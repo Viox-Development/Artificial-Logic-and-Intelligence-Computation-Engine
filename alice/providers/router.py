@@ -278,6 +278,8 @@ class Router:
         for ref in expanded:
             if ref not in out and ref not in dead:
                 out.append(ref)
+        shown = [r for r in out if not self.is_hidden(r)]
+        out = shown or out  # hepsi gizlendiyse rol tamamen çalışamaz hale gelmesin
         return [r for r in out if r not in ranking.RANDOM_ROUTERS] + [r for r in out if r in ranking.RANDOM_ROUTERS]
 
     def auto_chain(self, role: str) -> list[str]:
@@ -308,6 +310,46 @@ class Router:
                 if catalog.get(p) and model not in catalog[p]:
                     dead.add(ref)
         return dead
+
+    def hidden(self) -> set[str]:
+        """Arayüzden gizlenen modeller ve sağlayıcılar ([agent] hidden_models): otomatik zincirlerde kullanılmaz."""
+        return {str(x) for x in self.config.agent.get("hidden_models") or []}
+
+    def is_hidden(self, ref: str) -> bool:
+        h = self.hidden()
+        return ref in h or ref.partition(":")[0] in h
+
+    def set_hidden(self, name: str, hidden: bool) -> list[str]:
+        cur = [str(x) for x in self.config.agent.get("hidden_models") or []]
+        cur = [x for x in cur if x != name] + ([name] if hidden else [])
+        self.config.data.setdefault("agent", {})["hidden_models"] = cur
+        return cur
+
+    def catalog_view(self) -> list[dict[str, Any]]:
+        """Sağlayıcıya göre gruplanmış bütün bilinen modeller: ölçümde çalışanlar ve zincirlerde yazılı olanlar."""
+        res = self.auto_cache.get("results") or {}
+        dead = self._cached_dead()
+        refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
+        for role in self.config.roles:
+            try:
+                refs.update(self.chain(role))
+            except KeyError:
+                pass
+        hidden = self.hidden()
+        out: list[dict[str, Any]] = []
+        for name, pc in sorted(self.providers_cfg.items()):
+            rows = []
+            for ref in refs:
+                if ref.partition(":")[0] != name or ref in dead:
+                    continue
+                r = res.get(ref) or {}
+                rows.append({"ref": ref, "model": ref.partition(":")[2], "status": self.available(ref)[1],
+                             "hidden": ref in hidden, "quality": r.get("quality", ranking.quality(ref)),
+                             "latency": round(float(r.get("latency") or 0), 1), "tested": bool(r)})
+            rows.sort(key=lambda x: (-x["quality"], x["latency"] or 99, x["ref"]))
+            out.append({"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
+                        "key": pc.api_key_env, "models": rows})
+        return out
 
     def reload_auto(self, cache: dict[str, Any] | None = None) -> None:
         self.auto_cache = ranking.load_cache() if cache is None else cache

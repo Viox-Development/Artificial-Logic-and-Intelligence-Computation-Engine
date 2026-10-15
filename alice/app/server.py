@@ -799,6 +799,10 @@ def make_handler(state: AppState):
             if u.path == "/api/memory":
                 mem = state.agent.memory
                 return self._json({"text": mem.export_markdown() if mem is not None else ""})
+            if u.path == "/api/models/all":
+                return self._json({"providers": state.router.catalog_view(),
+                                   "brain": state.router.chain("brain"),
+                                   "pinned": state.router.role_overrides.get("brain", [None])[0]})
             if u.path == "/api/models":
                 return self._json({role: [{"ref": r, "status": st} for r, st in rows]
                                    for role, rows in state.router.status().items()})
@@ -953,6 +957,14 @@ def make_handler(state: AppState):
                         return self._json({"ok": False, "error": f"seviye: {' | '.join(LEVELS)}"}, 400)
                     state.router.thinking_overrides["brain"] = level
                     set_config_value("thinking", "brain", level)  # sonraki açılışta da kalsın
+                    return self._json({"ok": True, **state.status()})
+                if p == "/api/models/hide":
+                    from alice.config import set_config_value
+
+                    name, hide = str(d.get("name", "")).strip(), bool(d.get("hidden", True))
+                    if not name or name.partition(":")[0] not in state.router.providers_cfg:
+                        return self._json({"ok": False, "error": "bilinmeyen model ya da sağlayıcı"}, 400)
+                    set_config_value("agent", "hidden_models", state.router.set_hidden(name, hide))
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/model":
                     role, ref = str(d.get("role", "")), str(d.get("ref", ""))

@@ -70,19 +70,73 @@ function thinkMenu() {
     }
   }, "right");
 }
-function modelMenu() {
+async function modelMenu() {
+  const all = await api("/api/models/all");
+  const provs = (all && all.providers) || [];
+  const pinned = all ? all.pinned : (S.status.brain_pinned ? S.status.brain_chain[0] : null);
   openMenu($("#modelBtn"), (m) => {
     m.appendChild(el("div", "menu-title", "Ana model"));
     menuItem(m, IC.spark, "Otomatik", "Zincirdeki ilk uygun model, limit dolunca sıradakine geçer",
-      () => pinModel("reset"), !S.status.brain_pinned);
-    for (const ref of S.status.brain_chain || []) {
-      if (S.status.brain_pinned && S.status.brain_chain.length === 1) break;
-      menuItem(m, null, shortModel(ref), ref, () => pinModel(ref), false);
+      () => pinModel("reset"), !pinned);
+    // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
+    for (const p of provs) {
+      const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
+      if (!rows.length) continue;
+      m.appendChild(el("div", "menu-title", p.name));
+      for (const x of rows) {
+        menuItem(m, null, x.model, x.status === "hazır" ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
+      }
     }
-    if (S.status.brain_pinned) menuItem(m, null, shortModel(S.status.brain_chain[0]), S.status.brain_chain[0], () => {}, true);
     m.appendChild(el("div", "menu-sep"));
-    menuItem(m, IC.list, "Tüm modeller ve durumları", "", showModels);
+    menuItem(m, IC.list, "Modelleri yönet", "Sağlayıcı ya da model gizle/göster, durumları gör", () => showSettings("models"));
   }, "right");
+}
+async function hideModel(name, hidden) {
+  const r = await api("/api/models/hide", { name, hidden });
+  if (!r.ok) return toast(r.error || "Kaydedilemedi");
+  applyStatus(r);
+  toast((hidden ? "Gizlendi: " : "Gösteriliyor: ") + name);
+}
+function modelsPane(pane, all) {
+  const provs = (all && all.providers) || [];
+  pane.appendChild(el("div", "sec", "Sağlayıcılar ve modeller"));
+  pane.appendChild(el("p", "", "Gizlenen sağlayıcı ya da model otomatik zincirde kullanılmaz ve model menüsünde görünmez. " +
+    "Sabitlediğin model gizli olsa da kullanılır."));
+  const f = el("input"); f.type = "text"; f.placeholder = "Model ara"; f.className = "set-filter";
+  const box = el("div");
+  const toggle = (hidden) => el("button", "act", hidden ? "Göster" : "Gizle");
+  const draw = () => {
+    box.replaceChildren();
+    const q = f.value.trim().toLowerCase();
+    for (const p of provs) {
+      const rows = p.models.filter((x) => !q || x.ref.toLowerCase().includes(q));
+      if (q && !rows.length) continue;
+      const head = el("div", "list-row prov" + (p.hidden || !p.enabled ? " off" : ""));
+      const shown = p.models.filter((x) => !x.hidden).length;
+      head.append(el("b", "l plain", p.name),
+        el("span", "r", !p.enabled ? `${p.key} yok` : p.hidden ? `gizli · ${p.models.length} model` : `${shown}/${p.models.length} model açık`));
+      const hb = toggle(p.hidden);
+      hb.addEventListener("click", async () => { await hideModel(p.name, !p.hidden); showSettings("models"); });
+      head.appendChild(hb);
+      box.appendChild(head);
+      if (p.hidden && !q) continue;
+      for (const x of rows) {
+        const row = el("div", "list-row" + (x.hidden || p.hidden ? " off" : ""));
+        row.append(el("span", "l", x.model),
+          el("span", "r" + (x.status === "hazır" ? " ok" : ""), x.tested ? x.status : x.status + " · ölçülmedi"));
+        const tb = toggle(x.hidden);
+        tb.addEventListener("click", async () => { await hideModel(x.ref, !x.hidden); showSettings("models"); });
+        const pin = el("button", "act" + (all.pinned === x.ref ? " on" : ""), all.pinned === x.ref ? "Sabit" : "Sabitle");
+        pin.addEventListener("click", async () => { await pinModel(all.pinned === x.ref ? "reset" : x.ref); showSettings("models"); });
+        row.append(tb, pin);
+        box.appendChild(row);
+      }
+    }
+    if (!box.children.length) box.appendChild(el("p", "", q ? "Eşleşen model yok." : "Henüz ölçülmüş model yok."));
+  };
+  f.addEventListener("input", draw);
+  draw();
+  pane.append(f, box);
 }
 async function pinModel(ref) {
   await api("/api/model", { role: "brain", ref });
@@ -494,6 +548,7 @@ async function showSettings(tab) {
   tab = tab || "general";
   const data = {
     models: tab === "models" ? await api("/api/models") : null,
+    all: tab === "models" ? await api("/api/models/all") : null,
     tools: tab === "tools" ? await api("/api/tools") : null,
     memory: tab === "memory" ? await api("/api/memory") : null,
     usage: tab === "usage" ? await api("/api/usage") : null,
@@ -535,16 +590,12 @@ async function showSettings(tab) {
       pane.appendChild(setRow("Düşünme", (THINK[S.status.thinking] || ["", ""])[1],
         segmented(Object.entries(THINK).map(([k, [l]]) => [k, l]), S.status.thinking, (v) => setThinking(v))));
       const names = { brain: "Ana model", fast: "Hızlı işler", vision: "Görsel" };
+      modelsPane(pane, data.all);
       for (const [role, rows] of Object.entries(data.models || {})) {
-        pane.appendChild(el("div", "sec", names[role] || role));
+        pane.appendChild(el("div", "sec", (names[role] || role) + " sırası"));
         for (const r of rows) {
           const row = el("div", "list-row");
           row.append(el("span", "l", r.ref), el("span", "r" + (r.status === "hazır" ? " ok" : ""), r.status));
-          if (role === "brain") {
-            const pin = el("button", "act", "Sabitle");
-            pin.addEventListener("click", () => pinModel(r.ref));
-            row.appendChild(pin);
-          }
           pane.appendChild(row);
         }
       }

@@ -66,6 +66,8 @@ browser_cdp = "http://127.0.0.1:9222"
 browser_bridge_port = 9339
 # true: rol zincirinde "auto" yazmasan da ölçülen en iyi ücretsiz modeller zincirin sonuna eklenir.
 auto_models = true
+# Arayüzde gizlenen modeller ya da sağlayıcılar ("groq" ya da "groq:model"): otomatik zincirlerde kullanılmaz.
+hidden_models = []
 
 # Arka plan çekirdeği (`alice core run`): veri toplar, kuralları değerlendirir, görevleri çalıştırır.
 [core]

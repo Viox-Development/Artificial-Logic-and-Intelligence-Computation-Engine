@@ -859,6 +859,8 @@ function drawSessions() {
 $("#sessSearch").addEventListener("input", drawSessions);
 $("#sessSearch").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.target.value = ""; drawSessions(); e.target.blur(); } });
 async function resume(id) {
+  // Proje ekranı açıkken sohbete tıklamak önce projeyi kapatır; aynı sohbetse sadece ona dönülür.
+  if (S.proj) { closeProject(); drawSessions(); if (id === S.status.session) { closeSideOnMobile(); return; } }
   if (S.busy) return toast("Önce mevcut işi durdur");
   const r = await api("/api/resume", { id });
   if (!r.ok) return toast(r.error || "Oturum yüklenemedi");
@@ -868,6 +870,7 @@ async function resume(id) {
   closeSideOnMobile();
 }
 async function newChat() {
+  if (S.proj) closeProject();
   if (S.busy) return toast("Önce mevcut işi durdur");
   const r = await api("/api/new", {});
   if (r.ok) { clearChat(); applyStatus(r); loadSessions(); refreshChanges(); input.focus(); }

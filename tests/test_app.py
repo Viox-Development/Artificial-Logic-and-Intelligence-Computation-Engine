@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from alice.app.server import AppServer, AppState, display_history
+from alice.config import alice_home
 from tests.conftest import FakeProvider, make_config, rm_rf, tool_call
 
 
@@ -120,6 +121,10 @@ def test_mode_cwd_new_and_model(app, workdir):
     assert client.post("/api/cwd", json={"path": str(workdir / "yok")}).status_code == 400
     assert client.post("/api/model", json={"role": "brain", "ref": "a:other"}).json()["ok"]
     assert client.get("/api/models").json()["brain"][0]["ref"] == "a:other"
+    assert client.get("/api/models/all").json()["pinned"] == "a:other"
+    assert client.post("/api/models/hide", json={"name": "b", "hidden": True}).json()["ok"]
+    assert state.router.is_hidden("b:x") and "hidden_models" in (alice_home() / "config.toml").read_text(encoding="utf-8")
+    assert client.post("/api/models/hide", json={"name": "zzz"}).status_code == 400
     assert client.post("/api/new", json={}).json()["ok"]
 
 

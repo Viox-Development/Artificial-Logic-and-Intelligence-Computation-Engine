@@ -226,3 +226,30 @@ def test_model_rejecting_images_is_skipped_for_vision():
                                          {"type": "image_url", "image_url": {"url": "data:x"}}]}]
     assert r.chat("vision", img).text == "gördüm"
     assert not r.supports_vision("a:m")
+
+
+def test_hidden_models_and_providers_leave_auto_chain_but_pin_still_works():
+    cfg = make_config({"brain": ["a:m1", "a:m2", "b:m3"]}, auto_models=False, hidden_models=["a:m1"])
+    r = router_with(cfg, {"a": FakeProvider("a", []), "b": FakeProvider("b", [])}, auto_cache={})
+    assert r.chain("brain") == ["a:m2", "b:m3"]
+    r.set_hidden("a", True)
+    assert r.chain("brain") == ["b:m3"]
+    r.set_hidden("b", True)
+    assert r.chain("brain") == ["a:m1", "a:m2", "b:m3"]  # her şey gizlenirse rol çalışmaz hale gelmesin
+    r.set_hidden("a", False)
+    r.set_hidden("b", False)
+    assert cfg.agent["hidden_models"] == ["a:m1"]
+    r.role_overrides["brain"] = ["a:m1"]
+    assert r.chain("brain")[0] == "a:m1"
+
+
+def test_catalog_view_groups_tested_models_by_provider():
+    cfg = make_config({"brain": ["a:m1"]}, auto_models=False, hidden_models=["b"])
+    cache = {"results": {"b:fast": {"ok": True, "quality": 70, "latency": 1.2},
+                         "b:broken": {"ok": False, "error_kind": "not_found"},
+                         "a:extra": {"ok": False, "ever_ok": True, "quality": 50}}}
+    r = router_with(cfg, {"a": FakeProvider("a", []), "b": FakeProvider("b", [])}, auto_cache=cache)
+    view = {p["name"]: p for p in r.catalog_view()}
+    assert [m["ref"] for m in view["a"]["models"]] == ["a:extra", "a:m1"]
+    assert view["b"]["hidden"] and [m["ref"] for m in view["b"]["models"]] == ["b:fast"]
+    assert view["b"]["models"][0]["tested"] and not view["a"]["models"][1]["tested"]
