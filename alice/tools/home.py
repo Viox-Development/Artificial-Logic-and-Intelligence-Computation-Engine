@@ -158,13 +158,14 @@ class Android(Tool):
     description = ("ADB ile Android TV ve Android telefon. Her ikisinde: aç/kapa, tuş (ses, oynat, yön, ana ekran), "
                    "uygulama aç, YouTube'da video aç, yazı yaz, ekran görüntüsü, uygulama listesi. Telefonda ayrıca "
                    "pil, bildirimler, bilgisayardan dosya gönderme. İlk kullanımda find (TV'yi ağda arar) ya da "
-                   "host ile connect; telefon için önce pair. Adres bir kere kaydedilir.")
+                   "host ile connect; telefon için pair (eşler ve kendisi bağlanır). Adres bir kere kaydedilir.")
     parameters = obj({
         "device": {"type": "string", "enum": ["tv", "phone"], "description": "Hangi cihaz."},
         "action": {"type": "string", "enum": ["connect", "pair", "find", "power", "key", "open_app", "youtube",
                                               "open_url", "type", "screenshot", "apps", "battery", "notifications",
                                               "send_file"],
-                   "description": "connect: host'a bağlan ve kaydet | pair: telefonu eşle (host=IP:port, code) | "
+                   "description": "connect: host'a bağlan ve kaydet | "
+                   "pair: telefonu eşle ve bağlan (host=eşleme penceresindeki IP:port, code) | "
                    "find: ağda ADB'si açık TV ara | power: state'e göre | key: key tuşuna times kez bas | open_app: "
                    "app | youtube: query ya da url'deki videoyu aç | open_url | type: text yaz | screenshot | apps | "
                    "battery | notifications | send_file: path'teki dosyayı telefonun İndirilenler'ine."},
@@ -200,7 +201,10 @@ class Android(Tool):
             if action == "pair":
                 if not host or not code:
                     raise ToolError("pair için host (telefonun eşleme ekranındaki IP:port) ve code gerekli")
-                return ToolResult(adb.pair(host, code, exe))
+                msg, addr = adb.pair_and_connect(host, code, exe)
+                if addr:
+                    self._save(ctx, conf, device, addr)
+                return ToolResult(msg)
             if action == "find":
                 from alice.home.net import scan_port
 
@@ -211,13 +215,19 @@ class Android(Tool):
             if action == "connect":
                 target = host or conf.get(device, "")
                 d = adb.Device(target, device, exe)
-                msg = d.connect()
-                if host:
-                    from alice.config import set_config_value
-
-                    set_config_value("android", device, d.serial)
-                    conf[device] = d.serial
-                    ctx.config.data["android"] = conf
+                try:
+                    msg = d.connect()
+                except adb.AdbError:
+                    # Telefonda verilen port eşleme portu ya da eski port olabilir: aynı IP'nin güncel portunu bul.
+                    ip, _, port = d.serial.partition(":")
+                    new = adb.find_connect_address(ip, exe, skip=int(port) if port.isdigit() else None) \
+                        if device == "phone" else None
+                    if not new:
+                        raise
+                    d = adb.Device(new, device, exe)
+                    msg = d.connect()
+                if host or d.serial != conf.get(device):
+                    self._save(ctx, conf, device, d.serial)
                 return ToolResult(msg)
             d = self._device(ctx, conf, device, exe)
             if action == "power":
@@ -271,6 +281,14 @@ class Android(Tool):
         except (OSError, TimeoutError) as e:
             raise ToolError(f"{device} komutu çalışmadı: {e}") from e
         raise ToolError(f"bilinmeyen action: {action}")
+
+    @staticmethod
+    def _save(ctx: ToolContext, conf: dict, device: str, serial: str) -> None:
+        from alice.config import set_config_value
+
+        set_config_value("android", device, serial)
+        conf[device] = serial
+        ctx.config.data["android"] = conf
 
     @staticmethod
     def _device(ctx: ToolContext, conf: dict, device: str, exe: str):

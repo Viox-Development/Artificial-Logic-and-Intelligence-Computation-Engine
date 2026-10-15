@@ -561,3 +561,71 @@ def test_run_timeout_becomes_short_timeout_error():
 
     with pytest.raises(TimeoutError, match="cevap vermedi"):
         net.run([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.5)
+
+
+class PairSim:
+    """adb komutlarını taklit eder: pair, mdns services, connect."""
+
+    def __init__(self, mdns: str = "", connect_ok: set[str] | None = None, pair_out: str = "Successfully paired"):
+        self.mdns, self.ok, self.pair_out, self.calls = mdns, connect_ok or set(), pair_out, []
+
+    def __call__(self, cmd, timeout=15):
+        import subprocess
+
+        self.calls.append(cmd[1:])
+        if cmd[1] == "pair":
+            out = self.pair_out
+        elif cmd[1] == "mdns":
+            out = self.mdns
+        elif cmd[1] == "connect":
+            out = f"connected to {cmd[2]}" if cmd[2] in self.ok else f"failed to connect to {cmd[2]}"
+        else:
+            out = ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+
+@pytest.fixture
+def adb_sim(monkeypatch):
+    monkeypatch.setattr(android.shutil, "which", lambda n: "/usr/bin/adb")
+
+    def make(**kw):
+        f = PairSim(**kw)
+        monkeypatch.setattr(android, "run", f)
+        return f
+    return make
+
+
+def test_pair_then_connects_on_mdns_port_not_pairing_port(adb_sim):
+    f = adb_sim(mdns="adb-x\t_adb-tls-connect._tcp\t192.168.1.11:41001\n", connect_ok={"192.168.1.11:41001"})
+    msg, addr = android.pair_and_connect("192.168.1.11:37351", "016607")
+    assert addr == "192.168.1.11:41001" and "bağlı" in msg
+    assert ["connect", "192.168.1.11:37351"] not in f.calls
+
+
+def test_pair_falls_back_to_port_scan_when_mdns_is_empty(adb_sim, monkeypatch):
+    adb_sim(connect_ok={"192.168.1.11:44000"})
+    monkeypatch.setattr(net, "open_ports", lambda ip, ports, **k: [37351, 43000, 44000])
+    addr = android.find_connect_address("192.168.1.11", skip=37351, sleep=lambda s: None)
+    assert addr == "192.168.1.11:44000"
+
+
+def test_pair_without_connect_port_asks_for_the_right_line(adb_sim, monkeypatch):
+    adb_sim()
+    monkeypatch.setattr(net, "open_ports", lambda ip, ports, **k: [])
+    monkeypatch.setattr(android, "find_connect_address",
+                        lambda ip, adb="", skip=None: None)
+    msg, addr = android.pair_and_connect("192.168.1.11:37351", "016607")
+    assert addr is None and "eşleme penceresindeki port değil" in msg
+
+
+def test_repeated_pair_protocol_fault_is_explained(adb_sim):
+    adb_sim(pair_out="error: protocol fault (couldn't read status message): No error")
+    with pytest.raises(android.AdbError, match="connect yeter"):
+        android.pair("192.168.1.11:37351", "016607")
+
+
+def test_tool_connect_with_wrong_port_finds_the_right_one(adb_sim, tmp_path):
+    adb_sim(mdns="adb-x\t_adb-tls-connect._tcp\t192.168.1.11:41001\n", connect_ok={"192.168.1.11:41001"})
+    ctx = _ctx(tmp_path, {})
+    out = Android().run(ctx, device="phone", action="connect", host="192.168.1.11:37351").text
+    assert "41001" in out and ctx.config.data["android"]["phone"] == "192.168.1.11:41001"

@@ -268,8 +268,51 @@ def pair(host_port: str, code: str, adb: str = "") -> str:
                        "kapandı (kapanınca kod geçersiz olur; yeni kodla tekrar dene)") from e
     out = (r.stdout + r.stderr).strip()
     if "successfully paired" not in out.lower():
+        if "protocol fault" in out.lower() or "wrong password" in out.lower():
+            raise AdbError("eşleme kodu ya da portu artık geçersiz: eşleme penceresi kapandı ya da telefon zaten eşli. "
+                           "Zaten eşliyse tekrar eşlemeye gerek yok, connect yeter; değilse yeni kodla tekrar dene.")
         raise AdbError(out or "eşleme başarısız")
-    return "eşlendi; şimdi telefonun Kablosuz hata ayıklama ekranındaki IP:port ile connect"
+    return "eşlendi"
+
+
+# Telefonun bağlanma portu eşleme portundan farklıdır ve her açılışta değişir (Linux'un rastgele port aralığı).
+CONNECT_PORTS = range(30000, 61000)
+
+
+def find_connect_address(ip: str, adb: str = "", skip: int | None = None, tries: int = 3, wait: float = 1.5,
+                         sleep=None) -> str | None:
+    """Eşli telefonun güncel bağlanma adresi: önce mDNS, olmazsa IP'deki açık portlar tek tek denenir."""
+    import time
+
+    sleep = sleep or time.sleep
+    for i in range(tries):
+        if addr := mdns_connect_address(ip, adb):
+            return addr
+        if i < tries - 1:
+            sleep(wait)
+    from alice.home.net import open_ports
+
+    for port in [p for p in open_ports(ip, CONNECT_PORTS) if p != skip][:6]:
+        try:
+            r = run([adb_path(adb), "connect", f"{ip}:{port}"], timeout=6)
+        except TimeoutError:
+            continue
+        out = (r.stdout + r.stderr).lower()
+        if "connected to" in out and "cannot" not in out and "failed" not in out:
+            return f"{ip}:{port}"
+    return None
+
+
+def pair_and_connect(host_port: str, code: str, adb: str = "") -> tuple[str, str | None]:
+    """Eşle, sonra bağlanma portunu kendin bul ve bağlan. (mesaj, bağlanılan adres ya da None)"""
+    pair(host_port, code, adb)
+    ip, _, port = host_port.partition(":")
+    addr = find_connect_address(ip, adb, skip=int(port) if port.isdigit() else None)
+    if not addr:
+        return ("eşlendi ama bağlanma portu bulunamadı. Telefonda Kablosuz hata ayıklama ana ekranındaki "
+                "'IP adresi ve bağlantı noktası' satırını ver (eşleme penceresindeki port değil, o farklıdır).", None)
+    d = Device(addr, "phone", adb)
+    return f"eşlendi ve {d.connect()}", d.serial
 
 
 def parse_mdns(text: str) -> list[tuple[str, str]]:

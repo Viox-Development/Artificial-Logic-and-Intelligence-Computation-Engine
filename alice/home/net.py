@@ -77,6 +77,13 @@ def scan_port(port: int, hosts: list[str] | None = None, timeout: float = 0.4) -
     return [h for h in hits if h]
 
 
+def open_ports(host: str, ports, timeout: float = 0.25, workers: int = 256) -> list[int]:
+    """host'ta açık olan portlar (telefonun her seferinde değişen kablosuz hata ayıklama portunu bulmak için)."""
+    with ThreadPoolExecutor(workers) as ex:
+        hits = ex.map(lambda p: p if port_open(host, p, timeout) else None, ports)
+    return [p for p in hits if p]
+
+
 ARP_LINE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})\)?\s+(?:at\s+)?([0-9a-fA-F]{2}(?:[-:][0-9a-fA-F]{2}){5})\b")
 
 
