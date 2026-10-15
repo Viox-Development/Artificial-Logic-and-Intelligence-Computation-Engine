@@ -328,3 +328,23 @@ def test_scope_helpers(tmp_path):
     patch = "*** Begin Patch\n*** Update File: a.py\n@@\n-x\n+y\n*** Add File: b/c.py\n+z\n*** End Patch"
     assert patch_paths(patch) == ["a.py", "b/c.py"]
     assert write_targets("file_ops", {"path": "a", "paths": ["b"], "destination": "c"}) == ["a", "c", "b"]
+
+
+def test_saved_project_read_retries_while_file_is_being_replaced(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from alice import team as team_mod
+
+    f = tmp_path / "p.json"
+    f.write_text('{"id": "p"}', encoding="utf-8")
+    real, calls = Path.read_text, []
+
+    def flaky(self, *a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError(13, "Permission denied")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    monkeypatch.setattr(team_mod.time, "sleep", lambda s: None)
+    assert team_mod._read_saved(f) == '{"id": "p"}' and len(calls) == 3

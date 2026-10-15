@@ -342,6 +342,19 @@ def delete_template(name: str) -> None:
     _tpl_file(name).unlink(missing_ok=True)
 
 
+
+def _read_saved(f: Path, tries: int = 10) -> str:
+    """Kayıt dosyasını oku. Windows'ta başka bir iş parçacığı dosyayı tam o an yenisiyle değiştirirken (replace)
+    açmaya çalışmak PermissionError verir; kısa bekleyip tekrar denenir."""
+    for i in range(tries):
+        try:
+            return f.read_text(encoding="utf-8")
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05)
+    return ""
+
 class Team:
     """Bir proje: hedef, yönetici ve ajanlar."""
 
@@ -1715,7 +1728,7 @@ Nasıl yapılır:
     def load(cls, project_id: str, parent_ctx: ToolContext, max_parallel: int = 5,
              publish: Callable[[dict[str, Any]], None] | None = None) -> "Team":
         f = projects_dir() / f"{Path(project_id).name}.json"
-        data = json.loads(f.read_text(encoding="utf-8"))
+        data = json.loads(_read_saved(f))
         team = cls(parent_ctx, data.get("goal", ""), max_parallel, publish, origin=data.get("origin", "alice"),
                    project_id=data.get("id") or f.stem, title=data.get("title", ""),
                    review=bool(data.get("review", True)), lead_model=data.get("lead_model", "brain"),
