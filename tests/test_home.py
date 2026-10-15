@@ -11,6 +11,12 @@ from alice.home import android, net, pc, wifi
 from alice.tools.base import ToolContext, ToolError
 from alice.tools.home import PC, Android, Wifi
 
+@pytest.fixture(autouse=True)
+def _home_network(monkeypatch):
+    # Testler ev ağındaymış gibi çalışsın (CI makinesinin kendi IP'si 10.x olabiliyor).
+    monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
+
+
 POWERCFG_TR = """
 Mevcut Güç Düzenleri
 -----------------------------------
@@ -521,3 +527,37 @@ def test_zte_restart_posts_tokens():
 def test_modem_restart_needs_confirmation():
     assert Wifi().risk_for({"action": "modem_restart"}) == "danger"
     assert Wifi().risk_for({"action": "modem_devices"}) == "read"
+
+
+def test_network_mismatch_detects_vpn_address():
+    msg = net.network_mismatch("10.2.0.2:39241", me="192.168.1.34")
+    assert msg and "VPN" in msg and "192.168.1.x" in msg
+    assert net.network_mismatch("192.168.1.50:5555", me="192.168.1.34") is None
+    assert net.network_mismatch("192.168.1.50", me="127.0.0.1") is None
+
+
+def test_pair_refuses_other_network_before_running_adb(monkeypatch):
+    monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
+    monkeypatch.setattr(android.shutil, "which", lambda n: "/usr/bin/adb")
+    monkeypatch.setattr(android, "run", lambda *a, **k: pytest.fail("adb çalıştırılmamalıydı"))
+    with pytest.raises(android.AdbError, match="VPN"):
+        android.pair("10.2.0.2:39241", "029998")
+
+
+def test_pair_timeout_is_explained(monkeypatch):
+    monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
+    monkeypatch.setattr(android.shutil, "which", lambda n: "/usr/bin/adb")
+
+    def slow(*a, **k):
+        raise TimeoutError("adb 20 sn içinde cevap vermedi")
+
+    monkeypatch.setattr(android, "run", slow)
+    with pytest.raises(android.AdbError, match="eşleme cevap vermedi"):
+        android.pair("192.168.1.50:39241", "029998")
+
+
+def test_run_timeout_becomes_short_timeout_error():
+    import sys
+
+    with pytest.raises(TimeoutError, match="cevap vermedi"):
+        net.run([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.5)

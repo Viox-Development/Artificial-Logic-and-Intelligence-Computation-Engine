@@ -137,7 +137,11 @@ class Device:
 
     # ----- bağlantı -----
     def connect(self) -> str:
-        r = run([self.adb, "connect", self.serial], timeout=10)
+        check_reachable(self.serial)
+        try:
+            r = run([self.adb, "connect", self.serial], timeout=10)
+        except TimeoutError as e:
+            raise AdbError(f"{self.serial} cevap vermedi: cihaz açık ve aynı ağda mı?") from e
         out = (r.stdout + r.stderr).strip()
         if "connected to" in out.lower() and "cannot" not in out.lower():
             return f"{self.kind} bağlı ({self.serial})"
@@ -247,9 +251,21 @@ class Device:
         return f"gönderildi: {remote_dir}"
 
 
+def check_reachable(host: str) -> None:
+    from alice.home.net import network_mismatch
+
+    if why := network_mismatch(host):
+        raise AdbError(why)
+
+
 def pair(host_port: str, code: str, adb: str = "") -> str:
     """Android 11+ kablosuz hata ayıklama eşlemesi (bir kere)."""
-    r = run([adb_path(adb), "pair", host_port, code], timeout=20)
+    check_reachable(host_port)
+    try:
+        r = run([adb_path(adb), "pair", host_port, code.strip()], timeout=20)
+    except TimeoutError as e:
+        raise AdbError("eşleme cevap vermedi: adres ya da port yanlış, telefon başka ağda, ya da eşleme penceresi "
+                       "kapandı (kapanınca kod geçersiz olur; yeni kodla tekrar dene)") from e
     out = (r.stdout + r.stderr).strip()
     if "successfully paired" not in out.lower():
         raise AdbError(out or "eşleme başarısız")

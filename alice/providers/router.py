@@ -253,7 +253,15 @@ class Router:
         """Rolün model sırası. "auto" ölçülmüş en iyi ücretsiz modellere açılır; ölçümde kalıcı hata veren
         (kalkmış, bu anahtarla kapalı) modeller atlanır; rastgele model seçen router'lar en sona itilir."""
         if role in self.role_overrides:
-            return self.role_overrides[role]
+            pinned = self.role_overrides[role]
+            if role not in self.config.roles or not self.config.agent.get("pinned_fallback", True):
+                return pinned
+            # Arayüzden seçilen model önce denenir; aşırı yük (503) ya da kota yüzünden cevap veremezse iş
+            # durmasın diye rolün normal zinciriyle devam edilir.
+            return pinned + [r for r in self._role_chain(role) if r not in pinned]
+        return self._role_chain(role)
+
+    def _role_chain(self, role: str) -> list[str]:
         if ":" in role and role.split(":", 1)[0] in self.providers_cfg:
             return [role]  # doğrudan model referansı
         raw = self.config.roles.get(role)

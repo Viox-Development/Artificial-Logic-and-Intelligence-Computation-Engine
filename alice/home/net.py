@@ -8,14 +8,19 @@ import socket
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 
 def run(cmd: list[str], timeout: float = 15) -> subprocess.CompletedProcess:
     """Komutu çalıştır; Windows'ta konsol kod sayfasıyla (Türkçe netsh/powercfg çıktısı bozulmasın) çöz."""
     enc = "oem" if sys.platform == "win32" else "utf-8"
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return subprocess.run(cmd, capture_output=True, text=True, encoding=enc, errors="replace", timeout=timeout,
-                          creationflags=flags)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, encoding=enc, errors="replace", timeout=timeout,
+                              creationflags=flags)
+    except subprocess.TimeoutExpired as e:
+        # Araçlar OSError yakalıyor; TimeoutExpired ham haliyle kullanıcıya uzun bir komut satırı olarak düşüyordu.
+        raise TimeoutError(f"{Path(cmd[0]).stem} {timeout:g} sn içinde cevap vermedi") from e
 
 
 def local_ip() -> str:
@@ -35,6 +40,25 @@ def subnet_hosts(ip: str | None = None) -> list[str]:
     ip = ip or local_ip()
     net = ipaddress.ip_network(f"{ip}/24", strict=False)
     return [str(h) for h in net.hosts() if str(h) != ip]
+
+
+def network_mismatch(host: str, me: str | None = None) -> str | None:
+    """host bilgisayarla aynı ev ağında görünmüyorsa nedenini anlatan metin, görünüyorsa None."""
+    ip = host.split(":")[0].strip()
+    me = me or local_ip()
+    try:
+        a, b = ipaddress.ip_address(ip), ipaddress.ip_address(me)
+    except ValueError:
+        return None
+    if me.startswith("127.") or not a.is_private:
+        return None
+    if ipaddress.ip_network(f"{me}/16", strict=False) == ipaddress.ip_network(f"{ip}/16", strict=False) or a == b:
+        return None
+    vpn = " 10.2.0.x adresi tipik olarak telefonda açık bir VPN'in (ör. Proton VPN) adresidir." \
+        if ip.startswith("10.2.0.") else ""
+    return (f"{ip} bilgisayarın ağında değil (bilgisayar {me}).{vpn} Telefonda VPN'i kapat, telefonun da aynı Wi-Fi'a "
+            f"bağlı olduğundan emin ol; Kablosuz hata ayıklama ekranında {me.rsplit('.', 1)[0]}.x ile başlayan "
+            "adres görünmeli.")
 
 
 def port_open(host: str, port: int, timeout: float = 0.4) -> bool:
