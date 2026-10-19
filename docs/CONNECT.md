@@ -92,7 +92,8 @@ Model aracı `action` parametresiyle çağırıyor: `steam(action="library", ste
 WhatsApp, Instagram ve TikTok'un kişisel hesap için kullanılabilir resmî API'si yok: WhatsApp Cloud API
 işletme numarası istiyor, Instagram ve TikTok'un API'leri işletme/içerik üretici hesabına ve onay
 sürecine bağlı. Bunlar için doğru yol API değil, ALICE'in kalıcı profille açtığı gerçek tarayıcı
-(`browser` aracı) ve reflex modu: bir kere giriş yapıyorsun, oturum açık kalıyor.
+(`browser` aracı) ve reflex modu: bir kere giriş yapıyorsun, oturum açık kalıyor. Bu siteler için hazır
+tarifler `alice/apps.toml` içinde duruyor; `app` aracı onları çalıştırıyor (bkz. README, "Uygulama tarifleri").
 
 ## İpuçları
 

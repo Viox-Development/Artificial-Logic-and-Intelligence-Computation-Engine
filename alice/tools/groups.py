@@ -20,10 +20,11 @@ CORE = {"read_file", "write_file", "edit_file", "multi_edit", "apply_patch", "fi
 
 # grup -> (araçlar, kısa açıklama, anahtar kelime regex'i)
 GROUPS: dict[str, tuple[set[str], str, str]] = {
-    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex"},
+    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex", "app"},
                 "ekran görüntüsü, fare/klavye, masaüstü uygulamalarında tıklama, pano",
                 r"tıkla|ekran|pencere|fare|mouse|klavye|screenshot|buton|düğme|menü|click|screen|pano|kopyala|"
-                r"yapıştır|clipboard|oyun|ayarlar|uygulamada|arayüz|simge|ikon"),
+                r"yapıştır|clipboard|oyun|ayarlar|uygulamada|arayüz|simge|ikon|whatsapp|instagram|insta\b|"
+                r"tiktok|dm at|mesaj at|uygulama aç"),
     "browser": ({"browser"}, "kullanıcının tarayıcısında web sayfası okuma, tıklama, form doldurma",
                 r"site|tarayıcı|browser|chrome|edge|firefox|opera|youtube|google|sayfa|link|https?://|www\.|\.com|"
                 r"giriş yap|login|online|internetten|instagram|twitter|github|e-?posta|mail"),

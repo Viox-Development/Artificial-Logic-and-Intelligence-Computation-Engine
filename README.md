@@ -14,6 +14,7 @@ Neler yapabiliyor:
 * **Reflex modu:** net bir arayüz hedefini System One kararlarıyla adım başına ~100-500 ms'de yürütme
 * **Projeler:** büyük işleri kendi yöneticisi olan, paralel çalışan, birbirine mesaj atan, biten işi inceleyip onaylayan otonom ajan takımlarıyla yürütme
 * Alt ajan, todo planı, oturumlar arası hafıza, oturum kaydetme/devam ettirme, otomatik context özetleme
+* **Uygulama tarifleri:** WhatsApp, Instagram, TikTok, YouTube, Gmail, Steam için hangi işin hangi yoldan yapılacağı yazılı
 * **Bağlantılar:** Spotify, Steam, Discord, YouTube ve TOML tanımıyla eklediğin her API tek araç olarak
 * **Otomatik güncelleme:** `main`'e bir şey birleşince açılışta kendini günceller ve en son sürümle açılır
 * **İki arayüz:** masaüstü uygulaması (Claude Code / Codex masaüstü gibi) ve terminal. İkisinde de akışlı cevap, renkli diff, durum çubuğu ve çok satırlı yazma var
@@ -138,6 +139,22 @@ Kimlik tarafı: API anahtarları `.env`'den okunuyor, OAuth2 token'ları `~/.ali
 Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model `load_tools` deyince açılıyorlar. Böylece 4 servis bağlıyken de istek küçük kalıyor.
 
 **WhatsApp, Instagram, TikTok:** bunların kişisel hesap için kullanılabilir resmî API'si yok (WhatsApp Cloud API işletme numarası istiyor, Instagram/TikTok API'leri işletme hesabı + onay süreci). Onlar bağlantı tanımıyla değil, ALICE'in kalıcı profille açtığı gerçek tarayıcı ve reflex moduyla kullanılıyor: bir kere giriş yapıyorsun, oturum açık kalıyor.
+
+## Uygulama tarifleri: hangi işi hangi yoldan
+
+Aynı işi üç yoldan yapabiliyor: resmî API (hızlı, güvenilir), uygulamanın derin bağlantısı (`steam://rungameid/...`) ve tarayıcı/arayüz otomasyonu (her yerde çalışır ama yavaş). Hangisinin doğru olduğunu her seferinde modelin tahmin etmesi yerine `alice/apps.toml` içine yazdım:
+
+```
+app(action="list")                                  # tanımlı uygulamalar, akışlar, resmî API'si var mı
+app(action="open", name="wp")                       # WhatsApp Web'i kullanıcının kendi tarayıcısında aç
+app(action="flow", name="whatsapp", flow="send",
+    args={"kime": "Ahmet", "mesaj": "geliyorum"})   # tarifteki akışı reflex ile yürüt
+app(action="open", name="steam_game", target="238960")   # oyunu doğrudan başlat
+```
+
+Kutudan çıkan tarifler: WhatsApp (gönder/oku/ara), Instagram (DM, profil, akış), TikTok (arama, profil), YouTube (video aç/oynat), Gmail (yaz, gelen kutusu), Discord (web ve uygulama), Spotify, Steam ve Steam oyunu başlatma. Kendi tariflerin için `~/.alice/apps.toml` — aynı adı kullanırsan sadece değiştirdiğin alan üstüne yazılır.
+
+Akışlarda CSS seçici yok, "sol listeden {kime} sohbetini aç, mesaj kutusuna {mesaj} yaz" gibi hedef cümleleri var; bunları reflex yürütüyor. Site arayüzü değişince tarif bozulmuyor. Resmî API'si olan uygulamalarda tarif bunu söylüyor, model önce oraya gidiyor.
 
 ## Otomatik güncelleme
 

@@ -1,0 +1,109 @@
+# Uygulama ve site tarifleri. Kendi tariflerin için ~/.alice/apps.toml (aynı ad: seninki geçerli).
+# kind: web (tarayıcıda, kullanıcının kendi oturumuyla) | app (kurulu program) | protocol (derin bağlantı)
+# flows.<ad>: reflex için hedef şablonu, {alan} yer tutucuları çağrıda doldurulur.
+
+[whatsapp]
+title = "WhatsApp"
+kind = "web"
+url = "https://web.whatsapp.com"
+keywords = "whatsapp|wp\\b|watsap"
+note = "Kişisel hesap için resmî API yok (Cloud API işletme numarası ister). Tarayıcıdan çalışır; ilk açılışta telefondan QR okutman gerekir, sonra oturum açık kalır."
+[whatsapp.flows]
+send = "Sol taraftaki sohbet listesinde {kime} kişisini bul ve sohbetini aç, mesaj yazma kutusuna tıkla, {mesaj} yaz ve Enter'a basarak gönder"
+read = "Sol listeden {kime} sohbetini aç ve son mesajları göster"
+search = "Üstteki arama kutusuna {ne} yaz ve sonuçları göster"
+
+[instagram]
+title = "Instagram"
+kind = "web"
+url = "https://www.instagram.com"
+keywords = "instagram|insta|\\big\\b"
+note = "Resmî API sadece işletme/içerik üretici hesaplarına açık, kişisel hesap için tarayıcı kullanılır."
+[instagram.flows]
+dm = "Mesajlar (Direct) bölümüne gir, {kime} ile olan sohbeti aç, mesaj kutusuna {mesaj} yaz ve gönder"
+profile = "Arama kutusuna {kim} yaz ve çıkan ilk profili aç"
+feed = "Ana akışı aç ve ilk gönderileri oku"
+
+[tiktok]
+title = "TikTok"
+kind = "web"
+url = "https://www.tiktok.com"
+keywords = "tiktok|tik tok"
+note = "Resmî API onaylı geliştirici hesabı ister; tarayıcıdan çalışıyor."
+[tiktok.flows]
+search = "Arama kutusuna {ne} yaz, Enter'a bas ve sonuçları göster"
+profile = "Arama kutusuna {kim} yaz, Hesaplar sekmesine geç ve ilk profili aç"
+
+[youtube]
+title = "YouTube"
+kind = "web"
+url = "https://www.youtube.com"
+keywords = "youtube|yutub|video aç"
+api = "youtube_api"
+note = "Arama ve istatistik için youtube_api bağlantısı daha hızlı; video açmak/oynatmak için burası."
+[youtube.flows]
+play = "Arama kutusuna {ne} yaz, Enter'a bas ve ilk videoyu aç"
+open_video = "Adres satırına https://www.youtube.com/watch?v={id} yaz ve videoyu aç"
+
+[spotify_web]
+title = "Spotify (web)"
+kind = "web"
+url = "https://open.spotify.com"
+keywords = "spotify web"
+api = "spotify"
+note = "Çal/duraklat/arama için spotify bağlantısı (resmî API) daha hızlı ve güvenilir; burası son çare."
+[spotify_web.flows]
+play = "Arama kutusuna {ne} yaz, Enter'a bas ve ilk parçayı çal"
+
+[spotify]
+title = "Spotify (uygulama)"
+kind = "app"
+exe = "Spotify"
+keywords = "spotify uygulama|spotify aç"
+api = "spotify"
+
+[steam]
+title = "Steam"
+kind = "app"
+exe = "Steam"
+keywords = "steam aç|steam uygulama"
+api = "steam"
+
+[steam_game]
+title = "Steam oyunu"
+kind = "protocol"
+url = "steam://rungameid/{appid}"
+keywords = "oyunu başlat|oyun aç|rungameid"
+note = "appid'yi steam bağlantısının library eylemiyle bulabilirsin."
+
+[discord]
+title = "Discord"
+kind = "app"
+exe = "Discord"
+keywords = "discord aç|discord uygulama"
+api = "discord"
+
+[discord_web]
+title = "Discord (web)"
+kind = "web"
+url = "https://discord.com/app"
+keywords = "discord web"
+[discord_web.flows]
+send = "Sol taraftan {sunucu} sunucusunu ve {kanal} kanalını aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
+
+[gmail]
+title = "Gmail"
+kind = "web"
+url = "https://mail.google.com"
+keywords = "gmail|e-?posta|mail kutusu"
+[gmail.flows]
+compose = "Oluştur'a tıkla, Kime alanına {kime}, konu alanına {konu}, gövdeye {mesaj} yaz ve gönder"
+inbox = "Gelen kutusunu aç ve okunmamış son e-postaları göster"
+
+[github_web]
+title = "GitHub"
+kind = "web"
+url = "https://github.com"
+keywords = "github sitesi"
+api = "github"
+note = "Depo işleri için github aracı (API) kullanılmalı; burası sadece sitede gezinmek için."

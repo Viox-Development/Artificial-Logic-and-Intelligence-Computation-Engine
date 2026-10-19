@@ -1,0 +1,130 @@
+"""`app` aracı: uygulamayı/siteyi doğru yoldan aç ve tarifteki akışı çalıştır.
+
+Yol seçimi tarifte yazılı (bkz. alice/apps.py): resmî API varsa model oraya yönlendirilir, uygulamanın
+derin bağlantısı varsa o kullanılır, kalanı tarayıcı + reflex ile yapılır.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from alice.apps import App, find, registry
+from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolResult, obj
+
+
+def _open_web(ctx: ToolContext, url: str) -> str:
+    """Kullanıcının kendi tarayıcısında aç (oturumları orada açık). Bağlanamazsa varsayılan tarayıcı."""
+    from alice.tools.browser import Browser
+
+    try:
+        # browser aracının kendi mantığı: site zaten bir sekmedeyse ona geç, yoksa aç.
+        return Browser().run(ctx, action="goto", url=url).text
+    except Exception as e:  # noqa: BLE001 - tarayıcıya bağlanamamak işin sonu değil
+        from alice.tools.desktop import open_app
+
+        ctx.emit(f"tarayıcıya bağlanılamadı ({e}), varsayılan tarayıcıyla açılıyor")
+        return open_app(url)
+
+
+def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps: int) -> str:
+    from alice.reflex.loop import ReflexLoop, make_text_writer
+    from alice.reflex.observers import BrowserObserver
+
+    if ctx.decider is None or ctx.router is None:
+        raise ToolError("karar motoru yapılandırılmamış (alice doctor)")
+    try:
+        goal = app.goal(flow, args)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    observer = BrowserObserver(ctx, app.url or None)
+    loop = ReflexLoop(observer, ctx.decider, make_text_writer(ctx.router),
+                      min_confidence=float(ctx.config.decider.get("min_confidence", 0.55)), emit=ctx.emit)
+    return loop.run(goal, max_steps=max_steps).report()
+
+
+def _describe(apps: dict[str, App]) -> str:
+    rows = []
+    for a in sorted(apps.values(), key=lambda x: x.name):
+        bits = [a.name, f"({a.kind})"]
+        if a.api:
+            bits.append(f"API: {a.api}")
+        if a.flows:
+            bits.append("akışlar: " + ", ".join(f"{f}({', '.join(a.fields(f))})" for f in sorted(a.flows)))
+        rows.append(" · ".join(bits))
+    return "\n".join(rows) or "kayıt yok"
+
+
+class AppTool(Tool):
+    name = "app"
+    description = (
+        "Bir uygulamayı ya da siteyi doğru yoldan açar ve tanımlı akışları çalıştırır (WhatsApp'tan mesaj atma, "
+        "Instagram DM, YouTube'da video açma, Steam'de oyun başlatma gibi).\n"
+        "- list: hangi uygulamalar tanımlı, hangi akışları ve hangi alanları var.\n"
+        "- open: uygulamayı/siteyi aç (site ise kullanıcının kendi tarayıcısında, oturumu açık olan yerde).\n"
+        "- flow: tanımlı akışı çalıştır, ör. app(action='flow', name='whatsapp', flow='send', "
+        "args={'kime': 'Ahmet', 'mesaj': 'geliyorum'}).\n"
+        "- Bir uygulamanın resmî bağlantısı (API) varsa list çıktısında yazar; o varsa onu tercih et, daha hızlı.\n"
+        "- Burada olmayan bir sayfada iş yapacaksan browser ya da reflex araçlarını kullan."
+    )
+    parameters = obj({
+        "action": {"type": "string", "enum": ["list", "open", "flow"],
+                   "description": "list: tanımlı uygulamalar | open: aç | flow: tanımlı akışı çalıştır."},
+        "name": {"type": "string", "description": "Uygulama adı, ör. 'whatsapp', 'tiktok', 'steam_game'. "
+                 "Takma adlar da çalışır ('wp', 'insta')."},
+        "flow": {"type": "string", "description": "flow için akış adı, ör. 'send'. list çıktısında görünür."},
+        "args": {"type": "object", "additionalProperties": {"type": "string"},
+                 "description": "Akışın alanları, ör. {\"kime\": \"Ahmet\", \"mesaj\": \"selam\"}."},
+        "target": {"type": "string", "description": "protocol türü için yer tutucu değeri, ör. steam_game'de appid."},
+        "max_steps": {"type": "integer", "description": "flow için en fazla reflex adımı. Varsayılan 20."},
+    }, ["action"])
+    risk = COMPUTER
+
+    def risk_for(self, args: dict[str, Any]) -> str:
+        return READ if args.get("action") == "list" else COMPUTER
+
+    def summary(self, args: dict[str, Any]) -> str:
+        a = args.get("action", "")
+        if a == "list":
+            return "tanımlı uygulamalar"
+        name = args.get("name", "")
+        return f"{name} · {args.get('flow')}" if a == "flow" else f"{name} aç"
+
+    def run(self, ctx: ToolContext, action: str, name: str = "", flow: str = "", args: dict[str, Any] | None = None,
+            target: str = "", max_steps: int = 20) -> ToolResult:
+        apps = registry(ctx.config)
+        if action == "list":
+            return ToolResult(_describe(apps))
+        app = find(name, apps=apps)
+        if app is None:
+            raise ToolError(f"'{name}' diye bir uygulama tanımı yok. Tanımlılar: {', '.join(sorted(apps))}. "
+                            "Yenisini ~/.alice/apps.toml içine ekleyebilirsin.")
+        if action == "flow":
+            if not app.flows:
+                raise ToolError(f"{app.label} için tanımlı akış yok; open ile açıp browser/reflex ile devam et.")
+            note = f"\n({app.note})" if app.note else ""
+            return ToolResult(_flow(ctx, app, flow, args or {}, max_steps) + note)
+        # open
+        if app.kind == "web":
+            out = _open_web(ctx, app.url)
+        elif app.kind == "protocol":
+            from alice.apps import FIELD_RX
+
+            if FIELD_RX.search(app.url) and not target.strip():
+                raise ToolError(f"{app.label}: target gerekli, şablon: {app.url}")
+            url = FIELD_RX.sub(lambda _m: target.strip(), app.url)
+            from alice.tools.desktop import open_app
+
+            out = open_app(url)
+        else:
+            from alice.tools.desktop import open_app
+
+            out = open_app(app.exe or app.label)
+        extra = []
+        if app.api:
+            extra.append(f"not: bu servisin resmî bağlantısı var ({app.api}), veri işleri için onu kullan")
+        if app.note:
+            extra.append(app.note)
+        return ToolResult(out + ("\n" + "\n".join(extra) if extra else ""))
+
+
+TOOLS = [AppTool()]
