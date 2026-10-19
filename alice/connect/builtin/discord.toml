@@ -1,0 +1,61 @@
+# Discord bot API. Token: https://discord.com/developers/applications → Bot → Token
+# Botu kendi sunucuna davet etmen gerekir; kişisel hesabını otomatikleştirmek Discord kurallarına aykırı.
+name = "discord"
+title = "Discord"
+description = "Discord sunucularını bot hesabıyla okuma/yazma: kanal listesi, son mesajlar, mesaj gönderme."
+base_url = "https://discord.com/api/v10"
+keywords = "discord|sunucu|kanal|mesaj at|yaz"
+docs = "https://discord.com/developers/docs/intro"
+
+[auth]
+kind = "api_key"
+env = "DISCORD_BOT_TOKEN"
+place = "header"
+name = "Authorization"
+prefix = "Bot "
+help = "discord.com/developers/applications → yeni uygulama → Bot → Reset Token"
+
+[actions.guilds]
+summary = "Botun üye olduğu sunucular"
+path = "/users/@me/guilds"
+fields = ["name", "id"]
+
+[actions.channels]
+summary = "Bir sunucudaki kanallar"
+path = "/guilds/{guild_id}/channels"
+fields = ["name", "id", "type"]
+limit = 50
+[actions.channels.params.guild_id]
+type = "string"
+required = true
+into = "path"
+description = "Sunucu id'si (guilds eyleminden)"
+
+[actions.messages]
+summary = "Bir kanaldaki son mesajlar"
+path = "/channels/{channel_id}/messages"
+query = { limit = "15" }
+fields = ["author.username", "content", "timestamp"]
+limit = 15
+[actions.messages.params.channel_id]
+type = "string"
+required = true
+into = "path"
+description = "Kanal id'si"
+
+[actions.send]
+summary = "Kanala mesaj gönder"
+method = "POST"
+path = "/channels/{channel_id}/messages"
+writes = true
+fields = ["id", "content"]
+[actions.send.params.channel_id]
+type = "string"
+required = true
+into = "path"
+description = "Kanal id'si"
+[actions.send.params.content]
+type = "string"
+required = true
+into = "body"
+description = "Mesaj metni"

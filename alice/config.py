@@ -324,6 +324,11 @@ max_input_tokens = 32000
 
 # git / GitHub araçlarının kuralları. Anahtar: .env'deki GITHUB_TOKEN, yoksa GitHub MCP sunucusunun anahtarı,
 # yoksa GITHUB_MODELS_TOKEN, yoksa `gh auth token`.
+[connect]
+# Servis bağlantıları (alice/connect): yerleşik tanımlar + ~/.alice/connect/*.toml
+disabled = []       # kapatılacak bağlantı adları, ör. ["discord"]
+paths = []          # ek tanım klasörleri
+
 [update]
 # ALICE kendini GitHub'daki depodan günceller (main'e yeni commit girince).
 # auto   = açılışta sessizce güncelle ve en son sürümle aç (varsayılan)
@@ -373,6 +378,15 @@ SAMBANOVA_API_KEY=
 TYPESAFE_API_KEY=
 # GitHub (repo izinli token: depo klonlama, commit/push, PR) -> https://github.com/settings/tokens
 GITHUB_TOKEN=
+# --- Bağlantılar (alice connect): doldurduğun servis açılır, boş olan atlanır ---
+# Steam         -> https://steamcommunity.com/dev/apikey
+STEAM_API_KEY=
+# YouTube Data  -> console.cloud.google.com, YouTube Data API v3 -> API anahtarı
+YOUTUBE_API_KEY=
+# Discord bot   -> https://discord.com/developers/applications
+DISCORD_BOT_TOKEN=
+# Spotify       -> https://developer.spotify.com/dashboard (Redirect URI: http://127.0.0.1:8721/callback)
+SPOTIFY_CLIENT_ID=
 """
 
 

@@ -8,6 +8,7 @@
   alice reflex "hedef"       Jev/System One reflex döngüsünü tek başına çalıştır
   alice app                  masaüstü uygulamasını aç
   alice update [--check]     GitHub'daki son sürüme güncelle (main'e merge olanı çeker)
+  alice connect [ad]         servis bağlantıları (Spotify, Steam, Discord, YouTube, kendi API'ların)
   alice shortcut             masaüstüne ve Başlat menüsüne ALICE kısayolu koy (Windows)
   alice core run|install|status|mode|stats   arka plan çekirdeği (izleme, kurallar, modlar, görevler)
   alice rules [add "cümle"]  uyarı kuralları ("GPU uzun süre ısınırsa söyle")
@@ -792,6 +793,10 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[green]oluşturuldu:[/] {p}")
         console.print(f"Şimdi {alice_home() / '.env'} dosyasına API anahtarlarını yaz, sonra [bold]alice doctor[/].")
         return 0
+    if argv and argv[0] == "connect":
+        from alice.connect.cli import connect_cmd
+
+        return connect_cmd(argv[1:])
     if argv and argv[0] == "update":
         return update_cmd(argv[1:])
     if argv and argv[0] == "doctor":

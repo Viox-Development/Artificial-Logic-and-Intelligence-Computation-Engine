@@ -1,0 +1,80 @@
+# Steam Web API. Anahtar: https://steamcommunity.com/dev/apikey (ücretsiz, hesap yeterli)
+name = "steam"
+title = "Steam"
+description = "Steam kütüphanesi, oynama süreleri, arkadaş listesi ve oyuncu durumu. Oyun başlatmak için bu değil, windows aracıyla steam://rungameid/<appid> adresini aç."
+base_url = "https://api.steampowered.com"
+keywords = "steam|oyun|kütüphane|arkadaş|oynadım|saat"
+docs = "https://steamcommunity.com/dev"
+
+[auth]
+kind = "api_key"
+env = "STEAM_API_KEY"
+place = "query"
+name = "key"
+help = "https://steamcommunity.com/dev/apikey"
+
+[actions.library]
+summary = "Kütüphanedeki oyunlar ve toplam oynama süreleri (playtime dakika)"
+path = "/IPlayerService/GetOwnedGames/v1/"
+query = { include_appinfo = "1", include_played_free_games = "1", format = "json" }
+pick = "response.games"
+fields = ["name", "playtime_forever", "appid"]
+limit = 40
+[actions.library.params.steamid]
+type = "string"
+required = true
+description = "SteamID64 (profil numarası). Bilinmiyorsa önce resolve_vanity."
+
+[actions.recent]
+summary = "Son iki haftada oynanan oyunlar"
+path = "/IPlayerService/GetRecentlyPlayedGames/v1/"
+pick = "response.games"
+fields = ["name", "playtime_2weeks", "playtime_forever", "appid"]
+[actions.recent.params.steamid]
+type = "string"
+required = true
+description = "SteamID64"
+
+[actions.profile]
+summary = "Oyuncu durumu: çevrimiçi mi, şu an hangi oyunda"
+path = "/ISteamUser/GetPlayerSummaries/v2/"
+pick = "response.players"
+fields = ["personaname", "personastate", "gameextrainfo", "lastlogoff"]
+[actions.profile.params.steamids]
+type = "string"
+required = true
+description = "SteamID64, virgülle birden fazla olabilir"
+
+[actions.friends]
+summary = "Arkadaş listesi (SteamID64'ler; adları için profile)"
+path = "/ISteamUser/GetFriendList/v1/"
+query = { relationship = "friend" }
+pick = "friendslist.friends"
+fields = ["steamid", "friend_since"]
+limit = 50
+[actions.friends.params.steamid]
+type = "string"
+required = true
+description = "SteamID64"
+
+[actions.resolve_vanity]
+summary = "Profil adından (vanity URL) SteamID64 bul"
+path = "/ISteamUser/ResolveVanityURL/v1/"
+pick = "response"
+fields = ["steamid", "success", "message"]
+[actions.resolve_vanity.params.vanityurl]
+type = "string"
+required = true
+description = "steamcommunity.com/id/<buradaki ad>"
+
+[actions.news]
+summary = "Bir oyunun haber/yama notları"
+path = "/ISteamNews/GetNewsForApp/v2/"
+query = { count = "5", maxlength = "600" }
+pick = "appnews.newsitems"
+fields = ["title", "date", "url"]
+limit = 5
+[actions.news.params.appid]
+type = "integer"
+required = true
+description = "Oyunun Steam appid'si (library sonucunda var)"

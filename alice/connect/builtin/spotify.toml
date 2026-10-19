@@ -1,0 +1,100 @@
+# Spotify Web API (OAuth2 + PKCE, client secret gerekmez).
+# 1) developer.spotify.com/dashboard → Create app
+# 2) Redirect URI olarak tam şunu ekle:  http://127.0.0.1:8721/callback
+# 3) Client ID'yi ~/.alice/.env içine SPOTIFY_CLIENT_ID=... diye yaz
+# 4) alice connect spotify
+name = "spotify"
+title = "Spotify"
+description = "Müzik: çalan parçayı öğren, çal/duraklat, sonraki parça, arama, cihaz seçimi, çalma listeleri."
+base_url = "https://api.spotify.com/v1"
+keywords = "spotify|müzik|şarkı|parça|çal|duraklat|playlist"
+docs = "https://developer.spotify.com/documentation/web-api"
+
+[auth]
+kind = "oauth2"
+client_id_env = "SPOTIFY_CLIENT_ID"
+authorize_url = "https://accounts.spotify.com/authorize"
+token_url = "https://accounts.spotify.com/api/token"
+pkce = true
+redirect_port = 8721   # Spotify kayıtlı adres istiyor; rastgele port olmaz
+scopes = ["user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing",
+          "playlist-read-private"]
+help = "developer.spotify.com/dashboard → Create app → Client ID'yi ~/.alice/.env içine SPOTIFY_CLIENT_ID olarak yaz"
+
+[actions.now_playing]
+summary = "Şu an çalan parça"
+path = "/me/player/currently-playing"
+fields = ["item.name", "item.artists.0.name", "item.album.name", "is_playing", "progress_ms"]
+
+[actions.search]
+summary = "Parça/sanatçı/albüm ara (uri'si çalmak için gerekir)"
+path = "/search"
+query = { limit = "8" }
+pick = "tracks.items"
+fields = ["name", "artists.0.name", "album.name", "uri"]
+[actions.search.params.q]
+type = "string"
+required = true
+description = "Arama ifadesi"
+[actions.search.params.type]
+type = "string"
+description = "track | artist | album | playlist (varsayılan track)"
+enum = ["track", "artist", "album", "playlist"]
+default = "track"
+
+[actions.play]
+summary = "Çal/devam ettir; uris verilirse o parçaları çalar"
+method = "PUT"
+path = "/me/player/play"
+writes = true
+[actions.play.params.uris]
+type = "array"
+into = "body"
+description = "Çalınacak parça uri'leri, ör. spotify:track:... (search sonucundan)"
+[actions.play.params.device_id]
+type = "string"
+into = "query"
+description = "Hangi cihazda (devices eyleminden)"
+
+[actions.pause]
+summary = "Duraklat"
+method = "PUT"
+path = "/me/player/pause"
+writes = true
+
+[actions.next]
+summary = "Sonraki parça"
+method = "POST"
+path = "/me/player/next"
+writes = true
+
+[actions.previous]
+summary = "Önceki parça"
+method = "POST"
+path = "/me/player/previous"
+writes = true
+
+[actions.volume]
+summary = "Ses seviyesini ayarla (0-100)"
+method = "PUT"
+path = "/me/player/volume"
+writes = true
+[actions.volume.params.volume_percent]
+type = "integer"
+required = true
+into = "query"
+description = "0-100"
+
+[actions.devices]
+summary = "Spotify'ın çalabileceği cihazlar (telefon, bilgisayar, hoparlör)"
+path = "/me/player/devices"
+pick = "devices"
+fields = ["name", "type", "is_active", "id"]
+
+[actions.playlists]
+summary = "Çalma listelerin"
+path = "/me/playlists"
+query = { limit = "20" }
+pick = "items"
+fields = ["name", "tracks.total", "uri"]
+limit = 20

@@ -14,6 +14,7 @@ Neler yapabiliyor:
 * **Reflex modu:** net bir arayüz hedefini System One kararlarıyla adım başına ~100-500 ms'de yürütme
 * **Projeler:** büyük işleri kendi yöneticisi olan, paralel çalışan, birbirine mesaj atan, biten işi inceleyip onaylayan otonom ajan takımlarıyla yürütme
 * Alt ajan, todo planı, oturumlar arası hafıza, oturum kaydetme/devam ettirme, otomatik context özetleme
+* **Bağlantılar:** Spotify, Steam, Discord, YouTube ve TOML tanımıyla eklediğin her API tek araç olarak
 * **Otomatik güncelleme:** `main`'e bir şey birleşince açılışta kendini günceller ve en son sürümle açılır
 * **İki arayüz:** masaüstü uygulaması (Claude Code / Codex masaüstü gibi) ve terminal. İkisinde de akışlı cevap, renkli diff, durum çubuğu ve çok satırlı yazma var
 
@@ -111,6 +112,32 @@ Sonra:
 alice doctor          # her sağlayıcıya test isteği atar, karar motorunu dener, eksik paketleri gösterir
 alice models --write  # canlı ücretsiz katalogdan rol zincirlerini günceller (opsiyonel)
 ```
+
+## Bağlantılar: servisleri ALICE'e öğretmek
+
+Bir siteyi ALICE'e bağlamak için kod yazmak gerekmiyor: bir TOML tanımı yazıyorsun, ALICE onu şemalı bir araca çeviriyor (eylemler, parametreler, kimlik, cevabın okunur hali). Ayrıntı: [docs/CONNECT.md](docs/CONNECT.md).
+
+```powershell
+alice connect                       # bağlantılar ve durumları
+alice connect spotify               # OAuth: tarayıcıda izin ver, token saklanır
+alice connect steam --test library --arg steamid=7656119...
+alice connect benimsite --new       # ~/.alice/connect/benimsite.toml şablonu
+```
+
+Kutudan çıkanlar:
+
+| ad | kimlik | ne yapar |
+|---|---|---|
+| `steam` | `STEAM_API_KEY` | kütüphane, oynama süreleri, arkadaşlar, kim ne oynuyor, oyun haberleri |
+| `youtube_api` | `YOUTUBE_API_KEY` | video/kanal arama, izlenme-beğeni, yorumlar |
+| `discord` | `DISCORD_BOT_TOKEN` | sunucular, kanallar, son mesajlar, mesaj gönderme (bot hesabıyla) |
+| `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | çalan parça, çal/duraklat/sonraki, arama, cihaz seçimi, çalma listeleri |
+
+Kimlik tarafı: API anahtarları `.env`'den okunuyor, OAuth2 token'ları `~/.alice/connect.json` içinde (chmod 600) duruyor ve süresi dolunca kendiliğinden yenileniyor. OAuth akışı PKCE ile çalıştığı için client secret gerekmiyor.
+
+Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model `load_tools` deyince açılıyorlar. Böylece 4 servis bağlıyken de istek küçük kalıyor.
+
+**WhatsApp, Instagram, TikTok:** bunların kişisel hesap için kullanılabilir resmî API'si yok (WhatsApp Cloud API işletme numarası istiyor, Instagram/TikTok API'leri işletme hesabı + onay süreci). Onlar bağlantı tanımıyla değil, ALICE'in kalıcı profille açtığı gerçek tarayıcı ve reflex moduyla kullanılıyor: bir kere giriş yapıyorsun, oturum açık kalıyor.
 
 ## Otomatik güncelleme
 
@@ -377,6 +404,7 @@ alice --resume                          # son oturuma devam
 alice -v                                # hangi modelin cevap verdiğini göster
 alice update --check                    # main'de yeni commit var mı, CI yeşil mi
 alice update --restart                  # son sürümü çek ve uygulamayı aç
+alice connect                           # servis bağlantıları (Spotify, Steam, Discord, YouTube)
 ```
 
 Reflex'i tek başına denemek için:
