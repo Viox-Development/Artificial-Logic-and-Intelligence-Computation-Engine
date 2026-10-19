@@ -7,6 +7,7 @@
   alice core stats <anahtar> [süre]  ör. alice core stats pc.gpu.temp 1d
   alice rules [list|add "cümle"|rm|on|off <id>]
   alice tasks [list|add "cümle"|rm|run <id>]
+  alice feeds [list|--new|--test <ad>]   bağlı servisleri izleyip haber veren akışlar
 """
 
 from __future__ import annotations
@@ -199,6 +200,70 @@ def _start_voice(cfg, core):
     threading.Thread(target=va.run, daemon=True, name="alice-voice").start()
     voice_log(f"ses modülü başladı: {time.monotonic() - t0:.1f} sn")
     return va
+
+
+FEED_TEMPLATE = """# ALICE akışları: bağlı servislerde yeni bir şey olunca haber verir.
+# Çekirdek çalışırken (alice core run) yoklanır. Ayrıntı: docs/CONNECT.md
+
+[[feed]]
+name = "ornek"
+connector = "discord"      # alice connect ile listelenen bağlantı
+action = "messages"        # o bağlantının bir eylemi
+args = { channel_id = "KANAL_ID" }
+every_minutes = 5
+id_field = "id"            # yeni öğeyi ayırt eden alan
+title = "Discord · {author.username}"
+body = "{content}"
+topic = "discord"
+# agent = "Bu mesajlara bakip bana ozetle"   # dolu olursa ALICE uyanir ve bu isi yapar
+"""
+
+
+def feeds_cmd(argv: list[str]) -> int:
+    """alice feeds [list] | --new | --test <ad>"""
+    from alice.core.feeds import FeedMonitor, feeds_path, load_feeds
+
+    sub = argv[0] if argv else "list"
+    if sub == "--new":
+        p = feeds_path()
+        if p.exists():
+            console.print(f"[yellow]zaten var:[/] {p}")
+            return 1
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(FEED_TEMPLATE, encoding="utf-8")
+        console.print(f"[green]oluşturuldu:[/] {p}")
+        return 0
+
+    feeds, errors = load_feeds()
+    for e in errors:
+        console.print(f"[yellow]{escape(e)}[/]")
+
+    if sub == "--test" and len(argv) > 1:
+        feed = next((f for f in feeds if f.name == argv[1]), None)
+        if feed is None:
+            console.print(f"[red]akış yok:[/] {escape(argv[1])}")
+            return 1
+        mon = FeedMonitor(cfg=load_config(), emit=lambda s: console.print(f"[dim]{escape(s)}[/]"))
+        try:
+            items = mon._fetch(feed)
+        except Exception as e:  # noqa: BLE001 - test komutu: hatayı göster, çökme
+            console.print(f"[red]{escape(str(e))}[/]")
+            return 1
+        from alice.core.feeds import fill
+
+        console.print(f"[bold]{len(items)} öğe[/]")
+        for it in items[:5]:
+            console.print(f"  [dim]·[/] {escape(fill(feed.title, it, feed))} — {escape(fill(feed.body, it, feed))}")
+        return 0
+
+    if not feeds:
+        console.print(f"[dim]akış yok. Örnek dosya oluşturmak için: alice feeds --new  ({feeds_path()})[/]")
+        return 0
+    for f in feeds:
+        console.print(f"[bold]{escape(f.name)}[/] {f.connector}.{f.action} · {f.every_minutes:g} dk"
+                      + ("" if f.enabled else " [dim](kapalı)[/]")
+                      + (f"  [dim]ajan: {escape(f.agent[:40])}[/]" if f.agent else ""))
+    return 0
 
 
 def rules_cmd(argv: list[str]) -> int:

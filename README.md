@@ -14,6 +14,7 @@ Neler yapabiliyor:
 * **Reflex modu:** net bir arayüz hedefini System One kararlarıyla adım başına ~100-500 ms'de yürütme
 * **Projeler:** büyük işleri kendi yöneticisi olan, paralel çalışan, birbirine mesaj atan, biten işi inceleyip onaylayan otonom ajan takımlarıyla yürütme
 * Alt ajan, todo planı, oturumlar arası hafıza, oturum kaydetme/devam ettirme, otomatik context özetleme
+* **Akışlar:** bağlı servislerde yeni bir şey olunca (Discord mesajı, yeni video) kendi haber verir
 * **Uygulama tarifleri:** WhatsApp, Instagram, TikTok, YouTube, Gmail, Steam için hangi işin hangi yoldan yapılacağı yazılı
 * **Bağlantılar:** Spotify, Steam, Discord, YouTube ve TOML tanımıyla eklediğin her API tek araç olarak
 * **Otomatik güncelleme:** `main`'e bir şey birleşince açılışta kendini günceller ve en son sürümle açılır
@@ -139,6 +140,32 @@ Kimlik tarafı: API anahtarları `.env`'den okunuyor, OAuth2 token'ları `~/.ali
 Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model `load_tools` deyince açılıyorlar. Böylece 4 servis bağlıyken de istek küçük kalıyor.
 
 **WhatsApp, Instagram, TikTok:** bunların kişisel hesap için kullanılabilir resmî API'si yok (WhatsApp Cloud API işletme numarası istiyor, Instagram/TikTok API'leri işletme hesabı + onay süreci). Onlar bağlantı tanımıyla değil, ALICE'in kalıcı profille açtığı gerçek tarayıcı ve reflex moduyla kullanılıyor: bir kere giriş yapıyorsun, oturum açık kalıyor.
+
+## Akışlar: ALICE'in kendi haber vermesi
+
+Asistan sorulunca cevap verir, Jarvis olanı söyler. Çekirdek servis zaten bilgisayarı izliyordu (kurallar: "GPU uzun süre ısınırsa söyle"); artık bağlı servisleri de izliyor. `~/.alice/feeds.toml`:
+
+```toml
+[[feed]]
+name = "discord_genel"
+connector = "discord"        # alice connect ile listelenen bağlantı
+action = "messages"
+args = { channel_id = "123456" }
+every_minutes = 5
+id_field = "id"              # yeni öğeyi bununla ayırt eder
+title = "Discord · {author.username}"
+body = "{content}"
+metric = "feed.discord.yeni" # opsiyonel: sayı metrik olur, kurallar kullanabilir
+# agent = "Yeni mesajları özetle, önemliyse bana söyle"   # dolu olursa ALICE uyanıp bu işi yapar
+```
+
+```powershell
+alice feeds            # tanımlı akışlar
+alice feeds --new      # örnek dosya
+alice feeds --test discord_genel   # şimdi yokla, ne geldiğini göster
+```
+
+İlk turda hiçbir şey bildirilmiyor (o anki öğeler "görüldü" işaretleniyor), yoksa akışı kurduğun anda son 15 mesaj peş peşe düşerdi. Bir turda en fazla 5 bildirim gidiyor, gerisi "3 yeni öğe daha" diye toplanıyor. Bildirimler mod politikasından geçiyor: uçuş ya da sessiz moddayken susturulup kaydediliyor, sonra "ben oyundayken ne oldu?" diye sorabiliyorsun.
 
 ## Uygulama tarifleri: hangi işi hangi yoldan
 

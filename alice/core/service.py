@@ -99,6 +99,9 @@ class Core:
         self.retention_days = float(c.get("retention_days", 30))
         self.store = store or Store()
         self.pc = PCMonitor()
+        self.modes = ModeManager(c)
+        self.notifier = notifier or Notifier(self.store, lambda: self.modes.policy,
+                                             desktop=bool(c.get("desktop_notifications", True)))
         if monitors is None:
             monitors = [self.pc]
             export = cfg.data.get("watch", {}).get("export_path", "")
@@ -106,10 +109,14 @@ class Core:
                 from alice.health.watch import WatchMonitor
 
                 monitors.append(WatchMonitor(self.store, export))
+            # Akışlar: bağlı servislerde yeni bir şey olunca haber ver (~/.alice/feeds.toml).
+            from alice.core.feeds import FeedMonitor, load_feeds
+
+            feeds, _errors = load_feeds()
+            if feeds:
+                monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg,
+                                            emit=lambda s: self.store.add_event("info", s, topic="feed")))
         self.monitors: list[Monitor] = monitors
-        self.modes = ModeManager(c)
-        self.notifier = notifier or Notifier(self.store, lambda: self.modes.policy,
-                                             desktop=bool(c.get("desktop_notifications", True)))
         self.rules = rules or RuleSet()
         self.tasks = tasks or TaskStore()
         self.run_agent = run_agent

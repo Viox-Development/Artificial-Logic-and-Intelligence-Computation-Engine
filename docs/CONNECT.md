@@ -95,6 +95,26 @@ sürecine bağlı. Bunlar için doğru yol API değil, ALICE'in kalıcı profill
 (`browser` aracı) ve reflex modu: bir kere giriş yapıyorsun, oturum açık kalıyor. Bu siteler için hazır
 tarifler `alice/apps.toml` içinde duruyor; `app` aracı onları çalıştırıyor (bkz. README, "Uygulama tarifleri").
 
+## Akışlar: bağlantıyı izlemek
+
+Bir bağlantının eylemini arka planda yoklayıp yeni öğeleri bildirime çevirebilirsin: `~/.alice/feeds.toml`
+(`alice feeds --new` örnek dosya oluşturur). Çekirdek servis (`alice core run`) çalışırken yoklanır.
+
+```toml
+[[feed]]
+name = "yeni_video"
+connector = "youtube_api"
+action = "search"
+args = { q = "DCS World update", type = "video", maxResults = "5" }
+every_minutes = 30
+id_field = "id.videoId"
+title = "Yeni video: {snippet.title}"
+body = "{snippet.channelTitle}"
+```
+
+`agent = "..."` eklersen yeni öğe geldiğinde ALICE uyanıp o işi yapar (özetlemek, bir şeyi kontrol etmek).
+İlk tur sessizdir; bir turda en fazla 5 bildirim gider.
+
 ## İpuçları
 
 * Önce `--test` ile dene: `alice connect <ad> --test <eylem> --arg k=v`. Çıktıyı modelin göreceği

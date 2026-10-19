@@ -9,6 +9,7 @@
   alice app                  masaüstü uygulamasını aç
   alice update [--check]     GitHub'daki son sürüme güncelle (main'e merge olanı çeker)
   alice connect [ad]         servis bağlantıları (Spotify, Steam, Discord, YouTube, kendi API'ların)
+  alice feeds                bağlı servisleri izleyip yeni bir şey olunca haber veren akışlar
   alice shortcut             masaüstüne ve Başlat menüsüne ALICE kısayolu koy (Windows)
   alice core run|install|status|mode|stats   arka plan çekirdeği (izleme, kurallar, modlar, görevler)
   alice rules [add "cümle"]  uyarı kuralları ("GPU uzun süre ısınırsa söyle")
@@ -812,10 +813,11 @@ def main(argv: list[str] | None = None) -> int:
 
             log_error()
             raise
-    if argv and argv[0] in ("core", "rules", "tasks"):
+    if argv and argv[0] in ("core", "rules", "tasks", "feeds"):
         from alice.core import cli as core_cli
 
-        return {"core": core_cli.core_cmd, "rules": core_cli.rules_cmd, "tasks": core_cli.tasks_cmd}[argv[0]](argv[1:])
+        return {"core": core_cli.core_cmd, "rules": core_cli.rules_cmd, "tasks": core_cli.tasks_cmd,
+                "feeds": core_cli.feeds_cmd}[argv[0]](argv[1:])
     if argv and argv[0] in ("notes", "brief", "report"):
         from alice.extras import cli as extras_cli
 
