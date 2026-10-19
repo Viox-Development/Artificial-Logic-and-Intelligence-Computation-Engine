@@ -151,3 +151,23 @@ def test_site_preview_is_sandboxed_and_hides_secrets(app):
         assert anon.get(base + bad).status_code == 404
     assert anon.get(base.replace(state.preview_token, "yanlis") + "site/index.html").status_code == 403
     assert anon.get(f"/api/state?t={state.preview_token}").status_code == 403  # önizleme anahtarı API açmaz
+
+
+def test_deleted_project_is_not_resurrected_by_a_late_save(app):
+    """Silinen proje, kapanmakta olan ajanın geriden gelen kaydıyla geri gelmesin.
+
+    Windows runner'ında test_project_lifecycle_over_api'yi ara sıra düşüren yarış buydu: delete
+    dosyayı siliyor, hemen ardından çalışan bir save() onu geri yazıyor, sonraki GET 404 yerine
+    200 dönüyordu."""
+    state, client, _workdir = app
+    pid = client.post("/api/project/create", json={"goal": "Silinecek proje"}).json()["id"]
+    team = state.ctx.state["teams"][pid]
+    wait_for(client, pid, lambda d: d["status"] in ("planning", "running", "review", "needs_you", "done"))
+    act(client, pid, action="stop")
+    assert act(client, pid, action="delete").json()["ok"]
+    assert not team.path().exists()
+
+    team.save()        # geriden gelen kayıt
+    team._changed()    # ve canlı yayın yolu
+    assert not team.path().exists()
+    assert client.get(f"/api/project?id={pid}").status_code == 404

@@ -410,6 +410,9 @@ class Team:
         self._live_ui = publish is not None  # uygulamada: bildirimler tıklanabilir proje kartı olarak gider
         self.roles: list[str] = []
         self._saved_at = 0.0
+        # Silinmiş proje: geriden gelen bir kayıt dosyayı geri getirmesin (ajan thread'i kapanırken
+        # _changed -> save çağırabiliyor; silinen proje böyle geri geliyordu).
+        self.deleted = False
         self._save_lock = threading.RLock()
         self._pub_lock = threading.RLock()
         self._dir = projects_dir()  # kayıt klasörü proje kurulurken sabitlenir
@@ -1694,8 +1697,12 @@ Nasıl yapılır:
     def save(self) -> None:
         # İçerik de kilit altında hazırlanır: yoksa eski içerik ("çalışıyor") yeni içeriğin ("bitti") üstüne
         # yazılabiliyor ve yeniden açılan proje yanlış durumda görünüyordu.
+        if self.deleted:
+            return
         try:
             with self._save_lock:  # ajanlar aynı anda kaydetmeye çalışabilir
+                if self.deleted:  # kilit beklenirken silinmiş olabilir
+                    return
                 self._saved_at = time.monotonic()
                 body = self._body()
                 tmp = self.path().with_suffix(".json.tmp")

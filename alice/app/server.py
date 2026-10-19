@@ -584,6 +584,7 @@ class AppState:
         if action == "delete":
             if team.active():
                 raise ToolError("önce projeyi durdur")
+            team.deleted = True  # kapanmakta olan ajan thread'i dosyayı geri yazmasın
             team.cleanup()
             self._teams().pop(team.id, None)
             if self.ctx.state.get("team") is team:
