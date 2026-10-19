@@ -324,6 +324,18 @@ max_input_tokens = 32000
 
 # git / GitHub araçlarının kuralları. Anahtar: .env'deki GITHUB_TOKEN, yoksa GitHub MCP sunucusunun anahtarı,
 # yoksa GITHUB_MODELS_TOKEN, yoksa `gh auth token`.
+[update]
+# ALICE kendini GitHub'daki depodan günceller (main'e yeni commit girince).
+# auto   = açılışta sessizce güncelle ve en son sürümle aç (varsayılan)
+# notify = sadece haber ver, güncellemeyi sen başlat
+# off    = hiç bakma
+mode = "auto"
+branch = "main"
+check_every_minutes = 60      # uygulama açıkken arka planda bu sıklıkta bakar
+require_green_ci = true       # yeni commit'in CI'ı kırmızıysa otomatik güncelleme yapılmaz
+startup_timeout = 12          # açılıştaki kontrol en fazla bu kadar saniye bekletir
+startup_check = true          # false: sadece uygulama açıkken ve elle kontrol
+
 [github]
 protected_branches = ["main", "master"]  # bunlara (ve deponun ana dalına) push her zaman onay ister
 merge_method = "squash"                  # PR birleştirme: merge | squash | rebase

@@ -26,6 +26,7 @@ const handlers = {
     if (S.busy) showWorking("Çalışıyor");
     toBottom(stick);
   },
+  update: renderUpdate,
   permission: onPermission,
   permission_done: onPermissionDone,
   info: (ev) => addNote(ev.text, /hata|başarısız|cevap veremedi|başlatılamadı/i.test(ev.text) ? "err" :

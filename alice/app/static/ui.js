@@ -424,6 +424,7 @@ function paletteItems() {
   act("Eylemler", IC.folder, "Çalışma klasörünü değiştir", S.status.cwd || "", askCwd);
   act("Eylemler", IC.spark, "Konuşmayı özetle", "/compact", () => runCommand("/compact"));
   act("Eylemler", IC.rewind, "Son mesaja geri sar", "/rewind", () => runCommand("/rewind"));
+  act("Eylemler", IC.update, "Güncellemeleri denetle", "GitHub'daki son sürüm", checkUpdate);
   act("Eylemler", IC.gear, "Ayarlar", "", () => showSettings("general"), "Ctrl+,");
   act("Eylemler", IC.keyboard, "Klavye kısayolları", "", () => showSettings("keys"));
   for (const [k, label] of [["system", "Sistem"], ["light", "Açık"], ["dark", "Koyu"]]) {
@@ -583,6 +584,10 @@ async function showSettings(tab) {
         setRow("İzin modu", (MODES[S.status.mode] || ["", ""])[1],
           segmented(Object.entries(MODES).map(([k, [l]]) => [k, l]), S.status.mode, (v) => setMode(v))),
         setRow("Çalışma klasörü", S.status.cwd || "", (() => { const b = el("button", "btn", "Değiştir"); b.addEventListener("click", askCwd); return b; })()),
+        setRow("Güncelleme", "Otomatik: açılışta GitHub'daki main'den çeker ve en son sürümle açılır",
+          segmented([["auto", "Otomatik"], ["notify", "Haber ver"], ["off", "Kapalı"]], S.status.update_mode || "auto",
+            (v) => api("/api/update/mode", { mode: v }).then((r) => { if (r && r.ok) { S.status.update_mode = r.mode; toast("Güncelleme: " + v); } }))),
+        setRow("Sürüm", "ALICE " + (S.status.version || ""), (() => { const b = el("button", "btn", "Şimdi denetle"); b.addEventListener("click", checkUpdate); return b; })()),
       );
     } else if (tab === "models") {
       pane.append(el("h2", "", "Modeller"),

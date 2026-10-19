@@ -6,6 +6,9 @@ import html
 import json
 import os
 import re
+import threading
+import time
+from collections import OrderedDict
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -16,6 +19,39 @@ import httpx
 from alice.tools.base import NETWORK, Tool, ToolContext, ToolError, ToolResult, obj, truncate
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+
+# Aynı sayfayı/aramayı bir oturumda defalarca çekmek yaygın (ajan adım adım ilerlerken aynı dokümana dönüyor).
+# Kısa ömürlü bellek içi önbellek bunu saniyelerden milisaniyelere indirir; TTL kısa olduğu için içerik bayatlamaz.
+CACHE_TTL = 180.0
+CACHE_MAX = 48
+_cache: "OrderedDict[tuple, tuple[float, Any]]" = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def cache_get(key: tuple) -> Any:
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            return None
+        ts, value = hit
+        if time.time() - ts > CACHE_TTL:
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return value
+
+
+def cache_put(key: tuple, value: Any) -> None:
+    with _cache_lock:
+        _cache[key] = (time.time(), value)
+        _cache.move_to_end(key)
+        while len(_cache) > CACHE_MAX:
+            _cache.popitem(last=False)
+
+
+def cache_clear() -> None:
+    with _cache_lock:
+        _cache.clear()
 
 
 class _TextExtractor(HTMLParser):
@@ -136,29 +172,36 @@ class WebFetch(Tool):
             start: int = 0) -> ToolResult:
         if "://" not in url:
             url = "https://" + url
-        try:
-            r = httpx.get(url, headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
-        except httpx.HTTPError as e:
-            raise ToolError(f"indirilemedi: {e}") from e
-        ctype = r.headers.get("content-type", "").lower()
-        if "pdf" in ctype or (not ctype and str(r.url).lower().endswith(".pdf")):
-            body = _pdf_text(r.content)
-        else:
-            body = r.text
-            if not raw and "html" in ctype:
-                body = html_to_text(body, main_only=True)
-            elif not raw and "json" in ctype:
-                try:
-                    body = json.dumps(json.loads(body), ensure_ascii=False, indent=1)
-                except ValueError:
-                    pass
-        head = f"HTTP {r.status_code} {r.url}\n\n"
-        if prompt and r.status_code < 400:
-            answer = _extract(ctx, str(r.url), body, prompt)
+        key = ("fetch", url, raw)
+        hit = cache_get(key)
+        if hit is None:
+            try:
+                r = httpx.get(url, headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
+            except httpx.HTTPError as e:
+                raise ToolError(f"indirilemedi: {e}") from e
+            ctype = r.headers.get("content-type", "").lower()
+            if "pdf" in ctype or (not ctype and str(r.url).lower().endswith(".pdf")):
+                body = _pdf_text(r.content)
+            else:
+                body = r.text
+                if not raw and "html" in ctype:
+                    body = html_to_text(body, main_only=True)
+                elif not raw and "json" in ctype:
+                    try:
+                        body = json.dumps(json.loads(body), ensure_ascii=False, indent=1)
+                    except ValueError:
+                        pass
+            hit = (r.status_code, str(r.url), body)
+            if r.status_code < 400:
+                cache_put(key, hit)  # sadece başarılı indirmeler; hatalı sayfa tekrar denensin
+        status, final_url, body = hit
+        head = f"HTTP {status} {final_url}\n\n"
+        if prompt and status < 400:
+            answer = _extract(ctx, final_url, body, prompt)
             if answer:
                 return ToolResult(head + answer)
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
-        return ToolResult(head + _paginate(body, start, limit), is_error=r.status_code >= 400)
+        return ToolResult(head + _paginate(body, start, limit), is_error=status >= 400)
 
 
 def _pdf_text(data: bytes) -> str:
@@ -263,8 +306,13 @@ class WebSearch(Tool):
         res: list[dict[str, str]] = []
         errors = []
         for name, fn in engines:
+            ckey = ("search", name, q, want)  # dikkat: `key` yukarıda Brave anahtarı
             try:
-                res = [x for x in fn() if _domain_ok(x["url"], allowed, blocked)][:max_results]
+                raw_res = cache_get(ckey)
+                if raw_res is None:
+                    raw_res = fn()
+                    cache_put(ckey, raw_res)
+                res = [x for x in raw_res if _domain_ok(x["url"], allowed, blocked)][:max_results]
             except (httpx.HTTPError, ValueError) as e:
                 errors.append(f"{name}: {e}")
                 continue

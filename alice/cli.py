@@ -7,6 +7,7 @@
   alice models [--refresh] [--write]  ücretsiz modelleri canlı ölç/sırala; --write rolleri auto yapar
   alice reflex "hedef"       Jev/System One reflex döngüsünü tek başına çalıştır
   alice app                  masaüstü uygulamasını aç
+  alice update [--check]     GitHub'daki son sürüme güncelle (main'e merge olanı çeker)
   alice shortcut             masaüstüne ve Başlat menüsüne ALICE kısayolu koy (Windows)
   alice core run|install|status|mode|stats   arka plan çekirdeği (izleme, kurallar, modlar, görevler)
   alice rules [add "cümle"]  uyarı kuralları ("GPU uzun süre ısınırsa söyle")
@@ -61,6 +62,7 @@ HELP = """[bold]Komutlar[/]
   /clear                      konuşmayı sıfırla
   /sessions, /resume [id]     kayıtlı oturumlar / oturumu geri yükle
   /cwd [yol]                  çalışma klasörünü göster/değiştir
+  /update [apply]             GitHub'daki son sürümü kontrol et / çek
   /exit                       çık
 Özel komutlar: ~/.alice/commands/*.md ya da projede .alice/commands/*.md ($ARGUMENTS yer tutucusu).
 Mesajda [bold]@dosya/yolu[/] yazarsan dosyanın içeriği mesaja eklenir.
@@ -423,6 +425,24 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
             console.print(f"[green]yüklendi:[/] {loaded[0]}")
         else:
             console.print("[yellow]oturum yok[/]")
+    elif cmd == "/update":
+        from alice import updater
+
+        info = updater.check(cfg)
+        if info.error and not info.available:
+            console.print(f"[yellow]{escape(info.error)}[/]")
+        elif not info.available:
+            console.print(f"[green]ALICE güncel[/] ({info.branch} @ {info.local[:7]})")
+        elif args and args[0] in ("apply", "yap"):
+            ok, msg = updater.apply_update(info, cfg, force="--force" in args,
+                                           emit=lambda s: console.print(f"[dim]{s}[/]"))
+            console.print(("[green]" if ok else "[red]") + escape(msg) + "[/] "
+                          + ("[dim](yeni sürüm için ALICE'i kapatıp aç)[/]" if ok else ""))
+        else:
+            console.print(f"[bold]Yeni sürüm var:[/] {info.local[:7]} → {info.remote[:7]} (CI: {info.ci})")
+            for line in info.commits[:8]:
+                console.print(f"  [dim]·[/] {escape(line)}")
+            console.print("[dim]çekmek için: /update apply[/]")
     elif cmd == "/cwd":
         if args:
             p = ctx.resolve(" ".join(args))
@@ -477,9 +497,30 @@ def print_usage(router: Router) -> None:
 
 
 # ------------------------------------------------------------------- doctor
+def _doctor_update(cfg: Config) -> None:
+    """Sürüm satırı: hangi commit'tesin, yeni sürüm var mı, otomatik güncelleme hangi modda."""
+    from alice import updater
+
+    mode = updater.settings(cfg).get("mode", "auto")
+    try:
+        info = updater.check(cfg, timeout=10, details=False)
+    except Exception as e:  # noqa: BLE001 - doctor hiçbir adımda düşmemeli
+        console.print(f"[dim]sürüm kontrolü yapılamadı: {e}[/]")
+        return
+    if info.error and not info.available:
+        console.print(f"[bold]Sürüm:[/] {__version__}  [dim]{info.error}[/]")
+    elif info.available:
+        console.print(f"[bold]Sürüm:[/] {__version__} @ {info.local[:7]}  "
+                      f"[yellow]yeni sürüm var[/] ({info.remote[:7]}) · güncelleme modu: {mode} · "
+                      "[bold]alice update[/]")
+    else:
+        console.print(f"[bold]Sürüm:[/] {__version__} @ {info.local[:7]}  [green]güncel[/] · güncelleme modu: {mode}")
+
+
 def doctor(cfg: Config) -> int:
     router = Router(cfg, max_wait=0)
     console.print(f"[bold]ALICE home:[/] {alice_home()}  config: {cfg.path or '(varsayılan)'}")
+    _doctor_update(cfg)
     t = Table(title="Sağlayıcılar")
     for c in ("sağlayıcı", "anahtar", "test modeli", "sonuç"):
         t.add_column(c)
@@ -602,6 +643,43 @@ def reflex_cmd(cfg: Config, a: argparse.Namespace) -> int:
     return 0 if res.status == "done" else 1
 
 
+# ------------------------------------------------------------------- update
+def update_cmd(argv: list[str]) -> int:
+    """alice update [--check] [--force] [--restart]"""
+    from alice import updater
+
+    ap = argparse.ArgumentParser(prog="alice update", description="ALICE'i GitHub'daki son sürüme çek")
+    ap.add_argument("--check", action="store_true", help="sadece bak, güncelleme yapma")
+    ap.add_argument("--force", action="store_true", help="kirli ağaç / kırmızı CI uyarısını geç")
+    ap.add_argument("--restart", action="store_true", help="güncelleme sonrası uygulamayı aç")
+    a = ap.parse_args(argv)
+
+    cfg = load_config()
+    info = updater.check(cfg)
+    if info.error and not info.available:
+        console.print(f"[yellow]{info.error}[/]")
+        return 1
+    if not info.available:
+        console.print(f"[green]ALICE güncel[/] ({info.branch} @ {info.local[:7]})")
+        return 0
+    console.print(f"[bold]Yeni sürüm var:[/] {info.local[:7]} → {info.remote[:7]} "
+                  f"({info.branch}, CI: {info.ci})")
+    for line in info.commits[:10]:
+        console.print(f"  [dim]·[/] {escape(line)}")
+    if len(info.commits) > 10:
+        console.print(f"  [dim]… ve {len(info.commits) - 10} commit daha[/]")
+    if a.check:
+        if info.blocked:
+            console.print(f"[yellow]Otomatik güncellenmez: {info.blocked}[/]")
+        return 0
+    ok, msg = updater.apply_update(info, cfg, force=a.force, emit=lambda s: console.print(f"[dim]{s}[/]"))
+    console.print(("[green]" if ok else "[red]") + escape(msg) + "[/]")
+    if ok and a.restart:
+        console.print("[dim]ALICE yeniden açılıyor…[/]")
+        updater.restart([sys.executable, "-m", "alice", "app"])
+    return 0 if ok else 1
+
+
 # ---------------------------------------------------------------------- app
 def default_workspace() -> Path:
     """Uygulamanın başlangıç klasörü. Ev klasörü çok büyük ("bu proje" deyince her yeri tarıyordu), bu yüzden:
@@ -640,7 +718,13 @@ def app_cmd(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     cwd = (a.cwd or default_workspace()).resolve()
     cfg = load_config(cwd=cwd)
+    # Açılışta güncelleme: [update] mode="auto" ise yeni commit çekilir ve ALICE kendini yeniden başlatır
+    # (bu çağrı o durumda geri dönmez). mode="notify" ise sadece bilgi döner, arayüzde duyurulur.
+    from alice import updater
+
+    pending = updater.startup_update(cfg, emit=lambda s: console.print(f"[dim]güncelleme: {s}[/]"))
     state = AppState(cfg, cwd, a.mode or cfg.agent.get("permission_mode", "auto"))
+    state.watch_updates(pending)
     server = AppServer(state, a.port).start()
     if cfg.data.get("voice", {}).get("enabled"):
         # "Hey Alice" çekirdekte dinlenir; uygulama açılınca çekirdek kapalıysa onu da başlat.
@@ -708,6 +792,8 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[green]oluşturuldu:[/] {p}")
         console.print(f"Şimdi {alice_home() / '.env'} dosyasına API anahtarlarını yaz, sonra [bold]alice doctor[/].")
         return 0
+    if argv and argv[0] == "update":
+        return update_cmd(argv[1:])
     if argv and argv[0] == "doctor":
         return doctor(load_config())
     if argv and argv[0] == "models":

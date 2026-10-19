@@ -20,6 +20,16 @@ def isolated_home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def clear_web_cache():
+    """web_fetch/web_search kısa ömürlü önbelleği testler arasında sızmasın."""
+    from alice.tools import web
+
+    web.cache_clear()
+    yield
+    web.cache_clear()
+
+
 def rm_rf(name: str) -> str:
     """Özyinelemeli silme komutu: Windows'ta PowerShell, diğerlerinde bash."""
     import sys

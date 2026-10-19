@@ -292,6 +292,8 @@ class AppState:
         self.allowed_hosts = {"127.0.0.1", "localhost"}  # telefon sunucusunda LAN adresi eklenir
         self.watch_store = None  # telefon sunucusu: saat verisi buraya yazılır
         self.quick_pending: dict[str, Any] | None = None  # hızlı bar açılırken doldurulacak metin/görsel
+        self.update: Any = None  # alice.updater.UpdateInfo: açılışta/arka planda bulunan yeni sürüm
+        self._update_lock = threading.Lock()
         self._stt = None
         # Tüm ajan işleri tek bir kalıcı thread'de çalışır: Playwright tarayıcısı ve UI Automation
         # nesneleri oluşturuldukları thread'e bağlı, her mesajda yeni thread açmak onları bozar.
@@ -350,7 +352,91 @@ class AppState:
             "user": _user_name(),
             "checkpoints": sorted(self.agent.checkpoints),
             "team": self.team_snapshot(),
+            "update": self.update.as_dict() if (self.update is not None and self.update.available) else None,
+            "update_mode": self._update_mode(),
         }
+
+    # ------------------------------------------------------------------ güncelleme
+    def _update_mode(self) -> str:
+        from alice import updater
+
+        return str(updater.settings(self.cfg).get("mode", "auto"))
+
+    def set_update_mode(self, mode: str) -> bool:
+        """Güncelleme davranışını kalıcı yaz (config.toml [update] mode)."""
+        from alice.config import set_config_value
+
+        if mode not in ("auto", "notify", "off"):
+            return False
+        self.cfg.data.setdefault("update", {})["mode"] = mode
+        set_config_value("update", "mode", mode)
+        return True
+
+    def check_update(self, details: bool = True) -> dict[str, Any]:
+        """GitHub'daki dalda yeni commit var mı? Sonucu durumda tutar ve arayüze duyurur."""
+        from alice import updater
+
+        with self._update_lock:
+            info = updater.check(self.cfg, details=details)
+        self.update = info
+        data = info.as_dict()
+        if info.available:
+            self.bus.publish({"type": "update", **data})
+        return data
+
+    def apply_update(self, force: bool = False) -> dict[str, Any]:
+        """Güncellemeyi çek. Başarılıysa uygulama yeniden başlatılır (yeni pencere açılır)."""
+        from alice import updater
+
+        if self.agent.busy or self._queued:
+            return {"ok": False, "error": "önce mevcut işi durdur"}
+        with self._update_lock:
+            info = self.update if (self.update is not None and self.update.available) else updater.check(self.cfg)
+            ok, msg = updater.apply_update(info, self.cfg, force=force,
+                                           emit=lambda s: self.bus.publish({"type": "info", "text": "güncelleme: " + s}))
+        if ok:
+            self.update = None
+            self.bus.publish({"type": "info", "text": msg + " — ALICE yeniden başlatılıyor"})
+            threading.Thread(target=self._restart_soon, daemon=True, name="alice-restart").start()
+        return {"ok": ok, "note": msg, "restarting": ok}
+
+    def _restart_soon(self) -> None:
+        """Cevabın arayüze ulaşması için biraz bekle, sonra aynı komutla yeniden başla."""
+        import sys
+
+        from alice import updater
+
+        time.sleep(1.2)
+        try:
+            self.shutdown()
+        except Exception:  # noqa: BLE001 - kapanış hatası yeniden başlamayı engellemesin
+            pass
+        # Yeni süreç açılışta tekrar bakabilsin: bayrağı taşımıyoruz.
+        updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]],
+                        env={"ALICE_RESTARTED": ""})
+
+    def watch_updates(self, first: Any = None) -> None:
+        """Arka planda periyodik güncelleme kontrolü; bulunca arayüze bildirir."""
+        from alice import updater
+
+        if updater.settings(self.cfg).get("mode") == "off":
+            return
+        self.update = first
+        def loop() -> None:
+            if first is not None and getattr(first, "available", False):
+                time.sleep(2.0)  # arayüz bağlanana kadar bekle
+                self.bus.publish({"type": "update", **first.as_dict()})
+            wait = 10.0  # ilk bakış açılıştan hemen sonra, sonrası dakikalık tur
+            while True:
+                time.sleep(wait)
+                wait = 60.0
+                try:
+                    if updater.due(self.cfg) and not (self.agent.busy or self._queued):
+                        self.check_update()
+                except Exception:  # noqa: BLE001 - güncelleme kontrolü uygulamayı düşürmesin
+                    pass
+
+        threading.Thread(target=loop, daemon=True, name="alice-update").start()
 
     def team_snapshot(self) -> dict[str, Any] | None:
         """Sohbetteki mini kart: ALICE'in son projesi; o bitmişse çalışan en yeni proje."""
@@ -791,6 +877,9 @@ def make_handler(state: AppState):
                     return self._json({"ok": True, "repos": state.github_repos((q.get("q") or [""])[0])})
                 except ToolError as e:
                     return self._json({"ok": False, "error": str(e)})
+            if u.path == "/api/update":
+                return self._json(state.check_update() if (q.get("refresh") or [""])[0] == "1"
+                                  else (state.update.as_dict() if state.update is not None else {"available": False}))
             if u.path == "/api/usage":
                 return self._json(state.router.usage.today())
             if u.path == "/api/tools":
@@ -862,6 +951,15 @@ def make_handler(state: AppState):
                         return self._json({"ok": True, "text": state.transcribe(data, f"speech.{ext}")})
                     except (STTError, ValueError) as e:
                         return self._json({"ok": False, "error": str(e)}, 502)
+                if p == "/api/update/mode":
+                    mode = str(d.get("mode", ""))
+                    ok = state.set_update_mode(mode)
+                    return self._json({"ok": ok, "mode": state._update_mode()}, 200 if ok else 400)
+                if p == "/api/update/check":
+                    return self._json(state.check_update())
+                if p == "/api/update/apply":
+                    r = state.apply_update(force=bool(d.get("force")))
+                    return self._json(r, 200 if r.get("ok") else 409)
                 if p == "/api/stop":
                     state.agent.stop()
                     return self._json({"ok": True})

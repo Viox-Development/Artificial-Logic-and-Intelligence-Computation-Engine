@@ -233,3 +233,46 @@ def test_git_branch_and_session_times(app, workdir):
     t.join()
     row = client.get("/api/sessions").json()[0]
     assert row["title"] == "merhaba" and row["updated"] > 0
+
+
+def test_update_api(app, monkeypatch):
+    """Arayüz güncellemeyi görür, uygular ve yeniden başlatmayı tetikler."""
+    from alice import updater
+
+    state, _srv, client, _ = app
+    assert client.get("/api/update").json() == {"available": False}
+
+    info = updater.UpdateInfo(repo=None, branch="main", local="a" * 40, remote="b" * 40,
+                              commits=["yeni özellik"], ci="green")
+    monkeypatch.setattr(updater, "check", lambda *a, **k: info)
+    r = client.post("/api/update/check", json={}).json()
+    assert r["available"] and r["count"] == 1 and r["remote"] == "b" * 7
+    assert client.get("/api/state").json()["update"]["available"]
+
+    applied = {}
+    monkeypatch.setattr(updater, "apply_update", lambda i, c, force=False, emit=None: applied.setdefault("f", force) or (True, "güncellendi"))
+    monkeypatch.setattr(state, "_restart_soon", lambda: applied.setdefault("restart", True))
+    r = client.post("/api/update/apply", json={}).json()
+    assert r["ok"] and r["restarting"]
+    time.sleep(0.3)
+    assert applied.get("restart")
+    assert client.get("/api/state").json()["update"] is None
+
+
+def test_update_apply_waits_for_agent(app, monkeypatch):
+    """Ajan çalışırken güncelleme yapılmaz: iş yarıda kalmasın."""
+    state, _srv, client, _ = app
+    monkeypatch.setattr(state.agent, "busy", True, raising=False)
+    r = client.post("/api/update/apply", json={})
+    assert r.status_code == 409 and "durdur" in r.json()["error"]
+
+
+def test_update_mode_persists(app):
+    """Ayarlardan seçilen güncelleme modu config.toml'a yazılır."""
+    from alice.config import alice_home
+
+    state, _srv, client, _ = app
+    assert client.get("/api/state").json()["update_mode"] == "auto"
+    assert client.post("/api/update/mode", json={"mode": "notify"}).json() == {"ok": True, "mode": "notify"}
+    assert "notify" in (alice_home() / "config.toml").read_text(encoding="utf-8")
+    assert client.post("/api/update/mode", json={"mode": "saçma"}).status_code == 400

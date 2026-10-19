@@ -105,6 +105,7 @@ const IC = {
   gauge: '<path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  update: '<path d="M12 4v10M8 10l4 4 4-4"/><path d="M5 18h14"/>',
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-11.2 7.3"/>',
 };
 
@@ -734,12 +735,55 @@ function turnSummary() {
   }
   add(row);
 }
+/* ================================================================ güncelleme */
+// Sunucu açılışta ve saatte bir GitHub'daki dala bakar; yeni commit varsa bu çubuk çıkar.
+function renderUpdate(u) {
+  const bar = $("#update");
+  S.update = u && u.available ? u : null;
+  if (!S.update) { bar.hidden = true; return; }
+  const n = u.count || 0;
+  $("#upText").textContent = (n ? `Yeni sürüm hazır · ${n} değişiklik` : "Yeni sürüm hazır")
+    + (u.blocked ? ` — ${u.blocked}` : "");
+  $("#upText").title = (u.commits || []).join("\n") || `${u.local} → ${u.remote}`;
+  const btn = $("#upApply");
+  btn.disabled = false;
+  btn.hidden = false;
+  btn.textContent = u.blocked ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
+  $("#upLater").hidden = false;
+  bar.hidden = false;
+  const v = $("#ver");
+  if (v && !v.querySelector(".up-dot")) v.appendChild(el("i", "up-dot"));
+}
+async function applyUpdate() {
+  const btn = $("#upApply");
+  const forced = !!(S.update && S.update.blocked);
+  btn.disabled = true;
+  btn.textContent = "Güncelleniyor…";
+  const r = await api("/api/update/apply", { force: forced });
+  if (!r || !r.ok) {
+    btn.disabled = false;
+    btn.textContent = forced ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
+    return toast((r && (r.error || r.note)) || "Güncellenemedi");
+  }
+  btn.hidden = true;
+  $("#upLater").hidden = true;
+  $("#upText").textContent = r.note + " — ALICE yeniden başlatılıyor, birazdan yeni pencere açılacak.";
+}
+async function checkUpdate() {
+  toast("Güncelleme denetleniyor…");
+  const u = await api("/api/update/check", {});
+  if (!u) return toast("Denetlenemedi");
+  if (!u.available) return toast(u.error || "ALICE güncel");
+  renderUpdate(u);
+}
+
 function applyStatus(s) {
   Object.assign(S.status, s);
   const st = S.status;
   if ("team" in s) renderTeam(s.team);
   if (st.cwd !== undefined) { $("#cwd").textContent = st.cwd; $("#cwdBtn").title = st.cwd; }
   if (st.version) $("#ver").textContent = "ALICE " + st.version;
+  if ("update" in s) renderUpdate(s.update);
   if (st.user) { $("#userName").textContent = st.user; $("#avatar").textContent = st.user[0].toUpperCase(); }
   if (st.mode) {
     const [label, , icon] = MODES[st.mode] || [st.mode, "", IC.shield];
@@ -781,6 +825,8 @@ function applyStatus(s) {
   if (app.classList.contains("empty")) greet();
 }
 async function refreshStatus() { const s = await api("/api/state"); if (s && s.version) applyStatus(s); }
+$("#upApply").addEventListener("click", applyUpdate);
+$("#upLater").addEventListener("click", () => { $("#update").hidden = true; });
 
 /* ============================================================ geçmiş/oturum */
 function renderHistory(items) {

@@ -474,6 +474,18 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 #jump:hover { color: var(--text); }
 #jump svg { width: 17px; height: 17px; }
 #jump[hidden], #conn[hidden] { display: none; }
+#update[hidden] { display: none; }
+#update {
+  display: flex; align-items: center; gap: 9px; margin: 0 0 8px; padding: 7px 10px 7px 12px;
+  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); font-size: 13px;
+}
+#update svg { width: 17px; height: 17px; flex: none; color: var(--accent); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#upText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-btn { padding: 5px 11px; border-radius: 9px; border: 1px solid transparent; background: var(--accent); color: #fff; font-size: 12.5px; cursor: pointer; }
+.up-btn.ghost { background: transparent; color: var(--muted); border-color: var(--line-strong); }
+.up-btn:disabled { opacity: .6; cursor: default; }
+.up-btn.ghost:hover { color: var(--text); }
+#ver .up-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 5px; vertical-align: middle; }
 #conn {
   margin: 0 0 8px; padding: 7px 12px; border-radius: 10px; text-align: center; font-size: 13px;
   background: var(--accent-soft); color: var(--warn);

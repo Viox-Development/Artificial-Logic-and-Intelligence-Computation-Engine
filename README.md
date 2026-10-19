@@ -14,6 +14,7 @@ Neler yapabiliyor:
 * **Reflex modu:** net bir arayüz hedefini System One kararlarıyla adım başına ~100-500 ms'de yürütme
 * **Projeler:** büyük işleri kendi yöneticisi olan, paralel çalışan, birbirine mesaj atan, biten işi inceleyip onaylayan otonom ajan takımlarıyla yürütme
 * Alt ajan, todo planı, oturumlar arası hafıza, oturum kaydetme/devam ettirme, otomatik context özetleme
+* **Otomatik güncelleme:** `main`'e bir şey birleşince açılışta kendini günceller ve en son sürümle açılır
 * **İki arayüz:** masaüstü uygulaması (Claude Code / Codex masaüstü gibi) ve terminal. İkisinde de akışlı cevap, renkli diff, durum çubuğu ve çok satırlı yazma var
 
 ![ALICE uygulaması](docs/app-koyu.png)
@@ -110,6 +111,33 @@ Sonra:
 alice doctor          # her sağlayıcıya test isteği atar, karar motorunu dener, eksik paketleri gösterir
 alice models --write  # canlı ücretsiz katalogdan rol zincirlerini günceller (opsiyonel)
 ```
+
+## Otomatik güncelleme
+
+ALICE kendini GitHub'daki depodan günceller. Ölçü basit: yerel HEAD ile `main`'in ucu aynı mı? Kontrol `git ls-remote` ile yapılıyor, tek ağ turu, fetch yok; o yüzden açılışı bekletmiyor.
+
+* **Açılışta:** `alice app` açılırken `main`'e bakar. Yeni commit varsa fast-forward çeker, `pyproject.toml` değişmişse bağımlılıkları kurar ve kendini yeniden başlatıp **en son sürümü açar**.
+* **Uygulama açıkken:** arka planda saatte bir bakar. Yeni sürüm çıkınca sohbetin üstünde "Yeni sürüm hazır · Güncelle ve yeniden başlat" çubuğu çıkar. Düğmeye basınca çeker ve uygulamayı yeniden açar (ajan bir iş yapıyorsa önce onu durdurman gerekir, yarım kalmasın diye).
+* **Terminalde:** `alice update --check` neler değiştiğini ve CI'ın yeşil olup olmadığını yazar, `alice update` çeker, `alice update --restart` çekip uygulamayı açar. REPL içinde `/update` ve `/update apply` aynı işi yapar.
+
+Otomatik güncellemenin durduğu iki durum var, ikisi de bilerek:
+
+* **Depoda kendi değişikliklerin varsa** (kirli çalışma ağacı) hiçbir şey çekilmez, sadece haber verilir. Kodun kaybolmaz.
+* **Yeni commit'in CI'ı kırmızıysa ya da hâlâ sürüyorsa** otomatik çekilmez. CI durumu anahtarsız GitHub API'siyle okunur; API'ye ulaşılamazsa "bilinmiyor" sayılır ve güncelleme yapılır. Beklemek istemezsen: `alice update --force`, ya da çubuktaki "Yine de güncelle".
+
+Ayarlar → Genel → Güncelleme'den (ya da `config.toml`) davranışı seçersin:
+
+```toml
+[update]
+mode = "auto"               # auto | notify (sadece haber ver) | off
+branch = "main"
+check_every_minutes = 60
+require_green_ci = true
+startup_timeout = 12        # açılıştaki kontrol en fazla bu kadar bekletir
+startup_check = true
+```
+
+Tek seferlik kapatmak için `ALICE_UPDATE_MODE=off` ya da `ALICE_NO_UPDATE=1` ortam değişkeni yeter. Güncelleme yalnızca `git clone` ile kurulmuş bir ALICE'te çalışır (zip indirdiysen git deposu yok, `alice update` bunu söyler).
 
 ## Masaüstü uygulaması
 
@@ -347,6 +375,8 @@ alice -p "RAM'i en çok yiyen 5 süreci listele"   # tek seferlik, sonucu yazıp
 alice --yolo                            # hiçbir şey sormadan tam erişim
 alice --resume                          # son oturuma devam
 alice -v                                # hangi modelin cevap verdiğini göster
+alice update --check                    # main'de yeni commit var mı, CI yeşil mi
+alice update --restart                  # son sürümü çek ve uygulamayı aç
 ```
 
 Reflex'i tek başına denemek için:
@@ -359,7 +389,7 @@ alice reflex "hava durumunu ara" --target browser --url https://duckduckgo.com -
 
 Terminalde cevap akarak geliyor, dosya düzenlemeleri renkli diff olarak görünüyor, altta model, izin modu, context doluluğu ve bugünkü istek sayısını gösteren bir durum çubuğu var. Çok satırlı yazmak için **Alt+Enter** ya da satırı `\` ile bitirip Enter (her terminalde çalışır); Enter tek başına gönderir.
 
-REPL komutları: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (Shift+Tab ile de döner), `/model` (zincir durumları), `/model brain groq:openai/gpt-oss-120b` (sabitle), `/rewind`, `/init`, `/usage`, `/compact`, `/clear`, `/sessions`, `/resume`, `/cwd`, `/tools`, `/mcp`, `/memory`, `/exit`. Özel komutlar ve `@dosya` terminalde de çalışıyor.
+REPL komutları: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (Shift+Tab ile de döner), `/model` (zincir durumları), `/model brain groq:openai/gpt-oss-120b` (sabitle), `/rewind`, `/init`, `/usage`, `/compact`, `/clear`, `/sessions`, `/resume`, `/cwd`, `/tools`, `/mcp`, `/memory`, `/update`, `/exit`. Özel komutlar ve `@dosya` terminalde de çalışıyor.
 
 ## Arka plan çekirdeği
 

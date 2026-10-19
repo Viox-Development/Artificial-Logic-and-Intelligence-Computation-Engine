@@ -366,3 +366,50 @@ def test_http_request_download_to_file(ctx, monkeypatch, workdir):
     r = web.HttpRequest().run(ctx, url="https://a/f.bin", save_to="ind/f.bin")
     assert "6 byte" in r.text and (workdir / "ind" / "f.bin").read_bytes() == b"\x00\x01veri"
     assert real_stream is not None
+
+
+# ------------------------------------------------------------------ önbellek (hız)
+def test_web_fetch_caches_same_url(ctx, monkeypatch):
+    """Aynı sayfa ikinci kez istenince ağa çıkılmaz: ajan aynı dokümana dönüp duruyor."""
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        return _resp(url, "<html><body>" + "içerik " * 60 + "</body></html>")
+
+    monkeypatch.setattr(web.httpx, "get", fake_get)
+    a = web.WebFetch().run(ctx, url="https://x.example/doc").text
+    b = web.WebFetch().run(ctx, url="https://x.example/doc").text
+    assert a == b and len(calls) == 1
+    web.cache_clear()
+    web.WebFetch().run(ctx, url="https://x.example/doc")
+    assert len(calls) == 2
+
+
+def test_web_fetch_errors_are_not_cached(ctx, monkeypatch):
+    codes = [500, 200]
+
+    def fake_get(url, **kw):
+        return _resp(url, "hata" if codes[0] == 500 else "tamam", status=codes.pop(0))
+
+    monkeypatch.setattr(web.httpx, "get", fake_get)
+    assert web.WebFetch().run(ctx, url="https://x.example/f").is_error
+    assert not web.WebFetch().run(ctx, url="https://x.example/f").is_error
+
+
+def test_web_search_caches_engine_results(ctx, monkeypatch):
+    """Aynı sorgu arka arkaya sorulunca arama motoruna bir kez gidilir."""
+    calls = []
+
+    def fake_post(url, data=None, headers=None, timeout=None, follow_redirects=False):
+        calls.append(data)
+        return _resp(url, DDG_HTML, method="POST")
+
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    monkeypatch.setattr(web.httpx, "post", fake_post)
+    first = web.WebSearch().run(ctx, query="aynı sorgu").text
+    second = web.WebSearch().run(ctx, query="aynı sorgu").text
+    assert first == second and len(calls) == 1
+    # Farklı sorgu önbelleğe takılmaz.
+    web.WebSearch().run(ctx, query="başka sorgu")
+    assert len(calls) == 2
