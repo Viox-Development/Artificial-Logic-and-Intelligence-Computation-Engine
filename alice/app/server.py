@@ -356,6 +356,66 @@ class AppState:
             "update_mode": self._update_mode(),
         }
 
+    # ----------------------------------------------------------------- bağlantılar
+    def connections(self) -> dict[str, Any]:
+        """Ayarlar > Bağlantılar: servislerin durumu ve izleyen akışlar."""
+        from alice.connect.manifest import discover
+        from alice.connect.runner import ready
+        from alice.core.feeds import load_feeds, state_path
+
+        manifests, errors = discover(self.cfg)
+        rows = []
+        for m in sorted(manifests.values(), key=lambda x: x.name):
+            ok, note = ready(m)
+            rows.append({"name": m.name, "title": m.label, "kind": m.auth.kind, "ready": ok, "status": note,
+                         "env": m.auth.env or m.auth.client_id_env, "help": m.auth.help, "docs": m.docs,
+                         "actions": sorted(m.actions), "description": m.description})
+        feeds, feed_errors = load_feeds()
+        try:
+            fstate = json.loads(state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            fstate = {}
+        frows = [{"name": f.name, "connector": f.connector, "action": f.action, "every_minutes": f.every_minutes,
+                  "enabled": f.enabled, "agent": bool(f.agent),
+                  "last": float((fstate.get(f.name) or {}).get("last") or 0),
+                  "error": str((fstate.get(f.name) or {}).get("error") or "")} for f in feeds]
+        return {"connectors": rows, "feeds": frows, "errors": errors + feed_errors}
+
+    def connect_auth(self, name: str) -> dict[str, Any]:
+        """OAuth akışını arka planda başlat: tarayıcıda izin sayfası açılır, biten iş olay olarak duyurulur."""
+        import os
+
+        from alice.connect import oauth
+        from alice.connect.manifest import discover
+
+        m = discover(self.cfg)[0].get(name)
+        if m is None:
+            return {"ok": False, "error": f"bağlantı yok: {name}"}
+        if m.auth.kind != "oauth2":
+            return {"ok": False, "error": f"{m.label} anahtarla çalışıyor: ~/.alice/.env içine {m.auth.env} yaz"}
+        cid = os.environ.get(m.auth.client_id_env, "").strip()
+        if not cid:
+            return {"ok": False, "error": f"{m.auth.client_id_env} yok; ~/.alice/.env dosyasına ekle"}
+        secret = os.environ.get(m.auth.client_secret_env, "").strip() if m.auth.client_secret_env else ""
+
+        def run() -> None:
+            say = lambda s: self.bus.publish({"type": "info", "text": f"{m.label}: {s}"})  # noqa: E731
+            try:
+                oauth.authorize(m.auth, m.name, cid, secret, emit=say)
+            except oauth.OAuthError as e:
+                say(str(e))
+                return
+            say("bağlandı")
+            self.bus.publish({"type": "connect", "name": m.name, "ready": True})
+
+        threading.Thread(target=run, daemon=True, name=f"alice-oauth-{name}").start()
+        return {"ok": True, "note": f"{m.label} için tarayıcıda izin sayfası açılıyor"}
+
+    def connect_logout(self, name: str) -> dict[str, Any]:
+        from alice.connect import store
+
+        return {"ok": store.forget(name)}
+
     # ------------------------------------------------------------------ güncelleme
     def _update_mode(self) -> str:
         from alice import updater
@@ -878,6 +938,8 @@ def make_handler(state: AppState):
                     return self._json({"ok": True, "repos": state.github_repos((q.get("q") or [""])[0])})
                 except ToolError as e:
                     return self._json({"ok": False, "error": str(e)})
+            if u.path == "/api/connect":
+                return self._json(state.connections())
             if u.path == "/api/update":
                 return self._json(state.check_update() if (q.get("refresh") or [""])[0] == "1"
                                   else (state.update.as_dict() if state.update is not None else {"available": False}))
@@ -952,6 +1014,11 @@ def make_handler(state: AppState):
                         return self._json({"ok": True, "text": state.transcribe(data, f"speech.{ext}")})
                     except (STTError, ValueError) as e:
                         return self._json({"ok": False, "error": str(e)}, 502)
+                if p == "/api/connect/auth":
+                    r = state.connect_auth(str(d.get("name", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/connect/logout":
+                    return self._json(state.connect_logout(str(d.get("name", ""))))
                 if p == "/api/update/mode":
                     mode = str(d.get("mode", ""))
                     ok = state.set_update_mode(mode)

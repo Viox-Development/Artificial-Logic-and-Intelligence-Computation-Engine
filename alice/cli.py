@@ -499,6 +499,22 @@ def print_usage(router: Router) -> None:
 
 
 # ------------------------------------------------------------------- doctor
+def _doctor_connect(cfg: Config) -> None:
+    """Bağlantılar tek satırda: hangileri hazır, hangileri anahtar/izin bekliyor."""
+    from alice.connect.manifest import discover
+    from alice.connect.runner import ready
+
+    manifests, errors = discover(cfg)
+    if not manifests:
+        return
+    hazır = [m.label for m in manifests.values() if ready(m)[0]]
+    bekleyen = [f"{m.label} ({ready(m)[1]})" for m in manifests.values() if not ready(m)[0]]
+    console.print(f"[bold]Bağlantılar:[/] " + (f"[green]{', '.join(hazır)}[/]" if hazır else "[dim]hazır yok[/]")
+                  + (f"  [dim]bekleyen: {'; '.join(bekleyen)}[/]" if bekleyen else ""))
+    for e in errors:
+        console.print(f"  [yellow]{escape(e)}[/]")
+
+
 def _doctor_update(cfg: Config) -> None:
     """Sürüm satırı: hangi commit'tesin, yeni sürüm var mı, otomatik güncelleme hangi modda."""
     from alice import updater
@@ -523,6 +539,7 @@ def doctor(cfg: Config) -> int:
     router = Router(cfg, max_wait=0)
     console.print(f"[bold]ALICE home:[/] {alice_home()}  config: {cfg.path or '(varsayılan)'}")
     _doctor_update(cfg)
+    _doctor_connect(cfg)
     t = Table(title="Sağlayıcılar")
     for c in ("sağlayıcı", "anahtar", "test modeli", "sonuç"):
         t.add_column(c)

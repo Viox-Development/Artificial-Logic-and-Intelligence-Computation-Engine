@@ -135,6 +135,8 @@ Kutudan çıkanlar:
 | `discord` | `DISCORD_BOT_TOKEN` | sunucular, kanallar, son mesajlar, mesaj gönderme (bot hesabıyla) |
 | `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | çalan parça, çal/duraklat/sonraki, arama, cihaz seçimi, çalma listeleri |
 
+Uygulamada **Ayarlar → Bağlantılar**: her servisin durumu, OAuth olanlar için "Bağlan"/"Çıkış" düğmesi, anahtarla çalışanlar için hangi `.env` değişkeninin eksik olduğu ve altta tanımlı akışlar. Terminalde aynı özet `alice doctor` çıktısında bir satır.
+
 Kimlik tarafı: API anahtarları `.env`'den okunuyor, OAuth2 token'ları `~/.alice/connect.json` içinde (chmod 600) duruyor ve süresi dolunca kendiliğinden yenileniyor. OAuth akışı PKCE ile çalıştığı için client secret gerekmiyor.
 
 Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model `load_tools` deyince açılıyorlar. Böylece 4 servis bağlıyken de istek küçük kalıyor.

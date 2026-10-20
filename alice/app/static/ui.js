@@ -541,9 +541,54 @@ function setRow(title, sub, control) {
   r.append(t, control);
   return r;
 }
+/* Ayarlar > Bağlantılar: servislerin durumu, OAuth bağlanma/çıkış ve izleyen akışlar. */
+function connectPane(pane, data) {
+  const d = data || {};
+  pane.append(el("h2", "", "Bağlantılar"),
+    el("p", "", "Servisleri ALICE'e bağlar. Anahtarlar ~/.alice/.env dosyasında durur; yeni bir servis eklemek "
+      + "için ~/.alice/connect/<ad>.toml (terminalde: alice connect <ad> --new)."));
+  for (const e of d.errors || []) pane.appendChild(el("div", "list-row warn", e));
+  for (const c of d.connectors || []) {
+    const row = el("div", "list-row conn-row");
+    const l = el("span", "l");
+    l.append(el("b", "", c.title), el("small", "", c.description || ""));
+    const right = el("span", "conn-act");
+    right.appendChild(el("span", "risk " + (c.ready ? "read" : "write"), c.ready ? "hazır" : c.status));
+    if (c.kind === "oauth2") {
+      const b = el("button", "btn", c.ready ? "Çıkış" : "Bağlan");
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        const r = c.ready ? await api("/api/connect/logout", { name: c.name })
+          : await api("/api/connect/auth", { name: c.name });
+        toast((r && (r.note || r.error)) || (c.ready ? "Çıkıldı" : "Tarayıcıya bak"));
+        showSettings("connect");
+      });
+      right.appendChild(b);
+    } else if (!c.ready && c.env) {
+      right.appendChild(el("code", "", c.env));
+    }
+    row.append(l, right);
+    row.title = (c.actions || []).join(", ") + (c.help ? "\n" + c.help : "");
+    pane.appendChild(row);
+  }
+  pane.appendChild(el("div", "sec", "Akışlar"));
+  pane.appendChild(el("p", "", "Bağlı serviste yeni bir şey olunca ALICE haber verir (~/.alice/feeds.toml, "
+    + "çekirdek çalışırken yoklanır)."));
+  if (!(d.feeds || []).length) pane.appendChild(el("div", "list-row", "Tanımlı akış yok."));
+  for (const f of d.feeds || []) {
+    const row = el("div", "list-row");
+    const l = el("span", "l");
+    l.append(el("b", "", f.name), el("small", "", `${f.connector}.${f.action} · ${f.every_minutes} dk`
+      + (f.agent ? " · ALICE'i uyandırır" : "")));
+    row.append(l, el("span", "r" + (f.error ? "" : " ok"), f.error ? f.error : (f.enabled ? "açık" : "kapalı")));
+    pane.appendChild(row);
+  }
+}
+
 const SETTINGS_TABS = [
   ["general", "Genel", IC.gear], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
-  ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge], ["keys", "Kısayollar", IC.keyboard],
+  ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
+  ["keys", "Kısayollar", IC.keyboard],
 ];
 async function showSettings(tab) {
   tab = tab || "general";
@@ -553,6 +598,7 @@ async function showSettings(tab) {
     tools: tab === "tools" ? await api("/api/tools") : null,
     memory: tab === "memory" ? await api("/api/memory") : null,
     usage: tab === "usage" ? await api("/api/usage") : null,
+    connect: tab === "connect" ? await api("/api/connect") : null,
   };
   showDialog((d) => {
     d.classList.add("settings");
@@ -625,6 +671,8 @@ async function showSettings(tab) {
       draw();
       pane.append(f, listBox);
       setTimeout(() => f.focus(), 0);
+    } else if (tab === "connect") {
+      connectPane(pane, data.connect);
     } else if (tab === "memory") {
       pane.append(el("h2", "", "Hafıza"), el("p", "", "ALICE'in oturumlar arası kaydettiği notlar (~/.alice/memory.md)."));
       const box = el("div", "prose mem");

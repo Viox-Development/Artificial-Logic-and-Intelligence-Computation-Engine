@@ -276,3 +276,47 @@ def test_update_mode_persists(app):
     assert client.post("/api/update/mode", json={"mode": "notify"}).json() == {"ok": True, "mode": "notify"}
     assert "notify" in (alice_home() / "config.toml").read_text(encoding="utf-8")
     assert client.post("/api/update/mode", json={"mode": "saçma"}).status_code == 400
+
+
+def test_connections_api_lists_connectors_and_feeds(app, monkeypatch):
+    """Ayarlar > Bağlantılar: servislerin durumu ve akışlar arayüzden görünür."""
+    from alice.config import alice_home
+
+    state, _srv, client, _ = app
+    monkeypatch.setenv("STEAM_API_KEY", "k")
+    (alice_home() / "feeds.toml").write_text(
+        '[[feed]]\nname = "d"\nconnector = "discord"\naction = "messages"\nevery_minutes = 5\n', encoding="utf-8")
+
+    d = client.get("/api/connect").json()
+    by = {c["name"]: c for c in d["connectors"]}
+    assert {"steam", "spotify", "discord", "youtube_api"} <= set(by)
+    assert by["steam"]["ready"] and by["steam"]["kind"] == "api_key"
+    assert not by["spotify"]["ready"] and by["spotify"]["kind"] == "oauth2"
+    assert "library" in by["steam"]["actions"] and not d["errors"]
+    assert [f["name"] for f in d["feeds"]] == ["d"]
+    assert d["feeds"][0]["connector"] == "discord" and d["feeds"][0]["enabled"]
+
+
+def test_connect_auth_needs_client_id_then_starts_browser_flow(app, monkeypatch):
+    state, _srv, client, _ = app
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    r = client.post("/api/connect/auth", json={"name": "spotify"})
+    assert r.status_code == 400 and "SPOTIFY_CLIENT_ID" in r.json()["error"]
+    assert client.post("/api/connect/auth", json={"name": "steam"}).json()["error"].startswith("Steam anahtarla")
+    assert client.post("/api/connect/auth", json={"name": "yok"}).status_code == 400
+
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "cid")
+    started = threading.Event()
+    monkeypatch.setattr("alice.connect.oauth.authorize",
+                        lambda *a, **k: started.set() or {"access_token": "t"})
+    assert client.post("/api/connect/auth", json={"name": "spotify"}).json()["ok"]
+    assert started.wait(5)
+
+
+def test_connect_logout_forgets_token(app):
+    from alice.connect import store
+
+    _state, _srv, client, _ = app
+    store.save("spotify", access_token="t")
+    assert client.post("/api/connect/logout", json={"name": "spotify"}).json() == {"ok": True}
+    assert store.get("spotify") == {}
