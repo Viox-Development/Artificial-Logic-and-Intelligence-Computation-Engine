@@ -39,8 +39,12 @@ def core_cmd(argv: list[str]) -> int:
         from alice.providers.router import Router
 
         router = Router(cfg)
+        from alice import updater
+
+        updater.mark_running()  # diskteki kod bundan yenileşirse boşta kalınca yeniden başlarız
         core = service.Core(cfg, decider=Decider.from_config(cfg, router), run_agent=service.make_agent_runner(cfg))
         core.prime()  # DCS açık mı: ses modülü ekran kartını kullanıp kullanmayacağını buna göre seçer
+        announce_update(core, updater)
         voice = _start_voice(cfg, core) if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv else None
         sims = _start_sims(cfg, core) if "--once" not in argv else None
         phone = _start_phone(cfg, core) if cfg.data.get("phone", {}).get("enabled") and "--once" not in argv else None
@@ -243,6 +247,21 @@ regex = '\\b(acil|hemen)\\b'   # tek tırnak: TOML kaçış yapmaz
 # [feed.when]
 # fields = { gameextrainfo = "*" }
 """
+
+
+def announce_update(core, updater) -> None:
+    """Az önce güncellendiysek bir kez söyle. Uygulama açıksa sohbete o yazar, çekirdek susar."""
+    if updater.app_running():
+        return
+    ann = updater.consume_announcement("core")
+    if not ann:
+        return
+    from alice.core.notify import Notification
+
+    changes = ann.get("changes") or []
+    body = "; ".join(changes[:3]) + (f" ve {len(changes) - 3} değişiklik daha" if len(changes) > 3 else "")
+    core.notifier.send(Notification("ALICE güncellendi", body or f"{ann.get('to', '')[:7]} sürümüne geçildi",
+                                    "info", "core", kind="info"))
 
 
 def feeds_cmd(argv: list[str]) -> int:

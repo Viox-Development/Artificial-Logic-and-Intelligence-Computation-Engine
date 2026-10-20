@@ -320,3 +320,21 @@ def test_connect_logout_forgets_token(app):
     store.save("spotify", access_token="t")
     assert client.post("/api/connect/logout", json={"name": "spotify"}).json() == {"ok": True}
     assert store.get("spotify") == {}
+
+
+def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
+    """Kod başka bir süreçten indirildiyse 'Yeniden başlat' çekmeden yeniden başlatır."""
+    from alice import updater
+
+    state, _srv, client, _ = app
+    info = updater.UpdateInfo(repo=None, branch="main", local="b" * 40, remote="b" * 40, running="a" * 40)
+    monkeypatch.setattr(updater, "check", lambda *a, **k: info)
+    r = client.post("/api/update/check", json={}).json()
+    assert r["stale"] and not r["available"]
+    assert client.get("/api/state").json()["update"]["stale"]
+    monkeypatch.setattr(updater, "apply_update", lambda *a, **k: pytest.fail("çekecek bir şey yok"))
+    restarted = threading.Event()
+    monkeypatch.setattr(state, "_restart_soon", lambda: restarted.set())
+    r = client.post("/api/update/apply", json={}).json()
+    assert r["ok"] and r["restarting"] and "zaten indirilmiş" in r["note"]
+    assert restarted.wait(2)

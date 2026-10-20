@@ -226,6 +226,11 @@ ALICE kendini GitHub'daki depodan günceller. Ölçü basit: yerel HEAD ile `mai
 * **Uygulama açıkken:** arka planda saatte bir bakar. Yeni sürüm çıkınca sohbetin üstünde "Yeni sürüm hazır · Güncelle ve yeniden başlat" çubuğu çıkar. Düğmeye basınca çeker ve uygulamayı yeniden açar (ajan bir iş yapıyorsa önce onu durdurman gerekir, yarım kalmasın diye).
 * **Terminalde:** `alice update --check` neler değiştiğini ve CI'ın yeşil olup olmadığını yazar, `alice update` çeker, `alice update --restart` çekip uygulamayı açar. REPL içinde `/update` ve `/update apply` aynı işi yapar.
 
+* **Arka plan çekirdeği de güncel kalıyor.** Çekirdek günlerce açık kalabildiği için o da saatte bir bakıyor. Uygulama açıksa çekmiyor (işi arayüzü olana bırakıyor); uygulama kapalıysa kendisi çekiyor ve çalışan bir görev yokken sessizce yeniden başlıyor. Yarım kalan yedekleme olmuyor.
+* **Bayat süreç fark ediliyor.** Diskteki kod çalışan süreçten yeniyse (çekirdek çekti ya da sen elle `git pull` yaptın) uygulama "Yeni sürüm indirildi · yeniden başlatınca açılır" diyor, çekirdek boşta kalınca kendini yeniden başlatıyor. Eski süreç yeni dosyaları yarı yarıya yükleyip karışık sürümle çalışmasın diye.
+* **Aynı anda tek süreç güncelliyor.** Uygulama ve çekirdek aynı anda `git`'e girerse kilit çakışırdı; `~/.alice/update.lock` bunu önlüyor, kilidi bekleyen süreç diğeri zaten çektiyse tekrar çekmiyor.
+* **Neler değiştiği bir kez söyleniyor.** Güncellemeden sonraki ilk açılışta sohbetin başında "ALICE güncellendi, neler değişti" notu ve commit başlıkları çıkıyor (uygulama kapalıysa çekirdek masaüstü bildirimiyle söylüyor).
+
 Otomatik güncellemenin durduğu iki durum var, ikisi de bilerek:
 
 * **Depoda kendi değişikliklerin varsa** (kirli çalışma ağacı) hiçbir şey çekilmez, sadece haber verilir. Kodun kaybolmaz.

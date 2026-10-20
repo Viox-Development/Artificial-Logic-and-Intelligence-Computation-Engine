@@ -742,16 +742,17 @@ function turnSummary() {
 // Sunucu açılışta ve saatte bir GitHub'daki dala bakar; yeni commit varsa bu çubuk çıkar.
 function renderUpdate(u) {
   const bar = $("#update");
-  S.update = u && u.available ? u : null;
+  S.update = u && (u.available || u.stale) ? u : null;
   if (!S.update) { bar.hidden = true; return; }
   const n = u.count || 0;
-  $("#upText").textContent = (n ? `Yeni sürüm hazır · ${n} değişiklik` : "Yeni sürüm hazır")
-    + (u.blocked ? ` — ${u.blocked}` : "");
+  $("#upText").textContent = !u.available
+    ? "Yeni sürüm indirildi · yeniden başlatınca açılır"
+    : (n ? `Yeni sürüm hazır · ${n} değişiklik` : "Yeni sürüm hazır") + (u.blocked ? ` — ${u.blocked}` : "");
   $("#upText").title = (u.commits || []).join("\n") || `${u.local} → ${u.remote}`;
   const btn = $("#upApply");
   btn.disabled = false;
   btn.hidden = false;
-  btn.textContent = u.blocked ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
+  btn.textContent = !u.available ? "Yeniden başlat" : u.blocked ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
   $("#upLater").hidden = false;
   bar.hidden = false;
   const v = $("#ver");
@@ -776,7 +777,7 @@ async function checkUpdate() {
   toast("Güncelleme denetleniyor…");
   const u = await api("/api/update/check", {});
   if (!u) return toast("Denetlenemedi");
-  if (!u.available) return toast(u.error || "ALICE güncel");
+  if (!u.available && !u.stale) return toast(u.error || "ALICE güncel");
   renderUpdate(u);
 }
 

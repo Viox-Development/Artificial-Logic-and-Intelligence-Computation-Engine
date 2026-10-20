@@ -742,8 +742,16 @@ def app_cmd(argv: list[str]) -> int:
     from alice import updater
 
     pending = updater.startup_update(cfg, emit=lambda s: console.print(f"[dim]güncelleme: {s}[/]"))
+    updater.mark_running()  # bundan sonra diske yeni kod gelirse "yeniden başlat" deriz
+    updater.mark_app()      # çekirdek, uygulama açıkken kendi başına çekmesin
     state = AppState(cfg, cwd, a.mode or cfg.agent.get("permission_mode", "auto"))
     state.watch_updates(pending)
+    ann = updater.consume_announcement("app")
+    if ann and ann.get("changes"):
+        lines = "\n".join(f"- {c}" for c in ann["changes"][:8])
+        more = len(ann["changes"]) - 8
+        state.ui.info(f"ALICE güncellendi ({ann['from'][:7]} → {ann['to'][:7]}). Neler değişti:\n{lines}"
+                      + (f"\n… ve {more} değişiklik daha" if more > 0 else ""))
     server = AppServer(state, a.port).start()
     if cfg.data.get("voice", {}).get("enabled"):
         # "Hey Alice" çekirdekte dinlenir; uygulama açılınca çekirdek kapalıysa onu da başlat.
@@ -768,6 +776,7 @@ def app_cmd(argv: list[str]) -> int:
         pass
     finally:
         server.stop()
+        updater.clear_app()
     return 0
 
 

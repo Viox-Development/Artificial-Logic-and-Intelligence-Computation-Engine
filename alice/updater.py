@@ -11,6 +11,12 @@ Akış:
 * `alice app`             : config [update] mode="auto" ise açılışta sessizce günceller ve
                             güncelleme varsa kendini yeniden başlatıp en son sürümü açar
 * uygulama açıkken        : arka planda periyodik kontrol, arayüzde "Güncelle ve yeniden başlat"
+* arka plan çekirdeği     : uygulama kapalıyken kendisi çeker; boştayken (çalışan görev yokken)
+                            sessizce yeniden başlar. Uygulama açıksa çekmez, işi arayüzü olana bırakır.
+* bayat süreç             : diskteki kod çalışan süreçten yeniyse (başka bir süreç ya da elle
+                            `git pull` çekti) süreç bunu fark eder: uygulama "yeniden başlat" der,
+                            çekirdek boşta kalınca kendini yeniden başlatır. Eski süreç yeni dosyaları
+                            yarı yarıya yükleyip karışık sürümle çalışmasın diye.
 
 Kurallar:
 
@@ -177,10 +183,16 @@ class UpdateInfo:
     commits: list[str] = field(default_factory=list)
     ci: str = "unknown"
     error: str = ""
+    running: str = ""       # bu sürecin başladığı commit (mark_running çağrıldıysa)
 
     @property
     def available(self) -> bool:
         return bool(self.local and self.remote and self.local != self.remote)
+
+    @property
+    def stale(self) -> bool:
+        """Diskteki kod bu süreçten yeni: yeniden başlamak yeter, çekecek bir şey yok."""
+        return bool(self.running and self.local and self.running != self.local)
 
     @property
     def can_auto(self) -> bool:
@@ -203,7 +215,8 @@ class UpdateInfo:
     def as_dict(self) -> dict[str, Any]:
         return {"available": self.available, "branch": self.branch, "local": self.local[:7],
                 "remote": self.remote[:7], "commits": self.commits, "ci": self.ci, "dirty": self.dirty,
-                "blocked": self.blocked, "error": self.error, "count": len(self.commits)}
+                "blocked": self.blocked, "error": self.error, "count": len(self.commits), "stale": self.stale,
+                "running": self.running[:7]}
 
 
 def _state_path() -> Path:
@@ -227,6 +240,112 @@ def write_state(**kw: Any) -> None:
         pass
 
 
+# --------------------------------------------------------------------------------- süreçler arası
+_RUNNING: str | None = None
+LOCK_STALE = 900.0  # saniye: bu kadar eski kilit, çökmüş bir süreçten kalmıştır
+
+
+def mark_running() -> str:
+    """Bu sürecin hangi commit'le başladığını hatırla (uygulama ve çekirdek açılışta çağırır)."""
+    global _RUNNING
+    if _RUNNING is None:
+        repo = repo_dir()
+        _RUNNING = local_commit(repo) if repo else ""
+    return _RUNNING
+
+
+def running_commit() -> str:
+    return _RUNNING or ""
+
+
+def _lock_path() -> Path:
+    return alice_home() / "update.lock"
+
+
+class UpdateBusy(RuntimeError):
+    pass
+
+
+class update_lock:  # noqa: N801 - bağlam yöneticisi olarak okunur: with update_lock():
+    """Aynı anda tek süreç güncellesin (uygulama ve çekirdek aynı anda git'e girerse index.lock çakışır)."""
+
+    def __enter__(self) -> "update_lock":
+        p = _lock_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if time.time() - p.stat().st_mtime > LOCK_STALE:
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as e:
+            raise UpdateBusy("başka bir ALICE süreci şu an güncelliyor") from e
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        try:
+            _lock_path().unlink()
+        except OSError:
+            pass
+
+
+def _app_pid_path() -> Path:
+    return alice_home() / "app.pid"
+
+
+def mark_app() -> None:
+    """Uygulama açık: çekirdek güncellemeyi ona bıraksın."""
+    try:
+        _app_pid_path().parent.mkdir(parents=True, exist_ok=True)
+        _app_pid_path().write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def clear_app() -> None:
+    try:
+        if _app_pid_path().read_text(encoding="utf-8").strip() == str(os.getpid()):
+            _app_pid_path().unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def app_running() -> bool:
+    try:
+        pid = int(_app_pid_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        import psutil
+
+        if not psutil.pid_exists(pid):
+            return False
+        cmd = " ".join(psutil.Process(pid).cmdline()).lower()
+    except Exception:  # noqa: BLE001 - emin değilsek açık say: çekirdek gereksiz yere çekmesin
+        return True
+    return "alice" in cmd and "app" in cmd  # pid başka bir programa geçmiş olabilir
+
+
+def local_log(repo: Path, a: str, b: str, limit: int = 20) -> list[str]:
+    """İki commit arası başlıklar, yerel git'ten (fetch sonrası; API gerekmez)."""
+    code, out = _git(["log", "--format=%s", f"-n{limit}", f"{a}..{b}"], repo, timeout=20)
+    return [line.strip()[:120] for line in out.splitlines() if line.strip()] if code == 0 else []
+
+
+def consume_announcement(who: str) -> dict[str, Any] | None:
+    """Son güncellemeyi bu tüketici (app | core) henüz duyurmadıysa döndür ve duyurulmuş say."""
+    st = read_state()
+    if not st.get("last_update") or st.get(f"announced_{who}"):
+        return None
+    if time.time() - float(st.get("last_update") or 0) > 7 * 86400:
+        return None  # bir haftadan eski güncellemeyi artık duyurma
+    write_state(**{f"announced_{who}": True})
+    return {"from": st.get("update_from", ""), "to": st.get("update_to", ""), "changes": st.get("changes") or []}
+
+
 def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -> UpdateInfo:
     """Yeni commit var mı? Ağ turu: 1 (ls-remote) + ayrıntı istenirse 2 anahtarsız API çağrısı."""
     s = settings(cfg)
@@ -235,7 +354,7 @@ def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -
         return UpdateInfo(error="ALICE git deposundan kurulmamış; güncelleme için depoyu klonla "
                                 f"(git clone https://github.com/{REPO})")
     branch = str(s.get("branch") or "main")
-    info = UpdateInfo(repo=repo, branch=branch, local=local_commit(repo))
+    info = UpdateInfo(repo=repo, branch=branch, local=local_commit(repo), running=_RUNNING or "")
     info.remote, info.error = remote_head(repo, branch, float(timeout or s.get("startup_timeout") or 12))
     if info.available:
         info.dirty = is_dirty(repo)
@@ -300,6 +419,17 @@ def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = 
         return False, f"güncelleme yapılmadı: {info.blocked}"
     repo = info.repo
     assert repo is not None
+    try:
+        with update_lock():
+            return _apply_locked(info, repo, say)
+    except UpdateBusy as e:
+        return False, str(e)
+
+
+def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> tuple[bool, str]:
+    if local_commit(repo) != info.local:
+        # Kilidi beklerken başka bir süreç zaten çekti: tekrar çekme, sonuç aynı.
+        return True, f"zaten güncellendi: {local_commit(repo)[:7]}"
     say(f"güncelleme çekiliyor: {info.local[:7]} → {info.remote[:7]}")
     code, out = _git(["fetch", "--prune", "origin", info.branch], repo, timeout=300)
     if code != 0:
@@ -310,8 +440,10 @@ def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = 
     new = local_commit(repo)
     if _pip_needed(repo, info.local, new):
         install_deps(repo, say)
-    write_state(last_update=time.time(), local=new, remote=new)
-    n = len(info.commits)
+    changes = local_log(repo, info.local, new) or info.commits
+    write_state(last_update=time.time(), local=new, remote=new, update_from=info.local, update_to=new,
+                changes=changes, announced_app=False, announced_core=False)
+    n = len(changes)
     return True, f"güncellendi: {info.local[:7]} → {new[:7]}" + (f" ({n} commit)" if n else "")
 
 
@@ -329,6 +461,16 @@ def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, st
     except (OSError, subprocess.SubprocessError):
         pass
     os._exit(0)
+
+
+def prepare(info: UpdateInfo, cfg: Any = None, ci_timeout: float = 5.0) -> UpdateInfo:
+    """Ayrıntısız kontrolün (tek ls-remote) üstüne otomatik uygulama için gerekenleri ekle: kirli ağaç, CI."""
+    if not info.available:
+        return info
+    info.dirty = is_dirty(info.repo) if info.repo else False
+    if settings(cfg).get("require_green_ci", True) and not info.dirty:
+        info.ci = ci_state(info.remote, timeout=ci_timeout)
+    return info
 
 
 def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
@@ -350,9 +492,7 @@ def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
     info = check(cfg, timeout=float(s.get("startup_timeout") or 12), details=False)
     if not info.available:
         return info
-    info.dirty = is_dirty(info.repo) if info.repo else False
-    if s.get("require_green_ci", True) and not info.dirty:
-        info.ci = ci_state(info.remote, timeout=5.0)
+    prepare(info, cfg)
     if not info.can_auto:
         if info.blocked:
             say(f"yeni sürüm var ama {info.blocked}; `alice update --force` ile yine de geçebilirsin")

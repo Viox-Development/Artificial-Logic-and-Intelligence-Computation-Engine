@@ -92,7 +92,8 @@ def make_agent_runner(cfg: Config, cwd: Path | None = None) -> Callable[[str], s
 class Core:
     def __init__(self, cfg: Config, store: Store | None = None, monitors: list[Monitor] | None = None,
                  notifier: Notifier | None = None, rules: RuleSet | None = None, tasks: TaskStore | None = None,
-                 decider=None, run_agent: Callable[[str], str] | None = None):
+                 decider=None, run_agent: Callable[[str], str] | None = None,
+                 restart: Callable[[], None] | None = None):
         self.cfg = cfg
         c = cfg.data.get("core", {})
         self.interval = float(c.get("interval", 15))
@@ -129,6 +130,12 @@ class Core:
         self._last_prune = 0.0
         self._last_files: float | None = None  # None: dosyalar henüz hiç kontrol edilmedi
         self._lock = threading.Lock()
+        # Kendi kendini güncelleme: kontrol arka plan thread'inde (ağ turu turu bekletmesin), yeniden başlama
+        # çalışan görev yokken.
+        self._last_update_check = time.time()  # açılışta hemen bakma: uygulama zaten bakıyor
+        self._update_thread: threading.Thread | None = None
+        self.restart_pending = False
+        self.restart = restart or self._restart_process
 
     # ------------------------------------------------------------------ tur
     def tick(self, now: float | None = None) -> None:
@@ -153,6 +160,7 @@ class Core:
         self._reload_if_changed()
         self.engine.evaluate(now)
         self._run_due(now)
+        self._maybe_update(now)
         if now - self._last_prune > 3600:
             self._last_prune = now
             self.store.prune(self.retention_days, now)
@@ -193,6 +201,65 @@ class Core:
                 self.rules.load()
                 self.tasks.load()
             self._last_files = mt
+
+    # ---------------------------------------------------------- güncelleme
+    def _maybe_update(self, now: float) -> None:
+        from alice import updater
+
+        s = updater.settings(self.cfg)
+        if s.get("mode") == "off":
+            return
+        if self.restart_pending:
+            if not self.running_tasks:  # yarım görev bırakma: boşta kalınca
+                self.restart()
+            return
+        every = max(5.0, float(s.get("check_every_minutes") or 60)) * 60
+        if now - self._last_update_check < every:
+            return
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
+        self._last_update_check = now
+        self._update_thread = threading.Thread(target=self.update_job, daemon=True, name="alice-core-update")
+        self._update_thread.start()
+
+    def update_job(self) -> None:
+        """Yeni sürüm var mı; uygulama kapalıysa çek. Diskteki kod bu süreçten yeniyse yeniden başlamayı işaretle."""
+        from alice import updater
+
+        try:
+            info = updater.check(self.cfg, details=False)
+            if info.stale:
+                self.store.add_event("core", "Yeni sürüm indirilmiş, çekirdek boşta kalınca yeniden başlayacak",
+                                     topic="core")
+                self.restart_pending = True
+                return
+            if not info.available or updater.settings(self.cfg).get("mode") != "auto":
+                return
+            if updater.app_running():
+                return  # uygulama açık: arayüzü olan o, güncellemeyi o yapsın
+            updater.prepare(info, self.cfg)
+            if not info.can_auto:
+                self.store.add_event("core", "Yeni sürüm var ama otomatik çekilmedi", info.blocked, topic="core")
+                return
+            ok, msg = updater.apply_update(info, self.cfg)
+            self.store.add_event("core", "ALICE güncellendi" if ok else "Güncelleme yapılamadı", msg,
+                                 "info" if ok else "warn", "core")
+            if ok:
+                self.restart_pending = True
+        except Exception as e:  # noqa: BLE001 - güncelleme kontrolü çekirdeği düşürmesin
+            self.store.add_event("error", "güncelleme kontrolü hata verdi", repr(e)[:300], topic="core")
+
+    def _restart_process(self) -> None:
+        """Aynı komutla yeniden başla. Tek kopya kilidi önce bırakılır, yoksa yeni süreç 'zaten çalışıyor' der."""
+        from alice import updater
+
+        self.store.add_event("core", "Çekirdek yeni sürümle yeniden başlıyor", topic="core")
+        release_lock()
+        try:
+            state_path().unlink()
+        except OSError:
+            pass
+        updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]], env={"ALICE_RESTARTED": "1"})
 
     def _run_due(self, now: float) -> None:
         if self.run_agent is None:
