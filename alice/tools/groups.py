@@ -35,9 +35,9 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
                "CPU/RAM/GPU/disk durumu, çalışan işlemler, geçmiş ölçümler",
                r"cpu|ram|gpu|işlemci|ekran kartı|sıcaklık|derece|bellek|disk|pil|batarya|performans|işlem|süreç|"
                r"process|görev yöneticisi|kasıyor|yavaş|fps|metrik"),
-    "automation": ({"rules", "schedule"}, "uyarı kuralları ve zamanlanmış görevler",
+    "automation": ({"rules", "schedule", "feeds"}, "uyarı kuralları, zamanlanmış görevler ve servis akışları",
                    r"kural|uyar|hatırlat|zamanla|her gün|her sabah|her akşam|haftada|alarm|schedule|rule|cron|"
-                   r"saat \d|otomatik"),
+                   r"saat \d|otomatik|haber ver|söyle bana|gelirse|girince|olunca|bildir|takip et|izle"),
     "blender": ({"blender"}, "Blender'da 3B sahne (bpy betiği)",
                 r"blender|3d|3b|üç boyut|modelle|sahne|render|mesh"),
     "flight": ({"flight"}, "DCS / War Thunder uçuş verisi ve kneeboard",

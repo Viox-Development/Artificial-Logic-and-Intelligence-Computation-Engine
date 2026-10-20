@@ -110,13 +110,12 @@ class Core:
                 from alice.health.watch import WatchMonitor
 
                 monitors.append(WatchMonitor(self.store, export))
-            # Akışlar: bağlı servislerde yeni bir şey olunca haber ver (~/.alice/feeds.toml).
-            from alice.core.feeds import FeedMonitor, load_feeds
+            # Akışlar: bağlı servislerde önemli bir şey olunca haber ver (~/.alice/feeds.toml). Akış yokken de
+            # takılı: sohbetten eklenen akış çekirdek yeniden başlamadan devreye girsin (boşken maliyeti sıfır).
+            from alice.core.feeds import FeedMonitor
 
-            feeds, _errors = load_feeds()
-            if feeds:
-                monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg, decider=decider,
-                                            emit=lambda s: self.store.add_event("info", s, topic="feed")))
+            monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg, decider=decider,
+                                        emit=lambda s: self.store.add_event("info", s, topic="feed")))
         self.monitors: list[Monitor] = monitors
         self.rules = rules or RuleSet()
         self.tasks = tasks or TaskStore()

@@ -196,6 +196,8 @@ alice feeds --new                   # örnek dosya (Discord ve Steam "oyuna gird
 alice feeds --test discord_genel    # şimdi yokla: her öğe için ✓/✗ ve nedeni ("istenmeyen kelime: bot")
 ```
 
+**Akışı sohbetten de kurabiliyorsun.** "Ahmet Steam'de oyuna girince haber ver, gece rahatsız etme" dediğinde ALICE `feeds` aracıyla önce hangi bağlantının hazır olduğuna ve örnek öğelerin alan adlarına bakıyor, sonra akışı kurup `feeds.toml`'a yazıyor. Dosyayı baştan yazmıyor: senin yorumların ve elle eklediklerin olduğu gibi kalıyor, yeni akış sona ekleniyor. Akış kaydedilmeden önce doğrulanıyor (yanlış eylem adı, eksik parametre, bozuk koşul modele geri dönüyor, o da düzeltiyor). Çekirdek dosyanın değiştiğini kendisi görüyor, yeniden başlatmak gerekmiyor. Bildirim gidince ALICE'i uyandıran (`agent`) akış gözetimsiz çalışacağı için kurulurken onay istiyor.
+
 `--test` koşulları kurarken en çok işine yarayacak şey: hiçbir şey bildirmeden, hangi mesajın neden geçtiğini ya da elendiğini gösteriyor.
 
 İlk turda hiçbir şey bildirilmiyor (o anki öğeler "görüldü" işaretleniyor), yoksa akışı kurduğun anda son 15 mesaj peş peşe düşerdi. Bir turda en fazla 5 bildirim gidiyor, gerisi "3 yeni öğe daha" diye toplanıyor. Bildirimler mod politikasından geçiyor: uçuş ya da sessiz moddayken susturulup kaydediliyor. Sesli mod açıksa bildirim sesle de söyleniyor. Ayarlar → Bağlantılar'ın altında akışlar ve özet bekleyen öğe sayısı görünüyor.

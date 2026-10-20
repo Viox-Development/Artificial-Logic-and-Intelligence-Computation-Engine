@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from alice.tools.base import DANGER, READ, WRITE, Tool, ToolContext, ToolError, ToolResult, obj
+from alice.tools.base import DANGER, NETWORK, READ, WRITE, Tool, ToolContext, ToolError, ToolResult, obj
 
 
 def _store(ctx: ToolContext):
@@ -218,4 +218,202 @@ class Schedule(Tool):
         return ToolResult("bir sonraki çekirdek turunda çalışacak")
 
 
-TOOLS = [Metrics(), Rules(), Schedule()]
+def _obj_arg(name: str, v: Any) -> dict[str, Any]:
+    """Nesne parametreleri JSON metni olarak gelir (bazı sağlayıcılar serbest nesne kabul etmiyor)."""
+    import json
+
+    if v in (None, ""):
+        return {}
+    if isinstance(v, dict):
+        return v
+    try:
+        out = json.loads(str(v))
+    except ValueError as e:
+        raise ToolError(f"{name} geçerli JSON değil: {e}") from e
+    if not isinstance(out, dict):
+        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"hayat\"]}}")
+    return out
+
+
+class Feeds(Tool):
+    name = "feeds"
+    description = (
+        "Bağlı servisleri arka planda izleyip önemli bir şey olunca haber veren akışlar: 'Discord genel kanalında "
+        "bana mention gelirse söyle', 'Ahmet Steam'de oyuna girince haber ver', 'DCS kanalına video gelince "
+        "söyle', 'gece rahatsız etme, sabah özet geç'. Ölçüm eşiği (GPU sıcaklığı) için rules, belirli saat için "
+        "schedule.\n"
+        "- Önce connectors: hangi bağlantı hazır, eylemleri ve alanları ne.\n"
+        "- add öncesi test_action ile örnek öğeleri gör; title/body şablonunda ve when koşulunda alan adlarını "
+        "oradan al ({author.username} gibi iç içe yazılır).\n"
+        "- Yeni öğe için mode=new; bir alanın değişmesi için (oyuna girdi, çevrimiçi oldu) mode=change + watch.\n"
+        "- Gereksiz bildirimi önle: when ile süz, quiet ile geceyi sustur, acil olanı escalate ile işaretle."
+    )
+    parameters = obj({
+        "action": {"type": "string", "enum": ["list", "connectors", "test_action", "add", "test", "remove",
+                                              "enable", "disable"],
+                   "description": "list: akışlar | connectors: bağlantılar ve eylemleri | test_action: bir "
+                   "bağlantı eylemini şimdi çağır, örnek öğeleri göster | add: yeni akış | test: tanımlı akışı "
+                   "yokla, her öğe geçti mi neden | remove/enable/disable: name'li akış."},
+        "name": {"type": "string", "description": "Akış adı (add, test, remove, enable, disable), ör. 'ahmet_oyun'."},
+        "connector": {"type": "string", "description": "Bağlantı adı, ör. 'discord', 'steam', 'youtube_api'."},
+        "connector_action": {"type": "string", "description": "Bağlantının eylemi, ör. 'messages', 'profile'."},
+        "args": {"type": "string", "description": "Eylem parametreleri JSON metni, ör. '{\"channel_id\": \"123\"}'."},
+        "every_minutes": {"type": "number", "description": "Yoklama aralığı, dakika. Varsayılan 10, en az 1."},
+        "mode": {"type": "string", "enum": ["new", "change"],
+                 "description": "new: listeye yeni giren öğe | change: watch'taki alan değişince."},
+        "watch": {"type": "array", "items": {"type": "string", "description": "Alan adı."},
+                  "description": "mode=change için izlenecek alanlar, ör. [\"gameextrainfo\"]."},
+        "id_field": {"type": "string", "description": "Öğeyi ayırt eden alan. Varsayılan 'id' (Steam'de 'steamid')."},
+        "title": {"type": "string", "description": "Bildirim başlığı şablonu, ör. '{personaname} oyuna girdi'."},
+        "body": {"type": "string", "description": "Bildirim gövdesi şablonu, ör. '{content}'. change modunda "
+                 "{prev.alan} eski değer, {changed} değişen alanlar."},
+        "when": {"type": "string", "description": "Hangi öğe bildirime değer, JSON: any/all/none (kelime listesi), "
+                 "regex, fields (alan -> değer ya da liste, \"*\" boş değil), min/max (sayısal), ask (anlama göre "
+                 "evet/hayır sorusu). Ör. '{\"any\": [\"hayat\"], \"none\": [\"bot\"]}'."},
+        "escalate": {"type": "string", "description": "Bu koşul tutarsa önem critical (sessiz saatte de söylenir), "
+                     "when ile aynı biçim."},
+        "quiet": {"type": "string", "description": "Biriktirilecek saatler, ör. '23:00-08:00'; bitince özet gelir."},
+        "digest_minutes": {"type": "number", "description": "Tek tek değil bu aralıkla özet. 0: kapalı."},
+        "cooldown_minutes": {"type": "number", "description": "Bir bildirimden sonra gelenleri bu süre topla."},
+        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Önem. Varsayılan info."},
+        "agent": {"type": "string", "description": "Doluysa bildirim gidince ALICE uyanıp bu işi yapar (özetle, "
+                  "kontrol et). Gözetimsiz çalıştığı için onay ister."},
+        "description": {"type": "string", "description": "Kullanıcının kendi cümlesi (kayıtta not olarak durur)."},
+    }, ["action"])
+    risk = WRITE
+
+    def risk_for(self, args: dict[str, Any]) -> str:
+        a = args.get("action")
+        if a in ("list", "connectors"):
+            return READ
+        if a in ("test", "test_action"):
+            return NETWORK
+        return DANGER if a == "add" and args.get("agent") else WRITE
+
+    def summary(self, args: dict[str, Any]) -> str:
+        a = args.get("action", "")
+        if a in ("add", "test", "remove", "enable", "disable"):
+            return f"{a} {args.get('name', '')}".strip()
+        if a == "test_action":
+            return f"{args.get('connector', '')}.{args.get('connector_action', '')}"
+        return a
+
+    def run(self, ctx: ToolContext, action: str, name: str = "", connector: str = "", connector_action: str = "",
+            args: Any = None, **fields: Any) -> ToolResult:
+        from alice.core import feedfile
+        from alice.core.feeds import FeedMonitor, load_feeds
+
+        if action == "list":
+            feeds, errors = load_feeds()
+            lines = [f"{f.name}{'' if f.enabled else ' (kapalı)'}: {f.describe()}" for f in feeds]
+            return ToolResult("\n".join(lines + [f"hata: {e}" for e in errors]) or "akış yok")
+        if action == "connectors":
+            return ToolResult(_connectors_text(ctx))
+        if action == "test_action":
+            return ToolResult(_test_action(ctx, connector, connector_action, _obj_arg("args", args)))
+        if action in ("remove", "enable", "disable", "test") and not name:
+            raise ToolError(f"{action} için name gerekli")
+        if action == "remove":
+            return ToolResult("silindi" if feedfile.remove_feed(name) else f"akış yok: {name}")
+        if action in ("enable", "disable"):
+            ok = feedfile.set_enabled(name, action == "enable")
+            return ToolResult(("açıldı" if action == "enable" else "kapatıldı") if ok else f"akış yok: {name}")
+        if action == "test":
+            feed = next((f for f in load_feeds()[0] if f.name == name), None)
+            if feed is None:
+                raise ToolError(f"akış yok: {name}")
+            try:
+                verdicts = FeedMonitor(cfg=ctx.config, decider=ctx.decider).explain(feed)
+            except Exception as e:  # noqa: BLE001 - bağlantı hatası modele anlaşılır dönsün
+                raise ToolError(f"yoklanamadı: {e}") from e
+            lines = [f"{'✓' if v.ok else '✗'} {v.title}" + (f" — {v.body}" if v.body else "")
+                     + f"  ({v.reason}{', ' + v.severity if v.ok and v.severity != feed.severity else ''})"
+                     for v in verdicts[:15]]
+            return ToolResult(f"{sum(v.ok for v in verdicts)}/{len(verdicts)} öğe geçiyor\n" + "\n".join(lines))
+        if action == "add":
+            return ToolResult(_add(ctx, name, connector, connector_action, _obj_arg("args", args), fields))
+        raise ToolError(f"bilinmeyen işlem: {action}")
+
+
+def _connectors_text(ctx: ToolContext) -> str:
+    from alice.connect.manifest import discover
+    from alice.connect.runner import ready
+
+    out = []
+    for m in sorted(discover(ctx.config)[0].values(), key=lambda x: x.name):
+        ok, note = ready(m)
+        out.append(f"{m.name} ({'hazır' if ok else note})")
+        for a in m.actions.values():
+            if a.writes or a.sends:
+                continue  # akış sadece okuyan eylemleri yoklar
+            params = ", ".join(f"{p.name}{'*' if p.required else ''}" for p in a.params.values())
+            fields = f" alanlar: {', '.join(a.fields)}" if a.fields else ""
+            out.append(f"  - {a.name}({params}): {a.summary}{fields}")
+    return "\n".join(out) or "bağlantı yok"
+
+
+def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, Any]) -> str:
+    import json
+
+    from alice.connect.manifest import discover
+    from alice.connect.runner import ConnectError, call, pick, ready
+
+    m = discover(ctx.config)[0].get(connector)
+    if m is None:
+        raise ToolError(f"bağlantı yok: {connector}")
+    act = m.actions.get(action)
+    if act is None:
+        raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
+    if act.writes or act.sends:
+        raise ToolError(f"{connector}.{action} bir şey değiştiriyor/gönderiyor; akış sadece okuyan eylemleri yoklar")
+    ok, note = ready(m)
+    if not ok:
+        raise ToolError(f"{m.label} hazır değil: {note}")
+    try:
+        data = call(m, act, args)
+    except ConnectError as e:
+        raise ToolError(str(e)) from e
+    rows = pick(data, act.pick) if act.pick else data
+    rows = rows if isinstance(rows, list) else [rows]
+    sample = json.dumps(rows[:3], ensure_ascii=False, indent=1)
+    return f"{len(rows)} öğe. İlk {min(3, len(rows))} tanesi (alan adlarını buradan al):\n{sample[:6000]}"
+
+
+def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[str, Any],
+         fields: dict[str, Any]) -> str:
+    from alice.connect.manifest import discover
+    from alice.connect.runner import ready
+    from alice.core import feedfile
+
+    if not (name and connector and action):
+        raise ToolError("add için name, connector ve connector_action gerekli")
+    m = discover(ctx.config)[0].get(connector)
+    if m is None:
+        raise ToolError(f"bağlantı yok: {connector}. feeds action=connectors ile bak")
+    act = m.actions.get(action)
+    if act is None:
+        raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
+    if act.writes or act.sends:
+        raise ToolError(f"{connector}.{action} bir şey değiştiriyor/gönderiyor; akışa okuyan bir eylem ver")
+    missing = [p.name for p in act.params.values() if p.required and not str(args.get(p.name, "")).strip()]
+    if missing:
+        raise ToolError(f"{connector}.{action} için args içinde eksik: {', '.join(missing)}")
+    feed: dict[str, Any] = {"name": name, "connector": connector, "action": action, "args": args}
+    for k in ("every_minutes", "mode", "watch", "id_field", "title", "body", "quiet", "digest_minutes",
+              "cooldown_minutes", "severity", "agent", "description"):
+        if fields.get(k) not in (None, "", []):
+            feed[k] = fields[k]
+    for sub in ("when", "escalate"):
+        tab = _obj_arg(sub, fields.get(sub))
+        if tab:
+            feed[sub] = tab
+    try:
+        feedfile.add_feed(feed)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    hazır = "" if ready(m)[0] else f" Not: {m.label} henüz hazır değil, anahtar eklenince çalışır."
+    return (f"akış eklendi: {name}. Çekirdek çalışırken {feed.get('every_minutes', 10)} dakikada bir yoklanır; "
+            f"ilk tur sessizdir (mevcut öğeler görüldü sayılır).{hazır} Denemek için: feeds action=test name={name}")
+
+
+TOOLS = [Metrics(), Rules(), Schedule(), Feeds()]

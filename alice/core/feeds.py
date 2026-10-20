@@ -270,7 +270,26 @@ class FeedMonitor:
         self.emit = emit or (lambda _s: None)
         self.clock = clock or time.time
         self.feeds, self.errors = load_feeds()
+        self._mtime = self._file_mtime()
         self.state = _read_state()
+
+    @staticmethod
+    def _file_mtime() -> float:
+        try:
+            return feeds_path().stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def reload_if_changed(self) -> bool:
+        """feeds.toml değiştiyse (sohbetten akış eklendi, elle düzenlendi) yeniden yükle; durum korunur."""
+        mt = self._file_mtime()
+        if mt == self._mtime:
+            return False
+        self._mtime = mt
+        self.feeds, self.errors = load_feeds()
+        for e in self.errors:
+            self.emit(e)
+        return True
 
     # ------------------------------------------------------------------ veri
     def _call_connector(self, feed: Feed) -> list[Any]:
@@ -332,6 +351,7 @@ class FeedMonitor:
         return now - last >= feed.interval
 
     def collect(self) -> list[tuple[str, float | None, str | None]]:
+        self.reload_if_changed()
         now = self.clock()
         rows: list[tuple[str, float | None, str | None]] = []
         changed = False

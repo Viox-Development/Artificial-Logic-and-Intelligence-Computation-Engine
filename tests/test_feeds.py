@@ -201,14 +201,23 @@ def test_cekirdek_akislari_gozlemci_olarak_ekler(feeds_file, monkeypatch, tmp_pa
     core.store.close()
 
 
-def test_akis_yoksa_gozlemci_eklenmez(tmp_path, monkeypatch):
+def test_akis_yoksa_gozlemci_bos_durur_sonradan_eklenen_devreye_girer(tmp_path, monkeypatch):
+    """Sohbetten eklenen akış çekirdek yeniden başlamadan çalışmalı: gözlemci boşken de takılı."""
     from alice.core.service import Core
     from alice.core.store import Store
     from tests.conftest import make_config
 
-    monkeypatch.setattr(F, "feeds_path", lambda: tmp_path / "yok.toml")
+    p = tmp_path / "sonra.toml"
+    monkeypatch.setattr(F, "feeds_path", lambda: p)
+    monkeypatch.setattr(F, "state_path", lambda: tmp_path / "st.json")
     core = Core(make_config({"brain": ["a:m"]}), store=Store(tmp_path / "s.db"))
-    assert not any(getattr(mon, "name", "") == "feeds" for mon in core.monitors)
+    mon = next(m for m in core.monitors if getattr(m, "name", "") == "feeds")
+    assert mon.feeds == [] and mon.collect() == []     # boşken hiçbir şey yapmaz
+    p.write_text(TOML, encoding="utf-8")
+    calls = []
+    mon._fetch = lambda f: calls.append(f.name) or []
+    mon.collect()
+    assert calls == ["discord_genel"]                  # dosya değişince kendini yeniden yükledi
     core.store.close()
 
 
