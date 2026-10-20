@@ -216,6 +216,32 @@ title = "Discord · {author.username}"
 body = "{content}"
 topic = "discord"
 # agent = "Bu mesajlara bakip bana ozetle"   # dolu olursa ALICE uyanir ve bu isi yapar
+# quiet = "23:00-08:00"      # bu saatlerde biriktir, sabah ozet olarak gelsin
+# digest_minutes = 60        # tek tek degil, saatte bir ozet
+# cooldown_minutes = 10      # bir bildirimden sonra gelenleri topla
+
+[feed.when]                  # hangi mesaj bildirime degsin (bos: hepsi)
+any = ["hayat", "@everyone"] # en az biri gecsin
+none = ["bot"]               # bunlar gecmesin
+# ask = "Bu mesaj bana bir sey soruyor ya da acil mi?"   # anlamina gore: hizli model karar verir
+
+[feed.escalate]              # bu tutarsa onem kritik olur, sessiz saatte de soylenir
+regex = '\\b(acil|hemen)\\b'   # tek tırnak: TOML kaçış yapmaz
+
+# Arkadas oyuna girince haber ver (Steam):
+# [[feed]]
+# name = "arkadaslar"
+# connector = "steam"
+# action = "profile"
+# args = { steamids = "STEAMID1,STEAMID2" }
+# mode = "change"
+# watch = ["gameextrainfo"]
+# id_field = "steamid"
+# every_minutes = 3
+# title = "{personaname} oyuna girdi"
+# body = "{gameextrainfo}"
+# [feed.when]
+# fields = { gameextrainfo = "*" }
 """
 
 
@@ -243,26 +269,35 @@ def feeds_cmd(argv: list[str]) -> int:
         if feed is None:
             console.print(f"[red]akış yok:[/] {escape(argv[1])}")
             return 1
-        mon = FeedMonitor(cfg=load_config(), emit=lambda s: console.print(f"[dim]{escape(s)}[/]"))
+        cfg = load_config()
+        decider = None
+        if feed.when.ask or feed.escalate.ask:
+            from alice.decider import Decider
+            from alice.providers.router import Router
+
+            decider = Decider.from_config(cfg, Router(cfg))
+        mon = FeedMonitor(cfg=cfg, decider=decider, emit=lambda s: console.print(f"[dim]{escape(s)}[/]"))
         try:
-            items = mon._fetch(feed)
+            verdicts = mon.explain(feed)
         except Exception as e:  # noqa: BLE001 - test komutu: hatayı göster, çökme
             console.print(f"[red]{escape(str(e))}[/]")
             return 1
-        from alice.core.feeds import fill
-
-        console.print(f"[bold]{len(items)} öğe[/]")
-        for it in items[:5]:
-            console.print(f"  [dim]·[/] {escape(fill(feed.title, it, feed))} — {escape(fill(feed.body, it, feed))}")
+        passed = sum(v.ok for v in verdicts)
+        console.print(f"[bold]{len(verdicts)} öğe, {passed} tanesi koşulu geçiyor[/]  [dim]{escape(feed.describe())}[/]")
+        for v in verdicts[:15]:
+            mark = "[red]![/]" if v.ok and v.severity == "critical" else ("[green]✓[/]" if v.ok else "[dim]✗[/]")
+            line = escape(v.title + (f" — {v.body}" if v.body else ""))[:140]
+            console.print(f"  {mark} {line}  [dim]{escape(v.reason)}[/]")
+        if feed.mode == "change":
+            console.print("[dim]change modunda bildirim, izlenen alan bir önceki yoklamadan farklıysa gider.[/]")
         return 0
 
     if not feeds:
         console.print(f"[dim]akış yok. Örnek dosya oluşturmak için: alice feeds --new  ({feeds_path()})[/]")
         return 0
     for f in feeds:
-        console.print(f"[bold]{escape(f.name)}[/] {f.connector}.{f.action} · {f.every_minutes:g} dk"
-                      + ("" if f.enabled else " [dim](kapalı)[/]")
-                      + (f"  [dim]ajan: {escape(f.agent[:40])}[/]" if f.agent else ""))
+        console.print(f"[bold]{escape(f.name)}[/]" + ("" if f.enabled else " [dim](kapalı)[/]")
+                      + f"  [dim]{escape(f.describe())}[/]")
     return 0
 
 

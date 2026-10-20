@@ -73,7 +73,8 @@ def test_ilk_tur_bildirim_yapmaz(feeds_file):
     m = monitor([[msg("1"), msg("2")]], notify=sent.append)
     rows = m.collect()
     assert sent == []                                  # ilk turda sessiz: eski mesajlar bildirim olmaz
-    assert ("feed.discord.yeni", 2.0, None) in rows    # metrik yine de yazılır
+    # Metrik yazılır ama 0: ilk turdaki öğeler "yeni" değil (yoksa `yeni > 0` kuralı akış kurulur kurulmaz öterdi)
+    assert ("feed.discord.yeni", 0.0, None) in rows
 
 
 def test_yeni_oge_bildirilir_eskisi_tekrar_etmez(feeds_file):

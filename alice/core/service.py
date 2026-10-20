@@ -114,7 +114,7 @@ class Core:
 
             feeds, _errors = load_feeds()
             if feeds:
-                monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg,
+                monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg, decider=decider,
                                             emit=lambda s: self.store.add_event("info", s, topic="feed")))
         self.monitors: list[Monitor] = monitors
         self.rules = rules or RuleSet()

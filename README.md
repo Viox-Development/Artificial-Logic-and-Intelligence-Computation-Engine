@@ -145,29 +145,60 @@ Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geç
 
 ## Akışlar: ALICE'in kendi haber vermesi
 
-Asistan sorulunca cevap verir, Jarvis olanı söyler. Çekirdek servis zaten bilgisayarı izliyordu (kurallar: "GPU uzun süre ısınırsa söyle"); artık bağlı servisleri de izliyor. `~/.alice/feeds.toml`:
+Asistan sorulunca cevap verir, Jarvis olanı söyler. Çekirdek servis zaten bilgisayarı izliyordu (kurallar: "GPU uzun süre ısınırsa söyle"); artık bağlı servisleri de izliyor. Ama her yeni mesajı söyleyen bir asistan beş dakikada susturulur, o yüzden asıl iş **neyin söylenmeye değer olduğu**. `~/.alice/feeds.toml`:
 
 ```toml
 [[feed]]
 name = "discord_genel"
-connector = "discord"        # alice connect ile listelenen bağlantı
+connector = "discord"
 action = "messages"
 args = { channel_id = "123456" }
 every_minutes = 5
-id_field = "id"              # yeni öğeyi bununla ayırt eder
 title = "Discord · {author.username}"
 body = "{content}"
-metric = "feed.discord.yeni" # opsiyonel: sayı metrik olur, kurallar kullanabilir
-# agent = "Yeni mesajları özetle, önemliyse bana söyle"   # dolu olursa ALICE uyanıp bu işi yapar
+quiet = "23:00-08:00"          # gece biriktir, sabah özet olarak gelsin
+agent = "Önemli bir şey varsa bana kısaca söyle"   # opsiyonel: ALICE uyanıp bu işi yapar
+
+[feed.when]                     # hangi mesaj bildirime değer
+any  = ["hayat", "@everyone"]   # en az biri geçsin
+none = ["bot"]                  # bunlar geçmesin
+ask  = "Bu mesaj bana bir şey soruyor ya da acil bir şey mi?"   # anlamına göre karar
+
+[feed.escalate]                 # bu tutarsa önem kritik: sessiz saatte de hemen söylenir
+regex = '\b(acil|hemen)\b'
 ```
+
+**Koşul dili** (`[feed.when]`, `[feed.escalate]`), ucuzdan pahalıya sırayla bakılıyor ve ilk tutmayan öğeyi eliyor:
+
+| alan | ne yapar |
+|---|---|
+| `any` / `all` / `none` | metinde en az biri / hepsi / hiçbiri geçmeli (başlık, gövde ve öğenin bütün metin alanları; Türkçe büyük/küçük harf doğru: "ACİL" = "acil") |
+| `regex` | düzenli ifade |
+| `fields` | alan eşitliği: `{ "author.username" = ["ahmet", "ayşe"] }`, `"*"` = boş değil |
+| `min` / `max` | sayısal sınır: `{ "statistics.viewCount" = 1000 }` |
+| `ask` | anlamına göre evet/hayır: Jev ya da hızlı model karar veriyor. Model çağrısı olduğu için en sona bırakıldı, sadece diğer koşulları geçen öğe için soruluyor |
+
+**İki çalışma şekli:**
+
+* `mode = "new"` (varsayılan): listeye yeni giren öğe (yeni mesaj, yeni video).
+* `mode = "change"` + `watch = ["alan"]`: aynı öğenin bir alanı değişince. Örnek: Steam arkadaş listesini izle, `gameextrainfo` değişip boş olmayınca "Ahmet DCS World'e girdi" de. Şablonda `{prev.alan}` eski değer, `{changed}` değişen alanlar.
+
+**Teslim zamanlaması:**
+
+* `quiet = "23:00-08:00"`: bu saatlerde biriktiriliyor, saat bitince tek bir özet geliyor. Gece yarısını geçen aralık doğru çalışıyor.
+* `digest_minutes = 60`: tek tek değil, saatte bir özet.
+* `cooldown_minutes = 10`: bir bildirimden sonra 10 dakika içinde gelenler toplanıp sonra özet olarak geliyor; sohbet patlayınca telefon titremekten durmuyor.
+* `[feed.escalate]` tutan öğe `critical` oluyor ve bunların hiçbirini beklemiyor.
 
 ```powershell
-alice feeds            # tanımlı akışlar
-alice feeds --new      # örnek dosya
-alice feeds --test discord_genel   # şimdi yokla, ne geldiğini göster
+alice feeds                         # akışlar ve ne yaptıkları, okunur dille
+alice feeds --new                   # örnek dosya (Discord ve Steam "oyuna girdi" örnekleriyle)
+alice feeds --test discord_genel    # şimdi yokla: her öğe için ✓/✗ ve nedeni ("istenmeyen kelime: bot")
 ```
 
-İlk turda hiçbir şey bildirilmiyor (o anki öğeler "görüldü" işaretleniyor), yoksa akışı kurduğun anda son 15 mesaj peş peşe düşerdi. Bir turda en fazla 5 bildirim gidiyor, gerisi "3 yeni öğe daha" diye toplanıyor. Bildirimler mod politikasından geçiyor: uçuş ya da sessiz moddayken susturulup kaydediliyor, sonra "ben oyundayken ne oldu?" diye sorabiliyorsun.
+`--test` koşulları kurarken en çok işine yarayacak şey: hiçbir şey bildirmeden, hangi mesajın neden geçtiğini ya da elendiğini gösteriyor.
+
+İlk turda hiçbir şey bildirilmiyor (o anki öğeler "görüldü" işaretleniyor), yoksa akışı kurduğun anda son 15 mesaj peş peşe düşerdi. Bir turda en fazla 5 bildirim gidiyor, gerisi "3 yeni öğe daha" diye toplanıyor. Bildirimler mod politikasından geçiyor: uçuş ya da sessiz moddayken susturulup kaydediliyor. Sesli mod açıksa bildirim sesle de söyleniyor. Ayarlar → Bağlantılar'ın altında akışlar ve özet bekleyen öğe sayısı görünüyor.
 
 ## Uygulama tarifleri: hangi işi hangi yoldan
 

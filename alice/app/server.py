@@ -376,7 +376,8 @@ class AppState:
         except (OSError, ValueError):
             fstate = {}
         frows = [{"name": f.name, "connector": f.connector, "action": f.action, "every_minutes": f.every_minutes,
-                  "enabled": f.enabled, "agent": bool(f.agent),
+                  "enabled": f.enabled, "agent": bool(f.agent), "describe": f.describe(),
+                  "held": len((fstate.get(f.name) or {}).get("held") or []),
                   "last": float((fstate.get(f.name) or {}).get("last") or 0),
                   "error": str((fstate.get(f.name) or {}).get("error") or "")} for f in feeds]
         return {"connectors": rows, "feeds": frows, "errors": errors + feed_errors}

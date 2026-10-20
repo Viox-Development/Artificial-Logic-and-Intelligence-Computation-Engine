@@ -116,6 +116,12 @@ body = "{snippet.channelTitle}"
 `agent = "..."` eklersen yeni öğe geldiğinde ALICE uyanıp o işi yapar (özetlemek, bir şeyi kontrol etmek).
 İlk tur sessizdir; bir turda en fazla 5 bildirim gider.
 
+Hangi öğenin bildirileceğini `[feed.when]` (any/all/none/regex/fields/min/max/ask), hangisinin acil
+olduğunu `[feed.escalate]` belirler; `mode = "change"` ile bir alanın değişmesi izlenir, `quiet`,
+`digest_minutes` ve `cooldown_minutes` teslim zamanını ayarlar. Tam liste ve örnekler README'de,
+"Akışlar" bölümünde. Koşulu kurarken `alice feeds --test <ad>` her öğenin neden geçtiğini/elendiğini
+gösterir.
+
 ## İpuçları
 
 * Önce `--test` ile dene: `alice connect <ad> --test <eylem> --arg k=v`. Çıktıyı modelin göreceği
