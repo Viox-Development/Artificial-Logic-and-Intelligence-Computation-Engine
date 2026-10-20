@@ -94,8 +94,16 @@ def looks_internal(text: str) -> bool:
     return bool(_INTERNAL_TAG.search(text) or _INTERNAL_EN.search(text))
 
 
+_LIMIT_HINTS = ("rate limit", "billing", "quota", "resource_exhausted", "exhausted", "429")
+
+
 class LiveError(Exception):
-    pass
+    @property
+    def limited(self) -> bool:
+        """Kota/hız sınırı mı (Gemini ücretsiz katmanı: "You have reached a rate limit. Set up billing...")?
+        Bu durumda 5 dk sonra tekrar denemek aynı hatayı verir; daha uzun beklenir ve kullanıcıya bir kez söylenir."""
+        low = str(self).lower()
+        return any(h in low for h in _LIMIT_HINTS)
 
 
 def monitor_layout() -> str:

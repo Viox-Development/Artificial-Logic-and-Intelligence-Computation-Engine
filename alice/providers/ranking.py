@@ -31,7 +31,8 @@ QUALITY: list[tuple[str, int]] = [
     ("gemini-3.1-pro", 97), ("gemini-pro", 97), ("gemini-2.5-pro", 90),
     ("flash-lite", 66), ("gemini-3.8-flash", 93), ("gemini-flash-latest", 93), ("gemini-3.7-flash", 91),
     ("gemini-3.6-flash", 89), ("gemini-3.5-flash", 87), ("gemini-3-flash", 84), ("gemini-2.5-flash", 78),
-    ("kimi-k3", 92), ("glm-5.3-flash", 74), ("glm-5", 90), ("deepseek-v4", 88), ("deepseek-r", 80),
+    ("kimi-k3", 92), ("glm-5.3-flash", 74), ("glm-5", 90), ("glm-4.7-flash", 72), ("glm-4.5-flash", 64),
+    ("glm-4.6v-flash", 60), ("command-a-plus", 80), ("command-a-vision", 62), ("command-a", 76), ("deepseek-v4", 88), ("deepseek-r", 80),
     ("nemotron-3-ultra", 87), ("qwen3.8", 85), ("qwen3-coder", 84), ("gpt-oss-120b", 82), ("kimi-k2", 82),
     ("mistral-large", 78), ("nemotron-3-super", 78), ("laguna-s", 76), ("dots-3", 74), ("llama-3.3-70b", 70),
     ("north-mini-code", 72), ("devstral", 72), ("mistral-medium", 72), ("gemma-4-31b", 68), ("ling-3", 66),
@@ -127,6 +128,15 @@ def uses_auto(roles: dict[str, list[str]]) -> bool:
 
 
 # ------------------------------------------------------------------- adaylar
+def catalog_models(router, name: str) -> list[dict[str, Any]]:
+    """Sağlayıcının model listesi: config'te models yazılıysa o (sadece ücretsizler), yoksa /models."""
+    pc = router.providers_cfg[name]
+    fixed = getattr(pc, "models", None) or []
+    if fixed:
+        return [{"id": m} for m in fixed]
+    return router.client(name).list_models()
+
+
 def candidates(router, per_provider: int = PER_PROVIDER) -> tuple[list[str], dict[str, str], dict[str, list[str]]]:
     """Kataloglardan bildiğimiz iyi ailelere uyan adaylar (sağlayıcı başına en iyi per_provider tane),
     katalog hataları ve her sağlayıcının tam model listesi (elle yazılmış ama kalkmış modelleri ayıklamak için)."""
@@ -141,12 +151,17 @@ def candidates(router, per_provider: int = PER_PROVIDER) -> tuple[list[str], dic
         if not pc.enabled:
             errors[name] = f"{pc.api_key_env} tanımlı değil"
             continue
+        if not getattr(pc, "auto", True):
+            continue  # krediyle çalışan sağlayıcı: sadece elle seçilir, ölçümde bile kredi harcamasın
         try:
-            models = router.client(name).list_models()
+            models = catalog_models(router, name)
         except Exception as e:  # noqa: BLE001 - keşifte hiçbir hata ölümcül değil
             errors[name] = str(e)[:160]
             continue
-        catalog[name] = sorted({str(m.get("id") or m.get("name") or "").removeprefix("models/") for m in models} - {""})
+        if not getattr(pc, "models", None):
+            # Sabit liste gerçek katalog değil: elle yazılmış ücretli bir model (zai:glm-5) "kalkmış" sayılmasın.
+            catalog[name] = sorted({str(m.get("id") or m.get("name") or "").removeprefix("models/")
+                                    for m in models} - {""})
         for f in (_openrouter(models) if name == "openrouter" else _generic(name, models)):
             q = quality(f.ref)
             if q > 0 and f.tools is not False:

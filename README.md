@@ -60,9 +60,18 @@ Ekim 2026 itibarıyla ücretsiz katmanları taradım. Rakamlar sık değişiyor,
 | **NVIDIA NIM** | Developer Program ile ~40 RPM (hesap bazlı), qwen3-coder-480b, deepseek gibi büyük modeller | brain yedeği, güçlü kodlama modeli |
 | **Groq** | Günde 1000 istek ama dakikada 8K, günde 200K token. Llama ve Kimi kaldırıldı, gpt-oss duruyor. Çok hızlı | **fast #1.** Kısa işler ve Jev emülasyonu için ideal, büyük context'e uygun değil |
 | **Cerebras** | Son raporlara göre süreli kredi, kalıcı free tier belirsiz | yedek |
+| **Mistral (La Plateforme)** | "Experiment" planı ücretsiz, telefon doğrulaması istiyor, düşük RPS | brain/fast yedeği |
+| **SambaNova** | Ücretsiz katman, hızlı büyük açık modeller | yedek |
+| **Z.ai** | `glm-4.7-flash`, `glm-4.5-flash`, `glm-4.6v-flash` (görsel) ücretsiz. ALICE sadece bu üçünü sıraya koyuyor, ücretli GLM'lere kendiliğinden geçmiyor | brain/vision yedeği |
+| **Cohere** | Trial anahtarı ücretsiz (ayda sınırlı istek, ticari kullanım yok). Command A ailesi, araç çağırma destekli | brain yedeği |
+| **Vercel AI Gateway** | Hesap başına 30 günde 5$ kredi; Claude, GPT, Gemini aynı anahtarla. Kredi harcadığı için otomatik sıraya **girmiyor**, sadece elle: `/model brain vercel:anthropic/claude-sonnet-5.5` | elle seçilen güçlü model |
 | **Ollama (yerel)** | Limitsiz, offline, GPU'na bağlı | her zincirin sonunda son çare |
 
 **Tek sağlayıcıya güvenmiyorum.** Router her rol için bir zincir tutuyor. 429 gelince o model soğumaya alınıyor ve sıradakine geçiliyor, günlük kota dolunca 1 saat, anahtar yanlışsa sağlayıcı oturum boyunca, model katalogdan kalkmışsa o model kapatılıyor. İstek bir sağlayıcının token sınırını aşıyorsa (Groq'un 8K TPM'i gibi) o sağlayıcı o istek için atlanıyor. Yani bir sağlayıcı düşse de ALICE çalışmaya devam ediyor.
+
+**Gemini "You have reached a rate limit. Set up billing..." hatası:** bu ücretsiz katmanın dolduğu anlamına geliyor. ALICE bunu artık 20 saniyelik hız sınırı değil kota sayıyor: Gemini bir saat atlanıyor, istekler sıradaki sağlayıcıya gidiyor. Canlı sesli konuşma (Gemini Live) da aynı hatayı alınca bir saat normal sesli yola (STT + model + TTS) geçiyor ve bunu bir kez Türkçe söylüyor. Bu yüzden Gemini dışında en az iki anahtar daha doldurmak (Groq, Z.ai, Mistral, Cerebras) gerçekten fark ediyor.
+
+GitHub Models 30 Temmuz 2026'da kapatıldı, bu yüzden listede yok.
 
 Katalog değiştiğinde `alice models --write` canlı `/models` uçlarını tarayıp zincirleri güncelliyor.
 
@@ -106,6 +115,11 @@ Linux/macOS'ta aynısı, `pip install -e ".[all]"` sonrası `alice init`. Linux'
 * `OPENROUTER_API_KEY`: https://openrouter.ai/keys
 * `NVIDIA_API_KEY`: https://build.nvidia.com
 * `CEREBRAS_API_KEY`: https://cloud.cerebras.ai
+* `MISTRAL_API_KEY`: https://console.mistral.ai/api-keys (Experiment planı)
+* `SAMBANOVA_API_KEY`: https://cloud.sambanova.ai/apis
+* `ZAI_API_KEY`: https://z.ai/manage-apikey/apikey-list
+* `COHERE_API_KEY`: https://dashboard.cohere.com/api-keys
+* `AI_GATEWAY_API_KEY`: https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys (Vercel, 5$ kredi, sadece elle seçilir)
 * `TYPESAFE_API_KEY`: Jev erişimi alırsan
 
 Sonra:

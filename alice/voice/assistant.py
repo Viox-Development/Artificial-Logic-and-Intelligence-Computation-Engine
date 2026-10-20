@@ -80,6 +80,7 @@ def spoken_time(hour: int, minute: int) -> str:
 
 
 FILLERS = ["Hemen bakıyorum.", "Bir saniye, bakıyorum.", "Tamam, bakıyorum."]
+LIVE_LIMIT_WAIT = 3600.0  # Live kotası dolunca normal sesli yolda kalma süresi (sn)
 
 
 class VoiceUI:
@@ -476,9 +477,14 @@ class VoiceAssistant:
                 self.live.converse(text, q, self.stop_event)
             return True
         except LiveError as e:
-            self._live_down = time.monotonic() + 300  # 5 dk eski yolla devam
             voice_log(f"live açılamadı, eski yola dönülüyor: {e}")
-            self.emit(f"live açılamadı: {e}")
+            if e.limited:
+                # Kota dolu: her 5 dakikada aynı İngilizce hatayı göstermek yerine bir saat normal sesli yol.
+                self._live_down = time.monotonic() + LIVE_LIMIT_WAIT
+                self.emit("Gemini canlı ses kotası doldu; bir saat normal sesli yolla (STT + model + TTS) devam ediyorum.")
+            else:
+                self._live_down = time.monotonic() + 300  # 5 dk eski yolla devam
+                self.emit(f"live açılamadı: {e}")
             return False
         finally:
             self._live_q = None

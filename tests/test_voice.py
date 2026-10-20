@@ -964,6 +964,23 @@ def test_assistant_uses_live_and_falls_back():
     assert not va2._live_ready()
 
 
+def test_live_rate_limit_backs_off_for_an_hour_with_one_turkish_message():
+    import time
+
+    class LimitedLive(FakeLive):
+        def converse(self, text, frames, stop):
+            from alice.voice.live import LiveError
+
+            raise LiveError("gemini-live: You have reached a rate limit. Set up billing to increase your limits.")
+
+    events = []
+    va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=None, live=LimitedLive(), emit=events.append)
+    assert va._converse_live("merhaba") is False
+    assert va._live_down - time.monotonic() > 3000
+    assert any("kotası doldu" in e for e in events)
+    assert not any("rate limit" in e for e in events)  # ham İngilizce hata gösterilmez
+
+
 def test_strip_wake_split_ali_spelling():
     from alice.voice.listen import strip_wake
 

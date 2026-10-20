@@ -81,8 +81,12 @@ def discover(router: Router) -> tuple[list[FoundModel], dict[str, str]]:
         if not pc.enabled:
             errors[name] = f"{pc.api_key_env} tanımlı değil"
             continue
+        if not getattr(pc, "auto", True):
+            continue
         try:
-            models = router.client(name).list_models()
+            from alice.providers.ranking import catalog_models
+
+            models = catalog_models(router, name)
         except (ProviderError, Exception) as e:  # noqa: BLE001 - keşifte hiçbir hata ölümcül değil
             errors[name] = str(e)[:160]
             continue

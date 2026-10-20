@@ -55,7 +55,9 @@ class ChatResult:
         return self.message.get("tool_calls") or []
 
 
-_QUOTA_HINTS = ("per day", "daily", "quota", "rpd", "tokens per day", "free-models-per-day", "exhausted")
+# "set up billing": Gemini ücretsiz katmanı dolunca bu metinle 429 döner; 20 sn sonra tekrar denemek boşuna.
+_QUOTA_HINTS = ("per day", "daily", "quota", "rpd", "tokens per day", "free-models-per-day", "exhausted",
+                "billing", "insufficient credits", "insufficient_quota", "credit balance")
 _DAILY_HINTS = ("per day", "daily", "rpd", "tokens per day", "free-models-per-day")
 _TOO_LARGE_HINTS = ("context length", "context_length", "maximum context", "too long", "too large",
                     "reduce the length", "request_too_large", "tokens per minute", "max_tokens")

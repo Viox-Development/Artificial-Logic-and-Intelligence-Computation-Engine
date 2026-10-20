@@ -319,6 +319,33 @@ api_key_env = "SAMBANOVA_API_KEY"
 vision_models = ["*vision*", "llama-4-*"]
 max_input_tokens = 64000
 
+# Z.ai (GLM'yi yapan şirket): GLM-4.7-Flash, GLM-4.5-Flash ve görsel GLM-4.6V-Flash tamamen ücretsiz.
+# Katalogda paralı GLM-5'ler de var; models listesi sadece ücretsizleri kullandırır.
+[providers.zai]
+base_url = "https://api.z.ai/api/paas/v4"
+api_key_env = "ZAI_API_KEY"
+vision_models = ["glm-*v-*", "glm-*v"]
+max_input_tokens = 128000
+models = ["glm-4.7-flash", "glm-4.5-flash", "glm-4.6v-flash"]
+
+# Cohere: deneme anahtarı ücretsiz (ayda ~1000 istek, ticari olmayan kullanım). Command A araç kullanmada güçlü.
+[providers.cohere]
+base_url = "https://api.cohere.ai/compatibility/v1"
+api_key_env = "COHERE_API_KEY"
+vision_models = ["*vision*"]
+max_input_tokens = 128000
+models = ["command-a-plus-05-2026", "command-a-03-2025", "command-a-vision-07-2025"]
+
+# Vercel AI Gateway: her 30 günde $5 ücretsiz kredi, Claude / GPT / Gemini gibi üst modeller tek anahtarla.
+# Krediyle çalıştığı için otomatik zincire girmez; zor bir iş için elle seç, ör.
+#   /model brain vercel:anthropic/claude-sonnet-5.5
+[providers.vercel]
+base_url = "https://ai-gateway.vercel.sh/v1"
+api_key_env = "AI_GATEWAY_API_KEY"
+vision_models = ["anthropic/*", "openai/gpt-*", "google/gemini-*"]
+max_input_tokens = 200000
+auto = false
+
 [providers.ollama]
 base_url = "http://localhost:11434/v1"
 api_key_env = ""
@@ -377,6 +404,12 @@ CEREBRAS_API_KEY=
 MISTRAL_API_KEY=
 # SambaNova         -> https://cloud.sambanova.ai/apis
 SAMBANOVA_API_KEY=
+# Z.ai (GLM Flash modelleri ücretsiz, görsel dahil) -> https://z.ai/manage-apikey/apikey-list
+ZAI_API_KEY=
+# Cohere (deneme anahtarı ücretsiz, ayda ~1000 istek) -> https://dashboard.cohere.com/api-keys
+COHERE_API_KEY=
+# Vercel AI Gateway ($5/ay ücretsiz kredi, Claude/GPT; elle seçilir) -> https://vercel.com/d?to=/[team]/~/ai/api-keys
+AI_GATEWAY_API_KEY=
 # TypeSafe Jev (opsiyonel, ücretli ama çok ucuz) -> https://typesafe.ai
 TYPESAFE_API_KEY=
 # GitHub (repo izinli token: depo klonlama, commit/push, PR) -> https://github.com/settings/tokens
@@ -566,6 +599,12 @@ class ProviderConfig:
     vision_models: list[str] = field(default_factory=list)
     max_input_tokens: int = 32000
     headers: dict[str, str] = field(default_factory=dict)
+    # Doluysa katalog bu liste olur (/models sorulmaz): ücretsiz modelleri olan ama /models'ta paralıları da
+    # listeleyen sağlayıcılar (Z.ai) ya da /models'u olmayanlar için. Boş: /models'tan okunur.
+    models: list[str] = field(default_factory=list)
+    # false: otomatik sıralamaya ("auto" zinciri) hiç girmez, sadece elle seçilince kullanılır (krediyle çalışan
+    # Vercel AI Gateway gibi: otomatik zincire girse aylık krediyi bir günde yakardı).
+    auto: bool = True
 
     @property
     def api_key(self) -> str | None:
@@ -618,6 +657,8 @@ class Config:
                 vision_models=list(p.get("vision_models", [])),
                 max_input_tokens=int(p.get("max_input_tokens", 32000)),
                 headers=dict(p.get("headers", {})),
+                models=[str(m) for m in p.get("models", [])],
+                auto=bool(p.get("auto", True)),
             )
         return out
 
