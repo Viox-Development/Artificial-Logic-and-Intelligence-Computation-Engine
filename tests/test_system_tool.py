@@ -191,9 +191,14 @@ def test_process_list_no_match(ctx, monkeypatch):
 # ------------------------------------------------------------------ ProcessKill
 
 
-def test_process_kill_risk():
+def test_process_kill_risk(monkeypatch):
+    # pid'in adı gerçek psutil'den okunuyor: makinede 1234 o an korunan bir sürece (csrss, svchost) denk gelirse
+    # test Windows runner'ında rastgele düşüyordu. Süreç tablosunu sabitle.
+    names = {1234: "notepad.exe", 4321: "csrss.exe"}
+    monkeypatch.setattr(system.psutil, "Process", lambda pid: SimpleNamespace(name=lambda: names[pid]))
     k = system.ProcessKill()
     assert k.risk_for({"pid": 1234}) == EXEC
+    assert k.risk_for({"pid": 4321}) == DANGER     # pid ile verilen korunan süreç de sorulur
     assert k.risk_for({"name": "notepad.exe"}) == EXEC
     assert k.risk_for({"name": "LSASS.EXE"}) == DANGER
     assert k.risk_for({"name": "explorer.exe"}) == DANGER
