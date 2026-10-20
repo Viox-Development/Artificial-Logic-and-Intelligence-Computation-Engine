@@ -17,11 +17,13 @@ help = "discord.com/developers/applications → yeni uygulama → Bot → Reset 
 
 [actions.guilds]
 summary = "Botun üye olduğu sunucular"
+cache_seconds = 120
 path = "/users/@me/guilds"
 fields = ["name", "id"]
 
 [actions.channels]
 summary = "Bir sunucudaki kanallar"
+cache_seconds = 120
 path = "/guilds/{guild_id}/channels"
 fields = ["name", "id", "type"]
 limit = 50

@@ -67,6 +67,7 @@ fields = ["name", "playtime_forever"]     # listelerde gösterilecek alanlar (i�
 limit = 40                                # en fazla kaç satır
 writes = true                             # izin sistemi "yazma" saysın (GET dışında varsayılan true)
 sends = true                              # başkasına gidiyor (mesaj, gönderi): auto modda da onay sorulur
+cache_seconds = 300                       # okuyan eylemin cevabı bu kadar saniye hatırlanır (0: hiç)
 
 [actions.library.params.steamid]
 type = "string"        # string | integer | number | boolean | array
@@ -121,6 +122,15 @@ olduğunu `[feed.escalate]` belirler; `mode = "change"` ile bir alanın değişm
 `digest_minutes` ve `cooldown_minutes` teslim zamanını ayarlar. Tam liste ve örnekler README'de,
 "Akışlar" bölümünde. Koşulu kurarken `alice feeds --test <ad>` her öğenin neden geçtiğini/elendiğini
 gösterir.
+
+## Hız ve dayanıklılık
+
+* `cache_seconds`: yavaş değişen veriyi (Steam kütüphanesi, YouTube video bilgisi, Discord kanal listesi)
+  hatırlar; ajan aynı soruyu adım adım tekrar sorduğunda istek ağa çıkmaz. Varsayılan kapalı. Yazan ve
+  gönderen eylemler asla önbellekten dönmez; akışlar her zaman taze ister.
+* Tekrar deneme bir kez ve kısa: 429'da (sunucu isteği işlemeden reddetti) Retry-After 5 sn'den kısaysa
+  beklenip tekrar denenir. Ağ hatası ve 502/503/504'te sadece okuyan eylemler tekrar denenir: mesaj
+  gönderen bir isteği tekrarlamak aynı mesajı iki kez gönderebilir.
 
 ## İpuçları
 

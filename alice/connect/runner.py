@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
+from collections import OrderedDict
 from typing import Any
 
 from alice.connect import store
@@ -12,6 +15,21 @@ from alice.connect.manifest import Action, Auth, Manifest
 
 PLACEHOLDER = re.compile(r"\{([a-z_][a-z0-9_]*)\}")
 TIMEOUT = 30.0
+RETRY_STATUSES = {429, 502, 503, 504}
+MAX_RETRY_WAIT = 5.0     # saniye: Retry-After bundan uzunsa beklemeden hatayı söyle
+CACHE_MAX = 64
+_cache: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
+_cache_lock = threading.Lock()
+_sleep = time.sleep      # testler beklemeden geçsin diye değiştirilebilir
+
+
+def cache_clear() -> None:
+    with _cache_lock:
+        _cache.clear()
+
+
+def _cache_key(m: Manifest, act: Action, args: dict[str, Any]) -> str:
+    return json.dumps([m.name, act.name, args], ensure_ascii=False, sort_keys=True, default=str)
 
 
 class ConnectError(RuntimeError):
@@ -118,16 +136,60 @@ def _quote(v: str) -> str:
     return quote(v, safe="")
 
 
-def call(m: Manifest, act: Action, args: dict[str, Any], client: Any = None, timeout: float = TIMEOUT) -> Any:
+def call(m: Manifest, act: Action, args: dict[str, Any], client: Any = None, timeout: float = TIMEOUT,
+         cache: bool = True) -> Any:
+    """Eylemi çağır. Okuyan eylem `cache_seconds` kadar hatırlanır (akışlar cache=False ile hep taze ister).
+
+    Tekrar deneme bir kez ve kısa: 429'da (sunucu isteği işlemeden reddetti) her eylem için, ağ hatası ve
+    502/503/504'te sadece okuyan eylemler için. Gönderen bir isteği ağ hatasında tekrarlamak mesajı iki kez
+    gönderebilir; kullanıcı aynı mesajı iki kez almasın diye yapılmaz."""
+    safe = not (act.writes or act.sends)
+    key = _cache_key(m, act, args) if (cache and safe and act.cache_seconds > 0) else ""
+    if key:
+        with _cache_lock:
+            hit = _cache.get(key)
+            if hit and time.time() - hit[0] < act.cache_seconds:
+                _cache.move_to_end(key)
+                return hit[1]
+    data = _request(m, act, args, client, timeout, safe)
+    if key:
+        with _cache_lock:
+            _cache[key] = (time.time(), data)
+            while len(_cache) > CACHE_MAX:
+                _cache.popitem(last=False)
+    return data
+
+
+def _retry_wait(r: Any) -> float | None:
+    """Retry-After'a uyan bekleme; çok uzunsa None (beklemek yerine hatayı söyle)."""
+    raw = str((getattr(r, "headers", None) or {}).get("Retry-After", "") or "").strip()
+    try:
+        wait = float(raw) if raw else 1.0
+    except ValueError:
+        wait = 1.0
+    return wait if wait <= MAX_RETRY_WAIT else None
+
+
+def _request(m: Manifest, act: Action, args: dict[str, Any], client: Any, timeout: float, safe: bool) -> Any:
     import httpx
 
     req = build(m, act, args)
     c = client or httpx
-    try:
-        r = c.request(req["method"], req["url"], params=req["params"], headers=req["headers"],
-                      json=req["json"], timeout=timeout)
-    except Exception as e:  # noqa: BLE001 - ağ hatası modele anlaşılır dönsün
-        raise ConnectError(f"{m.label}: istek başarısız: {e}") from e
+    for attempt in (0, 1):
+        try:
+            r = c.request(req["method"], req["url"], params=req["params"], headers=req["headers"],
+                          json=req["json"], timeout=timeout)
+        except Exception as e:  # noqa: BLE001 - ağ hatası modele anlaşılır dönsün
+            if attempt == 0 and safe:
+                _sleep(1.0)
+                continue
+            raise ConnectError(f"{m.label}: istek başarısız: {e}") from e
+        if attempt == 0 and r.status_code in RETRY_STATUSES and (safe or r.status_code == 429):
+            wait = _retry_wait(r)
+            if wait is not None:
+                _sleep(wait)
+                continue
+        break
     if r.status_code == 401:
         raise ConnectError(f"{m.label}: yetki reddedildi (401). Tekrar bağlan: alice connect {m.name}")
     if r.status_code == 429:

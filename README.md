@@ -137,6 +137,8 @@ Kutudan çıkanlar:
 
 Uygulamada **Ayarlar → Bağlantılar**: her servisin durumu, OAuth olanlar için "Bağlan"/"Çıkış" düğmesi, anahtarla çalışanlar için hangi `.env` değişkeninin eksik olduğu ve altta tanımlı akışlar. Terminalde aynı özet `alice doctor` çıktısında bir satır.
 
+Yavaş değişen veriler (Steam kütüphanesi, YouTube video bilgisi) birkaç dakika hatırlanıyor, ajan aynı şeyi tekrar sorunca istek ağa çıkmıyor; hız sınırına (429) takılınca kısa bir bekleyip bir kez tekrar deneniyor. Mesaj gönderen istekler ağ hatasında tekrar denenmiyor, aynı mesaj iki kez gitmesin diye.
+
 Kimlik tarafı: API anahtarları `.env`'den okunuyor, OAuth2 token'ları `~/.alice/connect.json` içinde (chmod 600) duruyor ve süresi dolunca kendiliğinden yenileniyor. OAuth akışı PKCE ile çalıştığı için client secret gerekmiyor.
 
 Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model `load_tools` deyince açılıyorlar. Böylece 4 servis bağlıyken de istek küçük kalıyor.

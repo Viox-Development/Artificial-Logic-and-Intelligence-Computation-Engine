@@ -141,7 +141,7 @@ def test_connectors_sadece_okuyan_eylemleri_alanlariyla_gosterir(ctx):
 
 def test_test_action_ornek_ogeleri_gosterir(ctx, monkeypatch):
     monkeypatch.setattr("alice.connect.runner.call",
-                        lambda m, act, args: {"response": {"players": [{"personaname": "Ahmet", "steamid": "1"}]}})
+                        lambda m, act, args, **k: {"response": {"players": [{"personaname": "Ahmet", "steamid": "1"}]}})
     out = Feeds().run(ctx, action="test_action", connector="steam", connector_action="profile",
                       args={"steamids": "1"}).text
     assert out.startswith("1 öğe") and '"personaname": "Ahmet"' in out

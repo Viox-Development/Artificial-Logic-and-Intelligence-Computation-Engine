@@ -21,13 +21,17 @@ def isolated_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_web_cache():
-    """web_fetch/web_search kısa ömürlü önbelleği testler arasında sızmasın."""
+def clear_web_cache(monkeypatch):
+    """web_fetch/web_search ve bağlantı önbellekleri testler arasında sızmasın; tekrar deneme beklemesin."""
+    from alice.connect import runner
     from alice.tools import web
 
     web.cache_clear()
+    runner.cache_clear()
+    monkeypatch.setattr(runner, "_sleep", lambda s: None)
     yield
     web.cache_clear()
+    runner.cache_clear()
 
 
 def rm_rf(name: str) -> str:

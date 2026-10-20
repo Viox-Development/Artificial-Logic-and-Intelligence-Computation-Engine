@@ -28,6 +28,7 @@ fields = ["item.name", "item.artists.0.name", "item.album.name", "is_playing", "
 
 [actions.search]
 summary = "Parça/sanatçı/albüm ara (uri'si çalmak için gerekir)"
+cache_seconds = 60
 path = "/search"
 query = { limit = "8" }
 pick = "tracks.items"
@@ -87,12 +88,14 @@ description = "0-100"
 
 [actions.devices]
 summary = "Spotify'ın çalabileceği cihazlar (telefon, bilgisayar, hoparlör)"
+cache_seconds = 60
 path = "/me/player/devices"
 pick = "devices"
 fields = ["name", "type", "is_active", "id"]
 
 [actions.playlists]
 summary = "Çalma listelerin"
+cache_seconds = 60
 path = "/me/playlists"
 query = { limit = "20" }
 pick = "items"

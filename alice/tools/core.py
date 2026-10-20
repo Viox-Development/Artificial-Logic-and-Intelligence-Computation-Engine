@@ -370,7 +370,7 @@ def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, 
     if not ok:
         raise ToolError(f"{m.label} hazır değil: {note}")
     try:
-        data = call(m, act, args)
+        data = call(m, act, args, cache=False)
     except ConnectError as e:
         raise ToolError(str(e)) from e
     rows = pick(data, act.pick) if act.pick else data

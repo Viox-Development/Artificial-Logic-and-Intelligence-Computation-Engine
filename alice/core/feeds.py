@@ -306,7 +306,7 @@ class FeedMonitor:
         hazır, sebep = ready(m)
         if not hazır:
             raise ConnectError(f"{m.label}: {sebep}")
-        data = call(m, act, feed.args)
+        data = call(m, act, feed.args, cache=False)  # akış hep taze ister: önbellek yeni mesajı saklamasın
         rows = pick(data, act.pick) if act.pick else data
         if isinstance(rows, dict):
             rows = [rows]

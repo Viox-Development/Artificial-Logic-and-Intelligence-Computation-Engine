@@ -407,3 +407,95 @@ def test_store_dosyasi_json_ve_izinli(tmp_path):
     if hasattr(Path, "stat"):
         mode = p.stat().st_mode & 0o777
         assert mode in (0o600, 0o666)  # Windows'ta chmod sınırlı
+
+
+# ------------------------------------------------------------------------------ önbellek ve tekrar deneme
+class SeqHTTP:
+    """Sıradaki cevabı döndüren sahte istemci: (durum, gövde, başlıklar) ya da Exception."""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def request(self, *a, **k):
+        self.calls += 1
+        item = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
+        if isinstance(item, Exception):
+            raise item
+        status, body, headers = (item + ({},))[:3] if len(item) == 2 else item
+        r = FakeHTTP(body, status, "hata" if body is None else "")
+        r.headers = headers
+        return r
+
+
+def test_okuyan_eylem_onbellekten_gelir(m, monkeypatch):
+    monkeypatch.setenv("DENEME_KEY", "k")
+    act = m.actions["liste"]
+    act.cache_seconds = 60
+    http = SeqHTTP((200, {"response": {"items": [{"name": "a", "count": 1}]}}))
+    a = runner.call(m, act, {"owner": "x"}, client=http)
+    b = runner.call(m, act, {"owner": "x"}, client=http)
+    assert a == b and http.calls == 1
+    runner.call(m, act, {"owner": "baska"}, client=http)          # farklı parametre önbelleğe takılmaz
+    runner.call(m, act, {"owner": "x"}, client=http, cache=False)  # akışlar hep taze ister
+    assert http.calls == 3
+
+
+def test_onbellek_varsayilan_kapali_ve_yazan_eylem_onbelleklenmez(m, monkeypatch):
+    monkeypatch.setenv("DENEME_KEY", "k")
+    http = SeqHTTP((200, {"ok": True}))
+    runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
+    runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
+    assert http.calls == 2                                         # cache_seconds = 0
+    m.actions["gonder"].cache_seconds = 60
+    runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http)
+    runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http)
+    assert http.calls == 4                                         # gönderen eylem asla önbellekten dönmez
+
+
+def test_429_bir_kez_bekleyip_tekrar_dener(m, monkeypatch):
+    monkeypatch.setenv("DENEME_KEY", "k")
+    waits = []
+    monkeypatch.setattr(runner, "_sleep", waits.append)
+    http = SeqHTTP((429, None, {"Retry-After": "2"}), (200, {"response": {"items": []}}))
+    assert runner.call(m, m.actions["liste"], {"owner": "x"}, client=http) == {"response": {"items": []}}
+    assert http.calls == 2 and waits == [2.0]
+
+
+def test_uzun_retry_after_beklemez(m, monkeypatch):
+    monkeypatch.setenv("DENEME_KEY", "k")
+    monkeypatch.setattr(runner, "_sleep", lambda s: pytest.fail("60 sn beklememeli"))
+    http = SeqHTTP((429, None, {"Retry-After": "60"}))
+    with pytest.raises(runner.ConnectError, match="hız sınırı"):
+        runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
+    assert http.calls == 1
+
+
+def test_ag_hatasinda_okuyan_eylem_tekrar_dener_gonderen_denemez(m, monkeypatch):
+    """Gönderen isteği ağ hatasında tekrarlamak mesajı iki kez gönderebilir."""
+    monkeypatch.setenv("DENEME_KEY", "k")
+    http = SeqHTTP(ConnectionError("koptu"), (200, {"response": {"items": []}}))
+    runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
+    assert http.calls == 2
+    http = SeqHTTP(ConnectionError("koptu"), (200, {"id": "1"}))
+    with pytest.raises(runner.ConnectError, match="istek başarısız"):
+        runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http)
+    assert http.calls == 1
+    http = SeqHTTP((503, None), (200, {"id": "1"}))
+    with pytest.raises(runner.ConnectError, match="HTTP 503"):
+        runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http)
+    assert http.calls == 1                                         # 5xx'te de gönderen tekrar denemez
+    http = SeqHTTP((429, None), (200, {"id": "1"}))
+    assert runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http) == {"id": "1"}
+    assert http.calls == 2                                         # 429: sunucu işlemedi, tekrar güvenli
+
+
+def test_akislar_onbellek_kullanmaz(monkeypatch):
+    from alice.core.feeds import Feed, FeedMonitor
+
+    seen = {}
+    found, _ = mf.discover()
+    monkeypatch.setenv("STEAM_API_KEY", "k")
+    monkeypatch.setattr(runner, "call", lambda m, act, args, cache=True: seen.update(cache=cache) or {})
+    FeedMonitor()._call_connector(Feed(name="f", connector="steam", action="library", args={"steamid": "1"}))
+    assert seen["cache"] is False
