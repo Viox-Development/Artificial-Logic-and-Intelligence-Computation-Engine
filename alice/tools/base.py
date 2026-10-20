@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 # Risk sınıfları izin sistemi tarafından kullanılır.
 READ, WRITE, EXEC, COMPUTER, NETWORK, DANGER = "read", "write", "exec", "computer", "network", "danger"
+# Dışa dönük eylem: başka birine giden mesaj, gönderi, e-posta. Dosya düzenlemenin tersine geri alınamaz;
+# bu yüzden auto modda da sorulur ([agent] confirm_outward = false ile kapatılabilir).
+SEND = "send"
 
 
 @dataclass

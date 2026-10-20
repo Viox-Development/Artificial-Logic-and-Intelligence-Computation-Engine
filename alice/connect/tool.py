@@ -6,7 +6,7 @@ from typing import Any
 
 from alice.connect.manifest import Manifest
 from alice.connect.runner import ConnectError, call, ready, render
-from alice.tools.base import NETWORK, READ, WRITE, Tool, ToolContext, ToolError, ToolResult
+from alice.tools.base import NETWORK, READ, SEND, WRITE, Tool, ToolContext, ToolError, ToolResult
 
 TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean", "array": "array"}
 
@@ -46,6 +46,8 @@ class ConnectTool(Tool):
         act = self.m.actions.get(str(args.get("action", "")))
         if act is None:
             return READ
+        if act.sends:
+            return SEND  # başkasına gidiyor: geri alınamaz
         return WRITE if act.writes else NETWORK
 
     def summary(self, args: dict[str, Any]) -> str:

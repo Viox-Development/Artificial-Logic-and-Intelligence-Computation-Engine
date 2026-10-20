@@ -190,7 +190,7 @@ class RichUI:
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
         self._spin_stop()
         self._live_stop()
-        color = "red" if risk == "danger" else "yellow"
+        color = "red" if risk == "danger" else ("magenta" if risk == "send" else "yellow")
         console.print(f"[{color}]? İzin gerekiyor[/] [bold]{name}[/] ({risk})\n  {escape(summary)}")
         while True:
             ans = console.input("  [bold][y][/]evet  [bold][n][/]hayır  [bold][a][/]bu araca hep izin ver > ").strip().lower()

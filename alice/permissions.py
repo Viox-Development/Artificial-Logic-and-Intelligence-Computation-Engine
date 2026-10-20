@@ -2,8 +2,9 @@
 
 plan : sadece okuma/araştırma; dosya değiştiren, komut çalıştıran, ekrana dokunan her şey reddedilir
 ask  : okuma dışındaki her şey onay ister
-auto : tehlikeli komutlar (rm -r, format, registry, shutdown...) ve sistem klasörlerine
-       yazma onay ister; geri kalan her şey (dosya düzenleme, komut, fare/klavye) serbest
+auto : tehlikeli komutlar (rm -r, format, registry, shutdown...), sistem klasörlerine yazma ve
+       başkasına giden mesajlar (send: Discord/WhatsApp/e-posta) onay ister; geri kalan her şey
+       (dosya düzenleme, komut, fare/klavye) serbest
 yolo : hiçbir şey sormaz
 """
 
@@ -13,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from alice.tools.base import DANGER, NETWORK, READ, WRITE, Tool, ToolContext
+from alice.tools.base import DANGER, NETWORK, READ, SEND, WRITE, Tool, ToolContext
 
 MODES = ("plan", "ask", "auto", "yolo")
 
@@ -27,6 +28,12 @@ def is_system_path(p: Path) -> bool:
         low = s.lower()
         return any(low == d or low.startswith(d + "\\") for d in SYSTEM_DIRS_WIN)
     return any(s == d or s.startswith(d + "/") for d in SYSTEM_DIRS_POSIX)
+
+
+def _confirm_outward(ctx: ToolContext) -> bool:
+    cfg = getattr(ctx, "config", None)
+    agent = getattr(cfg, "agent", None) or {}
+    return bool(agent.get("confirm_outward", True)) if isinstance(agent, dict) else True
 
 
 class Permissions:
@@ -51,6 +58,8 @@ class Permissions:
             return "ask"
         # auto
         if risk == DANGER:
+            return "ask"
+        if risk == SEND and _confirm_outward(ctx):
             return "ask"
         if risk == WRITE and "path" in args:
             try:

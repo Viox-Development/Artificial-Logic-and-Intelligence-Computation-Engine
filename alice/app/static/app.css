@@ -773,6 +773,8 @@ kbd {
 .risk { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--code); color: var(--faint); }
 .risk.write, .risk.exec, .risk.computer { color: var(--warn); }
 .risk.danger { color: var(--err); background: var(--del-bg); }
+.risk.send { color: var(--accent); }
+.perm.send .perm-ic { color: var(--accent); }
 .keys { display: inline-flex; gap: 4px; }
 .use-row { display: grid; grid-template-columns: 1fr 120px; gap: 4px 12px; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .use-row .l { font: 12.5px var(--mono); overflow-wrap: anywhere; }

@@ -66,6 +66,7 @@ pick = "response.games"                   # cevabın hangi dalı gösterilsin
 fields = ["name", "playtime_forever"]     # listelerde gösterilecek alanlar (iç içe: "snippet.title")
 limit = 40                                # en fazla kaç satır
 writes = true                             # izin sistemi "yazma" saysın (GET dışında varsayılan true)
+sends = true                              # başkasına gidiyor (mesaj, gönderi): auto modda da onay sorulur
 
 [actions.library.params.steamid]
 type = "string"        # string | integer | number | boolean | array

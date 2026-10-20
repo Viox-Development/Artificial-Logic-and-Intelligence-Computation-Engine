@@ -1,6 +1,7 @@
 # Uygulama ve site tarifleri. Kendi tariflerin için ~/.alice/apps.toml (aynı ad: seninki geçerli).
 # kind: web (tarayıcıda, kullanıcının kendi oturumuyla) | app (kurulu program) | protocol (derin bağlantı)
 # flows.<ad>: reflex için hedef şablonu, {alan} yer tutucuları çağrıda doldurulur.
+# sends: başkasına giden akışlar (mesaj, DM, e-posta); izin sistemi bunları auto modda da sorar.
 
 [whatsapp]
 title = "WhatsApp"
@@ -8,6 +9,7 @@ kind = "web"
 url = "https://web.whatsapp.com"
 keywords = "whatsapp|wp\\b|watsap"
 note = "Kişisel hesap için resmî API yok (Cloud API işletme numarası ister). Tarayıcıdan çalışır; ilk açılışta telefondan QR okutman gerekir, sonra oturum açık kalır."
+sends = ["send"]   # başkasına gidiyor: auto modda da onay sorulur
 [whatsapp.flows]
 send = "Sol taraftaki sohbet listesinde {kime} kişisini bul ve sohbetini aç, mesaj yazma kutusuna tıkla, {mesaj} yaz ve Enter'a basarak gönder"
 read = "Sol listeden {kime} sohbetini aç ve son mesajları göster"
@@ -19,6 +21,7 @@ kind = "web"
 url = "https://www.instagram.com"
 keywords = "instagram|insta|\\big\\b"
 note = "Resmî API sadece işletme/içerik üretici hesaplarına açık, kişisel hesap için tarayıcı kullanılır."
+sends = ["dm"]   # başkasına gidiyor: auto modda da onay sorulur
 [instagram.flows]
 dm = "Mesajlar (Direct) bölümüne gir, {kime} ile olan sohbeti aç, mesaj kutusuna {mesaj} yaz ve gönder"
 profile = "Arama kutusuna {kim} yaz ve çıkan ilk profili aç"
@@ -88,6 +91,7 @@ title = "Discord (web)"
 kind = "web"
 url = "https://discord.com/app"
 keywords = "discord web"
+sends = ["send"]   # başkasına gidiyor: auto modda da onay sorulur
 [discord_web.flows]
 send = "Sol taraftan {sunucu} sunucusunu ve {kanal} kanalını aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
 
@@ -96,6 +100,7 @@ title = "Gmail"
 kind = "web"
 url = "https://mail.google.com"
 keywords = "gmail|e-?posta|mail kutusu"
+sends = ["compose"]   # başkasına gidiyor: auto modda da onay sorulur
 [gmail.flows]
 compose = "Oluştur'a tıkla, Kime alanına {kime}, konu alanına {konu}, gövdeye {mesaj} yaz ve gönder"
 inbox = "Gelen kutusunu aç ve okunmamış son e-postaları göster"

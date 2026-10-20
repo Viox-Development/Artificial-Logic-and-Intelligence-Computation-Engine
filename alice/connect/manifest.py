@@ -79,6 +79,7 @@ class Action:
     fields: list[str] = field(default_factory=list)  # liste sonuçlarında gösterilecek alanlar
     limit: int = 25
     writes: bool = False        # true: izin sistemi "yazma" riski saysın
+    sends: bool = False         # true: başkasına giden mesaj/gönderi (auto modda da onay sorulur)
 
 
 @dataclass
@@ -142,7 +143,7 @@ def _action(name: str, raw: Any) -> Action:
         headers={str(k): str(v) for k, v in (raw.get("headers") or {}).items()},
         body=dict(raw.get("body") or {}), params=params, pick=str(raw.get("pick", "")),
         fields=[str(x) for x in raw.get("fields", [])], limit=int(raw.get("limit", 25) or 25),
-        writes=bool(raw.get("writes", method != "GET")))
+        writes=bool(raw.get("writes", method != "GET")), sends=bool(raw.get("sends", False)))
 
 
 def _auth(raw: Any) -> Auth:

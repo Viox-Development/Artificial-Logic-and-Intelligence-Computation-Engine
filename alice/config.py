@@ -33,6 +33,9 @@ DEFAULT_CONFIG_TOML = r'''
 # auto = tehlikeli komutlar ve sistem klasörlerine yazma dışında her şeye izin verir
 # yolo = hiçbir şey sormaz, tam erişim
 permission_mode = "auto"
+# Başkasına giden mesaj/gönderi/e-posta (Discord, WhatsApp, Gmail...) auto modda da sorulsun mu?
+# Gönderilen mesaj geri alınamaz; false yapmadan önce iki kez düşün.
+confirm_outward = true
 max_steps = 80
 # Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %80'i
 # (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).

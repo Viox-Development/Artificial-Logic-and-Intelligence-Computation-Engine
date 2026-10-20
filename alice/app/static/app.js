@@ -629,13 +629,15 @@ function finishTool(t, ev, live) {
 function onPermission(ev) {
   if (S.perms.has(ev.id)) return;
   hideWorking();
-  const card = el("div", "perm" + (ev.risk === "danger" ? " danger" : ""));
+  const card = el("div", "perm" + (ev.risk === "danger" ? " danger" : ev.risk === "send" ? " send" : ""));
   const q = el("div", "perm-q");
   const [verb, icon] = verbFor(ev.name);
   const ic = el("span", "perm-ic");
   ic.appendChild(svg(ev.risk === "danger" ? IC.shield : icon));
   const qt = el("div", "perm-qt");
-  qt.append(el("b", "", ev.risk === "danger" ? "Bu işlem geri alınamayabilir" : "ALICE izin istiyor"),
+  const head = ev.risk === "danger" ? "Bu işlem geri alınamayabilir"
+    : ev.risk === "send" ? "Bu mesaj başkasına gidecek" : "ALICE izin istiyor";
+  qt.append(el("b", "", head),
     el("small", "", `${verb} · ${ev.name}`));
   q.append(ic, qt);
   const acts = el("div", "perm-actions");

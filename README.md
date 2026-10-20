@@ -646,6 +646,8 @@ Eklenti araçları kendi grubunda durur, mesajdaki anahtar kelimelerle ya da `lo
 * **auto** (varsayılan): dosya düzenleme, komut çalıştırma, fare/klavye serbest; `rm -r`, `Remove-Item -Recurse`, format, registry, shutdown, `git push --force`, `curl | sh` gibi tehlikeli kalıplar ve `C:\Windows`, `Program Files` gibi sistem klasörlerine yazma onay ister
 * **yolo:** hiçbir şey sormaz
 
+**Başkasına giden mesajlar her modda (yolo hariç) sorulur.** Discord'a mesaj, WhatsApp'tan yazı, Instagram DM, Gmail'den e-posta gibi eylemler ayrı bir risk sınıfında (`send`): dosya düzenlemenin tersine gönderilen mesaj geri alınamıyor, bu yüzden `auto` modda da onay istiyor, `plan` modda hiç yapılmıyor, arka plan görevlerinde (kullanıcı başında değilken) reddediliyor. Onay kartı "Bu mesaj başkasına gidecek" diyor. Spotify'da çal/duraklat gibi kendi cihazını kontrol eden eylemler bu sınıfta değil. Bağlantı tanımında `sends = true`, uygulama tarifinde `sends = ["akış"]` ile işaretleniyor; topluca kapatmak için `[agent] confirm_outward = false`.
+
 Onay sorusunda `a` dersen o araca oturum boyunca izin veriyorsun (tehlikeli kalıplar hariç).
 
 Varsayılanı `auto` yaptım çünkü tam erişim istedin ama bir free modelin yanlış anlayıp yanlış klasörü silmesi geri alınamıyor; `auto` normal işte neredeyse hiç soru sormuyor. Tamamen sorusuz istiyorsan `--yolo` ya da config'te `permission_mode = "yolo"`.

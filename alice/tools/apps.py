@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from alice.apps import App, find, registry
-from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolResult, obj
+from alice.tools.base import COMPUTER, READ, SEND, Tool, ToolContext, ToolError, ToolResult, obj
 
 
 def _open_web(ctx: ToolContext, url: str) -> str:
@@ -80,7 +80,13 @@ class AppTool(Tool):
     risk = COMPUTER
 
     def risk_for(self, args: dict[str, Any]) -> str:
-        return READ if args.get("action") == "list" else COMPUTER
+        if args.get("action") == "list":
+            return READ
+        if args.get("action") == "flow":
+            app = find(str(args.get("name", "")))
+            if app is not None and str(args.get("flow", "")) in app.sends:
+                return SEND  # mesaj/DM/e-posta: başkasına gidiyor, geri alınamaz
+        return COMPUTER
 
     def summary(self, args: dict[str, Any]) -> str:
         a = args.get("action", "")

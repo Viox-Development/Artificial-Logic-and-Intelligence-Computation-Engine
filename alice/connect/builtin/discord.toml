@@ -48,6 +48,7 @@ summary = "Kanala mesaj gönder"
 method = "POST"
 path = "/channels/{channel_id}/messages"
 writes = true
+sends = true
 fields = ["id", "content"]
 [actions.send.params.channel_id]
 type = "string"
