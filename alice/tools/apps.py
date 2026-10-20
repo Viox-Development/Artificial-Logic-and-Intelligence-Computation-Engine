@@ -26,9 +26,38 @@ def _open_web(ctx: ToolContext, url: str) -> str:
         return open_app(url)
 
 
+WINDOW_WAIT = 20.0  # saniye: uygulama açılınca penceresinin gelmesi için en fazla
+
+
+def _ensure_window(app: App, wait: float = WINDOW_WAIT, sleep=None) -> str:
+    """Uygulamanın penceresi yoksa aç, gelmesini bekle, öne al. Bulunan pencere başlığını döndürür."""
+    import time
+
+    from alice.tools.desktop import focus_window, list_windows, open_app
+
+    sleep = sleep or time.sleep
+    want = app.window_title.lower()
+
+    def find_title() -> str | None:
+        return next((w for w in list_windows() if want in w.lower()), None)
+
+    title = find_title()
+    if title is None:
+        open_app(app.exe or app.label)
+        end = time.monotonic() + wait
+        while title is None and time.monotonic() < end:
+            sleep(0.5)
+            title = find_title()
+        if title is None:
+            raise ToolError(f"{app.label} açıldı ama '{app.window_title}' başlıklı pencere {int(wait)} sn içinde "
+                            "gelmedi; tarifte window alanını pencerenin gerçek başlığına göre ayarla")
+    focus_window(app.window_title)
+    return title
+
+
 def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps: int) -> str:
     from alice.reflex.loop import ReflexLoop, make_text_writer
-    from alice.reflex.observers import BrowserObserver
+    from alice.reflex.observers import BrowserObserver, DesktopObserver
 
     if ctx.decider is None or ctx.router is None:
         raise ToolError("karar motoru yapılandırılmamış (alice doctor)")
@@ -36,7 +65,11 @@ def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps
         goal = app.goal(flow, args)
     except ValueError as e:
         raise ToolError(str(e)) from e
-    observer = BrowserObserver(ctx, app.url or None)
+    if app.flow_target == "desktop":
+        _ensure_window(app)
+        observer = DesktopObserver(ctx, app.window_title)
+    else:
+        observer = BrowserObserver(ctx, app.url or None)
     loop = ReflexLoop(observer, ctx.decider, make_text_writer(ctx.router),
                       min_confidence=float(ctx.config.decider.get("min_confidence", 0.55)), emit=ctx.emit)
     return loop.run(goal, max_steps=max_steps).report()
@@ -45,7 +78,7 @@ def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps
 def _describe(apps: dict[str, App]) -> str:
     rows = []
     for a in sorted(apps.values(), key=lambda x: x.name):
-        bits = [a.name, f"({a.kind})"]
+        bits = [a.name, f"({a.kind}" + (", masaüstü" if a.flows and a.flow_target == "desktop" else "") + ")"]
         if a.api:
             bits.append(f"API: {a.api}")
         if a.flows:

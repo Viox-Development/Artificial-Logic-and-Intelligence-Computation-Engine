@@ -177,7 +177,7 @@ def test_akissiz_uygulamada_flow_yonlendirir(ctx):
     ctx.decider = object()
     ctx.router = object()
     with pytest.raises(ToolError, match="tanımlı akış yok"):
-        AppTool().run(ctx, action="flow", name="steam", flow="x")
+        AppTool().run(ctx, action="flow", name="github_web", flow="x")
 
 
 def test_risk_list_okuma_digerleri_bilgisayar():
@@ -185,3 +185,87 @@ def test_risk_list_okuma_digerleri_bilgisayar():
     assert t.risk_for({"action": "list"}) == "read"
     assert t.risk_for({"action": "open"}) == "computer"
     assert t.risk_for({"action": "flow"}) == "computer"
+
+
+# ------------------------------------------------------------------------------- masaüstü akışları
+def test_uygulama_tarifleri_masaustunde_yurur():
+    sp = apps.find("spotify")
+    assert sp.flow_target == "desktop" and sp.window_title == "Spotify"
+    assert apps.find("whatsapp").flow_target == "browser"
+
+
+def test_pencere_yoksa_acilir_gelince_one_alinir(monkeypatch):
+    from alice.tools import apps as appsmod
+
+    windows: list[str] = ["Not Defteri"]
+    opened, focused = [], []
+
+    def fake_open(target):
+        opened.append(target)
+        windows.append("Spotify Premium")  # uygulama açılınca penceresi gelir
+        return "açıldı"
+
+    monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: list(windows))
+    monkeypatch.setattr("alice.tools.desktop.open_app", fake_open)
+    monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: focused.append(t) or t)
+    title = appsmod._ensure_window(apps.find("spotify"), wait=2, sleep=lambda s: None)
+    assert opened == ["Spotify"] and title == "Spotify Premium" and focused == ["Spotify"]
+
+
+def test_pencere_zaten_aciksa_tekrar_acilmaz(monkeypatch):
+    from alice.tools import apps as appsmod
+
+    monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: ["Discord | #genel"])
+    monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: pytest.fail("açıkken yeniden açılmamalı"))
+    monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: t)
+    assert appsmod._ensure_window(apps.find("discord"), wait=1) == "Discord | #genel"
+
+
+def test_pencere_gelmezse_anlasilir_hata(monkeypatch):
+    from alice.tools import apps as appsmod
+
+    monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: [])
+    monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: "açıldı")
+    monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: t)
+    with pytest.raises(ToolError, match="pencere .* gelmedi"):
+        appsmod._ensure_window(apps.find("steam"), wait=0.05, sleep=lambda s: None)
+
+
+def test_masaustu_akisi_desktop_gozlemcisini_kullanir(ctx, monkeypatch):
+    seen = {}
+
+    class FakeLoop:
+        def __init__(self, observer, decider, writer, min_confidence=0.0, emit=None):
+            seen["observer"] = observer
+
+        def run(self, goal, max_steps=20, inputs=None):
+            seen["goal"] = goal
+
+            class R:
+                def report(self):
+                    return "done"
+
+            return R()
+
+    monkeypatch.setattr("alice.reflex.loop.ReflexLoop", FakeLoop)
+    monkeypatch.setattr("alice.reflex.loop.make_text_writer", lambda router: None)
+    monkeypatch.setattr("alice.reflex.observers.DesktopObserver", lambda c, title: {"window": title})
+    monkeypatch.setattr("alice.reflex.observers.BrowserObserver", lambda *a: pytest.fail("tarayıcı değil"))
+    monkeypatch.setattr("alice.tools.apps._ensure_window", lambda app, **k: app.window_title)
+    ctx.decider = object()
+    ctx.router = object()
+    AppTool().run(ctx, action="flow", name="spotify", flow="play", args={"ne": "lofi"})
+    assert seen["observer"] == {"window": "Spotify"} and "lofi" in seen["goal"]
+
+
+def test_gecersiz_target_reddedilir(monkeypatch, tmp_path):
+    f = tmp_path / "apps.toml"
+    f.write_text('[x]\nkind = "app"\ntarget = "uzay"\n', encoding="utf-8")
+    monkeypatch.setattr(apps, "user_file", lambda: f)
+    assert "x" not in apps.registry()
+
+
+def test_discord_uygulamasinda_dm_send_sayilir():
+    t = AppTool()
+    assert t.risk_for({"action": "flow", "name": "discord", "flow": "dm"}) == "send"
+    assert t.risk_for({"action": "flow", "name": "discord", "flow": "mute"}) == "computer"

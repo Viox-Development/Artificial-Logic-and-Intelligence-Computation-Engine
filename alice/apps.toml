@@ -2,6 +2,7 @@
 # kind: web (tarayıcıda, kullanıcının kendi oturumuyla) | app (kurulu program) | protocol (derin bağlantı)
 # flows.<ad>: reflex için hedef şablonu, {alan} yer tutucuları çağrıda doldurulur.
 # sends: başkasına giden akışlar (mesaj, DM, e-posta); izin sistemi bunları auto modda da sorar.
+# target: browser | desktop (boş: web -> browser, app -> desktop); window: masaüstü pencere başlığından parça.
 
 [whatsapp]
 title = "WhatsApp"
@@ -62,15 +63,28 @@ play = "Arama kutusuna {ne} yaz, Enter'a bas ve ilk parçayı çal"
 title = "Spotify (uygulama)"
 kind = "app"
 exe = "Spotify"
+window = "Spotify"
 keywords = "spotify uygulama|spotify aç"
 api = "spotify"
+note = "Resmî bağlantı (spotify) varsa çal/duraklat/arama için o daha hızlı; bu akışlar bağlantı kurulmadıysa yedek."
+[spotify.flows]
+play = "Üstteki arama kutusuna tıkla, {ne} yaz, Enter'a bas ve çıkan ilk şarkıyı çal"
+pause = "Alttaki çalma çubuğunda oynat/duraklat düğmesine bas"
+next = "Alttaki çalma çubuğunda sonraki parça düğmesine bas"
+playlist = "Sol taraftaki kitaplıkta {liste} çalma listesini aç ve çal düğmesine bas"
 
 [steam]
 title = "Steam"
 kind = "app"
 exe = "Steam"
+window = "Steam"
 keywords = "steam aç|steam uygulama"
 api = "steam"
+note = "Oyunu başlatmak için steam_game (derin bağlantı) en hızlısı; kütüphane verisi için steam bağlantısı."
+[steam.flows]
+library = "Üstteki KÜTÜPHANE sekmesine tıkla"
+store = "Üstteki MAĞAZA sekmesine tıkla, arama kutusuna {oyun} yaz ve Enter'a bas"
+friends = "Sağ alttaki Arkadaşlar ve Sohbet düğmesine tıkla"
 
 [steam_game]
 title = "Steam oyunu"
@@ -83,8 +97,16 @@ note = "appid'yi steam bağlantısının library eylemiyle bulabilirsin."
 title = "Discord"
 kind = "app"
 exe = "Discord"
+window = "Discord"
 keywords = "discord aç|discord uygulama"
 api = "discord"
+note = "Bot bağlantısı (discord) varsa sunucu mesajları için o daha güvenilir; DM için uygulama akışı gerekir."
+sends = ["send", "dm"]   # başkasına gidiyor: auto modda da onay sorulur
+[discord.flows]
+send = "Soldaki sunucu listesinden {sunucu} sunucusunu, sonra {kanal} kanalını aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
+dm = "Sol üstteki Discord simgesine (Doğrudan Mesajlar) tıkla, {kime} ile olan sohbeti aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
+voice = "Soldan {sunucu} sunucusunu aç ve {kanal} ses kanalına tıklayıp katıl"
+mute = "Sol alttaki mikrofon düğmesine basarak sesi kapat ya da aç"
 
 [discord_web]
 title = "Discord (web)"

@@ -55,6 +55,16 @@ class App:
     api: str = ""           # bu iş için resmî bağlantı varsa onun adı (bkz. alice/connect)
     flows: dict[str, str] = field(default_factory=dict)
     sends: list[str] = field(default_factory=list)  # başkasına giden akışlar: auto modda da onay sorulur
+    target: str = ""        # akışlar nerede yürür: browser | desktop (boş: web -> browser, app -> desktop)
+    window: str = ""        # desktop için pencere başlığından parça (boş: title ya da exe)
+
+    @property
+    def flow_target(self) -> str:
+        return self.target or ("browser" if self.kind == "web" else "desktop")
+
+    @property
+    def window_title(self) -> str:
+        return self.window or self.exe or self.title or self.name
 
     @property
     def label(self) -> str:
@@ -78,10 +88,13 @@ def _parse(name: str, raw: dict[str, Any]) -> App:
     kind = str(raw.get("kind", "web"))
     if kind not in KINDS:
         raise ValueError(f"{name}: kind {' | '.join(KINDS)} olmalı")
+    if str(raw.get("target", "")) not in ("", "browser", "desktop"):
+        raise ValueError(f"{name}: target browser ya da desktop olmalı")
     return App(name=name, title=str(raw.get("title", "")), kind=kind, url=str(raw.get("url", "")),
                exe=str(raw.get("exe", "")), keywords=str(raw.get("keywords", "")), note=str(raw.get("note", "")),
                api=str(raw.get("api", "")), flows={str(k): str(v) for k, v in (raw.get("flows") or {}).items()},
-               sends=[str(x) for x in raw.get("sends", [])])
+               sends=[str(x) for x in raw.get("sends", [])], target=str(raw.get("target", "")),
+               window=str(raw.get("window", "")))
 
 
 def _load(p: Path) -> dict[str, dict[str, Any]]:

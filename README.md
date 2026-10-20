@@ -181,7 +181,9 @@ app(action="flow", name="whatsapp", flow="send",
 app(action="open", name="steam_game", target="238960")   # oyunu doğrudan başlat
 ```
 
-Kutudan çıkan tarifler: WhatsApp (gönder/oku/ara), Instagram (DM, profil, akış), TikTok (arama, profil), YouTube (video aç/oynat), Gmail (yaz, gelen kutusu), Discord (web ve uygulama), Spotify, Steam ve Steam oyunu başlatma. Kendi tariflerin için `~/.alice/apps.toml` — aynı adı kullanırsan sadece değiştirdiğin alan üstüne yazılır.
+Kutudan çıkan tarifler: WhatsApp (gönder/oku/ara), Instagram (DM, profil, akış), TikTok (arama, profil), YouTube (video aç/oynat), Gmail (yaz, gelen kutusu), Discord, Spotify, Steam ve Steam oyunu başlatma.
+
+**Masaüstü uygulamalarında da akış var.** Spotify (çal, duraklat, sonraki, çalma listesi), Discord (sunucu kanalına mesaj, DM, ses kanalına katıl, mikrofonu kapat) ve Steam (kütüphane, mağaza araması, arkadaşlar) uygulamanın kendi penceresinde yürüyor: pencere yoksa ALICE uygulamayı açıyor, penceresinin gelmesini bekliyor, öne alıyor, sonra reflex Windows UI Automation ile düğmeleri ID'leriyle görüp tıklıyor. Kendi tarifinde `target = "desktop"` ve `window = "pencere başlığından parça"` yazman yeterli. Kendi tariflerin için `~/.alice/apps.toml` — aynı adı kullanırsan sadece değiştirdiğin alan üstüne yazılır.
 
 Akışlarda CSS seçici yok, "sol listeden {kime} sohbetini aç, mesaj kutusuna {mesaj} yaz" gibi hedef cümleleri var; bunları reflex yürütüyor. Site arayüzü değişince tarif bozulmuyor. Resmî API'si olan uygulamalarda tarif bunu söylüyor, model önce oraya gidiyor.
 
