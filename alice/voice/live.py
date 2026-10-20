@@ -563,6 +563,9 @@ class LiveSession:
                                 out.clear()
                                 self.log(f"live iç not susturuldu: {''.join(state['said'])[-160:]}")
                         if sc.get("turnComplete") or sc.get("interrupted"):
+                            # Yeni tur: susturma kontrolü bu turun sözlerine baksın ("yeter" tek başına bir turdur);
+                            # eskiden oturum boyunca biriken metne bakılıyordu.
+                            state["cur"] = ""
                             if getattr(out, "underruns", 0):
                                 self.log(f"live ses takıldı: {out.underruns} kez")
                                 out.underruns = 0

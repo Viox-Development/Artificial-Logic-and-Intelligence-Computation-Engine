@@ -1404,11 +1404,59 @@ def test_is_hush(text, hush):
     assert is_hush(text) is hush
 
 
+# Eskiden tam eşleşen bir listeye bakılıyordu ve bunların çoğu kaçıyordu: ALICE susmayıp her söylenene cevap veriyordu.
+@pytest.mark.parametrize("text", [
+    "Alice sus be", "sus dedim", "Alice susar mısın", "sussana", "Alice sussana", "susun", "Susss", "sus sus",
+    "Alice sus sus", "alice susmanı istiyorum", "Alice sus artık be", "aşkım sus",
+    "yeter", "Alice yeter", "yeter artık", "tamam yeter", "kes", "kes artık", "sesini kes", "Alice sesini kes",
+    "şşt", "Şşşt", "konuşma", "Alice konuşma", "artık konuşma", "dur", "Alice dur", "tamam dur",
+    "SESSİZ OL",            # büyük İ: str.lower bunu 'i̇' yapıp eşleşmeyi bozuyordu
+    "sessiz olur musun", "çeneni kapat", "kapat çeneni",
+    "Ali sus",              # Whisper 'Alice'i sık sık 'Ali' diye yazıyor; eskiden komut sanılıp cevaplanıyordu
+    "tamam Alice teşekkürler", "Alice teşekkür ederim", "bu kadar", "sağ ol", "iyi geceler Alice",
+])
+def test_hush_turkce_halleri(text):
+    from alice.voice.listen import is_hush
+
+    assert is_hush(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "sus diye bağırdı", "susam al", "susamlı simit", "pastayı ikiye kes", "kes kopyala yapıştır", "orada dur",
+    "dur bir saniye şunu da ekle", "bu kadar yeter mi", "yeter mi", "konuşmayı kaydet",
+    "teşekkürler peki yarın hava nasıl", "bugün sessiz olacak mı", "Alice saat kaç", "Ali'ye mesaj at",
+])
+def test_hush_yanlis_alarm_vermez(text):
+    from alice.voice.listen import is_hush
+
+    assert not is_hush(text), text
+
+
 def test_ends_with_hush_on_streamed_transcript():
     from alice.voice.listen import ends_with_hush
 
     assert ends_with_hush("YouTube aç bakalım Alice sus")
     assert not ends_with_hush("olsun bakalım")
+    # Turun tamamıysa zayıf sözcük de susturur; uzun cümlenin sonundaysa ancak isimle
+    assert ends_with_hush("yeter") and ends_with_hush("tamam anladım Alice yeter")
+    assert not ends_with_hush("bence yeter") and not ends_with_hush("pastayı ikiye kes")
+    assert ends_with_hush("bir şey diyeceğim sus")  # güçlü sözcük sonda da susturur
+    assert not ends_with_hush("bu kadar yeter mi")
+
+
+def test_follow_up_window_her_kelimeye_cevap_vermez():
+    """Kullanıcının şikâyeti: 'sus' deyince susmayıp takip penceresinde her söylenene cevap veriyordu."""
+    for hush in ("Alice sus be", "Ali sus", "yeter", "sussana", "SESSİZ OL", "tamam teşekkürler"):
+        agent, sp = FakeAgent(), FakeSpeaker()
+        va = VoiceAssistant(agent, sp, stt=None, follow_up=5)
+        va.handle_text("Hey Alice, GPU kaç derece?", direct=False)
+        assert wait_for(lambda: va.armed_until > time.monotonic())
+        va.handle_text(hush, direct=False)
+        assert va.muted and va.armed_until == 0, hush
+        for said in ("peki", "ya dün", "hmm bilmem", "sonra bakarız"):  # odadaki konuşma artık komut değil
+            va.handle_text(said, direct=False)
+        time.sleep(0.1)
+        assert agent.turns == ["GPU kaç derece?"], (hush, agent.turns)
 
 
 def test_strict_wake_needs_name_at_start():

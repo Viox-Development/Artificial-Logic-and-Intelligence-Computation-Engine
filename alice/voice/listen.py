@@ -197,24 +197,101 @@ def strip_wake(text: str, strict: bool = False) -> str | None:
 # söylenenleri komut sanıyordu; ayar dosyasında daha büyük değer olsa da bu tavan geçerli.
 FOLLOW_MAX = 5.0
 
-HUSH = {"sus", "sessiz ol", "sessize geç", "sessiz kal", "kapa çeneni", "kes sesini", "uyu", "uyku moduna geç",
-        "dinlemeyi bırak", "beni dinleme", "şş", "şşş", "şşşş"}
+# "Alice sus" ve türevleri. Eskiden tam eşleşen bir ifade listesine bakılıyordu ve Türkçenin doğal halleri kaçıyordu
+# ("sus be", "sussana", "susar mısın", "yeter", "sesini kes", "şşt", "sus sus"): ALICE susmayıp her söylenene cevap
+# veriyordu. Artık cümle sözcüklere ayrılıyor; isim, dolgu ve soru ekleri atılıyor, kalan her sözcük bir susturma
+# parçası olmalı. Böylece "sus diye bağırdı" ya da "susam al" yine susturma sayılmıyor.
+#
+# Güçlü: tek başına da, uzun cümlenin sonunda da (canlı konuşma dökümü) susturur.
+_HUSH_RX = re.compile(r"^(?:s+u+s+(?:s?ana|un|sun|ar|abilir|abilirsin|ab|man[ıi]|mak|al[ıi]m|turul)?|ş+t*|s+h+|p+s+t+)$")
+_HUSH_PHRASES = {
+    ("sessiz", "ol"), ("sessiz", "olur"), ("sessiz", "kal"), ("sessize", "geç"), ("sessize", "al"), ("sessizlik",),
+    ("kapa", "çeneni"), ("çeneni", "kapa"), ("çeneni", "kapat"), ("kapat", "çeneni"),
+    ("sesini", "kes"), ("kes", "sesini"), ("sesini", "kapat"), ("sesini", "kıs"),
+    ("uyku", "moduna", "geç"), ("dinlemeyi", "bırak"), ("beni", "dinleme"), ("konuşmayı", "bırak"),
+    ("konuşma", "artık"), ("artık", "konuşma"),
+}
+# Zayıf: sadece cümlenin tamamıysa ("yeter", "kes", "dur") ya da hemen önünde isim varsa ("... Alice yeter").
+# Uzun bir cümlenin sonunda tek başına susturmaz: "pastayı ikiye kes" ya da "bu kadar yeter mi" komut değil.
+_HUSH_WEAK = {("yeter",), ("kes",), ("dur",), ("konuşma",), ("uyu",), ("bu", "kadar"), ("o", "kadar"),
+              ("teşekkürler",), ("teşekkür", "ederim"), ("sağ", "ol"), ("sağol",), ("eyvallah",), ("görüşürüz",),
+              ("iyi", "geceler"), ("kes", "artık"), ("bırak",)}
 _HUSH_FILLERS = {"tamam", "lütfen", "artık", "bi", "bir", "biraz", "hadi", "şimdi", "ya", "lan", "ok", "okey", "bakayım",
-                 "bakim", "bakım", "oke", "ama"}
+                 "bakim", "bakım", "oke", "ama", "be", "dedim", "diyorum", "sana", "yahu", "canım", "aşkım", "kızım",
+                 "bebeğim", "artik", "hemen", "hele", "bakalım", "şu", "an", "biraz", "mısın", "misin", "musun",
+                 "müsün", "mi", "mı", "mu", "mü", "misiniz", "mısınız", "istiyorum", "rica", "ederim", "et",
+                 "edebilir", "olur"}
+
+
+_QUESTION = {"mi", "mı", "mu", "mü", "misin", "mısın", "musun", "müsün", "misiniz", "mısınız"}
+
+
+def _tr_lower(s: str) -> str:
+    """Türkçe küçük harf: 'SESSİZ' -> 'sessiz'. str.lower 'İ'yi 'i̇' (noktalı birleşik harf) yapıp eşleşmeyi bozuyor."""
+    return s.replace("I", "ı").replace("İ", "i").lower()
+
+
+def _hush_parse(text: str) -> tuple[str | None, bool]:
+    """(tür, isim var mı). tür: "strong" | "weak" | None. Bütün sözcükler susturma parçası olmalı."""
+    words = re.findall(r"\w+", _tr_lower(text))
+    named = False
+    toks = []
+    for w in words:
+        if _name_like(w, False) or w.translate(_TR) == "ali":  # Whisper "Alice"i sık sık "Ali" diye yazıyor
+            named = True
+            continue
+        if w.translate(_TR) in _HEYS or w in _FILLERS:
+            continue
+        toks.append(w)
+    # "teşekkür ederim" ve "susar mısın" gibi: dolgu listesindeki sözcük ifadenin parçasıysa önce ifadeye bak.
+    kinds: list[str] = []
+    i = 0
+    while i < len(toks):
+        for n in (3, 2, 1):
+            seg = tuple(toks[i:i + n])
+            if len(seg) < n:
+                continue
+            if (n == 1 and _HUSH_RX.match(seg[0])) or seg in _HUSH_PHRASES:
+                kinds.append("strong")
+                i += n
+                break
+            if seg in _HUSH_WEAK:
+                kinds.append("weak")
+                i += n
+                break
+        else:
+            if toks[i] in _HUSH_FILLERS:
+                i += 1
+                continue
+            return None, named
+    if not kinds:
+        return None, named
+    if "strong" in kinds:
+        return "strong", named
+    # Soru eki sadece güçlü sözcükle susturmadır: "susar mısın" evet, "bu kadar yeter mi?" bir soru.
+    return (None if any(w in _QUESTION for w in toks) else "weak"), named
 
 
 def is_hush(text: str) -> bool:
-    """"Alice sus", "sus artık", "tamam Alice, sessiz ol" gibi susturma komutu mu? Sadece cümlenin tamamı susturmaysa:
-    "sus diye bağırdı" ya da "susam al" sayılmaz."""
-    words = [w for w in re.findall(r"\w+", text.lower())
-             if w not in _HUSH_FILLERS and w not in _FILLERS and w.translate(_TR) not in _HEYS and not _name_like(w, False)]
-    return bool(words) and " ".join(words) in HUSH
+    """"Alice sus", "sus be", "susar mısın", "yeter", "sesini kes", "şşt", "tamam Alice teşekkürler" gibi susturma ya da
+    konuşmayı bitirme cümlesi mi? Sadece cümlenin tamamı buysa: "sus diye bağırdı", "susam al" sayılmaz."""
+    kind, _named = _hush_parse(text)
+    return kind is not None
 
 
 def ends_with_hush(text: str, max_words: int = 6) -> bool:
-    """Canlı konuşmanın yazı dökümü parça parça gelir: son birkaç sözcük susturma komutu mu?"""
+    """Canlı konuşmanın yazı dökümü parça parça gelir: bu turun tamamı ya da son birkaç sözcüğü susturma mı?
+    Tamamı ise her tür sayılır; sadece sonu ise güçlü olan ("... sus") ya da isimle söylenen ("... Alice yeter")."""
     words = re.findall(r"\S+", text)
-    return any(is_hush(" ".join(words[-k:])) for k in range(1, min(max_words, len(words)) + 1))
+    if not words:
+        return False
+    if is_hush(text):
+        return True
+    for k in range(1, min(max_words, len(words) - 1) + 1):
+        kind, named = _hush_parse(" ".join(words[-k:]))
+        if kind == "strong" or (kind == "weak" and named):
+            return True
+    return False
 
 
 class WakeWord:
