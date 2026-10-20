@@ -10,6 +10,7 @@
   alice update [--check]     GitHub'daki son sürüme güncelle (main'e merge olanı çeker)
   alice connect [ad]         servis bağlantıları (Spotify, Steam, Discord, YouTube, kendi API'ların)
   alice feeds                bağlı servisleri izleyip yeni bir şey olunca haber veren akışlar
+  alice log [n]              ALICE'in senin adına gönderdikleri (mesaj, DM, e-posta) ve reddettiklerin
   alice shortcut             masaüstüne ve Başlat menüsüne ALICE kısayolu koy (Windows)
   alice core run|install|status|mode|stats   arka plan çekirdeği (izleme, kurallar, modlar, görevler)
   alice rules [add "cümle"]  uyarı kuralları ("GPU uzun süre ısınırsa söyle")
@@ -819,6 +820,15 @@ def main(argv: list[str] | None = None) -> int:
         for p in init_home(force="--force" in argv):
             console.print(f"[green]oluşturuldu:[/] {p}")
         console.print(f"Şimdi {alice_home() / '.env'} dosyasına API anahtarlarını yaz, sonra [bold]alice doctor[/].")
+        return 0
+    if argv and argv[0] == "log":
+        from alice import actionlog
+
+        rows = actionlog.recent(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 30)
+        for r in reversed(rows):
+            console.print(escape(actionlog.format_row(r)))
+        if not rows:
+            console.print("[dim]kayıt yok: ALICE kimseye bir şey göndermedi[/]")
         return 0
     if argv and argv[0] == "connect":
         from alice.connect.cli import connect_cmd

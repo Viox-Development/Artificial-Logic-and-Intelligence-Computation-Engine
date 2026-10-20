@@ -380,7 +380,10 @@ class AppState:
                   "held": len((fstate.get(f.name) or {}).get("held") or []),
                   "last": float((fstate.get(f.name) or {}).get("last") or 0),
                   "error": str((fstate.get(f.name) or {}).get("error") or "")} for f in feeds]
-        return {"connectors": rows, "feeds": frows, "errors": errors + feed_errors}
+        from alice import actionlog
+
+        sent = [{"text": actionlog.format_row(r), "outcome": r.get("outcome", "")} for r in actionlog.recent(10)]
+        return {"connectors": rows, "feeds": frows, "errors": errors + feed_errors, "actions": sent}
 
     def connect_auth(self, name: str) -> dict[str, Any]:
         """OAuth akışını arka planda başlat: tarayıcıda izin sayfası açılır, biten iş olay olarak duyurulur."""

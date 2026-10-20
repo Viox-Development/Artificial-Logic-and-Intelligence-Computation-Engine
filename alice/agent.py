@@ -19,7 +19,7 @@ from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
 from alice.providers.openai_compat import ChatResult, StreamCancelled
 from alice.providers.router import AllProvidersFailed, Router, estimate_tokens, strip_images
-from alice.tools.base import Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
+from alice.tools.base import SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
 
 class UI(Protocol):
@@ -567,6 +567,7 @@ class Agent:
             return ToolResult(f"geçersiz argüman: {type(e).__name__}: {e}. Parametre tiplerini düzeltip tekrar dene.",
                               is_error=True)
         if verdict == "deny":
+            self._log_outward(tool, args, summary, "blocked", "plan modu ya da gözetimsiz çalışma")
             res = ToolResult("Plan modundasın: bu araç değişiklik yapıyor ve şu an kapalı. Önce planını yaz; kullanıcı "
                              "onaylayıp modu değiştirince uygularsın.", is_error=True)
             self.ui.tool_start(call["id"], name, summary)
@@ -577,6 +578,7 @@ class Agent:
             if ans == "a":
                 self.permissions.always_allow.add(name)
             elif ans != "y":
+                self._log_outward(tool, args, summary, "rejected")
                 return ToolResult("Kullanıcı bu çağrıyı reddetti. Aynı şeyi tekrar deneme; başka yol bul ya da kullanıcıya sor.",
                                   is_error=True)
         return tool, args, summary
@@ -584,8 +586,21 @@ class Agent:
     def _execute(self, call: dict[str, Any], tool: Tool, args: dict[str, Any], summary: str) -> ToolResult:
         self.ui.tool_start(call["id"], tool.name, summary)
         result = self._run_tool(tool, args)
+        self._log_outward(tool, args, summary, "failed" if result.is_error else "sent", result.text)
         self.ui.tool_end(call["id"], tool.name, result)
         return result
+
+    @staticmethod
+    def _log_outward(tool: Tool, args: dict[str, Any], summary: str, outcome: str, detail: str = "") -> None:
+        """Başkasına giden eylemi (send riski) eylem kaydına yaz: gönderilen, reddedilen, engellenen hepsi."""
+        try:
+            if tool.risk_for(args) != SEND:
+                return
+        except Exception:  # noqa: BLE001 - risk hesaplanamadıysa kayıt yüzünden tur bozulmasın
+            return
+        from alice import actionlog
+
+        actionlog.log(tool.name, summary, outcome, args, detail)
 
     def _run_tool(self, tool: Tool, args: dict[str, Any]) -> ToolResult:
         # Araçlar bu thread'de çalışır (Playwright ve UI Automation nesneleri thread'e bağlı). Durdurulunca

@@ -583,6 +583,10 @@ function connectPane(pane, data) {
     row.append(l, el("span", "r" + (f.error ? "" : " ok"), st));
     pane.appendChild(row);
   }
+  pane.appendChild(el("div", "sec", "Senin adına gönderilenler"));
+  pane.appendChild(el("p", "", "Başkasına giden her mesaj, reddettiklerin dahil (terminalde: alice log)."));
+  if (!(d.actions || []).length) pane.appendChild(el("div", "list-row", "Henüz bir şey gönderilmedi."));
+  for (const a of d.actions || []) pane.appendChild(el("div", "list-row" + (a.outcome === "sent" ? "" : " warn"), a.text));
 }
 
 const SETTINGS_TABS = [

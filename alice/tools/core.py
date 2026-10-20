@@ -416,4 +416,24 @@ def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[st
             f"ilk tur sessizdir (mevcut öğeler görüldü sayılır).{hazır} Denemek için: feeds action=test name={name}")
 
 
-TOOLS = [Metrics(), Rules(), Schedule(), Feeds()]
+class ActionLog(Tool):
+    name = "action_log"
+    parallel_safe = True
+    description = ("ALICE'in kullanıcı adına başkasına gönderdiği şeylerin kaydı (Discord/WhatsApp mesajı, DM, "
+                   "e-posta): gönderilen, kullanıcının reddettiği, plan modunda engellenen ve başarısız olan. "
+                   "'Bugün kime ne yazdın?', 'benim adıma ne gönderdin?' sorularında kullan.")
+    parameters = obj({
+        "limit": {"type": "integer", "description": "En fazla kaç kayıt. Varsayılan 20."},
+        "hours": {"type": "number", "description": "Sadece son bu kadar saat. Boş: hepsi."},
+    })
+    risk = READ
+
+    def run(self, ctx: ToolContext, limit: int = 20, hours: float | None = None) -> ToolResult:
+        from alice import actionlog
+
+        since = time.time() - float(hours) * 3600 if hours else 0.0
+        rows = actionlog.recent(max(1, min(int(limit), 200)), since)
+        return ToolResult("\n".join(actionlog.format_row(r) for r in rows) or "kayıt yok: kimseye bir şey gönderilmedi")
+
+
+TOOLS = [Metrics(), Rules(), Schedule(), Feeds(), ActionLog()]
