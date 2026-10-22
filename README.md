@@ -719,6 +719,11 @@ depth = 3
 
 ## Karşılama, Gmail ve güvenlik
 
+Hepsinin durumu tek yerde: `alice doctor` (Google araması, anlam araması, hafıza, projeler, Takvim, Gmail hesapları,
+sandbox, karşılama, kurallar/hook/skill, güncelleme sağlığı; eksik olan için ne yapılacağı yazar) ve uygulamada
+**Ayarlar > Asistan**: aynı durum listesi, sandbox/koruma/karşılama/özet/e-posta bildirimi ayarları, "bu projede hep
+izin ver" ile eklenen kuralları silme, Gmail hesabı ekleme/çıkış, skill ve alt ajan listesi.
+
 **Bilgisayar başına dönünce.** Çekirdek klavye/fare boşta kalma süresine bakar (Windows'ta GetLastInputInfo,
 Linux'ta xprintidle, macOS'ta ioreg). 90 dakikadan uzun ayrı kalıp döndüğünde söyleyecek bir şey varsa kısa, sesli bir
 brifing verir: günü gelen takip ("Matematik sınavın nasıl geçti?"), bugünün kalan takvimi, okunmamış önemli
@@ -733,6 +738,12 @@ away_minutes = 90
 min_gap_hours = 3
 quiet_hours = "00:30-07:00"
 ```
+
+**Google kurulumu (Takvim + Gmail).** `alice setup google` adım adım sihirbazdır: Google Cloud'da proje, Takvim ve
+Gmail API'leri, izin ekranı, test kullanıcısı ve masaüstü istemcisi sayfalarını sırayla tarayıcıda açar, her adımda
+ne tıklanacağını söyler. İndirdiğin `client_secret_*.json` dosyasını İndirilenler'de kendisi bulur ve
+`~/.alice/.env`'e yazar; sonra Takvim'i ve istediğin kadar Gmail hesabını bağlatır. Yarıda bırakırsan tekrar
+çalıştır: istemci yazılıysa Cloud adımları atlanır.
 
 **Gmail, birden fazla hesap.** Takvimle aynı Google OAuth istemcisi kullanılır (Cloud projesinde Gmail API'yi de aç):
 

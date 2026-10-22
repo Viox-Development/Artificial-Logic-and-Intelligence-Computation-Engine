@@ -146,6 +146,23 @@ def persist_allow(cwd: Path, rule: str) -> Path:
     return path
 
 
+def remove_project_rule(cwd: Path, kind: str, rule: str) -> bool:
+    """Projedeki .alice/permissions.toml'dan bir kuralı sil (uygulamadaki Asistan sekmesi)."""
+    rules = dict(project_rules(cwd))
+    if kind not in ("allow", "ask", "deny") or rule not in (rules.get(kind) or []):
+        return False
+    rules[kind] = [r for r in rules[kind] if r != rule]
+    path = Path(cwd) / ".alice" / "permissions.toml"
+    import json
+
+    arr = {k: "[" + ", ".join(json.dumps(i, ensure_ascii=False) for i in rules.get(k, [])) + "]"
+           for k in ("allow", "ask", "deny")}
+    path.write_text("# ALICE izin kuralları (bu proje). Biçim: alice/permissions.py\n[permissions]\n"
+                    f"allow = {arr['allow']}\nask = {arr['ask']}\ndeny = {arr['deny']}\n", encoding="utf-8")
+    _project_cache.pop(str(path), None)
+    return True
+
+
 class Permissions:
     def __init__(self, mode: str = "auto", rules: dict[str, list[str]] | None = None):
         if mode not in MODES:

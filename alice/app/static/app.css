@@ -395,6 +395,8 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 .perm pre.cmd::before { content: "$ "; color: #d97757; }
 .perm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .perm-actions .btn { display: inline-flex; align-items: center; gap: 8px; }
+.chk { width: 20px; text-align: center; font-weight: 700; }
+.chk.ok { color: #3c9a5f; } .chk.warn { color: #c88a1e; } .chk.fail { color: #c94a3c; } .chk.off { opacity: .45; }
 .choice-other { flex: 1 1 180px; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line, #8884);
   background: transparent; color: inherit; font: inherit; }
 .perm-actions kbd { font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid currentColor; opacity: .55; line-height: 15px; }

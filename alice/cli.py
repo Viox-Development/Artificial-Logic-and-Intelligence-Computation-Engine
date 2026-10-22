@@ -3,6 +3,7 @@
   alice                      etkileşimli oturum (REPL)
   alice -p "görev"           tek seferlik çalıştır, sonucu yaz, çık (--output-format json|stream-json: betikler için)
   alice eval [--add|--from-log N]   gerçek konuşmalardan test seti: düzeldi mi bozuldu mu
+  alice setup google         Google Takvim + Gmail kurulum sihirbazı (adım adım, sayfaları kendisi açar)
   alice init                 ~/.alice altında config ve .env oluştur
   alice doctor               anahtarları, modelleri ve opsiyonel bağımlılıkları test et
   alice models [--refresh] [--write]  ücretsiz modelleri canlı ölç/sırala; --write rolleri auto yapar
@@ -614,10 +615,16 @@ def doctor(cfg: Config) -> int:
     for chain in cfg.roles.values():
         for ref in chain:
             p = ref.split(":", 1)[0]
-            refs_by_provider.setdefault(p, ref)
+            if p in router.providers_cfg:  # "auto" bir sağlayıcı değil
+                refs_by_provider.setdefault(p, ref)
+    from alice.doctor import run_all, test_ref
+
     for name, pc in router.providers_cfg.items():
         key = "gerekmez" if not pc.needs_key else ("var" if pc.api_key else f"[dim]{pc.api_key_env} yok[/]")
-        ref = refs_by_provider.get(name, "")
+        ref = test_ref(router, name, pc, refs_by_provider.get(name, "")) if pc.enabled else ""
+        if not getattr(pc, "auto", True) and name not in refs_by_provider:
+            t.add_row(name, key, "", "[dim]krediyle çalışır, test edilmedi (elle seç)[/]")
+            continue
         if not pc.enabled or not ref:
             t.add_row(name, key, ref, "[dim]atlandı[/]")
             continue
@@ -642,6 +649,12 @@ def doctor(cfg: Config) -> int:
                       f"[dim]{d.latency * 1000:.0f} ms, {d.engine}[/]")
     except DeciderError as e:
         console.print(f"  [red]karar motoru çalışmıyor: {e}[/]")
+
+    marks = {"ok": "[green]✓[/]", "warn": "[yellow]![/]", "off": "[dim]–[/]", "fail": "[red]✗[/]"}
+    console.print("[bold]Özellikler:[/]")
+    for c in run_all(cfg, Path.cwd()):
+        console.print(f"  {marks.get(c.status, '?')} {c.name:<24} {escape(c.detail)}"
+                      + (f"  [dim]→ {escape(c.fix)}[/]" if c.fix and c.status != "ok" else ""))
 
     console.print("[bold]Opsiyonel bileşenler:[/]")
     for mod, why in (("mss", "ekran görüntüsü"), ("pyautogui", "fare/klavye"), ("pyperclip", "pano, Türkçe yazma"),
@@ -905,6 +918,10 @@ def main(argv: list[str] | None = None) -> int:
         if not rows:
             console.print("[dim]kayıt yok: ALICE kimseye bir şey göndermedi[/]")
         return 0
+    if argv and argv[0] == "setup":
+        from alice.setup_google import setup_cmd
+
+        return setup_cmd(argv[1:])
     if argv and argv[0] == "eval":
         from alice.evals import eval_cmd
 
