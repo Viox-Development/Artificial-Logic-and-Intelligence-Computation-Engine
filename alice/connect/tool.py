@@ -16,6 +16,7 @@ class ConnectTool(Tool):
 
     parallel_safe = True
     risk = NETWORK
+    untrusted = True  # servisten gelen mesaj/başlık/açıklama başkasının yazdığı metin olabilir
 
     def __init__(self, m: Manifest):
         self.m = m

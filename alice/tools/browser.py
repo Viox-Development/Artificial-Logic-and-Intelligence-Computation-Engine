@@ -387,6 +387,7 @@ def format_snapshot(page_title: str, url: str, items: list[dict[str, Any]]) -> s
 
 class Browser(Tool):
     name = "browser"
+    untrusted = True
     description = (
         "Kullanıcının kendi açık tarayıcısında (Opera vb., kendi girişleriyle) web sayfalarıyla çalışır: siteye "
         "gitme, sayfayı okuma, tıklama, form doldurma. Her sitede aynı şekilde çalışır.\n"

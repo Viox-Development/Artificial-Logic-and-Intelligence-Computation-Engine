@@ -808,11 +808,20 @@ def app_cmd(argv: list[str]) -> int:
     # (bu çağrı o durumda geri dönmez). mode="notify" ise sadece bilgi döner, arayüzde duyurulur.
     from alice import updater
 
+    if updater.boot_check() == "rolled":  # yeni sürüm üst üste çöktü: önceki sürüme dönüldü, onunla aç
+        console.print("[yellow]yeni sürüm açılamadı, önceki sürüme dönüldü; yeniden başlatılıyor[/]")
+        updater.restart(env={"ALICE_RESTARTED": "1"})
     pending = updater.startup_update(cfg, emit=lambda s: console.print(f"[dim]güncelleme: {s}[/]"))
     updater.mark_running()  # bundan sonra diske yeni kod gelirse "yeniden başlat" deriz
+    updater.watch_health()  # 90 sn ayakta kalırsak yeni sürüm sağlam
     updater.mark_app()      # çekirdek, uygulama açıkken kendi başına çekmesin
     state = AppState(cfg, cwd, a.mode or cfg.agent.get("permission_mode", "auto"))
     state.watch_updates(pending)
+    rb = updater.consume_rollback("app")
+    if rb:
+        state.ui.info(f"Son güncelleme ({str(rb.get('from'))[:7]}) açılamadığı için önceki sürüme "
+                      f"({str(rb.get('to'))[:7]}) dönüldü. Sebep: {rb.get('reason')}. Düzeltme gelince otomatik "
+                      "güncellenecek.")
     ann = updater.consume_announcement("app")
     if ann and ann.get("changes"):
         lines = "\n".join(f"- {c}" for c in ann["changes"][:8])

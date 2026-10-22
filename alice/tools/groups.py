@@ -60,6 +60,8 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
     "projects": ({"projects"}, "kullanıcının projeleri (repo, Unity, Python...) ve ayrıntıları",
                  r"proje|repo\b|depo(su|m|yu)?\b|unity|godot|kodum|oyunum|oyunumu|uygulamam|scriptim|programım|"
                  r"son commit|nerede duruyor|hangi klasör"),
+    "mail": ({"gmail"}, "Gmail (birden fazla hesap): e-posta ara, oku, taslak, gönder",
+             r"e-?posta|\bmail|gmail|gelen kutu|inbox|okunmamış|taslak|cevap yaz|yanıtla"),
     "home": ({"pc", "wifi", "android", "tv"}, "PC gücü/parlaklık, Wi-Fi ve ev ağı, TV, Android telefon",
              r"kilitle|uyut|uyku|hazırda|yeniden başlat|restart|parlaklı|monitör|ekranı kapat|güç plan|wi-?fi|"
              r"kablosuz|internet|modem|\bağ(a|da|ı|daki)?\b|ssid|\btv\b|televizyon|android|telefon|bildirim|"

@@ -58,6 +58,9 @@ class Tool:
     risk: str = READ
     # True: yan etkisi olmayan, thread'e bağlı nesne kullanmayan araç; art arda gelirse paralel çalışır.
     parallel_safe: bool = False
+    # True: sonucu dışarıdan gelen içerik (web sayfası, mesaj, e-posta, MCP). Modele "güvenilmeyen veri" diye
+    # işaretlenmiş gider; o turda komut çalıştırma ve dışarı mesaj göndermek auto modda da onaya bağlanır.
+    untrusted: bool = False
 
     def risk_for(self, args: dict[str, Any]) -> str:
         return self.risk

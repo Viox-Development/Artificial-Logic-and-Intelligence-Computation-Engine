@@ -41,6 +41,33 @@ description = "Arama ifadesi"
 '''
 
 
+def _gmail(a) -> int:
+    """alice connect gmail [--account ad] [--logout]: birden fazla Gmail hesabı."""
+    from alice.connect import store
+    from alice.tools import gmail
+
+    if not a.account:
+        accs = gmail.accounts()
+        if not accs:
+            console.print("bağlı Gmail hesabı yok. Bağlamak için: [bold]alice connect gmail --account kisisel[/] "
+                          "(ikinci hesap için başka bir ad, ör. --account okul)")
+            return 1
+        for acc in accs:
+            console.print(f"  [green]●[/] {acc}  [dim]{store.get(gmail.PREFIX + acc).get('email', '')}[/]")
+        return 0
+    if a.logout:
+        ok = store.forget(gmail.PREFIX + a.account)
+        console.print("[green]hesap bağlantısı silindi[/]" if ok else "[dim]bu adla bağlı hesap yoktu[/]")
+        return 0
+    try:
+        email = gmail.connect(a.account, emit=lambda s: console.print(f"[dim]{s}[/]"))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]bağlanamadı:[/] {e}")
+        return 1
+    console.print(f"[green]bağlandı:[/] {a.account}" + (f" ({email})" if email else ""))
+    return 0
+
+
 def connect_cmd(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="alice connect", description="Servis bağlantıları (API'lar)")
     ap.add_argument("name", nargs="?", help="bağlantı adı (boş: hepsini listele)")
@@ -48,7 +75,10 @@ def connect_cmd(argv: list[str]) -> int:
     ap.add_argument("--test", metavar="EYLEM", help="bir eylemi dene, ör. --test library")
     ap.add_argument("--arg", action="append", default=[], metavar="AD=DEĞER", help="--test için parametre")
     ap.add_argument("--new", action="store_true", help="bu adla boş bir tanım dosyası oluştur")
+    ap.add_argument("--account", help="gmail: hesap adı (birden fazla hesap için, ör. kisisel, okul)")
     a = ap.parse_args(argv)
+    if a.name == "gmail":
+        return _gmail(a)
 
     cfg = load_config()
     manifests, errors = mf.discover(cfg)

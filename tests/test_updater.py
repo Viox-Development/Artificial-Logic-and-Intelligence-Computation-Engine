@@ -247,3 +247,61 @@ def test_acilista_arka_arkaya_ag_turu_harcanmaz(repos, monkeypatch, offline):
     updater.write_state(last_check=0)
     monkeypatch.setattr(updater, "check", real_check)
     assert updater.startup_update(cfg) is not None
+
+
+# ------------------------------------------------------------------------------------------- geri alma
+def test_smoke_test_catches_broken_code(tmp_path, monkeypatch):
+    (tmp_path / "kirik_mod.py").write_text("def (:\n", encoding="utf-8")
+    (tmp_path / "saglam_mod.py").write_text("X = 1\n", encoding="utf-8")
+    monkeypatch.setattr(updater, "SMOKE_MODULES", ("saglam_mod",))
+    assert updater.smoke_test(tmp_path) == ""
+    monkeypatch.setattr(updater, "SMOKE_MODULES", ("saglam_mod", "kirik_mod"))
+    assert "SyntaxError" in updater.smoke_test(tmp_path)
+
+
+def test_broken_update_rolls_back_and_is_skipped(repos, monkeypatch, offline):
+    clone, origin = repos
+    point_at(monkeypatch, clone)
+    old = git(clone, "rev-parse", "HEAD")
+    bad = push(origin, "kırık sürüm", "kirik_mod.py")
+    (origin / "kirik_mod.py").write_text("def (:\n", encoding="utf-8")
+    git(origin, "commit", "-qam", "gerçekten kırık")
+    bad = git(origin, "rev-parse", "HEAD")
+    monkeypatch.setattr(updater, "SMOKE_MODULES", ("kirik_mod",))
+    cfg = make_config({"brain": ["a:m"]})
+    ok, msg = updater.apply_update(updater.check(cfg), cfg)
+    assert not ok and "önceki sürüme dönüldü" in msg
+    assert git(clone, "rev-parse", "HEAD") == old
+    info = updater.check(cfg)
+    assert info.bad and "geri alındı" in info.blocked and not info.can_auto
+    rb = updater.consume_rollback("app")
+    assert rb["from"] == bad and rb["to"] == old and updater.consume_rollback("app") is None
+
+
+def test_crashing_boots_roll_back(repos, monkeypatch, offline):
+    clone, origin = repos
+    point_at(monkeypatch, clone)
+    old = git(clone, "rev-parse", "HEAD")
+    new = push(origin, "çalışıyor gibi ama açılınca çöküyor")
+    monkeypatch.setattr(updater, "SMOKE_MODULES", ())
+    cfg = make_config({"brain": ["a:m"]})
+    ok, _ = updater.apply_update(updater.check(cfg), cfg)
+    assert ok and git(clone, "rev-parse", "HEAD") == new
+    assert updater.boot_check() == "" and updater.boot_check() == ""  # iki açılış: sayılıyor
+    assert updater.boot_check() == "rolled"  # ikisi de sağlam sayılmadan bitti: geri dön
+    assert git(clone, "rev-parse", "HEAD") == old
+    assert new in updater.read_state()["bad"]
+
+
+def test_healthy_boot_clears_pending(repos, monkeypatch, offline):
+    clone, origin = repos
+    point_at(monkeypatch, clone)
+    push(origin, "sağlam")
+    monkeypatch.setattr(updater, "SMOKE_MODULES", ())
+    cfg = make_config({"brain": ["a:m"]})
+    updater.apply_update(updater.check(cfg), cfg)
+    updater.boot_check()
+    updater.boot_healthy()
+    assert not updater.read_state().get("pending_health")
+    for _ in range(4):
+        assert updater.boot_check() == ""  # sağlam sürüm bir daha sorgulanmaz

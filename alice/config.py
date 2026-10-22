@@ -38,6 +38,9 @@ permission_mode = "auto"
 # Gönderilen mesaj geri alınamaz; false yapmadan önce iki kez düşün.
 confirm_outward = true
 max_steps = 80
+# Prompt injection koruması: web/mesaj/e-posta gibi dış içerik okunan turda komut çalıştırma ve mesaj gönderme auto
+# modda da onaya bağlanır, içerik modele "güvenilmeyen veri" diye işaretli gider. Kapatmak önerilmez.
+taint_guard = true
 # İş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak) en fazla kaç kez devam hatırlatılsın. 0 = kapalı.
 finish_nudges = 2
 # web_search önce Google'da arasın (Gemini grounding, GEMINI_API_KEY): kaynaklı, güncel özet. Kota dolarsa ya da
@@ -98,6 +101,19 @@ task_permission_mode = "auto"
 programs = ["dcs.exe", "dcs_server.exe", "aces.exe"]
 [core.modes.dev]
 programs = ["unity.exe", "unity hub.exe", "code.exe", "devenv.exe", "rider64.exe"]
+
+# Gmail (birden fazla hesap): alice connect gmail --account <ad>. Yeni önemli e-posta gelince bildirim (çekirdekte).
+[gmail]
+notify = true
+notify_query = "is:unread is:important newer_than:1d"
+
+# Bilgisayar başına dönünce karşılama (alice/presence.py): uzun yokluktan sonra söyleyecek bir şey varsa (takip,
+# bugünün takvimi, önemli e-posta) kısa sesli brifing; yoksa sadece günün ilk dönüşünde selam. Çekirdek çalışırken.
+[greeting]
+enabled = true
+away_minutes = 90
+min_gap_hours = 3
+quiet_hours = "00:30-07:00"
 
 # Kalıcı izin kuralları (Claude Code'daki allow/deny gibi). Projeye özel kurallar: <proje>/.alice/permissions.toml.
 # Biçim "araç" ya da "araç(desen)"; desen aracın asıl argümanına bakar (komut, yol, url...). deny her modda geçerli.

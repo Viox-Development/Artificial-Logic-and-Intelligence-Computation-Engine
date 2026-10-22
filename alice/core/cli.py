@@ -41,11 +41,16 @@ def core_cmd(argv: list[str]) -> int:
         router = Router(cfg)
         from alice import updater
 
+        if updater.boot_check() == "rolled":  # yeni sürüm üst üste çöktü: önceki sürüme dönüldü
+            service.release_lock()
+            updater.restart(env={"ALICE_RESTARTED": "1"})
         updater.mark_running()  # diskteki kod bundan yenileşirse boşta kalınca yeniden başlarız
+        updater.watch_health()
         core = service.Core(cfg, decider=Decider.from_config(cfg, router), run_agent=service.make_agent_runner(cfg))
         core.prime()  # DCS açık mı: ses modülü ekran kartını kullanıp kullanmayacağını buna göre seçer
         announce_update(core, updater)
         voice = _start_voice(cfg, core) if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv else None
+        core.greeter.voice = voice  # karşılamadan sonra "Hey Alice" demeden cevap verilebilsin
         sims = _start_sims(cfg, core) if "--once" not in argv else None
         phone = _start_phone(cfg, core) if cfg.data.get("phone", {}).get("enabled") and "--once" not in argv else None
         quick = _start_quick(cfg) if cfg.data.get("quick", {}).get("enabled", True) and "--once" not in argv else None
@@ -253,6 +258,13 @@ def announce_update(core, updater) -> None:
     """Az önce güncellendiysek bir kez söyle. Uygulama açıksa sohbete o yazar, çekirdek susar."""
     if updater.app_running():
         return
+    from alice.core.notify import Notification
+
+    rb = updater.consume_rollback("core")
+    if rb:
+        core.notifier.send(Notification("ALICE güncellemesi geri alındı",
+                                        f"Yeni sürüm açılamadı, önceki sürüme dönüldü ({rb.get('reason')}).",
+                                        "warn", "core", kind="info"))
     ann = updater.consume_announcement("core")
     if not ann:
         return

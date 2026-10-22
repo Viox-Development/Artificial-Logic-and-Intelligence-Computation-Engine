@@ -158,6 +158,8 @@ def _safe(name: str) -> str:
 
 
 class MCPTool(Tool):
+    untrusted = True  # sunucunun döndürdüğü içerik (issue, sayfa, dosya) dışarıdan gelir
+
     def __init__(self, server: MCPServer, spec: dict[str, Any]):
         self.server = server
         self.remote_name = spec["name"]

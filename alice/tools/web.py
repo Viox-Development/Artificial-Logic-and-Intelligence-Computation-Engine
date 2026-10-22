@@ -146,6 +146,7 @@ def _extract(ctx: ToolContext, url: str, text: str, prompt: str) -> str | None:
 
 class WebFetch(Tool):
     name = "web_fetch"
+    untrusted = True
     parallel_safe = True
     description = ("Bir URL'yi arka planda indirir ve okunabilir metin döndürür: HTML asıl içeriğe çevrilir, JSON "
                    "düzenlenir, PDF metne çevrilir (ekranda bir şey açmaz).\n"
@@ -275,6 +276,7 @@ def _domain_ok(url: str, allowed: list[str], blocked: list[str]) -> bool:
 
 class WebSearch(Tool):
     name = "web_search"
+    untrusted = True
     parallel_safe = True
     description = ("İnternette arar ve sonuçların başlık, URL ve özetini döndürür; ekranda bir şey açmaz. "
                    "Güncel bilgi, haber, fiyat ya da bilmediğin bir şey sorulunca kullan; ayrıntı için sonra web_fetch "
@@ -408,6 +410,7 @@ def _json_arg(name: str, v: Any) -> Any:
 
 class HttpRequest(Tool):
     name = "http_request"
+    untrusted = True
     description = ("Herhangi bir HTTP isteği yapar (GET/POST/PUT/PATCH/DELETE): REST API çağırma, webhook, JSON gönderme, "
                    "dosya indirme. Sadece bir sayfayı okumak için web_fetch daha iyi.\n"
                    "- Gizli anahtarları yazma; başlıkta '${env:AD}' kullan, ALICE ortam değişkeninden doldurur.\n"

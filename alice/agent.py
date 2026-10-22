@@ -333,6 +333,10 @@ class Agent:
             extra = [e for e in extra if e]
             if extra:
                 content_text += "\n\n[hook bağlamı]\n" + "\n".join(extra)
+        if not self.is_child:
+            from alice import guard
+
+            guard.clear(self.ctx)  # kullanıcının yeni mesajı: önceki turda okunan dış içerik bu turu kısıtlamaz
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
         content: Any = content_text
@@ -608,11 +612,14 @@ class Agent:
                     for idx, (tool, _, _) in batch:
                         results[idx] = futures[idx].result()
                         self.ui.tool_end(calls[idx]["id"], tool.name, results[idx])
+                        results[idx] = self._fence(tool, results[idx])
             i = j
         return [r if r is not None else ToolResult("çalıştırılmadı", is_error=True) for r in results]
 
     def _parallel_ok(self, prep: tuple[Tool, dict[str, Any], str]) -> bool:
         tool, args, _ = prep
+        if self.hooks.has("PreToolUse") or self.hooks.has("PostToolUse"):
+            return False  # hook'lar her çağrıda sırayla çalışsın (paralel yol _execute'u atlıyor)
         try:
             return bool(getattr(tool, "parallel_safe", False)) and self.permissions.decide(tool, args, self.ctx) == "allow"
         except Exception:  # noqa: BLE001 - bozuk argüman: sıralı yolda hata olarak modele dönecek
@@ -657,7 +664,11 @@ class Agent:
             self.ui.tool_end(call["id"], name, res)
             return res
         if verdict == "ask":
-            ans = self.ui.ask_permission(name, summary, risk)
+            from alice import guard
+
+            shown = f"[dış içerik okunduktan sonra: {guard.tainted(self.ctx)}] {summary}" if guard.tainted(self.ctx) \
+                else summary
+            ans = self.ui.ask_permission(name, shown, risk)
             if ans == "a":
                 self.permissions.always_allow.add(name)
             elif ans == "p" and risk in (DANGER, SEND):
@@ -701,7 +712,20 @@ class Agent:
                 result = replace(result, text=result.text + "\n\n[hook geri bildirimi]\n" + back)
         self._log_outward(tool, args, summary, "failed" if result.is_error else "sent", result.text)
         self.ui.tool_end(call["id"], tool.name, result)
-        return result
+        return self._fence(tool, result)
+
+    def _fence(self, tool: Tool, result: ToolResult) -> ToolResult:
+        """Dış içerik getiren aracın sonucunu "güvenilmeyen veri" diye işaretle ve turu kirlenmiş say (bkz. guard)."""
+        if not getattr(tool, "untrusted", False) or result.is_error:
+            return result
+        from dataclasses import replace
+
+        from alice import guard
+
+        if not guard.enabled(self.ctx):
+            return result
+        guard.mark(self.ctx, tool.name)
+        return replace(result, text=guard.wrap(tool.name, result.text))
 
     @staticmethod
     def _log_outward(tool: Tool, args: dict[str, Any], summary: str, outcome: str, detail: str = "") -> None:

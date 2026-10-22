@@ -163,6 +163,20 @@ class Permissions:
         proj = project_rules(getattr(ctx, "cwd", None))
         return {k: [str(r) for r in base.get(k, []) or []] + proj.get(k, []) for k in ("allow", "ask", "deny")}
 
+    @staticmethod
+    def _risky_after_untrusted(tool: Tool, args: dict[str, Any], risk: str, ctx: ToolContext) -> bool:
+        """Dış içerik okunmuş bir turda onaya bağlanan işler: mesaj göndermek, komut çalıştırmak, çalışma klasörü
+        dışına yazmak."""
+        if risk == SEND or tool.name in ("run_command", "process_kill") or "command" in args:
+            return True
+        if risk == WRITE and args.get("path"):
+            try:
+                target = ctx.resolve(str(args["path"]))
+                return not str(target).startswith(str(Path(ctx.cwd).resolve()))
+            except (OSError, ValueError, AttributeError):
+                return True
+        return False
+
     def matching_rule(self, tool: Tool, args: dict[str, Any], ctx: ToolContext, kind: str) -> str | None:
         for rule in self.rules_for(ctx).get(kind, []):
             try:
@@ -195,6 +209,10 @@ class Permissions:
         # auto
         if risk == DANGER:
             return "ask"
+        from alice import guard
+
+        if guard.tainted(ctx) and self._risky_after_untrusted(tool, args, risk, ctx):
+            return "ask"  # bu turda dış içerik okundu: talimat oradan gelmiş olabilir
         if risk == SEND and _confirm_outward(ctx):
             return "ask"
         if risk == WRITE and "path" in args:

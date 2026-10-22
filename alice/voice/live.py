@@ -919,8 +919,11 @@ class LiveSession:
             job["done"].set()
 
     def _new_turn(self) -> None:
-        """Kullanıcı yeni bir şey söyledi: araç sayacı ve tekrar kontrolü sıfırlanır."""
+        """Kullanıcı yeni bir şey söyledi: araç sayacı, tekrar kontrolü ve dış içerik kirlenmesi sıfırlanır."""
         self._turn = {"n": 0, "last": None}
+        from alice import guard
+
+        guard.clear(getattr(self.agent, "ctx", None))
 
     def _guard(self, fc: dict[str, Any]) -> str | None:
         """Aracı çalıştırmadan modele dönülecek cevap (None = çalıştır). İki durum:

@@ -26,6 +26,15 @@ Kurallar:
   "bilinmiyor" sayılır ve güncelleme yapılır.)
 * `pyproject.toml` değiştiyse güncellemeden sonra `pip install -e .` otomatik çalışır; hangi
   opsiyonel paketlerin kurulu olduğu tespit edilip aynı extra'larla kurulur.
+
+Geri alma (bozuk sürüm ALICE'i açılmaz bırakmasın):
+
+* Duman testi: çekilen sürümün ana modülleri ayrı bir Python sürecinde içe aktarılır. Hata verirse (sözdizimi,
+  eksik paket) çalışma ağacı hemen önceki commit'e döner, o commit "bozuk" diye işaretlenir.
+* Açılış sağlığı: güncellemeden sonraki açılışlar sayılır. Yeni sürüm HEALTHY_AFTER saniye ayakta kalınca sağlam
+  sayılır. Üst üste MAX_BAD_BOOTS açılış sağlam sayılmadan biterse (açılıp çöktü) önceki commit'e dönülür.
+* Bozuk işaretli commit otomatik olarak bir daha çekilmez (yeni bir commit gelince o denenir); `alice update
+  --force` yine de çeker. Geri alma bir kez bildirilir.
 """
 
 from __future__ import annotations
@@ -53,6 +62,10 @@ DEFAULTS: dict[str, Any] = {
     "startup_check": True,
 }
 # extra adı -> o extra kurulduysa içe aktarılabilen bir modül
+SMOKE_MODULES = ("alice.cli", "alice.agent", "alice.memory", "alice.app.server", "alice.core.service",
+                 "alice.voice.live", "alice.tools")
+HEALTHY_AFTER = 90.0  # saniye: yeni sürüm bu kadar ayakta kalınca sağlam sayılır
+MAX_BAD_BOOTS = 2     # bu kadar açılış sağlam sayılmadan biterse geri dön
 EXTRA_PROBE = {"computer": "mss", "browser": "playwright", "app": "webview", "core": "pystray",
                "voice": "sounddevice", "home": "websockets"}
 
@@ -184,6 +197,7 @@ class UpdateInfo:
     ci: str = "unknown"
     error: str = ""
     running: str = ""       # bu sürecin başladığı commit (mark_running çağrıldıysa)
+    bad: bool = False       # uzaktaki commit daha önce açılamadığı için geri alındı
 
     @property
     def available(self) -> bool:
@@ -204,6 +218,8 @@ class UpdateInfo:
         """Otomatik güncellemeyi durduran sebep (boşsa engel yok). Elle `--force` bunları geçer."""
         if not self.available:
             return ""
+        if self.bad:
+            return "bu sürüm daha önce açılamadı ve geri alındı; yeni bir düzeltme bekleniyor"
         if self.dirty:
             return "depoda kaydedilmemiş değişiklikler var"
         if self.ci == "red":
@@ -356,6 +372,7 @@ def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -
     branch = str(s.get("branch") or "main")
     info = UpdateInfo(repo=repo, branch=branch, local=local_commit(repo), running=_RUNNING or "")
     info.remote, info.error = remote_head(repo, branch, float(timeout or s.get("startup_timeout") or 12))
+    info.bad = bool(info.remote) and info.remote in (read_state().get("bad") or [])
     if info.available:
         info.dirty = is_dirty(repo)
         if details:
@@ -440,11 +457,90 @@ def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> t
     new = local_commit(repo)
     if _pip_needed(repo, info.local, new):
         install_deps(repo, say)
+    problem = smoke_test(repo)
+    if problem:
+        say(f"yeni sürüm açılamıyor, geri alınıyor: {problem}")
+        rolled = rollback(repo, info.local, new, f"duman testi: {problem}")
+        return False, ("yeni sürüm açılamadı, önceki sürüme dönüldü" if rolled else
+                       "yeni sürüm açılamadı ve geri alınamadı") + f": {problem}"
     changes = local_log(repo, info.local, new) or info.commits
     write_state(last_update=time.time(), local=new, remote=new, update_from=info.local, update_to=new,
-                changes=changes, announced_app=False, announced_core=False)
+                changes=changes, announced_app=False, announced_core=False, pending_health=new, bad_boots=0)
     n = len(changes)
     return True, f"güncellendi: {info.local[:7]} → {new[:7]}" + (f" ({n} commit)" if n else "")
+
+
+# --------------------------------------------------------------------------------- geri alma
+def smoke_test(repo: Path, timeout: float = 180.0) -> str:
+    """Yeni kodun ana modülleri temiz bir süreçte içe aktarılabiliyor mu? Sorun yoksa "", varsa kısa hata."""
+    code = "import importlib\nfor m in %r:\n    importlib.import_module(m)\n" % (SMOKE_MODULES,)
+    try:
+        r = subprocess.run([sys.executable, "-c", code], cwd=str(repo), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW,
+                           env={**os.environ, "PYTHONPATH": str(repo), "ALICE_NO_UPDATE": "1"})
+    except subprocess.TimeoutExpired:
+        return "içe aktarma zaman aşımına uğradı"
+    except OSError as e:
+        return f"python çalıştırılamadı: {e}"
+    if r.returncode == 0:
+        return ""
+    lines = [ln for ln in (r.stderr or r.stdout or "").strip().splitlines() if ln.strip()]
+    return (lines[-1] if lines else f"çıkış kodu {r.returncode}")[:300]
+
+
+def rollback(repo: Path, good: str, bad: str, reason: str) -> bool:
+    """Çalışma ağacını iyi commit'e döndür, kötüyü bir daha otomatik çekilmesin diye işaretle."""
+    code, _ = _git(["reset", "--hard", good], repo, timeout=60)
+    st = read_state()
+    bads = [b for b in (st.get("bad") or []) if b != bad][-20:] + [bad]
+    write_state(bad=bads, local=good, pending_health="", bad_boots=0,
+                rollback={"from": bad, "to": good, "reason": reason, "ts": time.time(), "ok": code == 0,
+                          "announced_app": False, "announced_core": False})
+    return code == 0
+
+
+def boot_check(repo: Path | None = None) -> str:
+    """Açılışta çağrılır. Güncellemeden sonra üst üste MAX_BAD_BOOTS açılış sağlam sayılmadan bittiyse önceki
+    commit'e döner ve "rolled" döndürür (çağıran yeniden başlatmalı); aksi halde ""."""
+    st = read_state()
+    pending = st.get("pending_health") or ""
+    repo = repo or repo_dir()
+    if not pending or repo is None or local_commit(repo) != pending:
+        return ""
+    boots = int(st.get("bad_boots") or 0)
+    if boots >= MAX_BAD_BOOTS and st.get("update_from"):
+        if is_dirty(repo):
+            return ""  # elle değişiklik yapılmış: dokunma
+        ok = rollback(repo, str(st["update_from"]), pending, f"{boots} açılış üst üste çöktü")
+        return "rolled" if ok else ""
+    write_state(bad_boots=boots + 1)
+    return ""
+
+
+def boot_healthy() -> None:
+    """Süreç HEALTHY_AFTER saniye ayakta kaldı: yeni sürüm sağlam."""
+    if read_state().get("pending_health"):
+        write_state(pending_health="", bad_boots=0)
+
+
+def watch_health(delay: float = HEALTHY_AFTER) -> None:
+    """Arka planda bekle, süreç hâlâ yaşıyorsa sağlam say (uygulama ve çekirdek açılışta çağırır)."""
+    import threading
+
+    if not read_state().get("pending_health"):
+        return
+    t = threading.Timer(delay, boot_healthy)
+    t.daemon = True
+    t.start()
+
+
+def consume_rollback(who: str) -> dict[str, Any] | None:
+    """Geri alma olduysa bu tüketici (app | core) için bir kez döndür."""
+    rb = read_state().get("rollback")
+    if not isinstance(rb, dict) or rb.get(f"announced_{who}") or time.time() - float(rb.get("ts") or 0) > 7 * 86400:
+        return None
+    write_state(rollback={**rb, f"announced_{who}": True})
+    return rb
 
 
 def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, str] | None = None) -> None:
