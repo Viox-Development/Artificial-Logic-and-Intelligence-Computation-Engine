@@ -334,3 +334,47 @@ def test_eval_check_and_run(workdir):
     o2 = evals.Outcome(o.case, False, "", [], ["boş cevap"], 0.1)
     cmp = evals.save_results([o2])
     assert cmp["before"] == 1 and cmp["broken"] == [o.case.label]
+
+
+# ----------------------------------------------------------------------------------------- kalıcı izin
+def test_suggest_rule_is_narrow(workdir):
+    from alice.permissions import suggest_rule
+
+    assert suggest_rule(TOOLS["run_command"], {"command": "git status -s"}) == "run_command(git status*)"
+    assert suggest_rule(TOOLS["run_command"], {"command": "pytest -q -x"}) == "run_command(pytest*)"
+    assert suggest_rule(TOOLS["write_file"], {"path": "src/app/x.py"}, workdir) == "write_file(src/app/*)"
+    assert suggest_rule(TOOLS["write_file"], {"path": "x.py"}, workdir) == "write_file(*)"
+
+
+def test_project_allow_persists_across_sessions(workdir):
+    class Ask:
+        def __init__(self, answer):
+            self.answer, self.asked, self.notes = answer, 0, []
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+        def ask_permission(self, name, summary, risk):
+            self.asked += 1
+            return self.answer
+
+        def info(self, msg):
+            self.notes.append(msg)
+
+    script = [tool_call("run_command", {"command": "echo selam"}), "tamam"]
+    agent, _, _ = make_agent(script, workdir, mode="ask")
+    agent.ui = ui = Ask("p")
+    agent.run_turn("çalıştır")
+    assert ui.asked == 1 and any("kalıcı izin eklendi: run_command(echo selam*)" in n for n in ui.notes)
+    assert "run_command(echo selam*)" in (workdir / ".alice" / "permissions.toml").read_text()
+    # Yeni oturum (yeni ajan): aynı türden komut artık sorulmaz.
+    agent2, _, _ = make_agent([tool_call("run_command", {"command": "echo selam dünya"}), "tamam"], workdir, mode="ask")
+    agent2.ui = ui2 = Ask("n")
+    agent2.run_turn("tekrar")
+    assert ui2.asked == 0
+    # Tehlikeli işe kalıcı izin yazılmaz, bu seferlik geçer.
+    agent3, _, _ = make_agent([tool_call("run_command", {"command": "rm -rf build"}), "tamam"], workdir, mode="ask")
+    agent3.ui = ui3 = Ask("p")
+    agent3.run_turn("sil")
+    assert "rm -rf" not in (workdir / ".alice" / "permissions.toml").read_text()
+    assert any("kalıcı izin verilmez" in n for n in ui3.notes)

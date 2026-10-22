@@ -992,7 +992,7 @@ document.addEventListener("keydown", (e) => {
   if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); togglePanel(); return; }
   if (mod && e.key.toLowerCase() === "o" && !e.shiftKey) { e.preventDefault(); toggleVerbose(); return; }
   if (mod && e.key === ",") { e.preventDefault(); showSettings("general"); return; }
-  // İzin kartı 1/2/3 ile cevaplanır; mesaj yazılırken rakamlar metne gider.
+  // İzin kartı 1-4 ile cevaplanır; mesaj yazılırken rakamlar metne gider.
   const typing = (document.activeElement === input && input.value) ||
     (document.activeElement && document.activeElement !== input && /INPUT|TEXTAREA/.test(document.activeElement.tagName));
   if (!mod && !e.altKey && !typing && /^[1-6]$/.test(e.key) && $("#overlay").hidden && $("#palette").hidden) {
@@ -1000,9 +1000,9 @@ document.addEventListener("keydown", (e) => {
     if (card && card._choice) {  // seçenekli soru: rakam o seçeneğe tıklar
       const btn = card._acts.querySelectorAll("button")[Number(e.key) - 1];
       if (btn) { e.preventDefault(); btn.click(); return; }
-    } else if (card && /^[123]$/.test(e.key)) {
-      e.preventDefault();
-      api("/api/permission", { id: card._id, answer: { 1: "y", 2: "a", 3: "n" }[e.key] });
+    } else if (card && /^[1234]$/.test(e.key)) {  // kartta görünen sırayla (kalıcı seçenek yoksa 3 = reddet)
+      const btn = card._acts.querySelectorAll("button")[Number(e.key) - 1];
+      if (btn) { e.preventDefault(); btn.click(); }
       return;
     }
   }

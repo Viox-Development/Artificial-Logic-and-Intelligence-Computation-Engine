@@ -203,7 +203,7 @@ class TaskRunner:
         if say is None:
             agent = self.ctx.state.get("agent")
             ask = getattr(getattr(agent, "ui", None), "ask_permission", None)
-            ok = ask is not None and ask("run_plan", question, DANGER) in ("y", "a")
+            ok = ask is not None and ask("run_plan", question, DANGER) in ("y", "a", "p")
             self.log("onay: " + ("evet" if ok else "hayır"))
             return ok
         self._answer, self.waiting = None, question

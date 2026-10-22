@@ -19,7 +19,7 @@ from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
 from alice.providers.openai_compat import ChatResult, StreamCancelled
 from alice.providers.router import AllProvidersFailed, Router, estimate_tokens, strip_images
-from alice.tools.base import SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
+from alice.tools.base import DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
 
 class UI(Protocol):
@@ -660,7 +660,20 @@ class Agent:
             ans = self.ui.ask_permission(name, summary, risk)
             if ans == "a":
                 self.permissions.always_allow.add(name)
-            elif ans != "y":
+            elif ans == "p" and risk in (DANGER, SEND):
+                # Geri alınamayan ya da başkasına giden işe kalıcı izin yazılmaz: bu seferlik evet sayılır.
+                self.ui.info("tehlikeli ya da dışarı giden işlerde kalıcı izin verilmez; sadece bu sefer izin verildi")
+            elif ans == "p":  # bu projede hep: kalıcı kural olarak yazılır, sonraki oturumlarda da sorulmaz
+                from alice.permissions import persist_allow, suggest_rule
+
+                rule = suggest_rule(tool, args, self.ctx.cwd)
+                try:
+                    where = persist_allow(self.ctx.cwd, rule)
+                    self.ui.info(f"kalıcı izin eklendi: {rule} ({where})")
+                except OSError as e:
+                    self.ui.info(f"kalıcı izin yazılamadı ({e}); bu oturum için izin verildi")
+                    self.permissions.always_allow.add(name)
+            elif ans not in ("y", "p"):
                 self._log_outward(tool, args, summary, "rejected")
                 return ToolResult("Kullanıcı bu çağrıyı reddetti. Aynı şeyi tekrar deneme; başka yol bul ya da kullanıcıya sor.",
                                   is_error=True)

@@ -122,7 +122,7 @@ class AppUI:
         ev = self._events.get(pid)
         if ev is None:
             return False
-        self._answers[pid] = ans if ans in ("y", "n", "a") else "n"
+        self._answers[pid] = ans if ans in ("y", "n", "a", "p") else "n"
         ev.set()
         return True
 

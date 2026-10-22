@@ -641,14 +641,18 @@ function onPermission(ev) {
     el("small", "", `${verb} · ${ev.name}`));
   q.append(ic, qt);
   const acts = el("div", "perm-actions");
-  // 1/2/3 tuşları da cevaplar (Claude Code'daki gibi).
+  // 1-4 tuşları da cevaplar (Claude Code'daki gibi).
   const mk = (label, ans, cls, key) => {
     const b = el("button", "btn " + (cls || ""));
     b.append(document.createTextNode(label), el("kbd", "", key));
     b.addEventListener("click", () => api("/api/permission", { id: ev.id, answer: ans }));
     return b;
   };
-  acts.append(mk("İzin ver", "y", "primary", "1"), mk("Bu oturumda hep izin ver", "a", "", "2"), mk("Reddet", "n", "danger", "3"));
+  // Tehlikeli ve dışarı giden işlerde kalıcı izin yok (sunucu da kabul etmez).
+  const lasting = ev.risk !== "danger" && ev.risk !== "send";
+  acts.append(mk("İzin ver", "y", "primary", "1"), mk("Bu oturumda hep izin ver", "a", "", "2"));
+  if (lasting) acts.append(mk("Bu projede hep izin ver", "p", "", "3"));
+  acts.append(mk("Reddet", "n", "danger", lasting ? "4" : "3"));
   const pre = el("pre", ev.name === "run_command" ? "cmd" : "", ev.summary);
   card.append(q, pre, acts);
   card._id = ev.id;
@@ -659,7 +663,8 @@ function onPermission(ev) {
 function onPermissionDone(ev) {
   const card = S.perms.get(ev.id);
   if (!card) return;
-  const txt = { y: "İzin verildi", a: "Bu oturumda bu araca hep izin verildi", n: "Reddedildi" }[ev.answer] || ev.answer;
+  const txt = { y: "İzin verildi", a: "Bu oturumda bu araca hep izin verildi",
+    p: "Bu projede kalıcı izin verildi (.alice/permissions.toml)", n: "Reddedildi" }[ev.answer] || ev.answer;
   card._acts.replaceWith(el("div", "perm-done " + (ev.answer === "n" ? "no" : "yes"), txt));
   card.classList.add("answered");
 }

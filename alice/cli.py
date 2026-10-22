@@ -196,13 +196,16 @@ class RichUI:
         color = "red" if risk == "danger" else ("magenta" if risk == "send" else "yellow")
         console.print(f"[{color}]? İzin gerekiyor[/] [bold]{name}[/] ({risk})\n  {escape(summary)}")
         while True:
-            ans = console.input("  [bold][y][/]evet  [bold][n][/]hayır  [bold][a][/]bu araca hep izin ver > ").strip().lower()
+            ans = console.input("  [bold][y][/]evet  [bold][n][/]hayır  [bold][a][/]bu oturumda hep  "
+                                "[bold][p][/]bu projede hep (kalıcı) > ").strip().lower()
             if ans in ("y", "e", "evet", "yes", ""):
                 return "y"
             if ans in ("n", "h", "hayır", "no"):
                 return "n"
             if ans in ("a", "always", "hep"):
                 return "a"
+            if ans in ("p", "proje", "kalıcı"):
+                return "p"
 
     def ask_choice(self, question: str, options: list[str], multi: bool = False) -> str:
         self._spin_stop()

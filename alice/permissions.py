@@ -103,6 +103,49 @@ def project_rules(cwd: Path | None) -> dict[str, list[str]]:
     return rules
 
 
+def suggest_rule(tool: Tool, args: dict[str, Any], cwd: Path | None = None) -> str:
+    """"Bu projede hep izin ver" denince yazılacak kural: dar ama işe yarar. Komutta ilk iki kelime ("git status*"),
+    dosya araçlarında dosyanın klasörü, diğerlerinde aracın adı."""
+    name = tool.name
+    if "command" in args and args.get("command"):
+        words = str(args["command"]).split()
+        head = " ".join(words[:2]) if len(words) > 1 and not words[1].startswith(("-", "/", "\\", ".")) else words[0]
+        return f"{name}({head}*)"
+    if args.get("path"):
+        p = Path(str(args["path"]))
+        try:
+            base = cwd.resolve() if cwd else None
+            full = (base / p).resolve() if base and not p.is_absolute() else p.resolve()
+            rel = full.parent.relative_to(base) if base else full.parent
+            folder = str(rel).replace("\\", "/")
+        except (ValueError, OSError):
+            folder = str(p.parent).replace("\\", "/")
+        return f"{name}({'' if folder in ('', '.') else folder.rstrip('/') + '/'}*)"
+    return name
+
+
+def persist_allow(cwd: Path, rule: str) -> Path:
+    """Kuralı <proje>/.alice/permissions.toml'un allow listesine ekle (varsa tekrar eklemez)."""
+    path = Path(cwd) / ".alice" / "permissions.toml"
+    rules = dict(project_rules(cwd)) or {"allow": [], "ask": [], "deny": []}
+    for k in ("allow", "ask", "deny"):
+        rules.setdefault(k, [])
+    if rule not in rules["allow"]:
+        rules["allow"] = rules["allow"] + [rule]
+
+    def arr(items: list[str]) -> str:
+        import json
+
+        return "[" + ", ".join(json.dumps(i, ensure_ascii=False) for i in items) + "]"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# ALICE izin kuralları (bu proje). Biçim: alice/permissions.py\n[permissions]\n"
+                    f"allow = {arr(rules['allow'])}\nask = {arr(rules['ask'])}\ndeny = {arr(rules['deny'])}\n",
+                    encoding="utf-8")
+    _project_cache.pop(str(path), None)
+    return path
+
+
 class Permissions:
     def __init__(self, mode: str = "auto", rules: dict[str, list[str]] | None = None):
         if mode not in MODES:

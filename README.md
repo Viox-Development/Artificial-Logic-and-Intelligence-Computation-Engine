@@ -293,7 +293,7 @@ Tek seferlik kapatmak için `ALICE_UPDATE_MODE=off` ya da `ALICE_NO_UPDATE=1` or
 * Dosya düzenlemeleri satır numaralı, renklendirilmiş diff olarak açılıyor. Komutlar terminal görünümünde, çıkış koduyla gösteriliyor.
 * Kod blokları sözdizimine göre renkleniyor (Python, JS/TS, PowerShell, bash, JSON, CSS, Lua, SQL, C ailesi...).
 * ALICE plan tuttuğunda görev listesi ilerleme çubuğuyla çiziliyor. İş sürerken mesaj kutusunun üstünde o anki görev duruyor.
-* Tehlikeli işlemde sohbetin içinde "İzin ver / Bu oturumda hep izin ver / Reddet" kartı çıkıyor. 1, 2, 3 tuşlarıyla da cevaplanıyor.
+* Onay gereken işlemde sohbetin içinde "İzin ver / Bu oturumda hep izin ver / Bu projede hep izin ver / Reddet" kartı çıkıyor, 1-4 tuşlarıyla da cevaplanıyor. "Bu projede hep" kalıcı bir kural yazar (`.alice/permissions.toml`, ör. `run_command(git status*)`); tehlikeli ve başkasına giden işlerde bu seçenek yok.
 * Her işin sonunda süre, araç sayısı ve değişen dosyalarla tek satırlık bir özet çıkıyor.
 * Kod bloklarında ve cevaplarda Kopyala butonu var.
 

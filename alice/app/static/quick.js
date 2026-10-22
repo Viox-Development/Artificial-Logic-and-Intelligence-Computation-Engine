@@ -83,7 +83,7 @@ const handlers = {
   permission: (ev) => {
     const box = el("div", "perm", `İzin gerekiyor: ${ev.name} — ${ev.summary}`);
     box.id = "perm-" + ev.id;
-    for (const [ans, label] of [["y", "Evet"], ["n", "Hayır"], ["a", "Hep izin ver"]]) {
+    for (const [ans, label] of [["y", "Evet"], ["n", "Hayır"], ["a", "Hep izin ver"], ["p", "Projede kalıcı"]]) {
       const b = el("button", null, label);
       b.onclick = () => api("/api/permission", { id: ev.id, answer: ans });
       box.appendChild(b);
