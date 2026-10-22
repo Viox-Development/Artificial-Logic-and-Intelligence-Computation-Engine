@@ -135,6 +135,10 @@ class Core:
         self._update_thread: threading.Thread | None = None
         self.restart_pending = False
         self.restart = restart or self._restart_process
+        # Hafıza işi: bitmiş konuşmaları özetle, günü gelen hatırlatmaları bildir (10 dk'da bir, arka planda).
+        self.memory_every = float(c.get("memory_every_minutes", 10)) * 60
+        self._last_memory = time.monotonic()
+        self._memory_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ tur
     def tick(self, now: float | None = None) -> None:
@@ -160,6 +164,7 @@ class Core:
         self.engine.evaluate(now)
         self._run_due(now)
         self._maybe_update(now)
+        self._maybe_memory()
         if now - self._last_prune > 3600:
             self._last_prune = now
             self.store.prune(self.retention_days, now)
@@ -200,6 +205,42 @@ class Core:
                 self.rules.load()
                 self.tasks.load()
             self._last_files = mt
+
+    # ---------------------------------------------------------- hafıza
+    def _maybe_memory(self) -> None:
+        if self.memory_every <= 0 or time.monotonic() - self._last_memory < self.memory_every:
+            return
+        if self._memory_thread is not None and self._memory_thread.is_alive():
+            return
+        self._last_memory = time.monotonic()
+        self._memory_thread = threading.Thread(target=self.memory_job, daemon=True, name="alice-core-memory")
+        self._memory_thread.start()
+
+    def memory_job(self) -> None:
+        """Konuşma bitince özetlenmesi uygulama kapalıyken de olsun; "remind" takipleri günü gelince bildirim olur
+        (her biri bir kez; ALICE sohbette de hatırlatır, profilde durur)."""
+        try:
+            from alice.memory import shared_memory
+            from alice.providers.router import Router
+
+            mem = shared_memory(self.cfg, Router(self.cfg))
+            if mem is None:
+                return
+            mem.digest()
+            sent = set(json.loads(mem._meta("reminded") or "[]"))
+            now = time.time()
+            due = [f for f in mem.due_followups(now) if f.kind == "remind" and f.id not in sent
+                   and (f.due or 0) <= now]
+            for f in due:
+                self.notifier.send(Notification("Hatırlatma", f.text, "info", "memory", kind="info"))
+                sent.add(f.id)
+            if due:
+                mem._meta("reminded", json.dumps(sorted(sent)[-200:]))
+        except Exception as e:  # noqa: BLE001 - hafıza işi çekirdeği durdurmasın
+            try:
+                self.store.add_event("error", "hafıza işi hata verdi", repr(e)[:300], topic="core")
+            except Exception:  # noqa: BLE001
+                pass
 
     # ---------------------------------------------------------- güncelleme
     def _maybe_update(self, now: float) -> None:

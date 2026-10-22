@@ -263,16 +263,92 @@ class Screen:
         return round(shot.left + x / 1000 * shot.width), round(shot.top + y / 1000 * shot.height)
 
 
+# ------------------------------------------------------------------------------- deneyim
+# Biten işlerin adımları (~/.alice/computer_recipes.json): benzer bir hedef gelince modele ipucu olarak verilir.
+# Başarılı yol "bu sırayla oldu", başarısız deneme "bu yoldan gitme" der; aynı işte her seferinde sıfırdan aramaz.
+RECIPES_MAX = 80
+
+
+def recipes_path():
+    from alice.config import alice_home
+
+    return alice_home() / "computer_recipes.json"
+
+
+def load_recipes() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(recipes_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_recipe(goal: str, status: str, summary: str, steps: list[str], title: str = "") -> None:
+    from alice.memory import terms
+
+    mine = set(terms(goal))
+    rows = [r for r in load_recipes() if not (set(terms(r.get("goal", ""))) == mine and r.get("status") == status)]
+    rows.append({"goal": goal[:300], "status": status, "summary": summary[:300], "title": title[:120],
+                 "steps": [re.sub(r"\s*\([^()]*\)$", "", s)[:220] for s in steps[-12:]], "ts": time.time()})
+    path = recipes_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows[-RECIPES_MAX:], ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def similar_recipes(goal: str, min_score: float = 0.5) -> list[dict[str, Any]]:
+    """Hedefe en çok benzeyen geçmiş başarı ve başarısızlık (en fazla birer tane)."""
+    from alice.memory import terms
+
+    mine = set(terms(goal))
+    if not mine:
+        return []
+    best: dict[str, tuple[float, dict[str, Any]]] = {}
+    for r in load_recipes():
+        other = set(terms(r.get("goal", "")))
+        if not other:
+            continue
+        score = len(mine & other) / len(mine | other)
+        st = "done" if r.get("status") == "done" else "fail"
+        if score >= min_score and score >= best.get(st, (0.0, {}))[0]:
+            best[st] = (score, r)
+    return [r for _, r in best.values()]
+
+
+def recipe_hint(goal: str) -> str:
+    out = []
+    for r in similar_recipes(goal):
+        if r.get("status") == "done":
+            out.append(f"PAST SUCCESS on a similar goal ('{r['goal']}'). These steps worked; follow them if the screen "
+                       "matches, verify each one:\n" + "\n".join(r.get("steps", [])))
+        else:
+            out.append(f"PAST FAILED ATTEMPT on a similar goal ('{r['goal']}'): {r.get('summary', '')}. Its last steps "
+                       "(try a different way):\n" + "\n".join(r.get("steps", [])[-5:]))
+    return "\n".join(out)
+
+
 class ComputerAgent:
     def __init__(self, screen, ask: Callable[[list[dict[str, Any]]], str], emit: Callable[[str], None] = lambda s: None,
-                 settle: float = 0.5, stop: Callable[[], bool] = lambda: False):
+                 settle: float = 0.5, stop: Callable[[], bool] = lambda: False, learn: bool = True):
         self.screen = screen
         self.ask = ask  # mesajlar -> model cevabı (metin)
         self.emit = emit
         self.settle = settle
         self.stop = stop
+        self.learn = learn  # biten işin adımlarını sakla, benzer işte ipucu ver
 
     def run(self, goal: str, max_steps: int = 30, max_seconds: float = 180.0) -> TaskResult:
+        hint = recipe_hint(goal) if self.learn else ""
+        if hint:
+            self.emit("benzer bir işin geçmiş adımları ipucu olarak verildi")
+        res = self._run(goal, max_steps, max_seconds, hint)
+        if self.learn and res.status in ("done", "fail") and res.steps:
+            save_recipe(goal, res.status, res.summary, res.steps)
+        return res
+
+    def _run(self, goal: str, max_steps: int, max_seconds: float, hint: str = "") -> TaskResult:
         steps: list[str] = []
         last: list[str] = []
         model_errors = 0
@@ -288,7 +364,7 @@ class ComputerAgent:
                 return TaskResult("error", f"ekran okunamadı: {e}", steps)
             elems = "\n".join(f"[{e['id']}] {e.get('role', '')} '{e.get('name', '')}'"
                               + (f" değer='{e['value']}'" if e.get("value") else "") for e in shot.elements[:60])
-            text = (f"GOAL: {goal}\nFOREGROUND WINDOW: {shot.title or '?'}\n"
+            text = (f"GOAL: {goal}\n" + (f"{hint}\n" if hint else "") + f"FOREGROUND WINDOW: {shot.title or '?'}\n"
                     f"DONE SO FAR:\n{chr(10).join(steps[-10:]) or '(nothing yet)'}\n"
                     f"ELEMENTS:\n{elems or '(none: use points)'}\nNext action JSON:")
             messages = [{"role": "system", "content": SYSTEM},

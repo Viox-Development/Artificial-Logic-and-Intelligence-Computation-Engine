@@ -64,6 +64,7 @@ Ekim 2026 itibarıyla ücretsiz katmanları taradım. Rakamlar sık değişiyor,
 | **SambaNova** | Ücretsiz katman, hızlı büyük açık modeller | yedek |
 | **Z.ai** | `glm-4.7-flash`, `glm-4.5-flash`, `glm-4.6v-flash` (görsel) ücretsiz. ALICE sadece bu üçünü sıraya koyuyor, ücretli GLM'lere kendiliğinden geçmiyor | brain/vision yedeği |
 | **Cohere** | Trial anahtarı ücretsiz (ayda sınırlı istek, ticari kullanım yok). Command A ailesi, araç çağırma destekli | brain yedeği |
+| **Cloudflare Workers AI** | Günde 10.000 "neuron" ücretsiz: Kimi K2.5, GLM 4.7 Flash, Llama 3.3 70B, Gemma 4. Büyük modelde günde ~150-300 bin token. Adreste hesap kimliği var, `CLOUDFLARE_ACCOUNT_ID` de gerekiyor | brain yedeği |
 | **Vercel AI Gateway** | Hesap başına 30 günde 5$ kredi; Claude, GPT, Gemini aynı anahtarla. Kredi harcadığı için otomatik sıraya **girmiyor**, sadece elle: `/model brain vercel:anthropic/claude-sonnet-5.5` | elle seçilen güçlü model |
 | **Ollama (yerel)** | Limitsiz, offline, GPU'na bağlı | her zincirin sonunda son çare |
 
@@ -71,7 +72,7 @@ Ekim 2026 itibarıyla ücretsiz katmanları taradım. Rakamlar sık değişiyor,
 
 **Gemini "You have reached a rate limit. Set up billing..." hatası:** bu ücretsiz katmanın dolduğu anlamına geliyor. ALICE bunu artık 20 saniyelik hız sınırı değil kota sayıyor: Gemini bir saat atlanıyor, istekler sıradaki sağlayıcıya gidiyor. Canlı sesli konuşma (Gemini Live) da aynı hatayı alınca bir saat normal sesli yola (STT + model + TTS) geçiyor ve bunu bir kez Türkçe söylüyor. Bu yüzden Gemini dışında en az iki anahtar daha doldurmak (Groq, Z.ai, Mistral, Cerebras) gerçekten fark ediyor.
 
-GitHub Models 30 Temmuz 2026'da kapatıldı, bu yüzden listede yok.
+GitHub Models 30 Temmuz 2026'da kapatıldı, bu yüzden listede yok. Hugging Face Inference Providers da eklenmedi: ücretsiz hesaba ayda 0,10$ kredi veriyor, birkaç düzine istekte bitiyor.
 
 Katalog değiştiğinde `alice models --write` canlı `/models` uçlarını tarayıp zincirleri güncelliyor.
 
@@ -119,6 +120,7 @@ Linux/macOS'ta aynısı, `pip install -e ".[all]"` sonrası `alice init`. Linux'
 * `SAMBANOVA_API_KEY`: https://cloud.sambanova.ai/apis
 * `ZAI_API_KEY`: https://z.ai/manage-apikey/apikey-list
 * `COHERE_API_KEY`: https://dashboard.cohere.com/api-keys
+* `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`: https://dash.cloudflare.com/profile/api-tokens ("Workers AI" izinli token; hesap kimliği panelin sağında)
 * `AI_GATEWAY_API_KEY`: https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys (Vercel, 5$ kredi, sadece elle seçilir)
 * `TYPESAFE_API_KEY`: Jev erişimi alırsan
 
@@ -596,7 +598,43 @@ alice voice test      # mikrofonu dene
 * Onay gereken bir işte sesli sorar, "evet" dersen yapar.
 * Konuşma tanıma: Groq'taki `whisper-large-v3-turbo` (GROQ_API_KEY), yedek olarak bilgisayarda `faster-whisper`.
 
+**Sesli konuşmada zekâ.** Canlı ses modeli (Gemini Live, flash sınıfı) çok hızlı ama bilgi ve akıl yürütmede zayıf. Bu yüzden:
+
+* Live'ın bir `think` aracı var. Bilgi, açıklama, tavsiye, hesap, kod, plan ya da güncel bir şey sorulunca Live soruyu ALICE'in beyin modeline (brain zinciri) devreder. Beyin gerekirse webde arar, hafızaya ve projelere bakar, kısa bir sesli cevap döndürür; Live bunu kendi sesiyle söyler. Selamlaşma, saat ve "aç/kapat/çal" gibi komutlar hızlı yolda kalır. Kapatmak için `[voice] live_think = false`.
+* Live oturumu her "Hey Alice"te sıfırdan açılıyordu, az önce konuşulanı bilmiyordu. Artık son 30 dakikanın konuşması (sesli, canlı ya da yazılı) yeni oturuma "Az önceki konuşma" olarak giriyor (`live_history_minutes`). "Onu aç", "devam et" çalışıyor.
+* Live yokken kullanılan normal sesli yolda (yazıya çevir, model, ses) "neden", "nasıl", "anlat", "karşılaştır", "plan yap" gibi düşünmesi gereken sorular en hızlı model yerine beyin modeline gidiyor; komutlar hızlı modelde kalıyor (`smart_route`).
+* Ses tanıma ipuçlarına projelerinin adları ve hafızadaki özel adlar (kişiler, oyunlar) ekleniyor; Türkçe cümle içinde bozulan adlar daha az karışıyor.
+
 `[voice] enabled = true` yaparsan çekirdek (`alice core run`) sesli asistanı da başlatır ve bildirimleri seslendirir. Sessiz modda bildirimler sadece yazılı gelir.
+
+## Hafıza, projeler ve takip
+
+ALICE'in hafızası tamamen yerelde, `~/.alice/memory.db` içinde.
+
+* **Kalıcı bilgiler:** tercihler, kişiler, alışkanlıklar. "Bunu hatırla: ..." anında kaydedilir; kendinden bahsettiğin cümleler arka planda hızlı modele verilip çıkarılır.
+* **Konuşma özetleri:** bir konuşma 20 dakika sessiz kalınca bütünüyle tek seferde özetlenir. Özet, sinyal kelimesi olmadan geçen kalıcı bilgiler ("Unity'de FPS yapıyorum") ve takipler aynı çağrıda çıkar. Son günlerin özetleri sistem istemine girer, ALICE dün ne konuştuğunuzu bilir.
+* **Takipler:** "yarın sınavım var" dersen ALICE ertesi gün kendisi "nasıl geçti?" diye sorar; yarım kalan bir işi uygun anda hatırlatır. "Cuma faturayı öde" gibi hatırlatmalar günü gelince çekirdekten bildirim olarak da gelir. `memory` aracında `followup`, `followups`, `done`.
+* **Anlam araması:** `GEMINI_API_KEY` varsa bilgiler, özetler ve konuşmalar ücretsiz `gemini-embedding-001` ile vektöre çevrilir; "geçen gün oyun motorunda yaptığım şey" ile "Unity FPS projesi" eşleşir. Anahtar yoksa ya da sağlayıcı hata verirse eskisi gibi kelime aramasıyla çalışır.
+
+```toml
+[memory]
+digest = true                  # konuşma özetleri ve takipler
+session_gap_minutes = 20       # bu kadar sessizlik = konuşma bitti
+embed_provider = "gemini"      # OpenAI uyumlu /embeddings veren herhangi bir sağlayıcı; "off" = kapalı
+embed_model = "gemini-embedding-001"
+```
+
+**Projeler.** ALICE bilgisayarındaki projeleri kendisi bulur: ev klasöründe Masaüstü, Belgeler, GitHub, source/repos, Unity gibi yerleri ve Windows'ta diğer sürücülerin üst klasörlerini sığ tarar. `.git`, Unity (Assets + ProjectSettings, sürümüyle), Godot, pyproject, package.json, .sln gibi işaretlerden projeyi tanır. Her proje için yol, diller, GitHub adresi, dal, son commit ve README özeti çıkarır (URL'deki token yazılmaz). En son çalışılan sekiz proje sistem istemine girer: "Unity projemi aç" dediğinde hangisi olduğunu bilir. Ayrıntı `projects` aracında (`list`, `find`, `info`, `rescan`). Liste `~/.alice/projects.json`'da durur, 12 saatte bir arka planda yenilenir.
+
+```toml
+[projects]
+paths = ["D:/Oyunlar/Unity"]   # bulunmayan bir klasör varsa ekle
+depth = 3
+```
+
+**İşi yarıda bırakmama.** Ajan araçlarla çalışırken "şimdi testleri çalıştıracağım" deyip durursa ya da todo listesinde bitmemiş adım bırakırsa, ALICE ona en fazla iki kez kaldığı yerden devam etmesini hatırlatır. Soru soruyorsa, plan modundaysa ya da sesli konuşmadaysa hatırlatmaz (`[agent] finish_nudges`, 0 = kapalı).
+
+**Ekranda deneyim.** `computer_task` biten her işin adımlarını `~/.alice/computer_recipes.json`'a yazar. Benzer bir iş gelince işe yarayan yol ipucu olarak verilir, başarısız deneme "bu yoldan gitme" diye uyarır. Aynı ayarı ikinci kez açarken sıfırdan aramaz.
 
 ## Hızlı bar
 

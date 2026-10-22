@@ -15,9 +15,18 @@ def isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "alice-home"
     monkeypatch.setenv("ALICE_HOME", str(home))
     for k in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "NVIDIA_API_KEY", "CEREBRAS_API_KEY",
-              "TYPESAFE_API_KEY", "MISTRAL_API_KEY", "SAMBANOVA_API_KEY", "GITHUB_MODELS_TOKEN"):
+              "TYPESAFE_API_KEY", "MISTRAL_API_KEY", "SAMBANOVA_API_KEY", "GITHUB_MODELS_TOKEN", "ZAI_API_KEY",
+              "COHERE_API_KEY", "AI_GATEWAY_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "HF_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     return home
+
+
+@pytest.fixture(autouse=True)
+def no_project_scan(monkeypatch):
+    """Testler gerçek ev klasörünü (ve Windows'ta diğer sürücüleri) proje diye taramasın."""
+    from alice import projects
+
+    monkeypatch.setattr(projects, "enabled", lambda cfg=None: False)
 
 
 @pytest.fixture(autouse=True)

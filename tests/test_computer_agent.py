@@ -123,3 +123,36 @@ def test_live_refuses_second_screen_task_while_one_runs(monkeypatch):
     release.set()
     results = [m["toolResponse"]["functionResponses"][0]["response"]["result"] for m in sent if "toolResponse" in m]
     assert "başladı" in results[0] and "zaten" in results[1]
+
+
+def test_agent_remembers_what_worked_for_similar_goals():
+    from alice.computer_agent import load_recipes
+
+    answers = iter(['{"action": "click", "id": 1, "thought": "kaydet"}', '{"action": "done", "summary": "Kaydedildi."}',
+                    '{"action": "done", "summary": "Yine kaydedildi."}'])
+    seen = []
+
+    def ask(messages):
+        seen.append(messages[1]["content"][0]["text"])
+        return next(answers)
+
+    assert ComputerAgent(FakeScreen(), ask, settle=0).run("not defterindeki dosyayı kaydet").status == "done"
+    assert "PAST SUCCESS" not in seen[0]
+    assert load_recipes()[0]["status"] == "done"
+    ComputerAgent(FakeScreen(), ask, settle=0).run("not defterinde dosyayı kaydet")
+    assert "PAST SUCCESS" in seen[2]
+    assert '"click"' in seen[2]  # geçen seferki adım ipucu olarak geldi
+
+
+def test_failed_attempt_is_a_warning_next_time():
+    seen = []
+    s = FakeScreen()
+    ComputerAgent(s, lambda m: '{"action": "key", "keys": "enter"}', settle=0).run("ayarlardan bluetooth aç")
+
+    def ask(messages):
+        seen.append(messages[1]["content"][0]["text"])
+        return '{"action": "done", "summary": "açıldı"}'
+
+    ComputerAgent(FakeScreen(), ask, settle=0).run("ayarlardan bluetooth aç")
+    assert "PAST FAILED ATTEMPT" in seen[0] and "tekrarlanıyor" in seen[0]
+    assert ComputerAgent(FakeScreen(), ask, settle=0, learn=False).run("ayarlardan bluetooth aç").status == "done"

@@ -461,7 +461,7 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
 
 def rewind_prompt(agent: Agent):
     turns = [(i, m) for i, m in enumerate(agent.messages)
-             if m.get("role") == "user" and not m.get("_image") and i > 0
+             if m.get("role") == "user" and not m.get("_image") and not m.get("_nudge") and i > 0
              and not str(m.get("content", "")).startswith("[Önceki konuşmanın özeti]")][-9:]
     if not turns:
         console.print("[yellow]geri sarılacak mesaj yok[/]")

@@ -1,6 +1,6 @@
 """Uzun süreli hafıza: kullanıcı tercihleri, kalıcı bilgiler ve geçmiş konuşmalar.
 
-Her şey yerelde, ~/.alice/memory.db (SQLite) içinde durur; ücretli bir API ya da gömme (embedding) modeli yok.
+Her şey yerelde, ~/.alice/memory.db (SQLite) içinde durur.
 
 - facts: kalıcı bilgiler ("Kullanıcı kahveyi şekersiz içer"). Türü: tercih, bilgi, kişi, alışkanlık, not.
   En önemlileri sistem istemine "profil" olarak girer, böylece model her konuşmada kullanıcıyı tanır.
@@ -8,9 +8,15 @@ Her şey yerelde, ~/.alice/memory.db (SQLite) içinde durur; ücretli bir API ya
 - Hatırlama: kullanıcının sözüne en çok benzeyen bilgiler ve geçmiş konuşmalar her turda mesaja eklenir.
   Benzerlik Türkçe için sade bir yöntemle ölçülür: harfler sadeleştirilir (ç->c, ı->i...), kelimeler ilk 4
   harfine kısaltılır (ekler düşer: "kahveyi", "kahvemi" -> "kahv"), seyrek kelimeler daha ağır basar (IDF).
+  Ücretsiz bir embedding anahtarı varsa (varsayılan Gemini) anlam araması da eklenir: "Unity projem" ile "oyun
+  motorunda yaptığım şey" aynı hatırayı bulur (bkz. alice/memvec.py). Yoksa sadece kelime araması.
 - Öğrenme: "bunu hatırla: X" gibi açık istekler doğrudan kaydedilir. Kullanıcı kendinden bahsediyorsa
   (seviyorum, benim, her zaman...) konuşma arka planda hızlı modele verilir; kalıcı bilgileri çıkarır,
   eskiyenleri günceller ya da siler.
+- Özetleme (digest): bir konuşma bitince (varsayılan 20 dk sessizlik) bütün konuşma tek seferde hızlı modele
+  verilir: kısa özet, sinyal kelimesi olmadan geçen kalıcı bilgiler ("yarın sınavım var", "Unity'de FPS
+  yapıyorum") ve takip edilecekler (sınav nasıl geçti diye sorulacak, yarım kalan iş) çıkarılır. Özetler ve
+  günü gelen takipler sistem istemine girer: ALICE dün ne konuşulduğunu bilir, sınavı kendisi sorar.
 """
 
 from __future__ import annotations
@@ -41,7 +47,17 @@ CREATE TABLE IF NOT EXISTS episodes (
     user TEXT NOT NULL, reply TEXT NOT NULL DEFAULT '', terms TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS ix_episodes_ts ON episodes(ts);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, start REAL NOT NULL, end REAL NOT NULL, channel TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL, terms TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS ix_summaries_end ON summaries(end);
+CREATE TABLE IF NOT EXISTS followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL NOT NULL, due REAL, kind TEXT NOT NULL DEFAULT 'ask',
+    text TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS vectors (
+    kind TEXT NOT NULL, ref INTEGER NOT NULL, vec BLOB NOT NULL, PRIMARY KEY (kind, ref));
 """
+FOLLOWUP_KINDS = {"ask": "sor", "remind": "hatırlat", "open": "yarım kaldı"}
 
 _FOLD = str.maketrans({"ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u", "â": "a", "î": "i", "û": "u"})
 _STOP = set("""
@@ -150,9 +166,37 @@ class Episode:
 
 
 @dataclass
+class Summary:
+    id: int
+    start: float
+    end: float
+    channel: str
+    text: str
+
+    def line(self, now: float | None = None) -> str:
+        return f"{datetime.fromtimestamp(self.start):%d.%m.%Y %H:%M} ({_ago(self.start, now)}) özet: {self.text}"
+
+
+@dataclass
+class Followup:
+    id: int
+    created: float
+    due: float | None
+    kind: str
+    text: str
+    done: int = 0
+
+    def line(self, now: float | None = None) -> str:
+        when = ""
+        if self.due is not None:
+            when = f", {datetime.fromtimestamp(self.due):%d.%m}"
+        return f"#{self.id} ({FOLLOWUP_KINDS.get(self.kind, self.kind)}{when}) {self.text}"
+
+
+@dataclass
 class Hit:
     score: float
-    item: Fact | Episode
+    item: Fact | Episode | Summary
 
     def line(self) -> str:
         return self.item.line()
@@ -160,8 +204,15 @@ class Hit:
 
 class LongMemory:
     def __init__(self, path: Path | str, options: dict[str, Any] | None = None,
-                 extractor: Callable[[str], str] | None = None):
+                 extractor: Callable[[str], str] | None = None, embedder: Any = None):
         o = options or {}
+        self.embedder = embedder  # alice.memvec.Embedder ya da None (sadece kelime araması)
+        self.embed_min = float(o.get("embed_min", 0.68))  # bu kosinüsün altı "ilgisiz" sayılır
+        self.digest_enabled = bool(o.get("digest", True))
+        self.session_gap = float(o.get("session_gap_minutes", 20)) * 60
+        self._digest_lock = threading.Lock()
+        self._index_lock = threading.Lock()
+        self._last_digest_check = 0.0
         self.path = Path(path) if str(path) != ":memory:" else path
         self.auto_extract = bool(o.get("auto_extract", True))
         self.recall_limit = int(o.get("recall_limit", 4))
@@ -188,7 +239,13 @@ class LongMemory:
         o = dict((cfg.data.get("memory") if cfg is not None else None) or {})
         if not o.get("enabled", True):
             return None
-        mem = cls(alice_home() / "memory.db", o, make_extractor(o, router))
+        from alice.memvec import Embedder
+
+        try:
+            embedder = Embedder.from_config(cfg, o)
+        except Exception:  # noqa: BLE001 - embedding opsiyonel: yoksa kelime araması
+            embedder = None
+        mem = cls(alice_home() / "memory.db", o, make_extractor(o, router), embedder)
         mem.import_markdown(alice_home() / "memory.md")
         return mem
 
@@ -272,8 +329,10 @@ class LongMemory:
                 cur = self.db.execute("INSERT INTO facts(created, updated, kind, text, terms, source) "
                                       "VALUES (?, ?, ?, ?, ?, ?)", (now, now, kind, text, " ".join(terms(text)), source))
                 fid, new = int(cur.lastrowid), True
+            self.db.execute("DELETE FROM vectors WHERE kind = 'fact' AND ref = ?", (fid,))
             self.db.commit()
             self._bump()
+        self.index_soon()
         return fid, new
 
     def update(self, fid: int, text: str) -> bool:
@@ -281,9 +340,12 @@ class LongMemory:
         with self._lock:
             cur = self.db.execute("UPDATE facts SET text = ?, terms = ?, updated = ? WHERE id = ?",
                                   (text, " ".join(terms(text)), time.time(), int(fid)))
+            self.db.execute("DELETE FROM vectors WHERE kind = 'fact' AND ref = ?", (int(fid),))
             self.db.commit()
             if cur.rowcount:
                 self._bump()
+        if cur.rowcount:
+            self.index_soon()
         return bool(cur.rowcount)
 
     def forget(self, fid: int) -> Fact | None:
@@ -293,6 +355,7 @@ class LongMemory:
             if row is None:
                 return None
             self.db.execute("DELETE FROM facts WHERE id = ?", (int(fid),))
+            self.db.execute("DELETE FROM vectors WHERE kind = 'fact' AND ref = ?", (int(fid),))
             self.db.commit()
             self._bump()
         return Fact(*row)
@@ -316,6 +379,7 @@ class LongMemory:
             cur = self.db.execute("INSERT INTO episodes(ts, channel, user, reply, terms) VALUES (?, ?, ?, ?, ?)",
                                   (time.time(), channel, user[:2000], reply[:2000], " ".join(terms(user + " " + reply))))
             self.db.commit()
+        self.index_soon()
         return int(cur.lastrowid)
 
     def recent(self, n: int = 5) -> list[Episode]:
@@ -324,38 +388,115 @@ class LongMemory:
                                    (int(n),)).fetchall()
         return [Episode(*r) for r in reversed(rows)]
 
+    # ------------------------------------------------------------------ vektörler
+    def index_soon(self) -> None:
+        """Vektörü olmayan kayıtları arka planda vektöre çevir (tek iş parçacığı; embedding yoksa hiçbir şey)."""
+        if self.embedder is None or not self.embedder.available or self._index_lock.locked():
+            return
+        threading.Thread(target=self.index_pending, kwargs={"wait": False}, daemon=True,
+                         name="alice-memory-index").start()
+
+    def index_pending(self, limit: int = 256, wait: bool = True) -> int:
+        """Vektörü olmayanları vektöre çevir; bu çağrının eklediği sayıyı döndürür. wait: arka planda süren bir
+        indeksleme varsa bitmesini bekle (sonra kalanları yap)."""
+        if self.embedder is None or not self._index_lock.acquire(timeout=30 if wait else 0):
+            return 0
+        try:
+            with self._lock:
+                todo = [("fact", r[0], r[1]) for r in self.db.execute(
+                    "SELECT id, text FROM facts WHERE id NOT IN (SELECT ref FROM vectors WHERE kind = 'fact')")]
+                todo += [("summary", r[0], r[1]) for r in self.db.execute(
+                    "SELECT id, text FROM summaries WHERE id NOT IN (SELECT ref FROM vectors WHERE kind = 'summary')")]
+                todo += [("episode", r[0], f"Kullanıcı: {r[1]}\nALICE: {r[2][:400]}") for r in self.db.execute(
+                    "SELECT id, user, reply FROM episodes WHERE id NOT IN (SELECT ref FROM vectors WHERE kind = "
+                    "'episode') ORDER BY ts DESC LIMIT ?", (limit,))]
+            todo = todo[:limit]
+            if not todo:
+                return 0
+            from alice.memvec import pack
+
+            vecs = self.embedder.embed([t[2][:2000] for t in todo])
+            with self._lock:
+                # Embedding sürerken güncellenen/silinen bilgi eski metnin vektörüyle kaydedilmesin.
+                facts = dict(self.db.execute("SELECT id, text FROM facts").fetchall())
+                rows = [(k, ref, pack(v)) for (k, ref, text), v in zip(todo, vecs)
+                        if k != "fact" or facts.get(ref) == text]
+                self.db.executemany("INSERT OR REPLACE INTO vectors(kind, ref, vec) VALUES (?, ?, ?)", rows)
+                self.db.commit()
+            return len(todo)
+        except Exception:  # noqa: BLE001 - embedding opsiyonel; kelime araması çalışmaya devam eder
+            return 0
+        finally:
+            self._index_lock.release()
+
+    def _semantic(self, query: str, kinds: list[str], limit: int = 12) -> dict[tuple[str, int], float]:
+        """(tür, id) -> 0..1 anlam benzerliği puanı (embed_min'in altı yok sayılır). Embedding yoksa boş."""
+        if self.embedder is None or not self.embedder.available or not kinds:
+            return {}
+        with self._lock:
+            rows = self.db.execute(f"SELECT kind, ref, vec FROM vectors WHERE kind IN "
+                                   f"({','.join('?' * len(kinds))})", kinds).fetchall()
+        if not rows:
+            return {}
+        try:
+            from alice.memvec import top
+
+            qvec = self.embedder.query(query)
+        except Exception:  # noqa: BLE001
+            return {}
+        lo = self.embed_min
+        return {ref: 0.3 + 0.7 * (cos - lo) / max(1e-6, 1 - lo)
+                for ref, cos in top(qvec, [((k, r), v) for k, r, v in rows], k=limit, min_score=lo)}
+
     # ------------------------------------------------------------------ arama
     def search(self, query: str, limit: int = 5, facts: bool = True, episodes: bool = True,
-               min_score: float = 0.3, exclude_after: float | None = None) -> list[Hit]:
-        q = list(dict.fromkeys(terms(clean_user_text(query))))
-        if not q:
+               min_score: float = 0.3, exclude_after: float | None = None, summaries: bool = True) -> list[Hit]:
+        clean = clean_user_text(query)
+        q = list(dict.fromkeys(terms(clean)))
+        kinds = [k for k, on in (("fact", facts), ("summary", summaries and episodes), ("episode", episodes)) if on]
+        sem = self._semantic(clean, kinds) if clean.strip() else {}
+        if not q and not sem:
             return []
         with self._lock:
             frows = self.db.execute("SELECT id, kind, text, created, updated, hits, terms FROM facts").fetchall() \
                 if facts else []
+            srows = self.db.execute("SELECT id, start, end, channel, text, terms FROM summaries "
+                                    "ORDER BY end DESC LIMIT 500").fetchall() if summaries and episodes else []
             erows = self.db.execute("SELECT id, ts, channel, user, reply, terms FROM episodes "
                                     "ORDER BY ts DESC LIMIT 3000").fetchall() if episodes else []
-        docs = [set(r[-1].split()) for r in frows] + [set(r[-1].split()) for r in erows]
+        docs = [set(r[-1].split()) for r in frows + srows + erows]
         n = len(docs) or 1
         df = {t: sum(1 for d in docs if t in d) for t in q}
         idf = {t: math.log(1 + n / (1 + df[t])) + 0.1 for t in q}
-        total = sum(idf.values())
+        total = sum(idf.values()) or 1.0
         now = time.time()
+
+        def kw(d: set[str], need: int = 1) -> float:
+            matched = [t for t in q if t in d]
+            return sum(idf[t] for t in matched) / total if len(matched) >= need and matched else 0.0
+
+        def mix(a: float, b: float) -> float:  # kelime ve anlam puanı: güçlü olan + diğerinden küçük katkı
+            return max(a, b) + 0.1 * min(a, b)
+
         hits: list[Hit] = []
         for r, d in zip(frows, docs[:len(frows)]):
-            matched = [t for t in q if t in d]
-            if matched:
-                score = sum(idf[t] for t in matched) / total
-                if score >= min_score:
-                    hits.append(Hit(score + min(r[5], 10) * 0.005, Fact(*r[:6])))
-        for r, d in zip(erows, docs[len(frows):]):
+            score = mix(kw(d), sem.get(("fact", r[0]), 0.0))
+            if score >= min_score:
+                hits.append(Hit(score + min(r[5], 10) * 0.005, Fact(*r[:6])))
+        off = len(frows)
+        for r, d in zip(srows, docs[off:off + len(srows)]):
             if exclude_after is not None and r[1] >= exclude_after:
                 continue
-            matched = [t for t in q if t in d]
-            # Konuşmalarda tek ortak kelime çoğu zaman tesadüf: kısa sorgu dışında en az iki kelime eşleşsin.
-            if len(matched) < min(2, len(q)):
+            score = mix(kw(d, min(2, len(q))), sem.get(("summary", r[0]), 0.0))
+            score *= 0.7 + 0.3 * math.exp(-(now - r[2]) / 86400 / 90)
+            if score >= min_score + 0.1:
+                hits.append(Hit(score, Summary(*r[:5])))
+        off += len(srows)
+        for r, d in zip(erows, docs[off:]):
+            if exclude_after is not None and r[1] >= exclude_after:
                 continue
-            score = sum(idf[t] for t in matched) / total
+            # Konuşmalarda tek ortak kelime çoğu zaman tesadüf: kısa sorgu dışında en az iki kelime eşleşsin.
+            score = mix(kw(d, min(2, len(q))), sem.get(("episode", r[0]), 0.0))
             score *= 0.6 + 0.4 * math.exp(-(now - r[1]) / 86400 / 60)  # eski konuşma biraz geride kalır
             if score >= min_score + 0.15:
                 hits.append(Hit(score, Episode(*r[:5])))
@@ -377,9 +518,176 @@ class LongMemory:
         return ("[hafızadan, bu konuşmayla ilgili olabilir; işine yararsa kullan, hafızadan okuduğunu söyleme:\n"
                 f"{lines}]")
 
+    # ------------------------------------------------------------------ özetler ve takipler
+    def summaries(self, n: int = 5, within_days: float | None = None) -> list[Summary]:
+        sql = "SELECT id, start, end, channel, text FROM summaries"
+        args: tuple = ()
+        if within_days is not None:
+            sql += " WHERE end >= ?"
+            args = (time.time() - within_days * 86400,)
+        with self._lock:
+            rows = self.db.execute(sql + " ORDER BY end DESC LIMIT ?", args + (int(n),)).fetchall()
+        return [Summary(*r) for r in reversed(rows)]
+
+    def add_summary(self, start: float, end: float, text: str, channel: str = "") -> int:
+        text = " ".join(text.split())
+        with self._lock:
+            cur = self.db.execute("INSERT INTO summaries(start, end, channel, text, terms) VALUES (?, ?, ?, ?, ?)",
+                                  (start, end, channel, text[:1200], " ".join(terms(text))))
+            self.db.commit()
+            self._bump()
+        self.index_soon()
+        return int(cur.lastrowid)
+
+    def add_followup(self, text: str, due: float | None = None, kind: str = "ask") -> int:
+        text = " ".join(text.split())
+        if not text:
+            raise ValueError("boş takip")
+        kind = kind if kind in FOLLOWUP_KINDS else "ask"
+        with self._lock:
+            for f in self.followups():  # aynı takip ikinci kez eklenmesin
+                if f.kind == kind and set(terms(f.text)) == set(terms(text)):
+                    return f.id
+            cur = self.db.execute("INSERT INTO followups(created, due, kind, text) VALUES (?, ?, ?, ?)",
+                                  (time.time(), due, kind, text[:300]))
+            self.db.commit()
+            self._bump()
+        return int(cur.lastrowid)
+
+    def followups(self, include_done: bool = False) -> list[Followup]:
+        sql = "SELECT id, created, due, kind, text, done FROM followups"
+        if not include_done:
+            sql += " WHERE done = 0"
+        with self._lock:
+            rows = self.db.execute(sql + " ORDER BY COALESCE(due, created)").fetchall()
+        return [Followup(*r) for r in rows]
+
+    def due_followups(self, now: float | None = None) -> list[Followup]:
+        """Bugün ya da daha önce günü gelmiş takipler + yarım kalan işler. Çok eskiyenler kendiliğinden düşer
+        (sınavdan 4 gün sonra "nasıl geçti" sorulmaz; iki hafta önce yarım kalan iş artık güncel değil)."""
+        now = now or time.time()
+        end_of_day = datetime.fromtimestamp(now).replace(hour=23, minute=59, second=59).timestamp()
+        out, stale = [], []
+        for f in self.followups():
+            if f.due is not None and f.due > end_of_day:
+                continue
+            age = now - (f.due if f.due is not None else f.created)
+            if age > (14 if f.kind == "open" else 4) * 86400:
+                stale.append(f.id)
+                continue
+            out.append(f)
+        if stale:
+            with self._lock:
+                self.db.executemany("UPDATE followups SET done = 2 WHERE id = ?", [(i,) for i in stale])
+                self.db.commit()
+        return out
+
+    def done_followup(self, fid: int) -> Followup | None:
+        with self._lock:
+            row = self.db.execute("SELECT id, created, due, kind, text, done FROM followups WHERE id = ?",
+                                  (int(fid),)).fetchone()
+            if row is None:
+                return None
+            self.db.execute("UPDATE followups SET done = 1 WHERE id = ?", (int(fid),))
+            self.db.commit()
+            self._bump()
+        return Followup(*row)
+
+    # ------------------------------------------------------------------ özetleme
+    def pending_sessions(self, now: float | None = None, force: bool = False) -> list[list[Episode]]:
+        """Henüz özetlenmemiş, bitmiş konuşmalar (aralarında session_gap'ten uzun sessizlik olan tur grupları)."""
+        now = now or time.time()
+        raw = self._meta("digested_until")
+        since = float(raw) if raw else now - 3 * 86400  # ilk açılışta bütün geçmiş değil, son üç gün
+        with self._lock:
+            rows = self.db.execute("SELECT id, ts, channel, user, reply FROM episodes WHERE ts > ? "
+                                   "ORDER BY ts LIMIT 400", (since,)).fetchall()
+        groups: list[list[Episode]] = []
+        for r in rows:
+            e = Episode(*r)
+            if groups and e.ts - groups[-1][-1].ts <= self.session_gap:
+                groups[-1].append(e)
+            else:
+                groups.append([e])
+        if groups and not force and now - groups[-1][-1].ts < self.session_gap:
+            groups.pop()  # konuşma sürüyor
+        return groups
+
+    def maybe_digest(self) -> None:
+        """Ucuz kontrol (dakikada bir): bitmiş ve özetlenmemiş konuşma varsa arka planda özetle."""
+        if not self.digest_enabled or self.extractor is None or self._digest_lock.locked():
+            return
+        now = time.monotonic()
+        if now - self._last_digest_check < 60:
+            return
+        self._last_digest_check = now
+        if float(self._meta("digest_fail_until") or 0) > time.time() or not self.pending_sessions():
+            return
+        threading.Thread(target=self.digest, daemon=True, name="alice-memory-digest").start()
+
+    def digest(self, force: bool = False, max_sessions: int = 3) -> int:
+        """Bitmiş konuşmaları özetle; kalıcı bilgileri ve takipleri çıkar. Özetlenen konuşma sayısını döndürür."""
+        if self.extractor is None or not self._digest_lock.acquire(blocking=False):
+            return 0
+        done = 0
+        try:
+            for group in self.pending_sessions(force=force)[:max_sessions]:
+                if sum(len(e.user) for e in group) >= 40:  # "saat kaç" gibi tek kısa tur özetlenmez
+                    try:
+                        self._digest_one(group)
+                    except Exception:  # noqa: BLE001 - model yok/kota: sonra tekrar denenir
+                        self._meta("digest_fail_until", repr(time.time() + 900))
+                        break
+                    done += 1
+                self._meta("digested_until", repr(group[-1].ts))
+        finally:
+            self._digest_lock.release()
+        return done
+
+    def _digest_one(self, group: list[Episode]) -> None:
+        lines, used = [], 0
+        for e in reversed(group):  # uzun konuşmada son kısım önemli: sondan geriye 6000 karaktere kadar
+            line = f"{datetime.fromtimestamp(e.ts):%H:%M} Kullanıcı: {e.user[:600]}\nALICE: {e.reply[:400]}"
+            if used + len(line) > 6000:
+                break
+            lines.append(line)
+            used += len(line)
+        transcript = "\n".join(reversed(lines))
+        related = self.search(" ".join(e.user for e in group)[:1500], limit=10, episodes=False, min_score=0.1)
+        known = "\n".join(f"{h.item.id}: {h.item.text}" for h in related if isinstance(h.item, Fact)) or "(yok)"
+        open_items = "\n".join(f.line() for f in self.followups()) or "(yok)"
+        start = datetime.fromtimestamp(group[0].ts)
+        prompt = DIGEST_PROMPT.format(date=f"{start:%Y-%m-%d %A}", known=known, open=open_items,
+                                      transcript=transcript)
+        data = parse_json(self.extractor(prompt) if self.extractor else "")
+        if not data:
+            raise ValueError("özet cevabı boş")
+        self.apply(data)
+        summary = data.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            channels = ", ".join(dict.fromkeys(e.channel for e in group if e.channel))
+            self.add_summary(group[0].ts, group[-1].ts, summary, channels)
+        for fid in data.get("done") or []:
+            try:
+                self.done_followup(int(fid))
+            except (TypeError, ValueError):
+                continue
+        for f in (data.get("followups") or [])[:5]:
+            if not isinstance(f, dict) or not isinstance(f.get("text"), str):
+                continue
+            due = _parse_day(f.get("due"))
+            kind = str(f.get("kind") or ("open" if due is None else "ask"))
+            if kind != "open" and due is None:
+                continue
+            try:
+                self.add_followup(f["text"], due, kind)
+            except ValueError:
+                continue
+
     # ------------------------------------------------------------------ istem
     def profile(self, chars: int | None = None, recent: int = 3) -> str:
-        """Sistem istemine giren blok: kullanıcıyı tanıtan bilgiler + son birkaç konuşma."""
+        """Sistem istemine giren blok: kullanıcıyı tanıtan bilgiler, son günlerin özeti, günü gelen takipler ve son
+        birkaç konuşma."""
         chars = chars or self.profile_chars
         with self._lock:
             rows = self.db.execute("SELECT id, kind, text, created, updated, hits FROM facts").fetchall()
@@ -393,13 +701,22 @@ class LongMemory:
             out.append(line)
             used += len(line) + 1
         eps = self.recent(recent)
-        if not out and not eps:
+        sums = self.summaries(4, within_days=10)
+        due = self.due_followups()
+        if not out and not eps and not sums and not due:
             return ""
         parts = ["# Long-term memory\nWhat you know about the user from earlier conversations (stored locally). Use it "
                  "naturally to personalize answers; don't recite it. Each user message may end with a [hafızadan ...] "
                  "note of related memories. To save something new, change or delete a memory, use the memory tool."]
         if out:
             parts.append("\n".join(out))
+        if sums:
+            parts.append("Earlier conversations, summarized (continue from them naturally, e.g. ask how a thing went):\n"
+                         + "\n".join(f"- {s.line()}" for s in sums))
+        if due:
+            parts.append("Follow-ups due now: bring each up ONCE at a natural moment (a greeting or a pause is fine), "
+                         "briefly, in your own words; then call memory action=done id=<n>. Unfinished threads: offer "
+                         "to continue.\n" + "\n".join(f"- {f.line()}" for f in due))
         if eps:
             parts.append("Recent conversations:\n" + "\n".join(f"- {e.line(width=160)}" for e in eps))
         return "\n".join(parts)
@@ -410,6 +727,12 @@ class LongMemory:
         if not facts and not eps:
             return "(hafıza boş)"
         lines = ["# Bilgiler"] + [f"* {f.line()}" for f in facts]
+        sums = self.summaries(5)
+        if sums:
+            lines += ["", "# Konuşma özetleri"] + [f"* {s.line()}" for s in sums]
+        fups = self.followups()
+        if fups:
+            lines += ["", "# Takipler"] + [f"* {f.line()}" for f in fups]
         if eps:
             lines += ["", "# Son konuşmalar"] + [f"* {e.line()}" for e in eps]
         return "\n".join(lines)
@@ -418,6 +741,7 @@ class LongMemory:
     def learn(self, user: str, reply: str = "", background: bool = True) -> None:
         """Konuşma turundan kalıcı bilgi çıkar. Açık "hatırla" isteği hemen; diğerleri arka planda modelle."""
         user = clean_user_text(user)
+        self.maybe_digest()  # önceki (bitmiş) konuşma henüz özetlenmediyse şimdi arka planda
         note = explicit_note(user)
         if note:
             self.remember(note, "note", source="kullanıcı")
@@ -481,6 +805,40 @@ User: {user}
 ALICE: {reply}"""
 
 
+DIGEST_PROMPT = """You maintain the long-term memory of ALICE, a personal assistant (like Jarvis) for one user. Below is \
+one finished conversation (it started {date}). Produce:
+1. "summary": 1-3 short Turkish sentences: what was talked about, what got done or decided, what is left. Concrete \
+(names, projects, numbers), no filler. Empty string if it was only trivial commands/small talk.
+2. Durable facts about the user that will matter later (projects they work on, plans, goals, preferences, people, \
+habits, how they want ALICE to behave). One short Turkish sentence each, third person ("Kullanıcı ..."). kind: \
+preference | fact | person | routine | note. Use "update"/"remove" with the existing ids below instead of duplicating.
+3. "followups": things a good assistant should bring up later. kind "ask": an upcoming event to ask about afterwards \
+(exam, match, trip, interview) with "due" = the day after it happens; kind "remind": something the user must do on a \
+day; kind "open": unfinished work from this conversation the user may want to continue (no due). Turkish, written as \
+an instruction to ALICE ("Matematik sınavının nasıl geçtiğini sor."). Only real ones; usually zero or one.
+4. "done": ids of the open follow-ups below that this conversation already resolved.
+Dates are YYYY-MM-DD; resolve "yarın", "cuma" etc. relative to the conversation date.
+Existing related memories (id: text):
+{known}
+Open follow-ups:
+{open}
+Answer ONLY with JSON: {{"summary": "...", "add": [{{"text": "...", "kind": "..."}}], "update": [{{"id": 1, "text": \
+"..."}}], "remove": [], "followups": [{{"text": "...", "kind": "ask", "due": "YYYY-MM-DD"}}], "done": []}}
+
+Conversation:
+{transcript}"""
+
+
+def _parse_day(value: Any) -> float | None:
+    """'2026-10-23' -> o günün sabahı 09:00 (yerel saat); geçersizse None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value.strip()[:10], "%Y-%m-%d").replace(hour=9).timestamp()
+    except ValueError:
+        return None
+
+
 def parse_json(raw: str) -> dict[str, Any]:
     raw = (raw or "").strip()
     m = re.search(r"\{.*\}", raw, re.S)
@@ -502,9 +860,9 @@ def make_extractor(options: dict[str, Any], router) -> Callable[[str], str] | No
     def extract(prompt: str) -> str:
         msgs = [{"role": "user", "content": prompt}]
         try:
-            res = router.chat(role, msgs, temperature=0, max_tokens=500, response_format={"type": "json_object"})
+            res = router.chat(role, msgs, temperature=0, max_tokens=900, response_format={"type": "json_object"})
         except Exception:  # noqa: BLE001 - bazı modeller response_format'ı reddediyor
-            res = router.chat(role, msgs, temperature=0, max_tokens=500)
+            res = router.chat(role, msgs, temperature=0, max_tokens=900)
         return res.message.get("content") or ""
 
     return extract
@@ -539,6 +897,8 @@ def attach_memory(agent, channel: str) -> Any:
     if mem is not None:
         agent.ctx.state["memory"] = mem
         agent.refresh_memory(force=True)
+        mem.maybe_digest()  # dünkü konuşma hâlâ özetlenmediyse arka planda
+        mem.index_soon()
     return mem
 
 

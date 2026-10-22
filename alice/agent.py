@@ -178,6 +178,14 @@ PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiş
              "onayını bekle.]\n\n")
 
 
+NUDGE_PREFIX = "[devam kontrolü] "
+# Cevabın sonu "yapacağım" diyorsa iş yarım kalmış demektir.
+_PROMISE_RX = re.compile(
+    r"(yapaca[ğg][ıi]m|edece[ğg]im|ba[şs]l[ıi]yorum|bakaca[ğg][ıi]m|deneyece[ğg]im|ekleyece[ğg]im|d[üu]zeltece[ğg]im|"
+    r"[çc]al[ıi][şs]t[ıi]raca[ğg][ıi]m|kontrol edece[ğg]im|yazaca[ğg][ıi]m|kuraca[ğg][ıi]m|indirece[ğg]im|"
+    r"\blet me\b|\bi'll\b|\bi will\b|\bnext,? i\b|\bnow i\b)[^.!?]{0,60}[.:…]*\s*$", re.I)
+
+
 class Agent:
     def __init__(
         self,
@@ -211,6 +219,9 @@ class Agent:
         self.output_limit = int(a.get("tool_output_chars", 12000))
         self.keep_images = int(a.get("keep_images", 2))
         self.stream = bool(a.get("stream", True))
+        # Araçlarla çalışırken iş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak, todo listesinde
+        # bitmemiş adım bırakmak) en fazla bu kadar kez devam etmesi hatırlatılır. 0 = kapalı.
+        self.finish_nudges = int(a.get("finish_nudges", 2))
         self.cancel = threading.Event()
         self.busy = False
         self._call_counts: dict[str, int] = {}
@@ -222,7 +233,7 @@ class Agent:
         # Uzun süreli hafıza (alice.memory.LongMemory): oturum kuranlar bağlar; testler ve gözetimsiz görevlerde None.
         self.memory: Any = None
         self.memory_channel = ""
-        self._memory_version = -1
+        self._memory_version: Any = -1
         # Geri sarma için: kullanıcı mesajının indeksi -> o turda ilk değişen dosyaların eski hali.
         self.checkpoints: dict[int, dict[str, bytes | None]] = {}
         if not is_child:
@@ -255,11 +266,15 @@ class Agent:
         if mem is None or self.is_child:
             return
         try:
-            version = mem.version
+            from alice import projects
+
+            scanned = projects.load()[0] if projects.enabled(self.config) else 0.0
+            version = (mem.version, scanned)
             if force or version != self._memory_version:
                 from alice.prompts import with_memory
 
-                self.messages[0]["content"] = with_memory(self.messages[0]["content"], mem.profile())
+                profile = "\n\n".join(b for b in (mem.profile(), projects.brief(self.config)) if b)
+                self.messages[0]["content"] = with_memory(self.messages[0]["content"], profile)
                 self._memory_version = version
         except Exception:  # noqa: BLE001 - hafıza hatası konuşmayı durdurmasın
             pass
@@ -318,6 +333,8 @@ class Agent:
         self._fail_counts.clear()
         self._error_streak = 0
         sink = _Sink(self.ui, self.cancel)
+        self._turn_tools: set[str] = set()
+        nudges = 0
         try:
             for _ in range(steps):
                 if self.cancel.is_set():
@@ -358,7 +375,13 @@ class Agent:
                 if msg.get("content"):
                     final = msg["content"]
                 if not msg.get("tool_calls"):
-                    return final
+                    nudge = self._unfinished(msg.get("content") or "") if nudges < self.finish_nudges else ""
+                    if not nudge:
+                        return final
+                    nudges += 1
+                    self.messages.append({"role": "user", "content": nudge, "_nudge": True})
+                    continue
+                self._turn_tools.update(c["function"]["name"] for c in msg["tool_calls"])
                 self._run_tools(msg["tool_calls"])
                 if self.on_step is not None:
                     try:
@@ -388,6 +411,26 @@ class Agent:
             raise
         finally:
             self.busy = False
+
+    def _unfinished(self, text: str) -> str:
+        """Tur araçlarla iş yaparken cevap verip durduysa ve iş bitmemiş görünüyorsa modele gidecek hatırlatma (boş:
+        bitti). Sesli rolde yok: ikinci cevap da sesli okunurdu."""
+        used = getattr(self, "_turn_tools", set())
+        if not used or self.role == "voice" or self.permissions.mode == "plan":
+            return ""  # plan modunda "şunu yapacağım" zaten istenen cevap
+        tail = text.strip()[-240:]
+        if tail.endswith("?"):
+            return ""  # kullanıcıya soru soruyor: beklemesi doğru
+        todos = self.ctx.state.get("todos") or []
+        left = [t.get("content", "") for t in todos if isinstance(t, dict) and t.get("status") != "done"]
+        if "todo_write" in used and left:
+            return (NUDGE_PREFIX + "Todo listesinde bitmemiş adımlar var: " + "; ".join(left[:6]) + ". Kullanıcıdan bir "
+                    "şey gerekmiyorsa araçlarla kaldığın yerden devam et. Gerçekten bittiyse listeyi güncelle ve "
+                    "sonucu söyle; takıldıysan neden takıldığını açıkça söyle.")
+        if _PROMISE_RX.search(tail):
+            return (NUDGE_PREFIX + "Yapacağını söyledin ama yapmadan durdun. Kullanıcıdan bir şey gerekmiyorsa şimdi "
+                    "araçlarla yap ve bitince sonucu bildir; gerekiyorsa açıkça sor.")
+        return ""
 
     def stop(self) -> None:
         """Başka bir thread'den (ör. uygulamadaki Durdur butonu) mevcut turu durdur. Model ya da araç cevabı

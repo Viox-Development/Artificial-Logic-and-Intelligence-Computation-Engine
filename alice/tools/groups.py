@@ -57,6 +57,9 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
     "personal": ({"notes", "report", "media"}, "notlar, sabah/PC raporu, müzik ve ses seviyesi",
                  r"\bnot\b|notlar|not al|rapor|özet|sabah|müzik|şarkı|ses seviyesi|sesi aç|sesi kıs|spotify|"
                  r"kapat .*dakika|dakika sonra"),
+    "projects": ({"projects"}, "kullanıcının projeleri (repo, Unity, Python...) ve ayrıntıları",
+                 r"proje|repo\b|depo(su|m|yu)?\b|unity|godot|kodum|oyunum|oyunumu|uygulamam|scriptim|programım|"
+                 r"son commit|nerede duruyor|hangi klasör"),
     "home": ({"pc", "wifi", "android", "tv"}, "PC gücü/parlaklık, Wi-Fi ve ev ağı, TV, Android telefon",
              r"kilitle|uyut|uyku|hazırda|yeniden başlat|restart|parlaklı|monitör|ekranı kapat|güç plan|wi-?fi|"
              r"kablosuz|internet|modem|\bağ(a|da|ı|daki)?\b|ssid|\btv\b|televizyon|android|telefon|bildirim|"
@@ -142,10 +145,15 @@ class LoadTools(Tool):
     @property
     def description(self) -> str:  # eklenti grupları sonradan yüklendiği için her seferinde kurulur
         # Gemini Live açıklamayı 1000 karakterde kesiyor; grup sayısı arttıkça açıklamalar kısaltılır.
-        return ("Şu an listede olmayan bir araç grubunu açar; araçlar bir sonraki adımdan itibaren kullanılabilir. "
-                "İş için gereken araç listede yoksa ('yapamam' demeden önce) bunu çağır. Gruplar: "
-                + "; ".join(f"{g}: {_clip(desc)}" for g, (_, desc, _) in all_groups().items())
-                + "; MCP sunucuları için 'mcp:<sunucu>' (ör. mcp:github). Hepsi için 'all'.")
+        groups = all_groups()
+        for n in range(62, 20, -4):  # grup eklendikçe açıklamalar kısalır, toplam 1000 karakteri geçmez
+            text = ("Şu an listede olmayan bir araç grubunu açar; araçlar bir sonraki adımdan itibaren kullanılabilir. "
+                    "İş için gereken araç listede yoksa ('yapamam' demeden önce) bunu çağır. Gruplar: "
+                    + "; ".join(f"{g}: {_clip(desc, n)}" for g, (_, desc, _) in groups.items())
+                    + "; MCP sunucuları için 'mcp:<sunucu>' (ör. mcp:github). Hepsi için 'all'.")
+            if len(text) <= 1000:
+                break
+        return text
 
     parameters = obj({"groups": {"type": "array", "items": {"type": "string"},
                                  "description": "Açılacak grup adları, ör. [\"desktop\", \"browser\"]."}}, ["groups"])

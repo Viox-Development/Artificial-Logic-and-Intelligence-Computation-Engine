@@ -36,6 +36,28 @@ You are speaking out loud through text-to-speech. The user hears you, they may n
 - Checklists (checklist tool): read only the current step, then wait; on "tamam", "devam" or "sonraki" call next.
 - "Not al" during a flight goes to the kneeboard (kneeboard tool, action note); otherwise to the notes tool."""
 
+# Düşünmeyi gerektiren sorular: sesli yolda en hızlı (ilk kelimesi en çabuk gelen) model yerine beyin modeline gider.
+# Komutlar ("YouTube'u aç", "sesi kıs") hızlı yolda kalır.
+_THINK_RX = re.compile(
+    r"\b(neden|niye|niçin|nasıl (çalışır|yapılır|yaparım|olur|yani)|açıkla|anlat|karşılaştır|farkı|hangisi (daha|iyi)|"
+    r"öner|tavsiye|fikrin|ne düşünüyorsun|mantıklı mı|hesapla|kaç (para|lira|dolar|gün|saat|yıl)|plan(la|ı)?|"
+    r"strateji|analiz|araştır|özetle|kod|script|algoritma|hata(yı|sı)? (neden|nasıl)|optimize|tasarla|"
+    r"ne zaman|kimdir|nedir|ne demek|ne işe yarar|why|how (do|does|to|can)|explain|compare)\b", re.I)
+_COMMAND_RX = re.compile(r"\b(aç|kapat|çal|durdur|duraklat|geç|sesi|kıs|yükselt|ekran görüntüsü|kilitle|hatırlat)\w*\b",
+                         re.I)
+
+
+def needs_thinking(text: str) -> bool:
+    """Bu sesli istek hızlı modele mi (False) yoksa beyin modeline mi (True) gitmeli?"""
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    words = len(t.split())
+    if _THINK_RX.search(t):
+        return True
+    return words >= 16 and not _COMMAND_RX.search(t)
+
+
 def with_clock(text: str) -> str:
     """Sesli asistan saatlerce açık kalır; sistem istemindeki saat eskir. Saati/tarihi her cümleye ekle ki
     "saat kaç" gibi sorular komut çalıştırmadan cevaplansın."""
@@ -193,8 +215,9 @@ class VoiceAssistant:
                  follow_up: float = FOLLOW_MAX, emit: Callable[[str], None] = lambda s: None,
                  keep_turns: int = 4, idle_reset: float = 300.0, live=None, end_silence: float = 0.5,
                  live_text_min: float | None = -0.7, live_text_wait: float = 1.5, live_follow: float = FOLLOW_MAX,
-                 full_text_max: float = 8.0, live_gate: bool = True):
+                 full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True):
         self.agent = agent
+        self.smart_route = smart_route  # düşünmesi gereken soruyu hızlı ses modeli yerine beyin modeline ver
         # İlk cümlenin yerel dökümü bu güvenin (ortalama log olasılık) üstündeyse Live'a ses yerine yazı gider.
         self.live_text_min = live_text_min
         self.live_text_wait = live_text_wait
@@ -549,6 +572,10 @@ class VoiceAssistant:
             else:
                 msgs[:] = trim_history(msgs, self.keep_turns)
         reply = ""
+        old_role = getattr(self.agent, "role", "brain")
+        if self.smart_route and old_role == "voice" and needs_thinking(text):
+            self.agent.role = "brain"  # bu tur için: biraz geç başlar ama doğru ve dolu cevap verir
+            voice_log("düşünmesi gereken soru: beyin modeline gidiyor")
         try:
             self.ui.begin_turn()
             reply = self.agent.run_turn(with_clock(text)) or ""
@@ -557,6 +584,8 @@ class VoiceAssistant:
             self.emit(f"hata: {e}")
             reply = f"HATA {e}"
         finally:
+            if hasattr(self.agent, "role"):
+                self.agent.role = old_role
             self._busy.clear()
             self._last_turn = time.monotonic()
             tools = f" araçlar: {', '.join(self.ui.tools)}" if self.ui.tools else ""
@@ -660,7 +689,8 @@ def live_text_options(v: dict[str, Any]) -> dict[str, Any]:
     return {"live_text_min": None if m in ("", False, None) else float(m),
             "live_text_wait": float(v.get("live_text_wait", 1.5)),
             "live_follow": float(v.get("live_follow", FOLLOW_MAX)),
-            "live_gate": bool(v.get("live_gate", True))}
+            "live_gate": bool(v.get("live_gate", True)),
+            "smart_route": bool(v.get("smart_route", True))}
 
 
 def make_live(cfg, agent):

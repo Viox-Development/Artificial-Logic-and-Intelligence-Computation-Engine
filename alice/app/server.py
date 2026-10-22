@@ -160,7 +160,7 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
         role = m.get("role")
         content = m.get("content")
         if role == "user":
-            if m.get("_image"):
+            if m.get("_image") or m.get("_nudge"):
                 continue
             text = _user_text(m)
             if text.startswith("[Önceki konuşmanın özeti]"):

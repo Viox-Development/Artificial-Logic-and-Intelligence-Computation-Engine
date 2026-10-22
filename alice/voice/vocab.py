@@ -109,6 +109,36 @@ _cache: list[str] | None = None
 _lock = threading.Lock()
 
 
+def project_names(cfg=None) -> list[str]:
+    """Kullanıcının projelerinin adları ("ALICE reposu", "FPS-Game"): sesli komutta en çok bozulan adlar bunlar."""
+    from alice import projects
+
+    return [n for n in projects.names(cfg, 15) if 2 < len(n) <= 40]
+
+
+def memory_names(limit: int = 25) -> list[str]:
+    """Hafızadaki özel adlar (kişiler, oyunlar, uygulamalar): cümle başı olmayan büyük harfli kelimeler."""
+    from alice.config import alice_home
+
+    if not (alice_home() / "memory.db").is_file():
+        return []
+    from alice.memory import shared_memory
+
+    mem = shared_memory()
+    if mem is None:
+        return []
+    out: list[str] = []
+    for f in mem.facts(200):
+        words = f.text.split()
+        for w in words[1:]:
+            w = w.strip(".,;:!?()\"'").split("'")[0].split("’")[0]
+            if len(w) > 2 and w[0].isupper() and w not in out and w.lower() not in ("kullanıcı", "kullanıcının"):
+                out.append(w)
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
 def known_names(cfg=None, refresh: bool = False) -> list[str]:
     """Adlar listesi (ilk çağrıda hesaplanır, sonra önbellekten)."""
     global _cache
@@ -119,10 +149,11 @@ def known_names(cfg=None, refresh: bool = False) -> list[str]:
         extra = [str(x) for x in v.get("vocab", []) or []]
         groups: list[Iterable[str]] = [extra, COMMON]
         if v.get("vocab_auto", True):
-            try:
-                groups += [bookmark_names(), start_menu_apps()]
-            except Exception:  # noqa: BLE001 - ipucu; okunamazsa genel listeyle devam
-                pass
+            for source in (lambda: memory_names(), lambda: project_names(cfg), bookmark_names, start_menu_apps):
+                try:
+                    groups.append(source())
+                except Exception:  # noqa: BLE001 - ipucu; okunamazsa genel listeyle devam
+                    pass
         _cache = merge(groups, int(v.get("vocab_limit", 80)))
         return _cache
 
