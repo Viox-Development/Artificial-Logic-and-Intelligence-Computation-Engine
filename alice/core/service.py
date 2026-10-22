@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import traceback
 import threading
@@ -32,6 +33,41 @@ from alice.core.schedule import ScheduledTask, TaskStore
 from alice.core.store import MODE_KEY, Store
 
 MODE_NAMES = {"normal": "normal", "dev": "geliştirme", "flight": "uçuş", "quiet": "sessiz"}
+
+
+# Takvimde bunlar geçen etkinlik bitince "nasıl geçti" diye sorulur (her toplantı için değil).
+CALENDAR_ASK = re.compile(r"sınav|sinav|vize|final|quiz|maç|mac\b|mülakat|mulakat|görüşme|randevu|doktor|dişçi|"
+                          r"hastane|sunum|yarışma|turnuva|uçuş|seyahat|tatil|konser|exam|interview|match|trip|flight",
+                          re.I)
+
+
+def calendar_followups(mem, cfg, now: datetime | None = None, client: Any = None) -> int:
+    """Google Takvim bağlıysa önümüzdeki iki günün önemli etkinliklerini takibe çevir: ertesi gün ALICE sorar."""
+    from datetime import timedelta
+
+    from alice.connect import runner
+    from alice.connect.manifest import discover
+
+    m = discover(cfg)[0].get("google_calendar")
+    if m is None or not runner.ready(m)[0] or "upcoming" not in m.actions:
+        return 0
+    now = (now or datetime.now()).astimezone()
+    data = runner.call(m, m.actions["upcoming"], {"timeMin": now.isoformat(), "timeMax": (now + timedelta(days=2))
+                       .isoformat(), "maxResults": 20}, client=client, cache=False)
+    added = 0
+    for ev in (runner.pick(data, "items") or [])[:15]:
+        title = str(ev.get("summary") or "")
+        start = (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date") or ""
+        if not title or not start or not CALENDAR_ASK.search(title):
+            continue
+        try:
+            day = datetime.fromisoformat(start.replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        due = datetime.combine(day + timedelta(days=1), datetime.min.time()).replace(hour=9).timestamp()
+        mem.add_followup(f"Takvimdeki '{title}' ({day:%d.%m}) nasıl geçti, sor.", due, "ask")
+        added += 1
+    return added
 
 
 def state_path() -> Path:
@@ -227,6 +263,7 @@ class Core:
             if mem is None:
                 return
             mem.digest()
+            calendar_followups(mem, self.cfg)
             sent = set(json.loads(mem._meta("reminded") or "[]"))
             now = time.time()
             due = [f for f in mem.due_followups(now) if f.kind == "remind" and f.id not in sent

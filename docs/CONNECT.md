@@ -88,6 +88,7 @@ Model aracı `action` parametresiyle çağırıyor: `steam(action="library", ste
 | `youtube_api` | `YOUTUBE_API_KEY` | video/kanal arama, video istatistikleri, yorumlar |
 | `discord` | `DISCORD_BOT_TOKEN` | sunucular, kanallar, son mesajlar, mesaj gönderme (bot hesabıyla) |
 | `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | çalan parça, çal/duraklat/sonraki, arama, cihazlar, çalma listeleri |
+| `google_calendar` | OAuth2 + `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yaklaşan etkinlikler, arama, doğal dille ekleme ("Cuma 15:00 dişçi"), silme. Bağlıysa çekirdek önümüzdeki iki günün sınav/maç/randevu gibi etkinliklerini takibe çevirir; ertesi gün ALICE nasıl geçtiğini sorar |
 
 ## Resmî API'si olmayan siteler
 

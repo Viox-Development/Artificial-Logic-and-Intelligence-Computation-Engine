@@ -298,6 +298,17 @@ class WebSearch(Tool):
             blocked_domains: list[str] | None = None) -> ToolResult:
         allowed = [d for d in (allowed_domains or []) if d]
         blocked = [d for d in (blocked_domains or []) if d]
+        gkey = os.environ.get("GEMINI_API_KEY", "").strip()
+        if gkey and not allowed and not blocked and ctx.config.agent.get("search_grounding", True):
+            ckey = ("search", "gemini", query)
+            try:
+                res_g = cache_get(ckey)
+                if res_g is None:
+                    res_g = gemini_search(query, gkey, grounding_model(ctx))
+                    cache_put(ckey, res_g)
+                return ToolResult(format_grounded(res_g))
+            except ValueError:
+                pass  # kota/hata: klasik motorlar
         q = query + (f" site:{allowed[0]}" if len(allowed) == 1 and "site:" not in query else "")
         want = max_results * 3 if allowed or blocked else max_results
         key = os.environ.get("BRAVE_SEARCH_API_KEY") or ctx.config.agent.get("brave_api_key")
@@ -323,6 +334,53 @@ class WebSearch(Tool):
                 raise ToolError("arama başarısız: " + "; ".join(errors))
             return ToolResult("sonuç yok")
         return ToolResult("\n\n".join(f"{i}. {r['title']}\n{r['url']}\n{r['snippet']}" for i, r in enumerate(res, 1)))
+
+
+# Google araması (Gemini grounding): model aramayı Google'da yapar, sonuçları okuyup kaynaklı özet yazar.
+# DuckDuckGo/Bing sayfası kazımaktan çok daha güncel ve dolu; kota dolarsa ya da hata verirse bir süre denenmez,
+# klasik motorlara düşülür.
+GROUNDING_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GROUNDING_PROMPT = ("Bu soruyu Google'da ara ve bulduklarını kısa, olgusal bir özet olarak yaz: Türkçe, en fazla 8 madde, "
+                    "tarihleri, sayıları, sürümleri ve adları aynen koru; emin olmadığını belirt; yorum ekleme.\n"
+                    "Arama: {query}")
+_grounding = {"down_until": 0.0}
+
+
+def grounding_model(ctx: ToolContext) -> str:
+    return str(ctx.config.agent.get("grounding_model", "gemini-flash-latest"))
+
+
+def gemini_search(query: str, key: str, model: str, timeout: float = 25.0) -> dict[str, Any]:
+    """{'text': özet, 'sources': [{'title', 'url'}], 'queries': [...]}; kota/hata ValueError."""
+    if time.monotonic() < _grounding["down_until"]:
+        raise ValueError("Google araması geçici olarak kapalı (kota/hata)")
+    try:
+        r = httpx.post(GROUNDING_URL.format(model=model), headers={"x-goog-api-key": key},
+                       json={"contents": [{"role": "user", "parts": [{"text": GROUNDING_PROMPT.format(query=query)}]}],
+                             "tools": [{"google_search": {}}]}, timeout=timeout)
+    except httpx.HTTPError as e:
+        _grounding["down_until"] = time.monotonic() + 300
+        raise ValueError(f"bağlantı: {e}") from e
+    if r.status_code >= 400:
+        _grounding["down_until"] = time.monotonic() + (3600 if r.status_code == 429 else 900)
+        raise ValueError(f"HTTP {r.status_code}: {r.text[:160]}")
+    try:
+        cand = (r.json().get("candidates") or [{}])[0]
+        text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", [])).strip()
+        meta = cand.get("groundingMetadata") or {}
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"bozuk cevap: {e}") from e
+    sources = [{"title": (c.get("web") or {}).get("title", ""), "url": (c.get("web") or {}).get("uri", "")}
+               for c in meta.get("groundingChunks") or [] if c.get("web")]
+    if not text or not sources:
+        raise ValueError("Google araması sonuç döndürmedi")
+    return {"text": text, "sources": sources[:8], "queries": meta.get("webSearchQueries") or []}
+
+
+def format_grounded(res: dict[str, Any]) -> str:
+    src = "\n".join(f"{i}. {s['title']}\n{s['url']}" for i, s in enumerate(res["sources"], 1))
+    return (f"Google araması özeti (Gemini, kaynaklı):\n{res['text']}\n\nKaynaklar (ayrıntı için web_fetch; "
+            f"başlık sitenin adıdır):\n{src}")
 
 
 _ENV_RX = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")

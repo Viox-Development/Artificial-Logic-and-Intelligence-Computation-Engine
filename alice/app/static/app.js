@@ -663,6 +663,52 @@ function onPermissionDone(ev) {
   card._acts.replaceWith(el("div", "perm-done " + (ev.answer === "n" ? "no" : "yes"), txt));
   card.classList.add("answered");
 }
+/* ===================================================================== seçenekli soru */
+function onChoice(ev) {
+  if (S.perms.has(ev.id)) return;
+  hideWorking();
+  const card = el("div", "perm choice");
+  const q = el("div", "perm-q");
+  const qt = el("div", "perm-qt");
+  qt.append(el("b", "", ev.question), el("small", "", ev.multi ? "Birden fazla seçebilirsin" : "ALICE soruyor"));
+  q.append(qt);
+  const acts = el("div", "perm-actions choice-actions");
+  const send = (ans) => api("/api/choice", { id: ev.id, answer: ans });
+  const picked = new Set();
+  (ev.options || []).forEach((o, i) => {
+    const [label, desc] = String(o).split(" — ");
+    const b = el("button", "btn" + (i === 0 ? " primary" : ""));
+    b.append(document.createTextNode(label), el("kbd", "", String(i + 1)));
+    if (desc) b.title = desc;
+    b.addEventListener("click", () => {
+      if (!ev.multi) return send(o);
+      picked.has(o) ? picked.delete(o) : picked.add(o);
+      b.classList.toggle("primary", picked.has(o));
+    });
+    acts.append(b);
+  });
+  const other = el("input", "choice-other");
+  other.placeholder = "Başka bir cevap yaz, Enter";
+  other.addEventListener("keydown", (e) => { if (e.key === "Enter" && other.value.trim()) send(other.value.trim()); });
+  acts.append(other);
+  if (ev.multi) {
+    const ok = el("button", "btn primary", "Gönder");
+    ok.addEventListener("click", () => send([...picked].join(", ") || other.value.trim()));
+    acts.append(ok);
+  }
+  card.append(q, acts);
+  card._id = ev.id;
+  card._acts = acts;
+  card._choice = true;
+  S.perms.set(ev.id, card);
+  add(card, true);
+}
+function onChoiceDone(ev) {
+  const card = S.perms.get(ev.id);
+  if (!card) return;
+  card._acts.replaceWith(el("div", "perm-done " + (ev.answer ? "yes" : "no"), ev.answer ? "Cevap: " + ev.answer : "Vazgeçildi"));
+  card.classList.add("answered");
+}
 function pendingPerm() {
   for (const c of S.perms.values()) if (!c.classList.contains("answered")) return c;
   return null;
@@ -824,7 +870,7 @@ function applyStatus(s) {
   if (PREFS.panel && PREFS.tab === "context") renderPanel();
   // Sadece gelen durumda busy varsa uygula: kısmi güncelleme (ör. model değişimi) eski busy değeriyle işi bitmiş saymasın.
   if (s.busy !== undefined && s.busy !== S.busy) setBusy(s.busy);
-  for (const p of st.pending || []) onPermission(p);
+  for (const p of st.pending || []) (p.type === "ask_choice" ? onChoice : onPermission)(p);
   $$(".sess").forEach((b) => b.classList.toggle("active", b.dataset.id === st.session));
   if (app.classList.contains("empty")) greet();
 }

@@ -6,10 +6,21 @@ auto : tehlikeli komutlar (rm -r, format, registry, shutdown...), sistem klasör
        başkasına giden mesajlar (send: Discord/WhatsApp/e-posta) onay ister; geri kalan her şey
        (dosya düzenleme, komut, fare/klavye) serbest
 yolo : hiçbir şey sormaz
+
+Kalıcı kurallar (Claude Code'daki allow/deny gibi), config.toml ve projede .alice/permissions.toml:
+  [permissions]
+  allow = ["run_command(git status*)", "run_command(npm test*)", "edit_file(src/*)"]
+  ask   = ["run_command(git push*)"]
+  deny  = ["run_command(*rm -rf*)", "write_file(*.env)", "mcp__github__delete_*"]
+Biçim: "araç" ya da "araç(desen)". Araç adında * olabilir. Desen (büyük/küçük harf duyarsız, fnmatch) aracın asıl
+argümanına bakar: command, path, url, target, app, action ya da query (ilk bulunan). deny her modda (yolo dahil)
+geçerlidir; ask yolo dışında her zaman sorar; allow sormadan izin verir (plan modunu delmez; tehlikeli bir işe
+ancak desenli bir kural izin verir, "run_command" tek başına rm -r'yi serbest bırakmaz).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,22 +47,104 @@ def _confirm_outward(ctx: ToolContext) -> bool:
     return bool(agent.get("confirm_outward", True)) if isinstance(agent, dict) else True
 
 
+PRIMARY_ARGS = ("command", "path", "url", "target", "app", "action", "query")
+_project_cache: dict[str, tuple[float, dict[str, list[str]]]] = {}
+
+
+def primary_arg(args: dict[str, Any]) -> str:
+    for k in PRIMARY_ARGS:
+        v = args.get(k)
+        if v not in (None, ""):
+            return str(v)
+    return ""
+
+
+def parse_rule(rule: str) -> tuple[str, str | None]:
+    rule = rule.strip()
+    if rule.endswith(")") and "(" in rule:
+        name, spec = rule[:-1].split("(", 1)
+        return name.strip(), spec.strip()
+    return rule, None
+
+
+def rule_matches(rule: str, tool_name: str, args: dict[str, Any]) -> bool:
+    name, spec = parse_rule(rule)
+    if not fnmatch.fnmatchcase(tool_name, name):
+        return False
+    if spec is None:
+        return True
+    value = primary_arg(args).replace("\\", "/").lower()
+    return fnmatch.fnmatchcase(value, spec.replace("\\", "/").lower())
+
+
+def project_rules(cwd: Path | None) -> dict[str, list[str]]:
+    """<proje>/.alice/permissions.toml ([permissions] başlıklı ya da başlıksız allow/ask/deny)."""
+    if cwd is None:
+        return {}
+    path = Path(cwd) / ".alice" / "permissions.toml"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    hit = _project_cache.get(str(path))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        try:
+            import tomllib
+        except ImportError:  # pragma: no cover
+            import tomli as tomllib
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:  # noqa: BLE001 - bozuk dosya izinleri gevşetmesin: yok say
+        data = {}
+    data = data.get("permissions", data) if isinstance(data, dict) else {}
+    rules = {k: [str(r) for r in data.get(k, []) or []] for k in ("allow", "ask", "deny")}
+    _project_cache[str(path)] = (mtime, rules)
+    return rules
+
+
 class Permissions:
-    def __init__(self, mode: str = "auto"):
+    def __init__(self, mode: str = "auto", rules: dict[str, list[str]] | None = None):
         if mode not in MODES:
             raise ValueError(f"geçersiz izin modu: {mode}")
         self.mode = mode
         self.always_allow: set[str] = set()
+        self.rules = rules  # None: config.toml [permissions] + projedeki .alice/permissions.toml
+
+    def rules_for(self, ctx: ToolContext) -> dict[str, list[str]]:
+        if self.rules is not None:
+            return self.rules
+        cfg = getattr(ctx, "config", None)
+        data = getattr(cfg, "data", None)
+        base = (data.get("permissions") if isinstance(data, dict) else None) or {}
+        proj = project_rules(getattr(ctx, "cwd", None))
+        return {k: [str(r) for r in base.get(k, []) or []] + proj.get(k, []) for k in ("allow", "ask", "deny")}
+
+    def matching_rule(self, tool: Tool, args: dict[str, Any], ctx: ToolContext, kind: str) -> str | None:
+        for rule in self.rules_for(ctx).get(kind, []):
+            try:
+                if rule_matches(rule, tool.name, args):
+                    return rule
+            except Exception:  # noqa: BLE001 - garip argüman kuralı bozmasın
+                continue
+        return None
 
     def decide(self, tool: Tool, args: dict[str, Any], ctx: ToolContext) -> str:
         """'allow', 'ask' ya da 'deny' döndürür."""
+        if self.matching_rule(tool, args, ctx, "deny"):
+            return "deny"
         if self.mode == "yolo":
             return "allow"
+        if self.matching_rule(tool, args, ctx, "ask"):
+            return "ask"
         risk = tool.risk_for(args)
         if risk == READ:
             return "allow"
         if self.mode == "plan":
             return "allow" if risk == NETWORK else "deny"
+        allowed = self.matching_rule(tool, args, ctx, "allow")
+        if allowed and (risk != DANGER or parse_rule(allowed)[1] is not None):
+            return "allow"
         if tool.name in self.always_allow and risk != DANGER:
             return "allow"
         if self.mode == "ask":

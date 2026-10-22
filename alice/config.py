@@ -38,6 +38,12 @@ permission_mode = "auto"
 # Gönderilen mesaj geri alınamaz; false yapmadan önce iki kez düşün.
 confirm_outward = true
 max_steps = 80
+# İş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak) en fazla kaç kez devam hatırlatılsın. 0 = kapalı.
+finish_nudges = 2
+# web_search önce Google'da arasın (Gemini grounding, GEMINI_API_KEY): kaynaklı, güncel özet. Kota dolarsa ya da
+# hata verirse DuckDuckGo/Bing'e düşer.
+search_grounding = true
+grounding_model = "gemini-flash-latest"
 # Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %80'i
 # (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).
 compact_at_tokens = "auto"
@@ -92,6 +98,20 @@ task_permission_mode = "auto"
 programs = ["dcs.exe", "dcs_server.exe", "aces.exe"]
 [core.modes.dev]
 programs = ["unity.exe", "unity hub.exe", "code.exe", "devenv.exe", "rider64.exe"]
+
+# Kalıcı izin kuralları (Claude Code'daki allow/deny gibi). Projeye özel kurallar: <proje>/.alice/permissions.toml.
+# Biçim "araç" ya da "araç(desen)"; desen aracın asıl argümanına bakar (komut, yol, url...). deny her modda geçerli.
+[permissions]
+allow = []    # ör. ["run_command(git status*)", "run_command(npm test*)", "edit_file(src/*)"]
+ask = []      # ör. ["run_command(git push*)"]
+deny = []     # ör. ["run_command(*rm -rf*)", "write_file(*.env)"]
+
+# Hook'lar: belli anlarda kendi komutun çalışır (ayrıntı: alice/hooks.py). Örnek, her düzenlemeden sonra formatla:
+# [[hooks.PostToolUse]]
+# matcher = "edit_file|write_file|multi_edit"
+# command = "ruff format \"$ALICE_TOOL_PATH\""
+# Olaylar: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop. Çıkış kodu 2 = engelle / modele geri
+# bildirim ver (stderr). İstersen ayrı dosyada: ~/.alice/hooks.toml
 
 # Uzun süreli hafıza (~/.alice/memory.db, tamamen yerel): tercihler, bilgiler ve geçmiş konuşmalar.
 # En önemli bilgiler her konuşmada sistem istemine, sözüne benzeyen eski bilgi/konuşmalar mesaja eklenir.
@@ -447,6 +467,9 @@ YOUTUBE_API_KEY=
 DISCORD_BOT_TOKEN=
 # Spotify       -> https://developer.spotify.com/dashboard (Redirect URI: http://127.0.0.1:8721/callback)
 SPOTIFY_CLIENT_ID=
+# Google Takvim -> console.cloud.google.com, Calendar API + OAuth client (Desktop app); sonra: alice connect google_calendar
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 """
 
 

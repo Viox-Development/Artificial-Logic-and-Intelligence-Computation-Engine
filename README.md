@@ -150,6 +150,7 @@ Kutudan çıkanlar:
 | `youtube_api` | `YOUTUBE_API_KEY` | video/kanal arama, izlenme-beğeni, yorumlar |
 | `discord` | `DISCORD_BOT_TOKEN` | sunucular, kanallar, son mesajlar, mesaj gönderme (bot hesabıyla) |
 | `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | çalan parça, çal/duraklat/sonraki, arama, cihaz seçimi, çalma listeleri |
+| `google_calendar` | OAuth2 + `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yaklaşan etkinlikler, arama, doğal dille ekleme ("Cuma 15:00 dişçi"), silme. Bağlıysa çekirdek sınav, maç, randevu gibi etkinlikleri takibe çevirir: ertesi gün ALICE nasıl geçtiğini sorar |
 
 Uygulamada **Ayarlar → Bağlantılar**: her servisin durumu, OAuth olanlar için "Bağlan"/"Çıkış" düğmesi, anahtarla çalışanlar için hangi `.env` değişkeninin eksik olduğu ve altta tanımlı akışlar. Terminalde aynı özet `alice doctor` çıktısında bir satır.
 
@@ -448,13 +449,93 @@ Büyük bir iş (büyük bir kod tabanında birden çok modül, backend + fronte
 | Grep modları | `grep`: `output_mode` (content, files_with_matches, count), `context` satırları, `multiline`, `offset` ile sayfalama |
 | PDF ve Jupyter okuma | `read_file` PDF'i (`pages` ile) metin, `.ipynb`'yi hücre ve çıktılarıyla okur |
 | WebFetch | `web_fetch`: asıl içerik (`<main>`/`<article>`), JSON düzenleme, PDF; `prompt` ile sayfayı küçük model özetler, `start` ile devamı |
-| WebSearch | `web_search`: DuckDuckGo, düşerse Bing; `BRAVE_SEARCH_API_KEY` varsa Brave; `allowed_domains`/`blocked_domains` |
+| WebSearch | `web_search`: önce Google (Gemini grounding, `GEMINI_API_KEY`): kaynaklı, güncel özet. Kota dolar ya da hata verirse DuckDuckGo, Bing; `BRAVE_SEARCH_API_KEY` varsa Brave; `allowed_domains`/`blocked_domains` |
 | HTTP istekleri | `http_request` (net grubu): REST API, webhook, dosya indirme; başlıkta `${env:AD}` ile anahtar modele görünmez |
 | Paralel araç çağrıları | Model tek cevapta birkaç okuma/arama isterse (`read_file`, `grep`, `glob`, `list_dir`, `web_search`, `web_fetch`, salt okuma MCP araçları) aynı anda çalışır; sonuçlar sırayla modele döner |
 | Araç gruplama | Art arda gelen okumalar uygulamada "2 dosya okundu, 1 arama yapıldı" diye tek açılır satır olur, terminalde her biri tek satır |
-| Hook'lar | yok |
+| Hook'lar | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`; komut kabukta çalışır, olay stdin'e JSON gelir, çıkış kodu 2 engeller ya da modele geri bildirim verir. Ayrıntı aşağıda |
+| İzin kuralları | `[permissions] allow / ask / deny` desenleri (`run_command(git status*)`), projede `.alice/permissions.toml`; deny her modda geçerli |
+| Skills | `~/.alice/skills/<ad>/SKILL.md` (ve projede `.alice/skills`, `.claude/skills`): istemde sadece açıklaması durur, iş gelince `skill` aracıyla tamamı ve dosyaları okunur |
+| Özel alt ajanlar | `~/.alice/agents/<ad>.md` (ve projede): kendi istemi, araç listesi, modeli ve adım sınırı; `task` aracında `agent=<ad>` |
+| Seçenekli soru | `ask_user`: uygulamada tıklanabilir kart (1-6 tuşları), terminalde numaralı liste, hızlı barda düğmeler; seste düz soruya döner |
+| Headless | `alice -p "..."` (stdin'den de okur), `--output-format json` ya da `stream-json` |
+| Notebook düzenleme | `notebook_edit`: .ipynb'de hücre değiştir, ekle, sil (diğer hücrelere ve çıktılara dokunmaz) |
+| `/review`, `/security-review` | Değişikliği (ya da verilen PR/dalı) hata ya da güvenlik açısından inceler, değişiklik yapmaz; aynı adlı kendi komutun varsa o geçerli |
+| Eval | `alice eval`: gerçek konuşmalardan test seti (aşağıda) |
 | İnceleme kurulu | `/kurul <konu>` ve projelerde: eleştirmen, savunucu, kontrolcü ve uzmanlar tartışıp gerekçeli ağırlıklı oylamayla karar verir |
 | git ve GitHub | `git` (status, diff, log, dal, commit, pull, push) ve `github` (depolar, klonlama, PR aç/incele/birleştir, yorum, issue, CI durumu) araçları; ayrıntı aşağıda |
+
+**Hook örneği**, her düzenlemeden sonra formatla, `git push --force`'u engelle, iş bitince testleri kontrol et
+(`config.toml` ya da `~/.alice/hooks.toml`):
+
+```toml
+[[hooks.PostToolUse]]
+matcher = "edit_file|write_file|multi_edit"
+command = "ruff format \"$ALICE_TOOL_PATH\""
+
+[[hooks.PreToolUse]]
+matcher = "run_command"
+command = "python C:/Users/hayat/.alice/no_force_push.py"   # komutu stdin'deki JSON'dan okur, yasaksa exit 2
+
+[[hooks.Stop]]
+command = "pytest -q -x || (echo testler kırık 1>&2 && exit 2)"
+```
+
+Çıkış kodu 2 olunca `PreToolUse` aracı engeller, `PostToolUse` ve `Stop` stderr'i modele geri bildirim olarak verir
+(Stop'ta ajan işe devam eder, en fazla 3 kez). `UserPromptSubmit` ve `SessionStart`'ın stdout'u mesaja bağlam olarak
+eklenir. Hook'lar sadece senin config'inden okunur; klonladığın bir depodaki dosya komut çalıştıramaz.
+
+**İzin kuralları örneği**:
+
+```toml
+[permissions]
+allow = ["run_command(git status*)", "run_command(git diff*)", "run_command(npm test*)", "edit_file(src/*)"]
+ask = ["run_command(git push*)"]
+deny = ["run_command(*rm -rf*)", "write_file(*.env)", "mcp__github__delete_*"]
+```
+
+Desen aracın asıl argümanına bakar (komut, yol, url...). `allow` plan modunu delmez; tehlikeli bir komutu ancak
+desenli bir kural serbest bırakır (`"run_command"` tek başına `rm -r`'yi açmaz).
+
+**Skill örneği**, `~/.alice/skills/unity-build/SKILL.md` (yanına `build.ps1` gibi dosyalar koyabilirsin):
+
+```markdown
+---
+name: unity-build
+description: Unity projesinden editörü açmadan Windows build almak
+---
+1. projects aracıyla projenin yolunu ve Unity sürümünü bul.
+2. Unity.exe'yi `-batchmode -quit -projectPath <yol> -buildWindows64Player <çıktı>` ile çalıştır...
+```
+
+**Özel alt ajan örneği**, `~/.alice/agents/inceleyici.md`:
+
+```markdown
+---
+name: inceleyici
+description: Kod değişikliklerini hata ve risk açısından inceler, değişiklik yapmaz
+tools: read_file, grep, glob, list_dir, git
+model: brain
+max_steps: 30
+---
+Sen titiz bir kod inceleyicisin. Sadece gerçek hataları raporla...
+```
+
+**Eval.** ALICE'in saçmaladığı cümleleri test vakası yap, her güncellemeden sonra tekrar oynat:
+
+```powershell
+alice eval --from-log 20          # voice.log'daki son 20 cümleyi ~/.alice/evals.toml'a taslak olarak ekle
+alice eval --add "F-16 ile F-15'in farkı ne"
+alice eval                        # hepsini çalıştır: geçti/kaldı, öncekine göre düzelenler ve bozulanlar
+```
+
+Her vakada `expect` (cevapta geçmeli), `forbid`, `expect_tools`, `forbid_tools` ve `role` yazılabilir. Vakalar onay
+soruları otomatik reddedilerek çalışır: ALICE okur ve araştırır ama değişiklik yapan ya da ekrana dokunan araçlar
+çalışmaz; hangi aracı seçtiği yine kaydedilir. Test konuşmaları hafızaya yazılmaz.
+
+**Otomasyon:** `alice -p "son commit'leri özetle" --output-format json` sonunda tek JSON nesnesi
+(`result`, `is_error`, `models`, `tools`, `duration_s`) yazar; `stream-json` her olayı (metin, araç çağrısı, sonuç)
+ayrı satırda verir. Onay gereken araç sorulmadan reddedilir (`--yolo` hariç).
 
 **Özel komut örneği**, `~/.alice/commands/incele.md`:
 

@@ -129,17 +129,30 @@ class Task(Tool):
                    "araç çağrısıyla bitecek işlerde kullanma.")
     parameters = obj({
         "prompt": {"type": "string", "description": "Alt ajana eksiksiz görev: ne yapacak, nerede, ne döndürecek."},
-        "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 40."},
+        "agent": {"type": "string", "description": "Kullanıcının tanımladığı özel alt ajanın adı (sistem istemindeki "
+                  "'Custom subagents' listesi). Boş: genel alt ajan."},
+        "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 40 (özel ajanda kendi sınırı)."},
     }, ["prompt"])
     risk = READ  # alt ajanın kendi araç çağrıları ayrı ayrı izin kontrolünden geçer
 
-    def run(self, ctx: ToolContext, prompt: str, max_steps: int = 40) -> ToolResult:
+    def run(self, ctx: ToolContext, prompt: str, max_steps: int | None = None, agent: str = "") -> ToolResult:
         parent = ctx.state.get("agent")
         if parent is None:
             raise ToolError("alt ajan bu bağlamda kullanılamıyor")
-        sub = parent.spawn_child()
-        ctx.emit("alt ajan başladı")
-        result = sub.run_turn(prompt, max_steps=max_steps)
+        if agent:
+            from alice.skills import load_agents, spawn
+
+            defs = load_agents(ctx.cwd)
+            adef = defs.get(agent.strip().lower())
+            if adef is None:
+                raise ToolError(f"'{agent}' adında alt ajan yok. Tanımlı olanlar: {', '.join(defs) or '(yok)'}")
+            sub = spawn(parent, adef)
+            steps = max_steps or adef.max_steps
+        else:
+            sub = parent.spawn_child()
+            steps = max_steps or 40
+        ctx.emit(f"alt ajan başladı{f' ({agent})' if agent else ''}")
+        result = sub.run_turn(prompt, max_steps=steps)
         ctx.emit("alt ajan bitti")
         return ToolResult(result or "(alt ajan boş cevap döndürdü)")
 
@@ -180,6 +193,56 @@ class Reflex(Tool):
         return ToolResult(loop.run(goal, max_steps=max_steps, inputs=inputs).report())
 
 
+class AskUser(Tool):
+    name = "ask_user"
+    description = ("Kullanıcıya tıklanabilir seçeneklerle soru sorar ve cevabını bekler (uygulamada kart, terminalde "
+                   "numaralı liste). Sadece gerçekten kullanıcının vermesi gereken bir kararda kullan (iki makul yol, "
+                   "eksik bilgi); varsayılanı belli işlerde sorma. Önerdiğin seçeneği ilk sıraya koy. Kullanıcı "
+                   "listede olmayan bir cevap da yazabilir.")
+    parameters = obj({
+        "question": {"type": "string", "description": "Tek, net soru."},
+        "options": {"type": "array", "items": {"type": "string", "description": "Seçenek: kısa etiket, istersen "
+                    "' — ' ile açıklama."}, "description": "2-5 seçenek."},
+        "multi": {"type": "boolean", "description": "Birden fazla seçilebilsin mi? Varsayılan false."},
+    }, ["question", "options"])
+    risk = READ
+
+    def run(self, ctx: ToolContext, question: str, options: list[str], multi: bool = False) -> ToolResult:
+        ui = getattr(ctx.state.get("agent"), "ui", None)
+        # Sınıfta tanımlı olmalı: alt ajan/ses arayüzlerinin __getattr__'ı her adı sessizce yutan bir fonksiyon döndürür.
+        ask = getattr(ui, "ask_choice", None) if callable(getattr(type(ui), "ask_choice", None)) else None
+        opts = [str(o).strip() for o in options or [] if str(o).strip()][:6]
+        if len(opts) < 2:
+            raise ToolError("en az iki seçenek gerekli")
+        if not callable(ask):
+            return ToolResult("Bu arayüzde seçenekli soru gösterilemiyor (sesli konuşma ya da gözetimsiz çalışma). "
+                              "Soruyu ve seçenekleri cevabında kısaca sor, sonra dur ve kullanıcının cevabını bekle.")
+        answer = (ask(question, opts, bool(multi)) or "").strip()
+        if not answer:
+            return ToolResult("Kullanıcı cevap vermedi ya da soruyu kapattı. Varsayımda bulunma; kısaca sor ya da dur.")
+        return ToolResult(f"Kullanıcının cevabı: {answer}")
+
+
+class SkillTool(Tool):
+    name = "skill"
+    description = ("Kullanıcının ALICE'e öğrettiği bir skill'i (talimat + dosyalar) yükler. Sistem istemindeki "
+                   "'Skills' listesindeki bir iş geldiğinde önce bunu çağır, sonra yazdığına göre çalış.")
+    parameters = obj({"name": {"type": "string", "description": "Skill adı (listede yazan)."}}, ["name"])
+    risk = READ
+    parallel_safe = True
+
+    def run(self, ctx: ToolContext, name: str) -> ToolResult:
+        from alice.skills import load_skills
+
+        skills = load_skills(ctx.cwd)
+        sk = skills.get(name.strip().lower())
+        if sk is None:
+            raise ToolError(f"'{name}' adında skill yok. Olanlar: {', '.join(skills) or '(yok)'}")
+        files = sk.files()
+        listing = ("\nKlasördeki dosyalar (yollar bu klasöre göre):\n" + "\n".join(f"- {f}" for f in files)) if files else ""
+        return ToolResult(f"# Skill: {sk.name}\nKlasör: {sk.path.parent}\n\n{sk.body()}{listing}")
+
+
 class Projects(Tool):
     name = "projects"
     description = ("Kullanıcının bilgisayarındaki projeler (git depoları, Unity, Python, Node, .NET...): listele, ada/"
@@ -216,4 +279,4 @@ class Projects(Tool):
         return ToolResult("\n".join(f"- {p.line()}" for p in hits[:10]))
 
 
-TOOLS = [TodoWrite(), Memory(), Task(), Reflex(), Projects()]
+TOOLS = [TodoWrite(), Memory(), Task(), Reflex(), Projects(), SkillTool(), AskUser()]

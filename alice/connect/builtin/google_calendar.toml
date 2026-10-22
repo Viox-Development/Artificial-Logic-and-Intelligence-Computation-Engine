@@ -1,0 +1,91 @@
+# Google Takvim (OAuth2 + PKCE, Google masaüstü uygulaması).
+# 1) console.cloud.google.com → yeni proje → "Google Calendar API"yi etkinleştir
+# 2) OAuth izin ekranı: External, kendini "Test users"a ekle
+# 3) Credentials → Create credentials → OAuth client ID → Application type: Desktop app
+# 4) ~/.alice/.env içine GOOGLE_CLIENT_ID=... ve GOOGLE_CLIENT_SECRET=... yaz (masaüstü uygulamasında bu "secret"
+#    gerçek bir sır sayılmıyor ama Google token alırken istiyor)
+# 5) alice connect google_calendar
+name = "google_calendar"
+title = "Google Takvim"
+description = "Takvim: yaklaşan etkinlikler (sınav, maç, randevu, toplantı), arama, doğal dille etkinlik ekleme ('Cuma 15:00 dişçi'), silme."
+base_url = "https://www.googleapis.com/calendar/v3"
+keywords = "takvim|takvimim|takvime|randevu|toplantı|etkinlik|ajanda|calendar|bu hafta ne var|yarın ne var|programım"
+docs = "https://developers.google.com/calendar/api/v3/reference"
+
+[auth]
+kind = "oauth2"
+client_id_env = "GOOGLE_CLIENT_ID"
+client_secret_env = "GOOGLE_CLIENT_SECRET"
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+pkce = true
+scopes = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly"]
+extra_authorize = { access_type = "offline", prompt = "consent" }   # yenileme token'ı gelsin: her gün izin isteme
+help = "console.cloud.google.com → Calendar API → OAuth client (Desktop app); GOOGLE_CLIENT_ID ve GOOGLE_CLIENT_SECRET'i ~/.alice/.env'e yaz"
+
+[actions.upcoming]
+summary = "Bir zaman aralığındaki etkinlikler (sıralı). timeMin/timeMax RFC3339, ör. 2026-10-22T00:00:00+03:00"
+path = "/calendars/{calendarId}/events"
+query = { singleEvents = "true", orderBy = "startTime" }
+pick = "items"
+fields = ["summary", "start.dateTime", "start.date", "end.dateTime", "location", "id"]
+limit = 25
+[actions.upcoming.params.calendarId]
+type = "string"
+description = "Takvim kimliği; ana takvim için primary"
+default = "primary"
+into = "path"
+[actions.upcoming.params.timeMin]
+type = "string"
+required = true
+description = "Başlangıç, RFC3339 (bugün için bugünün 00:00'ı, saat dilimiyle)"
+[actions.upcoming.params.timeMax]
+type = "string"
+description = "Bitiş, RFC3339 (boş: sınırsız)"
+[actions.upcoming.params.q]
+type = "string"
+description = "Etkinliklerde metin araması, ör. 'sınav'"
+[actions.upcoming.params.maxResults]
+type = "integer"
+description = "En fazla etkinlik"
+default = 20
+
+[actions.quick_add]
+summary = "Doğal dille etkinlik ekle, ör. 'Cuma 15:00 dişçi' ya da 'Dec 3 7pm match' (Google ayrıştırır)"
+method = "POST"
+path = "/calendars/{calendarId}/events/quickAdd"
+writes = true
+fields = ["summary", "start.dateTime", "start.date", "htmlLink", "id"]
+[actions.quick_add.params.calendarId]
+type = "string"
+description = "Takvim kimliği; ana takvim için primary"
+default = "primary"
+into = "path"
+[actions.quick_add.params.text]
+type = "string"
+required = true
+description = "Etkinlik metni: ne, ne zaman (tarih ve saat açık yazılsın)"
+into = "query"
+
+[actions.delete]
+summary = "Etkinliği sil (id upcoming çıktısından)"
+method = "DELETE"
+path = "/calendars/{calendarId}/events/{eventId}"
+writes = true
+[actions.delete.params.calendarId]
+type = "string"
+description = "Takvim kimliği; ana takvim için primary"
+default = "primary"
+into = "path"
+[actions.delete.params.eventId]
+type = "string"
+required = true
+description = "Etkinlik kimliği"
+into = "path"
+
+[actions.calendars]
+summary = "Takvim listesi (kimlikleriyle)"
+path = "/users/me/calendarList"
+cache_seconds = 600
+pick = "items"
+fields = ["summary", "id", "primary"]

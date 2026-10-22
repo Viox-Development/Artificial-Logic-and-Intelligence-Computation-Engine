@@ -93,6 +93,12 @@ def build_system_prompt(cwd: Path, personality: bool = True) -> str:
             body = p.read_text(encoding="utf-8", errors="replace").strip()
             if body:
                 extras.append(f"# Instructions from {p}\n{body[:6000]}")
+    from alice.skills import agents_note, skills_prompt
+
+    sk = skills_prompt(cwd)
+    note = agents_note(cwd)
+    if sk or note:
+        extras.append("\n".join(x for x in (sk, note) if x))
     from alice.memory import profile_text
 
     profile = profile_text()

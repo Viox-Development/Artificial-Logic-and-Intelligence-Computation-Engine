@@ -36,7 +36,41 @@ BUILTINS: dict[str, str] = {
     "init": "Bu proje için ALICE.md talimat dosyası oluştur",
     "memory": "Kalıcı hafızayı göster",
     "kurul": "Bir konuyu inceleme kuruluna sor: eleştirmen, savunucu, kontrolcü ve uzmanlar tartışıp oylar",
+    "review": "Değişiklikleri (git diff ya da verilen PR/dal) hata ve risk açısından incele",
+    "security-review": "Değişikliklerde güvenlik açığı ara (sır sızıntısı, enjeksiyon, yetki, güvensiz komut)",
 }
+
+# Kullanıcının aynı adlı özel komutu varsa onunki geçerli (eski ~/.alice/commands/review.md'ler çalışmaya devam etsin).
+OVERRIDABLE = {"review", "security-review"}
+
+REVIEW_PROMPT = (
+    "Kod incelemesi yap. Kapsam: {target}. Önce değişikliği bul: git aracıyla status ve diff'e bak (kapsam bir PR ya da "
+    "dalsa ona göre); değişen dosyaların ilgili kısımlarını oku. Sadece GERÇEK sorunları raporla: hatalı mantık, kenar "
+    "durumlar, yarış durumları, kırılan çağrılar, eksik hata yönetimi, testin kaçırdığı davranış. Her bulgu için: "
+    "dosya:satır, ne yanlış, hangi girdiyle bozulur, önerilen düzeltme. Önem sırasına diz (kritik, önemli, küçük). Stil "
+    "zevklerini ve emin olmadığın tahminleri ayrı bir 'belki' başlığına koy. Değişiklik YAPMA; sadece raporla."
+)
+SECURITY_PROMPT = (
+    "Güvenlik incelemesi yap. Kapsam: {target}. git aracıyla değişikliği bul ve değişen kodu oku. Ara: koda/commit'e "
+    "girmiş anahtar ve şifreler, komut/SQL/yol enjeksiyonu, güvenilmeyen girdinin shell'e ya da eval'e gitmesi, yetki "
+    "kontrolü eksikliği, güvensiz deserializasyon, TLS doğrulamasını kapatma, hassas verinin loglanması, dışarıdan "
+    "gelen içeriğin talimat gibi işlenmesi. Her bulgu için: dosya:satır, saldırı senaryosu (kim, hangi girdiyle, ne "
+    "elde eder), önem (kritik/yüksek/orta/düşük), düzeltme. Bulgu yoksa açıkça 'bulgu yok' de. Değişiklik YAPMA."
+)
+
+
+def builtin_prompt(text: str) -> str | None:
+    """Model'e mesaj olarak giden yerleşik komutlar (/init, /kurul, /review, /security-review); değilse None."""
+    name, _, args = text.strip()[1:].partition(" ")
+    name, args = name.lower(), args.strip()
+    if name == "init":
+        return INIT_PROMPT
+    if name == "kurul":
+        return council_prompt(args)
+    if name in ("review", "security-review"):
+        target = args or "çalışma klasöründeki commit'lenmemiş değişiklikler, yoksa son commit"
+        return (REVIEW_PROMPT if name == "review" else SECURITY_PROMPT).format(target=target)
+    return None
 
 INIT_PROMPT = (
     "Bu klasördeki projeyi incele (yapı, diller, build/test komutları, önemli dosyalar, kod stili) ve proje kökünde "
@@ -94,14 +128,15 @@ def load_custom(cwd: Path) -> dict[str, CustomCommand]:
                 cmd = _parse(f)
             except OSError:
                 continue
-            if cmd.name not in BUILTINS:
+            if cmd.name not in BUILTINS or cmd.name in OVERRIDABLE:
                 out[cmd.name] = cmd
     return out
 
 
 def catalog(cwd: Path) -> list[dict[str, str]]:
-    items = [{"name": n, "description": d, "kind": "builtin"} for n, d in BUILTINS.items()]
-    items += [{"name": c.name, "description": c.description, "kind": "custom"} for c in load_custom(cwd).values()]
+    custom = load_custom(cwd)
+    items = [{"name": n, "description": d, "kind": "builtin"} for n, d in BUILTINS.items() if n not in custom]
+    items += [{"name": c.name, "description": c.description, "kind": "custom"} for c in custom.values()]
     return items
 
 

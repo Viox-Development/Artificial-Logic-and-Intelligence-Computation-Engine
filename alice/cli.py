@@ -1,7 +1,8 @@
 """ALICE komut satırı.
 
   alice                      etkileşimli oturum (REPL)
-  alice -p "görev"           tek seferlik çalıştır, sonucu yaz, çık
+  alice -p "görev"           tek seferlik çalıştır, sonucu yaz, çık (--output-format json|stream-json: betikler için)
+  alice eval [--add|--from-log N]   gerçek konuşmalardan test seti: düzeldi mi bozuldu mu
   alice init                 ~/.alice altında config ve .env oluştur
   alice doctor               anahtarları, modelleri ve opsiyonel bağımlılıkları test et
   alice models [--refresh] [--write]  ücretsiz modelleri canlı ölç/sırala; --write rolleri auto yapar
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import re
 import sys
 import time
@@ -202,9 +204,71 @@ class RichUI:
             if ans in ("a", "always", "hep"):
                 return "a"
 
+    def ask_choice(self, question: str, options: list[str], multi: bool = False) -> str:
+        self._spin_stop()
+        self._live_stop()
+        console.print(f"[cyan]? {escape(question)}[/]")
+        for i, o in enumerate(options, 1):
+            console.print(f"  [bold]{i}[/] {escape(o)}")
+        hint = "numaralar virgülle" if multi else "numara"
+        ans = console.input(f"  {hint} ya da kendi cevabın (boş = vazgeç) > ").strip()
+        picks = [p.strip() for p in ans.split(",")] if ans else []
+        if picks and all(p.isdigit() and 1 <= int(p) <= len(options) for p in picks):
+            chosen = [options[int(p) - 1] for p in (picks if multi else picks[:1])]
+            return ", ".join(chosen)
+        return ans
+
     def info(self, msg: str) -> None:
         self._spin_stop()
         console.print(f"[yellow]{escape(msg)}[/]")
+
+
+class JsonUI:
+    """`alice -p --output-format json|stream-json`: betik ve otomasyonlar için makinece okunur çıktı. stdout'a sadece
+    JSON gider (stream-json: her olay bir satır); izin gereken araç sorulmadan reddedilir (yolo hariç)."""
+
+    def __init__(self, out, stream: bool = False):
+        self.out = out
+        self.stream = stream
+        self.models: list[str] = []
+        self.tools: list[str] = []
+        self.errors: list[str] = []
+
+    def emit(self, ev: dict) -> None:
+        if self.stream:
+            self.out.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            self.out.flush()
+
+    def stream_start(self) -> None:
+        pass
+
+    def stream_delta(self, text: str) -> None:
+        self.emit({"type": "delta", "text": text})
+
+    def stream_reset(self) -> None:
+        self.emit({"type": "reset"})
+
+    def stream_end(self, text: str, source: str) -> None:
+        if source and source not in self.models:
+            self.models.append(source)
+        if text or source:
+            self.emit({"type": "assistant", "text": text, "model": source})
+
+    def tool_start(self, call_id: str, name: str, summary: str) -> None:
+        self.tools.append(name)
+        self.emit({"type": "tool_use", "id": call_id, "name": name, "summary": summary})
+
+    def tool_end(self, call_id: str, name: str, result) -> None:
+        self.emit({"type": "tool_result", "id": call_id, "name": name, "is_error": bool(result.is_error),
+                   "text": result.text[:4000]})
+
+    def ask_permission(self, name: str, summary: str, risk: str) -> str:
+        self.emit({"type": "permission_denied", "name": name, "summary": summary, "risk": risk})
+        return "n"
+
+    def info(self, msg: str) -> None:
+        self.errors.append(msg)
+        self.emit({"type": "info", "text": msg})
 
 
 def print_diff(diff: str, max_lines: int = 40) -> None:
@@ -354,19 +418,18 @@ def repl(agent: Agent, router: Router, ctx: ToolContext, cfg: Config, resume: st
 def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg: Config):
     """None, "exit", ("run", mesaj) ya da ("prefill", metin) döndürür."""
     from alice import session as sess
-    from alice.commands import INIT_PROMPT, council_prompt, expand_custom
+    from alice.commands import builtin_prompt, expand_custom
 
     parts = text.split()
     cmd, args = parts[0].lower(), parts[1:]
     if cmd in ("/exit", "/quit", "/q"):
         return "exit"
-    if cmd == "/init":
-        return ("run", INIT_PROMPT)
-    if cmd == "/kurul":
-        return ("run", council_prompt(" ".join(args)))
     custom = expand_custom(text, ctx.cwd)
     if custom is not None:
         return ("run", custom)
+    prompt = builtin_prompt(text)
+    if prompt is not None:
+        return ("run", prompt)
     if cmd == "/help":
         console.print(HELP)
     elif cmd == "/clear":
@@ -830,6 +893,10 @@ def main(argv: list[str] | None = None) -> int:
         if not rows:
             console.print("[dim]kayıt yok: ALICE kimseye bir şey göndermedi[/]")
         return 0
+    if argv and argv[0] == "eval":
+        from alice.evals import eval_cmd
+
+        return eval_cmd(argv[1:])
     if argv and argv[0] == "connect":
         from alice.connect.cli import connect_cmd
 
@@ -894,6 +961,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="alice", description="ALICE ajan harness")
     ap.add_argument("prompt", nargs="*", help="ilk mesaj (verilirse REPL bu mesajla başlar)")
     ap.add_argument("-p", "--print", dest="oneshot", action="store_true", help="tek seferlik çalıştır ve çık")
+    ap.add_argument("--output-format", choices=["text", "json", "stream-json"], default="text",
+                    help="-p ile: text (varsayılan), json (sonunda tek nesne) ya da stream-json (her olay bir satır)")
     ap.add_argument("--mode", choices=MODES)
     ap.add_argument("--yolo", action="store_true", help="hiçbir izin sorma (tam erişim)")
     ap.add_argument("--cwd", type=Path)
@@ -903,10 +972,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--version", action="version", version=f"alice {__version__}")
     a = ap.parse_args(argv)
 
+    json_out = None
+    if a.oneshot and a.output_format != "text":
+        json_out = sys.stdout  # stdout'a sadece JSON; diğer her şey stderr'e
+        console.file = sys.stderr
     cwd = (a.cwd or Path.cwd()).resolve()
     cfg = load_config(cwd=cwd)
     mode = "yolo" if a.yolo else (a.mode or cfg.agent.get("permission_mode", "auto"))
     agent, router, ctx = build(cfg, cwd, mode, a.verbose)
+    if json_out is not None:
+        agent.ui = JsonUI(json_out, stream=a.output_format == "stream-json")
     if a.model:
         router.role_overrides["brain"] = [a.model]
     if not _check_ready(router):
@@ -915,10 +990,18 @@ def main(argv: list[str] | None = None) -> int:
     if a.oneshot:
         if not prompt:
             prompt = sys.stdin.read().strip()
+        t0 = time.monotonic()
         try:
             out = agent.run_turn(prompt)
         finally:
             cleanup(ctx)
+        if json_out is not None:
+            ui = agent.ui
+            json_out.write(json.dumps({"type": "result", "result": out or "", "is_error": not out,
+                                       "models": getattr(ui, "models", []), "tools": getattr(ui, "tools", []),
+                                       "notes": getattr(ui, "errors", []),
+                                       "duration_s": round(time.monotonic() - t0, 2)}, ensure_ascii=False) + "\n")
+            json_out.flush()
         return 0 if out else 1
     if prompt:
         agent.run_turn(prompt)

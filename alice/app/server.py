@@ -126,6 +126,32 @@ class AppUI:
         ev.set()
         return True
 
+    def ask_choice(self, question: str, options: list[str], multi: bool = False) -> str:
+        """Seçenekli soru kartı; cevap /api/choice ile gelir (boş = vazgeçildi)."""
+        pid = secrets.token_hex(6)
+        ev = threading.Event()
+        self._events[pid] = ev
+        self.pending[pid] = {"type": "ask_choice", "id": pid, "question": question, "options": options,
+                             "multi": multi}
+        self.bus.publish(self.pending[pid])
+        while not ev.wait(0.25):
+            if self.agent is not None and self.agent.cancel.is_set():
+                self._answers[pid] = ""
+                break
+        self.pending.pop(pid, None)
+        self._events.pop(pid, None)
+        ans = self._answers.pop(pid, "")
+        self.bus.publish({"type": "ask_choice_done", "id": pid, "answer": ans})
+        return ans
+
+    def answer_choice(self, pid: str, ans: str) -> bool:
+        ev = self._events.get(pid)
+        if ev is None:
+            return False
+        self._answers[pid] = str(ans)[:2000]
+        ev.set()
+        return True
+
     def info(self, msg: str) -> None:
         self.bus.publish({"type": "info", "text": msg})
 
@@ -678,14 +704,11 @@ class AppState:
             return False, "ALICE şu an çalışıyor"
         prompt = text
         if text.startswith("/"):
-            from alice.commands import INIT_PROMPT, council_prompt, expand_custom
+            from alice.commands import builtin_prompt, expand_custom
 
-            if text.split()[0] == "/init":
-                prompt = INIT_PROMPT
-            elif text.split()[0] == "/kurul":
-                prompt = council_prompt(text[len("/kurul"):])
-            else:
-                prompt = expand_custom(text, self.ctx.cwd)
+            prompt = expand_custom(text, self.ctx.cwd)  # kullanıcının komutu önce (yerleşikler zaten hariç tutulur)
+            if prompt is None:
+                prompt = builtin_prompt(text)
                 if prompt is None:
                     return False, f"bilinmeyen komut: {text.split()[0]}"
         self._queued = True
@@ -1045,6 +1068,8 @@ def make_handler(state: AppState):
                     return self._json({"ok": True})
                 if p == "/api/permission":
                     return self._json({"ok": state.ui.answer(str(d.get("id")), str(d.get("answer")))})
+                if p == "/api/choice":
+                    return self._json({"ok": state.ui.answer_choice(str(d.get("id")), str(d.get("answer") or ""))})
                 if p == "/api/open":
                     url = str(d.get("url", ""))
                     if url.startswith(("http://", "https://")):

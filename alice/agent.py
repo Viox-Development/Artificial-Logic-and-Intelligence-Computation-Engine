@@ -222,6 +222,14 @@ class Agent:
         # Araçlarla çalışırken iş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak, todo listesinde
         # bitmemiş adım bırakmak) en fazla bu kadar kez devam etmesi hatırlatılır. 0 = kapalı.
         self.finish_nudges = int(a.get("finish_nudges", 2))
+        try:
+            from alice.hooks import Hooks
+
+            self.hooks = Hooks.from_config(config, ctx.cwd)  # kullanıcının hook'ları (config.toml / hooks.toml)
+        except Exception:  # noqa: BLE001 - bozuk hook ayarı ajanı açılmaz yapmasın
+            from alice.hooks import Hooks
+
+            self.hooks = Hooks([], ctx.cwd)
         self.cancel = threading.Event()
         self.busy = False
         self._call_counts: dict[str, int] = {}
@@ -309,6 +317,22 @@ class Agent:
         content_text = expand_mentions(user_text, self.ctx.cwd)
         if recall:
             content_text += "\n\n" + recall
+        if self.hooks.hooks and not self.is_child:
+            from alice.hooks import context, feedback
+
+            extra = []
+            if len(self.messages) == 1 and self.hooks.has("SessionStart"):
+                extra.append(context(self.hooks.run("SessionStart", {})))
+            if self.hooks.has("UserPromptSubmit"):
+                res = self.hooks.run("UserPromptSubmit", {"prompt": user_text})
+                blocked = feedback(res)
+                if blocked:
+                    self.ui.info(f"hook mesajı engelledi: {blocked}")
+                    return ""
+                extra.append(context(res))
+            extra = [e for e in extra if e]
+            if extra:
+                content_text += "\n\n[hook bağlamı]\n" + "\n".join(extra)
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
         content: Any = content_text
@@ -335,6 +359,7 @@ class Agent:
         sink = _Sink(self.ui, self.cancel)
         self._turn_tools: set[str] = set()
         nudges = 0
+        stop_hooks = 3  # Stop hook'u ajanı en fazla bu kadar kez geri çevirebilir (sonsuz döngü olmasın)
         try:
             for _ in range(steps):
                 if self.cancel.is_set():
@@ -375,6 +400,15 @@ class Agent:
                 if msg.get("content"):
                     final = msg["content"]
                 if not msg.get("tool_calls"):
+                    if stop_hooks and self.hooks.has("Stop") and not self.is_child:
+                        from alice.hooks import feedback
+
+                        back = feedback(self.hooks.run("Stop", {"reply": final}))
+                        if back:
+                            stop_hooks -= 1
+                            self.messages.append({"role": "user", "content": NUDGE_PREFIX + "Stop hook'u işi bitmiş "
+                                                  "saymadı, devam et:\n" + back, "_nudge": True})
+                            continue
                     nudge = self._unfinished(msg.get("content") or "") if nudges < self.finish_nudges else ""
                     if not nudge:
                         return final
@@ -610,9 +644,15 @@ class Agent:
             return ToolResult(f"geçersiz argüman: {type(e).__name__}: {e}. Parametre tiplerini düzeltip tekrar dene.",
                               is_error=True)
         if verdict == "deny":
-            self._log_outward(tool, args, summary, "blocked", "plan modu ya da gözetimsiz çalışma")
-            res = ToolResult("Plan modundasın: bu araç değişiklik yapıyor ve şu an kapalı. Önce planını yaz; kullanıcı "
-                             "onaylayıp modu değiştirince uygularsın.", is_error=True)
+            rule = self.permissions.matching_rule(tool, args, self.ctx, "deny")
+            self._log_outward(tool, args, summary, "blocked", f"izin kuralı {rule}" if rule else
+                              "plan modu ya da gözetimsiz çalışma")
+            if rule:
+                res = ToolResult(f"Kullanıcının izin kuralı bunu yasaklıyor ({rule}). Aynı şeyi başka biçimde de deneme; "
+                                 "gerekiyorsa kullanıcıya neden gerektiğini söyle.", is_error=True)
+            else:
+                res = ToolResult("Plan modundasın: bu araç değişiklik yapıyor ve şu an kapalı. Önce planını yaz; "
+                                 "kullanıcı onaylayıp modu değiştirince uygularsın.", is_error=True)
             self.ui.tool_start(call["id"], name, summary)
             self.ui.tool_end(call["id"], name, res)
             return res
@@ -628,7 +668,24 @@ class Agent:
 
     def _execute(self, call: dict[str, Any], tool: Tool, args: dict[str, Any], summary: str) -> ToolResult:
         self.ui.tool_start(call["id"], tool.name, summary)
+        if self.hooks.has("PreToolUse"):
+            from alice.hooks import feedback
+
+            blocked = feedback(self.hooks.run("PreToolUse", {"args": args}, tool.name))
+            if blocked:
+                result = ToolResult(f"Kullanıcının hook'u bu çağrıyı engelledi: {blocked}", is_error=True)
+                self.ui.tool_end(call["id"], tool.name, result)
+                return result
         result = self._run_tool(tool, args)
+        if self.hooks.has("PostToolUse"):
+            from dataclasses import replace
+
+            from alice.hooks import feedback
+
+            back = feedback(self.hooks.run("PostToolUse", {"args": args, "result": result.text[:4000],
+                                                           "is_error": result.is_error}, tool.name))
+            if back:
+                result = replace(result, text=result.text + "\n\n[hook geri bildirimi]\n" + back)
         self._log_outward(tool, args, summary, "failed" if result.is_error else "sent", result.text)
         self.ui.tool_end(call["id"], tool.name, result)
         return result

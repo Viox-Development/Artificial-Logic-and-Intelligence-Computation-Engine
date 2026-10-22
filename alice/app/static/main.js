@@ -29,6 +29,8 @@ const handlers = {
   update: renderUpdate,
   permission: onPermission,
   permission_done: onPermissionDone,
+  ask_choice: onChoice,
+  ask_choice_done: onChoiceDone,
   info: (ev) => addNote(ev.text, /hata|başarısız|cevap veremedi|başlatılamadı/i.test(ev.text) ? "err" :
     /durduruldu|limit/i.test(ev.text) ? "warn" : ""),
   route: (ev) => {

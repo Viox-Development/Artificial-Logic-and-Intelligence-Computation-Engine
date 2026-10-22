@@ -674,4 +674,74 @@ class FileOps(Tool):
         return target
 
 
-TOOLS = [ReadFile(), WriteFile(), EditFile(), MultiEdit(), ListDir(), Glob(), Grep(), FileOps()]
+class NotebookEdit(Tool):
+    name = "notebook_edit"
+    description = ("Jupyter defterinde (.ipynb) tek hücreyi değiştirir, araya yeni hücre ekler ya da siler; dosyanın geri "
+                   "kalanına ve diğer hücrelerin çıktılarına dokunmaz. Önce read_file ile oku (hücre numaraları orada). "
+                   "Değiştirilen kod hücresinin eski çıktısı silinir.")
+    parameters = obj({
+        "path": {"type": "string", "description": ".ipynb dosyasının yolu."},
+        "cell": {"type": "integer", "description": "Hücre numarası (0'dan başlar). insert'te yeni hücre bu numaraya girer "
+                 "(hücre sayısı = sona ekle)."},
+        "mode": {"type": "string", "enum": ["replace", "insert", "delete"], "description": "replace: hücrenin içeriğini "
+                 "değiştir | insert: yeni hücre ekle | delete: hücreyi sil. Varsayılan replace."},
+        "source": {"type": "string", "description": "Hücrenin yeni içeriği (replace/insert)."},
+        "cell_type": {"type": "string", "enum": ["code", "markdown"], "description": "insert için hücre türü; replace'te "
+                      "verilirse tür de değişir. Varsayılan code."},
+    }, ["path", "cell"])
+    risk = WRITE
+
+    def summary(self, args: dict[str, Any]) -> str:
+        return f"{args.get('path')} hücre {args.get('cell')} ({args.get('mode') or 'replace'})"
+
+    def run(self, ctx: ToolContext, path: str, cell: int, mode: str = "replace", source: str = "",
+            cell_type: str = "") -> ToolResult:
+        import json as _json
+
+        p = ctx.resolve(path)
+        if p.suffix.lower() != ".ipynb" or not p.is_file():
+            raise ToolError(f"Jupyter defteri bulunamadı: {p}")
+        before = _read_text(p)
+        try:
+            nb = _json.loads(before)
+        except ValueError as e:
+            raise ToolError(f"defter okunamadı (bozuk JSON): {e}") from e
+        cells = nb.get("cells")
+        if not isinstance(cells, list):
+            raise ToolError("defterde hücre listesi yok")
+        n = len(cells)
+        lines = source.splitlines(keepends=True)
+        if mode == "insert":
+            if not 0 <= cell <= n:
+                raise ToolError(f"insert için hücre 0..{n} arasında olmalı")
+            kind = cell_type or "code"
+            new_cell: dict[str, Any] = {"cell_type": kind, "metadata": {}, "source": lines}
+            if kind == "code":
+                new_cell.update(execution_count=None, outputs=[])
+            cells.insert(cell, new_cell)
+            done = f"hücre {cell} eklendi ({kind})"
+        elif not 0 <= cell < n:
+            raise ToolError(f"hücre {cell} yok (defterde {n} hücre var, 0..{n - 1})")
+        elif mode == "delete":
+            cells.pop(cell)
+            done = f"hücre {cell} silindi"
+        elif mode == "replace":
+            c = cells[cell]
+            c["source"] = lines
+            if cell_type and cell_type != c.get("cell_type"):
+                c["cell_type"] = cell_type
+                if cell_type == "markdown":
+                    c.pop("outputs", None)
+                    c.pop("execution_count", None)
+            if c.get("cell_type") == "code":
+                c["outputs"], c["execution_count"] = [], None
+            done = f"hücre {cell} değiştirildi"
+        else:
+            raise ToolError(f"bilinmeyen mode: {mode}")
+        snapshot(ctx, p)
+        after = _json.dumps(nb, ensure_ascii=False, indent=1) + "\n"
+        p.write_text(after, encoding="utf-8", newline="")
+        return ToolResult(f"{done}: {p} (toplam {len(cells)} hücre)", diff=make_diff(path, before, after))
+
+
+TOOLS = [ReadFile(), WriteFile(), EditFile(), MultiEdit(), ListDir(), Glob(), Grep(), FileOps(), NotebookEdit()]

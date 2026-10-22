@@ -995,9 +995,12 @@ document.addEventListener("keydown", (e) => {
   // İzin kartı 1/2/3 ile cevaplanır; mesaj yazılırken rakamlar metne gider.
   const typing = (document.activeElement === input && input.value) ||
     (document.activeElement && document.activeElement !== input && /INPUT|TEXTAREA/.test(document.activeElement.tagName));
-  if (!mod && !e.altKey && !typing && /^[123]$/.test(e.key) && $("#overlay").hidden && $("#palette").hidden) {
+  if (!mod && !e.altKey && !typing && /^[1-6]$/.test(e.key) && $("#overlay").hidden && $("#palette").hidden) {
     const card = pendingPerm();
-    if (card) {
+    if (card && card._choice) {  // seçenekli soru: rakam o seçeneğe tıklar
+      const btn = card._acts.querySelectorAll("button")[Number(e.key) - 1];
+      if (btn) { e.preventDefault(); btn.click(); return; }
+    } else if (card && /^[123]$/.test(e.key)) {
       e.preventDefault();
       api("/api/permission", { id: card._id, answer: { 1: "y", 2: "a", 3: "n" }[e.key] });
       return;
