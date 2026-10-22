@@ -41,6 +41,11 @@ max_steps = 80
 # Prompt injection koruması: web/mesaj/e-posta gibi dış içerik okunan turda komut çalıştırma ve mesaj gönderme auto
 # modda da onaya bağlanır, içerik modele "güvenilmeyen veri" diye işaretli gider. Kapatmak önerilmez.
 taint_guard = true
+# Komut sandbox'ı (alice/sandbox.py): sandbox'taki komut her yeri okur ama sadece çalıştığı klasöre ve geçici klasöre
+# yazabilir. off | auto (dış içerik okunan turda komut sorulmak yerine sandbox'ta çalışır) | on (her komut).
+# Windows: düşük bütünlük seviyesi; Linux: bubblewrap (apt install bubblewrap); macOS: sandbox-exec.
+sandbox = "auto"
+sandbox_network = true
 # İş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak) en fazla kaç kez devam hatırlatılsın. 0 = kapalı.
 finish_nudges = 2
 # web_search önce Google'da arasın (Gemini grounding, GEMINI_API_KEY): kaynaklı, güncel özet. Kota dolarsa ya da

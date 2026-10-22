@@ -167,7 +167,11 @@ class Permissions:
     def _risky_after_untrusted(tool: Tool, args: dict[str, Any], risk: str, ctx: ToolContext) -> bool:
         """Dış içerik okunmuş bir turda onaya bağlanan işler: mesaj göndermek, komut çalıştırmak, çalışma klasörü
         dışına yazmak."""
-        if risk == SEND or tool.name in ("run_command", "process_kill") or "command" in args:
+        if tool.name == "run_command":
+            from alice import sandbox
+
+            return not sandbox.usable(ctx, args)  # sandbox'ta çalışacaksa sormaya gerek yok: proje dışına yazamaz
+        if risk == SEND or tool.name == "process_kill" or "command" in args:
             return True
         if risk == WRITE and args.get("path"):
             try:

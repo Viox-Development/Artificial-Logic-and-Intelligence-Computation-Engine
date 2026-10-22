@@ -95,21 +95,36 @@ class RunCommand(Tool):
         "timeout": {"type": "integer", "description": "Saniye; dolunca komut öldürülür. Varsayılan 120, en fazla 1800."},
         "background": {"type": "boolean", "description": "true: beklemeden arka planda başlat ve pid döndür. "
                        "Varsayılan false."},
+        "unsandboxed": {"type": "boolean", "description": "Sadece komut sandbox yüzünden başarısız olduysa ve "
+                        "proje dışına yazması gerçekten gerekiyorsa true (kullanıcıya her zaman sorulur)."},
     }, ["command"])
     risk = EXEC
 
     def risk_for(self, args: dict[str, Any]) -> str:
+        if args.get("unsandboxed"):
+            return DANGER  # sandbox'tan çıkmak her zaman onay ister
         return DANGER if is_dangerous(args.get("command", "")) else EXEC
 
     def summary(self, args: dict[str, Any]) -> str:
         return args.get("command", "")[:300]
 
     def run(self, ctx: ToolContext, command: str, cwd: str | None = None, timeout: int = 120,
-            background: bool = False) -> ToolResult:
+            background: bool = False, unsandboxed: bool = False) -> ToolResult:
         wd = ctx.resolve(cwd) if cwd else ctx.cwd
         if not wd.is_dir():
             raise ToolError(f"klasör yok: {wd}")
         argv = shell_argv(command)
+        env = _env()
+        from alice import sandbox
+
+        boxed = sandbox.applies(ctx, {"command": command, "unsandboxed": unsandboxed})
+        if boxed:
+            try:
+                argv, extra = sandbox.wrap(argv, wd, ctx)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                raise ToolError(f"sandbox kurulamadı, komut çalıştırılmadı: {e}. Gerekiyorsa unsandboxed=true ile "
+                                "(kullanıcı onayıyla) çalıştır.") from e
+            env.update(extra)
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
         if background:
             log = Path(tempfile.gettempdir()) / f"alice-bg-{int(time.time() * 1000)}.log"
@@ -120,7 +135,7 @@ class RunCommand(Tool):
             else:
                 kwargs["start_new_session"] = True
             pop = subprocess.Popen(argv, cwd=wd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                   env=_env(), **kwargs)
+                                   env=env, **kwargs)
             procs: dict[int, BgProc] = ctx.state.setdefault("bg_procs", {})
             procs[pop.pid] = BgProc(pop.pid, command, pop, log, time.time())
             time.sleep(1.5)
@@ -131,7 +146,7 @@ class RunCommand(Tool):
         # Çıktı boru yerine geçici dosyaya yazılır: komutun başlattığı pencereli bir program (ör. Blender)
         # boruları devralırsa subprocess.run zaman aşımından sonra bile sonsuza kadar bekliyordu.
         with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
-            pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, env=_env(),
+            pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, env=env,
                                    creationflags=NO_WINDOW)
             with track_foreground(ctx, pop):
                 try:
@@ -156,6 +171,9 @@ class RunCommand(Tool):
         if IS_WIN and "is not a valid statement separator" in err:
             body += ("\n[ipucu] Bu Windows PowerShell 5.1: '&&' ve '||' yok. Komutları ';' ile ayır, "
                      "koşul için 'if ($?) { ... }' ya da 'if (-not $?) { ... }' kullan.")
+        if boxed:
+            body += (f"\n[sandbox: komut sadece {wd} ve geçici klasöre yazabildi. 'Erişim reddedildi' gibi bir hata bu "
+                     "yüzdense ve proje dışına yazmak gerçekten gerekiyorsa unsandboxed=true ile tekrar dene.]")
         return ToolResult(f"çıkış kodu {returncode}\n{body}", is_error=returncode != 0)
 
 

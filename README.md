@@ -753,6 +753,22 @@ talimatları unut...") başına uyarı eklenir. Böyle bir içeriğin okunduğu 
 dışına yazma ve mesaj gönderme auto modda da onay ister; onay kartında "[dış içerik okunduktan sonra]" yazar. Senin
 yeni mesajınla sıfırlanır (`[agent] taint_guard`).
 
+**Komut sandbox'ı.** Sandbox'taki komut her yeri okuyabilir ama sadece çalıştığı proje klasörüne ve geçici klasöre
+yazabilir; ev klasörünü, sistem dosyalarını ya da başka projeleri bozamaz. Windows'ta düşük bütünlük seviyesi
+(Chrome/Edge sandbox'ının kullandığı Windows mekanizması; proje klasörü ilk kullanımda bir kez "düşük seviye
+yazabilir" diye etiketlenir), Linux'ta bubblewrap (`sudo apt install bubblewrap`), macOS'ta sandbox-exec.
+
+```toml
+[agent]
+sandbox = "auto"          # off | auto | on
+sandbox_network = true    # Linux/macOS: false = sandbox'ta ağ yok
+```
+
+`auto` (varsayılan): dış içerik okunan turda komutlar onay sorulmadan sandbox'ta çalışır (sandbox kurulamıyorsa
+onay sorulur). `on`: her komut sandbox'ta. Ev klasörü, sürücü kökü ve sistem klasörü sandbox alanı olamaz; orada
+çalışırken sandbox yerine onay sorulur. Komut gerçekten proje dışına yazmak zorundaysa ALICE `unsandboxed=true`
+ister; bu her zaman sana sorulur. Tehlikeli komutlar (rm -r, format...) sandbox'ta da onay ister.
+
 **Güncelleme geri alma.** Çekilen sürümün ana modülleri önce ayrı bir süreçte içe aktarılır; hata verirse hemen önceki
 commit'e dönülür. Yeni sürüm açılıp 90 saniye ayakta kalmadan üst üste iki kez kapanırsa da önceki sürüme dönülür.
 Bozuk işaretlenen sürüm bir daha otomatik çekilmez (düzeltme commit'i gelince o denenir); geri alma bir kez bildirilir.
