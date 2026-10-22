@@ -49,9 +49,12 @@ def test_bwrap_argv(workdir, monkeypatch):
     assert argv[-3:] == ["bash", "-lc", "ls"] and env == {}
 
 
-def test_mac_profile(workdir):
-    p = sandbox.mac_profile(workdir, net=False)
-    assert "(deny file-write*)" in p and str(workdir) in p and "(deny network*)" in p
+def test_mac_profile():
+    from pathlib import PurePosixPath
+
+    p = sandbox.mac_profile(PurePosixPath("/Users/hayat/proje"), net=False)
+    assert "(deny file-write*)" in p and '(subpath "/Users/hayat/proje")' in p and "(deny network*)" in p
+    assert "(deny network*)" not in sandbox.mac_profile(PurePosixPath("/x"), net=True)
 
 
 def test_permissions_use_sandbox_instead_of_asking(workdir, monkeypatch):
