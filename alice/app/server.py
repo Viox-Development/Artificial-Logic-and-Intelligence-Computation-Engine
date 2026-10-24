@@ -544,6 +544,52 @@ class AppState:
             return {"ok": True, "started": True}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
+    # ------------------------------------------------------------------ Ses sekmesi
+    PREVIEW_TEXT = "Selam, ben Alice. Bugün ne yapıyoruz? İstersen önce şu indirmeleri bir toparlayayım."
+
+    def voice_view(self) -> dict[str, Any]:
+        from alice.voice.tts import ALL_GEMINI_VOICES
+
+        v = self.cfg.data.get("voice", {})
+        key_env = self.cfg.data.get("providers", {}).get("gemini", {}).get("api_key_env", "GEMINI_API_KEY")
+        return {"live": str(v.get("live_voice", "Kore")), "tts": str(v.get("tts_cloud", "gemini:Aoede")),
+                "can_preview": bool(os.environ.get(key_env, "").strip()),
+                "voices": [{"name": n, "desc": d} for n, d in ALL_GEMINI_VOICES.items()]}
+
+    def voice_preview(self, name: str) -> dict[str, Any]:
+        """Bu sesle kısa bir Türkçe örnek (wav, base64). Bir kez üretilir, ~/.alice/voice/previews'da saklanır."""
+        import base64
+
+        from alice.voice.tts import ALL_GEMINI_VOICES, TTSError, make_cloud
+
+        if name not in ALL_GEMINI_VOICES:
+            return {"ok": False, "error": f"bilinmeyen ses: {name}"}
+        path = alice_home() / "voice" / "previews" / f"{name}.wav"
+        if not path.is_file():
+            tts = make_cloud(self.cfg, f"gemini:{name}")
+            if tts is None:
+                return {"ok": False, "error": "örnek için Gemini anahtarı gerekli (Ayarlar → Anahtarlar)"}
+            try:
+                audio = tts.synth(self.PREVIEW_TEXT, "happy")
+            except TTSError as e:
+                return {"ok": False, "error": f"örnek üretilemedi: {e}"}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(audio.to_wav())
+        return {"ok": True, "audio": base64.b64encode(path.read_bytes()).decode()}
+
+    def set_voice(self, name: str) -> dict[str, Any]:
+        """Live ve normal sesli cevap aynı sesle konuşsun."""
+        from alice.config import set_config_value
+        from alice.voice.tts import ALL_GEMINI_VOICES
+
+        if name not in ALL_GEMINI_VOICES:
+            return {"ok": False, "error": f"bilinmeyen ses: {name}"}
+        v = self.cfg.data.setdefault("voice", {})
+        v["live_voice"], v["tts_cloud"] = name, f"gemini:{name}"
+        set_config_value("voice", "live_voice", name)
+        set_config_value("voice", "tts_cloud", f"gemini:{name}")
+        return {"ok": True}
+
     # ------------------------------------------------------------------ Hafıza sekmesi
     def memory_view(self) -> dict[str, Any]:
         """Hafızadaki bilgiler (tek tek silinebilir), açık takipler ve eski rolden kalan izler."""
@@ -1183,6 +1229,8 @@ def make_handler(state: AppState):
                 return self._json(state.connections())
             if u.path == "/api/assistant":
                 return self._json(state.assistant())
+            if u.path == "/api/voice":
+                return self._json(state.voice_view())
             if u.path == "/api/keys":
                 return self._json(state.keys())
             if u.path == "/api/update":
@@ -1269,6 +1317,12 @@ def make_handler(state: AppState):
                 if p == "/api/assistant/set":
                     ok = state.assistant_set(str(d.get("section", "")), str(d.get("key", "")), d.get("value"))
                     return self._json({"ok": ok}, 200 if ok else 400)
+                if p == "/api/voice/preview":
+                    r = state.voice_preview(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/voice/set":
+                    r = state.set_voice(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/memory/action":
                     r = state.memory_action(str(d.get("action", "")), d)
                     return self._json(r, 200 if r.get("ok") else 400)

@@ -496,7 +496,7 @@ class LiveSession:
         setup: dict[str, Any] = {
             "model": f"models/{model}",
             "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
-                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}, "languageCode": "tr-TR"}},
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.current_voice()}}, "languageCode": "tr-TR"}},
             "systemInstruction": {"parts": [{"text": system}]},
             "tools": [{"functionDeclarations": declarations(self._specs()) + ([THINK_DECL] if self.think else [])}],
             "inputAudioTranscription": {},
@@ -509,6 +509,30 @@ class LiveSession:
         if extras and self.proactive:
             setup["proactivity"] = {"proactiveAudio": True}
         return {"setup": setup}
+
+    def current_voice(self) -> str:
+        """Ayarlar > Ses'te seçilen ses: config.toml değiştiyse oradan okunur, çekirdek yeniden başlamadan bir
+        sonraki konuşmada geçerli olur."""
+        from alice.config import alice_home
+
+        path = alice_home() / "config.toml"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return self.voice
+        if mtime != getattr(self, "_voice_mtime", None):
+            self._voice_mtime = mtime
+            try:
+                import tomllib
+            except ImportError:  # pragma: no cover - Python 3.10
+                import tomli as tomllib
+            try:
+                name = (tomllib.loads(path.read_text(encoding="utf-8")).get("voice") or {}).get("live_voice")
+            except (OSError, ValueError):
+                name = None
+            if isinstance(name, str) and name.strip():
+                self.voice = name.strip()
+        return self.voice
 
     def history_text(self, limit: int = 8) -> str:
         """Son history_minutes içindeki konuşma (sesli, canlı ya da yazılı; hafıza varsa oradan, yoksa bu oturumun

@@ -632,6 +632,42 @@ function assistantPane(pane, data) {
     pane.appendChild(row);
   }
 }
+/* Ayarlar > Ses: Gemini seslerini dinle ve seç (Live ve normal sesli cevap aynı sesle konuşur). */
+let previewAudio = null;
+function voicePane(pane, data) {
+  const d = data || {};
+  pane.append(el("h2", "", "Ses"),
+    el("p", "", "ALICE'in konuşma sesi. Dinle'ye basınca o sesle kısa bir örnek çalar (ilk seferde birkaç saniye "
+      + "sürer). Seçtiğin ses canlı konuşmada bir sonraki \"Hey Alice\"te geçerli olur."));
+  if (!d.can_preview) pane.appendChild(el("p", "", "Örnek dinlemek için Gemini anahtarı gerekli (Ayarlar → Anahtarlar)."));
+  pane.appendChild(el("div", "sec", "Sesler"));
+  for (const v of d.voices || []) {
+    const on = v.name === d.live;
+    const row = el("div", "list-row");
+    const l = el("span", "l");
+    l.append(el("b", "", v.name + (on ? "  ✓" : "")), el("small", "", v.desc + (on ? " · şu an bu ses" : "")));
+    const play = el("button", "btn", "▶ Dinle");
+    play.disabled = !d.can_preview;
+    play.addEventListener("click", () => {
+      play.textContent = "…";
+      api("/api/voice/preview", { voice: v.name }).then((r) => {
+        play.textContent = "▶ Dinle";
+        if (!r || !r.ok) return toast((r && r.error) || "örnek üretilemedi");
+        if (previewAudio) previewAudio.pause();
+        previewAudio = new Audio("data:audio/wav;base64," + r.audio);
+        previewAudio.play();
+      });
+    });
+    const pick = el("button", on ? "btn" : "btn primary", on ? "Seçili" : "Seç");
+    pick.disabled = on;
+    pick.addEventListener("click", () => api("/api/voice/set", { voice: v.name }).then((r) => {
+      toast(r && r.ok ? v.name + " seçildi; bir sonraki konuşmada bu sesle konuşur" : "kaydedilemedi");
+      showSettings("voice");
+    }));
+    row.append(l, play, pick);
+    pane.appendChild(row);
+  }
+}
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
   const d = data || {};
@@ -788,7 +824,7 @@ function connectPane(pane, data) {
 }
 
 const SETTINGS_TABS = [
-  ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
+  ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
   ["assistant", "Asistan", IC.shield],
   ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
@@ -804,6 +840,7 @@ async function showSettings(tab) {
     connect: tab === "connect" ? await api("/api/connect") : null,
     assistant: tab === "assistant" ? await api("/api/assistant") : null,
     apikeys: tab === "apikeys" ? await api("/api/keys") : null,
+    voice: tab === "voice" ? await api("/api/voice") : null,
   };
   showDialog((d) => {
     d.classList.add("settings");
@@ -878,6 +915,8 @@ async function showSettings(tab) {
       setTimeout(() => f.focus(), 0);
     } else if (tab === "assistant") {
       assistantPane(pane, data.assistant);
+    } else if (tab === "voice") {
+      voicePane(pane, data.voice);
     } else if (tab === "apikeys") {
       keysPane(pane, data.apikeys);
     } else if (tab === "connect") {

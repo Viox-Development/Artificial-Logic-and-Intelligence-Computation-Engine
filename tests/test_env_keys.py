@@ -122,3 +122,50 @@ def test_feedback_tool_records(workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = Feedback().run(ctx, note="çok uzun konuştu", say="saat kaç", reply="Saat beş, ve bu arada...")
     assert "test setine eklendi" in out.text and any(c.say == "saat kaç" for c in evals.load_cases())
+
+
+def test_voice_tab_lists_previews_and_sets_voice(app, monkeypatch):
+    import base64
+
+    from alice.voice import tts as tts_mod
+    from alice.voice.audio import Audio
+
+    state, client, _ = app
+    view = client.get("/api/voice").json()
+    assert view["live"] == "Kore" and len(view["voices"]) == 30 and not view["can_preview"]
+    assert client.post("/api/voice/preview", json={"voice": "Puck"}).json()["error"].startswith("örnek için Gemini")
+    made = []
+
+    class FakeTTS:
+        def synth(self, text, emotion="calm"):
+            made.append(text)
+            return Audio(b"\0\0" * 2400, 24000)
+
+    monkeypatch.setattr(tts_mod, "make_cloud", lambda cfg, voice=None: FakeTTS())
+    for _ in range(2):
+        r = client.post("/api/voice/preview", json={"voice": "Puck"}).json()
+        assert base64.b64decode(r["audio"])[:4] == b"RIFF"
+    assert len(made) == 1  # ikinci dinleyiş önbellekten
+    assert client.post("/api/voice/preview", json={"voice": "Yok"}).status_code == 400
+    assert client.post("/api/voice/set", json={"voice": "Sulafat"}).json()["ok"]
+    from alice.config import alice_home
+
+    text = (alice_home() / "config.toml").read_text(encoding="utf-8")
+    assert 'live_voice = "Sulafat"' in text and 'tts_cloud = "gemini:Sulafat"' in text
+    assert client.get("/api/voice").json()["live"] == "Sulafat"
+
+
+def test_live_picks_up_voice_change_without_restart(monkeypatch):
+    from types import SimpleNamespace
+
+    from alice.config import alice_home, set_config_value
+    from alice.voice.live import LiveSession
+
+    s = LiveSession(SimpleNamespace(data={"voice": {"live_voice": "Kore"}}), SimpleNamespace())
+    assert s.current_voice() == "Kore"
+    set_config_value("voice", "live_voice", "Achernar")
+    import os
+    import time as _t
+
+    os.utime(alice_home() / "config.toml", (_t.time() + 5,) * 2)  # dosya sistemi saat çözünürlüğü
+    assert s.current_voice() == "Achernar"

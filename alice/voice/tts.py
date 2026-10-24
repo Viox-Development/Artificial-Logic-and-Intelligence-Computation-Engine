@@ -38,6 +38,16 @@ GEMINI_VOICES = {
     "Aoede": "ferah", "Kore": "kararlı", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
     "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak",
 }
+# Gemini'nin (TTS ve Live ortak) bütün hazır sesleri ve Google'ın tarifleri; Ayarlar > Ses'te dinlenip seçilir.
+ALL_GEMINI_VOICES = {
+    "Kore": "kararlı", "Aoede": "ferah", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
+    "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak", "Zephyr": "parlak",
+    "Puck": "neşeli", "Charon": "bilgili", "Fenrir": "heyecanlı", "Orus": "kararlı", "Enceladus": "nefesli",
+    "Iapetus": "net", "Umbriel": "rahat", "Algieba": "pürüzsüz", "Erinome": "net", "Algenib": "boğuk",
+    "Rasalgethi": "bilgili", "Laomedeia": "neşeli", "Alnilam": "kararlı", "Schedar": "dengeli", "Gacrux": "olgun",
+    "Pulcherrima": "atak", "Achird": "samimi", "Zubenelgenubi": "gündelik", "Sadachbia": "canlı",
+    "Sadaltager": "bilgili",
+}
 
 
 class TTSError(Exception):
