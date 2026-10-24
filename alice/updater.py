@@ -556,7 +556,18 @@ def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, st
         subprocess.Popen(args, cwd=str(Path.cwd()), **kw)
     except (OSError, subprocess.SubprocessError):
         pass
+    _before_exit()
     os._exit(0)
+
+
+def _before_exit() -> None:
+    """os._exit atexit'i çalıştırmaz: sahipsiz kalacak Playwright sürücüsü core.log'a EPIPE yığını dökmesin."""
+    try:
+        from alice.tools.browser import kill_playwright_drivers
+
+        kill_playwright_drivers()
+    except Exception:  # noqa: BLE001 - çıkışı hiçbir şey engellemesin
+        pass
 
 
 def prepare(info: UpdateInfo, cfg: Any = None, ci_timeout: float = 5.0) -> UpdateInfo:

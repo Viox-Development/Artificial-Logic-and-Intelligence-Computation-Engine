@@ -600,3 +600,35 @@ def test_format_snapshot():
               "href": "/x", "inView": False}]
     out = browser.format_snapshot("Başlık", "https://a.com", items).splitlines()
     assert out[2] == "[1] input[search] 'Ara' değer='kedi'" and out[3] == "[2] a '/x' (aşağıda)"
+
+
+def test_kill_playwright_drivers_only_kills_drivers():
+    # Gerçek alt süreçler: Playwright sürücüsüne benzeyen öldürülür, köprü gibi diğerleri yaşar.
+    import subprocess
+    import time as _t
+
+    pytest.importorskip("psutil")
+    sleep = [sys.executable, "-c", "import time; time.sleep(30)"]
+    driver = subprocess.Popen(sleep + ["playwright/driver/package/cli.js", "run-driver"])
+    bridge = subprocess.Popen(sleep + ["-m", "alice.tools.browser_bridge"])
+    try:
+        _t.sleep(0.3)
+        assert browser.kill_playwright_drivers() == 1
+        assert driver.wait(5) is not None and bridge.poll() is None
+    finally:
+        for p in (driver, bridge):
+            if p.poll() is None:
+                p.kill()
+            p.wait(5)
+
+
+def test_restart_kills_drivers_before_exit(monkeypatch):
+    from alice import updater
+
+    calls = []
+    monkeypatch.setattr(browser, "kill_playwright_drivers", lambda: calls.append("kill") or 0)
+    monkeypatch.setattr(updater.subprocess, "Popen", lambda *a, **k: calls.append("popen"))
+    monkeypatch.setattr(updater.os, "_exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+    with pytest.raises(SystemExit):
+        updater.restart(["x"], delay=0)
+    assert calls == ["popen", "kill"]

@@ -218,6 +218,7 @@ class BrowserSession:
         except ImportError as e:
             raise ToolError("playwright kurulu değil: pip install 'alice-harness[browser]' && playwright install chromium") from e
         self._pw = sync_playwright().start()
+        _register_exit_cleanup()
         try:
             self._start(endpoint, headless, executable)
         except BaseException:
@@ -386,6 +387,43 @@ def _is_closed(page) -> bool:
         return bool(page.is_closed())
     except Exception:  # noqa: BLE001
         return True
+
+
+def kill_playwright_drivers() -> int:
+    """Bu sürecin başlattığı Playwright sürücülerini (node ... run-driver) sessizce sonlandır.
+
+    ALICE kapanırken ya da güncelleme sonrası yeniden başlarken sürücü, kapanmış boruya yazmaya çalışıp
+    "Error: EPIPE: broken pipe" yığınını core.log'a döküyordu. Playwright nesneleri oluşturuldukları iş parçacığına
+    bağlı olduğundan çıkışta düzgün stop() her zaman mümkün değil; sürücü zaten sahipsiz kalacağı için öldürülür.
+    Tarayıcı köprüsü (ayrı süreç) ve kullanıcının tarayıcısı etkilenmez."""
+    try:
+        import psutil
+
+        kids = psutil.Process().children(recursive=True)
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for p in kids:
+        try:
+            cmd = " ".join(p.cmdline()).lower()
+            if "playwright" in cmd and "run-driver" in cmd:
+                p.kill()
+                n += 1
+        except Exception:  # noqa: BLE001 - süreç bu arada bitmiş olabilir
+            continue
+    return n
+
+
+_ATEXIT = False
+
+
+def _register_exit_cleanup() -> None:
+    global _ATEXIT
+    if not _ATEXIT:
+        import atexit
+
+        atexit.register(kill_playwright_drivers)
+        _ATEXIT = True
 
 
 # Playwright'ın bağlantı koptuğunda verdiği hatalar (Opera kapandı/yeniden başladı, köprü ölü bağlantıyı kesti).
