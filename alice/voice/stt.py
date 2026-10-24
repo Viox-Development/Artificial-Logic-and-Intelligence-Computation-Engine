@@ -441,6 +441,13 @@ def is_hallucination(text: str) -> bool:
     # Tek terim ("bingo", "Hey Alice") gerçek konuşma olabilir, ona dokunma.
     if len(t) > 3 and t in PROMPT.lower() and any(c in t for c in ",."):
         return True
+    # İpucunu bozarak geri vermiş: "ALICE, DIGITAL, Bingo, waypoint, kneeboard." Sözcüklerin çoğu ipucundansa
+    # gürültüdür; başında "ALICE" olduğu için ALICE kendi kendine uyanıyordu.
+    words = re.findall(r"\w+", t)
+    hits = sum(1 for w in words if w in _PROMPT_WORDS)
+    tail = sum(1 for w in words if w in ("bingo", "waypoint", "kneeboard"))
+    if hits >= 3 and hits / len(words) > 0.75 and tail >= 2:
+        return True
     if "alice" in t:
         return False
     return len(t) < 60 and any(h in t for h in HALLUCINATIONS)
@@ -448,6 +455,7 @@ def is_hallucination(text: str) -> bool:
 
 # İsimlerin doğru yazılması için Whisper'a ipucu.
 PROMPT = "Hey Alice. ALICE, DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
+_PROMPT_WORDS = set(re.findall(r"\w+", PROMPT.lower())) - {"hey"}
 
 
 def make_stt(cfg: Config) -> STTRouter:

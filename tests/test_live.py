@@ -338,3 +338,73 @@ def test_live_idle_is_capped_and_hush_closes_session(monkeypatch):
     t0 = time.monotonic()
     s.converse("selam", queue.Queue(), threading.Event())
     assert time.monotonic() - t0 < 2 and s.hushed and s.last_active > 0
+
+
+def _session(ws_for, **voice):
+    agent = SimpleNamespace(messages=[{"role": "system", "content": "s"}], ctx=SimpleNamespace(state={}), ui=None,
+                            tool_specs=lambda: [])
+    cfg = SimpleNamespace(data={"voice": {"live_models": ["m1"], **voice}})
+    logs: list[str] = []
+    return LiveSession(cfg, agent, log=logs.append, connect=ws_for), logs
+
+
+def test_live_asks_for_affective_dialog_and_proactive_audio(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    urls, sockets = [], []
+
+    def connect(url, **k):
+        urls.append(url)
+        sockets.append(FakeWS([]))
+        return sockets[-1]
+
+    s, _ = _session(connect)
+    s._open()
+    setup = sockets[0].sent[0]["setup"]
+    assert "v1alpha" in urls[0] and setup["generationConfig"]["enableAffectiveDialog"] is True
+    assert setup["proactivity"] == {"proactiveAudio": True}
+    s2, _ = _session(connect, live_affective=False, live_proactive=False)
+    s2._open()
+    plain = sockets[-1].sent[0]["setup"]
+    assert "v1beta" in urls[-1] and "proactivity" not in plain and "enableAffectiveDialog" not in plain["generationConfig"]
+
+
+def test_live_falls_back_without_extras_when_model_rejects_them(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    urls = []
+
+    class Picky(FakeWS):
+        def send(self, data):
+            msg = json.loads(data)
+            if "setup" in msg and "proactivity" in msg["setup"]:
+                self.sent.append(msg)
+                self.inbox.put({"error": {"message": "Unknown name proactivity"}})
+                return
+            super().send(data)
+
+    def connect(url, **k):
+        urls.append(url)
+        return Picky([])
+
+    s, logs = _session(connect)
+    s._open()
+    assert s.model == "m1" and "v1alpha" in urls[0] and "v1beta" in urls[1]
+    assert any("desteklenmiyor" in line for line in logs)
+    urls.clear()
+    s._open()  # bir kez reddeden modelde bir daha denenmez
+    assert len(urls) == 1 and "v1beta" in urls[0]
+
+
+def test_canned_replies_are_kept_out_of_history():
+    from alice.voice.live import canned_reply
+
+    for r in ("Buradayım efendim, size nasıl yardımcı olabilirim?", "Anladım efendim, buradayım. Başka bir konuda "
+              "yardımcı olabilir miyim?", "Anlayamadım, tekrar eder misiniz?", "Rica ederim, her zaman buradayım."):
+        assert canned_reply(r), r
+    assert not canned_reply("Hızın 367 knot, irtifa 1100 metre.")
+    s, _ = _session(lambda url, **k: FakeWS([]))
+    now = time.time()
+    s._history = [(now, "Aferin.", "Rica ederim, her zaman buradayım. Başka bir konuda yardımcı olabilir miyim?"),
+                  (now, "hızım kaç", "367 knot.")]
+    s._memory = lambda: None
+    text = s.history_text()
+    assert "Aferin." in text and "Rica ederim" not in text and "367 knot." in text

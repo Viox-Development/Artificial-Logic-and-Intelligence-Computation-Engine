@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from alice.voice.audio import Audio, rms
-from alice.voice.assistant import VoiceAssistant, VoiceUI
+from alice.voice.assistant import ACKS, VoiceAssistant, VoiceUI, pick_ack
 from alice.voice.audition import run_audition
 from alice.voice.listen import VAD, strip_wake, utterances
 from alice.voice.speaker import Speaker
@@ -304,7 +304,7 @@ def test_assistant_wake_gating_and_follow_up():
     va.handle_text("peki ya dün?", direct=False)
     assert wait_for(lambda: agent.turns[-1] == "peki ya dün?")
     va.handle_text("Alice", direct=True)
-    assert "Efendim?" in sp.said
+    assert any(a in sp.said for a in ACKS)
 
 
 def test_assistant_yes_no():
@@ -1569,3 +1569,30 @@ def test_speaking_over_alice_counts_as_follow_up():
     sp.speaking = True
     va._on_speech_start()
     assert not va._armed(va._speech_at)
+
+
+# ---- voice.log'dan gerçek örnekler: yanlış uyanma ve tekrar eden kalıp cevaplar
+def test_whisper_echoing_its_prompt_is_noise_not_a_wake():
+    from alice.voice.stt import is_hallucination
+
+    for t in ("ALICE, DIGITAL, Bingo, waypoint, kneeboard.", "ALICE, F-16, UNA, Bingo, waypoint, kneeboard.",
+              "ALICE, DOR, Bingo, waypoint, kneeboard."):
+        assert is_hallucination(t), t
+    for t in ("Hey Alice, saat kaç?", "Alice, bingo yakıtım ne kadar kaldı?", "Alice waypoint üçe yön ver",
+              "Alice War Thunder aç", "Alice, War Thunder'ı aç", "Alice, bingo ve waypoint söyle"):
+        assert not is_hallucination(t), t
+
+
+def test_name_mid_sentence_needs_a_real_request_to_wake():
+    # Arkadaşlarına ALICE'ten bahsederken söylenenler (voice.log): uyandırıp boş "Buradayım" cevabı aldırıyordu.
+    assert strip_wake("Şuan Alice ya") is None
+    assert strip_wake("Gideyse iyi Alice.") is None
+    assert strip_wake("Bak şimdi Alice müziği aç") == "müziği aç"
+    assert strip_wake("Alice") == "" and strip_wake("Hey Alice, saat kaç?") == "saat kaç?"
+
+
+def test_bare_wake_ack_varies_and_never_repeats_back_to_back():
+    recent: list[str] = []
+    said = [pick_ack(recent) for _ in range(40)]
+    assert all(a != b for a, b in zip(said, said[1:]))
+    assert len(set(said)) >= 4 and "Efendim?" not in said

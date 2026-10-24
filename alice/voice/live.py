@@ -23,6 +23,8 @@ from alice.voice.vocab import known_names
 
 URL = ("wss://generativelanguage.googleapis.com/ws/"
        "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={key}")
+# Duygulu konuşma (affective dialog) ve "sana söylenmeyene cevap verme" (proactive audio) şimdilik v1alpha'da.
+URL_ALPHA = URL.replace(".v1beta.", ".v1alpha.")
 DEFAULT_MODELS = ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest"]
 LIVE_GROUPS = {"desktop", "browser", "personal", "system", "automation"}
 SCHEMA_KEYS = {"type", "description", "enum", "properties", "required", "items", "nullable", "format"}
@@ -53,8 +55,11 @@ Masaüstü simgelerini göster'i aç"). Tek tıklık işler için reflex daha h�
 Ekranda birden fazla adım gereken işi (bir uygulamada yazmak, mesaj göndermek, ayar değiştirmek) DOĞRUDAN
 computer_task'a ver; önce screenshot/ui_elements/reflex ile denemeye çalışma. computer aracıyla görmeden (koordinat
 tahmin ederek) tıklama.
-Mikrofon oyun/motor sesi de duyabilir: duyduğun cümle anlamsızsa, Türkçe/İngilizce değilse ya da sana
-söylenmemiş gibiyse cevap verme; gerekiyorsa tek cümleyle "anlayamadım, tekrar eder misin" de.
+Mikrofon oyun/motor sesini, videoyu ve kullanıcının Discord'da/odada başkalarıyla konuşmasını da duyar. Duyduğun cümle
+anlamsızsa, Türkçe değilse ya da sana söylenmemiş gibiyse HİÇ cevap verme, sessiz kal; bu normaldir. "Anlayamadım,
+tekrar eder misin" demeyi bir konuşmada en fazla bir kez ve sadece sana söylendiğinden emin olduğun bir cümle için yap.
+Her zaman Türkçe konuş. Başka dilde (Portekizce, Almanca, Japonca...) bir şey duyarsan o büyük ihtimalle oyun, video
+ya da başkasıdır: o dilde cevap verme, cevap verme.
 Uçuşla ilgili her soruda (hız, irtifa, stall, yakıt, yön, silah) önce flight action=status çağır; ekran
 görüntüsünden ya da hafızadan uçuş verisi söyleme.
 Araçların vermediği sayıları ve durumları (uçaktaki silahlar, mesafe, yakıt, ekranda göremediğin şeyler) asla
@@ -83,8 +88,16 @@ fiyat, maç, sürüm, hava dışındaki her güncel bilgi) ya da cevabından emi
 (önce tek kısa doğal cümle söyle, ör. "Bir düşüneyim.") ve gelen cevabı kendi sesinle, anlamını bozmadan söyle; bilgi
 ekleme. Selamlaşma, saat/tarih, basit komutlar (aç, kapat, çal, ses) ve kısa sohbet için çağırma.
 # Konuşma tarzın
-Sistem istemindeki kişilik ("Your personality") sesli konuşmada da sensin: aynı karakter, aynı ton. Kalıp cümlelerle
-konuşma ("Hemen bakıyorum", "Tabii ki", "Başka bir şey var mı?" gibi sözleri tekrarlama); cümlelerini çeşitlendir.
+Sistem istemindeki kişilik ("Your personality") sesli konuşmada da sensin: aynı karakter, aynı ton. Sen dili kullan;
+"siz", "efendim", "buyurun" yok. Müşteri hizmetleri cümleleri kesinlikle yok: "size nasıl yardımcı olabilirim",
+"başka bir konuda yardımcı olabilir miyim", "buradayım", "dinliyorum", "rica ederim, her zaman buradayım", "anladım,
+ihtiyacın olursa buradayım". Kullanıcı bir şey istemediyse yardım teklif etme, sessiz kal. Aşağıdaki "Az önceki
+konuşma"da söylediğin bir cümleyi ya da kalıbı tekrarlama; her cevabın o ana özel olsun.
+Konuşmanın ilk mesajı boşsa kullanıcı sadece adını söyledi ve sen zaten kısa bir tepki verdin: selam verme, yardım
+teklif etme, onun konuşmasını bekle.
+Sesindeki duyguyu dinle (ton, hız, gülme, iç çekme, küfür) ve cevabını da sesini de ona göre ayarla: keyifliyse
+keyifle, sinirliyse onun tarafında ve kısa (nasihat verme, "sakin ol" deme), yorgunsa yumuşak, heyecanlıysa canlı.
+Monoton, okur gibi konuşma; bir insan gibi vurgu yap, gerektiğinde gül.
 Kullanıcının adını biliyorsan arada kullan. "O", "onu", "devam et", "az önceki" gibi sözler aşağıdaki "Az önceki
 konuşma"ya ya da hafızaya işaret eder; baştan sorma, kaldığın yerden devam et. Uygun düşerse tek cümlelik bir yorum
 ya da bir adım önde bir öneri ekleyebilirsin; dırdır etme.
@@ -93,6 +106,16 @@ Uzun süreli hafızan var (sistem istemindeki "Long-term memory"). Kullanıcı k
 olarak kaydet; "bunu unut" derse memory action=forget. Geçmiş bir konuşmayı ya da profilde olmayan kişisel bir
 bilgiyi sorarsa ("geçen gün ne demiştim", "hatırlıyor musun") önce memory action=search çağır, bilmediğini uydurma.
 Şu an: {now}.{history}"""
+
+_CANNED = re.compile(
+    r"(yardımcı olabil|nasıl yardım|buradayım|dinliyorum|rica ederim|anlayamadım|tekrar eder mi|"
+    r"ihtiyacınız olduğunda|ihtiyacın olduğunda|ne zaman ihtiyac|başka bir (konu|şey)|buyurun)", re.I)
+
+
+def canned_reply(text: str) -> bool:
+    """İçeriği olmayan kalıp cevap mı (selam, yardım teklifi, "anlayamadım")? Geçmişe konmaz, tekrar beslenmesin."""
+    return bool(_CANNED.search(text or "")) and len(text) < 160
+
 
 THINK_DECL = {
     "name": "think",
@@ -419,6 +442,12 @@ class LiveSession:
         # Az önceki konuşma: oturum 5 sn sessizlikte kapanıyor; yenisi bu kadar dakikalık geçmişi bilerek açılır.
         self.history_minutes = float(v.get("live_history_minutes", 30))
         self._history: list[tuple[float, str, str]] = []
+        # Duygulu konuşma: ses modeli kullanıcının sesindeki duyguyu anlar, kendi tonunu ona göre ayarlar.
+        # Proactive audio: kendisine söylenmeyen sesi (oyun, video, Discord'daki arkadaşlar) cevapsız geçebilir.
+        # Model ya da hesap desteklemezse oturum bu ikisi olmadan açılır.
+        self.affective = bool(v.get("live_affective", True))
+        self.proactive = bool(v.get("live_proactive", True))
+        self._no_extras: set[str] = set()  # bu özellikleri reddeden modeller: bir daha denenmez
 
     @property
     def available(self) -> bool:
@@ -432,7 +461,7 @@ class LiveSession:
             return False
         return True
 
-    def _setup(self, model: str) -> dict[str, Any]:
+    def _setup(self, model: str, extras: bool = False) -> dict[str, Any]:
         from datetime import datetime
 
         from alice.voice.assistant import spoken_time
@@ -450,7 +479,7 @@ class LiveSession:
         from alice import plugins
 
         enabled |= LIVE_GROUPS | plugins.live_groups()
-        return {"setup": {
+        setup: dict[str, Any] = {
             "model": f"models/{model}",
             "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
                 "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}, "languageCode": "tr-TR"}},
@@ -460,7 +489,12 @@ class LiveSession:
             "outputAudioTranscription": {},
             "realtimeInputConfig": {"automaticActivityDetection": {
                 "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": self.silence_ms}},
-        }}
+        }
+        if extras and self.affective:
+            setup["generationConfig"]["enableAffectiveDialog"] = True
+        if extras and self.proactive:
+            setup["proactivity"] = {"proactiveAudio": True}
+        return {"setup": setup}
 
     def history_text(self, limit: int = 8) -> str:
         """Son history_minutes içindeki konuşma (sesli, canlı ya da yazılı; hafıza varsa oradan, yoksa bu oturumun
@@ -480,7 +514,9 @@ class LiveSession:
         lines = []
         for ts, user, reply in items:
             line = f"- {datetime.fromtimestamp(ts):%H:%M} Kullanıcı: {user[:300]}"
-            if reply:
+            # Kalıp cevaplar ("Buradayım efendim, nasıl yardımcı olabilirim?") geçmişe konmaz: model kendi eski
+            # cümlesini görünce aynısını tekrar tekrar kuruyordu.
+            if reply and not canned_reply(reply):
                 line += f" / Sen: {reply[:300]}"
             lines.append(line)
         return "\n".join(lines)
@@ -500,23 +536,28 @@ class LiveSession:
             from websockets.sync.client import connect
         errors = []
         for model in self.models:
-            try:
-                ws = connect(URL.format(key=self.key), open_timeout=8, max_size=None)
-            except Exception as e:  # noqa: BLE001
-                raise LiveError(f"bağlanılamadı: {e}") from e
-            try:
-                ws.send(json.dumps(self._setup(model)))
-                msg = decode(ws.recv(timeout=10))
-                if "setupComplete" in msg:
-                    self.model = model
-                    return ws
-                errors.append(f"{model}: {str(msg)[:120]}")
-            except Exception as e:  # noqa: BLE001 - model yok/kapalı: sıradakini dene
-                errors.append(f"{model}: {e}")
-            try:
-                ws.close()
-            except Exception:  # noqa: BLE001
-                pass
+            want = (self.affective or self.proactive) and model not in self._no_extras
+            for extras in ([True, False] if want else [False]):
+                try:
+                    ws = connect((URL_ALPHA if extras else URL).format(key=self.key), open_timeout=8, max_size=None)
+                except Exception as e:  # noqa: BLE001
+                    raise LiveError(f"bağlanılamadı: {e}") from e
+                try:
+                    ws.send(json.dumps(self._setup(model, extras)))
+                    msg = decode(ws.recv(timeout=10))
+                    if "setupComplete" in msg:
+                        self.model = model
+                        return ws
+                    errors.append(f"{model}{' (duygulu)' if extras else ''}: {str(msg)[:120]}")
+                except Exception as e:  # noqa: BLE001 - model yok/kapalı ya da özelliği desteklemiyor
+                    errors.append(f"{model}{' (duygulu)' if extras else ''}: {e}")
+                if extras:
+                    self._no_extras.add(model)  # bu özelliklerle açılmadı: sonraki oturumlarda hiç deneme
+                    self.log(f"live {model}: duygulu konuşma/proactive audio desteklenmiyor, onlarsız açılıyor")
+                try:
+                    ws.close()
+                except Exception:  # noqa: BLE001
+                    pass
         raise LiveError("; ".join(errors) or "live modeli yok")
 
     def prefetch(self) -> None:

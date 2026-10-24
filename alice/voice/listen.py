@@ -186,10 +186,14 @@ def strip_wake(text: str, strict: bool = False) -> str | None:
         return re.sub(r"^['’]\w{1,3}", "", rest).lstrip(" ,.!?;:-'’").strip()
     if i < len(words) and i <= 2 and _name_like(words[i].group(), after_hey):
         return text[words[i].end():].lstrip(" ,.!?;:-'’").strip()
-    # "Bak şimdi Alice ..." gibi: ilk üç sözcükte tam isim (benzerlik değil, yanlış uyanmasın)
+    # "Bak şimdi Alice ..." gibi: ilk üç sözcükte tam isim (benzerlik değil, yanlış uyanmasın). İsim cümlenin
+    # başında değilse arkasından gerçek bir istek gelmeli: "Şuan Alice ya", "Gideyse iyi Alice" gibi başkasına
+    # ALICE'ten bahsederken söylenen cümleler uyandırıp boş bir "Buradayım" cevabı aldırıyordu.
     for w in ([] if strict else words[:3]):
         if _name_like(w.group(), False):
-            return text[w.end():].lstrip(" ,.!?;:-'’").strip()
+            rest = text[w.end():].lstrip(" ,.!?;:-'’").strip()
+            meaningful = [x for x in re.findall(r"\w+", rest) if x.lower() not in _FILLERS | {"ya", "yaa", "be", "lan"}]
+            return rest if len(meaningful) >= 2 else None
     return None
 
 

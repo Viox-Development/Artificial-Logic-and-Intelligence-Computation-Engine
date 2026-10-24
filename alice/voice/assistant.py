@@ -33,6 +33,13 @@ You are speaking out loud through text-to-speech. The user hears you, they may n
 - Weather: call the weather tool once (never run_command/curl for it).
 - Never read code, paths or long numbers aloud; say you put it on screen.
 - In urgent situations (flight warnings, errors) be clear and brief, no jokes.
+- Talk like a friend with your own character (see "Your personality"), informal "sen", never "siz"/"efendim". Never
+  use customer-service filler ("size nasıl yardımcı olabilirim", "başka bir konuda yardımcı olabilir miyim",
+  "buradayım", "rica ederim, her zaman"). Do not offer help unprompted and never repeat a sentence you already said.
+- Notice how the user feels from their words (frustrated, swearing, tired, excited) and react like a person would,
+  on their side; no lecturing ("sakin ol").
+- If the message was clearly not meant for you (talking to friends, game/video audio, another language), reply with
+  an empty answer.
 - Checklists (checklist tool): read only the current step, then wait; on "tamam", "devam" or "sonraki" call next.
 - "Not al" during a flight goes to the kneeboard (kneeboard tool, action note); otherwise to the notes tool."""
 
@@ -183,6 +190,20 @@ class VoiceUI:
         self._inner("info", msg)
 
 
+# Sadece "Alice" denince verilen kısa tepki. Hep aynı "Efendim?" robot gibi geliyordu: her seferinde başka biri,
+# son söylenenler tekrar edilmez.
+ACKS = ("Evet?", "Söyle.", "Hı?", "Dinliyorum.", "Evet, söyle.", "Hmm?", "Buyur.", "Ne var?")
+
+
+def pick_ack(recent: list[str]) -> str:
+    """Son birkaç tepkiden farklı bir tepki seç ve listeye ekle."""
+    choices = [a for a in ACKS if a not in recent[-3:]] or list(ACKS)
+    ack = random.choice(choices)
+    recent.append(ack)
+    del recent[:-5]
+    return ack
+
+
 def voice_log(line: str) -> None:
     """~/.alice/voice.log: ne duyuldu, ne cevap verildi (yanlış anlama sorunlarını görmek için)."""
     from datetime import datetime
@@ -217,6 +238,7 @@ class VoiceAssistant:
                  live_text_min: float | None = -0.7, live_text_wait: float = 1.5, live_follow: float = FOLLOW_MAX,
                  full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True):
         self.agent = agent
+        self._acks: list[str] = []  # son kısa tepkiler ("Evet?", "Söyle."): art arda aynısı söylenmesin
         self.smart_route = smart_route  # düşünmesi gereken soruyu hızlı ses modeli yerine beyin modeline ver
         # İlk cümlenin yerel dökümü bu güvenin (ortalama log olasılık) üstündeyse Live'a ses yerine yazı gider.
         self.live_text_min = live_text_min
@@ -338,11 +360,11 @@ class VoiceAssistant:
         elif not armed:
             return
         if not text:
-            self.speaker.say("Efendim?", "calm")
+            self.speaker.say(pick_ack(self._acks), "calm")
             if self._live_ready():
                 self._jobs.put("")  # canlı konuşmayı aç, kullanıcı söyleyecek
                 return
-            self.speaker.wait(5)  # pencere "Efendim?" bittikten sonra başlasın
+            self.speaker.wait(5)  # pencere kısa tepki bittikten sonra başlasın
             self.armed_until = time.monotonic() + self.follow_up
             return
         if self._busy.is_set():
