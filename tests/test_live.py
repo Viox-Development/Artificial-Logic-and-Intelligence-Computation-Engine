@@ -357,7 +357,12 @@ def test_live_asks_for_affective_dialog_and_proactive_audio(monkeypatch):
         sockets.append(FakeWS([]))
         return sockets[-1]
 
-    s, _ = _session(connect)
+    s0, _ = _session(connect)
+    s0._open()  # varsayılan kapalı: desteklemeyen modelde ilk seste 1007 ile kopuyordu
+    assert "v1beta" in urls[0] and "proactivity" not in sockets[0].sent[0]["setup"]
+    urls.clear()
+    sockets.clear()
+    s, _ = _session(connect, live_affective=True, live_proactive=True)
     s._open()
     setup = sockets[0].sent[0]["setup"]
     assert "v1alpha" in urls[0] and setup["generationConfig"]["enableAffectiveDialog"] is True
@@ -385,7 +390,7 @@ def test_live_falls_back_without_extras_when_model_rejects_them(monkeypatch):
         urls.append(url)
         return Picky([])
 
-    s, logs = _session(connect)
+    s, logs = _session(connect, live_affective=True, live_proactive=True)
     s._open()
     assert s.model == "m1" and "v1alpha" in urls[0] and "v1beta" in urls[1]
     assert any("desteklenmiyor" in line for line in logs)
@@ -437,3 +442,56 @@ def test_read_only_detection():
     assert read_only("run_command", {"command": "Get-ChildItem C:\\Users\\x\\Downloads"})
     assert read_only("run_command", {"command": "dir C:\\"}) and read_only("list_dir", {"path": "."})
     assert not read_only("run_command", {"command": "Remove-Item x"}) and not read_only("browser", {"action": "click"})
+
+
+def test_live_single_turn_closes_right_after_the_answer(monkeypatch):
+    # Seçici mod (Discord): cevap bitince oturum kapanır; arkadaşlara söylenenler Live'a gitmez.
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    pcm = base64.b64encode(b"\x01\x00" * 100).decode()
+    agent = SimpleNamespace(messages=[{"role": "system", "content": "s"}], ctx=SimpleNamespace(state={}), ui=None,
+                            tool_specs=lambda: [], _enable_groups_for=lambda **k: None, _execute_calls=lambda c: [])
+
+    def run(single):
+        ws = FakeWS([{"serverContent": {"inputTranscription": {"text": "saat kaç"},
+                                        "modelTurn": {"parts": [{"inlineData": {"data": pcm}}]},
+                                        "outputTranscription": {"text": "Saat beş."}, "turnComplete": True}}])
+        s = LiveSession(SimpleNamespace(data={"voice": {"live_idle": 5, "live_models": ["m1"]}}), agent,
+                        connect=lambda url, **k: ws, out_factory=FakeOut)
+        s.single_turn = single
+        t0 = time.monotonic()
+        s.converse("saat kaç", queue.Queue(), threading.Event())
+        return time.monotonic() - t0
+
+    assert run(True) < 3.0 < run(False)
+
+
+def test_think_runs_one_at_a_time_and_drops_stale_answers(monkeypatch):
+    from alice.voice import live as live_mod
+
+    s, ws, results = _guard_session()
+    s._bg = 0
+    gate = threading.Event()
+    s.think_answer = lambda q, c="": gate.wait(5) and "cevap"
+    s.think_timeout = 60
+    s._run_think(ws, {"id": "1", "name": "think", "args": {"question": "D&D nedir"}})
+    s._run_think(ws, {"id": "2", "name": "think", "args": {"question": "başka soru"}})
+    assert "hâlâ düşünülüyor" in results()[0]  # ikinci think çalışmadı, model kendisi cevaplasın
+    gate.set()
+    deadline = time.monotonic() + 3
+    while len(results()) < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert "cevap" in results()[1] and s._thinking == 0
+    # geç cevap: zaman aşımı mesajı gitti, cevap THINK_STALE'den sonra geldi -> söylenmez
+    sent = []
+    late_ws = SimpleNamespace(send=lambda d: sent.append(json.loads(d)))
+    monkeypatch.setattr(live_mod, "THINK_STALE", 0.0)
+    s.think_timeout = 0.01
+    gate.clear()
+    s._run_think(late_ws, {"id": "3", "name": "think", "args": {"question": "yavaş soru"}})
+    time.sleep(0.2)
+    gate.set()
+    deadline = time.monotonic() + 3
+    while s._thinking and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert [m for m in sent if "toolResponse" in m]  # "uzun sürüyor" cevabı gitti
+    assert not [m for m in sent if "clientContent" in m]  # dakikalar sonra gelen cevap okunmadı

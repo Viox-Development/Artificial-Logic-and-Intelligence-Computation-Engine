@@ -290,7 +290,8 @@ def test_wakegate_heard_uses_only_head(fake_fw):
     assert text == "merhaba dünya" and g.device == "cpu"
     call = g._model.calls[0]
     assert wav_seconds(call["bytes"]) == pytest.approx(WakeGate.HEAD_SECONDS, abs=0.01)
-    assert call["initial_prompt"] == "Hey Alice." and call["condition_on_previous_text"] is False
+    # İpucu yok: "Hey Alice." ipucu gürültüde aynen geri dönüp asistanı kendi kendine uyandırıyordu.
+    assert call["initial_prompt"] is None and call["condition_on_previous_text"] is False
     assert g.last_seconds >= 0
     g.heard(Audio.silence(1.0, 16000))
     assert fake_fw.created == [("base", "cpu", "int8")]

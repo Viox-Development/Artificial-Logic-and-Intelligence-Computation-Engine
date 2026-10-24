@@ -140,3 +140,13 @@ def test_social_mode_needs_name_first_and_closes_follow_up():
     social["on"] = ""
     va.handle_text("Bak şimdi Alice sesi kıs lütfen", direct=False)
     assert wait_for(lambda: agent.turns[-1] == "sesi kıs lütfen")
+
+
+def test_unchecked_wake_is_logged_with_reason(monkeypatch):
+    from alice.voice import assistant as va_mod
+
+    logs = []
+    monkeypatch.setattr(va_mod, "voice_log", logs.append)
+    va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
+    assert va._is_user(Audio(b"\2\0" * 4000, 16000))  # 0,25 sn
+    assert "kısa ses 0.25 sn" in logs[-1]

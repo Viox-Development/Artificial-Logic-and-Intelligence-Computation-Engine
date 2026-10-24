@@ -146,6 +146,7 @@ class SpeakerGate:
         self.threshold = float(threshold if threshold is not None else profile.get("threshold", THRESHOLD_RANGE[0]))
         self.embedder = embedder
         self.last_score = 0.0
+        self.last_note = ""  # karar verilemediyse nedeni (kısa ses, hata): voice.log'a yazılır
 
     @classmethod
     def load(cls, cfg: Any = None, log: Callable[[str], None] = lambda s: None) -> "SpeakerGate | None":
@@ -171,12 +172,15 @@ class SpeakerGate:
 
     def check(self, pcm: bytes, rate: int = 16000) -> bool:
         """True: kullanıcının sesi (ya da karar verilemeyecek kadar kısa)."""
+        self.last_note = ""
         if len(pcm) / 2 / rate < MIN_SECONDS:
             self.last_score = 1.0
+            self.last_note = f"kısa ses {len(pcm) / 2 / rate:.2f} sn, kontrol edilmedi"
             return True
         try:
             self.last_score = cosine(self.vector, self.embedder.embed(pcm, rate))
-        except Exception:  # noqa: BLE001 - ses tanıma hata verirse kullanıcıyı cezalandırma
+        except Exception as e:  # noqa: BLE001 - ses tanıma hata verirse kullanıcıyı cezalandırma
             self.last_score = 1.0
+            self.last_note = f"ses tanıma hatası, kontrol edilmedi: {type(e).__name__}: {str(e)[:120]}"
             return True
         return self.last_score >= self.threshold

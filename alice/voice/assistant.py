@@ -450,7 +450,8 @@ class VoiceAssistant:
             return True
         ok = gate.check(audio.pcm, audio.rate)
         if ok:
-            voice_log(f"ses tanındı ({gate.last_score:.2f})")
+            note = getattr(gate, "last_note", "")
+            voice_log(f"ses tanındı ({gate.last_score:.2f}{', ' + note if note else ''})")
         else:
             voice_log(f"başka biri konuştu (ses benzerliği {gate.last_score:.2f} < {gate.threshold:.2f}), cevap yok")
         return ok
@@ -543,6 +544,8 @@ class VoiceAssistant:
             self.speaker.wait(10)
         q: queue.Queue = self._live_q or queue.Queue()
         self._live_q = q
+        if hasattr(self.live, "single_turn"):
+            self.live.single_turn = bool(self.social())  # Discord'da/oyunda: tek cevap, sonra kapan
         try:
             if audio is not None:
                 hint = self._local_text(audio)

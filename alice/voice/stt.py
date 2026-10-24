@@ -351,7 +351,7 @@ class WakeGate:
                 if self._model is None:
                     self._model = self._load()
                 segments, _ = self._model.transcribe(io.BytesIO(head.to_wav()), language=self.language,
-                                                     beam_size=1, initial_prompt="Hey Alice.",
+                                                     beam_size=1, initial_prompt=None,
                                                      condition_on_previous_text=False)
                 segs = speech_segments(segments)
                 self.last_seconds = time.monotonic() - t0
@@ -439,7 +439,11 @@ def is_hallucination(text: str) -> bool:
         return True
     # İpucu metninden birden çok terimi (virgül/noktayla) aynen geri vermiş: "Hey Alice. ALICE, DCS".
     # Tek terim ("bingo", "Hey Alice") gerçek konuşma olabilir, ona dokunma.
-    if len(t) > 3 and t in PROMPT.lower() and any(c in t for c in ",."):
+    if len(t) > 3 and any(c in t for c in ",.") and (t in PROMPT.lower() or t in LEGACY_PROMPT.lower()):
+        return True
+    # Eski ipucunun kısa yankısı: büyük harfli "ALICE," ve ardından tek bozuk sözcük ("ALICE, DIGITI.",
+    # "ALICE, D'AMO."). Gerçek konuşmada Whisper adı "Alice" diye yazar; bu biçim ipucunun kendisi.
+    if re.fullmatch(r"\W*(HEY\s+)?ALICE[,.]\s*[\w'’-]{1,12}[.?!]?\W*", text.strip()):
         return True
     # İpucunu bozarak geri vermiş: "ALICE, DIGITAL, Bingo, waypoint, kneeboard." Sözcüklerin çoğu ipucundansa
     # gürültüdür; başında "ALICE" olduğu için ALICE kendi kendine uyanıyordu.
@@ -453,9 +457,13 @@ def is_hallucination(text: str) -> bool:
     return len(t) < 60 and any(h in t for h in HALLUCINATIONS)
 
 
-# İsimlerin doğru yazılması için Whisper'a ipucu.
-PROMPT = "Hey Alice. ALICE, DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
-_PROMPT_WORDS = set(re.findall(r"\w+", PROMPT.lower())) - {"hey"}
+# İsimlerin doğru yazılması için Whisper'a ipucu. "Alice" bilerek YOK: Whisper gürültüde ipucunu bozarak geri
+# veriyordu ("ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK.") ve başında ALICE olduğu için asistan kendi
+# kendine uyanıyordu (voice.log, 24 Ekim gecesi onlarca kez). Adın farklı yazımlarını strip_wake zaten tanıyor.
+PROMPT = "DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
+LEGACY_PROMPT = "Hey Alice. ALICE, DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
+# Eski ipucunun ("Hey Alice. ALICE, DCS, ...") yankılarını da tanımak için "alice" listede kalır.
+_PROMPT_WORDS = set(re.findall(r"\w+", PROMPT.lower())) | {"alice"}
 
 
 def make_stt(cfg: Config) -> STTRouter:

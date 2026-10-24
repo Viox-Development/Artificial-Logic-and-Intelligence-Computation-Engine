@@ -66,7 +66,8 @@ Ekranda birden fazla adım gereken işi (bir uygulamada yazmak, mesaj göndermek
 computer_task'a ver; önce screenshot/ui_elements/reflex ile denemeye çalışma. computer aracıyla görmeden (koordinat
 tahmin ederek) tıklama.
 Mikrofon oyun/motor sesini, videoyu ve kullanıcının Discord'da/odada başkalarıyla konuşmasını da duyar. Duyduğun cümle
-anlamsızsa, Türkçe değilse ya da sana söylenmemiş gibiyse HİÇ cevap verme, sessiz kal; bu normaldir. "Anlayamadım,
+anlamsızsa, Türkçe değilse ya da sana söylenmemiş gibiyse HİÇ cevap verme, sessiz kal; bu normaldir. Sessiz kalırken
+"cevap vermeyeceğim", "---", "no speech detected" gibi hiçbir şey söyleme ya da yazma, İngilizce konuşma. "Anlayamadım,
 tekrar eder misin" demeyi bir konuşmada en fazla bir kez ve sadece sana söylendiğinden emin olduğun bir cümle için yap.
 Her zaman Türkçe konuş. Başka dilde (Portekizce, Almanca, Japonca...) bir şey duyarsan o büyük ihtimalle oyun, video
 ya da başkasıdır: o dilde cevap verme, cevap verme.
@@ -151,6 +152,7 @@ sayıları ve birimleri okunur yaz. İlk cümle doğrudan cevap olsun, sonra ger
 uydurma, bilmediğini söyle.
 {history}
 Soru: {question}{context}"""
+THINK_STALE = 90.0  # sn: bundan geç gelen think cevabı artık söylenmez
 THINK_TOOLS = ("web_search", "web_fetch", "read_file", "list_dir", "glob", "grep", "memory", "projects", "weather",
                "system_info")
 
@@ -458,9 +460,14 @@ class LiveSession:
         self._history: list[tuple[float, str, str]] = []
         # Duygulu konuşma: ses modeli kullanıcının sesindeki duyguyu anlar, kendi tonunu ona göre ayarlar.
         # Proactive audio: kendisine söylenmeyen sesi (oyun, video, Discord'daki arkadaşlar) cevapsız geçebilir.
-        # Model ya da hesap desteklemezse oturum bu ikisi olmadan açılır.
-        self.affective = bool(v.get("live_affective", True))
-        self.proactive = bool(v.get("live_proactive", True))
+        # Varsayılan KAPALI: desteklemeyen modeller açılışta "tamam" deyip ilk seste bağlantıyı 1007 "invalid
+        # argument" ile kesiyordu (voice.log: ALICE uyanıp sessizce kapanıyordu). Destekleyen hesapta config'ten açılır.
+        self.affective = bool(v.get("live_affective", False))
+        self.proactive = bool(v.get("live_proactive", False))
+        # True: tek soru-tek cevap; cevap bitince oturum hemen kapanır (Discord'dayken arkadaşlara söylenen cümleler
+        # Live'a gitmesin). Sesli asistan her konuşmadan önce seçici moda göre ayarlar.
+        self.single_turn = False
+        self._thinking = 0  # süren think sayısı: aynı anda birden fazlası beyni boğuyordu (cevaplar 3 dk sonra geldi)
         self._no_extras: set[str] = set()  # bu özellikleri reddeden modeller: bir daha denenmez
 
     @property
@@ -742,6 +749,7 @@ class LiveSession:
                             touch()
                         if (t := (sc.get("outputTranscription") or {}).get("text")):
                             state["said"].append(t)
+                            state["answered"] = True
                             if not state["mute"] and looks_internal("".join(state["said"])):
                                 state["mute"] = True  # iç notu okuyor: bu turun kalanını çalma
                                 out.clear()
@@ -830,7 +838,10 @@ class LiveSession:
                     touch()
                 elif state["pending"] and time.monotonic() - state.get("asked", 0) < 20:
                     touch()  # kullanıcı konuştu, cevap bekleniyor: model düşünürken kapanma
-                if time.monotonic() - state["active"] > self.idle:
+                idle = self.idle
+                if self.single_turn and state.get("answered") and not state["pending"]:
+                    idle = min(idle, 1.0)  # seçici mod: cevap bitti, takip konuşması yok
+                if time.monotonic() - state["active"] > idle:
                     break
         finally:
             done.set()
@@ -924,6 +935,12 @@ class LiveSession:
         if not question:
             respond("HATA: question boş. Kullanıcının sorusunu question'a yaz.")
             return
+        if getattr(self, "_thinking", 0):
+            respond("Önceki soru hâlâ düşünülüyor; yeni think çağırma. Bu soruya kısaca kendin cevap ver ya da "
+                    "kullanıcıya biraz beklemesini söyle.")
+            self.log(f"live think atlandı (önceki sürüyor): {question[:120]}")
+            return
+        self._thinking = getattr(self, "_thinking", 0) + 1
         self._bg += 1  # düşünürken konuşma kapanmasın; _think_thread bitince azaltır
         self.log(f"live think: {question[:200]}")
 
@@ -955,6 +972,10 @@ class LiveSession:
             if not late:
                 respond(text)
                 return
+            if time.monotonic() - t0 > THINK_STALE:
+                # Dakikalar sonra gelen cevap konuşmayla ilgisiz bir anda okunuyordu: söyleme.
+                self.log(f"live think cevabı çok geç geldi ({time.monotonic() - t0:.0f} sn), söylenmedi")
+                return
             try:  # zaman aşımı cevabı gitmişti: sonuç yeni bir mesaj olarak gelsin
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
                     f"[think bitti, cevabı kullanıcıya söyle] {text}")}]}], "turnComplete": True}}))
@@ -962,6 +983,7 @@ class LiveSession:
                 pass
         finally:
             self._bg -= 1
+            self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
 
     def think_answer(self, question: str, context: str = "") -> str:
         """Beyin modeline sor: sadece okuyan araçlar (web, dosya okuma, hafıza, projeler), az adım."""

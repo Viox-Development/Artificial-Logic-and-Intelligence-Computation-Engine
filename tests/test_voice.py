@@ -1596,3 +1596,14 @@ def test_bare_wake_ack_varies_and_never_repeats_back_to_back():
     said = [pick_ack(recent) for _ in range(40)]
     assert all(a != b for a, b in zip(said, said[1:]))
     assert len(set(said)) >= 4 and "Efendim?" not in said
+
+
+def test_short_prompt_echo_with_caps_alice_is_noise():
+    # 24 Ekim gecesi voice.log: "ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK." Live'ı açıyordu.
+    from alice.voice.stt import PROMPT, is_hallucination
+
+    for t in ("ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK.", "ALICE, D'UNCAN.", "Hey Alice. ALICE, DCS, F-16"):
+        assert is_hallucination(t), t
+    for t in ("Alice, dur.", "Hey Alice.", "Alice, müziği aç", "Hey Alice, saat kaç?"):
+        assert not is_hallucination(t), t
+    assert "alice" not in PROMPT.lower()  # ipucunda ad yok: yankısı uyandıramaz
