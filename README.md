@@ -144,6 +144,10 @@ Eksik bir paket gereken bir komutu çalıştırırsan ALICE traceback yerine han
 
 Hiç anahtar yoksa ALICE sadece yerel Ollama'yı dener ve bunu açılışta söyler.
 
+**Dosyayla uğraşmak istemezsen:** uygulamada **Ayarlar → Anahtarlar**. Her sağlayıcının yanında "anahtarı al" bağlantısı var; anahtarı yapıştırıp Kaydet'e basınca `.env`'e yazılıyor ve hemen kullanılıyor (yeniden başlatmak gerekmiyor, yeni sağlayıcı arka planda ölçülüp model sırasına giriyor). Anahtarın tamamı arayüze hiç geri gelmiyor, sadece son 4 hanesi görünüyor. Arka plan çekirdeği (sesli asistan) yeni anahtarı bir sonraki açılışında görür.
+
+`.env`'in yeri: Windows'ta `C:\Users\<kullanıcı>\.alice\.env`, Linux/macOS'ta `~/.alice/.env`. Güncellemeyle yeni bir sağlayıcı gelince ALICE açılışta onun boş satırını (açıklaması ve bağlantısıyla) bu dosyaya kendisi ekler ve haber verir; dolu anahtarlarına dokunmaz. Dosya `.gitignore`'da, GitHub'a gitmez.
+
 Sonra:
 
 ```powershell

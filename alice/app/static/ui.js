@@ -632,6 +632,56 @@ function assistantPane(pane, data) {
     pane.appendChild(row);
   }
 }
+/* Ayarlar > Anahtarlar: API anahtarlarını uygulamanın içinden gir. Değerin tamamı sunucudan hiç gelmez; sadece son 4 hane. */
+function keysPane(pane, data) {
+  const d = data || {};
+  pane.append(el("h2", "", "Anahtarlar"),
+    el("p", "", "Anahtarı yapıştırıp Kaydet: hemen kullanılır, yeniden başlatmak gerekmez. Hepsi bu bilgisayarda "
+      + (d.path || "~/.alice/.env") + " dosyasında durur, GitHub'a gitmez. En az iki model anahtarı (ör. Gemini + Groq) "
+      + "doldurmak, biri kotaya takılınca ALICE'in durmamasını sağlar."));
+  const groups = [["model", "Modeller"], ["connect", "Bağlantılar"]];
+  for (const [g, title] of groups) {
+    pane.appendChild(el("div", "sec", title));
+    for (const k of (d.keys || []).filter((x) => x.group === g)) pane.appendChild(keyRow(k));
+  }
+}
+function keyRow(k) {
+  const row = el("div", "list-row key-row");
+  const mark = el("span", "chk " + (k.set ? "ok" : "off"), k.set ? "✓" : "–");
+  const l = el("span", "l");
+  const sub = el("small", "");
+  sub.append(document.createTextNode(k.key + (k.preview ? " · " + k.preview : "")
+    + (k.source === "env" ? " · Windows ortam değişkeninden" : "") + (k.help ? " · " + k.help : "")));
+  if (k.url) {
+    const a = el("a", "", " anahtarı al ↗");
+    a.title = k.url;
+    a.addEventListener("click", (e) => { e.preventDefault(); api("/api/open", { url: k.url }); });
+    sub.appendChild(a);
+  }
+  l.append(el("b", "", k.label), sub);
+  const edit = el("div", "key-edit");
+  const inp = el("input");
+  inp.type = "password";
+  inp.autocomplete = "off";
+  inp.spellcheck = false;
+  inp.placeholder = k.set ? "değiştirmek için yeni anahtarı yapıştır" : "anahtarı yapıştır";
+  const save = el("button", "btn primary", "Kaydet");
+  const send = (value, msg) => api("/api/keys/set", { key: k.key, value }).then((r) => {
+    if (!r || !r.ok) return toast((r && r.error) || "kaydedilemedi");
+    toast(msg);
+    showSettings("apikeys");
+  });
+  save.addEventListener("click", () => { if (inp.value.trim()) send(inp.value.trim(), k.label + " kaydedildi"); });
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.value.trim()) send(inp.value.trim(), k.label + " kaydedildi"); });
+  edit.append(inp, save);
+  if (k.source === "file") {
+    const del = el("button", "btn", "Sil");
+    del.addEventListener("click", () => send("", k.label + " silindi"));
+    edit.appendChild(del);
+  }
+  row.append(mark, l, edit);
+  return row;
+}
 /* Ayarlar > Bağlantılar: servislerin durumu, OAuth bağlanma/çıkış ve izleyen akışlar. */
 function connectPane(pane, data) {
   const d = data || {};
@@ -681,7 +731,7 @@ function connectPane(pane, data) {
 }
 
 const SETTINGS_TABS = [
-  ["general", "Genel", IC.gear], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
+  ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
   ["assistant", "Asistan", IC.shield],
   ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
@@ -696,6 +746,7 @@ async function showSettings(tab) {
     usage: tab === "usage" ? await api("/api/usage") : null,
     connect: tab === "connect" ? await api("/api/connect") : null,
     assistant: tab === "assistant" ? await api("/api/assistant") : null,
+    apikeys: tab === "apikeys" ? await api("/api/keys") : null,
   };
   showDialog((d) => {
     d.classList.add("settings");
@@ -770,6 +821,8 @@ async function showSettings(tab) {
       setTimeout(() => f.focus(), 0);
     } else if (tab === "assistant") {
       assistantPane(pane, data.assistant);
+    } else if (tab === "apikeys") {
+      keysPane(pane, data.apikeys);
     } else if (tab === "connect") {
       connectPane(pane, data.connect);
     } else if (tab === "memory") {

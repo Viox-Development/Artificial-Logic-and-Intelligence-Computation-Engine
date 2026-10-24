@@ -439,10 +439,10 @@ class AppState:
         if m is None:
             return {"ok": False, "error": f"bağlantı yok: {name}"}
         if m.auth.kind != "oauth2":
-            return {"ok": False, "error": f"{m.label} anahtarla çalışıyor: ~/.alice/.env içine {m.auth.env} yaz"}
+            return {"ok": False, "error": f"{m.label} anahtarla çalışıyor: Ayarlar → Anahtarlar'dan {m.auth.env} gir"}
         cid = os.environ.get(m.auth.client_id_env, "").strip()
         if not cid:
-            return {"ok": False, "error": f"{m.auth.client_id_env} yok; ~/.alice/.env dosyasına ekle"}
+            return {"ok": False, "error": f"{m.auth.client_id_env} yok; Ayarlar → Anahtarlar'dan gir"}
         secret = os.environ.get(m.auth.client_secret_env, "").strip() if m.auth.client_secret_env else ""
 
         def run() -> None:
@@ -543,6 +543,44 @@ class AppState:
             threading.Thread(target=run, daemon=True, name="alice-gmail-connect").start()
             return {"ok": True, "started": True}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+
+    # ------------------------------------------------------------------ Anahtarlar sekmesi
+    def keys(self) -> dict[str, Any]:
+        """API anahtarları: hangisi dolu, nereden alınır. Değerlerin tamamı tarayıcıya hiç gönderilmez."""
+        from alice.config import env_catalog, env_path, mask_secret, read_env
+
+        in_file = read_env()
+        providers = {pc.api_key_env: name for name, pc in self.router.providers_cfg.items() if pc.api_key_env}
+        rows = []
+        for e in env_catalog():
+            key = e["key"]
+            val = in_file.get(key) or ""
+            env_val = os.environ.get(key, "").strip()
+            source = "file" if val else ("env" if env_val else "")
+            rows.append({**e, "set": bool(source), "source": source, "preview": mask_secret(val or env_val),
+                         "provider": providers.get(key, "")})
+        return {"path": str(env_path()), "keys": rows}
+
+    def set_key(self, key: str, value: str) -> dict[str, Any]:
+        """.env'e yaz ve hemen kullan: yeni anahtarla sağlayıcı bu oturumda açılır, model sırası yeniden ölçülür."""
+        from alice.config import env_catalog, set_env_value
+
+        if key not in {e["key"] for e in env_catalog()}:
+            return {"ok": False, "error": f"bilinmeyen anahtar: {key}"}
+        try:
+            set_env_value(key, value)
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+        for name, pc in self.router.providers_cfg.items():
+            if pc.api_key_env == key or (key in pc.base_url):
+                # Önceki yanlış anahtar sağlayıcıyı "auth" ile kapatmış olabilir: yeni anahtarla tekrar denensin.
+                self.router.dead_providers.discard(name)
+        if value.strip():
+            from alice.providers import ranking
+
+            # Yeni sağlayıcı "auto" zincirine girsin: ölçüm arka planda, bitince sıra güncellenir.
+            ranking.refresh_in_background(self.router, emit=self.router.on_event, max_age=0)
+        return {"ok": True}
 
     def set_update_mode(self, mode: str) -> bool:
         """Güncelleme davranışını kalıcı yaz (config.toml [update] mode)."""
@@ -1106,6 +1144,8 @@ def make_handler(state: AppState):
                 return self._json(state.connections())
             if u.path == "/api/assistant":
                 return self._json(state.assistant())
+            if u.path == "/api/keys":
+                return self._json(state.keys())
             if u.path == "/api/update":
                 return self._json(state.check_update() if (q.get("refresh") or [""])[0] == "1"
                                   else (state.update.as_dict() if state.update is not None else {"available": False}))
@@ -1191,6 +1231,9 @@ def make_handler(state: AppState):
                 if p == "/api/assistant/set":
                     ok = state.assistant_set(str(d.get("section", "")), str(d.get("key", "")), d.get("value"))
                     return self._json({"ok": ok}, 200 if ok else 400)
+                if p == "/api/keys/set":
+                    r = state.set_key(str(d.get("key", "")), str(d.get("value", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/assistant/action":
                     return self._json(state.assistant_action(str(d.get("action", "")), d))
                 if p == "/api/update/mode":

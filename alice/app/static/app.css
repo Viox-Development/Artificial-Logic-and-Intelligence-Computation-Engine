@@ -563,6 +563,14 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
   font: 13.5px var(--mono); outline: none;
 }
 .dialog input[type=text]:focus { border-color: var(--faint); }
+.dialog input[type=password] {
+  flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel);
+  color: var(--text); font: 13px var(--mono); outline: none;
+}
+.dialog input[type=password]:focus { border-color: var(--faint); }
+.key-row { flex-wrap: wrap; }
+.key-row .key-edit { display: flex; gap: 6px; flex-basis: 100%; }
+.key-row a { color: var(--accent); cursor: pointer; }
 .gh-pick { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
 .gh-pick h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
 .gh-list { max-height: 260px; overflow-y: auto; margin-top: 8px; }

@@ -46,6 +46,9 @@ def core_cmd(argv: list[str]) -> int:
             updater.restart(env={"ALICE_RESTARTED": "1"})
         updater.mark_running()  # diskteki kod bundan yenileşirse boşta kalınca yeniden başlarız
         updater.watch_health()
+        from alice.config import refresh_home
+
+        refresh_home()  # güncellemeyle gelen yeni anahtar satırları .env'e
         core = service.Core(cfg, decider=Decider.from_config(cfg, router), run_agent=service.make_agent_runner(cfg))
         core.prime()  # DCS açık mı: ses modülü ekran kartını kullanıp kullanmayacağını buna göre seçer
         announce_update(core, updater)

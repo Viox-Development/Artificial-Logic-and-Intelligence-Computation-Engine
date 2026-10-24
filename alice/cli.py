@@ -45,7 +45,7 @@ from rich.table import Table
 
 from alice import __version__
 from alice.agent import Agent
-from alice.config import Config, alice_home, init_home, load_config
+from alice.config import Config, alice_home, init_home, load_config, refresh_home
 from alice.decider import Decider
 from alice.memory import attach_memory, shared_memory
 from alice.permissions import MODES, Permissions
@@ -859,6 +859,9 @@ def app_cmd(argv: list[str]) -> int:
     updater.mark_app()      # çekirdek, uygulama açıkken kendi başına çekmesin
     state = AppState(cfg, cwd, a.mode or cfg.agent.get("permission_mode", "auto"))
     state.watch_updates(pending)
+    added = refresh_home()  # güncellemeyle gelen yeni sağlayıcıların anahtar satırları .env'e eklenir
+    if added:
+        state.ui.info(f"Yeni anahtar alanları geldi: {', '.join(added)}. Ayarlar → Anahtarlar'dan girebilirsin.")
     rb = updater.consume_rollback("app")
     if rb:
         state.ui.info(f"Son güncelleme ({str(rb.get('from'))[:7]}) açılamadığı için önceki sürüme "
@@ -882,7 +885,8 @@ def app_cmd(argv: list[str]) -> int:
             pass
     console.print(f"[bold magenta]ALICE[/] uygulaması: {server.url}")
     if not state.router.first_available("brain"):
-        state.ui.info(f"Kullanılabilir model yok. {alice_home() / '.env'} dosyasına bir API anahtarı ekleyip uygulamayı yeniden aç.")
+        state.ui.info("Kullanılabilir model yok. Ayarlar → Anahtarlar'dan bir API anahtarı gir (ör. Gemini, ücretsiz); "
+                      "yeniden başlatmak gerekmez.")
     try:
         if a.window == "none":
             console.print("[dim]Durdurmak için Ctrl+C[/]")
@@ -1211,6 +1215,7 @@ def _dispatch(argv: list[str]) -> int:
     if not cwd.is_dir():
         console.print(f"[red]klasör yok:[/] {escape(str(cwd))}")
         return 2
+    refresh_home()  # yeni sağlayıcıların anahtar satırları .env'e (var olanlara dokunmaz)
     cfg = load_config(cwd=cwd)
     mode = "yolo" if a.yolo else (a.mode or cfg.agent.get("permission_mode", "auto"))
     prompt = " ".join(a.prompt).strip()
