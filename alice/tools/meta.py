@@ -279,4 +279,24 @@ class Projects(Tool):
         return ToolResult("\n".join(f"- {p.line()}" for p in hits[:10]))
 
 
-TOOLS = [TodoWrite(), Memory(), Task(), Reflex(), Projects(), SkillTool(), AskUser()]
+class Feedback(Tool):
+    name = "feedback"
+    description = ("Kullanıcı az önceki bir cevabını beğenmediğini söylerse ('bu cevap kötüydü', 'saçmaladın', 'öyle deme', "
+                   "'yanlış anladın') çağır: istek ve cevap test setine kaydedilir, sonraki güncellemelerde denenir. "
+                   "Kullanıcıya kısaca kabul ettiğini söyle (özür kalıbı yok); ne yapmamanı istiyorsa memory'ye de "
+                   "tercih olarak ekle.")
+    parameters = obj({
+        "say": {"type": "string", "description": "Beğenilmeyen cevaptan önce kullanıcının söylediği istek, kendi sözleriyle."},
+        "reply": {"type": "string", "description": "Senin verdiğin, beğenilmeyen cevap."},
+        "note": {"type": "string", "description": "Kullanıcının ne dediği / neyin yanlış olduğu."},
+    }, ["note"])
+    risk = READ
+
+    def run(self, ctx: ToolContext, note: str, say: str = "", reply: str = "") -> ToolResult:
+        from alice.evals import record_feedback
+
+        new = record_feedback(say, reply, note, source="sohbet")
+        return ToolResult("kaydedildi" + (", test setine eklendi" if new else ""))
+
+
+TOOLS = [TodoWrite(), Memory(), Task(), Reflex(), Projects(), SkillTool(), AskUser(), Feedback()]

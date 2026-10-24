@@ -20,6 +20,10 @@ ama değişiklik yapan, ekrana dokunan ya da mesaj gönderen araçlar ÇALIŞMAZ
   alice eval --only f16            adında/cümlesinde "f16" geçenler
   alice eval --add "cümle"         yeni vaka (beklentileri dosyada doldur)
   alice eval --from-log 20         voice.log'daki son 20 cümleyi vaka taslağı olarak ekle
+  alice eval --feedback            beğenmediğin cevaplar (sesle "bu cevap kötüydü" ya da uygulamada 👎)
+
+Beğenmediğin her cevap (feedback aracı ya da uygulamadaki 👎) ~/.alice/feedback.jsonl'a yazılır ve isteğin, kötü
+cevap ve notunla birlikte buraya vaka olarak eklenir; expect/forbid'i doldurunca her çalıştırmada denenir.
 """
 
 from __future__ import annotations
@@ -112,6 +116,41 @@ def add_cases(sayings: list[str], note: str = "", path: Path | None = None) -> i
             f.write("# ALICE test seti (alice eval). Ayrıntı: alice/evals.py\n")
         f.write("".join(chunks))
     return len(new)
+
+
+def feedback_path() -> Path:
+    return alice_home() / "feedback.jsonl"
+
+
+def record_feedback(say: str, reply: str, note: str = "", source: str = "", path: Path | None = None) -> bool:
+    """Beğenilmeyen cevabı kaydet: feedback.jsonl'a satır, evals.toml'a vaka (aynı istek zaten varsa eklenmez).
+    Döner: yeni vaka eklendi mi."""
+    say, reply, note = (say or "").strip(), (reply or "").strip(), (note or "").strip()
+    try:
+        with feedback_path().open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.time(), "say": say, "reply": reply, "note": note, "source": source},
+                               ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    if not say:
+        return False
+    one_line = lambda s: " ".join(s.split())[:300]  # noqa: E731
+    comment = f"beğenilmedi ({source or '?'}): {one_line(reply)}" + (f" | not: {one_line(note)}" if note else "")
+    return add_cases([say], note=comment, path=path) > 0
+
+
+def recent_feedback(n: int = 20) -> list[dict[str, Any]]:
+    try:
+        lines = feedback_path().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines[-n:]:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
 
 
 _LOG_RX = [re.compile(r"live \[[^\]]*\] duyulan: (.*?) \| cevap:"), re.compile(r"duyulan \[[^\]]*\](?: \(doğrudan\))?: (.*)$")]
@@ -218,7 +257,21 @@ def eval_cmd(argv: list[str]) -> int:
     ap.add_argument("--only", help="adında ya da cümlesinde bu geçen vakalar")
     ap.add_argument("--add", action="append", help="yeni vaka cümlesi (tekrarlanabilir)")
     ap.add_argument("--from-log", type=int, metavar="N", help="voice.log'daki son N cümleyi vaka taslağı yap")
+    ap.add_argument("--feedback", action="store_true", help="beğenmediğin son cevapları göster")
     a = ap.parse_args(argv)
+    if a.feedback:
+        rows = recent_feedback(30)
+        if not rows:
+            console.print("geri bildirim yok. Sesle 'bu cevap kötüydü' de ya da uygulamada cevabın altındaki 👎.")
+            return 0
+        for r in rows:
+            when = time.strftime("%d.%m %H:%M", time.localtime(r.get("ts", 0)))
+            console.print(f"[dim]{when} {escape(r.get('source', ''))}[/]  [bold]{escape(r.get('say', '') or '?')}[/]")
+            console.print(f"   cevap: {escape(r.get('reply', '')[:200])}")
+            if r.get("note"):
+                console.print(f"   not: {escape(r['note'])}")
+        console.print(f"\nvakalar: {evals_path()} (expect/forbid'i doldur, sonra: alice eval)")
+        return 0
     if a.add or a.from_log:
         sayings = list(a.add or []) + (sayings_from_log(a.from_log) if a.from_log else [])
         n = add_cases(sayings, "voice.log'dan" if a.from_log else "")

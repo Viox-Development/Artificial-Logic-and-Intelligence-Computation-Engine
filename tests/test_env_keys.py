@@ -98,3 +98,27 @@ def test_app_keys_rejects_unknown_key_and_needs_token(app):
     anon = httpx.post(str(client.base_url) + "/api/keys/set", json={"key": "GROQ_API_KEY", "value": "x"}, timeout=5)
     assert anon.status_code in (401, 403)
     assert os.environ.get("GROQ_API_KEY") != "x"
+
+
+def test_feedback_from_app_lands_in_eval_set(app):
+    from alice import evals
+
+    state, client, _ = app
+    r = client.post("/api/feedback", json={"say": "hava nasıl", "reply": "Buradayım efendim, nasıl yardımcı olabilirim?",
+                                           "note": "soruma cevap vermedi"})
+    assert r.json() == {"ok": True, "added": True}
+    case = next(c for c in evals.load_cases() if c.say == "hava nasıl")
+    text = evals.evals_path().read_text(encoding="utf-8")
+    assert case and "beğenilmedi (uygulama)" in text and "soruma cevap vermedi" in text
+    assert evals.recent_feedback()[-1]["reply"].startswith("Buradayım")
+    assert client.post("/api/feedback", json={"say": "hava nasıl", "reply": "x"}).json()["added"] is False  # tekrar yok
+
+
+def test_feedback_tool_records(workdir):
+    from alice import evals
+    from alice.tools.base import ToolContext
+    from alice.tools.meta import Feedback
+
+    ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
+    out = Feedback().run(ctx, note="çok uzun konuştu", say="saat kaç", reply="Saat beş, ve bu arada...")
+    assert "test setine eklendi" in out.text and any(c.say == "saat kaç" for c in evals.load_cases())

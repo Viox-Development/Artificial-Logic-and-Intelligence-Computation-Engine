@@ -1231,6 +1231,12 @@ def make_handler(state: AppState):
                 if p == "/api/assistant/set":
                     ok = state.assistant_set(str(d.get("section", "")), str(d.get("key", "")), d.get("value"))
                     return self._json({"ok": ok}, 200 if ok else 400)
+                if p == "/api/feedback":
+                    from alice.evals import record_feedback
+
+                    new = record_feedback(str(d.get("say", ""))[:4000], str(d.get("reply", ""))[:4000],
+                                          str(d.get("note", ""))[:1000], source="uygulama")
+                    return self._json({"ok": True, "added": new})
                 if p == "/api/keys/set":
                     r = state.set_key(str(d.get("key", "")), str(d.get("value", "")))
                     return self._json(r, 200 if r.get("ok") else 400)
