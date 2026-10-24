@@ -236,10 +236,13 @@ class VoiceAssistant:
                  follow_up: float = FOLLOW_MAX, emit: Callable[[str], None] = lambda s: None,
                  keep_turns: int = 4, idle_reset: float = 300.0, live=None, end_silence: float = 0.5,
                  live_text_min: float | None = -0.7, live_text_wait: float = 1.5, live_follow: float = FOLLOW_MAX,
-                 full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True, speaker_gate=None):
+                 full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True, speaker_gate=None,
+                 social: Callable[[], str] | None = None):
         self.agent = agent
         # Kullanıcının ses izi (alice voice enroll): varsa sadece onun sesi uyandırır (bkz. speaker_id.py).
         self.speaker_gate = speaker_gate
+        # Seçici uyanma (Discord'da konuşuyor, oyun açık): nedeni döner, boşsa normal mod (bkz. social.py).
+        self.social = social or (lambda: "")
         self._acks: list[str] = []  # son kısa tepkiler ("Evet?", "Söyle."): art arda aynısı söylenmesin
         self.smart_route = smart_route  # düşünmesi gereken soruyu hızlı ses modeli yerine beyin modeline ver
         # İlk cümlenin yerel dökümü bu güvenin (ortalama log olasılık) üstündeyse Live'a ses yerine yazı gider.
@@ -303,7 +306,13 @@ class VoiceAssistant:
     def _armed(self, at: float | None = None) -> bool:
         """'Alice' demeden konuşulabilir mi? Konuşmanın başladığı ana bakılır: pencere içinde başlayıp dışında biten
         cümle sayılır, pencere kapandıktan sonra başlayan sayılmaz."""
-        return not self.muted and (at or time.monotonic()) <= self.armed_until
+        if self.muted or self.social():
+            return False  # Discord'da/oyunda arkadaşına söylenen cümle ALICE'e gitmesin: hep "Alice" denmeli
+        return (at or time.monotonic()) <= self.armed_until
+
+    def _strict(self) -> bool:
+        """'Alice' cümlenin başında mı olmalı? Susturulmuşken ve seçici modda evet."""
+        return self.muted or bool(self.social())
 
     def _hush(self, why: str = "") -> None:
         """'Alice sus': konuşmayı kes, takip penceresini kapat, yeniden 'Alice' denene kadar dinleme."""
@@ -340,7 +349,7 @@ class VoiceAssistant:
         text = text.strip()
         if not text:
             return
-        rest = strip_wake(text, strict=self.muted)
+        rest = strip_wake(text, strict=self._strict())
         armed = direct or self._armed()
         if is_hush(text) and (armed or rest is not None or self._awaiting_answer or self.speaker.speaking
                               or self._busy.is_set()):
@@ -391,7 +400,7 @@ class VoiceAssistant:
             # "Alice" demeden devam: gürültüden uydurulmuş ya da çok güvensiz döküm canlı konuşmayı yeniden açmasın.
             follow = (armed and len(head.strip()) > 1 and not is_hallucination(head) and conf > -1.2
                       if head is not None else False)
-            woke = head is not None and (strip_wake(head, strict=self.muted) is not None or follow)
+            woke = head is not None and (strip_wake(head, strict=self._strict()) is not None or follow)
             if pre and not woke:
                 self.live.discard()
             if head is not None and woke and is_hush(head):
@@ -430,7 +439,7 @@ class VoiceAssistant:
             return
         voice_log(f"duyulan [{getattr(self.stt, 'last', '')}]{' (doğrudan)' if direct else ''}: {text}")
         if (not direct and not self._awaiting_answer and not is_hush(text)
-                and (strip_wake(text, strict=self.muted) is not None or self._armed()) and not self._is_user(audio)):
+                and (strip_wake(text, strict=self._strict()) is not None or self._armed()) and not self._is_user(audio)):
             return
         self.handle_text(text, direct)
 

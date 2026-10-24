@@ -175,6 +175,7 @@ def _start_voice(cfg, core):
     import time
 
     from alice.voice.assistant import VoiceAssistant, build_voice_agent, live_text_options, make_live, voice_log
+    from alice.voice.social import SocialWatch
     from alice.voice.speaker_id import SpeakerGate
     from alice.voice.audio import mic_available
     from alice.voice.stt import make_stt
@@ -212,7 +213,7 @@ def _start_voice(cfg, core):
                         barge_in=v.get("barge_in", True), follow_up=float(v.get("follow_up", 5)),
                         live=make_live(cfg, agent),
                         end_silence=float(v.get("end_silence", 0.5)), **live_text_options(v),
-                        speaker_gate=SpeakerGate.load(cfg, log=voice_log))
+                        speaker_gate=SpeakerGate.load(cfg, log=voice_log), social=SocialWatch(cfg, log=voice_log).reason)
     threading.Thread(target=va.run, daemon=True, name="alice-voice").start()
     voice_log(f"ses modülü başladı: {time.monotonic() - t0:.1f} sn")
     return va

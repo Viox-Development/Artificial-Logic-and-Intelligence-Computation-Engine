@@ -107,3 +107,36 @@ def test_enroll_command_records_saves_and_verifies(tmp_path, monkeypatch, capsys
     assert "tekrar oku" in out and "sesin kaydedildi" in out and "seni tanıdı" in out
     assert sid.load_profile()["samples"] == len(sid.ENROLL_SENTENCES)
     assert vcli._enroll(None, ["--off"]) == 0 and sid.load_profile() is None
+
+
+# ---- seçici uyanma (Discord'da konuşurken / oyunda)
+def test_social_watch_reads_mic_users_and_games():
+    from alice.voice.social import SocialWatch
+
+    logs = []
+    mics = [r"C:#Users#kresu#AppData#Local#Discord#app-1.0.9#Discord.exe", r"C:#Python311#python.exe"]
+    w = SocialWatch(None, mics=lambda: mics, procs=lambda: set(), every=0, log=logs.append)
+    assert w.reason() == "Discord sesli konuşmada" and "seçici uyanma" in logs[-1]
+    mics = []
+    assert w.reason() == "" and logs[-1] == "seçici uyanma kapandı"
+    w.procs = lambda: {"dcs.exe", "explorer.exe"}
+    assert w.reason() == "DCS açık"
+    off = SocialWatch(type("C", (), {"data": {"voice": {"social_mode": False}}})(), mics=lambda: mics, every=0)
+    mics = [r"C:#x#Discord.exe"]
+    assert off.reason() == ""
+
+
+def test_social_mode_needs_name_first_and_closes_follow_up():
+    agent = FakeAgent()
+    social = {"on": "Discord sesli konuşmada"}
+    va = VoiceAssistant(agent, FakeSpeaker(), stt=None, social=lambda: social["on"])
+    va.handle_text("Bak şimdi Alice müziği aç", direct=False)  # arkadaşına anlatıyor
+    va.armed_until = time.monotonic() + 5
+    va.handle_text("peki ya dün?", direct=False)  # takip penceresi kapalı
+    time.sleep(0.3)
+    assert agent.turns == []
+    va.handle_text("Alice, müziği aç", direct=False)
+    assert wait_for(lambda: agent.turns == ["müziği aç"])
+    social["on"] = ""
+    va.handle_text("Bak şimdi Alice sesi kıs lütfen", direct=False)
+    assert wait_for(lambda: agent.turns[-1] == "sesi kıs lütfen")

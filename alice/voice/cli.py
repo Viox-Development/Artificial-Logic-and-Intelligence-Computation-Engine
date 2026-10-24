@@ -441,6 +441,7 @@ def _enroll(cfg, argv) -> int:
 
 def _run(cfg, argv) -> int:
     from alice.voice.assistant import VoiceAssistant, build_voice_agent, live_text_options, make_live, voice_log
+    from alice.voice.social import SocialWatch
     from alice.voice.speaker_id import SpeakerGate
     from alice.voice.audio import mic_available
     from alice.voice.stt import make_stt
@@ -461,7 +462,7 @@ def _run(cfg, argv) -> int:
                         barge_in=v.get("barge_in", True), follow_up=float(v.get("follow_up", 5)),
                         emit=lambda s: console.print(f"[dim]  {escape(s)}[/]"), live=make_live(cfg, agent),
                         end_silence=float(v.get("end_silence", 0.5)), **live_text_options(v),
-                        speaker_gate=SpeakerGate.load(cfg, log=voice_log))
+                        speaker_gate=SpeakerGate.load(cfg, log=voice_log), social=SocialWatch(cfg, log=voice_log).reason)
     keys = f"bas-konuş: {va.ptt_key}" if va.ptt_key else ""
     wake = "'Hey Alice'" if va.wake_phrase or va.wake_model else ""
     console.print(f"[bold magenta]ALICE[/] dinliyor ({', '.join(filter(None, [keys, wake]))}). [dim]Ctrl+C çık[/]")
