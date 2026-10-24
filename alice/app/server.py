@@ -740,11 +740,20 @@ class AppState:
                 time.sleep(2.0)  # arayüz bağlanana kadar bekle
                 self.bus.publish({"type": "update", **first.as_dict()})
             wait = 10.0  # ilk bakış açılıştan hemen sonra, sonrası dakikalık tur
+            first_round = first is None  # açılışta bakılmadıysa (notify modu, kapalı açılış kontrolü) hemen bak
+            last = 0.0
             while True:
                 time.sleep(wait)
                 wait = 60.0
                 try:
-                    if updater.due(self.cfg) and not (self.agent.busy or self._queued):
+                    u = self.update
+                    # Yeni sürüm CI'ın bitmesini bekliyorsa saatte bir değil birkaç dakikada bir bak: merge'den
+                    # sonra açılan ALICE "CI sürüyor" deyip bir saat yeni sürümü göstermiyordu.
+                    waiting_ci = u is not None and getattr(u, "ci", "") == "pending" and \
+                        time.monotonic() - last >= updater.CI_RECHECK
+                    if (first_round or waiting_ci or updater.due(self.cfg)) and not (self.agent.busy or self._queued):
+                        first_round = False
+                        last = time.monotonic()
                         self.check_update()
                 except Exception:  # noqa: BLE001 - güncelleme kontrolü uygulamayı düşürmesin
                     pass

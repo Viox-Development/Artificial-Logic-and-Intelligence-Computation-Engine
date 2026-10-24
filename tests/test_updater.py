@@ -233,20 +233,20 @@ def test_ci_surerken_beklenir(repos, monkeypatch):
     assert ok and git(clone, "rev-parse", "HEAD") == sha
 
 
-def test_acilista_arka_arkaya_ag_turu_harcanmaz(repos, monkeypatch, offline):
-    """Az önce 'güncelsin' dendiyse ikinci açılış ls-remote bile yapmaz (hızlı açılış)."""
-    clone, _origin = repos
+def test_merge_sonrasi_hemen_acilista_yeni_surum_gorulur(repos, monkeypatch, offline):
+    """Kullanıcı: 'güncelleme yok diyor, açtım ama'. Eskiden son 10 dakikada 'güncel' dendiyse açılışta hiç
+    bakılmıyordu; merge'den hemen sonra açılan ALICE yeni sürümü görmüyordu."""
+    clone, origin = repos
     point_at(monkeypatch, clone)
+    monkeypatch.delenv("ALICE_RESTARTED", raising=False)
+    restarts = []
+    monkeypatch.setattr(updater, "restart", lambda argv=None, delay=0, env=None: restarts.append(argv))
     cfg = make_config({"brain": ["a:m"]})
     cfg.data["update"] = {"mode": "auto"}
-    real_check = updater.check
-    assert updater.startup_update(cfg) is not None  # ilk açılış: baktı, güncel
-    monkeypatch.setattr(updater, "check", lambda *a, **k: pytest.fail("yakın zamanda bakılmıştı"))
-    assert updater.startup_update(cfg) is None
-    # Süre dolunca yine bakar.
-    updater.write_state(last_check=0)
-    monkeypatch.setattr(updater, "check", real_check)
-    assert updater.startup_update(cfg) is not None
+    assert not updater.startup_update(cfg).available  # açıldı: güncel
+    sha = push(origin, "az önce merge edildi")
+    updater.startup_update(cfg)  # bir dakika sonra yeniden açıldı
+    assert git(clone, "rev-parse", "HEAD") == sha and restarts
 
 
 # ------------------------------------------------------------------------------------------- geri alma

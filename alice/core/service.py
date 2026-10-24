@@ -345,6 +345,11 @@ class Core:
                 return  # uygulama açık: arayüzü olan o, güncellemeyi o yapsın
             updater.prepare(info, self.cfg)
             if not info.can_auto:
+                if info.ci == "pending":
+                    # CI birkaç dakikada biter: bir saat değil, birkaç dakika sonra tekrar bak.
+                    every = max(5.0, float(updater.settings(self.cfg).get("check_every_minutes") or 60)) * 60
+                    self._last_update_check = time.time() - every + updater.CI_RECHECK
+                    return
                 self.store.add_event("core", "Yeni sürüm var ama otomatik çekilmedi", info.blocked, topic="core")
                 return
             ok, msg = updater.apply_update(info, self.cfg)

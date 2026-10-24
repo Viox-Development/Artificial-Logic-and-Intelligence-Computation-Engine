@@ -270,3 +270,17 @@ def test_duyuru_uygulama_aciksa_cekirdekte_susar(core, monkeypatch):
     assert sent[0].title == "ALICE güncellendi" and "1 değişiklik daha" in sent[0].body
     announce_update(core, updater)
     assert len(sent) == 1
+
+
+def test_cekirdek_ci_surerken_birkac_dakika_sonra_tekrar_bakar(core, at_clone, offline, monkeypatch):
+    import time as _t
+
+    clone, origin = at_clone
+    sha = push(origin, "yeni")
+    monkeypatch.setattr(updater, "app_running", lambda: False)
+    monkeypatch.setattr(updater, "ci_state", lambda sha, timeout=5.0: "pending")
+    core.update_job()
+    assert git(clone, "rev-parse", "HEAD") != sha and not core.restart_pending
+    every = 60 * 60
+    wait = core._last_update_check + every - _t.time()  # bir sonraki bakışa kalan süre
+    assert 0 < wait <= updater.CI_RECHECK + 1  # bir saat değil, birkaç dakika

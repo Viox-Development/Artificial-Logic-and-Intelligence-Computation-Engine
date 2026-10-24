@@ -169,3 +169,29 @@ def test_live_picks_up_voice_change_without_restart(monkeypatch):
 
     os.utime(alice_home() / "config.toml", (_t.time() + 5,) * 2)  # dosya sistemi saat çözünürlüğü
     assert s.current_voice() == "Achernar"
+
+
+def test_app_checks_for_update_right_after_opening_and_rechecks_pending_ci(app, monkeypatch):
+    # Kullanıcı: "güncelleme yok diyor, açtım ama". Açılışta bakılmadıysa saat dolmadan hiç bakılmıyordu;
+    # CI sürerken de bir saat bekleniyordu.
+    import threading
+    import time as _t
+
+    from alice import updater
+    from alice.app import server as server_mod
+
+    state, _client, _ = app
+    calls = []
+    infos = iter([updater.UpdateInfo(local="a" * 40, remote="b" * 40, ci="pending")] * 2
+                 + [updater.UpdateInfo(local="a" * 40, remote="b" * 40, ci="green")] * 50)
+    monkeypatch.setattr(updater, "check", lambda cfg=None, **k: calls.append(1) or next(infos))
+    monkeypatch.setattr(updater, "due", lambda cfg=None: False)  # saatlik tur gelmedi
+    monkeypatch.setattr(updater, "CI_RECHECK", 0.0)
+    real_sleep = _t.sleep
+    monkeypatch.setattr(server_mod.time, "sleep", lambda s: real_sleep(0.01) if threading.current_thread().name
+                        == "alice-update" else real_sleep(s))
+    state.watch_updates(None)
+    deadline = _t.monotonic() + 3
+    while _t.monotonic() < deadline and (state.update is None or state.update.ci != "green"):
+        real_sleep(0.02)
+    assert len(calls) >= 3 and state.update.ci == "green" and state.update.can_auto

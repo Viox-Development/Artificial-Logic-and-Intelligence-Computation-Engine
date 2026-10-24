@@ -592,8 +592,8 @@ def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
     if os.environ.get("ALICE_NO_UPDATE") or os.environ.get("ALICE_RESTARTED"):
         return None  # yeniden başlatılan süreç tekrar kontrol edip döngüye girmesin
     say = emit or (lambda _m: None)
-    if _checked_recently():
-        return None  # az önce bakıldı ve yeni bir şey yoktu: arka arkaya açılışlarda ağ turu harcama
+    # Her açılışta bakılır (tek ls-remote, saniyenin altında). Eskiden son 10 dakikada "güncel" denmişse hiç
+    # bakılmıyordu: merge'den hemen sonra açılan ALICE yeni sürümü görmüyordu.
     # Açılışı bekletmemek için burada sadece tek ls-remote turu var; commit listesi gibi ayrıntılar
     # (anahtarsız GitHub API) atlanır, CI'a da yalnız güncelleme varken ve kısa zaman aşımıyla bakılır.
     info = check(cfg, timeout=float(s.get("startup_timeout") or 12), details=False)
@@ -615,13 +615,7 @@ def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
     return None  # pragma: no cover - restart dönmez
 
 
-RECHECK_GRACE = 600.0  # saniye: bu süre içinde "güncelsin" denmişse açılışta tekrar bakma
-
-
-def _checked_recently() -> bool:
-    st = read_state()
-    fresh = time.time() - float(st.get("last_check") or 0) < RECHECK_GRACE
-    return bool(fresh and st.get("local") and st.get("local") == st.get("remote"))
+CI_RECHECK = 180.0  # saniye: yeni sürüm CI'ı bitmeyi bekliyorsa bu aralıkla tekrar bakılır (saatte bir değil)
 
 
 def due(cfg: Any = None) -> bool:
