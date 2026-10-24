@@ -26,6 +26,16 @@ URL = ("wss://generativelanguage.googleapis.com/ws/"
 # Duygulu konuşma (affective dialog) ve "sana söylenmeyene cevap verme" (proactive audio) şimdilik v1alpha'da.
 URL_ALPHA = URL.replace(".v1beta.", ".v1alpha.")
 DEFAULT_MODELS = ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest"]
+# Aynı istekte aynı argümanla ikinci kez çalışması bir şey değiştirmeyen araçlar.
+READ_ONLY_TOOLS = {"list_dir", "glob", "grep", "read_file", "system_info", "web_search", "web_fetch", "weather"}
+_READ_COMMAND = re.compile(r"^\s*(get-\w+|dir|ls|type|cat|where(\.exe)?|test-path|select-string)\b", re.I)
+
+
+def read_only(name: str, args: dict[str, Any]) -> bool:
+    """Aynı istekte tekrar çalıştırmanın anlamı olmayan okuma mı? Komutlarda sadece Get-*/dir/ls gibi okumalar."""
+    if name in READ_ONLY_TOOLS:
+        return True
+    return name == "run_command" and bool(_READ_COMMAND.match(str(args.get("command", ""))))
 LIVE_GROUPS = {"desktop", "browser", "personal", "system", "automation"}
 SCHEMA_KEYS = {"type", "description", "enum", "properties", "required", "items", "nullable", "format"}
 
@@ -69,6 +79,8 @@ ne dediğini tam anlamadıysan önce sor. Bir işi yaptığını ancak araç son
 Monitörler: {monitors}. Her konuşmada sana öndeki pencerenin olduğu monitörün görüntüsü gelir. Başka monitörü ya da
 hepsini görmek için computer action=screenshot monitor=<numara> (0 = hepsi yan yana); computer_task'a da monitor
 verebilirsin.
+Klasör ve dosya soruları için list_dir kullan ("İndirilenler", "Masaüstü" gibi adları doğrudan ver; "son indirdiğim"
+için sort=newest), PowerShell ile klasör arama.
 Bir işe özel araç varsa (ör. 3B/Blender için blender) run_command ya da write_file yerine onu kullan; iş bitince
 sonucu kullanıcının ekranında aç (blender action=open gibi), çünkü kullanıcı ekranda görmek ister.
 Bir araç "onay gerekli" derse kullanıcıya kısaca sor; "evet" derse aynı çağrıyı tekrarla.
@@ -994,7 +1006,7 @@ class LiveSession:
 
     def _new_turn(self) -> None:
         """Kullanıcı yeni bir şey söyledi: araç sayacı, tekrar kontrolü ve dış içerik kirlenmesi sıfırlanır."""
-        self._turn = {"n": 0, "last": None}
+        self._turn = {"n": 0, "last": None, "seen": {}}
         from alice import guard
 
         guard.clear(getattr(self.agent, "ctx", None))
@@ -1014,6 +1026,13 @@ class LiveSession:
             self.log(f"live aynı araç çağrısı tekrarlandı, çalıştırılmadı: {name}")
             return ("Bu çağrıyı az önce aynen yaptın, tekrar çalıştırılmadı. Önceki sonuç: " + last[2][:1500]
                     + "\nAynı aracı tekrar çağırma; bu sonuca göre kullanıcıya cevap ver.")
+        # Arada başka çağrı olsa da aynı okuma aynı istekte ikinci kez çalışmasın (voice.log: Get-Volume,
+        # Downloads listesi bir dakikada 5-6 kez). Değiştiren eylemler (tıkla, yaz) bu kontrole girmez.
+        seen = turn.setdefault("seen", {})
+        if key in seen and not repeatable and read_only(name, args):
+            self.log(f"live aynı okuma bu istekte tekrarlandı, çalıştırılmadı: {name}")
+            return ("Bu okumayı bu istekte zaten yaptın, sonuç değişmedi: " + seen[key][:1500]
+                    + "\nBaşka bir yol dene ya da bulduğunu kullanıcıya söyle.")
         turn["n"] += 1
         budget = int(getattr(self, "tool_budget", 10))
         if turn["n"] > budget:
@@ -1029,6 +1048,8 @@ class LiveSession:
         if turn is not None:
             key = fc.get("name", "") + json.dumps(fc.get("args") or {}, sort_keys=True, ensure_ascii=False)
             turn["last"] = (key, time.monotonic(), text)
+            if read_only(fc.get("name", ""), fc.get("args") or {}):
+                turn.setdefault("seen", {})[key] = text
 
     def _run_call(self, ws, fc: dict[str, Any]) -> None:
         early = self._guard(fc)

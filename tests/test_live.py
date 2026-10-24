@@ -408,3 +408,32 @@ def test_canned_replies_are_kept_out_of_history():
     s._memory = lambda: None
     text = s.history_text()
     assert "Aferin." in text and "Rica ederim" not in text and "367 knot." in text
+
+
+def test_live_same_read_is_not_rerun_even_with_calls_between():
+    # voice.log (10 Ekim): Get-Volume ve İndirilenler listesi aynı istekte arada başka komutlarla 5-6 kez çalıştı.
+    s, ws, results = _guard_session(budget=20)
+    calls = []
+    s.agent._execute_calls = lambda c: calls.append(c) or [ToolResult("C: D:")]
+    vol = {"id": "1", "name": "run_command", "args": {"command": "Get-Volume"}}
+    s._run_call(ws, vol)
+    s._run_call(ws, {"id": "2", "name": "list_dir", "args": {"path": "İndirilenler"}})
+    s._run_call(ws, dict(vol, id="3"))
+    assert len(calls) == 2 and "zaten yaptın" in results()[2] and "C: D:" in results()[2]
+    # komut çalıştırmak tekrar edilebilir (testi düzelttikten sonra yeniden çalıştırmak gibi)
+    build = {"id": "4", "name": "run_command", "args": {"command": "npm test"}}
+    s._run_call(ws, build)
+    s._run_call(ws, {"id": "5", "name": "list_dir", "args": {"path": "."}})
+    s._run_call(ws, dict(build, id="6"))
+    assert len(calls) == 5
+    s._new_turn()
+    s._run_call(ws, dict(vol, id="7"))  # yeni istek: tekrar okunabilir
+    assert len(calls) == 6
+
+
+def test_read_only_detection():
+    from alice.voice.live import read_only
+
+    assert read_only("run_command", {"command": "Get-ChildItem C:\\Users\\x\\Downloads"})
+    assert read_only("run_command", {"command": "dir C:\\"}) and read_only("list_dir", {"path": "."})
+    assert not read_only("run_command", {"command": "Remove-Item x"}) and not read_only("browser", {"action": "click"})

@@ -408,3 +408,29 @@ def test_browser_js_function_wrapping(js, want):
     from alice.tools.browser import js_function
 
     assert js_function(js) == want
+
+
+def test_list_dir_known_folders_and_newest(tmp_path, monkeypatch):
+    import os
+    import time as _t
+    from pathlib import Path
+
+    from alice.tools import files
+    from alice.tools.base import ToolContext
+    from tests.conftest import make_config
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    dl = tmp_path / "Downloads"
+    dl.mkdir()
+    for i, name in enumerate(["eski.zip", "orta.pdf", "yeni.exe"]):
+        f = dl / name
+        f.write_text("x" * (i + 1))
+        os.utime(f, (_t.time() - 1000 + i * 100,) * 2)
+    ctx = ToolContext(cwd=tmp_path, config=make_config({"brain": ["a:m"]}))
+    out = files.ListDir().run(ctx, path="İndirilenler", sort="newest", limit=2).text
+    lines = out.splitlines()
+    assert lines[0] == str(dl) and lines[1].startswith("yeni.exe") and lines[2].startswith("orta.pdf")
+    assert "1 öğe daha" in out and "." in lines[1].split("(")[1]  # tarih var
+    assert files.ListDir().run(ctx, path="downloads").text.splitlines()[1].startswith("eski.zip")  # ada göre
+    (tmp_path / "OneDrive" / "Desktop").mkdir(parents=True)
+    assert files.known_folder("Masaüstü") == tmp_path / "OneDrive" / "Desktop"

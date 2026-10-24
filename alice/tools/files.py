@@ -337,27 +337,78 @@ class MultiEdit(Tool):
                           diff=make_diff(path, before.replace("\r\n", "\n"), text.replace("\r\n", "\n")))
 
 
+# Kullanıcının "İndirilenler", "Masaüstü" dediği klasörler. Model bunları bulmak için onlarca PowerShell komutu
+# deniyordu (voice.log: bir dakikada 40+ run_command); adı doğrudan klasöre çevrilir.
+KNOWN_FOLDERS = {
+    "downloads": ["Downloads"], "indirilenler": ["Downloads"], "i̇ndirilenler": ["Downloads"],
+    "desktop": ["OneDrive/Desktop", "OneDrive/Masaüstü", "Desktop"], "masaüstü": ["OneDrive/Desktop",
+                                                                                "OneDrive/Masaüstü", "Desktop"],
+    "documents": ["OneDrive/Documents", "OneDrive/Belgeler", "Documents"],
+    "belgeler": ["OneDrive/Documents", "OneDrive/Belgeler", "Documents"],
+    "pictures": ["OneDrive/Pictures", "Pictures"], "resimler": ["OneDrive/Pictures", "Pictures"],
+    "videos": ["Videos"], "videolar": ["Videos"], "music": ["Music"], "müzik": ["Music"],
+}
+
+
+def known_folder(path: str) -> Path | None:
+    """'İndirilenler', 'downloads', 'Masaüstü' -> kullanıcının o klasörü (OneDrive'a taşınmışsa orası)."""
+    key = path.strip().strip("/\\").lower()
+    for cand in KNOWN_FOLDERS.get(key, []):
+        p = Path.home() / cand
+        if p.is_dir():
+            return p
+    return None
+
+
+def _when(ts: float) -> str:
+    from datetime import datetime
+
+    return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+
+
 class ListDir(Tool):
     name = "list_dir"
     parallel_safe = True
     description = ("Bir klasördeki dosya ve alt klasörleri boyut ve türleriyle listeler (alt klasörlerin içine inmez). "
+                   "'İndirilenler', 'Masaüstü', 'Belgeler' gibi adları doğrudan path olarak ver. 'Son indirdiğim dosya' "
+                   "gibi sorular için sort=newest (en yeni önce, tarihle). Klasör içeriği için run_command kullanma. "
                    "Desene göre dosya aramak için glob, içerik aramak için grep kullan.")
-    parameters = obj({"path": {"type": "string", "description": "Klasör yolu. Varsayılan: çalışma klasörü."}})
+    parameters = obj({
+        "path": {"type": "string", "description": "Klasör yolu ya da 'İndirilenler', 'Masaüstü', 'Belgeler'. "
+                 "Varsayılan: çalışma klasörü."},
+        "sort": {"type": "string", "enum": ["name", "newest"], "description": "name (varsayılan) ya da newest: "
+                 "en son değişen önce, tarihleriyle."},
+        "limit": {"type": "integer", "description": "En fazla kaç öğe (varsayılan 500; newest için 30)."},
+    })
 
     def summary(self, args: dict[str, Any]) -> str:
         return str(args.get("path") or ".")
 
-    def run(self, ctx: ToolContext, path: str = ".") -> ToolResult:
-        p = ctx.resolve(path)
+    def run(self, ctx: ToolContext, path: str = ".", sort: str = "name", limit: int | None = None) -> ToolResult:
+        p = known_folder(path) or ctx.resolve(path)
         if not p.is_dir():
             raise ToolError(f"klasör yok: {p}")
-        rows = []
-        for e in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))[:500]:
+        newest = sort == "newest"
+        limit = max(1, min(int(limit or (30 if newest else 500)), 500))
+
+        def mtime(x: Path) -> float:
             try:
-                rows.append(f"{e.name}/" if e.is_dir() else f"{e.name}  ({e.stat().st_size} B)")
+                return x.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        entries = list(p.iterdir())
+        entries.sort(key=(lambda x: -mtime(x)) if newest else (lambda x: (not x.is_dir(), x.name.lower())))
+        rows = []
+        for e in entries[:limit]:
+            try:
+                when = f", {_when(e.stat().st_mtime)}" if newest else ""
+                rows.append(f"{e.name}/{'  (' + when[2:] + ')' if when else ''}" if e.is_dir()
+                            else f"{e.name}  ({e.stat().st_size} B{when})")
             except OSError:
                 rows.append(f"{e.name}  (erişilemedi)")
-        return ToolResult(f"{p}\n" + "\n".join(rows) if rows else f"{p} boş")
+        more = f"\n... ve {len(entries) - limit} öğe daha" if len(entries) > limit else ""
+        return ToolResult(f"{p}\n" + "\n".join(rows) + more if rows else f"{p} boş")
 
 
 class Glob(Tool):
