@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS vectors (
     kind TEXT NOT NULL, ref INTEGER NOT NULL, vec BLOB NOT NULL, PRIMARY KEY (kind, ref));
 """
 FOLLOWUP_KINDS = {"ask": "sor", "remind": "hatırlat", "open": "yarım kaldı"}
+# Eski "sevgili/mommy" kişiliğinden kalan izler. Hafızada kaldıkça yeni kişilik "Buradayım bebeğim" diye geri
+# dönüyordu (voice.log); Ayarlar > Hafıza bunları gösterip tek tıkla temizler.
+OLD_ROLE_RX = re.compile(
+    r"\b(bebeğim|bebegim|aşkım|askim|tatlım|tatlim|sevgilin|sevgilim|sevgili(si)?|kız ?arkadaş\w*|mommy|mami|"
+    r"canım benim|iyi çocu\w*|choker|kıskan\w*|cilve\w*|öpücük|sarıl\w*)\b", re.I)
 
 _FOLD = str.maketrans({"ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u", "â": "a", "î": "i", "û": "u"})
 _STOP = set("""
@@ -370,6 +375,35 @@ class LongMemory:
             self.db.commit()
             self._bump()
         return Fact(*row)
+
+    def old_role(self) -> dict[str, list[Any]]:
+        """Eski rolden kalan izler: bilgiler, özetler ve o dönemin cevapları."""
+        with self._lock:
+            facts = [Fact(*r) for r in self.db.execute(
+                "SELECT id, kind, text, created, updated, hits FROM facts").fetchall() if OLD_ROLE_RX.search(r[2])]
+            sums = [Summary(*r) for r in self.db.execute(
+                "SELECT id, start, end, channel, text FROM summaries").fetchall() if OLD_ROLE_RX.search(r[4])]
+            eps = [Episode(*r) for r in self.db.execute(
+                "SELECT id, ts, channel, user, reply FROM episodes").fetchall() if OLD_ROLE_RX.search(r[4])]
+        return {"facts": facts, "summaries": sums, "episodes": eps}
+
+    def purge_old_role(self) -> dict[str, int]:
+        """Eski rol izlerini sil: bilgiler ve özetler gider, konuşmaların sadece eski cevabı silinir (kullanıcının
+        söyledikleri kalır, "geçen hafta ne konuşmuştuk" aramaları bozulmasın)."""
+        found = self.old_role()
+        with self._lock:
+            for f in found["facts"]:
+                self.db.execute("DELETE FROM facts WHERE id = ?", (f.id,))
+                self.db.execute("DELETE FROM vectors WHERE kind = 'fact' AND ref = ?", (f.id,))
+            for s in found["summaries"]:
+                self.db.execute("DELETE FROM summaries WHERE id = ?", (s.id,))
+                self.db.execute("DELETE FROM vectors WHERE kind = 'summary' AND ref = ?", (s.id,))
+            for e in found["episodes"]:
+                self.db.execute("UPDATE episodes SET reply = '' WHERE id = ?", (e.id,))
+                self.db.execute("DELETE FROM vectors WHERE kind = 'episode' AND ref = ?", (e.id,))  # yeniden dizinlensin
+            self.db.commit()
+            self._bump()
+        return {k: len(v) for k, v in found.items()}
 
     def forget_matching(self, query: str) -> tuple[list[Fact], list[Hit]]:
         """Sorguya çok benzeyen bilgileri sil. Emin olunamazsa hiçbirini silmez, adayları döndürür."""

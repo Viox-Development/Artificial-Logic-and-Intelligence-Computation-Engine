@@ -544,6 +544,45 @@ class AppState:
             return {"ok": True, "started": True}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
+    # ------------------------------------------------------------------ Hafıza sekmesi
+    def memory_view(self) -> dict[str, Any]:
+        """Hafızadaki bilgiler (tek tek silinebilir), açık takipler ve eski rolden kalan izler."""
+        from alice.memory import KINDS, OLD_ROLE_RX
+
+        mem = self.agent.memory
+        if mem is None:
+            return {"enabled": False, "facts": [], "followups": [], "old_role": {}, "text": ""}
+        old = mem.old_role()
+        return {
+            "enabled": True,
+            "facts": [{"id": f.id, "kind": KINDS.get(f.kind, f.kind), "text": f.text,
+                       "old": bool(OLD_ROLE_RX.search(f.text))} for f in mem.facts()],
+            "followups": [{"id": f.id, "text": f.line()} for f in mem.followups()],
+            "old_role": {"facts": len(old["facts"]), "summaries": len(old["summaries"]),
+                         "episodes": len(old["episodes"]),
+                         "examples": [e.reply[:140] for e in old["episodes"][-3:]] + [s.text[:140] for s in old["summaries"][-2:]]},
+            "text": mem.export_markdown(),
+        }
+
+    def memory_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
+        mem = self.agent.memory
+        if mem is None:
+            return {"ok": False, "error": "hafıza kapalı"}
+        if action == "forget":
+            try:
+                gone = mem.forget(int(d.get("id", -1)))
+            except (TypeError, ValueError):
+                gone = None
+            return {"ok": gone is not None}
+        if action == "done":
+            try:
+                return {"ok": mem.done_followup(int(d.get("id", -1))) is not None}
+            except (TypeError, ValueError):
+                return {"ok": False}
+        if action == "purge_old_role":
+            return {"ok": True, "removed": mem.purge_old_role()}
+        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+
     # ------------------------------------------------------------------ Anahtarlar sekmesi
     def keys(self) -> dict[str, Any]:
         """API anahtarları: hangisi dolu, nereden alınır. Değerlerin tamamı tarayıcıya hiç gönderilmez."""
@@ -1155,8 +1194,7 @@ def make_handler(state: AppState):
                 return self._json([{"name": t.name, "risk": t.risk, "description": t.description.split("\n")[0][:160]}
                                    for t in state.agent.tools.values()])
             if u.path == "/api/memory":
-                mem = state.agent.memory
-                return self._json({"text": mem.export_markdown() if mem is not None else ""})
+                return self._json(state.memory_view())
             if u.path == "/api/models/all":
                 return self._json({"providers": state.router.catalog_view(),
                                    "brain": state.router.chain("brain"),
@@ -1231,6 +1269,9 @@ def make_handler(state: AppState):
                 if p == "/api/assistant/set":
                     ok = state.assistant_set(str(d.get("section", "")), str(d.get("key", "")), d.get("value"))
                     return self._json({"ok": ok}, 200 if ok else 400)
+                if p == "/api/memory/action":
+                    r = state.memory_action(str(d.get("action", "")), d)
+                    return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/feedback":
                     from alice.evals import record_feedback
 
