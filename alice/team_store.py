@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,19 @@ def projects_dir() -> Path:
     d = alice_home() / "projects"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _read_saved(f: Path, tries: int = 10) -> str:
+    """Kayıt dosyasını oku. Windows'ta başka bir iş parçacığı dosyayı tam o an yenisiyle değiştirirken (replace)
+    açmaya çalışmak PermissionError verir; kısa bekleyip tekrar denenir."""
+    for i in range(tries):
+        try:
+            return f.read_text(encoding="utf-8")
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05)
+    return ""
 
 
 def _slim(messages: list[dict[str, Any]], limit: int = 6000) -> list[dict[str, Any]]:
@@ -35,7 +49,9 @@ def list_projects() -> list[dict[str, Any]]:
     out = []
     for f in projects_dir().glob("*.json"):
         try:
-            data = json.loads(f.read_text(encoding="utf-8"))
+            # Proje o an kaydediliyorsa (Windows'ta replace sırasında) düz okuma PermissionError verip proje
+            # listeden düşüyordu: biten proje "yok" görünüyordu.
+            data = json.loads(_read_saved(f))
         except (OSError, json.JSONDecodeError):
             continue
         members = data.get("members") or []

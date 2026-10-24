@@ -43,6 +43,7 @@ from alice.tools.base import Tool, ToolContext, ToolError, ToolResult, make_diff
 
 # Proje deposu team_store.py'de; buradan da içe aktarılabilsin diye yeniden dışa veriliyor.
 from alice.team_store import (  # noqa: F401
+    _read_saved,
     _slim,
     _tpl_file,
     delete_template,
@@ -264,21 +265,6 @@ def _read_original(p: Path) -> str | None:
 
 def _git(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
-
-
-
-
-def _read_saved(f: Path, tries: int = 10) -> str:
-    """Kayıt dosyasını oku. Windows'ta başka bir iş parçacığı dosyayı tam o an yenisiyle değiştirirken (replace)
-    açmaya çalışmak PermissionError verir; kısa bekleyip tekrar denenir."""
-    for i in range(tries):
-        try:
-            return f.read_text(encoding="utf-8")
-        except PermissionError:
-            if i == tries - 1:
-                raise
-            time.sleep(0.05)
-    return ""
 
 
 log = logging.getLogger(__name__)

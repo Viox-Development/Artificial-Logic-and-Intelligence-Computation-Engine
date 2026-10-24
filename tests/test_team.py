@@ -374,3 +374,26 @@ def test_save_survives_brief_windows_file_lock(tmp_path, monkeypatch):
     src.write_text("{}", encoding="utf-8")
     with pytest.raises(PermissionError):
         team_mod._replace(src, dst, tries=3)
+
+
+def test_list_projects_survives_file_being_replaced(monkeypatch):
+    # Windows: proje tam o an kaydediliyorsa okuma PermissionError veriyordu ve proje listeden düşüyordu
+    # (Windows CI'da test_autonomous_project_... list_projects() boş döndü).
+    import json
+    from pathlib import Path
+
+    from alice import team_store
+
+    (team_store.projects_dir() / "p1.json").write_text(json.dumps({"id": "p1", "status": "done"}), encoding="utf-8")
+    real, calls = Path.read_text, []
+
+    def flaky(self, *a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError(13, "Permission denied")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    monkeypatch.setattr(team_store.time, "sleep", lambda s: None)
+    rows = team_store.list_projects()
+    assert [r["id"] for r in rows] == ["p1"] and rows[0]["status"] == "done"
