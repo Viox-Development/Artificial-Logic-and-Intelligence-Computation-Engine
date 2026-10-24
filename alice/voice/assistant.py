@@ -236,8 +236,10 @@ class VoiceAssistant:
                  follow_up: float = FOLLOW_MAX, emit: Callable[[str], None] = lambda s: None,
                  keep_turns: int = 4, idle_reset: float = 300.0, live=None, end_silence: float = 0.5,
                  live_text_min: float | None = -0.7, live_text_wait: float = 1.5, live_follow: float = FOLLOW_MAX,
-                 full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True):
+                 full_text_max: float = 8.0, live_gate: bool = True, smart_route: bool = True, speaker_gate=None):
         self.agent = agent
+        # Kullanıcının ses izi (alice voice enroll): varsa sadece onun sesi uyandırır (bkz. speaker_id.py).
+        self.speaker_gate = speaker_gate
         self._acks: list[str] = []  # son kısa tepkiler ("Evet?", "Söyle."): art arda aynısı söylenmesin
         self.smart_route = smart_route  # düşünmesi gereken soruyu hızlı ses modeli yerine beyin modeline ver
         # İlk cümlenin yerel dökümü bu güvenin (ortalama log olasılık) üstündeyse Live'a ses yerine yazı gider.
@@ -397,6 +399,10 @@ class VoiceAssistant:
                     self.live.discard()
                 self._hush(head)  # "Alice sus" canlı konuşma açmasın
                 return
+            if head is not None and woke and not self._is_user(audio):
+                if pre:
+                    self.live.discard()
+                return
             if head is not None and woke and self.muted:
                 self.muted = False
                 voice_log("susturma kalktı")
@@ -423,7 +429,22 @@ class VoiceAssistant:
             voice_log(f"duyulan (gürültü sayıldı) [{getattr(self.stt, 'last', '')}]: {text}")
             return
         voice_log(f"duyulan [{getattr(self.stt, 'last', '')}]{' (doğrudan)' if direct else ''}: {text}")
+        if (not direct and not self._awaiting_answer and not is_hush(text)
+                and (strip_wake(text, strict=self.muted) is not None or self._armed()) and not self._is_user(audio)):
+            return
         self.handle_text(text, direct)
+
+    def _is_user(self, audio: Audio) -> bool:
+        """Bu ses kullanıcının mı? Ses izi kaydı yoksa herkes kabul. "Alice sus" ve bas-konuş bu kontrole girmez."""
+        gate = self.speaker_gate
+        if gate is None:
+            return True
+        ok = gate.check(audio.pcm, audio.rate)
+        if ok:
+            voice_log(f"ses tanındı ({gate.last_score:.2f})")
+        else:
+            voice_log(f"başka biri konuştu (ses benzerliği {gate.last_score:.2f} < {gate.threshold:.2f}), cevap yok")
+        return ok
 
     def _scan_wake(self, gate, audio: Audio, head: str, step: float = 2.0, limit: int = 5) -> tuple[Audio, str]:
         """Cümlenin başı konuşma değilse (oyun/müzik sesiyle başlayan uzun kayıt) "Hey Alice" ileride olabilir:

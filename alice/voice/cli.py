@@ -7,6 +7,7 @@
   alice voice library                 seçili bulut sesiyle duygu kütüphanesini oluştur (yerel motorlar için)
   alice voice say "metin" [--emotion urgent] [--engine cloud|local]
   alice voice test                    mikrofonu 5 sn dinle, seviyeyi ve duyulanı göster
+  alice voice enroll [--off]          sesini tanıt: ALICE sadece senin sesine cevap versin (--off: kapat)
   alice voice status                  motorlar, kütüphane, opsiyonel paketler
   alice voice models                  hesabında hangi Gemini ses modelleri var (kota harcamaz)
   alice voice install-local           yerel ses motorunu (Chatterbox) ayrı ortama kur
@@ -28,7 +29,8 @@ console = Console(highlight=False)
 OPTIONAL = (("sounddevice", "mikrofon ve ses çalma", "voice"), ("pynput", "bas-konuş ve kısayollar", "voice"),
             ("webrtcvad", "daha iyi konuşma algılama", "voice"),
             ("faster_whisper", "seni dinlemek için yerel Whisper (Groq yoksa)", "voice-local"),
-            ("openwakeword", "yerel 'Hey Alice'", "voice-local"))
+            ("openwakeword", "yerel 'Hey Alice'", "voice-local"),
+            ("sherpa_onnx", "sadece senin sesine cevap (alice voice enroll)", "voice"))
 
 
 def _parser(prog: str):
@@ -42,7 +44,7 @@ def voice_cmd(argv: list[str]) -> int:
     sub = argv[0] if argv and not argv[0].startswith("-") else "run"
     rest = argv[1:] if argv and not argv[0].startswith("-") else argv
     cfg = load_config()
-    fn = {"on": _on, "off": _off, "install-local": _install_local, "models": _models, "run": _run, "audition": _audition, "use": _use, "library": _library, "say": _say, "test": _test,
+    fn = {"on": _on, "off": _off, "install-local": _install_local, "models": _models, "run": _run, "audition": _audition, "use": _use, "library": _library, "say": _say, "test": _test, "enroll": _enroll,
           "status": _status}.get(sub)
     if fn is None:
         console.print(f"bilinmeyen ses komutu: {sub}", markup=False)
@@ -355,8 +357,91 @@ def _test(cfg, argv) -> int:
     return 0
 
 
+def _record_one(mic, vad, seconds: float = 15.0):
+    """Bir konuşmayı kaydet (sessizliğe kadar). Süre dolarsa None."""
+    import time
+
+    from alice.voice.listen import utterances
+
+    end = time.monotonic() + seconds
+
+    def frames():
+        while True:
+            yield mic.read()
+
+    for audio in utterances(frames(), vad, end_silence=0.8, max_seconds=12, stop=lambda: time.monotonic() > end):
+        if audio.seconds >= 1.0:
+            return audio
+    return None
+
+
+def _enroll(cfg, argv) -> int:
+    """Sesini tanıt: birkaç cümle oku, ALICE sesinin izini çıkarsın; sonra sadece senin sesin uyandırır."""
+    from alice.voice import speaker_id as sid
+
+    if "--off" in argv:
+        try:
+            sid.profile_path().unlink()
+            console.print("ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir (çekirdeği yeniden başlat).")
+        except FileNotFoundError:
+            console.print("zaten kapalı: kayıtlı ses izi yok.")
+        return 0
+    if not sid.available():
+        console.print("[red]sherpa-onnx kurulu değil.[/] Kur: " + escape('pip install "alice-harness[voice]"')
+                      + " (ya da: pip install sherpa-onnx)")
+        return 1
+    try:
+        sid.download_model(emit=lambda s: console.print(f"[dim]{escape(s)}[/]"))
+        emb = sid.Embedder()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]ses tanıma modeli hazırlanamadı:[/] {escape(str(e))}")
+        return 1
+    from alice.voice.audio import Microphone
+    from alice.voice.listen import VAD
+
+    try:
+        mic = Microphone()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]mikrofon açılamadı:[/] {escape(str(e))}")
+        return 1
+    console.print("Sesini tanıtıyoruz. Her cümleyi normal sesinle, ALICE'e konuşur gibi oku "
+                  "(oyunda/Discord'da nasıl konuşuyorsan öyle).\n")
+    vad = VAD()
+    embeddings: list[list[float]] = []
+    with mic:
+        for i, sentence in enumerate(sid.ENROLL_SENTENCES, 1):
+            for _attempt in range(2):
+                console.print(f"[bold]{i}/{len(sid.ENROLL_SENTENCES)}[/]  \"{escape(sentence)}\"")
+                audio = _record_one(mic, vad)
+                if audio is not None:
+                    embeddings.append(emb.embed(audio.pcm, audio.rate))
+                    console.print(f"[dim]  alındı ({audio.seconds:.1f} sn)[/]")
+                    break
+                console.print("[yellow]  duyamadım, tekrar oku[/]")
+        if len(embeddings) < 3:
+            console.print("[red]yeterli kayıt alınamadı.[/] Mikrofonu kontrol et: alice voice test")
+            return 1
+        prof = sid.save_profile(embeddings)
+        console.print(f"\n[green]sesin kaydedildi[/] ({len(embeddings)} cümle, eşik {prof['threshold']:.2f}, "
+                      f"tutarlılık {prof['consistency']:.2f}).")
+        if prof["consistency"] < 0.55:
+            console.print("[yellow]Kayıtların birbirine pek benzemiyor (gürültü ya da uzak mikrofon). Sessiz bir "
+                          "anda tekrar dene: alice voice enroll[/]")
+        console.print("\nŞimdi kendi aklından bir cümle söyle, deneyelim:")
+        audio = _record_one(mic, vad)
+    if audio is not None:
+        gate = sid.SpeakerGate(prof, emb)
+        ok = gate.check(audio.pcm, audio.rate)
+        console.print(f"benzerlik {gate.last_score:.2f} (eşik {gate.threshold:.2f}): "
+                      + ("[green]seni tanıdı[/]" if ok else "[red]tanımadı; tekrar kayıt dene ya da config'te "
+                                                             "[voice] speaker_threshold'ı düşür[/]"))
+    console.print("Çalışan ALICE çekirdeği ses izini yeniden başlayınca kullanır. Kapatmak için: alice voice enroll --off")
+    return 0
+
+
 def _run(cfg, argv) -> int:
-    from alice.voice.assistant import VoiceAssistant, build_voice_agent, live_text_options, make_live
+    from alice.voice.assistant import VoiceAssistant, build_voice_agent, live_text_options, make_live, voice_log
+    from alice.voice.speaker_id import SpeakerGate
     from alice.voice.audio import mic_available
     from alice.voice.stt import make_stt
 
@@ -375,7 +460,8 @@ def _run(cfg, argv) -> int:
                         wake_model=v.get("wake_model", ""), wake_phrase=not a.no_wake and v.get("wake_phrase", True),
                         barge_in=v.get("barge_in", True), follow_up=float(v.get("follow_up", 5)),
                         emit=lambda s: console.print(f"[dim]  {escape(s)}[/]"), live=make_live(cfg, agent),
-                        end_silence=float(v.get("end_silence", 0.5)), **live_text_options(v))
+                        end_silence=float(v.get("end_silence", 0.5)), **live_text_options(v),
+                        speaker_gate=SpeakerGate.load(cfg, log=voice_log))
     keys = f"bas-konuş: {va.ptt_key}" if va.ptt_key else ""
     wake = "'Hey Alice'" if va.wake_phrase or va.wake_model else ""
     console.print(f"[bold magenta]ALICE[/] dinliyor ({', '.join(filter(None, [keys, wake]))}). [dim]Ctrl+C çık[/]")
