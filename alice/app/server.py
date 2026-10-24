@@ -337,6 +337,8 @@ class AppState:
         self.quick_pending: dict[str, Any] | None = None  # hızlı bar açılırken doldurulacak metin/görsel
         self.update: Any = None  # alice.updater.UpdateInfo: açılışta/arka planda bulunan yeni sürüm
         self._update_lock = threading.Lock()
+        self._update_stop = threading.Event()  # kapanışta arka plan güncelleme döngüsü dursun
+        self._update_waits = (10.0, 60.0)  # ilk bakış, sonraki turlar (sn)
         self._stt = None
         # Tüm ajan işleri tek bir kalıcı thread'de çalışır: Playwright tarayıcısı ve UI Automation
         # nesneleri oluşturuldukları thread'e bağlı, her mesajda yeni thread açmak onları bozar.
@@ -369,6 +371,7 @@ class AppState:
             done.wait(wait)
 
     def shutdown(self) -> None:
+        self._update_stop.set()
         self.agent.stop()
         self.run_in_worker(lambda: cleanup(self.ctx), wait=10)
         self._jobs.put(None)
@@ -739,12 +742,11 @@ class AppState:
             if first is not None and (getattr(first, "available", False) or getattr(first, "stale", False)):
                 time.sleep(2.0)  # arayüz bağlanana kadar bekle
                 self.bus.publish({"type": "update", **first.as_dict()})
-            wait = 10.0  # ilk bakış açılıştan hemen sonra, sonrası dakikalık tur
+            wait = self._update_waits[0]  # ilk bakış açılıştan hemen sonra, sonrası dakikalık tur
             first_round = first is None  # açılışta bakılmadıysa (notify modu, kapalı açılış kontrolü) hemen bak
             last = 0.0
-            while True:
-                time.sleep(wait)
-                wait = 60.0
+            while not self._update_stop.wait(wait):
+                wait = self._update_waits[1]
                 try:
                     u = self.update
                     # Yeni sürüm CI'ın bitmesini bekliyorsa saatte bir değil birkaç dakikada bir bak: merge'den
