@@ -208,7 +208,7 @@ def test_app_enroll_records_each_sentence_saves_and_tries_out(tmp_path, monkeypa
     talk = [(40, True), (40, False)]  # 1,2 sn konuşma + sessizlik
     script = [(5, False)] + talk * len(sid.ENROLL_SENTENCES) + talk
     mic = Mic(script)
-    s = EnrollSession(mic=lambda: mic, vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=5)
+    s = EnrollSession(mic=lambda: mic, vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=5, got_pause=0)
     assert s.start()["ok"] and not s.start()["ok"]  # ikinci kez başlatılamaz
     s._thread.join(10)
     v = s.view()
@@ -275,3 +275,101 @@ def test_wake_ignored_while_enrolling(tmp_path, monkeypatch):
     assert va._is_user(Audio(b"\1\0" * 16000, 16000)) is False
     sid.enrolling_path().unlink()
     assert va._is_user(Audio(b"\1\0" * 16000, 16000)) is True
+
+
+class NoisyMic(Mic):
+    """Discord/oyun sesi: konuşma bitince de ses var (VAD hep "konuşma" der) ama seviye konuşmanın çok altında."""
+
+    def __init__(self, talk_frames=60, tail=b"\1\x02"):
+        self.frames = [b"\1\x40" * 480] * talk_frames + [tail * 480] * 2000
+
+
+class AlwaysSpeech:
+    def is_speech(self, frame, rate=16000):
+        return True
+
+
+def _session(tmp_path, monkeypatch, mic, vad=AlwaysSpeech, **kw):
+    from alice.voice.enroll import EnrollSession
+
+    monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
+    return EnrollSession(mic=lambda: mic, vad=vad, embedder=FakeEmbedder, got_pause=0, **kw)
+
+
+def test_record_ends_when_level_drops_under_background_noise(tmp_path, monkeypatch):
+    # Kullanıcı: "okuyorum sonra öyle kalıyor, algıladı mı algılamadı mı belli değil".
+    s = _session(tmp_path, monkeypatch, NoisyMic())
+    mic = NoisyMic()
+    t0 = time.monotonic()
+    audio = s._record(mic, AlwaysSpeech())
+    took = 60 * 0.03
+    assert audio is not None and took <= audio.seconds < took + 1.2  # 7 sn beklemedi
+    assert time.monotonic() - t0 < 5
+
+
+def test_record_caps_take_and_reports_progress(tmp_path, monkeypatch):
+    from alice.voice import enroll
+
+    monkeypatch.setattr(enroll, "MAX_TAKE", 1.5)
+    s = _session(tmp_path, monkeypatch, None)
+    mic = NoisyMic(talk_frames=2000)  # hiç bitmeyen konuşma
+    audio = s._record(mic, AlwaysSpeech())
+    assert 1.4 <= audio.seconds <= 1.8
+    v = s.view()
+    assert v["took"] >= 1.4 and v["left"] >= 0
+
+
+def test_done_button_takes_what_was_heard_and_skip_moves_on(tmp_path, monkeypatch):
+    s = _session(tmp_path, monkeypatch, None, listen_seconds=30)
+    got = []
+
+    class SlowLoud(Mic):
+        def __init__(self):
+            self.n = 0
+
+        def read(self):
+            self.n += 1
+            if self.n == 60:
+                s.done()  # kullanıcı "Okudum"a bastı
+            time.sleep(0.0005)
+            return b"\1\x40" * 480
+
+    got.append(s._record(SlowLoud(), AlwaysSpeech()))
+    assert got[0] is not None and got[0].seconds >= 1.0
+
+    class Quiet(Mic):
+        def __init__(self):
+            self.n = 0
+
+        def read(self):
+            self.n += 1
+            if self.n == 20:
+                s.skip()
+            return b"\0\0" * 480
+
+    assert s._record(Quiet(), LoudVAD()) is None
+
+
+def test_enroll_skip_sentence_continues_to_next(tmp_path, monkeypatch):
+    monkeypatch.setattr(sid, "available", lambda: True)
+    (tmp_path / "models").mkdir()
+    sid.model_path().parent.mkdir(parents=True, exist_ok=True)
+    talk = [(40, True), (40, False)]
+    mic = Mic([(5, False)] + talk * (len(sid.ENROLL_SENTENCES) + 1))
+    s = _session(tmp_path, monkeypatch, mic, vad=LoudVAD, listen_seconds=5)
+    sid.model_path().write_bytes(b"x")
+    s._skip.set()  # ilk cümle atlanır
+    orig = s._record
+    first = []
+
+    def rec(m, v):
+        if not first:
+            first.append(1)
+            return None
+        return orig(m, v)
+
+    s._record = rec
+    s.start()
+    s._thread.join(20)
+    v = s.view()
+    assert v["state"] == "done" and len(v["takes"]) == len(sid.ENROLL_SENTENCES) - 1

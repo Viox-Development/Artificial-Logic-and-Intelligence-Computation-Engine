@@ -21,6 +21,7 @@ from alice.voice import speaker_id as sid
 LISTEN_SECONDS = 15.0  # bir cümle için bekleme; konuşulmazsa "duyamadım"
 TRIES = 3  # aynı cümle en fazla bu kadar istenir
 MIN_TAKES = 4  # bu kadar cümle alınamazsa profil kaydedilmez
+MAX_TAKE = 7.0  # sn: cümleler kısa; arka plan sesi yüzünden kayıt bitmezse en geç bu kadar sonra alınır
 
 
 class Cancelled(Exception):
@@ -44,13 +45,16 @@ class EnrollSession:
 
     def __init__(self, mic: Callable[[], Any] = _make_mic, vad: Callable[[], Any] = _make_vad,
                  embedder: Callable[[], Any] | None = None, pip: Callable[[], int] | None = None,
-                 listen_seconds: float = LISTEN_SECONDS):
+                 listen_seconds: float = LISTEN_SECONDS, got_pause: float = 0.8):
         self.make_mic, self.make_vad = mic, vad
         self.make_embedder = embedder
         self.pip = pip or self._pip_install
         self.listen_seconds = listen_seconds
+        self.got_pause = got_pause
         self._lock = threading.Lock()
         self._cancel = threading.Event()
+        self._done = threading.Event()  # "Okudum": şimdiye kadar kaydedileni al
+        self._skip = threading.Event()  # "Bu cümleyi atla"
         self._thread: threading.Thread | None = None
         self._s: dict[str, Any] = {}
         self._reset("idle")
@@ -59,7 +63,8 @@ class EnrollSession:
     def _reset(self, state: str, **kw: Any) -> None:
         with self._lock:
             self._s = {"state": state, "step": 0, "total": len(sid.ENROLL_SENTENCES), "sentence": "", "level": 0.0,
-                       "hearing": False, "message": "", "progress": None, "result": None, "takes": [], **kw}
+                       "hearing": False, "took": 0.0, "left": 0, "message": "", "progress": None, "result": None,
+                       "takes": [], "got": "", **kw}
 
     def _set(self, **kw: Any) -> None:
         with self._lock:
@@ -115,6 +120,14 @@ class EnrollSession:
         self._reset("installing", message="sherpa-onnx kuruluyor (bir dakika sürebilir)")
         return self._run("enroll-install", self._install)
 
+    def done(self) -> dict[str, Any]:
+        self._done.set()
+        return {"ok": True}
+
+    def skip(self) -> dict[str, Any]:
+        self._skip.set()
+        return {"ok": True}
+
     def cancel(self) -> dict[str, Any]:
         self._cancel.set()
         return {"ok": True}
@@ -159,37 +172,72 @@ class EnrollSession:
         self._set(state="preparing", message="model yükleniyor", progress=None)
         return (self.make_embedder or sid.Embedder)()
 
+    def _touch_marker(self) -> None:
+        path = sid.enrolling_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
     def _record(self, mic: Any, vad: Any) -> Any:
-        """Bir cümle kaydet. Süre dolarsa None. Her karede seviye güncellenir, iptale bakılır."""
-        from alice.voice.audio import rms
-        from alice.voice.listen import utterances
+        """Bir cümle kaydet; süre dolarsa ya da atlanırsa None. Ekran her karede güncellenir: dinliyor mu, duyuyor mu,
+        kaç saniyedir, ne kadar süre kaldı.
 
-        end = time.monotonic() + self.listen_seconds
-        touched = [0.0]
+        Cümle sonu: kısa sessizlik, YA DA ses seviyesi konuşmanın çok altına düştü (Discord/oyun sesi açıkken VAD hiç
+        "sessizlik" demiyor, kayıt 12 sn sürüp ekranda hiçbir şey değişmiyordu), YA DA MAX_TAKE saniye doldu, YA DA
+        kullanıcı "Okudum"a bastı."""
+        from alice.voice.audio import Audio, rms
 
-        def frames():
-            while True:
-                if self._cancel.is_set():
-                    raise Cancelled
-                frame = mic.read()
-                now = time.monotonic()
-                if now - touched[0] > 5:
-                    touched[0] = now
-                    path = sid.enrolling_path()
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.touch()
-                self._set(level=round(min(1.0, rms(frame) * 6), 3))
-                yield frame
-
-        self._set(hearing=False)
-        for audio in utterances(frames(), vad, end_silence=0.8, max_seconds=12, stop=lambda: time.monotonic() > end,
-                                on_start=lambda: self._set(hearing=True)):
-            if audio.seconds >= 1.0:
+        frame_s = 0.03
+        start_frames, end_frames, quiet_frames = 5, int(0.6 / frame_s), int(0.7 / frame_s)
+        t0 = time.monotonic()
+        touched = 0.0
+        ring: list[bytes] = []  # cümle gösterildiğinden beri bütün kareler ("Okudum"a basılınca kullanılır)
+        buf: list[bytes] | None = None
+        voiced = silent = quiet = 0
+        peak = 0.0
+        self._done.clear()
+        self._skip.clear()
+        self._set(hearing=False, took=0.0, left=round(self.listen_seconds), level=0.0)
+        while True:
+            if self._cancel.is_set():
+                raise Cancelled
+            if self._skip.is_set():
                 self._set(hearing=False, level=0.0)
-                return audio
-            self._set(hearing=False)
-        self._set(hearing=False, level=0.0)
-        return None
+                return None
+            frame = mic.read()
+            now = time.monotonic()
+            if now - touched > 5:
+                touched = now
+                self._touch_marker()
+            level = rms(frame)
+            ring.append(frame)
+            ring = ring[-int(MAX_TAKE / frame_s):]
+            speech = vad.is_speech(frame, 16000)
+            if buf is None:
+                voiced = voiced + 1 if speech else 0
+                if voiced >= start_frames:
+                    buf = ring[-(start_frames + 10):]  # konuşmanın başı kesilmesin
+                    peak, silent, quiet = level, 0, 0
+            else:
+                buf.append(frame)
+                peak = max(peak, level)
+                silent = 0 if speech else silent + 1
+                quiet = quiet + 1 if level < peak * 0.25 else 0
+            took = len(buf) * frame_s if buf is not None else 0.0
+            self._set(level=round(min(1.0, level * 6), 3), hearing=buf is not None, took=round(took, 1),
+                      left=max(0, round(self.listen_seconds - (now - t0))))
+            if self._done.is_set():  # "Okudum": o ana kadarki sesi al
+                pcm = b"".join(buf if buf is not None and took >= 1.0 else ring)
+                self._done.clear()
+                if len(pcm) / 32000 >= 1.0 and max((rms(f) for f in (buf or ring)), default=0) > 0.01:
+                    return Audio(pcm, 16000)
+                self._set(message="ses gelmedi, bir daha oku")
+                continue
+            if buf is not None and took >= 1.0 and (silent >= end_frames or quiet >= quiet_frames or took >= MAX_TAKE):
+                self._set(hearing=False, level=0.0)
+                return Audio(b"".join(buf), 16000)
+            if buf is None and now - t0 > self.listen_seconds:
+                self._set(hearing=False, level=0.0)
+                return None
 
     def _try_out(self, mic: Any, vad: Any, emb: Any, prof: dict[str, Any]) -> None:
         self._set(state="testing", sentence="", message="Şimdi kendi aklından bir cümle söyle, deneyelim.")
@@ -214,13 +262,19 @@ class EnrollSession:
         with self.make_mic() as mic:
             for i, sentence in enumerate(sentences, 1):
                 for attempt in range(TRIES):
-                    self._set(state="recording", step=i, sentence=sentence,
+                    self._set(state="recording", step=i, sentence=sentence, got="",
                               message="oku" if attempt == 0 else "duyamadım, bir daha oku")
                     audio = self._record(mic, vad)
+                    if self._skip.is_set():
+                        self._skip.clear()
+                        break
                     if audio is not None:
                         embeddings.append(emb.embed(audio.pcm, audio.rate))
                         with self._lock:
                             self._s["takes"].append(round(audio.seconds, 1))
+                        # Alındığı ekranda görünsün, sonra sıradaki cümle.
+                        self._set(got=f"✓ alındı ({audio.seconds:.1f} sn)", hearing=False, level=0.0)
+                        time.sleep(self.got_pause)
                         break
             if len(embeddings) < MIN_TAKES:
                 raise RuntimeError("yeterli kayıt alınamadı: mikrofon sesini duymuyor olabilir "

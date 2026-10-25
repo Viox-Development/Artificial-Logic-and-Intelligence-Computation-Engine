@@ -732,7 +732,11 @@ function enrollCard() {
         const bar = el("i");
         bar.style.width = Math.round((s.level || 0) * 100) + "%";
         meter.appendChild(bar);
-        card.append(meter, el("small", "enroll-note", s.hearing ? "duyuyorum…" : s.message === "oku" ? "dinliyorum, oku" : s.message));
+        // Ne olduğu hep yazsın: dinliyor mu, duyuyor mu, kaç saniyedir, alındı mı.
+        const status = s.got ? s.got
+          : s.hearing ? `● duyuyorum… ${Number(s.took || 0).toFixed(1)} sn. Cümle bitince kendiliğinden alır; bitirdiysen "Okudum"a bas.`
+          : (s.message === "oku" ? "dinliyorum, sesli oku" : s.message) + (s.left ? ` (${s.left} sn)` : "");
+        card.append(meter, el("div", "enroll-status" + (s.got ? " got" : s.hearing ? " on" : ""), status));
       } else {
         card.appendChild(el("div", "enroll-say small", s.message || "…"));
         if (s.state === "downloading" && s.progress != null) {
@@ -745,6 +749,8 @@ function enrollCard() {
       }
       const row = el("div", "row");
       row.appendChild(btn("Vazgeç", "cancel"));
+      if (s.state === "recording" && !s.got) row.appendChild(btn("Bu cümleyi atla", "skip"));
+      if ((s.state === "recording" || s.state === "testing") && !s.got) row.appendChild(btn("Okudum", "done", true));
       card.appendChild(row);
     } else if (s.state === "done" && s.result) {
       const r = s.result;

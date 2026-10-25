@@ -1364,7 +1364,11 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .enroll-meter { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
 .enroll-meter i { display: block; height: 100%; width: 0; background: var(--muted); transition: width .12s linear; }
 .enroll-meter.hearing i, .enroll-meter.dl i { background: var(--ok); }
-.enroll .row { display: flex; justify-content: flex-end; margin-top: 12px; }
+.enroll-meter i { background: var(--faint); }
+.enroll .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.enroll-status { margin-top: 8px; font-size: 14px; color: var(--muted); }
+.enroll-status.on { color: var(--text); }
+.enroll-status.got { color: var(--ok); font-weight: 600; }
 .enroll-result { margin-top: 10px; font-weight: 500; }
 .enroll-result.good { color: var(--ok); }
 .enroll-result.bad { color: var(--err); }

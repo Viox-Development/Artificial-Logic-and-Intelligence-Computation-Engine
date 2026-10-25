@@ -653,7 +653,8 @@ class AppState:
 
     def enroll_action(self, action: str) -> dict[str, Any]:
         fn = {"start": self.enroll.start, "test": self.enroll.test, "install": self.enroll.install,
-              "cancel": self.enroll.cancel, "remove": self.enroll.remove}.get(action)
+              "cancel": self.enroll.cancel, "remove": self.enroll.remove, "done": self.enroll.done,
+              "skip": self.enroll.skip}.get(action)
         return fn() if fn else {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
     # ------------------------------------------------------------------ Hafıza sekmesi
