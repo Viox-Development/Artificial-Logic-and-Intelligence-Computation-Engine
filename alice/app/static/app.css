@@ -1376,3 +1376,21 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 @keyframes sysspin { to { transform: rotate(360deg); } }
 .mic-test { margin-top: 8px; }
 .ev-row small { overflow-wrap: anywhere; }
+
+/* Ayarlar > Otomasyon */
+.auto-new { margin: 4px 0 10px; }
+.auto-new .key-edit { display: flex; gap: 6px; }
+.auto-new input[type=text] { flex: 1; margin: 0; }
+.auto-preview { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 10px; background: var(--panel); }
+.auto-preview .sec { margin-top: 0; }
+.auto-line { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; flex-wrap: wrap; }
+.auto-line > span:first-child { color: var(--muted); min-width: 110px; font-size: 13px; }
+.auto-line > span.ok { color: var(--ok); }
+.auto-line small { color: var(--muted); }
+.auto-preview .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.list-row.off b { opacity: .55; }
+.auto-result { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.auto-result summary { cursor: pointer; }
+.auto-result div { white-space: pre-wrap; margin-top: 4px; color: var(--text); }
+.auto-verdicts { margin-top: 6px; }
+.auto-verdicts .auto-line > span:first-child { min-width: 14px; }
