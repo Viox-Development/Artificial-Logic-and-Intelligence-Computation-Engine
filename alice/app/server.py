@@ -38,7 +38,10 @@ STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "
                 "main.js": "text/javascript", "app.css": "text/css", "marked.min.js": "text/javascript",
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
                 "quick.css": "text/css"}
+# media-src: Ayarlar → Ses'teki "Dinle" örneği data: adresinden çalınır. Yoktu; default-src 'none' yüzünden
+# tarayıcı sesi sessizce engelliyordu.
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+       "media-src 'self' data: blob:; "
        "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
        "frame-src 'self'")
 # Önizlenen site korumalı çerçevede (ayrı köken) çalışır: ALICE'in sayfasına ve API'sine dokunamaz.

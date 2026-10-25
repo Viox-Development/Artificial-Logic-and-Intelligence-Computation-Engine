@@ -663,7 +663,7 @@ function voicePane(pane, data) {
         if (!r || !r.ok) return toast((r && r.error) || "örnek üretilemedi");
         if (previewAudio) previewAudio.pause();
         previewAudio = new Audio("data:audio/wav;base64," + r.audio);
-        previewAudio.play();
+        previewAudio.play().catch((e) => toast("ses çalınamadı: " + (e && e.message || e)));
       });
     });
     const pick = el("button", on ? "btn" : "btn primary", on ? "Seçili" : "Seç");
@@ -1295,7 +1295,7 @@ function setupPane(pane) {
       for (const p of doc.result.providers) {
         const [cls, m] = marks[p.status] || marks.skip;
         const it = el("div", "auto-line");
-        it.append(el("span", "chk " + cls, m), el("b", "", p.name), el("small", "", (p.model ? p.model + " · " : "") + p.detail + (p.key === "yok" && p.env ? ` (${p.env})` : "")));
+        it.append(el("span", "chk " + cls, m), el("b", "", p.name), el("small", "", (p.model ? p.model + " · " : "") + p.detail));
         c1.appendChild(it);
       }
       const dl = el("div", "auto-line");
@@ -1368,7 +1368,8 @@ function setupPane(pane) {
       segmented([[true, "Açık"], [false, "Kapalı"]], !!ph.enabled, (on) => act("phone_enable", { on }).then(done(on ? "telefon köprüsü açılıyor" : "telefon köprüsü kapatıldı"))));
     if (ph.enabled) {
       const box = el("div", "phone-box");
-      if (ph.qr) { const q = el("div", "phone-qr"); q.innerHTML = ph.qr; box.appendChild(q); }
+      // Resim olarak: satır içi SVG'yi uygulamanın simge kuralı (svg { fill: none; stroke }) boyayıp siliyordu.
+      if (ph.qr) { const q = el("img", "phone-qr"); q.alt = "QR kod"; q.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(ph.qr); box.appendChild(q); }
       const info = el("div", "phone-info");
       info.append(el("small", "", "Telefonun kamerasıyla okut ya da adresi aç:"), el("code", "", ph.url));
       if (!ph.qr_lib) info.appendChild(el("small", "", "QR kod için: pip install qrcode"));

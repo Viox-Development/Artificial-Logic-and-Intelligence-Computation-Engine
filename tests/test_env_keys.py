@@ -212,3 +212,11 @@ def test_voice_enroll_endpoints(app, monkeypatch):
     sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
     assert client.get("/api/voice/enroll").json()["profile"]["samples"] == 2
     assert client.post("/api/voice/enroll", json={"action": "remove"}).json()["ok"] and sid.load_profile() is None
+
+
+def test_page_allows_voice_preview_audio(app):
+    # "Dinle" sesi data: adresinden çalınır; CSP'de media-src yoktu, tarayıcı sessizce engelliyordu.
+    state, client, _ = app
+    csp = client.get("/?t=" + state.token).headers["Content-Security-Policy"]
+    media = next(p for p in csp.split(";") if p.strip().startswith("media-src"))
+    assert "data:" in media and "default-src 'none'" in csp

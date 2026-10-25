@@ -244,7 +244,7 @@ PROBE_TOKENS = 512  # düşünen modeller (GLM Flash) önce düşünür; 50 toke
 def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
     """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
-    status: ok | fail | off (anahtar yok, kurulu değil, elle seçilen) | skip."""
+    status: ok | warn (geçici: yoğun/hız sınırı) | fail | off (anahtar yok, kurulu değil, elle seçilen)."""
     from alice.providers.openai_compat import OpenAICompatProvider
     from alice.providers.router import AllProvidersFailed, Router
 
@@ -281,6 +281,9 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
             err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
             if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
                 row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
+            elif err.startswith(("[rate_limit]", "[server]")):
+                row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); ALICE "
+                                                 "sıradaki modelle devam eder")
             elif "zaman aşımı" in err:
                 row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
                                                  "ALICE bir süre sıradaki modelle devam eder")

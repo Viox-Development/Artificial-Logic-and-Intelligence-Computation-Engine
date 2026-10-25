@@ -192,6 +192,7 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
         "nvidia": {"base_url": "http://n", "api_key_env": "NK", "models": ["glm-5.3"]},
         "ollama": {"base_url": "http://localhost:11434/v1", "api_key_env": "", "models": ["qwen3:8b"]},
         "samba": {"base_url": "http://s", "api_key_env": "SK"},  # anahtar var, model bilinmiyor
+        "busy": {"base_url": "http://y", "api_key_env": "", "models": ["m"]},
         "mistral": {"base_url": "http://m", "api_key_env": "MK", "models": ["x"]},  # anahtar yok
     }
     seen = {}
@@ -203,6 +204,8 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
                 return ProviderError("network", "zaman aşımı (ReadTimeout)")
             if name == "ollama":
                 return ProviderError("unreachable", "bağlanılamadı (ConnectError)")
+            if name == "busy":
+                return ProviderError("rate_limit", 'The service may be temporarily overloaded')
             return "ok"
         return reply
 
@@ -215,7 +218,8 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
     assert rows["nvidia"]["status"] == "fail" and "cevap vermedi" in rows["nvidia"]["detail"]
     assert rows["ollama"]["status"] == "off" and "kurmadıysan sorun değil" in rows["ollama"]["detail"]
     assert rows["samba"]["status"] == "off" and "Yeniden ölç" in rows["samba"]["detail"]
-    assert rows["mistral"]["status"] == "off" and "MK" in rows["mistral"]["detail"]
+    assert rows["mistral"]["status"] == "off" and rows["mistral"]["detail"].count("MK") == 1
+    assert rows["busy"]["status"] == "warn" and "geçici" in rows["busy"]["detail"]
 
 
 def test_timed_out_model_is_skipped_for_ten_minutes():
