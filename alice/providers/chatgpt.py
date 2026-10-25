@@ -162,6 +162,7 @@ def _update_active(**fields: Any) -> None:
 
 _fetching = threading.Lock()
 MODELS_RETRY = 300.0  # sn: liste alınamadıysa en erken bu kadar sonra tekrar denenir
+LOADING_MAX = 45.0  # sn: bu kadar sürede liste gelmediyse "okunuyor" değil hata gösterilir
 
 
 def ensure_models(pc: ProviderConfig) -> None:
@@ -176,8 +177,7 @@ def ensure_models(pc: ProviderConfig) -> None:
 
     def run() -> None:
         try:
-            ChatGPTProvider(pc).list_models()
-            _update_active(models_error="")
+            ChatGPTProvider(pc, timeout=30.0).list_models()
         except Exception as e:  # noqa: BLE001 - ekranda göster
             _update_active(models_error=str(e)[:300])
         finally:
@@ -186,8 +186,50 @@ def ensure_models(pc: ProviderConfig) -> None:
     threading.Thread(target=run, daemon=True, name="alice-chatgpt-models").start()
 
 
+def parse_models(data: Any) -> list[dict[str, Any]]:
+    items = (data.get("models") or data.get("data") or []) if isinstance(data, dict) else data
+    out = []
+    for m in items if isinstance(items, list) else []:
+        slug = (m.get("slug") or m.get("id")) if isinstance(m, dict) else m
+        if slug and (not isinstance(m, dict) or m.get("visibility", "list") != "hide"):
+            out.append({"id": str(slug), "context_length": m.get("context_window") if isinstance(m, dict) else None})
+    return out
+
+
+def add_model(name: str) -> list[str]:
+    """Liste okunamasa da kullanılabilsin: model adını elle ekle (ör. gpt-5.5)."""
+    name = name.strip()
+    models = cached_models()
+    if name and name not in models:
+        models.append(name)
+        _update_active(models=models, models_error="")
+    return models
+
+
+def retry_models(pc: ProviderConfig) -> None:
+    _update_active(models_tried=0, models_error="")
+    ensure_models(pc)
+
+
+def models_state() -> str:
+    """'ok' | 'loading' | 'error' | '' (giriş yok)."""
+    a = load_auth()
+    if not a:
+        return ""
+    if a.get("models"):
+        return "ok"
+    if a.get("models_error"):
+        return "error"
+    return "loading" if time.time() - float(a.get("models_tried") or 0) < LOADING_MAX else "error"
+
+
 def models_error() -> str:
-    return str(load_auth().get("models_error") or "")
+    a = load_auth()
+    if a.get("models_error"):
+        return str(a["models_error"])
+    if a and not a.get("models") and a.get("models_tried") and time.time() - float(a["models_tried"]) >= LOADING_MAX:
+        return "sunucu cevap vermedi"
+    return ""
 
 
 def cached_models() -> list[str]:
@@ -254,7 +296,8 @@ def logout() -> bool:
 def status() -> dict[str, Any]:
     a = load_auth()
     return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", ""), "accounts": accounts(),
-            "models": cached_models(), "models_error": models_error(), "limits": a.get("limits") or {}}
+            "models": cached_models(), "models_error": models_error(), "models_state": models_state(),
+            "limits": a.get("limits") or {}}
 
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"  # Codex'in /status ekranının okuduğu limit durumu
@@ -497,23 +540,25 @@ class ChatGPTProvider(OpenAICompatProvider):
     def list_models(self) -> list[dict[str, Any]]:
         if self.cfg.models:
             return [{"id": m} for m in self.cfg.models]
-        try:
-            r = self._client.get(f"{self.cfg.base_url}/models", params={"client_version": CLIENT_VERSION},
-                                 headers=self._auth_headers())
-        except _TRANSPORT_ERRORS as e:
-            raise _transport_error(e) from e
-        if r.status_code != 200:
-            raise classify_error(r.status_code, r.text, dict(r.headers))
-        data = r.json()
-        items = (data.get("models") or data.get("data") or []) if isinstance(data, dict) else data
-        out = []
-        for m in items if isinstance(items, list) else []:
-            slug = m.get("slug") or m.get("id") if isinstance(m, dict) else m
-            if slug and (not isinstance(m, dict) or m.get("visibility", "list") != "hide"):
-                out.append({"id": str(slug), "context_length": (m.get("context_window") if isinstance(m, dict) else None)})
-        if out:
-            _update_active(models=[m["id"] for m in out])
-        return out
+        seen = ""
+        # Sunucu listeyi istemci sürümüne göre süzüyor olabilir: önce bizim sürüm, sonra yenisi, sonra sürümsüz.
+        for params in ({"client_version": CLIENT_VERSION}, {"client_version": "9.99.0"}, {}):
+            try:
+                r = self._client.get(f"{self.cfg.base_url}/models", params=params, headers=self._auth_headers())
+            except _TRANSPORT_ERRORS as e:
+                raise _transport_error(e) from e
+            if r.status_code != 200:
+                raise classify_error(r.status_code, r.text, dict(r.headers))
+            try:
+                data = r.json()
+            except ValueError as e:
+                raise ProviderError("server", f"model listesi okunamadı: {r.text[:160]}", 200) from e
+            out = parse_models(data)
+            if out:
+                _update_active(models=[m["id"] for m in out], models_error="")
+                return out
+            seen = r.text[:200]
+        raise ProviderError("server", f"model listesi boş geldi (sunucu cevabı: {seen or 'boş'})", 200)
 
     def chat(self, model, messages, tools=None, temperature=None, max_tokens=None, response_format=None, extra=None):
         return self.chat_stream(model, messages, lambda _t: None, tools=tools, extra=extra)

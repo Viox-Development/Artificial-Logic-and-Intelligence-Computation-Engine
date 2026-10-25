@@ -131,7 +131,7 @@ class SetupPanel:
     # ------------------------------------------------------------------ işlemler
     ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
                "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut", "chatgpt_login",
-               "chatgpt_logout", "chatgpt_use", "chatgpt_usage"}
+               "chatgpt_logout", "chatgpt_use", "chatgpt_usage", "chatgpt_model_add", "chatgpt_models_retry"}
 
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action) if action in self.ACTIONS else None
@@ -299,6 +299,23 @@ class SetupPanel:
         if pc is not None and chatgpt.logged_in():
             chatgpt.ensure_models(pc)
         return chatgpt.status()
+
+    def _chatgpt_model_add(self, d: dict[str, Any]) -> dict[str, Any]:
+        from alice.providers import chatgpt
+
+        name = str(d.get("name", "")).strip()
+        if not name or " " in name:
+            return {"ok": False, "error": "model adı yaz (ör. gpt-5.5)"}
+        return {"ok": True, "models": chatgpt.add_model(name)}
+
+    def _chatgpt_models_retry(self, d: dict[str, Any]) -> dict[str, Any]:
+        from alice.providers import chatgpt
+
+        pc = (getattr(self.router, "providers_cfg", None) or {}).get("chatgpt")
+        if pc is None or not chatgpt.logged_in():
+            return {"ok": False, "error": "önce giriş yap"}
+        chatgpt.retry_models(pc)
+        return {"ok": True}
 
     def _chatgpt_usage(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.providers import chatgpt

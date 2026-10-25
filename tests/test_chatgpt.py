@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from types import SimpleNamespace
 
 from alice.providers import chatgpt
 from alice.providers.chatgpt import ChatGPTProvider, to_responses, to_tools
@@ -295,3 +296,31 @@ def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
             break
         time.sleep(0.05)
     assert [m["ref"] for m in {p["name"]: p for p in router.catalog_view()}["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]
+
+
+def test_empty_list_is_an_error_and_manual_add_works(monkeypatch):
+    """Kullanıcı: dakikalarca 'okunuyor' yazdı. Boş liste artık hata; model adı elle eklenebilir."""
+    chatgpt.save_auth(tokens())
+    asked = []
+
+    def handler(req):
+        asked.append(dict(req.url.params))
+        return httpx.Response(200, json={"models": []})
+
+    p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="boş geldi"):
+        p.list_models()
+    assert [a.get("client_version") for a in asked] == [chatgpt.CLIENT_VERSION, "9.99.0", None]
+
+    assert chatgpt.models_state() == "error"  # hiç denenmemiş, süresi geçmiş sayılır
+    chatgpt._update_active(models_tried=time.time())
+    assert chatgpt.models_state() == "loading"
+    chatgpt._update_active(models_tried=time.time() - chatgpt.LOADING_MAX - 1)
+    assert chatgpt.models_state() == "error" and chatgpt.models_error() == "sunucu cevap vermedi"
+
+    from alice.app.setup_panel import SetupPanel
+
+    panel = SetupPanel(make_config({"brain": ["a:m"]}), SimpleNamespace(providers_cfg={}))
+    assert not panel.action("chatgpt_model_add", {"name": "  "})["ok"]
+    assert panel.action("chatgpt_model_add", {"name": "gpt-5.5"})["models"] == ["gpt-5.5"]
+    assert chatgpt.models_state() == "ok" and chatgpt.cached_models() == ["gpt-5.5"]

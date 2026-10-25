@@ -84,8 +84,9 @@ async function modelMenu() {
       if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
         // giriş var ama liste henüz yok: boş geçme, nedenini söyle
         m.appendChild(el("div", "menu-title", "chatgpt"));
-        menuItem(m, null, p.error ? "Model listesi alınamadı" : "Model listesi okunuyor…",
-          p.error ? p.error.slice(0, 120) : "birkaç saniye sonra menüyü tekrar aç", () => showSettings("setup"));
+        menuItem(m, null, p.loading ? "Model listesi okunuyor…" : "Model listesi alınamadı",
+          p.loading ? "birkaç saniye sonra menüyü tekrar aç" : (p.error || "").slice(0, 120) + " · Kurulum'dan elle ekleyebilirsin",
+          () => showSettings("setup"));
         continue;
       }
       if (!rows.length) continue;
@@ -1373,8 +1374,17 @@ function setupPane(pane) {
       c2b.appendChild(row);
       if ((cg.models || []).length) c2b.appendChild(el("small", "enroll-note",
         `Modeller: ${cg.models.join(", ")}. Sohbetin altındaki model menüsünden seç ya da Otomatik bırak.`));
-      else c2b.appendChild(el("div", "enroll-result " + (cg.models_error ? "bad" : ""), cg.models_error
-        ? "Model listesi alınamadı: " + cg.models_error : "Model listesi okunuyor… (birkaç saniye)"));
+      else {
+        c2b.appendChild(el("div", "enroll-result " + (cg.models_state === "loading" ? "" : "bad"),
+          cg.models_state === "loading" ? "Model listesi okunuyor…" : "Model listesi alınamadı: " + (cg.models_error || "bilinmiyor")));
+        // Liste gelmese de kullanılabilsin: adı elle ekle
+        const row = el("div", "key-edit auto-new");
+        const inp = el("input");
+        inp.type = "text"; inp.placeholder = "Model adı (ör. gpt-5.5)";
+        row.append(inp, btn("Ekle", () => act("chatgpt_model_add", { name: inp.value }).then(done("model eklendi, model menüsünde")), true),
+          btn("Tekrar dene", () => act("chatgpt_models_retry").then(done())));
+        c2b.appendChild(row);
+      }
     }
     // Kayıtlı hesaplar: tek tıkla geç ya da kaldır
     for (const a of cg.accounts || []) {
@@ -1477,7 +1487,8 @@ function setupPane(pane) {
       body.appendChild(card("Masaüstü ve Başlat menüsü", "ALICE'i Windows tuşuna basıp \"ALICE\" yazarak aç.",
         btn("Kısayol oluştur", () => act("shortcut").then(done("kısayol oluşturuldu")))));
     }
-    return doc.state === "running" || mo.state === "running" || (d.chatgpt || {}).state === "running";
+    return doc.state === "running" || mo.state === "running" || (d.chatgpt || {}).state === "running"
+      || (d.chatgpt || {}).models_state === "loading";
   }
   let shown = false;
   function load() {
