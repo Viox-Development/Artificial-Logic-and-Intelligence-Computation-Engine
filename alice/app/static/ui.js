@@ -82,7 +82,7 @@ async function modelMenu() {
     for (const p of provs) {
       const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
       if (!rows.length) continue;
-      m.appendChild(el("div", "menu-title", p.name));
+      m.appendChild(el("div", "menu-title", p.name + (p.note ? " · limit " + p.note : "")));
       for (const x of rows) {
         menuItem(m, null, x.model, x.status === "hazır" ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
       }
@@ -114,7 +114,7 @@ function modelsPane(pane, all) {
       const head = el("div", "list-row prov" + (p.hidden || !p.enabled ? " off" : ""));
       const shown = p.models.filter((x) => !x.hidden).length;
       head.append(el("b", "l plain", p.name),
-        el("span", "r", !p.enabled ? `${p.key} yok` : p.hidden ? `gizli · ${p.models.length} model` : `${shown}/${p.models.length} model açık`));
+        el("span", "r", !p.enabled ? (p.name === "chatgpt" ? "giriş yapılmamış (Kurulum → ChatGPT ile giriş)" : `${p.key} yok`) : p.hidden ? `gizli · ${p.models.length} model` : `${shown}/${p.models.length} model açık`));
       const hb = toggle(p.hidden);
       hb.addEventListener("click", async () => { await hideModel(p.name, !p.hidden); showSettings("models"); });
       head.appendChild(hb);
@@ -1345,6 +1345,28 @@ function setupPane(pane) {
       btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : cg.logged_in ? "Hesap ekle" : "Giriş yap",
         () => act("chatgpt_login").then(done()), cg.state !== "running"));
     c2b.appendChild(jobLines(cg));
+    if (cg.logged_in) {
+      // Limit: Codex'in 5 saatlik ve haftalık penceresi (her cevapta güncellenir, "Limiti yenile" ile şimdi sorulur)
+      const lim = cg.limits || {};
+      const fmtReset = (t) => { if (!t) return ""; const m = Math.max(0, Math.round((t * 1000 - Date.now()) / 60000));
+        return m >= 60 * 24 ? ` · ${Math.round(m / 1440)} gün sonra sıfırlanır` : m >= 60 ? ` · ${Math.floor(m / 60)} sa ${m % 60} dk sonra sıfırlanır` : ` · ${m} dk sonra sıfırlanır`; };
+      const winName = (w) => !w.window_minutes ? "limit" : w.window_minutes >= 60 * 24 * 6 ? "haftalık" : w.window_minutes >= 60 ? `${Math.round(w.window_minutes / 60)} saatlik` : `${w.window_minutes} dk'lık`;
+      for (const key of ["primary", "secondary"]) {
+        const w = lim[key];
+        if (!w) continue;
+        const it = el("div", "auto-line");
+        const bar = el("div", "enroll-meter dl");
+        bar.appendChild(el("i")).style.width = Math.min(100, w.used_percent) + "%";
+        it.append(el("span", "", winName(w)), el("small", "", `%${Math.round(w.used_percent)} kullanıldı${fmtReset(w.reset_at)}`), bar);
+        c2b.appendChild(it);
+      }
+      const row = el("div", "auto-line");
+      row.append(el("small", "", (lim.primary || lim.secondary) ? "" : "Limit henüz bilinmiyor."),
+        btn("Limiti yenile", () => act("chatgpt_usage").then(done())));
+      c2b.appendChild(row);
+      if ((cg.models || []).length) c2b.appendChild(el("small", "enroll-note",
+        `Modeller: ${cg.models.join(", ")}. Sohbetin altındaki model menüsünden seç ya da Otomatik bırak.`));
+    }
     // Kayıtlı hesaplar: tek tıkla geç ya da kaldır
     for (const a of cg.accounts || []) {
       const it = el("div", "auto-line");

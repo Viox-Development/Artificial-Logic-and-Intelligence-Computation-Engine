@@ -212,3 +212,46 @@ def test_switching_clears_previous_account_limit():
     assert p.action("chatgpt_use", {"key": "acc1"})["ok"] and chatgpt.load_auth()["email"] == "a@b.c"
     assert router.cooldown_until == {"g:m": 9e9} and not router.dead_providers
     assert not p.action("chatgpt_use", {"key": "yok"})["ok"]
+
+
+def test_limits_from_headers_usage_endpoint_and_model_menu():
+    chatgpt.save_auth(tokens())
+    lim = chatgpt.limits_from_headers(httpx.Headers({"x-codex-primary-used-percent": "40",
+                                                     "x-codex-primary-window-minutes": "300",
+                                                     "x-codex-primary-reset-after-seconds": "3600",
+                                                     "x-codex-secondary-used-percent": "12",
+                                                     "x-codex-secondary-window-minutes": "10080"}))
+    chatgpt.save_limits(lim)
+    assert chatgpt.limit_note() == "5 sa: %40 · haftalık: %12"
+    assert chatgpt.status()["limits"]["primary"]["reset_at"] > time.time()
+
+    def handler(req):
+        if req.url.path.endswith("/wham/usage"):
+            return httpx.Response(200, json={"plan_type": "free", "rate_limit": {
+                "primary_window": {"used_percent": 75, "limit_window_seconds": 18000, "reset_after_seconds": 60}}})
+        return httpx.Response(200, json={"models": [{"slug": "gpt-5.5"}, {"slug": "gizli", "visibility": "hide"}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert chatgpt.fetch_usage(client)["primary"]["used_percent"] == 75
+    assert ChatGPTProvider(pc(), client=client).list_models() == [{"id": "gpt-5.5", "context_length": None}]
+    assert chatgpt.cached_models() == ["gpt-5.5"]
+
+    from alice.providers.router import Router
+
+    cfg = make_config({"brain": ["a:m"]}, {"chatgpt": dict(__import__("alice.config", fromlist=["x"])
+                                                          .default_config_dict()["providers"]["chatgpt"])})
+    view = {p["name"]: p for p in Router(cfg, provider_factory=lambda p: None, auto_cache={}).catalog_view()}
+    assert [m["ref"] for m in view["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]  # ölçülmeden menüde
+    assert view["chatgpt"]["note"] == "5 sa: %75"
+
+
+def test_stream_records_limit_headers():
+    chatgpt.save_auth(tokens())
+
+    def handler(req):
+        return httpx.Response(200, headers={"x-codex-primary-used-percent": "5", "x-codex-primary-window-minutes": "300"},
+                              content=sse({"type": "response.output_text.delta", "delta": "ok"}))
+
+    ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler))).chat(
+        "gpt-5.5", [{"role": "user", "content": "x"}])
+    assert chatgpt.limit_note() == "5 sa: %5"

@@ -151,6 +151,67 @@ def remove(key: str | None = None) -> bool:
     return True
 
 
+def _update_active(**fields: Any) -> None:
+    st = _store()
+    acc = st["accounts"].get(st["active"])
+    if acc is None:
+        return
+    acc.update(fields)
+    _write(st)
+
+
+def cached_models() -> list[str]:
+    """Seçili hesabın son okunan model listesi (model menüsünde ölçülmeden de görünsün)."""
+    return [str(m) for m in load_auth().get("models") or []]
+
+
+def _window(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    used = raw.get("used_percent")
+    if used is None:
+        return None
+    secs = raw.get("limit_window_seconds") or (float(raw.get("window_minutes") or 0) * 60)
+    reset = raw.get("reset_after_seconds")
+    reset_at = raw.get("reset_at") or (time.time() + float(reset) if reset is not None else None)
+    return {"used_percent": round(float(used), 1), "window_minutes": round(float(secs or 0) / 60),
+            "reset_at": float(reset_at) if reset_at else None}
+
+
+def limits_from_headers(headers: Any) -> dict[str, Any] | None:
+    """Codex her cevapta limit durumunu başlıklarda yolluyor (x-codex-primary-used-percent...)."""
+    out: dict[str, Any] = {}
+    for name in ("primary", "secondary"):
+        used = headers.get(f"x-codex-{name}-used-percent")
+        if used is None:
+            continue
+        try:
+            out[name] = _window({"used_percent": float(used),
+                                 "window_minutes": float(headers.get(f"x-codex-{name}-window-minutes") or 0),
+                                 "reset_after_seconds": float(headers.get(f"x-codex-{name}-reset-after-seconds") or 0)})
+        except ValueError:
+            continue
+    return out or None
+
+
+def limit_note() -> str:
+    """Model menüsü için kısa limit özeti: '5 sa: %40 · haftalık: %12'."""
+    lim = load_auth().get("limits") or {}
+    parts = []
+    for key in ("primary", "secondary"):
+        w = lim.get(key)
+        if not w:
+            continue
+        mins = int(w.get("window_minutes") or 0)
+        name = "haftalık" if mins >= 6 * 24 * 60 else f"{round(mins / 60)} sa" if mins >= 60 else f"{mins} dk"
+        parts.append(f"{name}: %{round(w.get('used_percent') or 0)}")
+    return " · ".join(parts)
+
+
+def save_limits(limits: dict[str, Any]) -> None:
+    _update_active(limits={**limits, "updated": time.time()})
+
+
 def logged_in() -> bool:
     a = load_auth()
     return bool(a.get("refresh_token") or a.get("access_token"))
@@ -162,7 +223,38 @@ def logout() -> bool:
 
 def status() -> dict[str, Any]:
     a = load_auth()
-    return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", ""), "accounts": accounts()}
+    return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", ""), "accounts": accounts(),
+            "models": cached_models(), "limits": a.get("limits") or {}}
+
+
+USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"  # Codex'in /status ekranının okuduğu limit durumu
+
+
+def fetch_usage(client: httpx.Client | None = None) -> dict[str, Any]:
+    """Limit durumunu şimdi sor (model çağırmadan). Olmazsa son cevaptan okunanla yetinilir."""
+    c = client or httpx.Client(timeout=20.0)
+    try:
+        a = access(c)
+        h = {"Authorization": f"Bearer {a['access_token']}", "originator": "codex_cli_rs"}
+        if a.get("account_id"):
+            h["chatgpt-account-id"] = a["account_id"]
+        r = c.get(USAGE_URL, headers=h)
+    except _TRANSPORT_ERRORS as e:
+        raise _transport_error(e) from e
+    finally:
+        if client is None:
+            c.close()
+    if r.status_code != 200:
+        raise classify_error(r.status_code, r.text, dict(r.headers))
+    data = r.json() if r.content else {}
+    rl = (data.get("rate_limit") or data) if isinstance(data, dict) else {}
+    limits = {k: w for k, w in (("primary", _window(rl.get("primary_window") or rl.get("primary"))),
+                                ("secondary", _window(rl.get("secondary_window") or rl.get("secondary")))) if w}
+    if isinstance(data, dict) and data.get("plan_type"):
+        _update_active(plan=data["plan_type"])
+    if limits:
+        save_limits(limits)
+    return limits
 
 
 def refresh(client: httpx.Client | None = None) -> dict[str, Any]:
@@ -389,6 +481,8 @@ class ChatGPTProvider(OpenAICompatProvider):
             slug = m.get("slug") or m.get("id") if isinstance(m, dict) else m
             if slug and (not isinstance(m, dict) or m.get("visibility", "list") != "hide"):
                 out.append({"id": str(slug), "context_length": (m.get("context_window") if isinstance(m, dict) else None)})
+        if out:
+            _update_active(models=[m["id"] for m in out])
         return out
 
     def chat(self, model, messages, tools=None, temperature=None, max_tokens=None, response_format=None, extra=None):
@@ -424,6 +518,9 @@ class ChatGPTProvider(OpenAICompatProvider):
         try:
             with self._client.stream("POST", f"{self.cfg.base_url}/responses", headers=self._auth_headers(),
                                      json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=15.0)) as r:
+                lim = limits_from_headers(r.headers)
+                if lim:
+                    save_limits(lim)
                 if r.status_code != 200:
                     r.read()
                     raise classify_error(r.status_code, r.text, dict(r.headers))

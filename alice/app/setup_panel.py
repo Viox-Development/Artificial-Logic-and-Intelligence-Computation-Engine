@@ -131,7 +131,7 @@ class SetupPanel:
     # ------------------------------------------------------------------ işlemler
     ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
                "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut", "chatgpt_login",
-               "chatgpt_logout", "chatgpt_use"}
+               "chatgpt_logout", "chatgpt_use", "chatgpt_usage"}
 
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action) if action in self.ACTIONS else None
@@ -251,8 +251,12 @@ class SetupPanel:
             info = chatgpt.login(emit=job.say)
             self._chatgpt_reset()
             job.say(f"giriş tamam: {info.get('email') or 'ChatGPT hesabı'} ({info.get('plan') or 'plan bilinmiyor'})")
-            job.say("modelleri sıraya almak için 'Ücretsiz modelleri ölç'e bas")
-            return {"email": info.get("email", ""), "plan": info.get("plan", "")}
+            models = self._chatgpt_models(job)
+            try:
+                chatgpt.fetch_usage()
+            except Exception:  # noqa: BLE001 - limit ilk cevapta da öğrenilir
+                pass
+            return {"email": info.get("email", ""), "plan": info.get("plan", ""), "models": models}
 
         return self.chatgpt.start(run)
 
@@ -271,6 +275,35 @@ class SetupPanel:
             return {"ok": False, "error": "hesap yok"}
         self._chatgpt_reset()
         return {"ok": True}
+
+    def _chatgpt_models(self, job: Job | None = None) -> list[str]:
+        """Hesabın açabildiği modelleri oku: model menüsünde hemen görünsünler."""
+        from alice.providers.chatgpt import ChatGPTProvider
+
+        pc = (getattr(self.router, "providers_cfg", None) or {}).get("chatgpt")
+        if pc is None:
+            return []
+        try:
+            models = [m["id"] for m in ChatGPTProvider(pc).list_models()]
+        except Exception as e:  # noqa: BLE001 - ekranda göster
+            if job:
+                job.say(f"model listesi alınamadı: {e}")
+            return []
+        if job:
+            job.say(f"{len(models)} model açık: {', '.join(models[:6])}. Model menüsünden seçebilirsin; otomatik "
+                    "sıraya girmeleri için 'Yeniden ölç'.")
+        return models
+
+    def _chatgpt_usage(self, d: dict[str, Any]) -> dict[str, Any]:
+        from alice.providers import chatgpt
+
+        try:
+            limits = chatgpt.fetch_usage()
+        except Exception as e:  # noqa: BLE001 - son bilinen kalır
+            return {"ok": False, "error": f"limit okunamadı: {e}"}
+        if not chatgpt.cached_models():
+            self._chatgpt_models()
+        return {"ok": True, "limits": limits}
 
     def _chatgpt_reset(self) -> None:
         r = self.router

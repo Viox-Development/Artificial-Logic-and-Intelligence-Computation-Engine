@@ -363,6 +363,11 @@ class Router:
         res = self.auto_cache.get("results") or {}
         dead = self._cached_dead()
         refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
+        cg = self.providers_cfg.get("chatgpt")
+        if cg is not None and cg.auth == "chatgpt" and cg.enabled:
+            from alice.providers.chatgpt import cached_models
+
+            refs.update(f"chatgpt:{m}" for m in cached_models())  # girişten sonra ölçülmeden de seçilebilsin
         for role in self.config.roles:
             try:
                 refs.update(self.chain(role))
@@ -380,8 +385,13 @@ class Router:
                              "hidden": ref in hidden, "quality": r.get("quality", ranking.quality(ref)),
                              "latency": round(float(r.get("latency") or 0), 1), "tested": bool(r)})
             rows.sort(key=lambda x: (-x["quality"], x["latency"] or 99, x["ref"]))
-            out.append({"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
-                        "key": pc.api_key_env, "models": rows})
+            entry = {"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
+                     "key": pc.api_key_env, "models": rows}
+            if pc.auth == "chatgpt":
+                from alice.providers.chatgpt import limit_note
+
+                entry.update(key="ChatGPT girişi", note=limit_note() if pc.enabled else "")
+            out.append(entry)
         return out
 
     def reload_auto(self, cache: dict[str, Any] | None = None) -> None:
