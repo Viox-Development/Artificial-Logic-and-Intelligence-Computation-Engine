@@ -241,6 +241,47 @@ PROBE_TIMEOUT = 30.0  # sn: "Hepsini dene"de bir sağlayıcı en fazla bu kadar 
 PROBE_TOKENS = 512  # düşünen modeller (GLM Flash) önce düşünür; 50 token'da cevaba gelmeden kesiliyordu
 
 
+# Krediyle çalışan sağlayıcıda (Vercel) test için en ucuz görünen model: kalıp sırası önemli.
+CHEAP_HINTS = ("flash-lite", "nano", "haiku", "mini", "small", "flash", "8b")
+
+
+def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) -> list[str]:
+    """Bir sağlayıcıyı denemek için aday modeller (sırayla, en fazla limit): rolde yazılı olan, son ölçümde
+    çalışanlar, ölçülmüş diğerleri, yoksa sağlayıcının canlı kataloğundan. Hiç ölçülmemiş sağlayıcı (SambaNova)
+    önceden "atlandı" görünüyordu; bir model yoğunsa (Z.ai) kardeşi denenmeden kırmızı çıkıyordu."""
+    from alice.providers import ranking
+
+    out: list[str] = [explicit] if explicit else []
+    try:
+        results = (ranking.load_cache() or {}).get("results") or {}
+    except Exception:  # noqa: BLE001
+        results = {}
+    mine = [r for r in results.values() if str(r.get("ref", "")).startswith(name + ":")]
+    for r in sorted(mine, key=lambda r: (not r.get("ok"), -float(r.get("quality") or 0))):
+        if r.get("error_kind") not in ("not_found", "auth"):
+            out.append(str(r["ref"]))
+    out += [f"{name}:{m}" for m in (getattr(pc, "models", None) or [])]
+    if len(set(out)) < limit:
+        try:
+            ids = [str(m.get("id") or m.get("name") or "").removeprefix("models/")
+                   for m in router.client(name).list_models()]
+        except Exception:  # noqa: BLE001 - katalog alınamazsa elimizdekiyle dene
+            ids = []
+        ids = [i for i in ids if i and not any(x in i.lower() for x in ranking.EXCLUDE)]
+        if not getattr(pc, "auto", True):  # krediyle: en ucuz görüneni
+            def cheap(i: str) -> int:
+                return next((n for n, h in enumerate(CHEAP_HINTS) if h in i.lower()), len(CHEAP_HINTS))
+            ids.sort(key=cheap)
+        else:
+            ids.sort(key=lambda i: -(ranking.quality(f"{name}:{i}") or ranking.UNKNOWN_QUALITY))
+        out += [f"{name}:{i}" for i in ids]
+    seen: list[str] = []
+    for ref in out:
+        if ref not in seen:
+            seen.append(ref)
+    return seen[:limit]
+
+
 def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
     """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
@@ -260,36 +301,49 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
         key = "gerekmez" if not pc.needs_key else ("var" if pc.api_key else "yok")
         row = {"name": name, "key": key, "env": pc.api_key_env or "", "model": "", "status": "off", "detail": ""}
         rows.append(row)
-        if not getattr(pc, "auto", True) and name not in explicit:
-            row["detail"] = "krediyle çalışır, test edilmedi (elle seçilir)"
-            continue
         if not pc.enabled:
             row["detail"] = (f"anahtar yok ({pc.api_key_env})" if key == "yok"
                              else "hesap kimliği eksik" if "${" in pc.base_url else "kapalı")
             continue
-        ref = test_ref(router, name, pc, explicit.get(name, ""))
-        if not ref:
-            row["detail"] = "anahtar var ama hangi modelinin çalıştığı henüz bilinmiyor: Modeller → Yeniden ölç"
+        credit = not getattr(pc, "auto", True)
+        refs = test_refs(router, name, pc, explicit.get(name, ""), limit=1 if credit else 3)
+        if not refs:
+            row["detail"] = "anahtar var ama model listesi alınamadı (adres ya da anahtar yanlış olabilir)"
             continue
-        emit(f"{name} deneniyor…")
-        row["model"] = ref
-        t0 = time.monotonic()
-        try:
-            res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=PROBE_TOKENS)
-            row.update(status="ok", detail=f"{time.monotonic() - t0:.1f} sn")
-        except AllProvidersFailed as e:
-            err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
-            if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
-                row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
-            elif err.startswith(("[rate_limit]", "[server]")):
-                row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); ALICE "
-                                                 "sıradaki modelle devam eder")
-            elif "zaman aşımı" in err:
-                row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
-                                                 "ALICE bir süre sıradaki modelle devam eder")
-            else:
-                row.update(status="fail", detail=err[:200])
-        else:
+        tried: list[str] = []
+        for ref in refs:
+            emit(f"{name} deneniyor ({ref.split(':', 1)[1]})…")
+            row["model"] = ref
+            t0 = time.monotonic()
+            try:
+                res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=PROBE_TOKENS)
+            except AllProvidersFailed as e:
+                err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
+                tried.append(f"{ref.split(':', 1)[1]}: {err[:90]}")
+                if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
+                    row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
+                    break
+                if err.startswith("[auth]"):
+                    row.update(status="fail", detail="anahtar reddedildi: Ayarlar → Anahtarlar'dan kontrol et")
+                    break
+                if err.startswith(("[rate_limit]", "[server]")):
+                    row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); "
+                                                     "ALICE sıradaki modelle devam eder")
+                elif "zaman aşımı" in err:
+                    row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
+                                                     "ALICE bir süre sıradaki modelle devam eder")
+                else:
+                    row.update(status="fail", detail=err[:200])
+                continue
             if not (res.text or "").strip():
+                tried.append(f"{ref.split(':', 1)[1]}: boş cevap")
                 row.update(status="fail", detail="boş cevap döndü")
+                continue
+            row.update(status="ok", detail=f"{time.monotonic() - t0:.1f} sn" + (" · kredi harcar (çok az)" if credit
+                                                                                   else ""))
+            break
+        if row["status"] != "ok" and len(tried) > 1:
+            row["detail"] += " · denenenler: " + "; ".join(tried)
+        elif row["status"] == "ok" and tried:
+            row["detail"] += f" · ilk denenen olmadı ({tried[0][:60]})"
     return rows

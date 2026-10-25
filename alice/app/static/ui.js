@@ -1432,6 +1432,89 @@ function setupPane(pane) {
   }
   load();
 }
+/* Ayarlar > Modeller > Puanlama: her model zekâ / hız / ilk kelime / akış'ta 0-100 puan alır; rolün ağırlıklarıyla
+   genel puan çıkar ve otomatik sıra buna göre kurulur. Ağırlık değişince modeller tekrar ölçülmeden sıra yenilenir. */
+const ROLE_NAMES = { brain: "Ana model", voice: "Sesli", fast: "Hızlı işler", vision: "Görsel" };
+const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış" };
+let scoreRole = "brain";
+function scorePane() {
+  const box = el("div", "score-pane");
+  let data = null;
+  let timer = null;
+  const draw = () => {
+    if (!data) return;
+    box.replaceChildren();
+    box.appendChild(el("div", "sec", "Puanlama"));
+    box.appendChild(el("p", "", "Her model dört ölçütte 0-100 puan alır. Rol için hangisinin ne kadar önemli olduğunu sürgülerle "
+      + "ayarla; otomatik sıra buna göre kurulur (modeller tekrar ölçülmez)." + (data.probed_at ? " Son ölçüm: " + data.probed_at.replace("T", " ") + "." : "")));
+    box.appendChild(segmented(Object.entries(ROLE_NAMES), scoreRole, (r) => { scoreRole = r; draw(); }));
+    const w = data.weights[scoreRole];
+    const total = Object.values(w).reduce((a, b) => a + b, 0) || 1;
+    const sliders = el("div", "score-weights");
+    for (const [k, label] of Object.entries(data.metrics)) {
+      const row = el("label", "score-w");
+      const name = el("span", "score-wn", METRIC_SHORT[k]);
+      name.title = label;
+      const inp = el("input");
+      inp.type = "range"; inp.min = "0"; inp.max = "100"; inp.step = "5"; inp.value = String(w[k]);
+      const pct = el("span", "score-wp", Math.round(100 * w[k] / total) + "%");
+      inp.addEventListener("input", () => {
+        w[k] = Number(inp.value);
+        const t = Object.values(w).reduce((a, b) => a + b, 0) || 1;
+        sliders.querySelectorAll(".score-wp").forEach((el_, i) => { el_.textContent = Math.round(100 * w[Object.keys(data.metrics)[i]] / t) + "%"; });
+        clearTimeout(timer);
+        timer = setTimeout(() => api("/api/setup/action", { action: "weights_set", role: scoreRole, weights: w }).then((r) => {
+          if (r && r.ok) { data = r; draw(); } else toast((r && r.error) || "kaydedilemedi");
+        }), 400);
+      });
+      row.append(name, inp, pct);
+      sliders.appendChild(row);
+    }
+    const reset = el("button", "btn", "Varsayılana dön");
+    reset.addEventListener("click", () => api("/api/setup/action", { action: "weights_set", role: scoreRole, reset: true })
+      .then((r) => { if (r && r.ok) { data = r; draw(); toast(ROLE_NAMES[scoreRole] + " ağırlıkları varsayılana döndü"); } }));
+    sliders.appendChild(reset);
+    box.appendChild(sliders);
+    const chain = data.chains[scoreRole] || [];
+    const rows = data.rows.filter((r) => r.ok).sort((a, b) => (b.scores[scoreRole] || 0) - (a.scores[scoreRole] || 0));
+    if (!rows.length) {
+      box.appendChild(el("p", "", "Henüz ölçüm yok: Ayarlar → Kurulum → Ücretsiz modelleri ölç."));
+      return;
+    }
+    const table = el("div", "score-table");
+    const head = el("div", "score-row head");
+    head.append(el("span", "score-m", "Model"), ...Object.keys(data.metrics).map((k) => el("span", "score-c", METRIC_SHORT[k])), el("span", "score-c total", "Genel"));
+    table.appendChild(head);
+    for (const r of rows.slice(0, 25)) {
+      const row = el("div", "score-row" + (chain.includes(r.ref) ? " in" : ""));
+      const m = el("span", "score-m");
+      const pos = chain.indexOf(r.ref);
+      const why = pos < 0 && r.why ? r.why[scoreRole] : "";
+      m.append(el("b", "", (pos >= 0 ? pos + 1 + ". " : "") + r.ref.split(":").slice(1).join(":")), el("small", why ? "why" : "", r.ref.split(":")[0]
+        + (why ? " · sırada değil: " + why : ` · ${Number(r.latency || 0).toFixed(1)} sn · ilk kelime ${Number(r.ttft || 0).toFixed(1)} sn · ${Math.round(r.tps || 0)} tok/sn`)));
+      if (why) m.title = "Sırada değil: " + why;
+      row.appendChild(m);
+      for (const k of Object.keys(data.metrics)) {
+        const v = r.metrics[k];
+        const c = el("span", "score-c");
+        const bar = el("i");
+        bar.style.width = Math.round(v) + "%";
+        c.append(bar, el("em", "", k === "zeka" && !r.known ? "?" : String(Math.round(v))));
+        if (k === "zeka" && !r.known) c.title = "Bu modelin zekâ puanı bilinmiyor (tabloda yok); varsayılan 45";
+        row.appendChild(c);
+      }
+      row.appendChild(el("span", "score-c total", String(Math.round(r.scores[scoreRole] || 0))));
+      table.appendChild(row);
+    }
+    box.appendChild(table);
+    const failed = data.rows.filter((r) => !r.ok);
+    if (failed.length) box.appendChild(el("small", "enroll-note", `${failed.length} model ölçümde çalışmadı (` +
+      [...new Set(failed.map((r) => r.error || "?"))].join(", ") + "); sıraya girmez."));
+    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden."));
+  };
+  api("/api/models/scores").then((d) => { data = d; draw(); });
+  return box;
+}
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
   const d = data || {};
@@ -1678,6 +1761,7 @@ async function showSettings(tab) {
       pane.appendChild(setRow("Düşünme", (THINK[S.status.thinking] || ["", ""])[1],
         segmented(Object.entries(THINK).map(([k, [l]]) => [k, l]), S.status.thinking, (v) => setThinking(v))));
       const names = { brain: "Ana model", fast: "Hızlı işler", vision: "Görsel" };
+      pane.appendChild(scorePane());
       modelsPane(pane, data.all);
       for (const [role, rows] of Object.entries(data.models || {})) {
         pane.appendChild(el("div", "sec", (names[role] || role) + " sırası"));

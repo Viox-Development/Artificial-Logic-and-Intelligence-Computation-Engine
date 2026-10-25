@@ -635,13 +635,26 @@ def test_cache_helpers(tmp_path):
 
 
 def test_scores():
-    fast = Probe("a:x", True, 60, latency=0.1, ttft=0.1)
+    # Ağırlıklı puan: dört ölçüt 0-100, rolün ağırlıklarıyla.
+    fast = Probe("a:x", True, 60, latency=0.1, ttft=0.1, tps=300)
     slow = Probe("a:y", True, 60, latency=10, ttft=4)
-    assert ranking.fast_score(fast) == pytest.approx(40 + 18)  # 30/0.25 = 120 -> 40 ile sınırlı
-    assert ranking.fast_score(slow) == pytest.approx(3 + 18)
-    assert ranking.brain_score_of(90, 2) == 90 and ranking.brain_score_of(90, 13) == 75
-    assert ranking.brain_score_of(90, 100) == 60  # ceza en çok 30
-    assert ranking.voice_score(slow) == 0
+    assert ranking.metric_scores(fast) == {"zeka": 60, "hiz": 100, "tepki": 100, "akis": 100}
+    m = ranking.metric_scores(slow)
+    assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 0
+    assert ranking.fast_score(fast) > ranking.fast_score(slow) + 40
+    assert ranking.brain_score_of(90, 2) > ranking.brain_score_of(90, 13) > ranking.brain_score_of(90, 100)
+    assert ranking.voice_score(fast) - ranking.voice_score(slow) > ranking.brain_score(fast) - ranking.brain_score(slow)
+
+
+def test_weights_change_order_and_are_saved():
+    smart_slow = Probe("a:smart", True, 95, latency=4, ttft=1)
+    quick = Probe("a:quick", True, 60, latency=1, ttft=0.3, tps=200)
+    assert ranking.brain_score(smart_slow) > ranking.brain_score(quick)
+    w = ranking.load_weights()
+    w["brain"] = {"zeka": 20, "hiz": 60, "tepki": 10, "akis": 10}
+    ranking.save_weights(w)
+    assert ranking.brain_score(quick) > ranking.brain_score(smart_slow)  # kayıttan okunur
+    assert ranking.load_weights()["voice"] == ranking.DEFAULT_WEIGHTS["voice"]
 
 
 def test_vision_backups_one_per_provider():
@@ -680,7 +693,8 @@ def test_candidates_filters_catalogs():
     assert errors == {"groq": "GROQ_KEY tanımlı değil", "nvidia": "401 yetkisiz"}
     assert catalog["gemini"] == ["bilinmeyen", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-3.8-flash-tts"]
     gem = [r for r in refs if r.startswith("gemini:")]
-    assert gem == ["gemini:gemini-3.8-flash", "gemini:gemini-2.5-pro"]  # kaliteye göre, tts ve bilinmeyen yok
+    # kaliteye göre; tts hiç yok, bilinmeyen model en sonda yine ölçülür (SambaNova'nın modelleri hiç denenmiyordu)
+    assert gem == ["gemini:gemini-3.8-flash", "gemini:gemini-2.5-pro", "gemini:bilinmeyen"]
     orr = [r for r in refs if r.startswith("openrouter:")]
     assert len(orr) == ranking.PROVIDER_CAP["openrouter"]  # günlük ortak kota: en çok 6 aday
     assert not any("glm-5" in r or "kimi" in r for r in orr)  # araç desteklemeyen ve ücretli olan yok

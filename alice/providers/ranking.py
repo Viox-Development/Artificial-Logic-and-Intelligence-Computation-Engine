@@ -38,7 +38,11 @@ QUALITY: list[tuple[str, int]] = [
     ("north-mini-code", 72), ("devstral", 72), ("mistral-medium", 72), ("gemma-4-31b", 68), ("ling-3", 66),
     ("gemma-4-26b", 64), ("nemotron-3.5-lightning", 62), ("gpt-oss-20b", 60), ("laguna-xs", 58),
     ("llama-4", 60), ("mistral-small", 58), ("qwen3:8b", 40),
+    ("deepseek-v3", 84), ("qwen3-235b", 82), ("qwen3-32b", 70),
 ]
+# Tabloda olmayan model: yine ölçülür (SambaNova gibi sağlayıcıların modelleri hiç denenmiyordu), ama zekâsı
+# bilinmediği için bu puanla ana/ses zincirine (60+) girmez; ekranda "zekâ bilinmiyor" diye görünür.
+UNKNOWN_QUALITY = 45
 # Sohbet/araç işi yapmayan ya da ajan için uygun olmayan modeller.
 EXCLUDE = ("openrouter/free", "openrouter/auto", "tts", "image", "embed", "live", "audio", "guard", "safety",
            "reward", "parse", "translate", "transcribe", "robotics", "computer-use", "lyria", "veo", "banana",
@@ -164,6 +168,8 @@ def candidates(router, per_provider: int = PER_PROVIDER) -> tuple[list[str], dic
                                     for m in models} - {""})
         for f in (_openrouter(models) if name == "openrouter" else _generic(name, models)):
             q = quality(f.ref)
+            if q == 0 and not any(x in f.ref.lower() for x in EXCLUDE) and name != "openrouter":
+                q = UNKNOWN_QUALITY  # OpenRouter'ın yüzlerce bilinmeyen modeli ölçümü boğmasın
             if q > 0 and f.tools is not False:
                 by_provider.setdefault(name, []).append((q, f.ref))
     out = []
@@ -196,7 +202,7 @@ def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: 
         {"role": "system", "content": "You are ALICE, an agent on the user's Windows PC. Use tools to act."},
         {"role": "user", "content": PROBE_PROMPT},
     ], gemini=is_gemini(pc))
-    res = Probe(ref, False, quality(ref))
+    res = Probe(ref, False, quality(ref) or UNKNOWN_QUALITY)
     first: list[float] = []
     t0 = time.monotonic()
     try:
@@ -276,26 +282,87 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
 
 
 # -------------------------------------------------------------------- sıralama
-def brain_score(pr: Probe) -> float:
-    return brain_score_of(pr.quality, pr.latency)
+# Her model dört ölçütte 0-100 puan alır; rolün ağırlıklarıyla genel puan çıkar. Ağırlıklar uygulamada
+# (Ayarlar → Modeller → Puanlama) değiştirilebilir, ~/.alice/model-weights.json'a yazılır.
+METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi bitirme süresi)",
+           "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)"}
+DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
+    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık da pahalı.
+    "brain": {"zeka": 70, "hiz": 20, "tepki": 5, "akis": 5},
+    # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli.
+    "voice": {"zeka": 45, "hiz": 10, "tepki": 40, "akis": 5},
+    # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin.
+    "fast": {"zeka": 30, "hiz": 55, "tepki": 10, "akis": 5},
+    "vision": {"zeka": 70, "hiz": 20, "tepki": 5, "akis": 5},
+}
 
 
-def brain_score_of(quality: float, latency: float) -> float:
-    # Ajan bir işte 10-20 kez model çağırıyor: 3 sn üstündeki her saniye kaliteden 1,5 puan götürür.
-    # (Önce 20 sn sonrası cezalıydı; ~8 sn'lik NVIDIA glm-5.3 zincirin başında kalıyor, basit iş 4 dk sürüyordu.)
-    slow = max(0.0, latency - SLOW)
-    return quality - min(30.0, slow * 1.5)
+def weights_path() -> Path:
+    return alice_home() / "model-weights.json"
 
 
-def fast_score(pr: Probe) -> float:
-    # Hızlı rol: kalite yeterliyse süreye göre. 1 sn ~ +30, 10 sn ~ +3.
-    return min(40.0, 30.0 / max(pr.latency, 0.25)) + pr.quality * 0.3
+def load_weights() -> dict[str, dict[str, float]]:
+    out = {role: dict(w) for role, w in DEFAULT_WEIGHTS.items()}
+    try:
+        saved = json.loads(weights_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    for role, w in (saved if isinstance(saved, dict) else {}).items():
+        if role in out and isinstance(w, dict):
+            for k, v in w.items():
+                if k in METRICS and isinstance(v, (int, float)) and 0 <= v <= 100:
+                    out[role][k] = float(v)
+    return out
 
 
-def voice_score(pr: Probe) -> float:
-    # Sesli asistan: ilk kelimeye kadar geçen süre (TTFT) her saniye 15 puan götürür. Ölçümdeki TTFT kısa
-    # istekle; gerçek sesli istekte (uzun sistem istemi) yavaş modeller 5-10 kat yavaşlıyor.
-    return pr.quality - pr.ttft * 15
+def save_weights(weights: dict[str, dict[str, float]]) -> None:
+    p = weights_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(weights, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _get(r: Any, key: str) -> float:
+    v = r.get(key) if isinstance(r, dict) else getattr(r, key, 0)
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def metric_scores(r: Any) -> dict[str, float]:
+    """Ölçüm sonucundan (Probe ya da önbellekteki sözlük) 0-100 alt puanlar. Eğriler yumuşak: 1 sn -> 2 sn farkı
+    8 sn -> 9 sn farkından çok daha önemli."""
+    lat, ttft, tps = _get(r, "latency"), _get(r, "ttft"), _get(r, "tps")
+    return {
+        "zeka": max(0.0, min(100.0, _get(r, "quality"))),
+        "hiz": round(100 / (1 + max(0.0, lat - 1) / 4), 1),        # 1 sn 100, 3 sn 67, 5 sn 50, 13 sn 25
+        "tepki": round(100 / (1 + max(0.0, ttft - 0.3) / 1.0), 1),  # 0,3 sn 100, 0,8 sn 67, 1,3 sn 50, 5 sn 18
+        "akis": round(min(100.0, tps / 1.5), 1),                     # 150 token/sn ve üstü 100
+    }
+
+
+def role_score(r: Any, role: str = "brain", weights: dict[str, dict[str, float]] | None = None) -> float:
+    w = (weights or load_weights()).get(role) or DEFAULT_WEIGHTS.get(role) or DEFAULT_WEIGHTS["brain"]
+    total = sum(w.values()) or 1.0
+    m = metric_scores(r)
+    return round(sum(m[k] * w.get(k, 0) for k in METRICS) / total, 1)
+
+
+def brain_score(pr: Probe, weights: dict[str, dict[str, float]] | None = None) -> float:
+    return role_score(pr, "brain", weights)
+
+
+def brain_score_of(quality: float, latency: float, ttft: float = 0.0, tps: float = 0.0,
+                   weights: dict[str, dict[str, float]] | None = None) -> float:
+    return role_score({"quality": quality, "latency": latency, "ttft": ttft, "tps": tps}, "brain", weights)
+
+
+def fast_score(pr: Probe, weights: dict[str, dict[str, float]] | None = None) -> float:
+    return role_score(pr, "fast", weights)
+
+
+def voice_score(pr: Probe, weights: dict[str, dict[str, float]] | None = None) -> float:
+    return role_score(pr, "voice", weights)
 
 
 def _diversify(ranked: list[Probe], score: Callable[[Probe], float], gap: float = 12.0) -> list[Probe]:
@@ -322,8 +389,7 @@ def vision_backups(results: dict[str, Any], providers_cfg: dict[str, Any], have:
     bir) yedek olarak sona eklenir."""
     used = {r.split(":", 1)[0] for r in have}
     out: list[str] = []
-    for ref, r in sorted(results.items(), key=lambda kv: -brain_score_of(kv[1].get("quality", 0),
-                                                                          kv[1].get("latency", 0))):
+    for ref, r in sorted(results.items(), key=lambda kv: -role_score(kv[1], "vision")):
         prov, _, model = ref.partition(":")
         pc = providers_cfg.get(prov)
         if (len(out) < limit and r.get("ok") and prov not in used and ref not in have and pc
@@ -333,7 +399,22 @@ def vision_backups(results: dict[str, Any], providers_cfg: dict[str, Any], have:
     return out
 
 
-def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int = 10) -> dict[str, list[str]]:
+def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int = 10,
+                 weights: dict[str, dict[str, float]] | None = None) -> dict[str, list[str]]:
+    weights = weights or load_weights()
+
+    def brain_score(r: Probe) -> float:
+        return role_score(r, "brain", weights)
+
+    def voice_score(r: Probe) -> float:
+        return role_score(r, "voice", weights)
+
+    def fast_score(r: Probe) -> float:
+        return role_score(r, "fast", weights)
+
+    def vision_score(r: Probe) -> float:
+        return role_score(r, "vision", weights)
+
     ok = [r for r in results if r.ok and r.quality > 0]
 
     def provider_cfg(ref: str):
@@ -361,7 +442,7 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
     fast = [r for r in ok if r.quality >= 55 and r.latency <= 15]
     fast.sort(key=lambda r: -fast_score(r))
     vision = [r for r in ok if (pc := provider_cfg(r.ref)) and pc.supports_vision(r.ref.split(":", 1)[1])]
-    vision.sort(key=lambda r: -brain_score(r))
+    vision.sort(key=lambda r: -vision_score(r))
     vision = vision[:4]
     vision += [next(r for r in ok if r.ref == ref) for ref in vision_backups(
         {r.ref: asdict(r) for r in ok}, providers_cfg, [r.ref for r in vision])]
@@ -395,6 +476,64 @@ def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | N
     except OSError:
         pass
     return cache
+
+
+def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Path | None = None) -> dict[str, Any]:
+    """Son ölçümün sonuçlarıyla zincirleri yeniden kur (yeni ağırlıklar): modelleri tekrar ölçmeden."""
+    cache = load_cache(path)
+    results = []
+    for d in (cache.get("results") or {}).values():
+        try:
+            results.append(Probe(**{k: v for k, v in d.items() if k in Probe.__dataclass_fields__}))
+        except TypeError:
+            continue
+    if not results:
+        return cache
+    cache["chains"] = build_chains(results, router.providers_cfg, weights=weights)
+    p = path or cache_path()
+    try:
+        p.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    router.reload_auto(cache)
+    return cache
+
+
+def left_out(r: dict[str, Any], role: str, providers_cfg: dict[str, Any] | None) -> str:
+    """Puanı yüksek olsa da model bu rolün sırasına neden girmiyor (build_chains'in koşulları)."""
+    q, lat = float(r.get("quality") or 0), float(r.get("latency") or 0)
+    prov, _, model = str(r.get("ref", "")).partition(":")
+    pc = (providers_cfg or {}).get(prov)
+    if not quality(str(r.get("ref", ""))):
+        return "zekâ puanı bilinmiyor"
+    if role in ("brain", "voice") and q < 60:
+        return "zekâ 60'ın altında"
+    if role == "brain" and pc is not None and pc.max_input_tokens < 16000:
+        return f"bağlamı küçük ({pc.max_input_tokens // 1000}K), ana modelin isteğine sığmaz"
+    if role == "fast" and (q < 55 or lat > 15):
+        return "yeterince iyi ya da hızlı değil"
+    if role == "vision" and pc is not None and not pc.supports_vision(model):
+        return "görsel desteklemiyor"
+    return "sıranın sonuna sığmadı"
+
+
+def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str, float]] | None = None,
+                providers_cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Ekrandaki puan tablosu: her model için alt puanlar, rol başına genel puan ve sıraya girmediyse nedeni."""
+    cache = load_cache() if cache is None else cache
+    weights = weights or load_weights()
+    chains = cache.get("chains") or {}
+    rows = []
+    for ref, r in (cache.get("results") or {}).items():
+        row = {"ref": ref, "ok": bool(r.get("ok")), "error": r.get("error_kind") or "",
+               "known": quality(ref) > 0, "latency": r.get("latency"), "ttft": r.get("ttft"), "tps": r.get("tps"),
+               "metrics": metric_scores(r)}
+        row["scores"] = {role: role_score(r, role, weights) for role in DEFAULT_WEIGHTS} if row["ok"] else {}
+        row["why"] = {role: left_out({**r, "ref": ref}, role, providers_cfg) for role in DEFAULT_WEIGHTS
+                      if row["ok"] and ref not in (chains.get(role) or [])}
+        rows.append(row)
+    rows.sort(key=lambda x: (not x["ok"], -(x["scores"].get("brain") or 0)))
+    return rows
 
 
 _refreshing = threading.Lock()

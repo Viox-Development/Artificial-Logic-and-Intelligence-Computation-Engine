@@ -126,7 +126,7 @@ class SetupPanel:
                 "mission": m.name if m else ""}
 
     # ------------------------------------------------------------------ işlemler
-    ACTIONS = {"doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
+    ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
                "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut"}
 
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
@@ -176,6 +176,36 @@ class SetupPanel:
                     "total": len(cache.get("results") or {})}
 
         return self.models.start(run)
+
+    def scores_view(self) -> dict[str, Any]:
+        from alice.providers import ranking
+
+        cache = ranking.load_cache()
+        weights = ranking.load_weights()
+        return {"metrics": ranking.METRICS, "weights": weights, "defaults": ranking.DEFAULT_WEIGHTS,
+                "rows": ranking.score_table(cache, weights, self.router.providers_cfg), "chains": cache.get("chains") or {},
+                "probed_at": cache.get("probed_at", ""), "state": self.models.view()["state"]}
+
+    def _weights_set(self, d: dict[str, Any]) -> dict[str, Any]:
+        """Bir rolün ağırlıklarını kaydet (ya da varsayılana dön) ve zincirleri son ölçümden yeniden kur."""
+        from alice.providers import ranking
+
+        weights = ranking.load_weights()
+        role = str(d.get("role", ""))
+        if d.get("reset"):
+            weights = {r: dict(w) for r, w in ranking.DEFAULT_WEIGHTS.items()} if not role else \
+                {**weights, role: dict(ranking.DEFAULT_WEIGHTS[role])}
+        else:
+            if role not in ranking.DEFAULT_WEIGHTS:
+                return {"ok": False, "error": f"bilinmeyen rol: {role}"}
+            new = d.get("weights") or {}
+            vals = {k: float(new.get(k, weights[role][k])) for k in ranking.METRICS}
+            if any(not 0 <= v <= 100 for v in vals.values()) or not sum(vals.values()):
+                return {"ok": False, "error": "ağırlıklar 0-100 arası olmalı, hepsi sıfır olamaz"}
+            weights[role] = vals
+        ranking.save_weights(weights)
+        ranking.rebuild(self.router, weights)
+        return {"ok": True, **self.scores_view()}
 
     def _models_auto(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.cli import write_roles

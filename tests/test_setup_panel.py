@@ -217,7 +217,7 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
     assert rows["zai"]["status"] == "ok" and seen["zai"] == PROBE_TOKENS >= 400  # düşünen model cevaba ulaşsın
     assert rows["nvidia"]["status"] == "fail" and "cevap vermedi" in rows["nvidia"]["detail"]
     assert rows["ollama"]["status"] == "off" and "kurmadıysan sorun değil" in rows["ollama"]["detail"]
-    assert rows["samba"]["status"] == "off" and "Yeniden ölç" in rows["samba"]["detail"]
+    assert rows["samba"]["status"] == "off" and "model listesi alınamadı" in rows["samba"]["detail"]
     assert rows["mistral"]["status"] == "off" and rows["mistral"]["detail"].count("MK") == 1
     assert rows["busy"]["status"] == "warn" and "geçici" in rows["busy"]["detail"]
 
@@ -245,3 +245,95 @@ def test_timed_out_model_is_skipped_for_ten_minutes():
     assert left > router_mod.TIMEOUT_COOLDOWN - 5  # 30 sn değil: her istekte zaman aşımını baştan beklemesin
     rt.chat("brain", [{"role": "user", "content": "y"}])
     assert calls == ["a", "b", "b"]
+
+
+def test_probe_uses_catalog_tries_siblings_and_cheapest_credit_model(monkeypatch):
+    # Kullanıcı: "SambaNova'yı, Z.ai'yi, Vercel'i neden kullanamıyorum, neden istek atmıyor?"
+    from alice.doctor import probe_providers
+    from alice.providers import ranking
+    from alice.providers.openai_compat import ProviderError
+    from tests.conftest import FakeProvider
+
+    monkeypatch.setattr(ranking, "load_cache", lambda path=None: {})
+    for k in ("SK", "ZK", "VK"):
+        monkeypatch.setenv(k, "k")
+    prov = {
+        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # hiç ölçülmemiş, sabit listesi yok
+        "zai": {"base_url": "http://z", "api_key_env": "ZK", "models": ["glm-4.7-flash", "glm-4.5-flash"]},
+        "vercel": {"base_url": "http://v", "api_key_env": "VK", "auto": False},
+    }
+    catalogs = {"samba": [{"id": "DeepSeek-V3.1"}, {"id": "Meta-Llama-3.3-70B-Instruct"}, {"id": "Whisper-Large-v3"}],
+                "vercel": [{"id": "anthropic/claude-opus-5"}, {"id": "openai/gpt-5-nano"}, {"id": "google/gemini-3-flash"}]}
+    asked: list[str] = []
+
+    class P(FakeProvider):
+        def list_models(self):
+            return catalogs.get(self.name, [])
+
+    def reply(name):
+        def r(model, messages, tools, **kw):
+            asked.append(f"{name}:{model}")
+            if model == "glm-4.7-flash":
+                return ProviderError("rate_limit", "The service may be temporarily overloaded")
+            return "ok"
+        return r
+
+    rows = {r["name"]: r for r in probe_providers(make_config({"brain": ["auto"]}, prov),
+                                                    factory=lambda pc: P(pc.name, reply(pc.name)))}
+    assert rows["samba"]["status"] == "ok" and rows["samba"]["model"] == "samba:DeepSeek-V3.1"  # katalogdan
+    assert rows["zai"]["status"] == "ok" and rows["zai"]["model"] == "zai:glm-4.5-flash"  # yoğun olanın kardeşi
+    assert "ilk denenen olmadı" in rows["zai"]["detail"]
+    assert rows["vercel"]["status"] == "ok" and rows["vercel"]["model"] == "vercel:openai/gpt-5-nano"  # en ucuz
+    assert "kredi" in rows["vercel"]["detail"] and not any("claude" in a for a in asked)
+
+
+def _seed_cache():
+    from alice.providers import ranking
+
+    results = {
+        "a:glm-5": {"ref": "a:glm-5", "ok": True, "quality": 90, "latency": 9, "ttft": 4, "tps": 30},
+        "b:qwen3.8-27b": {"ref": "b:qwen3.8-27b", "ok": True, "quality": 85, "latency": 1, "ttft": 0.3, "tps": 400},
+        "b:yeni-model": {"ref": "b:yeni-model", "ok": True, "quality": 45, "latency": 1, "ttft": 0.3, "tps": 100},
+        "a:dead": {"ref": "a:dead", "ok": False, "quality": 80, "error_kind": "not_found"},
+    }
+    cache = {"probed_at": "2026-10-25T06:00:00", "probed_ts": 0, "results": results, "chains": {}}
+    ranking.cache_path().parent.mkdir(parents=True, exist_ok=True)
+    ranking.cache_path().write_text(json.dumps(cache), encoding="utf-8")
+
+
+def test_score_table_and_weights_reorder_chains_without_reprobing():
+    from alice.providers import ranking
+
+    _seed_cache()
+    p = panel()
+    p.router.providers_cfg = make_config({"brain": []}, {"a": {"base_url": "http://a", "api_key_env": ""},
+                                                          "b": {"base_url": "http://b", "api_key_env": ""}}).providers()
+    v = p.scores_view()
+    rows = {r["ref"]: r for r in v["rows"]}
+    assert rows["b:yeni-model"]["known"] is False and rows["a:glm-5"]["known"]
+    assert rows["a:dead"]["scores"] == {} and set(rows["a:glm-5"]["scores"]) == set(ranking.DEFAULT_WEIGHTS)
+    r = p.action("weights_set", {"role": "brain", "weights": {"zeka": 100, "hiz": 0, "tepki": 0, "akis": 0}})
+    assert r["ok"] and r["chains"]["brain"][0] == "a:glm-5" and p.router.reloaded  # sadece zekâ
+    r = p.action("weights_set", {"role": "brain", "weights": {"zeka": 10, "hiz": 90, "tepki": 0, "akis": 0}})
+    assert r["chains"]["brain"][0] == "b:qwen3.8-27b"  # hız önde
+    assert ranking.load_weights()["brain"]["hiz"] == 90  # kaydedildi
+    assert "b:yeni-model" not in r["chains"]["brain"]  # zekâsı bilinmeyen model ana sıraya girmez
+    assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0}})["ok"]
+    assert not p.action("weights_set", {"role": "uzay", "weights": {}})["ok"]
+    p.action("weights_set", {"role": "brain", "reset": True})
+    assert ranking.load_weights()["brain"] == ranking.DEFAULT_WEIGHTS["brain"]
+
+
+def test_score_table_says_why_a_model_is_not_in_the_chain():
+    from alice.providers import ranking
+
+    pcs = make_config({"brain": []}, {"a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 128000},
+                                      "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 8000}}).providers()
+    cache = {"chains": {"brain": ["a:glm-5"]}, "results": {
+        "a:glm-5": {"ok": True, "quality": 90, "latency": 2},
+        "b:qwen3.8-27b": {"ok": True, "quality": 85, "latency": 1},
+        "b:yeni": {"ok": True, "quality": 45, "latency": 1}}}
+    rows = {r["ref"]: r for r in ranking.score_table(cache, None, pcs)}
+    assert "brain" not in rows["a:glm-5"]["why"]
+    assert "bağlamı küçük (8K)" in rows["b:qwen3.8-27b"]["why"]["brain"]
+    assert rows["b:yeni"]["why"]["brain"] == "zekâ puanı bilinmiyor"

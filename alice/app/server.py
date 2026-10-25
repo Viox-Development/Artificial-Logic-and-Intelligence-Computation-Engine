@@ -1306,6 +1306,8 @@ def make_handler(state: AppState):
                 return self._json(state.assistant())
             if u.path == "/api/voice":
                 return self._json(state.voice_view())
+            if u.path == "/api/models/scores":
+                return self._json(state.setup.scores_view())
             if u.path == "/api/setup":
                 return self._json(state.setup.view())
             if u.path == "/api/notes":

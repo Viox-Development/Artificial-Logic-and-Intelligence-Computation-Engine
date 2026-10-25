@@ -288,13 +288,13 @@ class Router:
         chains = self.auto_cache.get("chains") or {}
         refs = chains.get(role) or (role == "voice" and chains.get("brain")) or ranking.DEFAULT_AUTO.get(role, [])
         res = self.auto_cache.get("results") or {}
-        if role == "brain" and res:  # önceki ölçümle kurulmuş zinciri güncel hız cezasına göre yeniden diz
-            refs = sorted(refs, key=lambda r: -ranking.brain_score_of(res[r].get("quality", 0), res[r].get("latency", 0))
-                          if r in res else 0)
-        if role == "voice" and not chains.get("voice"):  # eski ölçüm: beyin zincirini ilk kelime hızına göre diz
-            res = self.auto_cache.get("results") or {}
+        if role == "brain" and res:  # önceki ölçümle kurulmuş zinciri güncel puan ağırlıklarına göre yeniden diz
+            w = ranking.load_weights()
+            refs = sorted(refs, key=lambda r: -ranking.role_score(res[r], "brain", w) if r in res else 0)
+        if role == "voice" and not chains.get("voice"):  # eski ölçüm: beyin zincirini ses puanına göre diz
+            w = ranking.load_weights()
             refs = sorted(refs or ranking.DEFAULT_AUTO["brain"],
-                          key=lambda r: -(res[r].get("quality", 0) - res[r].get("ttft", 0) * 15) if r in res else 0)
+                          key=lambda r: -ranking.role_score(res[r], "voice", w) if r in res else 0)
         if role == "vision" and res:
             refs = list(refs) + ranking.vision_backups(res, self.providers_cfg, list(refs))
         return [r for r in refs if r.partition(":")[0] in self.providers_cfg]
