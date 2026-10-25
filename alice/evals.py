@@ -246,6 +246,36 @@ def save_results(outcomes: list[Outcome]) -> dict[str, Any]:
     return {"before": prev.get("passed"), "before_total": prev.get("total"), "fixed": fixed, "broken": broken}
 
 
+def run_all(cases: list[Case], on_case=lambda i, o: None, stop=lambda: False, cfg: Any = None) -> list[Outcome]:
+    """Vakaları "ask" modunda, hafızasız bir ajanla sırayla oynat (komut satırı ve uygulama aynı yolu kullanır)."""
+    from pathlib import Path as _P
+
+    from alice.cli import build
+    from alice.config import load_config
+    from alice.tools import cleanup
+
+    agent, _, ctx = build(cfg or load_config(), _P.home(), "ask")
+    agent.memory = None  # test konuşmaları hafızaya kaydedilmesin (profil sistem isteminde kalır)
+    base_role = agent.role
+
+    def make_agent():
+        agent.messages[:] = agent.messages[:1]
+        agent.role = base_role
+        return agent
+
+    outcomes: list[Outcome] = []
+    try:
+        for i, c in enumerate(cases, 1):
+            if stop():
+                break
+            o = run_case(c, make_agent)
+            outcomes.append(o)
+            on_case(i, o)
+    finally:
+        cleanup(ctx)
+    return outcomes
+
+
 def eval_cmd(argv: list[str]) -> int:
     import argparse
 
@@ -285,37 +315,16 @@ def eval_cmd(argv: list[str]) -> int:
         console.print(f"vaka yok. Eklemek için: alice eval --add \"cümle\" ya da alice eval --from-log 20 "
                       f"({evals_path()})")
         return 1
-    from pathlib import Path as _P
+    def show(i: int, o: Outcome) -> None:
+        mark = "[green]geçti[/]" if o.passed else "[red]kaldı[/]"
+        console.print(f"{i:>2}. {mark} {escape(o.case.label)} [dim]({o.seconds:.1f} sn, {escape(o.model)}, "
+                      f"araçlar: {escape(', '.join(o.tools) or '-')})[/]")
+        for r in o.reasons:
+            console.print(f"     [yellow]{escape(r)}[/]")
+        if not o.passed:
+            console.print(f"     [dim]cevap: {escape(o.reply[:200])}[/]")
 
-    from alice.cli import build
-    from alice.config import load_config
-
-    from alice.tools import cleanup
-
-    cfg = load_config()
-    agent, _, ctx = build(cfg, _P.home(), "ask")
-    agent.memory = None  # test konuşmaları hafızaya kaydedilmesin (profil sistem isteminde kalır)
-    base_role = agent.role
-
-    def make_agent():
-        agent.messages[:] = agent.messages[:1]
-        agent.role = base_role
-        return agent
-
-    outcomes = []
-    try:
-        for i, c in enumerate(cases, 1):
-            o = run_case(c, make_agent)
-            outcomes.append(o)
-            mark = "[green]geçti[/]" if o.passed else "[red]kaldı[/]"
-            console.print(f"{i:>2}. {mark} {escape(c.label)} [dim]({o.seconds:.1f} sn, {escape(o.model)}, "
-                          f"araçlar: {escape(', '.join(o.tools) or '-')})[/]")
-            for r in o.reasons:
-                console.print(f"     [yellow]{escape(r)}[/]")
-            if not o.passed:
-                console.print(f"     [dim]cevap: {escape(o.reply[:200])}[/]")
-    finally:
-        cleanup(ctx)
+    outcomes = run_all(cases, on_case=show)
     cmp = save_results(outcomes)
     passed = sum(o.passed for o in outcomes)
     line = f"\n{passed}/{len(outcomes)} geçti"

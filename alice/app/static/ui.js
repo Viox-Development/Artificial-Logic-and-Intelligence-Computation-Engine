@@ -1049,6 +1049,204 @@ function autoPane(pane) {
   }
   reload();
 }
+/* Ayarlar > Notlar: ALICE'e "not al" dediklerin, sabah özeti ve haftalık rapor (alice notes / brief / report). */
+function scheduleRow(title, sub, info, def, weekdaysOpt, prefix, after) {
+  const row = el("div", "list-row sched-row");
+  const l = el("span", "l");
+  l.append(el("b", "", title), el("small", "", info ? `kurulu: ${info.when}${info.enabled ? "" : " (kapalı)"}` : sub));
+  const at = el("input");
+  at.type = "time";
+  at.value = (info && info.at) || def;
+  const ctl = el("span", "enroll-act");
+  ctl.appendChild(at);
+  let wd = null;
+  if (weekdaysOpt) {
+    wd = el("label", "sched-wd");
+    const c = el("input");
+    c.type = "checkbox";
+    c.checked = !!(info && info.weekdays);
+    wd.append(c, document.createTextNode(" hafta içi"));
+    wd.box = c;
+    ctl.appendChild(wd);
+  }
+  const save = el("button", info ? "btn" : "btn primary", info ? "Güncelle" : "Kur");
+  save.addEventListener("click", () => api("/api/notes/action", { action: prefix + "_install", at: at.value, weekdays: wd ? wd.box.checked : false })
+    .then((r) => { toast(r && r.ok ? title + " kuruldu" : (r && r.error) || "kurulamadı"); after(); }));
+  ctl.appendChild(save);
+  if (info) {
+    const rm = el("button", "btn", "Kaldır");
+    rm.addEventListener("click", () => api("/api/notes/action", { action: prefix + "_remove" }).then(() => { toast(title + " kaldırıldı"); after(); }));
+    ctl.appendChild(rm);
+  }
+  row.append(l, ctl);
+  return row;
+}
+function notesPane(pane) {
+  pane.append(el("h2", "", "Notlar"),
+    el("p", "", "ALICE'e \"not al: ...\" dediklerin burada. Sesle \"dün ne not almıştım\" diye de sorabilirsin."));
+  const add = el("div", "key-edit auto-new");
+  const inp = el("input");
+  inp.type = "text";
+  inp.placeholder = "Yeni not ya da aramak için yaz";
+  const addBtn = el("button", "btn primary", "Not al");
+  add.append(inp, addBtn);
+  const head = el("div");
+  const list = el("div");
+  const tools = el("div");
+  pane.append(add, head, list, tools);
+  let timer = null;
+  const load = () => api("/api/notes?q=" + encodeURIComponent(inp.value.trim())).then((d) => {
+    if (!d) return;
+    head.replaceChildren(el("div", "sec", inp.value.trim() ? `Eşleşen (${d.notes.length})` : `Notlar (${d.total})`));
+    list.replaceChildren();
+    if (!d.notes.length) list.appendChild(el("p", "", inp.value.trim() ? "Eşleşen not yok; \"Not al\" ile ekleyebilirsin." : "Henüz not yok."));
+    for (const n of d.notes) {
+      const row = el("div", "list-row");
+      const l = el("span", "l");
+      l.append(el("b", "", n.text), el("small", "", n.when));
+      const del = el("button", "btn", "Sil");
+      del.addEventListener("click", () => api("/api/notes/action", { action: "remove", ts: n.ts }).then(() => { toast("not silindi"); load(); }));
+      row.append(l, del);
+      list.appendChild(row);
+    }
+    drawTools(d);
+  });
+  const addNote = () => {
+    const text = inp.value.trim();
+    if (!text) return;
+    api("/api/notes/action", { action: "add", text }).then((r) => {
+      if (!r || !r.ok) return toast((r && r.error) || "kaydedilemedi");
+      inp.value = "";
+      toast("not alındı");
+      load();
+    });
+  };
+  addBtn.addEventListener("click", addNote);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") addNote(); });
+  inp.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(load, 250); });
+  const out = el("div");
+  function drawTools(d) {
+    tools.replaceChildren();
+    tools.appendChild(el("div", "sec", "Sabah özeti ve haftalık rapor"));
+    const show = (label, action, extra) => {
+      const b = el("button", "btn", label);
+      b.addEventListener("click", () => {
+        b.disabled = true;
+        const old = b.textContent;
+        b.textContent = "hazırlanıyor…";
+        api("/api/notes/action", Object.assign({ action }, extra || {})).then((r) => {
+          b.disabled = false;
+          b.textContent = old;
+          if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+          out.replaceChildren(el("pre", "mem", r.text));
+          if (r.path) {
+            const o = el("button", "btn", "Sayfayı aç");
+            o.addEventListener("click", () => api("/api/notes/action", { action: "report_show", open: true }));
+            out.appendChild(o);
+          }
+        });
+      });
+      return b;
+    };
+    const br = scheduleRow("Sabah özeti", "Her sabah takvim, hava, gece olanlar ve dünden kalan notlar.", d.brief, "08:00", true, "brief", load);
+    br.querySelector(".enroll-act").prepend(show("Şimdi göster", "brief_show"));
+    const rp = scheduleRow("Haftalık rapor", "Pazar akşamı: sıcaklıklar, disk, en çok bellek yiyenler, uyarılar.", d.report, "20:00", false, "report", load);
+    rp.querySelector(".enroll-act").prepend(show("Şimdi göster", "report_show"));
+    tools.append(br, rp, out);
+  }
+  load();
+}
+/* Ayarlar > Kayıtlar: ALICE'in kime ne gönderdiği, beğenmediğin cevaplar ve test seti (alice log / alice eval). */
+function logsPane(pane) {
+  pane.append(el("h2", "", "Kayıtlar"),
+    el("p", "", "ALICE'in senin adına gönderdikleri ve beğenmediğin cevaplar. Beğenmediğin her cevap test setine eklenir; "
+      + "\"Testleri çalıştır\" o cümleleri yeniden sorar, düzelip düzelmediğini gösterir."));
+  const body = el("div");
+  pane.appendChild(body);
+  let timer = null;
+  const act = (action, extra) => api("/api/logs/action", Object.assign({ action }, extra || {}));
+  const evalBox = el("div", "enroll");
+  const drawEval = (r, d) => {
+    evalBox.replaceChildren();
+    const head = el("div", "enroll-head");
+    const l = el("span", "l");
+    const last = d && d.last_run ? ` · son çalıştırma ${d.last_run.when}: ${d.last_run.passed}/${d.last_run.total} geçti` : "";
+    l.append(el("b", "", "Test seti"), el("small", "", `${d ? d.cases : "?"} vaka${last}`));
+    const ctl = el("span", "enroll-act");
+    if (r.state === "running") {
+      const stop = el("button", "btn", "Durdur");
+      stop.addEventListener("click", () => act("eval_stop").then(poll));
+      ctl.appendChild(stop);
+    } else {
+      const add = el("button", "btn", "voice.log'dan ekle");
+      add.title = "Son 20 sesli isteğini vaka olarak ekle";
+      add.addEventListener("click", () => act("eval_from_log", { n: 20 }).then((x) => { toast(x && x.ok ? `${x.added} vaka eklendi` : "eklenemedi"); refresh(); }));
+      const open = el("button", "btn", "Dosyayı aç");
+      open.addEventListener("click", () => act("eval_open").then((x) => { if (!x || !x.ok) toast((x && x.error) || "açılamadı"); }));
+      const run = el("button", "btn primary", "Testleri çalıştır");
+      run.addEventListener("click", () => act("eval_run").then((x) => { if (!x || !x.ok) toast((x && x.error) || "başlamadı"); poll(); }));
+      ctl.append(add, open, run);
+    }
+    head.append(l, ctl);
+    evalBox.appendChild(head);
+    if (r.state === "running") {
+      const meter = el("div", "enroll-meter dl");
+      const bar = el("i");
+      bar.style.width = Math.round(100 * r.done / Math.max(1, r.total)) + "%";
+      meter.appendChild(bar);
+      meter.style.marginTop = "12px";
+      evalBox.append(meter, el("small", "enroll-note", `${r.done}/${r.total} · şimdi: ${r.current || "…"}`));
+    } else if (r.summary) {
+      evalBox.appendChild(el("div", "enroll-result " + (r.state === "error" ? "bad" : ""), r.summary));
+    }
+    for (const x of r.results || []) {
+      const it = el("div", "auto-line");
+      it.append(el("span", x.passed ? "ok" : "", x.passed ? "✓" : "✗"), el("b", "", x.label),
+        el("small", "", `${x.seconds} sn · ${x.model || "?"}` + (x.passed ? "" : " · " + x.reasons.join("; ") + " · cevap: " + x.reply)));
+      evalBox.appendChild(it);
+    }
+    return r.state === "running";
+  };
+  let last = null;
+  function poll() {
+    clearTimeout(timer);
+    api("/api/logs/eval").then((r) => {
+      if (!r || !evalBox.isConnected) return;
+      if (drawEval(r, last)) timer = setTimeout(poll, 1000);
+      else if (r.state === "done" || r.state === "stopped") refresh();
+    });
+  }
+  function refresh() {
+    api("/api/logs").then((d) => {
+      if (!d) return;
+      last = d;
+      body.replaceChildren();
+      body.appendChild(el("div", "sec", `Gönderilenler (${d.sent.length})`));
+      if (!d.sent.length) body.appendChild(el("p", "", "ALICE henüz kimseye bir şey göndermedi."));
+      for (const r of d.sent) {
+        const row = el("div", "list-row" + (r.outcome === "sent" ? "" : " warn"));
+        const l = el("span", "l");
+        l.append(el("b", "", r.summary), el("small", "", `${r.when} · ${r.tool} · ${r.status}` + (r.detail && r.outcome !== "sent" ? " — " + r.detail : "")));
+        row.append(el("span", "chk " + (r.outcome === "sent" ? "ok" : "warn"), r.outcome === "sent" ? "✓" : "!"), l);
+        body.appendChild(row);
+      }
+      body.appendChild(el("div", "sec", `Beğenmediğin cevaplar (${d.feedback.length})`));
+      if (!d.feedback.length) body.appendChild(el("p", "", "Yok. Sohbette cevabın altındaki 👎 ya da sesle \"bu cevap kötüydü\"."));
+      for (const f of d.feedback) {
+        const row = el("div", "list-row");
+        const l = el("span", "l");
+        l.append(el("b", "", f.say || "?"), el("small", "", `${f.when}${f.source ? " · " + f.source : ""} · cevap: ${f.reply}` + (f.note ? " · not: " + f.note : "")));
+        row.appendChild(l);
+        body.appendChild(row);
+      }
+      body.appendChild(el("div", "sec", "Test seti"));
+      body.appendChild(evalBox);
+      drawEval(d.run, d);
+      if (d.run.state === "running") poll();
+    });
+  }
+  refresh();
+}
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
   const d = data || {};
@@ -1237,7 +1435,7 @@ function connectPane(pane, data) {
 
 const SETTINGS_TABS = [
   ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
-  ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term], ["auto", "Otomasyon", IC.list],
+  ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term], ["auto", "Otomasyon", IC.list], ["notes", "Notlar", IC.sun], ["logs", "Kayıtlar", IC.check],
   ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
 ];
@@ -1333,6 +1531,10 @@ async function showSettings(tab) {
       systemPane(pane);
     } else if (tab === "auto") {
       autoPane(pane);
+    } else if (tab === "notes") {
+      notesPane(pane);
+    } else if (tab === "logs") {
+      logsPane(pane);
     } else if (tab === "apikeys") {
       keysPane(pane, data.apikeys);
     } else if (tab === "connect") {

@@ -1379,7 +1379,7 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 
 /* Ayarlar > Otomasyon */
 .auto-new { margin: 4px 0 10px; }
-.auto-new .key-edit { display: flex; gap: 6px; }
+.auto-new .key-edit, .key-edit.auto-new { display: flex; gap: 6px; }
 .auto-new input[type=text] { flex: 1; margin: 0; }
 .auto-preview { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 10px; background: var(--panel); }
 .auto-preview .sec { margin-top: 0; }
@@ -1394,3 +1394,9 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .auto-result div { white-space: pre-wrap; margin-top: 4px; color: var(--text); }
 .auto-verdicts { margin-top: 6px; }
 .auto-verdicts .auto-line > span:first-child { min-width: 14px; }
+
+/* Ayarlar > Notlar */
+.sched-row { flex-wrap: wrap; }
+.sched-row .l { flex: 1 1 240px; }
+.sched-row input[type=time] { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: var(--raised); color: var(--text); font: inherit; }
+.sched-wd { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }

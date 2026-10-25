@@ -593,6 +593,17 @@ class AppState:
         set_config_value("voice", "tts_cloud", f"gemini:{name}")
         return {"ok": True}
 
+    _journal = None
+
+    @property
+    def journal(self):
+        """Ayarlar → Notlar ve Kayıtlar."""
+        if self._journal is None:
+            from alice.app.journal import Journal
+
+            self._journal = Journal(self.cfg)
+        return self._journal
+
     _automations = None
 
     @property
@@ -1280,6 +1291,12 @@ def make_handler(state: AppState):
                 return self._json(state.assistant())
             if u.path == "/api/voice":
                 return self._json(state.voice_view())
+            if u.path == "/api/notes":
+                return self._json(state.journal.notes_view((q.get("q") or [""])[0]))
+            if u.path == "/api/logs":
+                return self._json(state.journal.logs_view())
+            if u.path == "/api/logs/eval":
+                return self._json(state.journal.eval_view())
             if u.path == "/api/automations":
                 return self._json(state.automations.view())
             if u.path == "/api/system":
@@ -1376,6 +1393,12 @@ def make_handler(state: AppState):
                     return self._json({"ok": ok}, 200 if ok else 400)
                 if p == "/api/voice/preview":
                     r = state.voice_preview(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/notes/action":
+                    r = state.journal.notes_action(str(d.get("action", "")), d)
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/logs/action":
+                    r = state.journal.logs_action(str(d.get("action", "")), d)
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/automations/action":
                     r = state.automations.action(str(d.get("action", "")), d)

@@ -69,3 +69,15 @@ def remove_last() -> Note | None:
     path().write_text("".join(json.dumps({"ts": n.ts, "text": n.text}, ensure_ascii=False) + "\n" for n in notes),
                       encoding="utf-8")
     return last
+
+
+def remove(ts: float) -> Note | None:
+    """Zaman damgasıyla tek bir notu sil (uygulamadaki Sil)."""
+    notes = all_notes()
+    hit = next((n for n in notes if abs(n.ts - ts) < 1e-6), None)
+    if hit is None:
+        return None
+    notes.remove(hit)
+    path().write_text("".join(json.dumps({"ts": n.ts, "text": n.text}, ensure_ascii=False) + "\n" for n in notes),
+                      encoding="utf-8")
+    return hit
