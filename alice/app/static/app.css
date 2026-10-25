@@ -1368,3 +1368,11 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .enroll-result { margin-top: 10px; font-weight: 500; }
 .enroll-result.good { color: var(--ok); }
 .enroll-result.bad { color: var(--err); }
+
+/* Ayarlar > Çekirdek */
+.sys-state { align-items: center; }
+.sys-state .l { flex: 1 1 220px; min-width: 0; }
+.sys-spin { width: 16px; height: 16px; border: 2px solid var(--line-strong); border-top-color: var(--text); border-radius: 50%; animation: sysspin .8s linear infinite; }
+@keyframes sysspin { to { transform: rotate(360deg); } }
+.mic-test { margin-top: 8px; }
+.ev-row small { overflow-wrap: anywhere; }

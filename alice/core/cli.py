@@ -54,6 +54,8 @@ def core_cmd(argv: list[str]) -> int:
         announce_update(core, updater)
         voice = _start_voice(cfg, core) if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv else None
         core.greeter.voice = voice  # karşılamadan sonra "Hey Alice" demeden cevap verilebilsin
+        if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv:
+            core.voice = "listening" if voice is not None else "no-mic"
         sims = _start_sims(cfg, core) if "--once" not in argv else None
         phone = _start_phone(cfg, core) if cfg.data.get("phone", {}).get("enabled") and "--once" not in argv else None
         quick = _start_quick(cfg) if cfg.data.get("quick", {}).get("enabled", True) and "--once" not in argv else None

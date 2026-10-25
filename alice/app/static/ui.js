@@ -765,6 +765,141 @@ function enrollCard() {
   poll();
   return card;
 }
+/* Ayarlar > Çekirdek: arka plandaki ALICE (bildirimler, görevler, "Hey Alice") ve sesli asistan. Komut satırındaki
+   alice core status/install/mode ve alice voice on/off/test burada düğme. Durum birkaç saniyede bir tazelenir. */
+const MODE_LABELS = { auto: "Otomatik", normal: "Normal", dev: "Geliştirme", flight: "Uçuş", quiet: "Sessiz" };
+function systemPane(pane) {
+  pane.append(el("h2", "", "Çekirdek"),
+    el("p", "", "ALICE'in arka planda çalışan kısmı: \"Hey Alice\" dinleme, bildirimler, zamanlanmış görevler, "
+      + "kurallar. Tepsideki ALICE simgesi odur. Bu pencereyi kapatsan da çalışmaya devam eder."));
+  const body = el("div");
+  pane.appendChild(body);
+  const mic = micTestCard();  // tek kart: durum tazelenirken süren test sıfırlanmasın
+  let timer = null;
+  const act = (action, extra, msg) => api("/api/system/action", Object.assign({ action }, extra || {})).then((r) => {
+    if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+    if (msg) toast(msg);
+    load();
+  });
+  const btn = (label, action, extra, primary, msg) => {
+    const b = el("button", primary ? "btn primary" : "btn", label);
+    b.addEventListener("click", () => { b.disabled = true; act(action, extra, msg); });
+    return b;
+  };
+  const draw = (d) => {
+    body.replaceChildren();
+    const c = d.core || {};
+    const v = d.voice || {};
+    // Durum
+    const st = el("div", "list-row sys-state");
+    const l = el("span", "l");
+    const state = c.busy ? c.busy + "…" : c.running ? "Çalışıyor" : "Çalışmıyor";
+    const voiceTxt = !c.running ? "" : c.voice === "listening" ? " · \"Hey Alice\" dinliyor"
+      : c.voice === "no-mic" ? " · mikrofon bulunamadı, sadece bildirimleri okur" : " · ses kapalı";
+    l.append(el("b", "", state),
+      el("small", "", c.running ? `mod: ${MODE_LABELS[c.mode] || c.mode || "?"}${c.forced ? " (elle sabit)" : ""}${voiceTxt} · pid ${c.pid}`
+        : "Bildirimler, görevler ve sesli asistan çalışmıyor."));
+    const acts = el("span", "enroll-act");
+    if (c.busy) acts.appendChild(el("span", "sys-spin", ""));
+    else if (c.running) acts.append(btn("Yeniden başlat", "restart"), btn("Durdur", "stop"));
+    else acts.appendChild(btn("Başlat", "start", null, true));
+    st.append(el("span", "chk " + (c.running ? "ok" : "off"), c.running ? "●" : "○"), l, acts);
+    body.appendChild(st);
+    body.appendChild(setRow("Windows açılınca başlasın", "Oturum açınca çekirdek kendiliğinden, pencere açmadan başlar.",
+      segmented([[true, "Açık"], [false, "Kapalı"]], !!c.autostart, (on) => act("autostart", { on }, on ? "otomatik başlatma kuruldu" : "otomatik başlatma kaldırıldı"))));
+    body.appendChild(setRow("Mod", "Otomatik: oyun/uçuş/kod açıkken kendisi değiştirir. Elle seçersen öyle kalır.",
+      segmented((d.modes || []).map((m) => [m, MODE_LABELS[m] || m]), c.forced || "auto", (mode) => act("mode", { mode }, "mod: " + (MODE_LABELS[mode] || mode)))));
+    // Ses
+    body.appendChild(el("div", "sec", "Sesli asistan"));
+    body.appendChild(setRow("\"Hey Alice\" ile konuş",
+      "Açınca çekirdek yeniden başlar ve mikrofonu dinlemeye başlar." + (v.ptt_key ? ` Bas-konuş tuşu: ${keyName(v.ptt_key)}.` : ""),
+      segmented([[true, "Açık"], [false, "Kapalı"]], !!v.enabled, (on) => act("voice", { on }, on ? "sesli asistan açılıyor" : "sesli asistan kapatıldı"))));
+    const ok = (x) => x ? "✓" : "✗";
+    body.appendChild(setRow("Mikrofon", (v.mic ? "bulundu" : "bulunamadı") + " · konuşmayı yazıya çeviren: " + ((v.stt || []).join(", ") || "yok (Groq ya da Gemini anahtarı gir)"),
+      el("span", "chk " + (v.mic ? "ok" : "fail"), ok(v.mic))));
+    body.appendChild(mic);
+    // Paketler
+    const missing = (d.packages || []).filter((p) => !p.ok);
+    body.appendChild(el("div", "sec", "Paketler"));
+    for (const p of d.packages || []) {
+      const r = el("div", "list-row");
+      const pl = el("span", "l");
+      pl.append(el("b", "", p.name), el("small", "", p.why));
+      r.append(el("span", "chk " + (p.ok ? "ok" : "off"), p.ok ? "✓" : "–"), pl);
+      body.appendChild(r);
+    }
+    if (missing.length) body.appendChild(el("small", "enroll-note", "Eksikler isteğe bağlı. Kurmak için: pip install \"alice-harness[voice]\""));
+    // Olaylar
+    if ((d.events || []).length) {
+      body.appendChild(el("div", "sec", "Son olaylar"));
+      for (const e of d.events) {
+        const r = el("div", "list-row ev-row");
+        const el_ = el("span", "l");
+        const t = new Date(e.ts * 1000);
+        el_.append(el("b", "", e.title), el("small", "", t.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+          + " · " + e.kind + (e.body ? " · " + e.body : "")));
+        r.append(el("span", "chk " + (e.severity === "warn" || e.severity === "critical" ? "warn" : "off"), "•"), el_);
+        body.appendChild(r);
+      }
+    }
+    return c.busy;
+  };
+  let shown = false;
+  function load() {
+    clearTimeout(timer);
+    api("/api/system").then((d) => {
+      if (!d || (shown && !body.isConnected)) return;
+      shown = true;
+      const busy = draw(d);
+      timer = setTimeout(() => { if (body.isConnected) load(); }, busy ? 800 : 5000);
+    });
+  }
+  load();
+}
+// "<scroll_lock>" -> "Scroll Lock", "<ctrl>+<alt>+a" -> "Ctrl + Alt + A"
+function keyName(k) {
+  return String(k).split("+").map((p) => p.replace(/[<>]/g, "").split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")).join(" + ");
+}
+function micTestCard() {
+  const card = el("div", "enroll mic-test");
+  let timer = null;
+  const draw = (s) => {
+    card.replaceChildren();
+    const head = el("div", "enroll-head");
+    const l = el("span", "l");
+    l.append(el("b", "", "Mikrofon testi"), el("small", "", "5 saniye konuş; ses seviyesini ve ALICE'in ne duyduğunu gösterir."));
+    const b = el("button", "btn", s.state === "listening" ? `dinliyorum… ${Math.ceil(s.left || 0)}` : s.state === "transcribing" ? "yazıya çevriliyor…" : "Test et");
+    b.disabled = s.state === "listening" || s.state === "transcribing";
+    b.addEventListener("click", () => api("/api/system/action", { action: "mic_test" }).then(poll));
+    head.append(l, b);
+    card.appendChild(head);
+    if (s.state === "listening") {
+      const meter = el("div", "enroll-meter hearing");
+      const bar = el("i");
+      bar.style.width = Math.round((s.level || 0) * 100) + "%";
+      meter.appendChild(bar);
+      meter.style.marginTop = "12px";
+      card.appendChild(meter);
+    } else if (s.state === "done" || s.state === "error") {
+      if (s.text) card.appendChild(el("div", "enroll-say small", "“" + s.text + "”"));
+      const note = s.text ? `duyulan${s.engine ? " (" + s.engine + ")" : ""} · en yüksek seviye ${Number(s.peak).toFixed(3)}` : s.message;
+      card.appendChild(el("div", "enroll-result" + (s.text ? " good" : " bad"), note));
+    }
+    return s.state === "listening" || s.state === "transcribing";
+  };
+  let shown = false;
+  function poll() {
+    clearTimeout(timer);
+    api("/api/system/mictest").then((s) => {
+      if (!s || (shown && !card.isConnected)) return;
+      shown = true;
+      if (draw(s)) timer = setTimeout(poll, 150);
+    });
+  }
+  poll();
+  return card;
+}
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
   const d = data || {};
@@ -953,7 +1088,7 @@ function connectPane(pane, data) {
 
 const SETTINGS_TABS = [
   ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
-  ["assistant", "Asistan", IC.shield],
+  ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term],
   ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
 ];
@@ -1045,6 +1180,8 @@ async function showSettings(tab) {
       assistantPane(pane, data.assistant);
     } else if (tab === "voice") {
       voicePane(pane, data.voice);
+    } else if (tab === "system") {
+      systemPane(pane);
     } else if (tab === "apikeys") {
       keysPane(pane, data.apikeys);
     } else if (tab === "connect") {

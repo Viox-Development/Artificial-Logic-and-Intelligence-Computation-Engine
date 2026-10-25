@@ -88,6 +88,25 @@ def force_mode(mode: str | None) -> None:
         p.unlink()
 
 
+def stop_path() -> Path:
+    return alice_home() / "core-stop"
+
+
+def request_stop() -> None:
+    """Çalışan çekirdekten kapanmasını iste (uygulamadaki Durdur / Yeniden başlat). Bir saniye içinde fark eder."""
+    p = stop_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(time.time()), encoding="utf-8")
+
+
+def _take_stop_request() -> bool:
+    try:
+        stop_path().unlink()
+        return True
+    except OSError:
+        return False
+
+
 def read_state() -> dict[str, Any]:
     """Servisin son yazdığı durum. Servis çalışmıyorsa {"running": False}."""
     try:
@@ -135,6 +154,7 @@ class Core:
         self.cfg = cfg
         c = cfg.data.get("core", {})
         self.interval = float(c.get("interval", 15))
+        self.voice = "off"  # core-state.json'a yazılır: "listening" (mikrofon dinleniyor), "no-mic", "off"
         self.retention_days = float(c.get("retention_days", 30))
         self.store = store or Store()
         self.pc = PCMonitor()
@@ -408,7 +428,7 @@ class Core:
     def write_state(self, now: float | None = None) -> None:
         pol: Policy = self.modes.policy
         data = {"pid": os.getpid(), "ts": now or time.time(), "mode": self.modes.current,
-                "forced": self.modes.forced, "policy": asdict(pol), "interval": self.interval}
+                "forced": self.modes.forced, "policy": asdict(pol), "interval": self.interval, "voice": self.voice}
         p = state_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
@@ -418,6 +438,7 @@ class Core:
     # ---------------------------------------------------------------- döngü
     def run_forever(self) -> None:
         self.store.add_event("core", "Çekirdek başladı", severity="info", topic="core")
+        _take_stop_request()  # önceki çekirdeğe gönderilmiş, kullanılmamış istek yenisini kapatmasın
         try:
             while not self.stop_event.is_set():
                 t0 = time.monotonic()
@@ -428,7 +449,12 @@ class Core:
                         self.store.add_event("error", "çekirdek turu hata verdi", repr(e)[:500], "warn", "core")
                     except Exception:  # noqa: BLE001
                         traceback.print_exc()
-                self.stop_event.wait(max(1.0, self.interval - (time.monotonic() - t0)))
+                end = t0 + max(1.0, self.interval)
+                while not self.stop_event.is_set() and time.monotonic() < end:
+                    self.stop_event.wait(min(1.0, max(0.0, end - time.monotonic())))
+                    if _take_stop_request():
+                        self.store.add_event("core", "Çekirdek uygulamadan durduruldu", topic="core")
+                        self.stop()
         finally:
             self.store.add(MODE_KEY, text="off")
             self.store.add_event("core", "Çekirdek durdu", topic="core")
@@ -465,6 +491,16 @@ def release_lock() -> None:
     lock = alice_home() / "core.pid"
     try:
         if lock.read_text().strip() == str(os.getpid()):
+            lock.unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def release_lock_of(pid: Any) -> None:
+    """Dışarıdan kapatılan çekirdeğin kilidini kaldır (kilit o süreçteyse)."""
+    lock = alice_home() / "core.pid"
+    try:
+        if pid and lock.read_text().strip() == str(pid):
             lock.unlink()
     except (OSError, ValueError):
         pass
@@ -512,7 +548,13 @@ def run_tray(core: Core) -> bool:
         pystray.MenuItem("Çık", quit_),
     )
     icon = pystray.Icon("alice", image, "ALICE", menu)
-    threading.Thread(target=core.run_forever, daemon=True).start()
+    def loop() -> None:
+        try:
+            core.run_forever()
+        finally:
+            icon.stop()  # uygulamadan durdurulunca tepsi simgesi de kalksın
+
+    threading.Thread(target=loop, daemon=True).start()
     icon.run()
     return True
 
