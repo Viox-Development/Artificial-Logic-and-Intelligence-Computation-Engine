@@ -291,18 +291,88 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
 # (Ayarlar → Modeller → Puanlama) değiştirilebilir, ~/.alice/model-weights.json'a yazılır.
 METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi bitirme süresi)",
            "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)",
-           "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)"}
+           "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)",
+           "guven": "güvenilirlik (gerçek kullanımda takılmadan, saçmalamadan cevap verme)"}
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
-    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık da pahalı.
+    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık ve takılma da pahalı. Önceden zekâ %60'tı:
+    # çok zeki ama yavaş/takılan modeller (glm-5.3) öne geçip bir iş 5-10 dakika sürüyordu; şimdi ortası iyi olan.
     # Bağlam: ajan uzun dosya/sayfa okuyor, konuşma uzuyor; küçük bağlamlı model işin ortasında sığmaz olur.
-    "brain": {"zeka": 60, "hiz": 20, "tepki": 5, "akis": 5, "baglam": 10},
+    "brain": {"zeka": 45, "hiz": 20, "tepki": 10, "akis": 5, "baglam": 10, "guven": 10},
     # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli; konuşmalar kısa.
-    "voice": {"zeka": 45, "hiz": 10, "tepki": 40, "akis": 5, "baglam": 0},
+    "voice": {"zeka": 40, "hiz": 10, "tepki": 35, "akis": 5, "baglam": 0, "guven": 10},
     # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin; özet için biraz bağlam.
-    "fast": {"zeka": 30, "hiz": 50, "tepki": 10, "akis": 5, "baglam": 5},
+    "fast": {"zeka": 30, "hiz": 45, "tepki": 10, "akis": 5, "baglam": 5, "guven": 5},
     # Görsel: ekran okuma işinde doğruluk önde; bir saniyelik fark daha az önemli.
-    "vision": {"zeka": 65, "hiz": 15, "tepki": 5, "akis": 5, "baglam": 10},
+    "vision": {"zeka": 60, "hiz": 15, "tepki": 5, "akis": 5, "baglam": 10, "guven": 5},
 }
+
+# ------------------------------------------------------------------ gerçek kullanımda güvenilirlik
+# Ölçüm tek bir kısa istek: bir modelin uzun konuşmada takılıp takılmadığını göstermiyor. Router her gerçek
+# çağrının sonucunu buraya yazar; takılan (zaman aşımı), saçmalayan, 5xx veren model puanda geriye düşer.
+# Sayılar haftada yarıya iner: düzelen model zamanla eski yerine döner.
+HEALTH_HALF_LIFE = 7 * 24 * 3600
+BAD_KINDS = ("network", "garbled", "server")  # modelin kendi sorunu; kota/hız sınırı/istek hatası sayılmaz
+UNRELIABLE = (3.0, 0.4)  # en az bu kadar hata ve güvenilirlik bunun altındaysa zincirin sonuna
+_health: dict[str, dict[str, float]] | None = None
+_health_lock = threading.Lock()
+_health_dirty = 0
+
+
+def health_path() -> Path:
+    return alice_home() / "model-health.json"
+
+
+def load_health() -> dict[str, dict[str, float]]:
+    global _health
+    with _health_lock:
+        if _health is None:
+            try:
+                data = json.loads(health_path().read_text(encoding="utf-8"))
+                _health = {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+            except (OSError, ValueError):
+                _health = {}
+        return _health
+
+
+def _decayed(h: dict[str, float], now: float) -> tuple[float, float]:
+    f = 0.5 ** (max(0.0, now - float(h.get("ts", now))) / HEALTH_HALF_LIFE)
+    return float(h.get("ok", 0)) * f, float(h.get("bad", 0)) * f
+
+
+def record_outcome(ref: str, ok: bool, kind: str = "", now: float | None = None) -> None:
+    """Gerçek bir çağrının sonucu. Hatalar hemen, başarılar ara ara diske yazılır."""
+    global _health_dirty
+    if not ok and kind not in BAD_KINDS:
+        return
+    now = time.time() if now is None else now
+    health = load_health()
+    with _health_lock:
+        good, bad = _decayed(health.get(ref, {}), now)
+        health[ref] = {"ok": round(good + ok, 3), "bad": round(bad + (not ok), 3), "ts": now}
+        _health_dirty += 1
+        if ok and _health_dirty < 20:
+            return
+        _health_dirty = 0
+        snapshot = json.dumps(health, ensure_ascii=False)
+    try:
+        health_path().parent.mkdir(parents=True, exist_ok=True)
+        health_path().write_text(snapshot, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def reliability(ref: str, now: float | None = None) -> tuple[float, float]:
+    """(0-1 güvenilirlik, hata sayısı). Veri yoksa 1: ölçümde çalışan model suçsuz sayılır."""
+    h = load_health().get(ref)
+    if not h:
+        return 1.0, 0.0
+    good, bad = _decayed(h, time.time() if now is None else now)
+    return (good + 2) / (good + bad + 2), bad
+
+
+def unreliable(ref: str) -> bool:
+    rel, bad = reliability(ref)
+    return bad >= UNRELIABLE[0] and rel < UNRELIABLE[1]
 
 
 def weights_path() -> Path:
@@ -346,8 +416,9 @@ def context_of(ref: str, providers_cfg: dict[str, Any] | None, catalog: int | No
 
 
 def with_context(r: dict[str, Any], ref: str, providers_cfg: dict[str, Any] | None) -> dict[str, Any]:
-    """Eski ölçümde bağlam yok: sağlayıcının sınırıyla doldur."""
-    return r if r.get("context") else {**r, "context": context_of(ref, providers_cfg)}
+    """Eski ölçümde bağlam yok: sağlayıcının sınırıyla doldur. Gerçek kullanımdaki güvenilirlik de eklenir."""
+    out = r if r.get("context") else {**r, "context": context_of(ref, providers_cfg)}
+    return {**out, "reliability": reliability(ref)[0]}
 
 
 def metric_scores(r: Any) -> dict[str, float]:
@@ -362,7 +433,14 @@ def metric_scores(r: Any) -> dict[str, float]:
         "akis": round(min(100.0, tps / 1.5), 1) if tps > 0 else 50.0,
         # 8K 20, 16K 40, 32K 60, 64K 80, 128K ve üstü 100; bilinmiyorsa orta
         "baglam": (round(max(0.0, min(100.0, 20 * math.log2(ctx / 4000))), 1) if (ctx := _get(r, "context")) else 50.0),
+        # Karesi: 2 başarı 2 takılma (%67) 44, hep takılan (%29) 8. Takılan model zekâsına rağmen geriye düşsün.
+        "guven": round(100 * _rel(r) ** 2, 1),
     }
+
+
+def _rel(r: Any) -> float:
+    v = r.get("reliability") if isinstance(r, dict) else getattr(r, "reliability", None)
+    return 1.0 if v is None else max(0.0, min(1.0, float(v)))
 
 
 def role_score(r: Any, role: str = "brain", weights: dict[str, dict[str, float]] | None = None) -> float:
@@ -428,17 +506,21 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
                  weights: dict[str, dict[str, float]] | None = None) -> dict[str, list[str]]:
     weights = weights or load_weights()
 
+    def live(r: Probe) -> dict[str, Any]:
+        return {**asdict(r), "reliability": reliability(r.ref)[0]}
+
+    # Gerçek kullanımda sık takılan model puanı ne olursa olsun çalışanların arkasına (yedek olarak kalır).
     def brain_score(r: Probe) -> float:
-        return role_score(r, "brain", weights)
+        return role_score(live(r), "brain", weights) - 1000 * unreliable(r.ref)
 
     def voice_score(r: Probe) -> float:
-        return role_score(r, "voice", weights)
+        return role_score(live(r), "voice", weights) - 1000 * unreliable(r.ref)
 
     def fast_score(r: Probe) -> float:
-        return role_score(r, "fast", weights)
+        return role_score(live(r), "fast", weights) - 1000 * unreliable(r.ref)
 
     def vision_score(r: Probe) -> float:
-        return role_score(r, "vision", weights)
+        return role_score(live(r), "vision", weights) - 1000 * unreliable(r.ref)
 
     ok = [r for r in results if r.ok and r.quality > 0]
 

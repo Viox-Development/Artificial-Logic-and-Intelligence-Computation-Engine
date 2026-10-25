@@ -638,7 +638,8 @@ def test_scores():
     # Ağırlıklı puan: dört ölçüt 0-100, rolün ağırlıklarıyla.
     fast = Probe("a:x", True, 60, latency=0.1, ttft=0.1, tps=300)
     slow = Probe("a:y", True, 60, latency=10, ttft=4)
-    assert ranking.metric_scores(fast) == {"zeka": 60, "hiz": 100, "tepki": 100, "akis": 100, "baglam": 50}  # bağlam bilinmiyor
+    assert ranking.metric_scores(fast) == {"zeka": 60, "hiz": 100, "tepki": 100, "akis": 100, "baglam": 50,
+                                            "guven": 100}  # bağlam bilinmiyor
     m = ranking.metric_scores(slow)
     assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 50  # tps 0 = ölçülemedi, ceza değil
     assert ranking.fast_score(fast) > ranking.fast_score(slow) + 40

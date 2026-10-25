@@ -204,3 +204,20 @@ def test_stream_aborts_when_only_keepalives_arrive():
     with pytest.raises(ProviderError) as ei:
         p.chat_stream("m", [], lambda t: None)
     assert ei.value.kind == "network" and "veri göndermiyor" in str(ei.value) and time.monotonic() - t0 < 1.5
+
+
+def test_stream_gives_up_when_first_answer_never_comes():
+    """glm-5.3 (NVIDIA) bağlantıyı açık tutup 5 dakikadan fazla hiç cevap vermedi: ilk veri gelmezse vazgeç,
+    hata 'zaman aşımı' olsun ki router modeli uzun süre atlasın."""
+    class Trickle(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(200):
+                time.sleep(0.01)
+                yield b": OPENROUTER PROCESSING\n\n"
+
+    p = provider(lambda r: httpx.Response(200, stream=Trickle()))
+    p.FIRST_DATA = 0.2
+    t0 = time.monotonic()
+    with pytest.raises(ProviderError) as ei:
+        p.chat_stream("m", [], lambda t: None)
+    assert "zaman aşımı" in str(ei.value) and "ilk" in str(ei.value) and time.monotonic() - t0 < 1.5

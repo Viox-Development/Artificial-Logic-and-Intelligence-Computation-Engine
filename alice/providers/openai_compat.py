@@ -235,6 +235,9 @@ class OpenAICompatProvider:
     # beklerken ": PROCESSING" gibi canlı tutma satırları yollar; bunlar okuma zaman aşımını sıfırladığı için
     # yoksa çağrı saatlerce asılı kalabiliyor.
     STREAM_IDLE = 300.0
+    # İlk gerçek veri (metin, düşünme, araç) bu kadar saniyede gelmezse model takılmış sayılır, sıradakine geçilir.
+    # NVIDIA'daki glm-5.3 bağlantıyı açık tutup hiç cevap vermeden 5 dakikadan fazla bekletiyordu.
+    FIRST_DATA = 90.0
 
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
         self.cfg = cfg
@@ -368,17 +371,21 @@ class OpenAICompatProvider:
         finish = None
         think = ThinkFilter()
         last_data = time.monotonic()
+        got_data = False
         chunks = 0  # çözülebilen SSE parçası sayısı
         done = False
         try:
-            with self._client.stream("POST", f"{self.cfg.base_url}/chat/completions",
-                                     headers=self._headers(), json=body) as r:
+            with self._client.stream("POST", f"{self.cfg.base_url}/chat/completions", headers=self._headers(),
+                                     json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=15.0)) as r:
                 if r.status_code != 200:
                     r.read()
                     raise classify_error(r.status_code, r.text, dict(r.headers))
                 for line in r.iter_lines():
                     if cancel and cancel():
                         raise StreamCancelled()
+                    if not got_data and time.monotonic() - t0 > self.FIRST_DATA:
+                        raise ProviderError("network", f"zaman aşımı: model {int(self.FIRST_DATA)} sn'dir ilk "
+                                                       "cevabı vermedi")
                     if time.monotonic() - last_data > self.STREAM_IDLE:
                         raise ProviderError("network", f"akış {int(self.STREAM_IDLE)} sn'dir veri göndermiyor")
                     if not line or not line.startswith("data:"):
@@ -410,6 +417,7 @@ class OpenAICompatProvider:
                         if delta.get("content") or delta.get("tool_calls") or delta.get("reasoning_content") \
                                 or delta.get("reasoning"):
                             last_data = time.monotonic()
+                            got_data = True
                         if on_first is not None and (delta.get("content") or delta.get("tool_calls")
                                                      or delta.get("reasoning_content") or delta.get("reasoning")):
                             on_first()  # ilk token süresi (model sıralaması için)

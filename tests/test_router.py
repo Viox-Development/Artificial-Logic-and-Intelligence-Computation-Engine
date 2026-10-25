@@ -277,3 +277,15 @@ def test_looks_garbled_spares_real_multilingual_answers():
     assert not looks_garbled("Japonca 'merhaba dünya': こんにちは世界、お元気ですか")
     assert not looks_garbled("Örnek:\n```\nΑΒΓΔΕΖΗΘΙΚ = 漢字漢字漢字漢字漢字\n```\nbu kod çalışır")
     assert not looks_garbled("Pi sayısı π, alfa α, beta β ile gösterilir.")
+
+
+def test_real_calls_are_recorded_for_reliability():
+    from alice.providers import ranking
+
+    cfg = make_config({"brain": ["a:m1", "b:m2"]})
+    r = router_with(cfg, {"a": FakeProvider("a", [ProviderError("network", "zaman aşımı (ReadTimeout)")]),
+                          "b": FakeProvider("b", ["tamam"])})
+    r._real_clients = True  # gerçek sağlayıcılarla çalışıyormuş gibi (testlerde varsayılan kapalı)
+    assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "tamam"
+    assert round(ranking.reliability("a:m1")[1], 3) == 1 and ranking.reliability("b:m2")[1] == 0
+    assert ranking.load_health()["b:m2"]["ok"] == 1

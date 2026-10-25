@@ -318,7 +318,8 @@ def test_score_table_and_weights_reorder_chains_without_reprobing():
     assert r["chains"]["brain"][0] == "b:qwen3.8-27b"  # hız önde
     assert ranking.load_weights()["brain"]["hiz"] == 90  # kaydedildi
     assert "b:yeni-model" not in r["chains"]["brain"]  # zekâsı bilinmeyen model ana sıraya girmez
-    assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0, "baglam": 0}})["ok"]
+    assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0, "baglam": 0,
+                                                                       "guven": 0}})["ok"]
     assert not p.action("weights_set", {"role": "uzay", "weights": {}})["ok"]
     p.action("weights_set", {"role": "brain", "reset": True})
     assert ranking.load_weights()["brain"] == ranking.DEFAULT_WEIGHTS["brain"]

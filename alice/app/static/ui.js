@@ -1442,7 +1442,7 @@ function setupPane(pane) {
 /* Ayarlar > Modeller > Puanlama: her model zekâ / hız / ilk kelime / akış'ta 0-100 puan alır; rolün ağırlıklarıyla
    genel puan çıkar ve otomatik sıra buna göre kurulur. Ağırlık değişince modeller tekrar ölçülmeden sıra yenilenir. */
 const ROLE_NAMES = { brain: "Ana model", voice: "Sesli", fast: "Hızlı işler", vision: "Görsel" };
-const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış", baglam: "Bağlam" };
+const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış", baglam: "Bağlam", guven: "Güven" };
 const kTok = (n) => !n ? "?" : n >= 1000000 ? Math.round(n / 100000) / 10 + "M" : Math.round(n / 1000) + "K";
 let scoreRole = "brain";
 function scorePane() {

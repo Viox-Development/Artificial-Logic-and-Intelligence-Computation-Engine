@@ -167,3 +167,41 @@ def test_backup_with_failed_probe_stays_after_working_models():
         "o:busy": {"ok": False, "quality": 90, "latency": 0, "ttft": 0, "error_kind": "rate_limit"}}}
     r = Router(make_config({"brain": ["auto"]}, PROVIDERS), auto_cache=cache)
     assert r.auto_chain("brain")[-1] == "o:busy"
+
+
+def test_real_use_failures_push_a_hanging_model_back():
+    """glm-5.3 ölçümde zeki ve çalışıyor ama gerçek kullanımda 5 dakika takıldı: puanı düşsün, sona geçsin."""
+    res = [Probe("n:z-ai/glm-5.3", True, 90, latency=3), Probe("g:gemini-3-flash", True, 84, latency=3)]
+    assert build_chains(res, pcs())["brain"][0] == "n:z-ai/glm-5.3"
+    now = time.time()
+    for _ in range(3):
+        ranking.record_outcome("n:z-ai/glm-5.3", False, "network", now=now)
+    ranking.record_outcome("n:z-ai/glm-5.3", False, "rate_limit", now=now)  # kota/hız sınırı modelin suçu değil
+    rel, bad = ranking.reliability("n:z-ai/glm-5.3", now=now)
+    assert bad == 3 and round(rel, 2) == 0.4 and not ranking.unreliable("n:z-ai/glm-5.3")
+    ranking.record_outcome("n:z-ai/glm-5.3", False, "garbled", now=now)
+    assert ranking.unreliable("n:z-ai/glm-5.3")
+    assert build_chains(res, pcs())["brain"] == ["g:gemini-3-flash", "n:z-ai/glm-5.3"]  # yedek olarak kalır
+    assert ranking.health_path().exists()  # hatalar hemen kaydedilir
+    # Bir hafta sonra sayılar yarıya iner; düzelen model eski yerine döner.
+    for _ in range(6):
+        ranking.record_outcome("n:z-ai/glm-5.3", True, now=now + 14 * 24 * 3600)
+    assert not ranking.unreliable("n:z-ai/glm-5.3")
+
+
+def test_reliability_shows_in_scores():
+    r = {"quality": 90, "latency": 3, "reliability": 0.29}
+    assert ranking.metric_scores(r)["guven"] < 10
+    assert ranking.role_score(r, "brain") < ranking.role_score({**r, "reliability": 1.0}, "brain") - 8
+
+
+def test_router_orders_brain_by_reliability(tmp_path):
+    cfg = make_config({"brain": ["auto"]}, PROVIDERS)
+    r = Router(cfg, provider_factory=lambda pc: FakeProvider(pc.name, []), sleep=lambda s: None)
+    r.reload_auto({"chains": {"brain": ["n:z-ai/glm-5.3", "g:gemini-3-flash"]},
+                   "results": {"n:z-ai/glm-5.3": {"ok": True, "quality": 90, "latency": 3},
+                               "g:gemini-3-flash": {"ok": True, "quality": 84, "latency": 3}}})
+    assert r.auto_chain("brain")[0] == "n:z-ai/glm-5.3"
+    for _ in range(5):
+        ranking.record_outcome("n:z-ai/glm-5.3", False, "network")
+    assert r.auto_chain("brain") == ["g:gemini-3-flash", "n:z-ai/glm-5.3"]
