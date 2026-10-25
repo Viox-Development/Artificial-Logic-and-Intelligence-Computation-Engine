@@ -1400,3 +1400,23 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .sched-row .l { flex: 1 1 240px; }
 .sched-row input[type=time] { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: var(--raised); color: var(--text); font: inherit; }
 .sched-wd { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+
+/* Ayarlar > Kurulum */
+.sys-indet { margin-top: 12px; }
+.sys-indet i { width: 35% !important; animation: indet 1.2s ease-in-out infinite; }
+@keyframes indet { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.enroll + .enroll { margin-top: 8px; }
+.enroll .auto-line > span.chk:first-child { min-width: 16px; width: 16px; }
+.enroll .auto-line > b { min-width: 150px; }
+.enroll .auto-line > small { flex: 1 1 260px; }
+.g-step { align-items: center; }
+.g-step > span:first-child { min-width: 140px; }
+.g-step small { flex: 1 1 200px; }
+.g-connect { margin-top: 10px; align-items: center; }
+.g-connect input, .enroll .key-edit input { flex: 1; min-width: 120px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--raised); color: var(--text); font: inherit; }
+.enroll .key-edit { margin-top: 10px; }
+.phone-box { display: flex; gap: 16px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.phone-qr { width: 150px; height: 150px; flex: 0 0 150px; }
+.phone-qr svg { width: 100%; height: 100%; border-radius: 8px; }
+.phone-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; flex: 1 1 220px; }
+.phone-info code { overflow-wrap: anywhere; font-size: 12px; }

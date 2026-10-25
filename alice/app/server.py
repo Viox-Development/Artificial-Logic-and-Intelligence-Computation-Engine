@@ -534,7 +534,7 @@ class AppState:
             if not re.fullmatch(r"[a-z0-9_-]{1,30}", acc):
                 return {"ok": False, "error": "ad sadece harf, rakam, - ve _ olsun (ör. okul)"}
             if not os.environ.get("GOOGLE_CLIENT_ID", "").strip():
-                return {"ok": False, "error": "önce Google kurulumu: terminalde alice setup google"}
+                return {"ok": False, "error": "önce Google kurulumu: Ayarlar → Kurulum → Google"}
 
             def run() -> None:
                 try:
@@ -592,6 +592,17 @@ class AppState:
         set_config_value("voice", "live_voice", name)
         set_config_value("voice", "tts_cloud", f"gemini:{name}")
         return {"ok": True}
+
+    _setup = None
+
+    @property
+    def setup(self):
+        """Ayarlar → Kurulum: doctor, modelleri ölç, Google, telefon, DCS, eklentiler, kısayol."""
+        if self._setup is None:
+            from alice.app.setup_panel import SetupPanel
+
+            self._setup = SetupPanel(self.cfg, self.router, self.system)
+        return self._setup
 
     _journal = None
 
@@ -1291,6 +1302,8 @@ def make_handler(state: AppState):
                 return self._json(state.assistant())
             if u.path == "/api/voice":
                 return self._json(state.voice_view())
+            if u.path == "/api/setup":
+                return self._json(state.setup.view())
             if u.path == "/api/notes":
                 return self._json(state.journal.notes_view((q.get("q") or [""])[0]))
             if u.path == "/api/logs":
@@ -1393,6 +1406,9 @@ def make_handler(state: AppState):
                     return self._json({"ok": ok}, 200 if ok else 400)
                 if p == "/api/voice/preview":
                     r = state.voice_preview(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/setup/action":
+                    r = state.setup.action(str(d.get("action", "")), d)
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/notes/action":
                     r = state.journal.notes_action(str(d.get("action", "")), d)

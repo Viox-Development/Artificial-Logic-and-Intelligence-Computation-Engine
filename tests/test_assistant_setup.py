@@ -139,5 +139,5 @@ def test_assistant_tab_status_settings_rules_and_gmail(app, workdir, isolated_ho
     r = client.post("/api/assistant/action", json={"action": "gmail_connect", "account": "iş"}).json()
     assert not r["ok"] and "harf" in r["error"]
     r = client.post("/api/assistant/action", json={"action": "gmail_connect", "account": "is"}).json()
-    assert not r["ok"] and "alice setup google" in r["error"]
+    assert not r["ok"] and "Kurulum" in r["error"]
 

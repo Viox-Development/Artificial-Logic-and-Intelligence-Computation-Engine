@@ -116,8 +116,8 @@ def check_calendar(cfg) -> Check:
     ok, why = runner.ready(m)
     if ok:
         return Check(name, "ok", "bağlı")
-    fix = "alice setup google" if "GOOGLE_CLIENT_ID" in why or not os.environ.get("GOOGLE_CLIENT_ID") else \
-        "alice connect google_calendar"
+    fix = "Ayarlar → Kurulum → Google (komut: alice setup google)" if "GOOGLE_CLIENT_ID" in why or \
+        not os.environ.get("GOOGLE_CLIENT_ID") else "Ayarlar → Kurulum → Takvimi bağla (komut: alice connect google_calendar)"
     return Check(name, "off", why, fix)
 
 
@@ -128,7 +128,7 @@ def check_gmail(cfg, network: bool = True) -> Check:
 
     accs = gmail.accounts()
     if not accs:
-        return Check(name, "off", "bağlı hesap yok", "alice setup google (ya da alice connect gmail --account <ad>)")
+        return Check(name, "off", "bağlı hesap yok", "Ayarlar → Kurulum → Gmail ekle (komut: alice setup google)")
     parts, bad = [], []
     for acc in accs:
         email = store.get(gmail.PREFIX + acc).get("email", "")
@@ -140,7 +140,7 @@ def check_gmail(cfg, network: bool = True) -> Check:
                 continue
         parts.append(f"{acc}" + (f" ({email})" if email else ""))
     if bad:
-        return Check(name, "warn", "; ".join(parts + bad), "bozuk hesabı tekrar bağla: alice connect gmail --account <ad>")
+        return Check(name, "warn", "; ".join(parts + bad), "bozuk hesabı tekrar bağla: Ayarlar → Kurulum → Gmail ekle (aynı ad)")
     return Check(name, "ok", ", ".join(parts))
 
 

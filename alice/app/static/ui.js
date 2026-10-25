@@ -619,7 +619,13 @@ function assistantPane(pane, data) {
     row.appendChild(inp);
     pane.appendChild(row);
   } else {
-    pane.appendChild(el("p", "", "Google kurulumu yapılmamış. Terminalde: alice setup google (adım adım, sayfaları kendisi açar)."));
+    const g = el("div", "list-row warn");
+    const gl = el("span", "l");
+    gl.append(el("b", "", "Google kurulumu yapılmamış"), el("small", "", "Takvim ve Gmail için adım adım kurulum, sayfaları kendisi açar."));
+    const gb = el("button", "btn primary", "Kuruluma git");
+    gb.addEventListener("click", () => showSettings("setup"));
+    g.append(gl, gb);
+    pane.appendChild(g);
   }
   pane.appendChild(el("div", "sec", "Skill'ler ve alt ajanlar"));
   const items = [...(d.skills || []).map((x) => ["skill", x]), ...(d.agents || []).map((x) => ["alt ajan", x])];
@@ -1247,6 +1253,178 @@ function logsPane(pane) {
   }
   refresh();
 }
+/* Ayarlar > Kurulum: sağlayıcıları dene (doctor), modelleri ölç, Google, telefon, DCS, eklentiler, kısayol. */
+function setupPane(pane) {
+  pane.append(el("h2", "", "Kurulum"),
+    el("p", "", "Bir kere yapılan işler ve sorun giderme. Bir şey çalışmıyorsa önce \"Hepsini dene\"."));
+  const body = el("div");
+  pane.appendChild(body);
+  const act = (action, extra) => api("/api/setup/action", Object.assign({ action }, extra || {}));
+  const done = (msg) => (r) => { if (!r || !r.ok) toast((r && r.error) || "olmadı"); else if (msg) toast(typeof msg === "function" ? msg(r) : msg); load(); };
+  const btn = (label, fn, primary) => { const b = el("button", primary ? "btn primary" : "btn", label); b.addEventListener("click", () => { b.disabled = true; fn(); }); return b; };
+  const card = (title, sub, ...acts) => {
+    const c = el("div", "enroll");
+    const h = el("div", "enroll-head");
+    const l = el("span", "l");
+    l.append(el("b", "", title), el("small", "", sub));
+    const a = el("span", "enroll-act");
+    a.append(...acts);
+    h.append(l, a);
+    c.appendChild(h);
+    return c;
+  };
+  const jobLines = (j) => {
+    const box = el("div");
+    if (j.state === "running") {
+      box.appendChild(el("div", "enroll-meter dl sys-indet")).appendChild(el("i"));
+      box.appendChild(el("small", "enroll-note", (j.lines || []).slice(-1)[0] || "başlıyor…"));
+    } else if (j.state === "error") box.appendChild(el("div", "enroll-result bad", j.error));
+    return box;
+  };
+  let timer = null;
+  const marks = { ok: ["ok", "✓"], warn: ["warn", "!"], off: ["off", "–"], fail: ["fail", "✗"], skip: ["off", "–"] };
+  function draw(d) {
+    body.replaceChildren();
+    // Sağlayıcılar
+    body.appendChild(el("div", "sec", "Sağlayıcılar ve özellikler"));
+    const doc = d.doctor;
+    const c1 = card("Hepsini dene", "Her model sağlayıcısına kısa bir istek atar, karar motorunu dener, özellikleri kontrol eder (alice doctor).",
+      btn(doc.state === "running" ? "deneniyor…" : "Hepsini dene", () => act("doctor_run").then(done()), doc.state !== "running"));
+    c1.appendChild(jobLines(doc));
+    if (doc.state === "done" && doc.result) {
+      for (const p of doc.result.providers) {
+        const [cls, m] = marks[p.status] || marks.skip;
+        const it = el("div", "auto-line");
+        it.append(el("span", "chk " + cls, m), el("b", "", p.name), el("small", "", (p.model ? p.model + " · " : "") + p.detail + (p.key === "yok" && p.env ? ` (${p.env})` : "")));
+        c1.appendChild(it);
+      }
+      const dl = el("div", "auto-line");
+      dl.append(el("span", "chk " + (doc.result.decider_ok ? "ok" : "fail"), doc.result.decider_ok ? "✓" : "✗"), el("b", "", "karar motoru"), el("small", "", doc.result.decider));
+      c1.appendChild(dl);
+      for (const ch of doc.result.checks) {
+        const [cls, m] = marks[ch.status] || marks.off;
+        const it = el("div", "auto-line");
+        it.append(el("span", "chk " + cls, m), el("b", "", ch.name), el("small", "", ch.detail + (ch.fix && ch.status !== "ok" ? " → " + ch.fix : "")));
+        c1.appendChild(it);
+      }
+    }
+    body.appendChild(c1);
+    // Modeller
+    const mo = d.models;
+    const c2 = card("Ücretsiz modelleri ölç", (mo.probed_at ? "son ölçüm: " + mo.probed_at + ". " : "henüz ölçülmedi. ")
+      + "Her modeli gerçek bir araç çağrısıyla dener, hızlı ve doğru olanları öne alır (~1-2 dk).",
+      ...(mo.auto ? [] : [btn("Otomatik sıraya geç", () => act("models_auto").then(done("roller ölçüme göre sıralanacak")))]),
+      btn(mo.state === "running" ? "ölçülüyor…" : "Yeniden ölç", () => act("models_refresh").then(done()), mo.state !== "running"));
+    c2.appendChild(jobLines(mo));
+    const chains = (mo.state === "done" && mo.result ? mo.result.chains : mo.chains) || {};
+    if (mo.state === "done" && mo.result) c2.appendChild(el("div", "enroll-result good", `${mo.result.working}/${mo.result.total} model çalışıyor`));
+    for (const [role, refs] of Object.entries(chains)) {
+      const it = el("div", "auto-line");
+      it.append(el("span", "", { brain: "ana model", fast: "hızlı", vision: "görsel" }[role] || role), el("small", "", (refs || []).slice(0, 5).join(" → ") || "-"));
+      c2.appendChild(it);
+    }
+    body.appendChild(c2);
+    // Google
+    body.appendChild(el("div", "sec", "Google Takvim ve Gmail"));
+    const g = d.google;
+    const c3 = card(g.client ? "Google istemcisi kayıtlı ✓" : "Adım adım kurulum",
+      g.client ? "Takvimi ve Gmail hesaplarını bağlayabilirsin." : "Her adımda \"Aç\" doğru sayfayı açar; yapınca sıradakine geç. Sonunda indirilen dosyayı burada seç.");
+    if (!g.client) {
+      g.steps.forEach((st, i) => {
+        const it = el("div", "auto-line g-step");
+        const ob = el("button", "btn", "Aç");
+        ob.addEventListener("click", () => act("google_open", { step: i }));
+        it.append(el("span", "", `${i + 1}. ${st.title}`), el("small", "", st.how), ob);
+        c3.appendChild(it);
+      });
+      const row = el("div", "key-edit auto-new");
+      const inp = el("input");
+      inp.type = "text";
+      inp.placeholder = "Client ID (….apps.googleusercontent.com) ya da JSON içeriği";
+      const sec = el("input");
+      sec.type = "password";
+      sec.placeholder = "Client secret";
+      const save = btn("Kaydet", () => act("google_client", { text: inp.value, secret: sec.value }).then(done("Google istemcisi kaydedildi")), true);
+      row.append(inp, sec, save);
+      if (g.found_json) c3.appendChild(card("İndirilenlerde bulundu: " + g.found_json, "Google'dan indirdiğin dosya bu mu?",
+        btn("Bunu kullan", () => act("google_client", { use_download: true }).then(done("Google istemcisi kaydedildi")), true)));
+      c3.appendChild(row);
+    } else {
+      const row = el("div", "enroll-act g-connect");
+      const cal = btn("Takvimi bağla", () => api("/api/connect/auth", { name: "google_calendar" }).then((r) => toast((r && (r.note || r.error)) || "tarayıcıya bak")));
+      const acc = el("input");
+      acc.type = "text";
+      acc.placeholder = "Gmail hesap adı (ör. okul)";
+      const gm = btn("Gmail ekle", () => api("/api/assistant/action", { action: "gmail_connect", account: acc.value.trim() })
+        .then((x) => { toast(x && x.ok ? "Tarayıcıda izin sayfası açıldı" : (x && x.error) || "başlatılamadı"); gm.disabled = false; }));
+      row.append(cal, acc, gm);
+      c3.appendChild(row);
+    }
+    body.appendChild(c3);
+    // Telefon
+    body.appendChild(el("div", "sec", "Telefon"));
+    const ph = d.phone;
+    const c4 = card("Telefondan ALICE", "Aynı Wi-Fi'deki telefonun tarayıcısından yazarak sor, projeleri izle. Çekirdek açıkken çalışır.",
+      segmented([[true, "Açık"], [false, "Kapalı"]], !!ph.enabled, (on) => act("phone_enable", { on }).then(done(on ? "telefon köprüsü açılıyor" : "telefon köprüsü kapatıldı"))));
+    if (ph.enabled) {
+      const box = el("div", "phone-box");
+      if (ph.qr) { const q = el("div", "phone-qr"); q.innerHTML = ph.qr; box.appendChild(q); }
+      const info = el("div", "phone-info");
+      info.append(el("small", "", "Telefonun kamerasıyla okut ya da adresi aç:"), el("code", "", ph.url));
+      if (!ph.qr_lib) info.appendChild(el("small", "", "QR kod için: pip install qrcode"));
+      info.appendChild(btn("Yeni anahtar", () => act("phone_new_token").then(done("eski adres artık çalışmaz"))));
+      box.appendChild(info);
+      c4.appendChild(box);
+    }
+    body.appendChild(c4);
+    // DCS
+    body.appendChild(el("div", "sec", "DCS World"));
+    const dc = d.dcs;
+    const installed = dc.dirs.some((x) => x.installed);
+    const c5 = card("Uçuş verisi ve kneeboard", dc.dirs.length
+      ? dc.dirs.map((x) => x.path + (x.installed ? " ✓ kurulu" : " · kurulu değil")).join(" · ") + (dc.mission ? " · son görev: " + dc.mission : "")
+      : "DCS Saved Games klasörü bulunamadı (DCS bir kez açılmış olmalı).",
+      ...(dc.dirs.length ? [btn("Kneeboard yaz", () => act("dcs_kneeboard").then(done((r) => `${r.pages} sayfa yazıldı` + (r.mission ? " (" + r.mission + ")" : "")))),
+        btn(installed ? "Kaldır" : "Kur", () => act("dcs_install", { on: !installed }).then(done(installed ? "kaldırıldı" : "kuruldu; DCS'i yeniden başlat")), !installed)] : []));
+    body.appendChild(c5);
+    // Eklentiler
+    body.appendChild(el("div", "sec", `Eklentiler (${d.plugins.items.length})`));
+    const pl = d.plugins;
+    const name = el("input");
+    name.type = "text";
+    name.placeholder = "yeni eklenti adı";
+    const c6 = card("Kendi araçların", "Python dosyası olarak " + pl.dir + " içinde. Değişiklik ALICE yeniden açılınca geçerli olur.",
+      btn("Klasörü aç", () => act("plugin_folder").then(done())));
+    const nr = el("div", "key-edit auto-new");
+    nr.append(name, btn("Şablon oluştur", () => act("plugin_new", { name: name.value.trim() }).then(done("oluşturuldu ve açıldı"))));
+    c6.appendChild(nr);
+    for (const p of pl.items) {
+      const it = el("div", "auto-line");
+      it.append(el("span", "ok", "✓"), el("b", "", p.name + (p.version ? " " + p.version : "")), el("small", "", p.mode + " · " + (p.tools.join(", ") || "-")));
+      c6.appendChild(it);
+    }
+    for (const e of pl.errors) c6.appendChild(el("div", "enroll-result bad", e));
+    body.appendChild(c6);
+    if (d.windows) {
+      body.appendChild(el("div", "sec", "Kısayol"));
+      body.appendChild(card("Masaüstü ve Başlat menüsü", "ALICE'i Windows tuşuna basıp \"ALICE\" yazarak aç.",
+        btn("Kısayol oluştur", () => act("shortcut").then(done("kısayol oluşturuldu")))));
+    }
+    return doc.state === "running" || mo.state === "running";
+  }
+  let shown = false;
+  function load() {
+    clearTimeout(timer);
+    api("/api/setup").then((d) => {
+      if (!d || (shown && !body.isConnected)) return;
+      shown = true;
+      const keep = body.querySelector("input:focus");  // yazarken tazelenip yazılan silinmesin
+      if (keep) { timer = setTimeout(load, 1500); return; }
+      if (draw(d)) timer = setTimeout(load, 1000);
+    });
+  }
+  load();
+}
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
   const d = data || {};
@@ -1435,7 +1613,7 @@ function connectPane(pane, data) {
 
 const SETTINGS_TABS = [
   ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
-  ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term], ["auto", "Otomasyon", IC.list], ["notes", "Notlar", IC.sun], ["logs", "Kayıtlar", IC.check],
+  ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term], ["auto", "Otomasyon", IC.list], ["notes", "Notlar", IC.sun], ["logs", "Kayıtlar", IC.check], ["setup", "Kurulum", IC.update],
   ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
 ];
@@ -1531,6 +1709,8 @@ async function showSettings(tab) {
       systemPane(pane);
     } else if (tab === "auto") {
       autoPane(pane);
+    } else if (tab === "setup") {
+      setupPane(pane);
     } else if (tab === "notes") {
       notesPane(pane);
     } else if (tab === "logs") {
