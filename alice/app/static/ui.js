@@ -786,8 +786,12 @@ function connectPane(pane, data) {
     const row = el("div", "list-row conn-row");
     const l = el("span", "l");
     l.append(el("b", "", c.title), el("small", "", c.description || ""));
+    // Durum kısa etiket; uzun açıklama ("… yok — sayfa → Bot → Reset Token") alta iner. Eskiden uzun durum sağda
+    // daralmadan duruyor, açıklamayı sıfır genişliğe itip harf harf alt alta döküyordu.
+    const [short, ...more] = String(c.ready ? "hazır" : c.status || "hazır değil").split(" — ");
+    if (more.length) l.appendChild(el("small", "conn-help", more.join(" — ")));
     const right = el("span", "conn-act");
-    right.appendChild(el("span", "risk " + (c.ready ? "read" : "write"), c.ready ? "hazır" : c.status));
+    right.appendChild(el("span", "risk " + (c.ready ? "read" : "write"), c.ready ? "hazır" : (c.env ? "anahtar yok" : short)));
     if (c.kind === "oauth2") {
       const b = el("button", "btn", c.ready ? "Çıkış" : "Bağlan");
       b.addEventListener("click", async () => {
@@ -799,7 +803,10 @@ function connectPane(pane, data) {
       });
       right.appendChild(b);
     } else if (!c.ready && c.env) {
-      right.appendChild(el("code", "", c.env));
+      const b = el("button", "btn", "Anahtar gir");
+      b.title = c.env;
+      b.addEventListener("click", () => showSettings("apikeys"));
+      right.appendChild(b);
     }
     row.append(l, right);
     row.title = (c.actions || []).join(", ") + (c.help ? "\n" + c.help : "");

@@ -489,7 +489,11 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 .up-btn.ghost { background: transparent; color: var(--muted); border-color: var(--line-strong); }
 .up-btn:disabled { opacity: .6; cursor: default; }
 .up-btn.ghost:hover { color: var(--text); }
-.conn-row .conn-act { display: flex; align-items: center; gap: 8px; }
+.conn-row .conn-act { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; flex-wrap: wrap;
+  justify-content: flex-end; max-width: 45%; }
+.conn-row .l { flex: 1 1 220px; }
+.conn-row .conn-help { margin-top: 2px; }
+.risk { white-space: nowrap; }
 .conn-row code { font: 12px var(--mono); color: var(--muted); }
 .list-row.warn { color: var(--warn); }
 #ver .up-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 5px; vertical-align: middle; }
