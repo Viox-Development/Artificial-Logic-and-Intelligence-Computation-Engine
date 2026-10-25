@@ -366,8 +366,9 @@ class Router:
         refs.update(r for chain in self.role_overrides.values() for r in chain)  # seçilen model menüde işaretli görünsün
         cg = self.providers_cfg.get("chatgpt")
         if cg is not None and cg.auth == "chatgpt" and cg.enabled:
-            from alice.providers.chatgpt import cached_models
+            from alice.providers.chatgpt import cached_models, ensure_models
 
+            ensure_models(cg)  # liste yoksa arka planda okunur, menü bir sonraki açılışta gösterir
             refs.update(f"chatgpt:{m}" for m in cached_models())  # girişten sonra ölçülmeden de seçilebilsin
         for role in self.config.roles:
             try:
@@ -389,9 +390,11 @@ class Router:
             entry = {"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
                      "key": pc.api_key_env, "models": rows}
             if pc.auth == "chatgpt":
-                from alice.providers.chatgpt import limit_note
+                from alice.providers.chatgpt import limit_note, models_error
 
-                entry.update(key="ChatGPT girişi", note=limit_note() if pc.enabled else "")
+                entry.update(key="ChatGPT girişi", note=limit_note() if pc.enabled else "",
+                             error=models_error() if pc.enabled and not rows else "",
+                             loading=pc.enabled and not rows)
             out.append(entry)
         return out
 

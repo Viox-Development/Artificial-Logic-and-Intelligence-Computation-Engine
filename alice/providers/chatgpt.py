@@ -160,6 +160,36 @@ def _update_active(**fields: Any) -> None:
     _write(st)
 
 
+_fetching = threading.Lock()
+MODELS_RETRY = 300.0  # sn: liste alınamadıysa en erken bu kadar sonra tekrar denenir
+
+
+def ensure_models(pc: ProviderConfig) -> None:
+    """Giriş yapılmış ama model listesi yoksa (eski sürümde girildiyse ya da ilk deneme olmadıysa) arka planda oku.
+    Hata kaydedilir: model menüsü ve Kurulum kartı nedenini gösterir."""
+    a = load_auth()
+    if not a or a.get("models") or time.time() - float(a.get("models_tried") or 0) < MODELS_RETRY:
+        return
+    if not _fetching.acquire(blocking=False):
+        return
+    _update_active(models_tried=time.time())
+
+    def run() -> None:
+        try:
+            ChatGPTProvider(pc).list_models()
+            _update_active(models_error="")
+        except Exception as e:  # noqa: BLE001 - ekranda göster
+            _update_active(models_error=str(e)[:300])
+        finally:
+            _fetching.release()
+
+    threading.Thread(target=run, daemon=True, name="alice-chatgpt-models").start()
+
+
+def models_error() -> str:
+    return str(load_auth().get("models_error") or "")
+
+
 def cached_models() -> list[str]:
     """Seçili hesabın son okunan model listesi (model menüsünde ölçülmeden de görünsün)."""
     return [str(m) for m in load_auth().get("models") or []]
@@ -224,7 +254,7 @@ def logout() -> bool:
 def status() -> dict[str, Any]:
     a = load_auth()
     return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", ""), "accounts": accounts(),
-            "models": cached_models(), "limits": a.get("limits") or {}}
+            "models": cached_models(), "models_error": models_error(), "limits": a.get("limits") or {}}
 
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"  # Codex'in /status ekranının okuduğu limit durumu

@@ -255,3 +255,43 @@ def test_stream_records_limit_headers():
     ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler))).chat(
         "gpt-5.5", [{"role": "user", "content": "x"}])
     assert chatgpt.limit_note() == "5 sa: %5"
+
+
+def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
+    """Eski sürümde giriş yapılmıştı: model listesi yoktu, menüde chatgpt hiç görünmüyordu."""
+    from alice.providers.router import Router
+
+    chatgpt.save_auth(tokens())
+    calls = []
+
+    def fail(self):
+        calls.append(1)
+        raise ProviderError("not_found", "404 yok")
+
+    monkeypatch.setattr(ChatGPTProvider, "list_models", fail)
+    from alice.config import default_config_dict
+
+    cfg = make_config({"brain": ["a:m"]}, {"chatgpt": default_config_dict()["providers"]["chatgpt"]})
+    router = Router(cfg, provider_factory=lambda p: None, auto_cache={})
+    view = {p["name"]: p for p in router.catalog_view()}
+    assert view["chatgpt"]["loading"] and view["chatgpt"]["models"] == []
+    for _ in range(50):
+        if chatgpt.models_error():
+            break
+        time.sleep(0.05)
+    assert calls == [1] and "404" in chatgpt.models_error()
+    view = {p["name"]: p for p in router.catalog_view()}
+    assert "404" in view["chatgpt"]["error"] and calls == [1]  # hemen tekrar denenmez
+
+    def ok(self):
+        chatgpt._update_active(models=["gpt-5.5"])
+        return [{"id": "gpt-5.5"}]
+
+    monkeypatch.setattr(ChatGPTProvider, "list_models", ok)
+    chatgpt._update_active(models_tried=0)
+    router.catalog_view()
+    for _ in range(50):
+        if chatgpt.cached_models():
+            break
+        time.sleep(0.05)
+    assert [m["ref"] for m in {p["name"]: p for p in router.catalog_view()}["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]

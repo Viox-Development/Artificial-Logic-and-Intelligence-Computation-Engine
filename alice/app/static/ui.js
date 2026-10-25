@@ -81,6 +81,13 @@ async function modelMenu() {
     // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
     for (const p of provs) {
       const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
+      if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
+        // giriş var ama liste henüz yok: boş geçme, nedenini söyle
+        m.appendChild(el("div", "menu-title", "chatgpt"));
+        menuItem(m, null, p.error ? "Model listesi alınamadı" : "Model listesi okunuyor…",
+          p.error ? p.error.slice(0, 120) : "birkaç saniye sonra menüyü tekrar aç", () => showSettings("setup"));
+        continue;
+      }
       if (!rows.length) continue;
       m.appendChild(el("div", "menu-title", p.name + (p.note ? " · limit " + p.note : "")));
       for (const x of rows) {
@@ -1366,6 +1373,8 @@ function setupPane(pane) {
       c2b.appendChild(row);
       if ((cg.models || []).length) c2b.appendChild(el("small", "enroll-note",
         `Modeller: ${cg.models.join(", ")}. Sohbetin altındaki model menüsünden seç ya da Otomatik bırak.`));
+      else c2b.appendChild(el("div", "enroll-result " + (cg.models_error ? "bad" : ""), cg.models_error
+        ? "Model listesi alınamadı: " + cg.models_error : "Model listesi okunuyor… (birkaç saniye)"));
     }
     // Kayıtlı hesaplar: tek tıkla geç ya da kaldır
     for (const a of cg.accounts || []) {

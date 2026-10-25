@@ -98,7 +98,7 @@ class SetupPanel:
             "google": {"steps": [{"title": t, "url": u, "how": h} for t, u, h in STEPS],
                        "client": bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
                        "found_json": found.name if found else ""},
-            "chatgpt": {**chatgpt.status(), **self.chatgpt.view()},
+            "chatgpt": {**self._chatgpt_status(chatgpt), **self.chatgpt.view()},
             "phone": self._phone(),
             "dcs": self._dcs(),
             "plugins": {"dir": str(plugins.plugin_dir()), "errors": plugins.errors(),
@@ -293,6 +293,12 @@ class SetupPanel:
             job.say(f"{len(models)} model açık: {', '.join(models[:6])}. Model menüsünden seçebilirsin; otomatik "
                     "sıraya girmeleri için 'Yeniden ölç'.")
         return models
+
+    def _chatgpt_status(self, chatgpt: Any) -> dict[str, Any]:
+        pc = (getattr(self.router, "providers_cfg", None) or {}).get("chatgpt")
+        if pc is not None and chatgpt.logged_in():
+            chatgpt.ensure_models(pc)
+        return chatgpt.status()
 
     def _chatgpt_usage(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.providers import chatgpt
