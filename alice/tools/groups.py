@@ -44,6 +44,8 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
                 r"blender|3d|3b|üç boyut|modelle|sahne|render|mesh"),
     "flight": ({"flight"}, "DCS / War Thunder uçuş verisi ve kneeboard",
                r"dcs|war ?thunder|uçuş|uçak|kneeboard|pist|iniş|kalkış|simülasyon|sim\b"),
+    "discord": ({"discord_admin"}, "Discord sunucu yönetimi: kanal izinlerini toplu değiştirme (görsel atma vs.)",
+                r"discord|kanal izin|izinler|talep|ticket|ses kanal|sesli kanal|görsel at|dosya at|resim at"),
     "connect": (set(),  # araçlar çalışma anında tanımlardan gelir (alice/connect)
                 "bağlı servisler: Spotify, Steam, Discord, YouTube, eklediğin API'lar",
                 r"spotify|müzik|şark[ıi]|parça|çal\b|duraklat|steam|oyun kütüphanesi|discord|sunucu|kanal|"
