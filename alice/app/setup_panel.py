@@ -180,10 +180,20 @@ class SetupPanel:
     def scores_view(self) -> dict[str, Any]:
         from alice.providers import ranking
 
-        cache = ranking.load_cache()
         weights = ranking.load_weights()
+        # Gösterilen sıra ölçüm anındaki (eski formülle kurulmuş) sıra kalmasın: her açılışta güncel ağırlıklarla
+        # yeniden kur (modeller tekrar ölçülmez, milisaniyeler sürer). Önceden numaralar puanla uyuşmuyordu.
+        cache = ranking.rebuild(self.router, weights) if (ranking.load_cache().get("results")) else ranking.load_cache()
+        # ALICE'in gerçekten kullandığı sıra (ana model zinciri çalışırken puana göre yeniden dizilir).
+        chains = {}
+        for role in ranking.DEFAULT_WEIGHTS:
+            try:
+                chains[role] = list(self.router.auto_chain(role))
+            except Exception:  # noqa: BLE001 - sahte router (testler) ya da eski önbellek
+                chains[role] = list((cache.get("chains") or {}).get(role) or [])
+        cache = {**cache, "chains": chains}
         return {"metrics": ranking.METRICS, "weights": weights, "defaults": ranking.DEFAULT_WEIGHTS,
-                "rows": ranking.score_table(cache, weights, self.router.providers_cfg), "chains": cache.get("chains") or {},
+                "rows": ranking.score_table(cache, weights, self.router.providers_cfg), "chains": chains,
                 "probed_at": cache.get("probed_at", ""), "state": self.models.view()["state"]}
 
     def _weights_set(self, d: dict[str, Any]) -> dict[str, Any]:

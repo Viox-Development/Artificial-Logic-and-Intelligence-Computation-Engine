@@ -386,3 +386,23 @@ def test_payment_required_stops_trying_other_models(monkeypatch):
     prov = {"samba": {"base_url": "http://s", "api_key_env": "SK", "models": ["a", "b", "c"]}}
     row = probe_providers(make_config({"brain": ["auto"]}, prov), factory=lambda pc: FakeProvider(pc.name, reply))[0]
     assert row["status"] == "fail" and row["detail"].startswith("ödeme yöntemi istiyor") and asked == ["a"]
+
+
+def test_scores_view_shows_current_order_not_the_one_from_measurement_time():
+    # Kullanıcının ekranı: numaralar puanla uyuşmuyordu (sıra ölçüm anında eski formülle kurulmuştu).
+    from alice.providers import ranking
+    from alice.providers.router import Router
+
+    _seed_cache()
+    cache = ranking.load_cache()
+    cache["chains"] = {"brain": ["b:qwen3.8-27b", "a:glm-5"]}  # eski, yanlış sıra
+    ranking.cache_path().write_text(json.dumps(cache), encoding="utf-8")
+    cfg = make_config({"brain": ["auto"]}, {"a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 128000},
+                                            "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 128000}})
+    p = SetupPanel(cfg, Router(cfg, provider_factory=lambda pc: None), FakeSystem())
+    v = p.scores_view()
+    rows = {r["ref"]: r for r in v["rows"]}
+    brain = v["chains"]["brain"]
+    in_chain = [r for r in brain if r in rows]
+    assert in_chain == sorted(in_chain, key=lambda r: -rows[r]["scores"]["brain"])  # numaralar puan sırasında
+    assert ranking.load_cache()["chains"]["brain"] != ["b:qwen3.8-27b", "a:glm-5"] or in_chain[0] == "b:qwen3.8-27b"

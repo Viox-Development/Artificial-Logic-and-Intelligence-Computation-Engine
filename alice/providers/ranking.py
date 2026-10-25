@@ -358,7 +358,8 @@ def metric_scores(r: Any) -> dict[str, float]:
         "zeka": max(0.0, min(100.0, _get(r, "quality"))),
         "hiz": round(100 / (1 + max(0.0, lat - 1) / 4), 1),        # 1 sn 100, 3 sn 67, 5 sn 50, 13 sn 25
         "tepki": round(100 / (1 + max(0.0, ttft - 0.3) / 1.0), 1),  # 0,3 sn 100, 0,8 sn 67, 1,3 sn 50, 5 sn 18
-        "akis": round(min(100.0, tps / 1.5), 1),                     # 150 token/sn ve üstü 100
+        # 150 token/sn ve üstü 100. 0 = ölçülemedi (cevap tek parçada geldi): ceza değil, orta puan.
+        "akis": round(min(100.0, tps / 1.5), 1) if tps > 0 else 50.0,
         # 8K 20, 16K 40, 32K 60, 64K 80, 128K ve üstü 100; bilinmiyorsa orta
         "baglam": (round(max(0.0, min(100.0, 20 * math.log2(ctx / 4000))), 1) if (ctx := _get(r, "context")) else 50.0),
     }

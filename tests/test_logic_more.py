@@ -640,7 +640,7 @@ def test_scores():
     slow = Probe("a:y", True, 60, latency=10, ttft=4)
     assert ranking.metric_scores(fast) == {"zeka": 60, "hiz": 100, "tepki": 100, "akis": 100, "baglam": 50}  # bağlam bilinmiyor
     m = ranking.metric_scores(slow)
-    assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 0
+    assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 50  # tps 0 = ölçülemedi, ceza değil
     assert ranking.fast_score(fast) > ranking.fast_score(slow) + 40
     assert ranking.brain_score_of(90, 2) > ranking.brain_score_of(90, 13) > ranking.brain_score_of(90, 100)
     assert ranking.voice_score(fast) - ranking.voice_score(slow) > ranking.brain_score(fast) - ranking.brain_score(slow)

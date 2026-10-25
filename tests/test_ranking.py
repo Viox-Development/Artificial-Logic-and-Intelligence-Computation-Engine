@@ -157,3 +157,13 @@ def test_voice_chain_from_old_cache_sorts_brain_by_ttft():
              "results": {"n:glm": {"quality": 95, "ttft": 5.5}, "g:flash": {"quality": 90, "ttft": 0.8}}}
     r = Router(make_config({"voice": ["auto"]}, PROVIDERS), auto_cache=cache)
     assert r.auto_chain("voice") == ["g:flash", "n:glm"]
+
+
+def test_backup_with_failed_probe_stays_after_working_models():
+    # Ölçümde geçici hata alan yedek (süresi 0 kaydedilmiş) "çok hızlı" görünüp çalışanların önüne geçiyordu.
+    cache = {"probed_ts": time.time(), "chains": {"brain": ["n:a", "o:b", "o:busy"]}, "results": {
+        "n:a": {"ok": True, "quality": 85, "latency": 3, "ttft": 1},
+        "o:b": {"ok": True, "quality": 80, "latency": 2, "ttft": 1},
+        "o:busy": {"ok": False, "quality": 90, "latency": 0, "ttft": 0, "error_kind": "rate_limit"}}}
+    r = Router(make_config({"brain": ["auto"]}, PROVIDERS), auto_cache=cache)
+    assert r.auto_chain("brain")[-1] == "o:busy"

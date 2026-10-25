@@ -290,13 +290,16 @@ class Router:
         res = self.auto_cache.get("results") or {}
         if role == "brain" and res:  # önceki ölçümle kurulmuş zinciri güncel puan ağırlıklarına göre yeniden diz
             w = ranking.load_weights()
-            refs = sorted(refs, key=lambda r: -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
-                                                                  "brain", w) if r in res else 0)
+            # Sadece ölçümde çalışanlar puana göre dizilir; geçici hatalı yedekler (süresi 0 kaydedilmiş, "çok hızlı"
+            # görünür) sonda kalır. Önceden yedek model çalışanların önüne geçiyordu.
+            refs = sorted(refs, key=lambda r: (0, -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
+                                                                      "brain", w)) if r in res and res[r].get("ok", True)
+                          else (1, 0))
         if role == "voice" and not chains.get("voice"):  # eski ölçüm: beyin zincirini ses puanına göre diz
             w = ranking.load_weights()
             refs = sorted(refs or ranking.DEFAULT_AUTO["brain"],
-                          key=lambda r: -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
-                                                            "voice", w) if r in res else 0)
+                          key=lambda r: (0, -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
+                                                                "voice", w)) if r in res and res[r].get("ok", True) else (1, 0))
         if role == "vision" and res:
             refs = list(refs) + ranking.vision_backups(res, self.providers_cfg, list(refs))
         return [r for r in refs if r.partition(":")[0] in self.providers_cfg]

@@ -1477,7 +1477,9 @@ function scorePane() {
     sliders.appendChild(reset);
     box.appendChild(sliders);
     const chain = data.chains[scoreRole] || [];
-    const rows = data.rows.filter((r) => r.ok).sort((a, b) => (b.scores[scoreRole] || 0) - (a.scores[scoreRole] || 0));
+    // Önce ALICE'in sırası (gerçekte denenme sırası), sonra sırada olmayanlar puana göre, nedeniyle.
+    const rank = (r) => { const i = chain.indexOf(r.ref); return i < 0 ? 1e6 : i; };
+    const rows = data.rows.filter((r) => r.ok || chain.includes(r.ref)).sort((a, b) => rank(a) - rank(b) || (b.scores[scoreRole] || 0) - (a.scores[scoreRole] || 0));
     if (!rows.length) {
       box.appendChild(el("p", "", "Henüz ölçüm yok: Ayarlar → Kurulum → Ücretsiz modelleri ölç."));
       return;
@@ -1490,9 +1492,10 @@ function scorePane() {
       const row = el("div", "score-row" + (chain.includes(r.ref) ? " in" : ""));
       const m = el("span", "score-m");
       const pos = chain.indexOf(r.ref);
-      const why = pos < 0 && r.why ? r.why[scoreRole] : "";
+      const why = !r.ok ? `yedek: ölçümde geçici hata (${r.error || "?"}), çalışan modeller bitince denenir`
+        : pos < 0 && r.why ? r.why[scoreRole] : "";
       m.append(el("b", "", (pos >= 0 ? pos + 1 + ". " : "") + r.ref.split(":").slice(1).join(":")), el("small", why ? "why" : "", r.ref.split(":")[0]
-        + (why ? " · sırada değil: " + why : ` · ${Number(r.latency || 0).toFixed(1)} sn · ilk kelime ${Number(r.ttft || 0).toFixed(1)} sn · ${Math.round(r.tps || 0)} tok/sn · ${kTok(r.context)} bağlam`)));
+        + (why ? (r.ok ? " · sırada değil: " : " · ") + why : ` · ${Number(r.latency || 0).toFixed(1)} sn · ilk kelime ${Number(r.ttft || 0).toFixed(1)} sn · ${Math.round(r.tps || 0)} tok/sn · ${kTok(r.context)} bağlam`)));
       if (why) m.title = "Sırada değil: " + why;
       row.appendChild(m);
       for (const k of Object.keys(data.metrics)) {
@@ -1500,19 +1503,23 @@ function scorePane() {
         const c = el("span", "score-c");
         const bar = el("i");
         bar.style.width = Math.round(v) + "%";
-        c.append(bar, el("em", "", k === "zeka" && !r.known ? "?" : k === "baglam" ? kTok(r.context) : String(Math.round(v))));
+        const unmeasured = !r.ok && (k === "hiz" || k === "tepki" || k === "akis");  // yedek: ölçüm hatayla bitti
+        if (unmeasured) bar.style.width = "0";
+        c.append(bar, el("em", "", k === "zeka" && !r.known ? "?" : k === "baglam" ? kTok(r.context)
+          : unmeasured || (k === "akis" && !(r.tps > 0)) ? "–" : String(Math.round(v))));
+        if (k === "akis" && !(r.tps > 0)) c.title = "Ölçülemedi (cevap tek parçada geldi); orta puan (50) sayıldı";
         if (k === "baglam") c.title = `${kTok(r.context)} token bağlam → ${Math.round(v)} puan`;
         if (k === "zeka" && !r.known) c.title = "Bu modelin zekâ puanı bilinmiyor (tabloda yok); varsayılan 45";
         row.appendChild(c);
       }
-      row.appendChild(el("span", "score-c total", String(Math.round(r.scores[scoreRole] || 0))));
+      row.appendChild(el("span", "score-c total", r.ok ? String(Math.round(r.scores[scoreRole] || 0)) : "yedek"));
       table.appendChild(row);
     }
     box.appendChild(table);
     const failed = data.rows.filter((r) => !r.ok);
     if (failed.length) box.appendChild(el("small", "enroll-note", `${failed.length} model ölçümde çalışmadı (` +
       [...new Set(failed.map((r) => r.error || "?"))].join(", ") + "); sıraya girmez."));
-    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
+    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında, denenme sırasıyla. Aynı sağlayıcıdan art arda üç model konmaz (biri kotaya takılınca hepsi birden düşmesin), bu yüzden puanı yakın iki model yer değiştirebilir. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
   };
   api("/api/models/scores").then((d) => { data = d; draw(); });
   return box;
