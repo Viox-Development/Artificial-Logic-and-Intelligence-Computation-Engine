@@ -512,16 +512,23 @@ class Router:
                 kw = dict(tools=tools, temperature=temperature, max_tokens=max_tokens,
                           response_format=response_format, extra=extra or None)
                 emitted = [False]
+                first = [0.0]  # ilk kelime anı (gerçek kullanımdaki hız ölçümü için)
+                t_start = time.monotonic()
 
-                def call(kw=kw, client=client, model=model, msgs=msgs, emitted=emitted):
+                def call(kw=kw, client=client, model=model, msgs=msgs, emitted=emitted, first=first):
                     if stream is not None and hasattr(client, "chat_stream"):
                         def on_delta(piece: str, _flag=emitted, _sink=stream) -> None:
                             _flag[0] = True
                             _sink.on_delta(piece)
 
+                        def on_first(_first=first) -> None:
+                            _first[0] = time.monotonic()
+
+                        extra_kw = {"on_tool": stream.on_tool} if hasattr(stream, "on_tool") else {}
+                        if isinstance(client, OpenAICompatProvider):
+                            extra_kw["on_first"] = on_first
                         r = client.chat_stream(model, msgs, on_delta, cancel=stream.cancelled,
-                                               on_reasoning=getattr(stream, "on_reasoning", None),
-                                               **({"on_tool": stream.on_tool} if hasattr(stream, "on_tool") else {}), **kw)
+                                               on_reasoning=getattr(stream, "on_reasoning", None), **extra_kw, **kw)
                         if not r.usage:
                             r.usage = {"prompt_tokens": est, "completion_tokens": int(len(r.text) / 3.5)}
                         return r
@@ -557,7 +564,11 @@ class Router:
                     continue
                 self.usage.record(ref, res.usage, ok=True)
                 if self._real_clients:
-                    ranking.record_outcome(ref, True)
+                    ttft = first[0] - t_start if first[0] else 0.0
+                    gen = time.monotonic() - (first[0] or t_start)
+                    out_tokens = float((res.usage or {}).get("completion_tokens") or 0)
+                    ranking.record_outcome(ref, True, ttft=ttft,
+                                           tps=out_tokens / gen if first[0] and gen > 0.2 and out_tokens >= 20 else 0.0)
                 if failed:
                     # Arayüz bunu not olarak gösterir: hangi model düştü, kim devraldı.
                     msg = f"{role}: {', '.join(failed[-3:])} hata verdi, {ref} modeline geçildi"

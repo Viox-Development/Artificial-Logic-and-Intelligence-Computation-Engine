@@ -1453,7 +1453,7 @@ function scorePane() {
     if (!data) return;
     box.replaceChildren();
     box.appendChild(el("div", "sec", "Puanlama"));
-    box.appendChild(el("p", "", "Her model beş ölçütte 0-100 puan alır. Rol için hangisinin ne kadar önemli olduğunu sürgülerle "
+    box.appendChild(el("p", "", "Her model altı ölçütte 0-100 puan alır. Rol için hangisinin ne kadar önemli olduğunu sürgülerle "
       + "ayarla; otomatik sıra buna göre kurulur (modeller tekrar ölçülmez)." + (data.probed_at ? " Son ölçüm: " + data.probed_at.replace("T", " ") + "." : "")));
     box.appendChild(segmented(Object.entries(ROLE_NAMES), scoreRole, (r) => { scoreRole = r; draw(); }));
     const w = data.weights[scoreRole];
@@ -1516,7 +1516,10 @@ function scorePane() {
           : unmeasured || (k === "akis" && !(r.tps > 0)) ? "–" : String(Math.round(v))));
         if (k === "akis" && !(r.tps > 0)) c.title = "Ölçülemedi (cevap tek parçada geldi); orta puan (50) sayıldı";
         if (k === "baglam") c.title = `${kTok(r.context)} token bağlam → ${Math.round(v)} puan`;
-        if (k === "zeka" && !r.known) c.title = "Bu modelin zekâ puanı bilinmiyor (tabloda yok); varsayılan 45";
+        if (k === "zeka") c.title = r.arena ? `LMArena: ${r.arena.name} (Elo ${r.arena.elo})`
+          : r.known ? "LMArena'da bulunamadı: elle yazılmış tablodan tahmin" : "Bu modelin zekâ puanı bilinmiyor; varsayılan 45";
+        if ((k === "tepki" || k === "akis") && r.live_calls) c.title = `Gerçek kullanımdan (${r.live_calls} çağrı)`;
+        if (k === "guven") c.title = "Gerçek kullanımda takılmadan, saçmalamadan cevap verme";
         row.appendChild(c);
       }
       row.appendChild(el("span", "score-c total", r.ok ? String(Math.round(r.scores[scoreRole] || 0)) : "yedek"));
@@ -1526,7 +1529,7 @@ function scorePane() {
     const failed = data.rows.filter((r) => !r.ok);
     if (failed.length) box.appendChild(el("small", "enroll-note", `${failed.length} model ölçümde çalışmadı (` +
       [...new Set(failed.map((r) => r.error || "?"))].join(", ") + "); sıraya girmez."));
-    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında, denenme sırasıyla. Aynı sağlayıcıdan art arda üç model konmaz (biri kotaya takılınca hepsi birden düşmesin), bu yüzden puanı yakın iki model yer değiştirebilir. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
+    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında, denenme sırasıyla. Aynı sağlayıcıdan art arda üç model konmaz (biri kotaya takılınca hepsi birden düşmesin), bu yüzden puanı yakın iki model yer değiştirebilir. Zekâ puanı LMArena\'nın gerçek kullanıcı oylarıyla oluşan sıralamasından (genel, kod, talimata uyma, İngilizce dışı, çok turlu; bulunamazsa tahmin); hız ölçümden; ilk kelime ve akış ALICE\'i kullandıkça gerçek çağrılardan (önce ölçümden); güven gerçek kullanımdaki takılma/saçmalamadan; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
   };
   api("/api/models/scores").then((d) => { data = d; draw(); });
   return box;

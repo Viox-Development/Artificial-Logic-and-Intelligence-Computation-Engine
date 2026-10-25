@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.providers import arena
 
 # Kalite puanı (0-100): model kimliğinde geçen ilk kalıp kazanır. Sıra önemli: özel kalıplar önce.
 # Puanlar ajan işi (araç kullanma, Türkçe, kod) için; yeni aileler çıktıkça buraya eklenir.
@@ -79,7 +80,8 @@ DEFAULT_AUTO: dict[str, list[str]] = {
 }
 
 
-def quality(ref: str) -> int:
+def table_quality(ref: str) -> int:
+    """Elle yazılmış tablodan tahmin (LMArena'da bulunamayan modeller için)."""
     low = ref.lower()
     if any(x in low for x in EXCLUDE):
         return 0
@@ -87,6 +89,36 @@ def quality(ref: str) -> int:
         if pat in low:
             return score
     return 0
+
+
+_offset: tuple[float, int] = (0.0, 0)  # (LMArena verisinin zamanı, tablo -> LMArena ölçek farkı)
+
+
+def _table_offset() -> int:
+    """Tablo puanları LMArena ölçeğinden cömert (gemini-3.8-flash 93'e 88, glm-5.3 90'a 81). İkisinde de olan
+    modellerin farkının ortancası tablodaki tahminlere eklenir: iki kaynaktan gelen puanlar aynı ölçekte olsun."""
+    global _offset
+    data = arena.load()
+    ts = float(data.get("fetched_ts") or 0)
+    if _offset[0] == ts:
+        return _offset[1]
+    diffs = sorted(hit["q"] - score for pat, score in QUALITY
+                   if (hit := (data.get("scores") or {}).get(arena.norm(pat))))
+    off = round(diffs[len(diffs) // 2]) if len(diffs) >= 5 else 0
+    _offset = (ts, off)
+    return off
+
+
+def quality(ref: str) -> int:
+    """Zekâ puanı: LMArena'daki gerçek sıralama, bulunamazsa elle yazılmış tablo (aynı ölçeğe çekilmiş)."""
+    low = ref.lower()
+    if any(x in low for x in EXCLUDE):
+        return 0
+    hit = arena.lookup(ref)
+    if hit is not None:
+        return max(1, round(hit["q"]))
+    q = table_quality(ref)
+    return max(1, min(100, q + _table_offset())) if q else 0
 
 
 @dataclass
@@ -339,16 +371,31 @@ def _decayed(h: dict[str, float], now: float) -> tuple[float, float]:
     return float(h.get("ok", 0)) * f, float(h.get("bad", 0)) * f
 
 
-def record_outcome(ref: str, ok: bool, kind: str = "", now: float | None = None) -> None:
-    """Gerçek bir çağrının sonucu. Hatalar hemen, başarılar ara ara diske yazılır."""
+SPEED_ALPHA = 0.3  # gerçek hız ölçümünde yeni çağrının ağırlığı (üstel ortalama)
+SPEED_MIN = 3  # en az bu kadar gerçek çağrı olunca ölçüm yerine gerçek kullanımın hızı sayılır
+
+
+def record_outcome(ref: str, ok: bool, kind: str = "", now: float | None = None, ttft: float = 0.0,
+                   tps: float = 0.0) -> None:
+    """Gerçek bir çağrının sonucu (başarılıysa ilk kelime süresi ve saniyede token). Hatalar hemen, başarılar
+    ara ara diske yazılır."""
     global _health_dirty
     if not ok and kind not in BAD_KINDS:
         return
     now = time.time() if now is None else now
     health = load_health()
     with _health_lock:
-        good, bad = _decayed(health.get(ref, {}), now)
-        health[ref] = {"ok": round(good + ok, 3), "bad": round(bad + (not ok), 3), "ts": now}
+        prev = health.get(ref, {})
+        good, bad = _decayed(prev, now)
+        row = {"ok": round(good + ok, 3), "bad": round(bad + (not ok), 3), "ts": now}
+        for key, val in (("ttft", ttft), ("tps", tps)):
+            old, n = prev.get(key), int(prev.get(key + "_n", 0))
+            if ok and val > 0:
+                row[key] = round(val if old is None else old + SPEED_ALPHA * (val - old), 3)
+                row[key + "_n"] = n + 1
+            elif old is not None:
+                row[key], row[key + "_n"] = old, n
+        health[ref] = row
         _health_dirty += 1
         if ok and _health_dirty < 20:
             return
@@ -368,6 +415,19 @@ def reliability(ref: str, now: float | None = None) -> tuple[float, float]:
         return 1.0, 0.0
     good, bad = _decayed(h, time.time() if now is None else now)
     return (good + 2) / (good + bad + 2), bad
+
+
+def live_speed(ref: str) -> dict[str, float]:
+    """Gerçek kullanımda ölçülen ilk kelime süresi ve saniyede token (yeterince çağrı varsa). Günlük ölçüm tek bir
+    kısa istek: şansa bağlı ve uzun konuşmadaki hızı göstermiyor."""
+    h = load_health().get(ref) or {}
+    out: dict[str, float] = {}
+    for key in ("ttft", "tps"):
+        if int(h.get(key + "_n", 0)) >= SPEED_MIN and h.get(key):
+            out[key] = float(h[key])
+    if out:
+        out["live_calls"] = float(max(int(h.get("ttft_n", 0)), int(h.get("tps_n", 0))))
+    return out
 
 
 def unreliable(ref: str) -> bool:
@@ -418,7 +478,11 @@ def context_of(ref: str, providers_cfg: dict[str, Any] | None, catalog: int | No
 def with_context(r: dict[str, Any], ref: str, providers_cfg: dict[str, Any] | None) -> dict[str, Any]:
     """Eski ölçümde bağlam yok: sağlayıcının sınırıyla doldur. Gerçek kullanımdaki güvenilirlik de eklenir."""
     out = r if r.get("context") else {**r, "context": context_of(ref, providers_cfg)}
-    return {**out, "reliability": reliability(ref)[0]}
+    out = {**out, "reliability": reliability(ref)[0]}
+    q = quality(ref)  # LMArena güncellendiyse ölçüm anındaki eski puan yerine güncel olan
+    if q:
+        out["quality"] = q
+    return {**out, **live_speed(ref)}
 
 
 def metric_scores(r: Any) -> dict[str, float]:
@@ -507,7 +571,7 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
     weights = weights or load_weights()
 
     def live(r: Probe) -> dict[str, Any]:
-        return {**asdict(r), "reliability": reliability(r.ref)[0]}
+        return {**asdict(r), "reliability": reliability(r.ref)[0], **live_speed(r.ref)}
 
     # Gerçek kullanımda sık takılan model puanı ne olursa olsun çalışanların arkasına (yedek olarak kalır).
     def brain_score(r: Probe) -> float:
@@ -560,6 +624,8 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
 
 def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | None = None,
             per_provider: int = PER_PROVIDER, timeout: float = PROBE_TIMEOUT) -> dict[str, Any]:
+    if getattr(router, "_real_clients", False) and arena.age() > arena.MAX_AGE:
+        arena.refresh(emit)  # zekâ puanları: gerçek benchmark (üç günde bir, birkaç saniye)
     contexts: dict[str, int] = {}
     refs, errors, catalog = candidates(router, per_provider, contexts=contexts)
     emit(f"{len(refs)} aday ölçülüyor ({', '.join(sorted({r.split(':', 1)[0] for r in refs}))})")
@@ -636,8 +702,10 @@ def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str
     rows = []
     for ref, r in (cache.get("results") or {}).items():
         r = with_context(r, ref, providers_cfg)
+        hit = arena.lookup(ref)
         row = {"ref": ref, "context": r.get("context") or 0, "ok": bool(r.get("ok")), "error": r.get("error_kind") or "",
-               "known": quality(ref) > 0, "latency": r.get("latency"), "ttft": r.get("ttft"), "tps": r.get("tps"),
+               "known": quality(ref) > 0, "arena": {"name": hit["name"], "elo": hit["elo"]} if hit else None,
+               "live_calls": int(r.get("live_calls") or 0), "latency": r.get("latency"), "ttft": r.get("ttft"), "tps": r.get("tps"),
                "metrics": metric_scores(r)}
         row["scores"] = {role: role_score(r, role, weights) for role in DEFAULT_WEIGHTS} if row["ok"] else {}
         row["why"] = {role: left_out({**r, "ref": ref}, role, providers_cfg) for role in DEFAULT_WEIGHTS
