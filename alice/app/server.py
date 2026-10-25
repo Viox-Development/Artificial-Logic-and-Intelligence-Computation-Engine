@@ -383,7 +383,11 @@ class AppState:
         a = self.agent
         return {
             "version": __version__,
-            "model": self.router.last_ref.get("brain") or self.router.first_available("brain") or "",
+            # Düğmede seçilen model (sabitlendiyse o, hemen); alttaki çubukta son cevabı gerçekten veren model.
+            # Önceden ikisi de son cevabı veren modeldi: yeni seçilen model bir sonraki cevaba kadar görünmüyordu.
+            "model": ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
+                      or self.router.first_available("brain") or ""),
+            "served_model": self.router.last_ref.get("brain") or "",
             "mode": a.permissions.mode,
             "ctx_tokens": a.context_tokens(),
             "ctx_limit": a.compact_at,

@@ -122,6 +122,13 @@ def test_mode_cwd_new_and_model(app, workdir):
     assert client.post("/api/model", json={"role": "brain", "ref": "a:other"}).json()["ok"]
     assert client.get("/api/models").json()["brain"][0]["ref"] == "a:other"
     assert client.get("/api/models/all").json()["pinned"] == "a:other"
+    # düğme seçilen modeli hemen göstersin (önceden bir sonraki cevaba kadar eski model yazıyordu)
+    st = state.status()
+    assert st["model"] == "a:other" and st["brain_pinned"]
+    a_models = next(p for p in client.get("/api/models/all").json()["providers"] if p["name"] == "a")["models"]
+    assert "a:other" in [m["ref"] for m in a_models]  # ölçülmemiş olsa da menüde işaretli
+    state.router.last_ref["brain"] = "a:m"  # seçili model cevap veremedi, yedek cevapladı
+    assert state.status()["model"] == "a:other" and state.status()["served_model"] == "a:m"
     assert client.post("/api/models/hide", json={"name": "b", "hidden": True}).json()["ok"]
     assert state.router.is_hidden("b:x") and "hidden_models" in (alice_home() / "config.toml").read_text(encoding="utf-8")
     assert client.post("/api/models/hide", json={"name": "zzz"}).status_code == 400

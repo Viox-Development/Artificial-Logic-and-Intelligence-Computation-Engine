@@ -1453,3 +1453,4 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .score-failed summary { cursor: pointer; }
 .score-failed-row { padding: 3px 0 3px 14px; }
 .score-failed-row b { font-weight: 600; color: var(--text, inherit); }
+#stModel.warn { color: var(--warn); }

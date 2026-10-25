@@ -363,6 +363,7 @@ class Router:
         res = self.auto_cache.get("results") or {}
         dead = self._cached_dead()
         refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
+        refs.update(r for chain in self.role_overrides.values() for r in chain)  # seçilen model menüde işaretli görünsün
         cg = self.providers_cfg.get("chatgpt")
         if cg is not None and cg.auth == "chatgpt" and cg.enabled:
             from alice.providers.chatgpt import cached_models

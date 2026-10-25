@@ -877,8 +877,12 @@ function applyStatus(s) {
     $("#thinkIcon").innerHTML = st.thinking === "off" ? IC.bolt : IC.brain;
     $("#thinkBtn").title = "Düşünme: " + THINK[st.thinking][1];
   }
-  $("#modelBtn").title = st.model || "";
-  $("#stModel").textContent = st.model || "model yok";
+  // Sabitlenen model cevap veremeyip yedeğe geçildiyse düğme seçileni, çubuk gerçekten cevap vereni gösterir.
+  const served = st.served_model || st.model;
+  const fellBack = st.brain_pinned && st.served_model && st.served_model !== st.model;
+  $("#modelBtn").title = fellBack ? `Seçili: ${st.model} · son cevabı veren: ${st.served_model} (seçili model cevap veremedi)` : st.model || "";
+  $("#stModel").textContent = served || "model yok";
+  $("#stModel").classList.toggle("warn", !!fellBack);
   if (st.ctx_limit) {
     const win = st.ctx_window || st.ctx_limit;
     const pct = Math.min(100, (100 * st.ctx_tokens) / win);
