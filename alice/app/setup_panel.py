@@ -161,9 +161,14 @@ class SetupPanel:
             decider_ok = True
         except DeciderError as e:
             decider_line, decider_ok = f"çalışmıyor: {e}", False
+        job.say("Jev görsel testi…")
+        from alice.decider import image_check
+
+        image = image_check(decider)
         job.say("özellikler kontrol ediliyor…")
         checks = [c.__dict__ for c in run_all(self.cfg, Path.home())]
-        return {"providers": providers, "decider": decider_line, "decider_ok": decider_ok, "checks": checks}
+        return {"providers": providers, "decider": decider_line, "decider_ok": decider_ok, "checks": checks,
+                "image": image}
 
     def _models_refresh(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.providers import ranking

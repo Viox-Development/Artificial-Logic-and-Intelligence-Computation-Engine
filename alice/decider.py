@@ -10,6 +10,12 @@ Soru tipleri (Jev ile aynı isimler):
   Choice(instructions, criteria={etiket: açıklama})  -> tek etiket
   Noul(instructions)                                   -> 0..1 arası "evet" olasılığı
   Score(instructions, levels={1: "...", 5: "..."})     -> seviye (beklenen değer)
+  Box(instructions)                                    -> görüntüde yer: {left, top, right, bottom} (0-1)
+
+Görseller (Jev 1.13+, Box Jev 1.14+; TypeSafe'in "Danger Zone" deneysel özelliği): decide(..., images={ref: bytes})
+ile gönderilir; ref, state'te ya da soru metninde görselin geçtiği yerdir. Box her zaman bir kutu döndürür ("yok"
+cevabı yoktur): yanına aynı istekte "var mı?" diye bir Noul sorulur. Görsel/Box desteklemeyen motorlar (LLM yedeği)
+böyle bir istekte atlanır. Ayrıntı: https://docs.typesafe.ai/go/images.md
 
 Zincir: config [decider].chain, örn. ["jev", "jev-openrouter", "llm:fast"]. Jev anahtarı yoksa ya da
 hata verirse aynı soru ücretsiz hızlı bir LLM'e JSON formatında sorulur.
@@ -47,7 +53,44 @@ class Score:
     levels: dict[int, str]
 
 
-Question = Choice | Noul | Score
+@dataclass
+class Box:
+    """Görüntüde bir şeyin yeri. Cevap: {"left","top","right","bottom"}, görüntünün eni/boyunun 0-1 kesri."""
+    instructions: str
+
+
+Question = Choice | Noul | Score | Box
+IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
+IMAGE_MIN, IMAGE_MAX = 280, 1568  # piksel: Jev'in kabul ettiği kenar aralığı (dışındaki görüntü reddedilir)
+
+
+def prepare_image(img: Any, quality: int = 85) -> bytes:
+    """PIL görüntüsünü Jev'in istediği hale getir: uzun kenar en fazla 1568, kısa kenar en az 280 (beyazla
+    doldurulur, oran bozulmaz), RGB, düz (baseline) JPEG. Bu sınırların dışındaki görüntüyü API reddeder."""
+    import io
+
+    from PIL import Image as PILImage
+
+    img = img.convert("RGB")
+    if max(img.size) > IMAGE_MAX:
+        img = img.copy()
+        img.thumbnail((IMAGE_MAX, IMAGE_MAX))
+    w, h = img.size
+    if min(w, h) < IMAGE_MIN:
+        canvas = PILImage.new("RGB", (max(w, IMAGE_MIN), max(h, IMAGE_MIN)), (255, 255, 255))
+        canvas.paste(img, (0, 0))
+        img = canvas
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def padded_fraction(img_size: tuple[int, int]) -> tuple[float, float]:
+    """prepare_image küçük görüntüyü sağdan/alttan doldurduysa: Box kesirlerini asıl görüntüye çevirmek için çarpan."""
+    w, h = img_size
+    scale = min(1.0, IMAGE_MAX / max(w, h))
+    sw, sh = w * scale, h * scale
+    return max(sw, IMAGE_MIN) / sw, max(sh, IMAGE_MIN) / sh
 
 
 @dataclass
@@ -77,12 +120,22 @@ class DeciderError(Exception):
 class Engine(Protocol):
     name: str
 
-    def decide(self, state: str, questions: dict[str, Question]) -> Decision: ...
+    def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
+        ...
+
+
+def _needs_images(questions: dict[str, Question], images: dict[str, bytes] | None) -> bool:
+    return bool(images) or any(isinstance(q, Box) for q in questions.values())
+
+
+def _image_format(data: bytes) -> str:
+    return "png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
 
 
 def _validate(questions: dict[str, Question]) -> None:
-    if not 1 <= len(questions) <= 8:
-        raise ValueError("System One 1 ile 8 arasında soru alır")
+    # Jev'de soru sayısı sınırı yok (istek bağlam sınırına sığmalı); LLM yedeği için makul bir üst sınır.
+    if not 1 <= len(questions) <= 16:
+        raise ValueError("System One'a 1 ile 16 arasında soru sorulur")
     for k, q in questions.items():
         if isinstance(q, Choice) and len(q.criteria) < 2:
             raise ValueError(f"{k}: Choice en az 2 seçenek ister")
@@ -107,32 +160,45 @@ class JevEngine:
     API hâlâ erken erişimde ve alan adları değişebilir.
     """
 
-    def __init__(self, url: str, model: str, api_key: str, client: httpx.Client | None = None, name: str = "jev"):
+    def __init__(self, url: str, model: str, api_key: str, client: httpx.Client | None = None, name: str = "jev",
+                 images: bool = False):
         self.name = name
         self.url = url
         self.model = model
         self.api_key = api_key
+        self.images = images  # görsel + Box (TypeSafe'in deneysel "Danger Zone" özelliği): config [decider] jev_images
         self._client = client or httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
 
     def close(self) -> None:
         self._client.close()
 
-    def decide(self, state: str, questions: dict[str, Question]) -> Decision:
+    def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
+        import base64
+
         _validate(questions)
+        visual = _needs_images(questions, images)
+        if visual and not self.images:
+            raise DeciderError(f"{self.name}: görsel kapalı", 0.0)
         wire: dict[str, Any] = {}
         for k, q in questions.items():
             if isinstance(q, Noul):
                 wire[k] = {"type": "noul", "instructions": q.instructions}
+            elif isinstance(q, Box):
+                wire[k] = {"type": "box", "instructions": q.instructions}
             else:
                 c = _score_as_choice(q) if isinstance(q, Score) else q
                 wire[k] = {"type": "choice", "instructions": c.instructions, "criteria": c.criteria}
+        body: dict[str, Any] = {"model": self.model, "state": state, "questions": wire}
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if visual:
+            headers[IMAGES_HEADER] = "true"
+        if images:
+            body["assets"] = {ref: {"type": "image", "format": _image_format(data),
+                                    "data_base64": base64.b64encode(data).decode("ascii")}
+                              for ref, data in images.items()}
         t0 = time.monotonic()
         try:
-            r = self._client.post(
-                self.url,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={"model": self.model, "state": state, "questions": wire},
-            )
+            r = self._client.post(self.url, headers=headers, json=body)
         except httpx.HTTPError as e:
             raise DeciderError(f"jev ağ hatası: {e}") from e
         if r.status_code != 200:
@@ -148,6 +214,13 @@ class JevEngine:
     def _parse(q: Question, a: Any) -> Answer:
         if a is None:
             raise DeciderError("jev cevabında soru eksik")
+        if isinstance(q, Box):
+            b = a.get("box") if isinstance(a, dict) else None
+            if not isinstance(b, dict) or not all(k in b for k in ("left", "top", "right", "bottom")):
+                raise DeciderError(f"jev box cevabı çözülemedi: {a!r}"[:200])
+            box = {k: min(1.0, max(0.0, float(b[k]))) for k in ("left", "top", "right", "bottom")}
+            conf = a.get("confidence")
+            return Answer("box", box, float(conf) if isinstance(conf, (int, float)) else 0.0)
         if isinstance(q, Noul):
             if isinstance(a, (int, float)):
                 p = float(a)
@@ -189,8 +262,12 @@ class LLMEngine:
         self.role = role
         self.name = f"llm:{role}"
 
-    def decide(self, state: str, questions: dict[str, Question]) -> Decision:
+    def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
         _validate(questions)
+        if _needs_images(questions, images):
+            raise DeciderError(f"{self.name}: görsel/Box desteklemiyor", 0.0)
+        if not isinstance(state, str):
+            state = json.dumps(state, ensure_ascii=False, indent=1)
         lines = []
         shape = {}
         for k, q in questions.items():
@@ -292,7 +369,8 @@ class Decider:
             if item == "jev":
                 key = os.environ.get(dc.get("jev_api_key_env", "TYPESAFE_API_KEY"))
                 if key:
-                    engines.append(JevEngine(dc.get("jev_url"), dc.get("jev_model", "jev-latest"), key))
+                    engines.append(JevEngine(dc.get("jev_url"), dc.get("jev_model", "jev-latest"), key,
+                                             images=bool(dc.get("jev_images", True))))
             elif item == "jev-openrouter":
                 # Aynı Jev, OpenRouter hesabından faturalanır. Ücretsiz (:free) sürümü yok, kredi gerekir.
                 key = os.environ.get(dc.get("openrouter_jev_api_key_env", "OPENROUTER_API_KEY"))
@@ -320,18 +398,72 @@ class Decider:
                 except Exception:  # noqa: BLE001
                     pass
 
-    def decide(self, state: str, questions: dict[str, Question]) -> Decision:
+    @property
+    def supports_images(self) -> bool:
+        """Görsel/Box sorabilecek, şu an bozuk sayılmayan bir motor var mı (TypeSafe anahtarı + jev_images)."""
+        now = time.monotonic()
+        return any(getattr(e, "images", False) and self._broken.get(f"{e.name}:img", 0) <= now
+                   and self._broken.get(e.name, 0) <= now for e in self.engines)
+
+    def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
         # Geçersiz soru çağıranın hatası: motorlara gitmeden düşsün. Önceden her motor bu yüzden "bozuk" sayılıp
         # soğumaya alınıyordu ve sonraki geçerli sorular da bir dakika boyunca cevapsız kalıyordu.
         _validate(questions)
+        visual = _needs_images(questions, images)
         errors = []
         for e in self.engines:
             if self._broken.get(e.name, 0) > time.monotonic():
                 continue
+            if visual and not getattr(e, "images", False):
+                continue  # görsel soramayan motor (LLM yedeği): bozuk sayma, atla
+            if visual and self._broken.get(f"{e.name}:img", 0) > time.monotonic():
+                continue
             try:
-                return e.decide(state, questions)
+                return e.decide(state, questions, images) if visual else e.decide(state, questions)
             except Exception as err:  # noqa: BLE001 - beklenmeyen cevap (JSON değil, eksik anahtar) da sıradaki motora geçsin
                 errors.append(f"{e.name}: {err}")
                 self.on_event(f"decider {e.name} başarısız, sıradakine geçiliyor")
-                self._broken[e.name] = time.monotonic() + getattr(err, "cooldown", 60.0)
-        raise DeciderError("; ".join(errors) or "kullanılabilir karar motoru yok")
+                # Görsel istek reddedildiyse (400: görsel izni yok, görüntü kabul edilmedi) sadece görsel kısmı
+                # soğusun; aynı motor metin sorularını yine cevaplasın.
+                key = f"{e.name}:img" if visual and "HTTP 4" in str(err) else e.name
+                self._broken[key] = time.monotonic() + getattr(err, "cooldown", 60.0)
+        raise DeciderError("; ".join(errors) or ("görsel soru sorabilecek karar motoru yok (TypeSafe anahtarı gerekli)"
+                                                 if visual else "kullanılabilir karar motoru yok"))
+
+
+# ------------------------------------------------------------------- görsel testi
+TEST_RECT = (0.55, 0.2, 0.85, 0.55)  # left, top, right, bottom: test görüntüsündeki kırmızı dikdörtgen
+
+
+def image_check(decider: "Decider") -> dict[str, Any]:
+    """Jev görselleri görüyor ve Box doğru yeri buluyor mu? Bilinen bir test görüntüsüyle tek istek (Kurulum →
+    Hepsini dene). status: ok | warn (çalışıyor ama cevap şüpheli) | fail | off (görsel motoru yok)."""
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    if not decider.supports_images:
+        return {"status": "off", "detail": "TypeSafe anahtarı yok ya da [decider] jev_images kapalı"}
+    w, h = 640, 400
+    img = PILImage.new("RGB", (w, h), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    l, t, r, b = TEST_RECT
+    d.rectangle([l * w, t * h, r * w, b * h], fill=(220, 30, 30))
+    d.ellipse([60, 220, 200, 360], fill=(40, 80, 220))
+    ref = "alice-test-3b9e5c71"
+    try:
+        dec = decider.decide({"picture": ref}, {
+            "has_red": Noul("Is there a red rectangle in `picture`?"),
+            "has_green": Noul("Is there a green triangle in `picture`?"),
+            "where": Box("the red rectangle in `picture`"),
+        }, images={ref: prepare_image(img)})
+    except DeciderError as e:
+        return {"status": "fail", "detail": str(e)[:200]}
+    box = dec["where"].value
+    cx, cy = (box["left"] + box["right"]) / 2, (box["top"] + box["bottom"]) / 2
+    inside = l <= cx <= r and t <= cy <= b
+    red, green = dec["has_red"].value, dec["has_green"].value
+    detail = (f"kırmızı var mı {red:.2f}, yeşil var mı {green:.2f}, kutu "
+              f"{box['left']:.2f}-{box['right']:.2f} × {box['top']:.2f}-{box['bottom']:.2f} "
+              f"({'doğru yerde' if inside else 'YANLIŞ yerde'}) · {dec.latency * 1000:.0f} ms, {dec.engine}")
+    ok = inside and red >= 0.7 and green <= 0.3
+    return {"status": "ok" if ok else "warn", "detail": detail}

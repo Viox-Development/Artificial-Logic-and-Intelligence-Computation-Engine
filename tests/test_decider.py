@@ -103,7 +103,9 @@ def test_from_config_skips_jev_without_key(monkeypatch):
 def test_question_validation():
     router, _ = _llm_router([])
     with pytest.raises(ValueError):
-        LLMEngine(router).decide("s", {f"q{i}": Noul("?") for i in range(9)})
+        LLMEngine(router).decide("s", {f"q{i}": Noul("?") for i in range(17)})  # Jev'de sayı sınırı yok; 16 makul
+    with pytest.raises(ValueError):
+        LLMEngine(router).decide("s", {})
 
 
 def test_extract_json():

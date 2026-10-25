@@ -9,6 +9,20 @@ from alice.tools.base import ToolContext
 
 EDITABLE_TAGS = {"input", "textarea"}
 EDITABLE_ROLES = {"textbox", "searchbox", "combobox", "Edit", "ComboBox", "Document"}
+# Pencere çerçevesi: başlık çubuğunun sistem menüsü ve düğmeleri. Uygulamanın kendi içeriği değil; reflex bunları
+# seçenek olarak görünce (ör. içi okunamayan WebView penceresinde) "System" menüsüne tıklıyordu, "Close" da vardı.
+WINDOW_CHROME = {"system", "sistem", "restore", "move", "size", "minimize", "maximize", "close", "geri yükle",
+                 "taşı", "boyut", "boyutlandır", "simge durumuna küçült", "ekranı kapla", "kapat", "önceki boyut"}
+CHROME_GOAL = ("kapat", "küçült", "büyüt", "close", "minimize", "maximize", "ekranı kapla")
+
+
+def is_window_chrome(role: str, name: str, goal: str = "") -> bool:
+    if role == "TitleBar":
+        return True
+    if role in ("MenuBar", "MenuItem", "Button") and name.strip().lower() in WINDOW_CHROME:
+        # Pencereyi kapatmak/küçültmek hedefin kendisiyse düğmeler kalsın; sistem menüsü hiç gerekmez.
+        return not (role == "Button" and any(w in goal.lower() for w in CHROME_GOAL))
+    return False
 
 
 @dataclass
@@ -40,6 +54,8 @@ class Observer(Protocol):
     kind: str
 
     def observe(self) -> Observation: ...
+    # İsteğe bağlı (görsel reflex): snapshot() -> (PIL görüntü, ...) ya da None; click_at(x, y) görüntünün eni/boyunun
+    # 0-1 kesriyle tıklar.
     def click(self, element_id: int) -> None: ...
     def type(self, element_id: int, text: str, submit: bool) -> None: ...
     def scroll(self, down: bool) -> None: ...
@@ -101,6 +117,19 @@ class BrowserObserver:
         self.b.page.mouse.wheel(0, 700 if down else -700)
         self.b.page.wait_for_timeout(300)
 
+    def snapshot(self):
+        """Görünen sayfa alanının görüntüsü (Jev'e gösterilir)."""
+        import io
+
+        from PIL import Image
+
+        return Image.open(io.BytesIO(self.b.page.screenshot(type="jpeg", quality=80)))
+
+    def click_at(self, fx: float, fy: float) -> None:
+        size = self.b.page.viewport_size or self.b.page.evaluate("({width: innerWidth, height: innerHeight})")
+        self.b.page.mouse.click(fx * size["width"], fy * size["height"])
+        self.b.page.wait_for_timeout(500)
+
     def back(self) -> None:
         self.b.page.go_back(wait_until="domcontentloaded")
 
@@ -112,17 +141,54 @@ class BrowserObserver:
 class DesktopObserver:
     kind = "desktop"
 
-    def __init__(self, ctx: ToolContext, window_title: str | None = None):
+    def __init__(self, ctx: ToolContext, window_title: str | None = None, goal: str = ""):
         self.ctx = ctx
         self.title = window_title
+        self.goal = goal
+        self._rect: tuple[int, int, int, int] | None = None  # son ekran görüntüsünün ekrandaki yeri
 
     def observe(self) -> Observation:
         from alice.tools.desktop import collect_ui_elements
 
         title, items = collect_ui_elements(self.ctx, self.title, limit=150)
         els = [Element(i["id"], i["role"], i["name"] or i["auto_id"], i["role"] in EDITABLE_ROLES, i["value"])
-               for i in items if i["enabled"]]
+               for i in items if i["enabled"] and not is_window_chrome(i["role"], i["name"], self.goal)]
         return Observation(title, "desktop", els)
+
+    def snapshot(self):
+        """Öndeki pencerenin görüntüsü (Windows). Pencere bulunamazsa None: reflex görselsiz devam eder."""
+        import sys
+
+        if sys.platform != "win32":
+            return None
+        import ctypes
+        from ctypes import wintypes
+
+        import mss
+        from PIL import Image
+
+        from alice.tools.computer import _dpi_aware
+
+        _dpi_aware()
+        r = wintypes.RECT()
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd or not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r)):
+            return None
+        w, h = r.right - r.left, r.bottom - r.top
+        if w < 50 or h < 50:
+            return None
+        with mss.mss() as sct:
+            raw = sct.grab({"left": r.left, "top": r.top, "width": w, "height": h})
+        self._rect = (r.left, r.top, w, h)
+        return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+
+    def click_at(self, fx: float, fy: float) -> None:
+        from alice.tools.computer import _pyautogui
+
+        if self._rect is None:
+            raise RuntimeError("önce ekran görüntüsü alınmalı")
+        left, top, w, h = self._rect
+        _pyautogui().click(round(left + fx * w), round(top + fy * h))
 
     def click(self, element_id: int) -> None:
         from alice.tools.desktop import ui_act

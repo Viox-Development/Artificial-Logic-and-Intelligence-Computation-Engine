@@ -1307,6 +1307,13 @@ function setupPane(pane) {
       const dl = el("div", "auto-line");
       dl.append(el("span", "chk " + (doc.result.decider_ok ? "ok" : "fail"), doc.result.decider_ok ? "✓" : "✗"), el("b", "", "karar motoru"), el("small", "", doc.result.decider));
       c1.appendChild(dl);
+      if (doc.result.image) {
+        const im = doc.result.image;
+        const [icls, imk] = marks[im.status] || marks.off;
+        const il = el("div", "auto-line");
+        il.append(el("span", "chk " + icls, imk), el("b", "", "Jev görsel (Box)"), el("small", "", im.detail));
+        c1.appendChild(il);
+      }
       for (const ch of doc.result.checks) {
         const [cls, m] = marks[ch.status] || marks.off;
         const it = el("div", "auto-line");

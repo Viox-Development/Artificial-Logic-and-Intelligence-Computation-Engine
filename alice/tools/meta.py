@@ -165,7 +165,9 @@ class Reflex(Tool):
         "- Kullan: 'ekrandaki Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'arama kutusuna X yazıp ilk "
         "sonuca tıkla'.\n"
         "- Kullanma: birçok adımlı, ekranı izleyerek yapılacak işler (computer_task).\n"
-        "- Sonuç 'needs_help' ise kalan kısmı browser snapshot/click ya da ui_elements/ui_act ile sen bitir."
+        "- Sonuç 'needs_help' ise kalan kısmı browser snapshot/click ya da ui_elements/ui_act ile sen bitir.\n"
+        "- TypeSafe anahtarı varsa pencerenin görüntüsüne de bakar: içi okunamayan pencerelerde (web tabanlı "
+        "uygulamalar, oyun menüleri) ekranda gördüğü düğmeye tıklayabilir."
     )
     parameters = obj({
         "goal": {"type": "string", "description": "Hedef, ekranda göründüğü adlarla, ör. 'ekrandaki Impossible "
@@ -190,7 +192,16 @@ class Reflex(Tool):
         observer = BrowserObserver(ctx, url) if target == "browser" else DesktopObserver(ctx, title)
         loop = ReflexLoop(observer, ctx.decider, make_text_writer(ctx.router),
                           min_confidence=float(ctx.config.decider.get("min_confidence", 0.55)), emit=ctx.emit)
-        return ToolResult(loop.run(goal, max_steps=max_steps, inputs=inputs).report())
+        res = loop.run(goal, max_steps=max_steps, inputs=inputs)
+        # Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
+        # başardı" diyordu (needs_help sonucunda bile).
+        verdict = {"done": "SONUÇ: hedef yapıldı.",
+                   "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya "
+                                 "başardı deme; kalanını kendin yap ya da nedenini söyle.",
+                   "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
+                   "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(getattr(res, "status", ""), "")
+        return ToolResult(res.report() + ("\n" + verdict if verdict else ""),
+                          is_error=getattr(res, "status", "") == "error")
 
 
 class AskUser(Tool):

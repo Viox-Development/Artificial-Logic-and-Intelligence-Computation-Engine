@@ -3,7 +3,10 @@
 Her adım:
   1. observe  -> ekrandaki öğeler ID'li listeye çevrilir
   2. rank     -> hedefle en alakalı N aday seçilir (Jev'e az ve net seçenek gitsin)
-  3. decide   -> tek System One çağrısı: "sıradaki aksiyon?" + "hedef tamam mı?"
+  3. decide   -> tek System One çağrısı: "sıradaki aksiyon?" + "hedef tamam mı?". Jev görsel görebiliyorsa
+                (TypeSafe anahtarı, [decider] jev_images) pencerenin görüntüsü de gider ve aynı istekte
+                "listede olmayan ama ekranda görünen bir şeye tıkla" seçeneği için hedefin var olup olmadığı (Noul)
+                ve yeri (Box) da sorulur: içi okunamayan pencerelerde (WebView, oyun menüsü) de tıklanabilsin.
   4. act      -> seçilen aday uygulanır; metin gerekiyorsa hızlı LLM üretir
   5. düşük güven / aynı aksiyonun tekrarı / 'stuck' -> beyne (System 2) geri döner
 
@@ -19,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from alice.decider import Choice, Decider, DeciderError, Noul
+from alice.decider import Box, Choice, Decider, DeciderError, Noul, padded_fraction, prepare_image
 from alice.reflex.observers import Element, Observation, Observer
 
 SPECIAL = {
@@ -30,6 +33,14 @@ SPECIAL = {
     "done": "The goal is already fully achieved, stop",
     "stuck": "None of the options make progress toward the goal",
 }
+
+VISUAL_KEY = "click_on_screen"
+VISUAL_OPTION = "Click a button, link, tab, field or menu item that is visible in `screen` but is not one of these options"
+TARGET = "the button, link, tab, field or menu item in `screen` that a person would click next to work toward `goal`"
+TARGET_VISIBLE = ("Is there a button, link, tab, field or menu item in `screen` that a person would click next to "
+                  "work toward `goal`?")
+VISIBLE_MIN = 0.7  # "hedef ekranda var mı?" bundan düşükse Box'a güvenilmez (Box her zaman bir kutu döndürür)
+SCREEN_REF = "alice-screen-6f1c0d2e"  # görselin istekteki yer tutucusu: metinde kazara geçemeyecek bir dize
 
 _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{3,}", re.U)
 
@@ -102,8 +113,25 @@ class ReflexLoop:
         self.max_cands = max_candidates
         self.emit = emit
         self.settle = settle
+        self.visual = True  # görsel istek bir kez reddedilirse (izin yok, görüntü kabul edilmedi) bu çalışmada kapanır
+
+    def _look(self) -> tuple[bytes, tuple[float, float]] | None:
+        """Pencerenin Jev'e gidecek görüntüsü ve Box kesirlerini asıl görüntüye çevirme çarpanı; olmuyorsa None."""
+        snap = getattr(self.obs, "snapshot", None)
+        if not (self.visual and callable(snap) and getattr(self.decider, "supports_images", False)):
+            return None
+        try:
+            img = snap()
+        except Exception as e:  # noqa: BLE001 - görüntü alınamadı: görselsiz devam
+            self.emit(f"ekran görüntüsü alınamadı, görselsiz devam: {e}")
+            return None
+        if img is None:
+            return None
+        return prepare_image(img), padded_fraction(img.size)
 
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None) -> ReflexResult:
+        if hasattr(self.obs, "goal"):
+            self.obs.goal = goal  # pencere çerçevesi süzgeci "kapat" gibi hedefleri bilsin
         log: list[str] = []
         typed: set[int] = set()
         last_keys: list[str] = []
@@ -121,19 +149,38 @@ class ReflexLoop:
                 options[key] = f"{'Type into' if el.editable else 'Click'} {el.describe()}"
                 by_key[key] = el
             options.update(SPECIAL)
-            state = (
-                f"GOAL: {goal}\nSCREEN: {ob.title} | {ob.location}\n"
-                f"ELEMENTS: {len(ob.elements)} on screen, {len(cands)} shown as options\n"
-                "RECENT ACTIONS (oldest first):\n" + ("\n".join(log[-8:]) or "(none yet)")
-            )
+            look = self._look()
             t0 = time.monotonic()
-            try:
-                d = self.decider.decide(state, {
-                    "next": Choice("Which single next action moves closest to the GOAL?", options),
-                    "done": Noul("Looking at the SCREEN and RECENT ACTIONS, is the GOAL already fully achieved?"),
-                })
-            except DeciderError as e:
-                return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, ob.title, ob.location)
+            d = None
+            if look is not None:
+                # Aynı isteğe hem sıradaki adım hem "ekranda tıklanacak şey var mı, nerede?" (spekülatif soru:
+                # cevabı sadece click_on_screen seçilirse kullanılır).
+                state = {"goal": goal, "window": f"{ob.title} | {ob.location}", "screen": SCREEN_REF,
+                         "recent_actions": log[-8:]}
+                try:
+                    d = self.decider.decide(state, {
+                        "next": Choice("Which single next action moves closest to `goal`?",
+                                       {**options, VISUAL_KEY: VISUAL_OPTION}),
+                        "done": Noul("Looking at `screen` and `recent_actions`, is `goal` already fully achieved?"),
+                        "target_visible": Noul(TARGET_VISIBLE),
+                        "target": Box(TARGET),
+                    }, images={SCREEN_REF: look[0]})
+                except DeciderError as e:
+                    self.visual = False
+                    self.emit(f"görsel karar olmadı, görselsiz devam: {e}")
+            if d is None:
+                state = (
+                    f"GOAL: {goal}\nSCREEN: {ob.title} | {ob.location}\n"
+                    f"ELEMENTS: {len(ob.elements)} on screen, {len(cands)} shown as options\n"
+                    "RECENT ACTIONS (oldest first):\n" + ("\n".join(log[-8:]) or "(none yet)")
+                )
+                try:
+                    d = self.decider.decide(state, {
+                        "next": Choice("Which single next action moves closest to the GOAL?", options),
+                        "done": Noul("Looking at the SCREEN and RECENT ACTIONS, is the GOAL already fully achieved?"),
+                    })
+                except DeciderError as e:
+                    return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, ob.title, ob.location)
             nxt, done = d["next"], d["done"]
             self.emit(f"[{step}] {nxt.value} (güven {nxt.confidence:.2f}, bitti? {done.value:.2f}) "
                       f"{(time.monotonic() - t0) * 1000:.0f} ms via {d.engine}")
@@ -142,6 +189,27 @@ class ReflexLoop:
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, ob.title, ob.location)
             if nxt.value == "stuck":
                 return ReflexResult("needs_help", step - 1, "uygun seçenek yok", log, ob.title, ob.location)
+            if nxt.value == VISUAL_KEY:
+                # Box her zaman bir kutu döndürür: "ekranda var mı?" düşükse kutuya güvenme, beyne bırak.
+                seen = d["target_visible"].value
+                if seen < VISIBLE_MIN:
+                    return ReflexResult("needs_help", step - 1, f"ekranda tıklanacak şey bulunamadı (var mı? {seen:.2f})",
+                                        log, ob.title, ob.location)
+                b = d["target"].value
+                sx, sy = look[1] if look else (1.0, 1.0)
+                fx = min(1.0, (b["left"] + b["right"]) / 2 * sx)
+                fy = min(1.0, (b["top"] + b["bottom"]) / 2 * sy)
+                last_keys.append(f"{VISUAL_KEY}@{fx:.2f},{fy:.2f}")
+                if len(last_keys) >= 3 and len(set(last_keys[-3:])) == 1:
+                    return ReflexResult("needs_help", step - 1, "aynı yere tekrar tekrar tıklanıyor",
+                                        log, ob.title, ob.location)
+                try:
+                    self.obs.click_at(fx, fy)
+                    log.append(f"{step}. ekranda tıklandı ({fx:.2f}, {fy:.2f}) var mı? {seen:.2f}")
+                except Exception as e:  # noqa: BLE001
+                    log.append(f"{step}. ekranda tıklama -> HATA {e}")
+                time.sleep(self.settle)
+                continue
             if nxt.confidence < self.min_conf and not _named_in_goal(nxt.value, by_key, ob.elements, goal):
                 return ReflexResult("needs_help", step - 1,
                                     f"düşük güven ({nxt.confidence:.2f}) - '{options.get(nxt.value, nxt.value)}'",

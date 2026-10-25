@@ -318,6 +318,9 @@ chain = ["jev", "jev-openrouter", "llm:fast"]
 jev_url = "https://api.typesafe.ai/v1/systemone"
 jev_model = "jev-latest"
 jev_api_key_env = "TYPESAFE_API_KEY"
+# Jev'e ekran görüntüsü gösterme ve Box (görüntüde yer bulma). TypeSafe'te deneysel ("Danger Zone"): biçim ve
+# doğruluk sürümler arasında değişebilir. Reflex döngüsü bununla listede olmayan, ekranda görünen şeye tıklayabilir.
+jev_images = true
 openrouter_jev_url = "https://openrouter.ai/api/v1/systemone"
 openrouter_jev_model = "~typesafe/jev-latest"
 openrouter_jev_api_key_env = "OPENROUTER_API_KEY"
