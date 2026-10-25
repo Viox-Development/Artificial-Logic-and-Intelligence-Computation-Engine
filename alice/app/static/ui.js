@@ -1342,9 +1342,21 @@ function setupPane(pane) {
     const c2b = card(cg.logged_in ? "ChatGPT bağlı ✓" : "ChatGPT ile giriş",
       cg.logged_in ? `${cg.email || "hesap"}${cg.plan ? " · " + cg.plan : ""}. Modeller ölçülünce otomatik sıraya girer; limit dolunca sıradakine geçilir.`
         : "API anahtarı olmadan ChatGPT hesabınla (ücretsiz plan dahil) GPT modelleri. Kullanım planının Codex limitinden düşer. Resmi olarak onaylı değil (OpenCode da aynı yolu kullanıyor).",
-      cg.logged_in ? btn("Çıkış yap", () => act("chatgpt_logout").then(done("ChatGPT oturumu kapatıldı")))
-        : btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : "Giriş yap", () => act("chatgpt_login").then(done()), cg.state !== "running"));
+      btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : cg.logged_in ? "Hesap ekle" : "Giriş yap",
+        () => act("chatgpt_login").then(done()), cg.state !== "running"));
     c2b.appendChild(jobLines(cg));
+    // Kayıtlı hesaplar: tek tıkla geç ya da kaldır
+    for (const a of cg.accounts || []) {
+      const it = el("div", "auto-line");
+      const acts = el("span", "enroll-act");
+      if (!a.active) acts.appendChild(btn("Kullan", () => act("chatgpt_use", { key: a.key }).then(done(`${a.email || "hesap"} kullanılıyor`))));
+      acts.appendChild(btn("Kaldır", () => act("chatgpt_logout", { key: a.key }).then(done("hesap kaldırıldı"))));
+      it.append(el("span", "chk " + (a.active ? "ok" : "off"), a.active ? "✓" : "–"), el("b", "", a.email || a.key),
+        el("small", "", (a.plan || "") + (a.active ? " · kullanılıyor" : "")), acts);
+      c2b.appendChild(it);
+    }
+    if ((cg.accounts || []).length > 1) c2b.appendChild(el("small", "enroll-note",
+      "Hesap elle seçilir; limit dolunca kendiliğinden değişmez. Limiti aşmak için hesap değiştirmek OpenAI kurallarına aykırı, hesaplar kapatılabilir."));
     if (cg.state === "done" && cg.lines && cg.lines.length) c2b.appendChild(el("small", "enroll-note", cg.lines.slice(-1)[0]));
     body.appendChild(c2b);
     // Google

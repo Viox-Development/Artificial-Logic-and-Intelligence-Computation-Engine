@@ -6,9 +6,10 @@ OpenCode'daki "ChatGPT Plus/Pro ile giriş" ile aynı yol: Codex CLI'ın (açık
 Codex limitinden düşer. Limit dolunca router sıradaki modele geçer.
 
 Not: OpenAI bu girişin başka programlardan kullanılmasını açıkça yasaklamıyor ama resmen de onaylamıyor (gri bölge).
-Tek hesapla kullanılmalı: limiti aşmak için hesap değiştirmek kurallara aykırı.
+Birden çok hesap kaydedilebilir ve elle seçilir; limit dolunca kendiliğinden hesap değiştirilmez (limiti aşmak için
+hesap değiştirmek OpenAI kurallarına aykırı).
 
-Giriş bilgisi ~/.alice/chatgpt-auth.json'da (yalnız kullanıcı okuyabilir); erişim anahtarı süresi dolunca yenilenir.
+Giriş bilgileri ~/.alice/chatgpt-auth.json'da (yalnız kullanıcı okuyabilir); erişim anahtarı süresi dolunca yenilenir.
 """
 
 from __future__ import annotations
@@ -60,19 +61,46 @@ def _jwt_claims(token: str) -> dict[str, Any]:
         return {}
 
 
-def load_auth() -> dict[str, Any]:
+def _store() -> dict[str, Any]:
+    """{"active": anahtar, "accounts": {anahtar: giriş bilgisi}}. Eski tek hesaplı dosya da okunur."""
     try:
         data = json.loads(auth_path().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return {}
+        return {"active": "", "accounts": {}}
+    if not isinstance(data, dict):
+        return {"active": "", "accounts": {}}
+    if "accounts" not in data:  # eski biçim: tek hesap
+        key = data.get("account_id") or data.get("email") or "hesap"
+        return {"active": key, "accounts": {key: data}} if data.get("access_token") else {"active": "", "accounts": {}}
+    return {"active": str(data.get("active") or ""), "accounts": dict(data.get("accounts") or {})}
 
 
-def save_auth(tokens: dict[str, Any]) -> dict[str, Any]:
+def _write(store: dict[str, Any]) -> None:
+    p = auth_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(store), encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
+def load_auth() -> dict[str, Any]:
+    """Kullanılan (seçili) hesabın giriş bilgisi."""
+    st = _store()
+    return dict(st["accounts"].get(st["active"]) or {})
+
+
+def save_auth(tokens: dict[str, Any], key: str | None = None) -> dict[str, Any]:
+    """Giriş ya da yenilemeden gelen anahtarları kaydet. key yoksa (yeni giriş) hesap anahtarlardan bulunur ve seçili
+    hesap olur; aynı hesaba tekrar girilirse üzerine yazılır."""
     claims = _jwt_claims(tokens.get("id_token") or "")
     auth_claims = claims.get("https://api.openai.com/auth") or {}
     access = tokens.get("access_token") or ""
-    prev = load_auth()
+    st = _store()
+    if key is None:
+        key = auth_claims.get("chatgpt_account_id") or claims.get("email") or f"hesap{len(st['accounts']) + 1}"
+    prev = st["accounts"].get(key) or {}
     data = {
         "access_token": access,
         "refresh_token": tokens.get("refresh_token") or prev.get("refresh_token", ""),
@@ -82,14 +110,45 @@ def save_auth(tokens: dict[str, Any]) -> dict[str, Any]:
         "email": claims.get("email") or prev.get("email", ""),
         "expires_at": float(_jwt_claims(access).get("exp") or time.time() + 3600),
     }
-    p = auth_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data), encoding="utf-8")
-    try:
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
+    st["accounts"][key] = data
+    st["active"] = key
+    _write(st)
     return data
+
+
+def accounts() -> list[dict[str, Any]]:
+    st = _store()
+    return [{"key": k, "email": a.get("email", ""), "plan": a.get("plan", ""), "active": k == st["active"]}
+            for k, a in st["accounts"].items()]
+
+
+def use(key: str) -> bool:
+    """Kayıtlı başka bir hesaba geç (elle)."""
+    st = _store()
+    if key not in st["accounts"]:
+        return False
+    st["active"] = key
+    _write(st)
+    return True
+
+
+def remove(key: str | None = None) -> bool:
+    """Hesabı kaldır (varsayılan: seçili olan); seçili kaldırılırsa kalan ilk hesap seçilir."""
+    st = _store()
+    key = key or st["active"]
+    if key not in st["accounts"]:
+        return False
+    del st["accounts"][key]
+    if st["active"] == key:
+        st["active"] = next(iter(st["accounts"]), "")
+    if st["accounts"]:
+        _write(st)
+    else:
+        try:
+            auth_path().unlink()
+        except OSError:
+            pass
+    return True
 
 
 def logged_in() -> bool:
@@ -98,16 +157,12 @@ def logged_in() -> bool:
 
 
 def logout() -> bool:
-    try:
-        auth_path().unlink()
-        return True
-    except OSError:
-        return False
+    return remove()
 
 
 def status() -> dict[str, Any]:
     a = load_auth()
-    return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", "")}
+    return {"logged_in": logged_in(), "email": a.get("email", ""), "plan": a.get("plan", ""), "accounts": accounts()}
 
 
 def refresh(client: httpx.Client | None = None) -> dict[str, Any]:
@@ -126,7 +181,7 @@ def refresh(client: httpx.Client | None = None) -> dict[str, Any]:
     if r.status_code != 200:
         kind = "auth" if r.status_code in (400, 401, 403) else "server"
         raise ProviderError(kind, f"ChatGPT oturumu yenilenemedi ({r.status_code}); tekrar giriş yap", r.status_code)
-    return save_auth(r.json())
+    return save_auth(r.json(), key=_store()["active"])
 
 
 def access(client: httpx.Client | None = None) -> dict[str, Any]:

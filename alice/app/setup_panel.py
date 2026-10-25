@@ -131,7 +131,7 @@ class SetupPanel:
     # ------------------------------------------------------------------ işlemler
     ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
                "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut", "chatgpt_login",
-               "chatgpt_logout"}
+               "chatgpt_logout", "chatgpt_use"}
 
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action) if action in self.ACTIONS else None
@@ -249,9 +249,7 @@ class SetupPanel:
         def run(job: Job) -> dict[str, Any]:
             job.say("tarayıcıda ChatGPT girişi açılıyor; giriş yapıp izin ver (5 dk içinde)")
             info = chatgpt.login(emit=job.say)
-            dead = getattr(self.router, "dead_providers", None)
-            if isinstance(dead, set):
-                dead.discard("chatgpt")
+            self._chatgpt_reset()
             job.say(f"giriş tamam: {info.get('email') or 'ChatGPT hesabı'} ({info.get('plan') or 'plan bilinmiyor'})")
             job.say("modelleri sıraya almak için 'Ücretsiz modelleri ölç'e bas")
             return {"email": info.get("email", ""), "plan": info.get("plan", "")}
@@ -261,7 +259,29 @@ class SetupPanel:
     def _chatgpt_logout(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.providers import chatgpt
 
-        return {"ok": chatgpt.logout()}
+        ok = chatgpt.remove(str(d.get("key") or "") or None)
+        self._chatgpt_reset()
+        return {"ok": ok}
+
+    def _chatgpt_use(self, d: dict[str, Any]) -> dict[str, Any]:
+        """Kayıtlı başka hesaba geç; önceki hesabın limit beklemesi yeni hesaba taşınmasın."""
+        from alice.providers import chatgpt
+
+        if not chatgpt.use(str(d.get("key") or "")):
+            return {"ok": False, "error": "hesap yok"}
+        self._chatgpt_reset()
+        return {"ok": True}
+
+    def _chatgpt_reset(self) -> None:
+        r = self.router
+        for name in ("cooldown_until", "cooldown_kind"):
+            table = getattr(r, name, None)
+            if isinstance(table, dict):
+                for ref in [k for k in table if str(k).startswith("chatgpt:")]:
+                    del table[ref]
+        dead = getattr(r, "dead_providers", None)
+        if isinstance(dead, set):
+            dead.discard("chatgpt")
 
     def _google_open(self, d: dict[str, Any]) -> dict[str, Any]:
         import webbrowser

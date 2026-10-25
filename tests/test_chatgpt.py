@@ -22,10 +22,10 @@ def jwt(claims: dict) -> str:
     return f"{enc({'alg': 'none'})}.{enc(claims)}.sig"
 
 
-def tokens(exp_in=3600):
-    return {"access_token": jwt({"exp": time.time() + exp_in}), "refresh_token": "r1",
-            "id_token": jwt({"email": "a@b.c", "https://api.openai.com/auth": {"chatgpt_account_id": "acc1",
-                                                                             "chatgpt_plan_type": "free"}})}
+def tokens(exp_in=3600, email="a@b.c", acc="acc1", refresh="r1"):
+    return {"access_token": jwt({"exp": time.time() + exp_in}), "refresh_token": refresh,
+            "id_token": jwt({"email": email, "https://api.openai.com/auth": {"chatgpt_account_id": acc,
+                                                                            "chatgpt_plan_type": "free"}})}
 
 
 def pc():
@@ -43,7 +43,8 @@ def sse(*events) -> bytes:
 def test_provider_enabled_only_after_login():
     assert pc().auth == "chatgpt" and not pc().enabled
     chatgpt.save_auth(tokens())
-    assert pc().enabled and chatgpt.status() == {"logged_in": True, "email": "a@b.c", "plan": "free"}
+    st = chatgpt.status()
+    assert pc().enabled and (st["logged_in"], st["email"], st["plan"]) == (True, "a@b.c", "free")
     assert chatgpt.logout() and not pc().enabled
 
 
@@ -174,3 +175,40 @@ def test_browser_login_flow(monkeypatch):
 
     info = chatgpt.login(open_url=open_url, timeout=10)
     assert exchanged["code"] == "abc" and len(exchanged["verifier"]) > 40 and info["email"] == "a@b.c"
+
+
+def test_several_accounts_switched_by_hand(isolated_home):
+    chatgpt.save_auth(tokens())
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # "Hesap ekle": yeni hesap seçili olur
+    accs = chatgpt.accounts()
+    assert [(a["email"], a["active"]) for a in accs] == [("a@b.c", False), ("x@y.z", True)]
+    assert chatgpt.load_auth()["refresh_token"] == "r2"
+    assert chatgpt.use("acc1") and chatgpt.load_auth()["email"] == "a@b.c"
+    # yenileme seçili hesabın üstüne yazar, diğerine dokunmaz
+    chatgpt.save_auth({"access_token": tokens()["access_token"]}, key="acc1")
+    assert chatgpt.load_auth()["refresh_token"] == "r1" and len(chatgpt.accounts()) == 2
+    assert chatgpt.remove("acc1") and chatgpt.load_auth()["email"] == "x@y.z"  # kalan hesap seçilir
+    assert chatgpt.remove() and not chatgpt.logged_in() and not chatgpt.auth_path().exists()
+    assert not chatgpt.use("yok")
+
+
+def test_old_single_account_file_still_works(isolated_home):
+    isolated_home.mkdir(parents=True, exist_ok=True)
+    chatgpt.auth_path().write_text(json.dumps({"access_token": "a", "refresh_token": "r", "email": "e@f.g",
+                                               "account_id": "old"}), encoding="utf-8")
+    assert chatgpt.logged_in() and chatgpt.accounts()[0]["email"] == "e@f.g"
+
+
+def test_switching_clears_previous_account_limit():
+    from types import SimpleNamespace
+
+    from alice.app.setup_panel import SetupPanel
+
+    chatgpt.save_auth(tokens())
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2"))
+    router = SimpleNamespace(cooldown_until={"chatgpt:gpt-5.5": 9e9, "g:m": 9e9}, cooldown_kind={"chatgpt:gpt-5.5": "rate_limit"},
+                             dead_providers={"chatgpt"})
+    p = SetupPanel(make_config({"brain": ["a:m"]}), router)
+    assert p.action("chatgpt_use", {"key": "acc1"})["ok"] and chatgpt.load_auth()["email"] == "a@b.c"
+    assert router.cooldown_until == {"g:m": 9e9} and not router.dead_providers
+    assert not p.action("chatgpt_use", {"key": "yok"})["ok"]
