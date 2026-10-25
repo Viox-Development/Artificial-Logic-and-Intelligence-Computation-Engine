@@ -290,11 +290,13 @@ class Router:
         res = self.auto_cache.get("results") or {}
         if role == "brain" and res:  # önceki ölçümle kurulmuş zinciri güncel puan ağırlıklarına göre yeniden diz
             w = ranking.load_weights()
-            refs = sorted(refs, key=lambda r: -ranking.role_score(res[r], "brain", w) if r in res else 0)
+            refs = sorted(refs, key=lambda r: -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
+                                                                  "brain", w) if r in res else 0)
         if role == "voice" and not chains.get("voice"):  # eski ölçüm: beyin zincirini ses puanına göre diz
             w = ranking.load_weights()
             refs = sorted(refs or ranking.DEFAULT_AUTO["brain"],
-                          key=lambda r: -ranking.role_score(res[r], "voice", w) if r in res else 0)
+                          key=lambda r: -ranking.role_score(ranking.with_context(res[r], r, self.providers_cfg),
+                                                            "voice", w) if r in res else 0)
         if role == "vision" and res:
             refs = list(refs) + ranking.vision_backups(res, self.providers_cfg, list(refs))
         return [r for r in refs if r.partition(":")[0] in self.providers_cfg]

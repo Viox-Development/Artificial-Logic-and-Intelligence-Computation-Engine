@@ -1435,7 +1435,8 @@ function setupPane(pane) {
 /* Ayarlar > Modeller > Puanlama: her model zekâ / hız / ilk kelime / akış'ta 0-100 puan alır; rolün ağırlıklarıyla
    genel puan çıkar ve otomatik sıra buna göre kurulur. Ağırlık değişince modeller tekrar ölçülmeden sıra yenilenir. */
 const ROLE_NAMES = { brain: "Ana model", voice: "Sesli", fast: "Hızlı işler", vision: "Görsel" };
-const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış" };
+const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış", baglam: "Bağlam" };
+const kTok = (n) => !n ? "?" : n >= 1000000 ? Math.round(n / 100000) / 10 + "M" : Math.round(n / 1000) + "K";
 let scoreRole = "brain";
 function scorePane() {
   const box = el("div", "score-pane");
@@ -1445,7 +1446,7 @@ function scorePane() {
     if (!data) return;
     box.replaceChildren();
     box.appendChild(el("div", "sec", "Puanlama"));
-    box.appendChild(el("p", "", "Her model dört ölçütte 0-100 puan alır. Rol için hangisinin ne kadar önemli olduğunu sürgülerle "
+    box.appendChild(el("p", "", "Her model beş ölçütte 0-100 puan alır. Rol için hangisinin ne kadar önemli olduğunu sürgülerle "
       + "ayarla; otomatik sıra buna göre kurulur (modeller tekrar ölçülmez)." + (data.probed_at ? " Son ölçüm: " + data.probed_at.replace("T", " ") + "." : "")));
     box.appendChild(segmented(Object.entries(ROLE_NAMES), scoreRole, (r) => { scoreRole = r; draw(); }));
     const w = data.weights[scoreRole];
@@ -1491,7 +1492,7 @@ function scorePane() {
       const pos = chain.indexOf(r.ref);
       const why = pos < 0 && r.why ? r.why[scoreRole] : "";
       m.append(el("b", "", (pos >= 0 ? pos + 1 + ". " : "") + r.ref.split(":").slice(1).join(":")), el("small", why ? "why" : "", r.ref.split(":")[0]
-        + (why ? " · sırada değil: " + why : ` · ${Number(r.latency || 0).toFixed(1)} sn · ilk kelime ${Number(r.ttft || 0).toFixed(1)} sn · ${Math.round(r.tps || 0)} tok/sn`)));
+        + (why ? " · sırada değil: " + why : ` · ${Number(r.latency || 0).toFixed(1)} sn · ilk kelime ${Number(r.ttft || 0).toFixed(1)} sn · ${Math.round(r.tps || 0)} tok/sn · ${kTok(r.context)} bağlam`)));
       if (why) m.title = "Sırada değil: " + why;
       row.appendChild(m);
       for (const k of Object.keys(data.metrics)) {
@@ -1499,7 +1500,8 @@ function scorePane() {
         const c = el("span", "score-c");
         const bar = el("i");
         bar.style.width = Math.round(v) + "%";
-        c.append(bar, el("em", "", k === "zeka" && !r.known ? "?" : String(Math.round(v))));
+        c.append(bar, el("em", "", k === "zeka" && !r.known ? "?" : k === "baglam" ? kTok(r.context) : String(Math.round(v))));
+        if (k === "baglam") c.title = `${kTok(r.context)} token bağlam → ${Math.round(v)} puan`;
         if (k === "zeka" && !r.known) c.title = "Bu modelin zekâ puanı bilinmiyor (tabloda yok); varsayılan 45";
         row.appendChild(c);
       }
@@ -1510,7 +1512,7 @@ function scorePane() {
     const failed = data.rows.filter((r) => !r.ok);
     if (failed.length) box.appendChild(el("small", "enroll-note", `${failed.length} model ölçümde çalışmadı (` +
       [...new Set(failed.map((r) => r.error || "?"))].join(", ") + "); sıraya girmez."));
-    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden."));
+    box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında. Zekâ puanı bilinen model aileleri tablosundan; hız, ilk kelime ve akış ölçümden; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
   };
   api("/api/models/scores").then((d) => { data = d; draw(); });
   return box;

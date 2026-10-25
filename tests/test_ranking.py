@@ -104,7 +104,7 @@ def test_refresh_writes_cache(monkeypatch, tmp_path):
     cfg = make_config({"brain": ["auto"]}, PROVIDERS)
     r = Router(cfg, provider_factory=lambda pc: None, auto_cache={})
     found = (["g:gemini-3.8-flash", "n:dead"], {}, {"g": ["gemini-3.8-flash"]})
-    monkeypatch.setattr(ranking, "candidates", lambda router, per_provider=15: found)
+    monkeypatch.setattr(ranking, "candidates", lambda router, per_provider=15, contexts=None: found)
     fake = {"g:gemini-3.8-flash": Probe("g:gemini-3.8-flash", True, 93, latency=3, ttft=1, tokens=20, tps=10),
             "n:dead": Probe("n:dead", False, 0, error_kind="not_found")}
     monkeypatch.setattr(ranking, "probe", lambda router, ref, specs=None, timeout=45: fake[ref])

@@ -318,7 +318,7 @@ def test_score_table_and_weights_reorder_chains_without_reprobing():
     assert r["chains"]["brain"][0] == "b:qwen3.8-27b"  # hız önde
     assert ranking.load_weights()["brain"]["hiz"] == 90  # kaydedildi
     assert "b:yeni-model" not in r["chains"]["brain"]  # zekâsı bilinmeyen model ana sıraya girmez
-    assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0}})["ok"]
+    assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0, "baglam": 0}})["ok"]
     assert not p.action("weights_set", {"role": "uzay", "weights": {}})["ok"]
     p.action("weights_set", {"role": "brain", "reset": True})
     assert ranking.load_weights()["brain"] == ranking.DEFAULT_WEIGHTS["brain"]
@@ -337,3 +337,52 @@ def test_score_table_says_why_a_model_is_not_in_the_chain():
     assert "brain" not in rows["a:glm-5"]["why"]
     assert "bağlamı küçük (8K)" in rows["b:qwen3.8-27b"]["why"]["brain"]
     assert rows["b:yeni"]["why"]["brain"] == "zekâ puanı bilinmiyor"
+
+
+def test_context_counts_in_score():
+    # Kullanıcı: "değerlendirmede context de katılmalı".
+    from alice.providers import ranking
+
+    pcs = make_config({"brain": []}, {"big": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 128000},
+                                      "small": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 8000}}).providers()
+    assert ranking.context_of("big:m", pcs, 32000) == 32000 and ranking.context_of("big:m", pcs) == 128000
+    assert ranking.context_of("small:m", pcs, 200000) == 8000  # ALICE o sağlayıcıya 8K'dan fazlasını göndermez
+    same = {"quality": 85, "latency": 2, "ttft": 0.5, "tps": 100}
+    big = ranking.with_context(same, "big:m", pcs)
+    small = ranking.with_context(same, "small:m", pcs)
+    assert ranking.metric_scores(big)["baglam"] == 100 and ranking.metric_scores(small)["baglam"] == 20
+    assert ranking.role_score(big, "brain") > ranking.role_score(small, "brain")
+    assert ranking.role_score(big, "voice") == ranking.role_score(small, "voice")  # seste bağlamın ağırlığı 0
+    rows = {r["ref"]: r for r in ranking.score_table({"results": {"small:m": {**same, "ok": True}}}, None, pcs)}
+    assert rows["small:m"]["context"] == 8000
+
+
+def test_short_err_turns_raw_json_into_readable_text():
+    from alice.doctor import short_err
+
+    pay = ('[quota] {"error":{"balance_units":0,"billing_portal_url":"https://cloud.sambanova.ai/plans/billing",'
+           '"code":"PAYMENT_METHOD_REQUIRED","message":"A payment method is required."}}')
+    assert short_err(pay).startswith("ödeme yöntemi istiyor")
+    busy = '[rate_limit] {"error":{"code":null,"message":"Meta-Llama-3.3-70B-Instruct is currently experiencing high traffic"}}'
+    assert short_err(busy) == "hız sınırı/yoğun: Meta-Llama-3.3-70B-Instruct is currently experiencing high traffic"
+    assert short_err('[auth] {"error":{"message":"Invalid API key"}}') == "anahtar reddedildi: Invalid API key"
+    assert len(short_err("[server] " + "x" * 500)) <= 160 and "{" not in short_err(busy)
+
+
+def test_payment_required_stops_trying_other_models(monkeypatch):
+    from alice.doctor import probe_providers
+    from alice.providers import ranking
+    from alice.providers.openai_compat import ProviderError
+    from tests.conftest import FakeProvider
+
+    monkeypatch.setattr(ranking, "load_cache", lambda path=None: {})
+    monkeypatch.setenv("SK", "k")
+    asked = []
+
+    def reply(model, messages, tools, **kw):
+        asked.append(model)
+        return ProviderError("quota", '{"error":{"code":"PAYMENT_METHOD_REQUIRED","message":"A payment method is required"}}')
+
+    prov = {"samba": {"base_url": "http://s", "api_key_env": "SK", "models": ["a", "b", "c"]}}
+    row = probe_providers(make_config({"brain": ["auto"]}, prov), factory=lambda pc: FakeProvider(pc.name, reply))[0]
+    assert row["status"] == "fail" and row["detail"].startswith("ödeme yöntemi istiyor") and asked == ["a"]

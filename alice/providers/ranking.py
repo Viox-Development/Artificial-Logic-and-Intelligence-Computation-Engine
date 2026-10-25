@@ -15,6 +15,7 @@ uygulama açılışta arka planda yeniler.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -101,6 +102,7 @@ class Probe:
     error_kind: str = ""
     error: str = ""
     ever_ok: bool = False  # önceki ölçümlerde en az bir kez çalıştı mı
+    context: int = 0  # token: modelin bağlamı ile sağlayıcıya gönderilebilen sınırın küçüğü (0 = bilinmiyor)
 
     @property
     def dead(self) -> bool:
@@ -141,7 +143,8 @@ def catalog_models(router, name: str) -> list[dict[str, Any]]:
     return router.client(name).list_models()
 
 
-def candidates(router, per_provider: int = PER_PROVIDER) -> tuple[list[str], dict[str, str], dict[str, list[str]]]:
+def candidates(router, per_provider: int = PER_PROVIDER,
+               contexts: dict[str, int] | None = None) -> tuple[list[str], dict[str, str], dict[str, list[str]]]:
     """Kataloglardan bildiğimiz iyi ailelere uyan adaylar (sağlayıcı başına en iyi per_provider tane),
     katalog hataları ve her sağlayıcının tam model listesi (elle yazılmış ama kalkmış modelleri ayıklamak için)."""
     from alice.providers.discovery import _generic, _openrouter
@@ -172,6 +175,8 @@ def candidates(router, per_provider: int = PER_PROVIDER) -> tuple[list[str], dic
                 q = UNKNOWN_QUALITY  # OpenRouter'ın yüzlerce bilinmeyen modeli ölçümü boğmasın
             if q > 0 and f.tools is not False:
                 by_provider.setdefault(name, []).append((q, f.ref))
+                if contexts is not None and f.context:
+                    contexts[f.ref] = int(f.context)
     out = []
     for name, items in by_provider.items():
         items.sort(key=lambda x: -x[0])
@@ -282,18 +287,21 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
 
 
 # -------------------------------------------------------------------- sıralama
-# Her model dört ölçütte 0-100 puan alır; rolün ağırlıklarıyla genel puan çıkar. Ağırlıklar uygulamada
+# Her model beş ölçütte 0-100 puan alır; rolün ağırlıklarıyla genel puan çıkar. Ağırlıklar uygulamada
 # (Ayarlar → Modeller → Puanlama) değiştirilebilir, ~/.alice/model-weights.json'a yazılır.
 METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi bitirme süresi)",
-           "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)"}
+           "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)",
+           "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)"}
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
     # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık da pahalı.
-    "brain": {"zeka": 70, "hiz": 20, "tepki": 5, "akis": 5},
-    # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli.
-    "voice": {"zeka": 45, "hiz": 10, "tepki": 40, "akis": 5},
-    # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin.
-    "fast": {"zeka": 30, "hiz": 55, "tepki": 10, "akis": 5},
-    "vision": {"zeka": 70, "hiz": 20, "tepki": 5, "akis": 5},
+    # Bağlam: ajan uzun dosya/sayfa okuyor, konuşma uzuyor; küçük bağlamlı model işin ortasında sığmaz olur.
+    "brain": {"zeka": 60, "hiz": 20, "tepki": 5, "akis": 5, "baglam": 10},
+    # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli; konuşmalar kısa.
+    "voice": {"zeka": 45, "hiz": 10, "tepki": 40, "akis": 5, "baglam": 0},
+    # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin; özet için biraz bağlam.
+    "fast": {"zeka": 30, "hiz": 50, "tepki": 10, "akis": 5, "baglam": 5},
+    # Görsel: ekran okuma işinde doğruluk önde; bir saniyelik fark daha az önemli.
+    "vision": {"zeka": 65, "hiz": 15, "tepki": 5, "akis": 5, "baglam": 10},
 }
 
 
@@ -329,6 +337,19 @@ def _get(r: Any, key: str) -> float:
         return 0.0
 
 
+def context_of(ref: str, providers_cfg: dict[str, Any] | None, catalog: int | None = None) -> int:
+    """Modelin kullanılabilir bağlamı: katalogdaki değer ile ALICE'in o sağlayıcıya gönderdiği sınırın küçüğü."""
+    pc = (providers_cfg or {}).get(ref.partition(":")[0])
+    limit = int(getattr(pc, "max_input_tokens", 0) or 0)
+    vals = [v for v in (catalog, limit) if v]
+    return min(vals) if vals else 0
+
+
+def with_context(r: dict[str, Any], ref: str, providers_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """Eski ölçümde bağlam yok: sağlayıcının sınırıyla doldur."""
+    return r if r.get("context") else {**r, "context": context_of(ref, providers_cfg)}
+
+
 def metric_scores(r: Any) -> dict[str, float]:
     """Ölçüm sonucundan (Probe ya da önbellekteki sözlük) 0-100 alt puanlar. Eğriler yumuşak: 1 sn -> 2 sn farkı
     8 sn -> 9 sn farkından çok daha önemli."""
@@ -338,6 +359,8 @@ def metric_scores(r: Any) -> dict[str, float]:
         "hiz": round(100 / (1 + max(0.0, lat - 1) / 4), 1),        # 1 sn 100, 3 sn 67, 5 sn 50, 13 sn 25
         "tepki": round(100 / (1 + max(0.0, ttft - 0.3) / 1.0), 1),  # 0,3 sn 100, 0,8 sn 67, 1,3 sn 50, 5 sn 18
         "akis": round(min(100.0, tps / 1.5), 1),                     # 150 token/sn ve üstü 100
+        # 8K 20, 16K 40, 32K 60, 64K 80, 128K ve üstü 100; bilinmiyorsa orta
+        "baglam": (round(max(0.0, min(100.0, 20 * math.log2(ctx / 4000))), 1) if (ctx := _get(r, "context")) else 50.0),
     }
 
 
@@ -389,7 +412,8 @@ def vision_backups(results: dict[str, Any], providers_cfg: dict[str, Any], have:
     bir) yedek olarak sona eklenir."""
     used = {r.split(":", 1)[0] for r in have}
     out: list[str] = []
-    for ref, r in sorted(results.items(), key=lambda kv: -role_score(kv[1], "vision")):
+    for ref, r in sorted(results.items(),
+                         key=lambda kv: -role_score(with_context(kv[1], kv[0], providers_cfg), "vision")):
         prov, _, model = ref.partition(":")
         pc = providers_cfg.get(prov)
         if (len(out) < limit and r.get("ok") and prov not in used and ref not in have and pc
@@ -453,13 +477,15 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
 
 def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | None = None,
             per_provider: int = PER_PROVIDER, timeout: float = PROBE_TIMEOUT) -> dict[str, Any]:
-    refs, errors, catalog = candidates(router, per_provider)
+    contexts: dict[str, int] = {}
+    refs, errors, catalog = candidates(router, per_provider, contexts=contexts)
     emit(f"{len(refs)} aday ölçülüyor ({', '.join(sorted({r.split(':', 1)[0] for r in refs}))})")
     results = probe_all(router, refs, emit, timeout)
     prev = (load_cache(path).get("results") or {})
     for r in results:
         old = prev.get(r.ref) or {}
         r.ever_ok = r.ok or bool(old.get("ever_ok") or old.get("ok"))
+        r.context = context_of(r.ref, router.providers_cfg, contexts.get(r.ref))
     results.sort(key=lambda r: (not r.ok, -brain_score(r)))
     cache = {
         "probed_at": datetime.now().isoformat(timespec="seconds"),
@@ -484,6 +510,7 @@ def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Pa
     results = []
     for d in (cache.get("results") or {}).values():
         try:
+            d = with_context(d, str(d.get("ref", "")), router.providers_cfg)
             results.append(Probe(**{k: v for k, v in d.items() if k in Probe.__dataclass_fields__}))
         except TypeError:
             continue
@@ -525,7 +552,8 @@ def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str
     chains = cache.get("chains") or {}
     rows = []
     for ref, r in (cache.get("results") or {}).items():
-        row = {"ref": ref, "ok": bool(r.get("ok")), "error": r.get("error_kind") or "",
+        r = with_context(r, ref, providers_cfg)
+        row = {"ref": ref, "context": r.get("context") or 0, "ok": bool(r.get("ok")), "error": r.get("error_kind") or "",
                "known": quality(ref) > 0, "latency": r.get("latency"), "ttft": r.get("ttft"), "tps": r.get("tps"),
                "metrics": metric_scores(r)}
         row["scores"] = {role: role_score(r, role, weights) for role in DEFAULT_WEIGHTS} if row["ok"] else {}

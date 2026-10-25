@@ -282,6 +282,28 @@ def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) ->
     return seen[:limit]
 
 
+def short_err(err: str, limit: int = 160) -> str:
+    """Sağlayıcı hatasından okunur kısa metin: ham JSON yerine içindeki "message", bilinen durumlar Türkçe."""
+    import re
+
+    kind = ""
+    m = re.match(r"\[(\w+)\]\s*", err)
+    if m:
+        kind, err = m.group(1), err[m.end():]
+    low = err.lower()
+    if "payment_method_required" in low or "payment method is required" in low:
+        return "ödeme yöntemi istiyor: sağlayıcı ücretsiz kullanım için de hesaba kart eklenmesini şart koşuyor"
+    if "insufficient" in low and ("credit" in low or "balance" in low or "funds" in low):
+        return "kredisi bitmiş ya da yok"
+    msg = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', err)
+    text = (msg.group(1) if msg else err).replace("\\n", " ").strip()
+    text = " ".join(text.split())
+    prefix = {"auth": "anahtar reddedildi", "quota": "kota dolu ya da ödeme gerekli", "not_found": "model yok",
+              "rate_limit": "hız sınırı/yoğun", "server": "sağlayıcı hatası", "too_large": "istek çok büyük"}.get(kind, "")
+    out = f"{prefix}: {text}" if prefix and text else (prefix or text)
+    return out if len(out) <= limit else out[:limit - 1] + "…"
+
+
 def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
     """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
@@ -319,13 +341,16 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                 res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=PROBE_TOKENS)
             except AllProvidersFailed as e:
                 err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
-                tried.append(f"{ref.split(':', 1)[1]}: {err[:90]}")
+                tried.append(f"{ref.split(':', 1)[1]}: {short_err(err, 70)}")
                 if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
                     row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
                     break
                 if err.startswith("[auth]"):
-                    row.update(status="fail", detail="anahtar reddedildi: Ayarlar → Anahtarlar'dan kontrol et")
+                    row.update(status="fail", detail=short_err(err) + " · Ayarlar → Anahtarlar'dan kontrol et")
                     break
+                if "payment" in err.lower() and "required" in err.lower():
+                    row.update(status="fail", detail=short_err(err))
+                    break  # diğer modeller de aynı hesapta: denemeye gerek yok
                 if err.startswith(("[rate_limit]", "[server]")):
                     row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); "
                                                      "ALICE sıradaki modelle devam eder")
@@ -333,7 +358,7 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
                                                      "ALICE bir süre sıradaki modelle devam eder")
                 else:
-                    row.update(status="fail", detail=err[:200])
+                    row.update(status="fail", detail=short_err(err))
                 continue
             if not (res.text or "").strip():
                 tried.append(f"{ref.split(':', 1)[1]}: boş cevap")

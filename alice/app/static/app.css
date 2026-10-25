@@ -1412,7 +1412,7 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .enroll + .enroll { margin-top: 8px; }
 .enroll .auto-line > span.chk:first-child { min-width: 16px; width: 16px; }
 .enroll .auto-line > b { min-width: 150px; }
-.enroll .auto-line > small { flex: 1 1 260px; }
+.enroll .auto-line > small { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
 .g-step { align-items: center; }
 .g-step > span:first-child { min-width: 140px; }
 .g-step small { flex: 1 1 200px; }
@@ -1426,14 +1426,14 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 
 /* Ayarlar > Modeller > Puanlama */
 .score-pane .seg { margin-bottom: 10px; }
-.score-weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 18px; align-items: center; margin-bottom: 12px; }
+.score-weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 18px; align-items: center; margin-bottom: 12px; }
 .score-w { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .score-wn { min-width: 72px; color: var(--muted); }
 .score-w input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
 .score-wp { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
 .score-weights .btn { justify-self: start; }
 .score-table { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-.score-row { display: grid; grid-template-columns: minmax(160px, 1fr) repeat(4, 64px) 54px; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; }
+.score-row { display: grid; grid-template-columns: minmax(150px, 1fr) repeat(5, 56px) 50px; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; }
 .score-row:nth-child(even) { background: var(--panel); }
 .score-row.head { color: var(--muted); font-size: 12px; background: none; }
 .score-row.in .score-m b { color: var(--text); }
@@ -1447,4 +1447,4 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 .score-c i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent-soft); }
 .score-c em { position: relative; font-style: normal; line-height: 20px; font-size: 12px; }
 .score-c.total { background: none; font-weight: 700; font-size: 14px; }
-@media (max-width: 700px) { .score-row { grid-template-columns: minmax(120px, 1fr) repeat(4, 40px) 40px; } }
+@media (max-width: 700px) { .score-row { grid-template-columns: minmax(110px, 1fr) repeat(5, 36px) 36px; } }
