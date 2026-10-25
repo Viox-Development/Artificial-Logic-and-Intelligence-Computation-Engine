@@ -193,6 +193,42 @@ def test_reflex_falls_back_to_text_when_image_request_fails():
     assert res.status == "needs_help" and d.visual_calls == 1 and d.text_calls == 1
 
 
+def test_reflex_clicks_seen_target_even_when_jev_picks_stuck():
+    """Kullanıcının gördüğü hata: ağaçta sadece 'Document' var, Jev 'stuck' dedi ama hedef ekranda görünüyordu."""
+    obs = WebViewObserver()
+    dec = VisualDecider(obs)
+    first = dec.decide
+
+    def stuck_first(state, questions, images=None):
+        d = first(state, questions, images)
+        if obs.page == "home":
+            d.answers["next"] = Answer("choice", "stuck", 0.5)
+        return d
+
+    dec.decide = stuck_first
+    lines = []
+    res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
+    assert res.status == "done" and obs.clicked == [(0.85, 0.15)]
+    assert "[görsel]" in lines[0] and "ekranda var mı? 0.95" in lines[0]
+
+
+def test_reflex_says_why_it_cannot_look():
+    obs = WebViewObserver()
+
+    class TextOnly:
+        supports_images = False
+        names = ["f"]
+
+        def decide(self, state, questions, images=None):
+            assert images is None
+            return Decision({"next": Answer("choice", "stuck", 0.5), "done": Answer("noul", 0.0, 1)}, "f", 0)
+
+    lines = []
+    res = ReflexLoop(obs, TextOnly(), settle=0, emit=lines.append).run("Ayarlar'ı aç")
+    assert res.status == "needs_help"
+    assert "ekrana bakılmıyor" in lines[0] and "jev_images" in lines[0] and "[metin]" in lines[1]
+
+
 def test_image_check_reports_box_position():
     def handler(req):
         body = json.loads(req.content)

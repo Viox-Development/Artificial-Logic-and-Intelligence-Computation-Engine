@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from alice.decider import Box, Choice, Decider, DeciderError, Noul, padded_fraction, prepare_image
@@ -114,18 +114,27 @@ class ReflexLoop:
         self.emit = emit
         self.settle = settle
         self.visual = True  # görsel istek bir kez reddedilirse (izin yok, görüntü kabul edilmedi) bu çalışmada kapanır
+        self._no_look = ""  # ekrana neden bakılamadığı (son söylenen)
 
     def _look(self) -> tuple[bytes, tuple[float, float]] | None:
         """Pencerenin Jev'e gidecek görüntüsü ve Box kesirlerini asıl görüntüye çevirme çarpanı; olmuyorsa None."""
         snap = getattr(self.obs, "snapshot", None)
-        if not (self.visual and callable(snap) and getattr(self.decider, "supports_images", False)):
-            return None
-        try:
-            img = snap()
-        except Exception as e:  # noqa: BLE001 - görüntü alınamadı: görselsiz devam
-            self.emit(f"ekran görüntüsü alınamadı, görselsiz devam: {e}")
-            return None
-        if img is None:
+        why = ("" if self.visual else "görsel istek bu çalışmada reddedildi") or \
+              ("" if callable(snap) else "bu gözlemci ekran görüntüsü alamıyor") or \
+              ("" if getattr(self.decider, "supports_images", False)
+               else "görsel karar yok (TypeSafe anahtarı yok, [decider] jev_images kapalı ya da Jev görseli reddetti)")
+        img = None
+        if not why:
+            try:
+                img = snap()
+            except Exception as e:  # noqa: BLE001 - görüntü alınamadı: görselsiz devam
+                why = f"ekran görüntüsü alınamadı: {e}"
+            else:
+                why = "" if img is not None else "öndeki pencerenin görüntüsü alınamadı"
+        if why:
+            if why != self._no_look:  # her adımda aynı uyarıyı tekrarlama
+                self.emit(f"ekrana bakılmıyor, sadece erişilebilirlik ağacıyla devam: {why}")
+                self._no_look = why
             return None
         return prepare_image(img), padded_fraction(img.size)
 
@@ -182,11 +191,21 @@ class ReflexLoop:
                 except DeciderError as e:
                     return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, ob.title, ob.location)
             nxt, done = d["next"], d["done"]
-            self.emit(f"[{step}] {nxt.value} (güven {nxt.confidence:.2f}, bitti? {done.value:.2f}) "
-                      f"{(time.monotonic() - t0) * 1000:.0f} ms via {d.engine}")
+            tv = d.answers.get("target_visible")
+            seen_on_screen = tv.value if tv is not None else None
+            self.emit(f"[{step}] {nxt.value} (güven {nxt.confidence:.2f}, bitti? {done.value:.2f}"
+                      + (f", ekranda var mı? {seen_on_screen:.2f}" if seen_on_screen is not None else "")
+                      + f") {(time.monotonic() - t0) * 1000:.0f} ms via {d.engine}"
+                      + (" [görsel]" if seen_on_screen is not None else " [metin]"))
 
             if done.value >= 0.85 or nxt.value == "done":
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, ob.title, ob.location)
+            if (seen_on_screen is not None and seen_on_screen >= VISIBLE_MIN and nxt.value != VISUAL_KEY
+                    and (nxt.value == "stuck" or nxt.confidence < self.min_conf)):
+                # Seçeneklerde yok (ör. WebView2 penceresi ağaçta sadece "Document") ama Jev hedefi ekranda görüyor:
+                # pes etmek yerine gördüğü yere tıkla.
+                self.emit(f"[{step}] seçeneklerde uygun yok ama hedef ekranda görünüyor: ekrandaki yere tıklanıyor")
+                nxt = replace(nxt, value=VISUAL_KEY)
             if nxt.value == "stuck":
                 return ReflexResult("needs_help", step - 1, "uygun seçenek yok", log, ob.title, ob.location)
             if nxt.value == VISUAL_KEY:

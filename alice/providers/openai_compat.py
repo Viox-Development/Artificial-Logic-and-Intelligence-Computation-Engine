@@ -45,7 +45,7 @@ def redact(text: str, *secrets: str | None) -> str:
 
 
 class ProviderError(Exception):
-    """kind: rate_limit | quota | auth | not_found | too_large | bad_request | server | network | unreachable"""
+    """kind: rate_limit | quota | auth | not_found | too_large | bad_request | server | network | unreachable | garbled"""
 
     def __init__(self, kind: str, message: str, status: int | None = None, retry_after: float | None = None,
                  daily: bool = False):

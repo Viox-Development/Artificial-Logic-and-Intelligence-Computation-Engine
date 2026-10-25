@@ -253,3 +253,27 @@ def test_catalog_view_groups_tested_models_by_provider():
     assert [m["ref"] for m in view["a"]["models"]] == ["a:extra", "a:m1"]
     assert view["b"]["hidden"] and [m["ref"] for m in view["b"]["models"]] == ["b:fast"]
     assert view["b"]["models"][0]["tested"] and not view["a"]["models"][1]["tested"]
+
+
+GARBLED = ("Projeye tıklamayı denedim ama 项目视图没有找到请再试一次 Η προβολή έργου δεν βρέθηκε ProjectView "
+           "tekrar deneyeceğim")
+
+
+def test_garbled_answer_falls_back_to_next_model():
+    """glm-4.7-flash uzun bağlamda Türkçe, Çince, Yunanca karışık uydurma metin üretti: kullanıcıya gösterme."""
+    cfg = make_config({"brain": ["a:m1", "b:m2"]})
+    a = FakeProvider("a", [GARBLED])
+    b = FakeProvider("b", ["İlk projeyi açtım."])
+    events = []
+    r = router_with(cfg, {"a": a, "b": b}, on_event=events.append)
+    assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "İlk projeyi açtım."
+    assert not r.available("a:m1")[0] and any("garbled" in e for e in events)
+
+
+def test_looks_garbled_spares_real_multilingual_answers():
+    from alice.providers.router import looks_garbled
+
+    assert looks_garbled(GARBLED)
+    assert not looks_garbled("Japonca 'merhaba dünya': こんにちは世界、お元気ですか")
+    assert not looks_garbled("Örnek:\n```\nΑΒΓΔΕΖΗΘΙΚ = 漢字漢字漢字漢字漢字\n```\nbu kod çalışır")
+    assert not looks_garbled("Pi sayısı π, alfa α, beta β ile gösterilir.")

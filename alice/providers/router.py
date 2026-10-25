@@ -22,6 +22,7 @@ zinciri bu şekilde dolaşmak sistemin ayakta kalmasını sağlıyor.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -35,7 +36,30 @@ from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, Pro
                                             redact)
 
 TIMEOUT_COOLDOWN = 600.0  # sn: zaman aşımına uğrayan model bu kadar atlanır
-COOLDOWNS = {"rate_limit": 20.0, "quota": 3600.0, "server": 30.0, "network": 30.0, "unreachable": 600.0}
+COOLDOWNS = {"rate_limit": 20.0, "quota": 3600.0, "server": 30.0, "network": 30.0, "unreachable": 600.0,
+             "garbled": 1800.0}
+# Harf aralıkları: cevapta bunlardan üçü birden yeterince geçiyorsa model çökmüş, anlamsız metin üretiyor demektir
+# (ör. glm-4.7-flash uzun bağlamda Türkçe, Çince ve Yunanca kelimeleri karıştırıp uydurmaya başladı).
+SCRIPTS = (("latin", 0x0041, 0x024F), ("latin", 0x1E00, 0x1EFF), ("greek", 0x0370, 0x03FF),
+           ("cyrillic", 0x0400, 0x04FF), ("hebrew", 0x0590, 0x05FF), ("arabic", 0x0600, 0x06FF),
+           ("devanagari", 0x0900, 0x097F), ("thai", 0x0E00, 0x0E7F), ("cjk", 0x3040, 0x30FF),
+           ("cjk", 0x4E00, 0x9FFF), ("hangul", 0xAC00, 0xD7AF))
+SCRIPT_MIN = 8  # bir alfabenin "var" sayılması için gereken harf sayısı (tek tük sembol, isim sayılmasın)
+
+
+def looks_garbled(text: str) -> bool:
+    """Cevap birbirine karışmış üç ya da daha fazla alfabeden oluşuyorsa True (kod blokları sayılmaz)."""
+    plain = re.sub(r"```.*?(```|$)|`[^`]*`|https?://\S+", " ", text, flags=re.S)
+    counts: dict[str, int] = {}
+    for ch in plain:
+        if not ch.isalpha():
+            continue
+        o = ord(ch)
+        for name, lo, hi in SCRIPTS:
+            if lo <= o <= hi:
+                counts[name] = counts.get(name, 0) + 1
+                break
+    return sum(n >= SCRIPT_MIN for n in counts.values()) >= 3
 
 
 def seconds_until_reset(provider: str, base_url: str = "", now: datetime | None = None) -> float:
@@ -516,6 +540,8 @@ class Router:
                         self._log(f"{ref} düşünme ayarını kabul etmedi ({e}); ayarsız deneniyor")
                         kw["extra"] = {k: v for k, v in extra.items() if k not in think} or None
                         res = call()
+                    if looks_garbled(res.text):
+                        raise ProviderError("garbled", "model anlamsız, birbirine karışmış dillerde metin üretti")
                 except ProviderError as e:
                     if emitted[0]:
                         stream.on_reset()
