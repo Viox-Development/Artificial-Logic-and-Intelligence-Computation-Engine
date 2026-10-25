@@ -1445,6 +1445,9 @@ const ROLE_NAMES = { brain: "Ana model", voice: "Sesli", fast: "Hızlı işler",
 const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış", baglam: "Bağlam", guven: "Güven" };
 const kTok = (n) => !n ? "?" : n >= 1000000 ? Math.round(n / 100000) / 10 + "M" : Math.round(n / 1000) + "K";
 let scoreRole = "brain";
+const FAIL_WHY = { quota: "kota doldu", rate_limit: "hız sınırı", network: "zaman aşımı / bağlantı", server: "sunucu hatası",
+  not_found: "model yok", auth: "anahtar geçersiz", no_tool: "araç çağırmadı", bad_args: "araç parametresi yanlış",
+  bad_request: "isteği reddetti", unreachable: "ulaşılamadı", too_large: "istek sığmadı" };
 function scorePane() {
   const box = el("div", "score-pane");
   let data = null;
@@ -1526,9 +1529,21 @@ function scorePane() {
       table.appendChild(row);
     }
     box.appendChild(table);
-    const failed = data.rows.filter((r) => !r.ok);
-    if (failed.length) box.appendChild(el("small", "enroll-note", `${failed.length} model ölçümde çalışmadı (` +
-      [...new Set(failed.map((r) => r.error || "?"))].join(", ") + "); sıraya girmez."));
+    // Ölçümde çalışmayanlar: neden listede olmadıkları görünsün (ör. gemini-3.8-flash zaman aşımı, kota).
+    const failed = data.rows.filter((r) => !r.ok && !chain.includes(r.ref));
+    if (failed.length) {
+      const det = el("details", "score-failed");
+      det.appendChild(el("summary", "", `${failed.length} model ölçümde çalışmadı, sıraya girmedi (` +
+        [...new Set(failed.map((r) => FAIL_WHY[r.error] || r.error || "?"))].join(", ") + ")"));
+      for (const r of failed.sort((a, b) => (b.metrics.zeka || 0) - (a.metrics.zeka || 0))) {
+        const line = el("div", "score-failed-row");
+        line.append(el("b", "", r.ref), el("span", "", " · zekâ " + (r.known ? Math.round(r.metrics.zeka) : "?") + " · "
+          + (FAIL_WHY[r.error] || r.error || "?")));
+        if (r.error_text) line.title = r.error_text;
+        det.appendChild(line);
+      }
+      box.appendChild(det);
+    }
     box.appendChild(el("small", "enroll-note", "Numaralı olanlar bu rolün otomatik sırasında, denenme sırasıyla. Aynı sağlayıcıdan art arda üç model konmaz (biri kotaya takılınca hepsi birden düşmesin), bu yüzden puanı yakın iki model yer değiştirebilir. Zekâ puanı LMArena\'nın gerçek kullanıcı oylarıyla oluşan sıralamasından (genel, kod, talimata uyma, İngilizce dışı, çok turlu; bulunamazsa tahmin); hız ölçümden; ilk kelime ve akış ALICE\'i kullandıkça gerçek çağrılardan (önce ölçümden); güven gerçek kullanımdaki takılma/saçmalamadan; bağlam katalogdan (ALICE'in o sağlayıcıya gönderebildiği sınırla). Bağlam: 8K 20 puan, 32K 60, 128K ve üstü 100."));
   };
   api("/api/models/scores").then((d) => { data = d; draw(); });

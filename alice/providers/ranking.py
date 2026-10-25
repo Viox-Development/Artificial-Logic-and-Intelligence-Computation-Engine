@@ -326,10 +326,11 @@ METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi b
            "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)",
            "guven": "güvenilirlik (gerçek kullanımda takılmadan, saçmalamadan cevap verme)"}
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
-    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık ve takılma da pahalı. Önceden zekâ %60'tı:
-    # çok zeki ama yavaş/takılan modeller (glm-5.3) öne geçip bir iş 5-10 dakika sürüyordu; şimdi ortası iyi olan.
+    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık ve takılma da pahalı. Zekâ LMArena'dan
+    # geldiğinden beri modeller arası fark küçük (flash-lite 67, 3.5-flash 82): %45'te hızlı ama zayıf flash-lite
+    # ana modelin başına geçiyordu. Takılan model "güven"le, çok yavaş olan "hız"la yine geri düşer.
     # Bağlam: ajan uzun dosya/sayfa okuyor, konuşma uzuyor; küçük bağlamlı model işin ortasında sığmaz olur.
-    "brain": {"zeka": 45, "hiz": 20, "tepki": 10, "akis": 5, "baglam": 10, "guven": 10},
+    "brain": {"zeka": 65, "hiz": 15, "tepki": 5, "akis": 0, "baglam": 5, "guven": 10},
     # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli; konuşmalar kısa.
     "voice": {"zeka": 40, "hiz": 10, "tepki": 35, "akis": 5, "baglam": 0, "guven": 10},
     # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin; özet için biraz bağlam.
@@ -704,6 +705,7 @@ def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str
         r = with_context(r, ref, providers_cfg)
         hit = arena.lookup(ref)
         row = {"ref": ref, "context": r.get("context") or 0, "ok": bool(r.get("ok")), "error": r.get("error_kind") or "",
+               "error_text": str(r.get("error") or "")[:160],
                "known": quality(ref) > 0, "arena": {"name": hit["name"], "elo": hit["elo"]} if hit else None,
                "live_calls": int(r.get("live_calls") or 0), "latency": r.get("latency"), "ttft": r.get("ttft"), "tps": r.get("tps"),
                "metrics": metric_scores(r)}

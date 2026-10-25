@@ -209,4 +209,13 @@ def lookup(ref: str, data: dict[str, Any] | None = None) -> dict[str, Any] | Non
         hit = _newest(scores, re.compile(rf"^{re.escape(base)}-(\d{{1,2}}(?:\.\d+)?)$"))
         if hit is not None:
             return hit
-    return scores.get(dated) or scores.get(norm(ref)) or scores.get(re.sub(r"-latest$", "", norm(ref)))
+    key = norm(ref)
+    hit = scores.get(dated) or scores.get(key) or scores.get(re.sub(r"-latest$", "", key))
+    if hit is None:  # "qwen-3.8-27b" (Cerebras) = "qwen3.8-27b": harf ile sürüm arasındaki tire önemsiz
+        squashed = {squash(k): v for k, v in scores.items()}
+        hit = squashed.get(squash(dated)) or squashed.get(squash(key))
+    return hit
+
+
+def squash(key: str) -> str:
+    return re.sub(r"(?<=[a-z])-(?=\d)", "", key)

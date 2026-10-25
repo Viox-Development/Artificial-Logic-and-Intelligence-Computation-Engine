@@ -110,3 +110,15 @@ def test_live_speed_replaces_single_probe_after_enough_calls():
     assert ranking.role_score(live, "voice") < ranking.role_score(r, "voice") - 20
     ranking.record_outcome(ref, True, ttft=1.0)  # üstel ortalama: yeni çağrı %30 ağırlıkla
     assert ranking.with_context(r, ref, None)["ttft"] == pytest.approx(2.4)
+
+
+def test_hyphen_between_name_and_version_does_not_matter():
+    assert arena.lookup("cerebras:qwen-3.8-27b", data())["name"] == "Qwen3.8-27B"
+
+
+def test_brain_prefers_smart_enough_over_fastest():
+    """Kullanıcının tablosu: flash-lite (zekâ 67, çok hızlı) ana modelin başına geçmişti; 3.5-flash (82) 5. idi."""
+    lite = {"quality": 67, "latency": 0.6, "ttft": 0.6, "context": 1_000_000}
+    flash = {"quality": 82, "latency": 2.6, "ttft": 2.6, "context": 1_000_000}
+    assert ranking.role_score(flash, "brain") > ranking.role_score(lite, "brain")
+    assert ranking.role_score(lite, "voice") > ranking.role_score(flash, "voice")  # seste ilk kelime önemli
