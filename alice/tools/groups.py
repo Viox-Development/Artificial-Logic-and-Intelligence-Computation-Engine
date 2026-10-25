@@ -13,20 +13,30 @@ from typing import Any
 from alice import plugins
 from alice.tools.base import READ, Tool, ToolContext, ToolError, ToolResult, obj
 
-CORE = {"read_file", "write_file", "edit_file", "multi_edit", "apply_patch", "file_ops", "list_dir", "glob", "grep",
-        "run_command",
-        "process_output", "process_stop", "web_fetch", "web_search", "windows", "todo_write", "memory", "task", "weather", "youtube",
-        "load_tools", "run_plan", "task_control", "skill", "ask_user", "feedback"}
+# Her istekte tam tanımıyla giden araçlar: en sık gerekenler. Diğerleri (Claude Code'daki gibi) sadece adlarıyla
+# sistem talimatında listelenir; kullanıcının sözüne göre kendiliğinden ya da model load_tools deyince yüklenir.
+# Önceden 27 araç her istekte ~9K token tutuyordu: dar bağlamlı/hızlı ücretsiz modeller (Groq, Cerebras) ana model
+# olamıyordu.
+CORE = {"read_file", "write_file", "edit_file", "list_dir", "glob", "grep", "run_command", "web_fetch", "web_search",
+        "memory", "load_tools", "ask_user"}
 
 # grup -> (araçlar, kısa açıklama, anahtar kelime regex'i)
 GROUPS: dict[str, tuple[set[str], str, str]] = {
-    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex", "app"},
-                "ekran görüntüsü, fare/klavye, masaüstü uygulamalarında tıklama, pano",
+    "files": ({"file_ops", "multi_edit", "apply_patch", "notebook_edit"},
+              "dosya taşıma/kopyalama/silme, bir dosyada çok değişiklik, çok dosyaya yama, Jupyter defteri",
+              r"taşı|kopyala|\bsil(in|e|er misin)?\b|yeniden adlandır|adını değiştir|çöp|düzenle|değiştir|düzelt|refactor|"
+              r"yama|patch|notebook|ipynb|jupyter|\bkod|code|script|fonksiyon|\.py\b|\.js\b|\.ts\b|bug|klasör"),
+    "plan": ({"todo_write", "run_plan", "task_control", "task", "process_output", "process_stop", "skill"},
+             "çok adımlı iş planı ve yapılacaklar listesi, alt ajan, arka plandaki komutun çıktısı/durdurma, beceriler",
+             r"önce .* sonra|ardından|sonra da|adım adım|planla|alt ajan|arka planda|background|sunucu(yu)? başlat|"
+             r"dev server|npm run|\bwatch\b|beceri|skill"),
+    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex", "app", "windows"},
+                "uygulama/pencere açma-kapama, ekran görüntüsü, fare/klavye, masaüstü uygulamalarında tıklama, pano",
                 r"tıkla|ekran|pencere|fare|mouse|klavye|screenshot|buton|düğme|menü|click|screen|pano|kopyala|"
                 r"yapıştır|clipboard|oyun|ayarlar|uygulamada|arayüz|simge|ikon|whatsapp|instagram|insta\b|"
-                r"tiktok|dm at|mesaj at|uygulama aç"),
+                r"tiktok|dm at|mesaj at|uygulama|\baç|kapat|başlat|küçült|sekme"),
     "browser": ({"browser"}, "kullanıcının tarayıcısında web sayfası okuma, tıklama, form doldurma",
-                r"site|tarayıcı|browser|chrome|edge|firefox|opera|youtube|google|sayfa|link|https?://|www\.|\.com|"
+                r"site|tarayıcı|browser|chrome|edge|firefox|opera|google|sayfa|link|https?://|www\.|\.com|"
                 r"giriş yap|login|online|internetten|instagram|twitter|github|e-?posta|mail"),
     "github": ({"git", "github"}, "git (commit, dal, push) ve GitHub (depo klonlama, PR açma/birleştirme, CI durumu)",
                r"git\b|git ?hub|\brepo|depo|commit|push|pull|pull request|\bpr\b|merge|birleştir|branch|\bdal\b|"
@@ -54,9 +64,11 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
              "tartışıp oylar)",
              r"takım|ekip|paralel|aynı anda|ajanlar|ajan çağır|orkestra|alt ajan|subagent|multi.?agent|büyük (iş|proje|"
              r"kod)|codebase|kod tabanı|refactor|yeniden düzenle|kurul|eleştir|tartış|savun|artı.*eksi|incele"),
-    "personal": ({"notes", "report", "media"}, "notlar, sabah/PC raporu, müzik ve ses seviyesi",
+    "personal": ({"notes", "report", "media", "youtube", "weather", "feedback"},
+                 "notlar, sabah/PC raporu, müzik, YouTube'da video açma, ses seviyesi, hava durumu, beğenilmeyen cevap",
                  r"\bnot\b|notlar|not al|rapor|özet|sabah|müzik|şarkı|ses seviyesi|sesi aç|sesi kıs|spotify|"
-                 r"kapat .*dakika|dakika sonra"),
+                 r"kapat .*dakika|dakika sonra|youtube|video|klip|izle|\bçal\b|hava|yağmur|kar yağ|derece|sıcak|soğuk|"
+                 r"şemsiye|beğenmedim|yanlış (yaptın|cevap)|kötü cevap"),
     "projects": ({"projects"}, "kullanıcının projeleri (repo, Unity, Python...) ve ayrıntıları",
                  r"proje|repo\b|depo(su|m|yu)?\b|unity|godot|kodum|oyunum|oyunumu|uygulamam|scriptim|programım|"
                  r"son commit|nerede duruyor|hangi klasör"),
@@ -69,6 +81,28 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
 }
 
 TOOL_TO_GROUP = {name: g for g, (names, _, _) in GROUPS.items() for name in names}
+
+# Büyük gruplarda sözden bütün grubu değil, sadece gereken aracı aç: "YouTube'da lofi aç" için 8 masaüstü aracı ve
+# not/rapor araçları değil, youtube yeter. Burada adı geçen grupların araçları sadece kendi kalıplarıyla açılır;
+# grubun tamamı model load_tools deyince ya da gruptan bir araç kullanılınca açılır.
+TOOL_HINTS: dict[str, str] = {
+    "windows": r"\baç|kapat|pencere|uygulama|başlat|küçült|büyüt|sekme|program",
+    "computer": r"ekran|screenshot|fare|mouse|klavye|tıkla|sürükle|kaydır|bas\b",
+    "reflex": r"reflex|tıkla|ekrana bak|ekranda|butona|düğmeye|menüden",
+    "ui_elements": r"tıkla|buton|düğme|menü|arayüz|ayarlar|simge|ikon|uygulamada|pencerede",
+    "ui_act": r"tıkla|buton|düğme|menü|arayüz|ayarlar|simge|ikon|uygulamada|pencerede",
+    "computer_task": r"ekranda .*(yap|doldur|gir)|bilgisayarı kullan|oyun|kurulum yap",
+    "clipboard": r"pano|kopyala|yapıştır|clipboard",
+    "app": r"whatsapp|instagram|insta\b|tiktok|telegram|dm at|mesaj at|discord'?a yaz",
+    "youtube": r"youtube|video|klip|izle|şarkı(yı|sını)? (aç|çal)|\bçal\b",
+    "media": r"müzik|şarkı|ses seviyesi|sesi (aç|kıs|kapat)|duraklat|devam ettir|sonraki|önceki|\bsesi?\b",
+    "notes": r"\bnot\b|notlar|not al|not et",
+    "report": r"rapor|özet|sabah",
+    "weather": r"hava|yağmur|kar yağ|derece|sıcak|soğuk|şemsiye|rüzgar",
+    "feedback": r"beğenmedim|yanlış (yaptın|cevap)|kötü cevap|saçmaladın|öyle deme",
+}
+_HINT_RX = {name: re.compile(rx, re.I) for name, rx in TOOL_HINTS.items()}
+_HINTED_GROUPS = {TOOL_TO_GROUP[n] for n in TOOL_HINTS}
 
 # Bağlantı araçları (alice/connect) çalışma anında tanımlardan geliyor; adları burada tutulur ve
 # "connect" grubuna sayılır. Böylece her isteğe 4-5 servisin şeması eklenmez, gerekince açılır.
@@ -109,8 +143,10 @@ def mcp_servers(tool_names) -> set[str]:
 
 
 def groups_for_text(text: str, tool_names=()) -> set[str]:
+    """Kullanıcının sözüne göre açılacaklar: grup adları ve (ipucu olan büyük gruplarda) tek tek araç adları."""
     text = text or ""
-    out = {g for g, rx in _RX.items() if rx.search(text)}
+    out = {g for g, rx in _RX.items() if g not in _HINTED_GROUPS and rx.search(text)}
+    out |= {name for name, rx in _HINT_RX.items() if rx.search(text)}
     out |= {g for g, (_, _, rx) in plugins.groups().items() if rx and re.search(rx, text, re.I)}
     for srv in mcp_servers(tool_names):
         rx = re.escape(srv) + ("|" + MCP_KEYWORDS[srv] if srv in MCP_KEYWORDS else "")
@@ -125,9 +161,30 @@ def visible_tools(tools: dict[str, Tool], enabled: set[str]) -> list[Tool]:
     always = CORE | plugins.always_tools()
     for name, t in tools.items():
         g = group_of(name)
-        if name in always or g is None or g in enabled:
+        if name in always or g is None or g in enabled or name in enabled:
             out.append(t)
     return out
+
+
+def catalog(tools: dict[str, Tool]) -> str:
+    """Sistem talimatına eklenen kısa liste: tanımı her istekte gitmeyen araçların adları, gruplarıyla."""
+    always = CORE | plugins.always_tools()
+    by_group: dict[str, list[str]] = {}
+    for name in tools:
+        g = group_of(name)
+        if name not in always and g is not None:
+            by_group.setdefault(g, []).append(name)
+    groups = all_groups()
+    lines = []
+    for g, names in by_group.items():
+        desc = groups[g][1] if g in groups else ""
+        shown = sorted(names)[:8] + (["…"] if len(names) > 8 else [])
+        lines.append(f"- {g} ({', '.join(shown)}): {_clip(desc, 90)}" if desc else f"- {g} ({', '.join(shown)})")
+    if not lines:
+        return ""
+    return ("# Yüklenebilir araçlar\nBunların tanımı her istekte gönderilmiyor. Kullanıcının sözleri çoğu zaman "
+            "gerekeni kendiliğinden açar; gereken araç elinde yoksa önce load_tools ile aç (grup ya da araç adı):\n"
+            + "\n".join(lines))
 
 
 def _clip(desc: str, n: int = 62) -> str:
@@ -144,21 +201,12 @@ class LoadTools(Tool):
     name = "load_tools"
     parallel_safe = True
 
-    @property
-    def description(self) -> str:  # eklenti grupları sonradan yüklendiği için her seferinde kurulur
-        # Gemini Live açıklamayı 1000 karakterde kesiyor; grup sayısı arttıkça açıklamalar kısaltılır.
-        groups = all_groups()
-        for n in range(62, 20, -4):  # grup eklendikçe açıklamalar kısalır, toplam 1000 karakteri geçmez
-            text = ("Şu an listede olmayan bir araç grubunu açar; araçlar bir sonraki adımdan itibaren kullanılabilir. "
-                    "İş için gereken araç listede yoksa ('yapamam' demeden önce) bunu çağır. Gruplar: "
-                    + "; ".join(f"{g}: {_clip(desc, n)}" for g, (_, desc, _) in groups.items())
-                    + "; MCP sunucuları için 'mcp:<sunucu>' (ör. mcp:github). Hepsi için 'all'.")
-            if len(text) <= 1000:
-                break
-        return text
+    description = ("Şu an tanımı yüklü olmayan araçları açar (sistem talimatındaki 'Yüklenebilir araçlar' listesi); "
+                   "bir sonraki adımdan itibaren kullanılabilirler. Gereken araç yüklü değilse 'yapamam' demeden önce "
+                   "bunu çağır. Grup adı ya da araç adı verilebilir; MCP için 'mcp:<sunucu>', hepsi için 'all'.")
 
     parameters = obj({"groups": {"type": "array", "items": {"type": "string"},
-                                 "description": "Açılacak grup adları, ör. [\"desktop\", \"browser\"]."}}, ["groups"])
+                                 "description": "Grup ya da araç adları, ör. [\"desktop\", \"youtube\"]."}}, ["groups"])
     risk = READ
 
     def run(self, ctx: ToolContext, groups: list[str] | str) -> ToolResult:
@@ -167,6 +215,8 @@ class LoadTools(Tool):
         servers = mcp_servers(ctx.state.get("tool_names", ()))
         groups_ = all_groups()
         known = set(groups_) | {"mcp:" + s for s in servers}
+        # Araç adı verildiyse grubunu aç (model listedeki araç adını yazabilir).
+        groups = [group_of(g) or g if g not in known else g for g in groups]
         groups = ["mcp:" + g if g in servers else g for g in groups]
         wanted = known if "all" in groups else set(groups)
         unknown = wanted - known

@@ -228,7 +228,51 @@ def test_read_ipynb(ctx, workdir):
 
 
 def test_new_tools_are_visible():
-    assert {"apply_patch", "file_ops"} <= groups.CORE
+    assert groups.group_of("apply_patch") == groups.group_of("file_ops") == "files"  # adıyla listede, gerekince yüklenir
+    assert "files" in groups.groups_for_text("bu dosyayı masaüstüne taşı")
     assert groups.group_of("http_request") == "net"
     assert "net" in groups.groups_for_text("şu API'ye post isteği at")
     assert "net" in groups.groups_for_text("bu dosyayı indir")
+
+
+def test_requests_are_small_and_tools_load_on_demand(tmp_path):
+    """Her istekte sadece temel araçların tanımı gider; diğerleri adıyla listelenir, sözle ya da load_tools ile açılır."""
+    from alice.agent import Agent
+    from alice.permissions import Permissions
+    from alice.providers.router import estimate_tokens
+    from alice.tools import ToolContext, all_tools
+    from tests.conftest import make_config
+
+    cfg = make_config({"brain": ["a:m"]})
+    ctx = ToolContext(cwd=tmp_path, config=cfg)
+    agent = Agent(cfg, None, all_tools(cfg), ctx, Permissions("auto"))
+    agent.sync_catalog()
+    specs = agent.tool_specs()
+    assert {s["function"]["name"] for s in specs} >= {"read_file", "run_command", "memory", "load_tools"}
+    assert "youtube" not in {s["function"]["name"] for s in specs}
+    assert estimate_tokens([], specs) < 6000  # önceden ~9.200
+    system = agent.messages[0]["content"]
+    assert "# Yüklenebilir araçlar" in system and "youtube" in system and "file_ops" in system
+    agent.sync_catalog()
+    assert agent.messages[0]["content"].count("# Yüklenebilir araçlar") == 1  # tekrar eklenmez
+    agent._enable_groups_for("YouTube'da lofi aç")
+    assert "youtube" in {s["function"]["name"] for s in agent.tool_specs()}
+
+
+def test_old_tool_outputs_are_shortened(tmp_path):
+    from alice.agent import Agent
+    from alice.permissions import Permissions
+    from alice.tools import ToolContext
+    from tests.conftest import make_config
+
+    cfg = make_config({"brain": ["a:m"]})
+    agent = Agent(cfg, None, [], ToolContext(cwd=tmp_path, config=cfg), Permissions("auto"))
+    for i in range(8):
+        agent.messages.append({"role": "tool", "tool_call_id": str(i), "name": "read_file", "content": f"{i}" * 5000})
+    agent._shrink_old_outputs()
+    tools = [m for m in agent.messages if m["role"] == "tool"]
+    assert all(len(m["content"]) < 1500 and "kısaltıldı" in m["content"] for m in tools[:2])
+    assert all(len(m["content"]) == 5000 for m in tools[2:])  # son altı olduğu gibi
+    assert tools[0]["tool_call_id"] == "0"  # araç çağrısıyla bağı kopmaz
+    agent._shrink_old_outputs()
+    assert len(tools[0]["content"]) == len(agent.messages[1]["content"])  # tekrar kısaltılmaz

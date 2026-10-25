@@ -49,9 +49,12 @@ def test_plugin_tools_are_grouped_and_open_by_keyword(isolated_home, tmp_path):
     assert "ping" in groups_for_text("bir ping at", tools)
     assert "ping_pong" in {t.name for t in visible_tools(tools, {"ping"})}
     assert "ping" in plugins.live_groups()
-    assert "ping:" in LoadTools().description
+    from alice.tools.groups import catalog
+
+    assert "- ping (ping_pong)" in catalog(tools)  # sistem talimatındaki yüklenebilir araçlar listesinde
     ctx = ToolContext(cwd=tmp_path, config=cfg())
     assert "ping_pong" in LoadTools().run(ctx, groups=["ping"]).text
+    assert "ping_pong" in LoadTools().run(ctx, groups=["ping_pong"]).text  # araç adıyla da açılır
     cleanup(ctx)
     import sys
     assert sys.modules["alice_plugin_ping"].CLOSED == [1]

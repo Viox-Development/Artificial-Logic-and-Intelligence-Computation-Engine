@@ -199,6 +199,9 @@ PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiş
              "onayını bekle.]\n\n")
 
 
+_CATALOG_RX = re.compile(r"\n\n# Yüklenebilir araçlar\n.*?(?=\n\n# |\n\n<|\Z)", re.S)
+KEEP_OUTPUTS = 6  # son bu kadar araç çıktısı tam kalır
+OLD_OUTPUT_CHARS = 1200  # daha eskilerin uzunları bu kadara kısaltılır
 NUDGE_PREFIX = "[devam kontrolü] "
 # Cevabın sonu "yapacağım" diyorsa iş yarım kalmış demektir.
 _PROMISE_RX = re.compile(
@@ -326,8 +329,23 @@ class Agent:
         except Exception:  # noqa: BLE001
             log.debug("tur hafızaya yazılamadı", exc_info=True)
 
+    def sync_catalog(self) -> None:
+        """Sistem talimatının sonundaki 'Yüklenebilir araçlar' listesini güncel araçlarla yenile (MCP ve eklenti
+        araçları ajan kurulduktan sonra eklenebiliyor)."""
+        if str(self.config.agent.get("tool_groups", "auto")) == "all":
+            return
+        from alice.tools.groups import catalog
+
+        text = catalog(self.tools)
+        system = self.messages[0]["content"]
+        body = _CATALOG_RX.sub("", system)
+        new = body + ("\n\n" + text if text else "")
+        if new != system:
+            self.messages[0]["content"] = new
+
     def run_turn(self, user_text: str, max_steps: int | None = None, images: list[str] | None = None) -> str:
         self.refresh_memory()
+        self.sync_catalog()
         recall = self._recall(user_text)
         final = self._run_turn(user_text, max_steps, images, recall)
         self._remember_turn(user_text, final)
@@ -392,6 +410,7 @@ class Agent:
                     raise Cancelled
                 self._maybe_compact()
                 self._prune_images()
+                self._shrink_old_outputs()
                 sink.parts.clear()
                 self.ui.stream_start()
                 sent = len(self.messages)
@@ -801,6 +820,17 @@ class Agent:
         idx = [i for i, m in enumerate(self.messages) if m.get("_image")]
         for i in idx[:-self.keep_images] if self.keep_images else idx:
             self.messages[i] = {"role": "user", "content": "[eski ekran görüntüsü yer kazanmak için kaldırıldı]", "_image": False}
+
+    def _shrink_old_outputs(self) -> None:
+        """Eski araç çıktılarını kısalt: son KEEP_OUTPUTS sonuç olduğu gibi kalır, öncekilerin uzunları başı ve sonuyla
+        kısaltılır. Uzun bir işte okunan dosyalar, listeler, sayfalar her adımda baştan gönderiliyor ve bağlamı
+        dolduruyordu; model onların özünü zaten kullandı, gerekirse tekrar okur."""
+        idx = [i for i, m in enumerate(self.messages) if m["role"] == "tool" and isinstance(m.get("content"), str)]
+        for i in idx[:-KEEP_OUTPUTS]:
+            c = self.messages[i]["content"]
+            if len(c) > OLD_OUTPUT_CHARS * 1.5:
+                self.messages[i] = {**self.messages[i], "content": "[eski çıktı, yer kazanmak için kısaltıldı; "
+                                    "gerekirse aracı tekrar çağır]\n" + truncate(c, OLD_OUTPUT_CHARS)}
 
     # -------------------------------------------------------------- context
     @property

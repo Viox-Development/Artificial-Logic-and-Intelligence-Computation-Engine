@@ -493,6 +493,9 @@ class LiveSession:
         refresh = getattr(self.agent, "refresh_memory", None)
         if callable(refresh):
             refresh(force=True)  # son konuşmalar ve yeni öğrenilenler bu oturuma da girsin
+        sync = getattr(self.agent, "sync_catalog", None)
+        if callable(sync):
+            sync()  # yüklenebilir araçların listesi
         history = self.history_text()
         system = self.agent.messages[0]["content"] + "\n\n" + LIVE_PROMPT.format(
             now=f"{now:%d.%m.%Y %H:%M} ({spoken_time(now.hour, now.minute)})", names=", ".join(self.names()),
