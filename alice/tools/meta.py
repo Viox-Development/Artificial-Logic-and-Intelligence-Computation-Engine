@@ -196,6 +196,8 @@ class Reflex(Tool):
         # Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
         # başardı" diyordu (needs_help sonucunda bile).
         verdict = {"done": "SONUÇ: hedef yapıldı.",
+                   "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle "
+                              "doğru şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
                    "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya "
                                  "başardı deme; kalanını kendin yap ya da nedenini söyle.",
                    "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",

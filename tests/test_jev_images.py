@@ -165,7 +165,7 @@ def test_reflex_clicks_what_it_sees_when_the_window_has_no_readable_items():
     obs = WebViewObserver()
     dec = VisualDecider(obs)
     res = ReflexLoop(obs, dec, settle=0).run("Ayarlar'ı aç")
-    assert res.status == "done" and obs.clicked == [(0.85, 0.15)]  # kutunun ortası
+    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]  # kutunun ortası
     state, questions, images = dec.calls[0]
     assert isinstance(questions["target"], Box) and isinstance(questions["target_visible"], Noul)
     assert VISUAL_KEY in questions["next"].criteria and state["screen"] in images
@@ -180,7 +180,7 @@ def test_reflex_zooms_in_when_unsure_and_clicks_the_close_up_box():
                         zoom_box={"left": 0.4, "top": 0.275, "right": 0.6, "bottom": 0.475})
     lines = []
     res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
-    assert res.status == "done" and obs.clicked == [(0.85, 0.15)]
+    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
     crop = Image.open(__import__("io").BytesIO(dec.zooms[0][1]))
     assert crop.size == (360, 320)  # pencerenin %30 x %40'ı, asıl çözünürlükte (küçültülmeden)
     assert any("yakından: var mı? 0.92" in ln for ln in lines)
@@ -234,7 +234,7 @@ def test_reflex_clicks_seen_target_even_when_jev_picks_stuck():
     dec.decide = stuck_first
     lines = []
     res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
-    assert res.status == "done" and obs.clicked == [(0.85, 0.15)]
+    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
     assert "[görsel]" in lines[0] and "ekranda var mı? 0.95" in lines[0]
 
 
@@ -293,3 +293,45 @@ def test_reflex_tool_states_failure_plainly(monkeypatch):
     ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
     out = Reflex().run(ctx, goal="Ayarlar'ı aç", target="desktop")
     assert "YAPILAMADI" in out.text and "başardı deme" in out.text
+
+
+def test_single_click_goal_finishes_after_the_click():
+    """Kullanıcının gördüğü: doğru projeye tıkladı (var mı? 0.96) ama 'bitti mi?' düşük kaldığı için aynı yere üç kez
+    tıklayıp 'yapılamadı' dedi. Tek tıklamalık hedefte tıklayınca biter (sonucu beyin doğrular)."""
+    from alice.reflex.loop import single_click_goal
+
+    assert single_click_goal("Projeler kısmındaki ilk projeye tıkla")
+    assert not single_click_goal("arama kutusuna tıkla ve kedi yaz")
+    assert not single_click_goal("Ayarlar'a tıkla sonra Ses'e tıkla")
+    obs = WebViewObserver()
+    dec = VisualDecider(obs)
+    first = dec.decide
+
+    def never_done(state, questions, images=None):
+        d = first(state, questions, images)
+        if "next" in questions:
+            obs.page = "home"  # ekran değişmiş gibi görünmese de
+            d = Decision({**d.answers, "next": Answer("choice", VISUAL_KEY, 0.8), "done": Answer("noul", 0.05, 0.9)},
+                         "f", 0)
+        return d
+
+    dec.decide = never_done
+    res = ReflexLoop(obs, dec, settle=0).run("Projelerdeki ilk projeye tıkla")
+    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
+
+
+def test_reflex_tool_says_click_is_unverified(monkeypatch):
+    from types import SimpleNamespace
+
+    from alice.reflex import loop as loop_mod
+    from alice.reflex import observers
+    from alice.reflex.loop import ReflexResult
+    from alice.tools.meta import Reflex
+
+    monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title: SimpleNamespace())
+    monkeypatch.setattr(loop_mod, "ReflexLoop", lambda *a, **k: SimpleNamespace(
+        run=lambda goal, **kw: ReflexResult("clicked", 1, "tıklandı")))
+    monkeypatch.setattr(loop_mod, "make_text_writer", lambda r: None)
+    ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
+    out = Reflex().run(ctx, goal="ilk projeye tıkla", target="desktop").text
+    assert "doğrulanmadı" in out and "ekran görüntüsüyle" in out

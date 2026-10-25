@@ -45,6 +45,18 @@ ZOOM_REF = "alice-zoom-3b8e91a7"
 ZOOM_MIN = 0.4  # "var mı?" en az bu kadarsa kutunun çevresi yakından bir kez daha sorulur
 ZOOM_SPAN = (0.3, 0.4)  # yakın görüntü en az pencerenin bu kadarı (genişlik, yükseklik)
 
+# Hedef tek bir tıklamaysa ("ilk projeye tıkla") ekranda görülen hedefe tıklanınca iş biter. Önceden Jev'in
+# "bitti mi?" sorusu tıklananın ne olduğunu bilmediği için düşük kalıyor, aynı yere üç kez tıklanıp "yapılamadı"
+# deniyordu. Sonraki adım içeren hedefler (yaz, gönder, sonra...) bu kısa yoldan geçmez.
+_CLICK_GOAL = re.compile(r"tıkla|tikla|click|\bbas\b|basar|\bseç\b|seçer|\baç\b", re.I)
+_MULTI_STEP = re.compile(r"\byaz|gir\b|doldur|gönder|kaydet|sonra|ardından|\bve\b.*(tıkla|yaz|seç)|then|type|"
+                         r"\bara\b|arat|indir|kopyala|yapıştır", re.I)
+
+
+def single_click_goal(goal: str) -> bool:
+    return bool(_CLICK_GOAL.search(goal)) and not _MULTI_STEP.search(goal)
+
+
 _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{3,}", re.U)
 
 
@@ -86,7 +98,7 @@ def _named_in_goal(key: str, by_key: dict[str, Element], elements: list[Element]
 
 @dataclass
 class ReflexResult:
-    status: str  # done | needs_help | max_steps | error
+    status: str  # done | clicked (tek tıklamalık hedef, sonuç doğrulanmadı) | needs_help | max_steps | error
     steps: int
     reason: str
     log: list[str] = field(default_factory=list)
@@ -263,7 +275,12 @@ class ReflexLoop:
                     log.append(f"{step}. ekranda tıklandı ({fx:.2f}, {fy:.2f}) var mı? {seen:.2f}")
                 except Exception as e:  # noqa: BLE001
                     log.append(f"{step}. ekranda tıklama -> HATA {e}")
+                    time.sleep(self.settle)
+                    continue
                 time.sleep(self.settle)
+                if single_click_goal(goal):
+                    return ReflexResult("clicked", step, f"ekranda hedef görülen yere tıklandı ({fx:.2f}, {fy:.2f})",
+                                        log, ob.title, ob.location)
                 continue
             if nxt.confidence < self.min_conf and not _named_in_goal(nxt.value, by_key, ob.elements, goal):
                 return ReflexResult("needs_help", step - 1,
