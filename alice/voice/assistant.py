@@ -445,10 +445,17 @@ class VoiceAssistant:
 
     def _is_user(self, audio: Audio) -> bool:
         """Bu ses kullanıcının mı? Ses izi kaydı yoksa herkes kabul. "Alice sus" ve bas-konuş bu kontrole girmez."""
+        from alice.voice.speaker_id import enrolling
+
+        if enrolling():
+            voice_log("uygulamada ses tanıtılıyor: okunan cümleye cevap yok")
+            return False
         gate = self.speaker_gate
         if gate is None:
             return True
         ok = gate.check(audio.pcm, audio.rate)
+        if not getattr(gate, "active", True):
+            return True  # henüz ses tanıtılmadı: herkes kabul, kayıt da yok
         if ok:
             note = getattr(gate, "last_note", "")
             voice_log(f"ses tanındı ({gate.last_score:.2f}{', ' + note if note else ''})")

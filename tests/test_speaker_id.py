@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 from alice.voice import speaker_id as sid
 from alice.voice.assistant import VoiceAssistant
@@ -74,13 +75,24 @@ def test_profile_roundtrip_and_calibrated_threshold(tmp_path):
 
 def test_gate_load_needs_profile_package_and_model(tmp_path, monkeypatch):
     monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
-    assert sid.SpeakerGate.load(None) is None  # kayıt yok: herkes kabul
-    sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
     logs = []
+    g = sid.SpeakerGate.load(None, log=logs.append)
+    assert g is not None and not g.active and g.check(b"\1\0" * 16000)  # kayıt yok: herkes kabul
     monkeypatch.setattr(sid, "available", lambda: False)
-    assert sid.SpeakerGate.load(None, log=logs.append) is None and "sherpa-onnx" in logs[-1]
+    sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
+    assert g.check(b"\1\0" * 16000) and g.active  # uygulamadan tanıtılınca yeniden başlatmadan devreye girer
+    assert "sherpa-onnx" in logs[-1] and "kontrol edilmedi" in g.last_note
     monkeypatch.setattr(sid, "available", lambda: True)
-    assert sid.SpeakerGate.load(None, log=logs.append) is None and "model yok" in logs[-1]
+    assert g.check(b"\1\0" * 16000) and "modeli yok" in logs[-1]
+    monkeypatch.setattr(sid, "Embedder", lambda: FakeEmbedder())
+    (tmp_path / "models").mkdir()
+    sid.model_path().write_bytes(b"x")
+    g.make_embedder = sid.Embedder
+    g.check(b"\1\0" * 16000)
+    assert g.embedder is not None and not g.last_note
+    sid.profile_path().unlink()
+    assert g.check(b"\1\0" * 16000) and not g.active  # profil silinince kontrol kapanır
+    assert sid.SpeakerGate.load(SimpleNamespace(data={"voice": {"speaker_check": False}})) is None
 
 
 def test_enroll_command_records_saves_and_verifies(tmp_path, monkeypatch, capsys):
@@ -150,3 +162,116 @@ def test_unchecked_wake_is_logged_with_reason(monkeypatch):
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
     assert va._is_user(Audio(b"\2\0" * 4000, 16000))  # 0,25 sn
     assert "kısa ses 0.25 sn" in logs[-1]
+
+
+# ---- uygulamadan "Sesimi tanıt"
+class Mic:
+    """Sırayla konuşma/sessizlik kareleri: (kare sayısı, dolu mu)."""
+
+    def __init__(self, script):
+        self.frames = [b"\1\x40" * 480 if loud else b"\0\0" * 480 for n, loud in script for _ in range(n)]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def read(self):
+        time.sleep(0.0005)
+        self.marked = sid.enrolling()
+        return self.frames.pop(0) if self.frames else b"\0\0" * 480
+
+
+class LoudVAD:
+    def is_speech(self, frame, rate=16000):
+        return frame[:1] == b"\1"
+
+
+def wait_state(s, *states, timeout=10.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        v = s.view()
+        if v["state"] in states:
+            return v
+        time.sleep(0.01)
+    raise AssertionError(f"durum gelmedi: {states}, son: {s.view()['state']}")
+
+
+def test_app_enroll_records_each_sentence_saves_and_tries_out(tmp_path, monkeypatch):
+    from alice.voice.enroll import EnrollSession
+
+    monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
+    monkeypatch.setattr(sid, "available", lambda: True)
+    (tmp_path / "models").mkdir()
+    sid.model_path().write_bytes(b"x")
+    talk = [(40, True), (40, False)]  # 1,2 sn konuşma + sessizlik
+    script = [(5, False)] + talk * len(sid.ENROLL_SENTENCES) + talk
+    mic = Mic(script)
+    s = EnrollSession(mic=lambda: mic, vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=5)
+    assert s.start()["ok"] and not s.start()["ok"]  # ikinci kez başlatılamaz
+    s._thread.join(10)
+    v = s.view()
+    assert mic.marked  # kayıt sürerken çalışan ALICE uyanmasın
+    assert v["state"] == "done" and v["result"]["recognized"] and v["profile"]["samples"] == len(sid.ENROLL_SENTENCES)
+    assert len(v["takes"]) == len(sid.ENROLL_SENTENCES) and not sid.enrolling()  # işaret kalktı
+    assert s.remove()["ok"] and sid.load_profile() is None
+
+
+def test_app_enroll_cancel_and_silent_mic(tmp_path, monkeypatch):
+    from alice.voice.enroll import EnrollSession
+
+    monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
+    monkeypatch.setattr(sid, "available", lambda: True)
+    (tmp_path / "models").mkdir()
+    sid.model_path().write_bytes(b"x")
+    s = EnrollSession(mic=lambda: Mic([]), vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=0.05)
+    s.start()
+    s._thread.join(10)
+    v = s.view()
+    assert "yeterli kayıt" in v["message"] and sid.load_profile() is None
+    s = EnrollSession(mic=lambda: Mic([]), vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=30)
+    s.start()
+    wait_state(s, "recording")
+    s.cancel()
+    s._thread.join(10)
+    assert s.view()["state"] == "cancelled" and s.view()["message"] == "iptal edildi"
+    assert s.test()["ok"] is False  # profil yok: denenecek bir şey yok
+
+
+def test_app_enroll_installs_package_and_downloads_with_progress(tmp_path, monkeypatch):
+    from alice.voice.enroll import EnrollSession
+
+    monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
+    have = []
+    monkeypatch.setattr(sid, "available", lambda: bool(have))
+    s = EnrollSession(pip=lambda: have.append(1) or 0)
+    assert not s.view()["available"]
+    s.install()
+    s._thread.join(10)
+    assert s.view()["message"] == "sherpa-onnx kuruldu" and s.view()["available"]
+    steps = []
+
+    def fake_download(emit=None, progress=lambda d, t: None):
+        for i in range(1, 5):
+            progress(i * 10, 40)
+            steps.append(s.view()["progress"])
+        sid.model_path().parent.mkdir(parents=True, exist_ok=True)
+        sid.model_path().write_bytes(b"x")
+
+    monkeypatch.setattr(sid, "download_model", fake_download)
+    s.make_embedder, s.make_mic, s.make_vad, s.listen_seconds = FakeEmbedder, (lambda: Mic([])), LoudVAD, 0.05
+    s.start()
+    s._thread.join(10)
+    assert s.view()["state"] == "error" and steps == [0.25, 0.5, 0.75, 1.0]
+
+
+def test_wake_ignored_while_enrolling(tmp_path, monkeypatch):
+    monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
+    sid.enrolling_path().parent.mkdir(parents=True, exist_ok=True)
+    sid.enrolling_path().touch()
+    va = VoiceAssistant.__new__(VoiceAssistant)
+    va.speaker_gate = None
+    assert va._is_user(Audio(b"\1\0" * 16000, 16000)) is False
+    sid.enrolling_path().unlink()
+    assert va._is_user(Audio(b"\1\0" * 16000, 16000)) is True

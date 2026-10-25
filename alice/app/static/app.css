@@ -574,6 +574,10 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 .dialog input[type=password]:focus { border-color: var(--faint); }
 .key-row { flex-wrap: wrap; }
 .key-row .key-edit { display: flex; gap: 6px; flex-basis: 100%; }
+.key-row .key-edit { align-items: center; }
+.key-row .key-field { display: flex; flex-direction: column; flex: 0 0 170px; min-width: 0; }
+.key-row .key-field small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .key-row .key-edit { flex-wrap: wrap; } .key-row .key-field { flex-basis: 100%; } }
 .key-row a { color: var(--accent); cursor: pointer; }
 .gh-pick { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
 .gh-pick h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
@@ -1342,3 +1346,25 @@ details.cc[open] > summary.cc-head::after { transform: rotate(45deg); }
 /* Sağ panel (Plan / Değişiklikler / Bağlam) sohbete ait; projede boş "Henüz plan yok" gösterip yer kaplıyordu. */
 #app.in-project #panel, #app.in-project.panel-open #panel { width: 0; border-left-color: transparent; overflow: hidden; }
 #app.in-project #panelBtn { display: none; }
+
+/* Ayarlar > Ses > Sesimi tanıt */
+.enroll { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; background: var(--panel); }
+.enroll-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.enroll-head .l { flex: 1 1 260px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.enroll-head small, .enroll-note { color: var(--muted); }
+.enroll-act { display: flex; gap: 8px; flex-wrap: wrap; }
+.enroll-note { display: block; margin-top: 8px; }
+.enroll-steps { display: flex; gap: 6px; margin-bottom: 14px; }
+.enroll-steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+.enroll-steps span.done { background: var(--ok); }
+.enroll-steps span.on { background: var(--text); }
+.enroll-n { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+.enroll-say { font: 500 26px/1.35 var(--serif); margin: 4px 0 16px; overflow-wrap: anywhere; }
+.enroll-say.small { font-size: 18px; }
+.enroll-meter { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.enroll-meter i { display: block; height: 100%; width: 0; background: var(--muted); transition: width .12s linear; }
+.enroll-meter.hearing i, .enroll-meter.dl i { background: var(--ok); }
+.enroll .row { display: flex; justify-content: flex-end; margin-top: 12px; }
+.enroll-result { margin-top: 10px; font-weight: 500; }
+.enroll-result.good { color: var(--ok); }
+.enroll-result.bad { color: var(--err); }

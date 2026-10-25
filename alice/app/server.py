@@ -593,6 +593,22 @@ class AppState:
         set_config_value("voice", "tts_cloud", f"gemini:{name}")
         return {"ok": True}
 
+    _enroll = None
+
+    @property
+    def enroll(self):
+        """Ayarlar → Ses → Sesimi tanıt (alice voice enroll'un ekranlı hâli)."""
+        if self._enroll is None:
+            from alice.voice.enroll import EnrollSession
+
+            self._enroll = EnrollSession()
+        return self._enroll
+
+    def enroll_action(self, action: str) -> dict[str, Any]:
+        fn = {"start": self.enroll.start, "test": self.enroll.test, "install": self.enroll.install,
+              "cancel": self.enroll.cancel, "remove": self.enroll.remove}.get(action)
+        return fn() if fn else {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+
     # ------------------------------------------------------------------ Hafıza sekmesi
     def memory_view(self) -> dict[str, Any]:
         """Hafızadaki bilgiler (tek tek silinebilir), açık takipler ve eski rolden kalan izler."""
@@ -1242,6 +1258,8 @@ def make_handler(state: AppState):
                 return self._json(state.assistant())
             if u.path == "/api/voice":
                 return self._json(state.voice_view())
+            if u.path == "/api/voice/enroll":
+                return self._json(state.enroll.view())
             if u.path == "/api/keys":
                 return self._json(state.keys())
             if u.path == "/api/update":
@@ -1330,6 +1348,9 @@ def make_handler(state: AppState):
                     return self._json({"ok": ok}, 200 if ok else 400)
                 if p == "/api/voice/preview":
                     r = state.voice_preview(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/voice/enroll":
+                    r = state.enroll_action(str(d.get("action", "")))
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/voice/set":
                     r = state.set_voice(str(d.get("voice", "")))

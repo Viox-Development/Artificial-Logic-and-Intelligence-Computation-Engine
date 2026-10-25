@@ -382,7 +382,7 @@ def _enroll(cfg, argv) -> int:
     if "--off" in argv:
         try:
             sid.profile_path().unlink()
-            console.print("ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir (çekirdeği yeniden başlat).")
+            console.print("ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir.")
         except FileNotFoundError:
             console.print("zaten kapalı: kayıtlı ses izi yok.")
         return 0
@@ -435,7 +435,7 @@ def _enroll(cfg, argv) -> int:
         console.print(f"benzerlik {gate.last_score:.2f} (eşik {gate.threshold:.2f}): "
                       + ("[green]seni tanıdı[/]" if ok else "[red]tanımadı; tekrar kayıt dene ya da config'te "
                                                              "[voice] speaker_threshold'ı düşür[/]"))
-    console.print("Çalışan ALICE çekirdeği ses izini yeniden başlayınca kullanır. Kapatmak için: alice voice enroll --off")
+    console.print("Çalışan ALICE yeni ses izini hemen kullanır. Kapatmak için: alice voice enroll --off (ya da Ayarlar → Ses)")
     return 0
 
 

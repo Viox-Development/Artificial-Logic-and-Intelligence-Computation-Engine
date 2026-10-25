@@ -20,6 +20,11 @@ def test_catalog_lists_template_keys_with_links():
     assert cat["DISCORD_BOT_TOKEN"]["group"] == "connect"
     # açıklamasız satır bir öncekinin parçası: aynı bağlantıyı gösterir
     assert cat["CLOUDFLARE_ACCOUNT_ID"]["url"] == cat["CLOUDFLARE_API_TOKEN"]["url"]
+    # iki değer isteyen servis tek kartta, adlı iki kutu ("aynı anahtarı iki kere istiyor" sanılmasın)
+    assert cat["CLOUDFLARE_ACCOUNT_ID"]["part_of"] == "CLOUDFLARE_API_TOKEN"
+    assert cat["CLOUDFLARE_API_TOKEN"]["field"] == "API token" and "Account ID" in cat["CLOUDFLARE_ACCOUNT_ID"]["field"]
+    assert cat["GOOGLE_CLIENT_SECRET"]["part_of"] == "GOOGLE_CLIENT_ID" and cat["GOOGLE_CLIENT_SECRET"]["field"] == "Client secret"
+    assert cat["GROQ_API_KEY"]["part_of"] == "GROQ_API_KEY"
     assert all(config.ENV_KEY_RE.fullmatch(k) for k in cat)
 
 
@@ -194,3 +199,16 @@ def test_app_checks_for_update_right_after_opening_and_rechecks_pending_ci(app, 
         assert len(calls) >= 3 and state.update.ci == "green" and state.update.can_auto
     finally:
         state._update_stop.set()  # döngü sonraki testlere (saati taklit edenlere) taşmasın
+
+
+def test_voice_enroll_endpoints(app, monkeypatch):
+    from alice.voice import speaker_id as sid
+
+    state, client, _ = app
+    v = client.get("/api/voice/enroll").json()
+    assert v["state"] == "idle" and v["total"] == len(sid.ENROLL_SENTENCES) and v["profile"] is None
+    assert client.post("/api/voice/enroll", json={"action": "uç"}).status_code == 400
+    assert client.post("/api/voice/enroll", json={"action": "test"}).json()["error"] == "önce sesini tanıt"
+    sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
+    assert client.get("/api/voice/enroll").json()["profile"]["samples"] == 2
+    assert client.post("/api/voice/enroll", json={"action": "remove"}).json()["ok"] and sid.load_profile() is None

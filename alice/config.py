@@ -945,8 +945,19 @@ def env_path() -> Path:
     return alice_home() / ".env"
 
 
+# Bazı servisler iki değer ister (Cloudflare: token + hesap kimliği; Google: client id + secret). Uygulamada tek kartta,
+# iki ayrı adlı kutu olarak gösterilir; yoksa aynı başlık iki kez görünüp "aynı anahtarı iki kere istiyor" sanılıyordu.
+_FIELD_NAMES = {"_ACCOUNT_ID": "Hesap kimliği (Account ID)", "_API_TOKEN": "API token", "_CLIENT_ID": "Client ID",
+                "_CLIENT_SECRET": "Client secret"}
+
+
+def _field_name(key: str) -> str:
+    return next((v for suf, v in _FIELD_NAMES.items() if key.endswith(suf)), "Anahtar")
+
+
 def env_catalog() -> list[dict[str, str]]:
-    """ENV_TEMPLATE'teki anahtarlar: ad, görünen ad, nereden alınacağı (bağlantı), açıklama, grup."""
+    """ENV_TEMPLATE'teki anahtarlar: ad, görünen ad, nereden alınacağı (bağlantı), açıklama, grup.
+    part_of: aynı servisin ilk anahtarı (iki değer isteyen servislerde ikisi de aynı karta düşer); field: kutunun adı."""
     out: list[dict[str, str]] = []
     group, notes = "model", []
     for raw in ENV_TEMPLATE.splitlines():
@@ -965,7 +976,9 @@ def env_catalog() -> list[dict[str, str]]:
         notes = []
         if not text and out:  # açıklamasız satır bir öncekinin parçası (CLOUDFLARE_ACCOUNT_ID, GOOGLE_CLIENT_SECRET)
             prev = out[-1]
-            out.append({"key": key, "label": prev["label"], "url": prev["url"], "help": prev["help"], "group": group})
+            prev["field"] = _field_name(prev["key"])
+            out.append({"key": key, "label": prev["label"], "url": prev["url"], "help": prev["help"], "group": group,
+                        "part_of": prev["part_of"], "field": _field_name(key)})
             continue
         m = re.search(r"https?://\S+", text)
         url = m.group(0).rstrip(").,") if m else ""
@@ -973,7 +986,8 @@ def env_catalog() -> list[dict[str, str]]:
         rest = rest.replace(url, "", 1).strip(" ()") if url else rest.strip()
         if rest.count(")") > rest.count("("):  # bağlantıdan sonra kapanan parantez: "(... token). Hesap..."
             rest = rest.replace(")", "", 1)
-        out.append({"key": key, "label": label.strip() or key, "url": url, "help": rest, "group": group})
+        out.append({"key": key, "label": label.strip() or key, "url": url, "help": rest, "group": group,
+                    "part_of": key, "field": "Anahtar"})
     return out
 
 

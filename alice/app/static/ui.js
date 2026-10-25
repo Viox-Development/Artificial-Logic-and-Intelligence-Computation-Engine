@@ -639,6 +639,8 @@ function voicePane(pane, data) {
   pane.append(el("h2", "", "Ses"),
     el("p", "", "ALICE'in konuşma sesi. Dinle'ye basınca o sesle kısa bir örnek çalar (ilk seferde birkaç saniye "
       + "sürer). Seçtiğin ses canlı konuşmada bir sonraki \"Hey Alice\"te geçerli olur."));
+  pane.appendChild(el("div", "sec", "Sesimi tanıt"));
+  pane.appendChild(enrollCard());
   if (!d.can_preview) pane.appendChild(el("p", "", "Örnek dinlemek için Gemini anahtarı gerekli (Ayarlar → Anahtarlar)."));
   pane.appendChild(el("div", "sec", "Sesler"));
   for (const v of d.voices || []) {
@@ -667,6 +669,101 @@ function voicePane(pane, data) {
     row.append(l, play, pick);
     pane.appendChild(row);
   }
+}
+/* Ayarlar > Ses > Sesimi tanıt: okunacak cümle büyük yazılır, mikrofon seviyesi canlı görünür. Kayıt sunucuda
+   (mikrofonun olduğu bilgisayarda) yürür; burası durumu sık sık okur. Kart ekrandan kalkınca okuma durur. */
+const ENROLL_BUSY = ["preparing", "installing", "downloading", "recording", "testing"];
+function enrollCard() {
+  const card = el("div", "enroll");
+  let timer = null;
+  const act = (action) => api("/api/voice/enroll", { action }).then((r) => {
+    if (r && r.ok === false && r.error) toast(r.error);
+    poll();
+  });
+  const btn = (label, action, primary) => {
+    const b = el("button", primary ? "btn primary" : "btn", label);
+    b.addEventListener("click", () => act(action));
+    return b;
+  };
+  const draw = (s) => {
+    card.replaceChildren();
+    const busy = ENROLL_BUSY.includes(s.state);
+    const prof = s.profile;
+    if (!busy) {
+      const head = el("div", "enroll-head");
+      const l = el("span", "l");
+      if (prof) {
+        l.append(el("b", "", "Sesin tanıtıldı ✓"),
+          el("small", "", `${prof.samples} cümle · eşik ${Number(prof.threshold).toFixed(2)} · tutarlılık ${Number(prof.consistency).toFixed(2)}. `
+            + "\"Alice\" deyince sadece senin sesine cevap verir; Discord'daki arkadaşların ya da videodaki sesler uyandırmaz."));
+      } else {
+        l.append(el("b", "", "Sadece senin sesine cevap versin"),
+          el("small", "", "6 kısa cümle okursun (1 dakika). ALICE sesinin izini çıkarır; başkası \"Alice\" deyince uyanmaz. "
+            + "Discord'da/oyunda nasıl konuşuyorsan öyle oku."));
+      }
+      const acts = el("span", "enroll-act");
+      if (!s.available) acts.append(btn("Gerekeni kur", "install", true));
+      else if (prof) acts.append(btn("Dene", "test"), btn("Yeniden tanıt", "start"), btn("Kapat", "remove"));
+      else acts.append(btn("Sesimi tanıt", "start", true));
+      head.append(l, acts);
+      card.appendChild(head);
+      if (!s.available) card.appendChild(el("small", "enroll-note", "Ses tanıma paketi (sherpa-onnx) kurulu değil; \"Gerekeni kur\" bir kez kurar."));
+      else if (!s.model) card.appendChild(el("small", "enroll-note", "İlk seferde ses tanıma modeli indirilir (~40 MB)."));
+    }
+    if (busy) {
+      const steps = el("div", "enroll-steps");
+      for (let i = 1; i <= s.total; i++) {
+        steps.appendChild(el("span", i < s.step || (i === s.step && s.state === "testing") ? "done" : i === s.step && s.state === "recording" ? "on" : ""));
+      }
+      if (s.state === "recording") {
+        card.append(steps, el("div", "enroll-n", `${s.step}/${s.total} · bu cümleyi sesli oku`),
+          el("div", "enroll-say", "“" + s.sentence + "”"));
+      } else if (s.state === "testing") {
+        card.append(steps, el("div", "enroll-say small", "Şimdi kendi aklından bir cümle söyle, deneyelim."));
+      }
+      if (s.state === "recording" || s.state === "testing") {
+        const meter = el("div", "enroll-meter" + (s.hearing ? " hearing" : ""));
+        const bar = el("i");
+        bar.style.width = Math.round((s.level || 0) * 100) + "%";
+        meter.appendChild(bar);
+        card.append(meter, el("small", "enroll-note", s.hearing ? "duyuyorum…" : s.message === "oku" ? "dinliyorum, oku" : s.message));
+      } else {
+        card.appendChild(el("div", "enroll-say small", s.message || "…"));
+        if (s.state === "downloading" && s.progress != null) {
+          const meter = el("div", "enroll-meter dl");
+          const bar = el("i");
+          bar.style.width = Math.round(s.progress * 100) + "%";
+          meter.appendChild(bar);
+          card.append(meter, el("small", "enroll-note", Math.round(s.progress * 100) + "%"));
+        }
+      }
+      const row = el("div", "row");
+      row.appendChild(btn("Vazgeç", "cancel"));
+      card.appendChild(row);
+    } else if (s.state === "done" && s.result) {
+      const r = s.result;
+      const msg = r.score == null ? s.message
+        : `Deneme: benzerlik ${Number(r.score).toFixed(2)} (eşik ${Number(r.threshold).toFixed(2)}) — ` + (r.recognized ? "seni tanıdı ✓" : "tanımadı ✗");
+      card.appendChild(el("div", "enroll-result " + (r.recognized === false ? "bad" : "good"), msg));
+      if (r.recognized === false || r.noisy) {
+        card.appendChild(el("small", "enroll-note", "Kayıtlar birbirine pek benzemedi ya da deneme tutmadı: sessiz bir anda, mikrofona aynı uzaklıkta yeniden tanıt."));
+      }
+    } else if ((s.state === "error" || s.state === "cancelled" || s.message) && s.state !== "done") {
+      card.appendChild(el("div", "enroll-result" + (s.state === "error" ? " bad" : ""), s.message));
+    }
+    return busy;
+  };
+  let shown = false;  // ilk çizim kart sayfaya eklenmeden yapılır
+  function poll() {
+    clearTimeout(timer);
+    api("/api/voice/enroll").then((s) => {
+      if (!s || (shown && !card.isConnected)) return;
+      shown = true;
+      if (draw(s)) timer = setTimeout(poll, 150);
+    });
+  }
+  poll();
+  return card;
 }
 /* Ayarlar > Hafıza: bildiklerini tek tek gör ve sil; eski rolden ("sevgili") kalan izleri temizle. */
 function memoryPane(pane, data) {
@@ -735,16 +832,29 @@ function keysPane(pane, data) {
   const groups = [["model", "Modeller"], ["connect", "Bağlantılar"]];
   for (const [g, title] of groups) {
     pane.appendChild(el("div", "sec", title));
-    for (const k of (d.keys || []).filter((x) => x.group === g)) pane.appendChild(keyRow(k));
+    // İki değer isteyen servis (Cloudflare: token + hesap kimliği) tek kart: aynı başlık iki kez görünmesin.
+    const cards = new Map();
+    for (const k of (d.keys || []).filter((x) => x.group === g)) {
+      const id = k.part_of || k.key;
+      if (!cards.has(id)) cards.set(id, []);
+      cards.get(id).push(k);
+    }
+    for (const parts of cards.values()) pane.appendChild(keyRow(parts));
   }
 }
-function keyRow(k) {
+function keyRow(parts) {
+  const k = parts[0];
+  const many = parts.length > 1;
+  const all = parts.every((p) => p.set);
+  const some = parts.some((p) => p.set);
   const row = el("div", "list-row key-row");
-  const mark = el("span", "chk " + (k.set ? "ok" : "off"), k.set ? "✓" : "–");
+  const mark = el("span", "chk " + (all ? "ok" : "off"), all ? "✓" : some ? "!" : "–");
   const l = el("span", "l");
   const sub = el("small", "");
-  sub.append(document.createTextNode(k.key + (k.preview ? " · " + k.preview : "")
-    + (k.source === "env" ? " · Windows ortam değişkeninden" : "") + (k.help ? " · " + k.help : "")));
+  const info = many
+    ? (some && !all ? "eksik: " + parts.filter((p) => !p.set).map((p) => p.field).join(", ") + " · " : "") + "iki değer ister"
+    : k.key + (k.preview ? " · " + k.preview : "") + (k.source === "env" ? " · Windows ortam değişkeninden" : "");
+  sub.append(document.createTextNode(info + (k.help ? " · " + k.help : "")));
   if (k.url) {
     const a = el("a", "", " anahtarı al ↗");
     a.title = k.url;
@@ -752,27 +862,38 @@ function keyRow(k) {
     sub.appendChild(a);
   }
   l.append(el("b", "", k.label), sub);
-  const edit = el("div", "key-edit");
-  const inp = el("input");
-  inp.type = "password";
-  inp.autocomplete = "off";
-  inp.spellcheck = false;
-  inp.placeholder = k.set ? "değiştirmek için yeni anahtarı yapıştır" : "anahtarı yapıştır";
-  const save = el("button", "btn primary", "Kaydet");
-  const send = (value, msg) => api("/api/keys/set", { key: k.key, value }).then((r) => {
-    if (!r || !r.ok) return toast((r && r.error) || "kaydedilemedi");
-    toast(msg);
-    showSettings("apikeys");
-  });
-  save.addEventListener("click", () => { if (inp.value.trim()) send(inp.value.trim(), k.label + " kaydedildi"); });
-  inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.value.trim()) send(inp.value.trim(), k.label + " kaydedildi"); });
-  edit.append(inp, save);
-  if (k.source === "file") {
-    const del = el("button", "btn", "Sil");
-    del.addEventListener("click", () => send("", k.label + " silindi"));
-    edit.appendChild(del);
+  row.append(mark, l);
+  for (const p of parts) {
+    const edit = el("div", "key-edit");
+    if (many) {
+      const name = el("span", "key-field");
+      name.append(el("b", "", p.field), el("small", "", p.key + (p.preview ? " · " + p.preview : "")
+        + (p.source === "env" ? " · ortam değişkeninden" : "")));
+      edit.appendChild(name);
+    }
+    const what = many ? p.field : "anahtarı";
+    const inp = el("input");
+    inp.type = "password";
+    inp.autocomplete = "off";
+    inp.spellcheck = false;
+    inp.placeholder = p.set ? `değiştirmek için yeni ${many ? p.field : "anahtarı"} yapıştır` : `${what} yapıştır`;
+    const save = el("button", "btn primary", "Kaydet");
+    const label = many ? `${k.label} ${p.field}` : k.label;
+    const send = (value, msg) => api("/api/keys/set", { key: p.key, value }).then((r) => {
+      if (!r || !r.ok) return toast((r && r.error) || "kaydedilemedi");
+      toast(msg);
+      showSettings("apikeys");
+    });
+    save.addEventListener("click", () => { if (inp.value.trim()) send(inp.value.trim(), label + " kaydedildi"); });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.value.trim()) send(inp.value.trim(), label + " kaydedildi"); });
+    edit.append(inp, save);
+    if (p.source === "file") {
+      const del = el("button", "btn", "Sil");
+      del.addEventListener("click", () => send("", label + " silindi"));
+      edit.appendChild(del);
+    }
+    row.appendChild(edit);
   }
-  row.append(mark, l, edit);
   return row;
 }
 /* Ayarlar > Bağlantılar: servislerin durumu, OAuth bağlanma/çıkış ve izleyen akışlar. */
