@@ -637,12 +637,14 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
                 continue
             name = (info.name or "").strip()
             value = ""
-            if ctype in ("Edit", "ComboBox", "Document"):
+            # Document'ın değeri sayfanın bütün metni: WebView2 penceresinde (ALICE'in kendisi, Discord) okumak
+            # tek başına bir dakika sürebiliyordu ve 80 karakterden fazlası zaten kullanılmıyor.
+            if ctype in ("Edit", "ComboBox"):
                 try:
                     value = (el.get_value() if hasattr(el, "get_value") else el.window_text()) or ""
                 except Exception:  # noqa: BLE001
                     value = ""
-            if not name and not value and not info.automation_id:
+            if not name and not value and not info.automation_id and ctype != "Document":
                 continue
             idx = len(items) + 1
             wrappers[idx] = el

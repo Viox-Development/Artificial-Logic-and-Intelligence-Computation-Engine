@@ -509,6 +509,18 @@ def test_collect_ui_elements_filters_and_numbers(ctx, monkeypatch):
     assert text.splitlines() == ["pencere: Hesap Makinesi", "[1] Button 'Bir'"]
 
 
+def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
+    """WebView2 Document'ının değeri sayfanın bütün metni: okumak bir dakika sürüyordu."""
+    class Doc(FakeEl):
+        def get_value(self):
+            raise AssertionError("Document metni okunmamalı")
+
+    monkeypatch.setattr(desktop, "IS_WIN", True)
+    monkeypatch.setattr(desktop, "_foreground_uia", lambda title: FakeUIAWin([Doc("Document", "")], "ALICE"))
+    _, items = desktop.collect_ui_elements(ctx)
+    assert [(i["role"], i["value"]) for i in items] == [("Document", "")]
+
+
 def test_collect_ui_elements_off_windows(ctx, monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", False)
     with pytest.raises(ToolError, match="sadece Windows"):
