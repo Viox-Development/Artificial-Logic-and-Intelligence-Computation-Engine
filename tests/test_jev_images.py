@@ -140,10 +140,17 @@ class VisualDecider:
     supports_images = True
     names = ["fake"]
 
-    def __init__(self, obs, visible=0.95):
+    def __init__(self, obs, visible=0.95, zoom_visible=0.2, zoom_box=None):
         self.obs, self.visible, self.calls = obs, visible, []
+        self.zoom_visible = zoom_visible
+        self.zoom_box = zoom_box or {"left": 0, "top": 0, "right": 0.1, "bottom": 0.1}
+        self.zooms = []
 
     def decide(self, state, questions, images=None):
+        if "next" not in questions:  # yakından bakış: sadece "var mı?" + Box
+            self.zooms.append((state, images[state["screen"]]))
+            return Decision({"target_visible": Answer("noul", self.zoom_visible, 0.9),
+                             "target": Answer("box", self.zoom_box, 0.8)}, "f", 0)
         self.calls.append((state, questions, images))
         if self.obs.page == "settings":
             return Decision({"next": Answer("choice", "done", 0.9), "done": Answer("noul", 0.95, 0.9),
@@ -164,6 +171,25 @@ def test_reflex_clicks_what_it_sees_when_the_window_has_no_readable_items():
     assert VISUAL_KEY in questions["next"].criteria and state["screen"] in images
     assert Image.open(__import__("io").BytesIO(images[state["screen"]])).format == "JPEG"
     assert obs.goal == "Ayarlar'ı aç"  # çerçeve süzgeci hedefi bilsin
+
+
+def test_reflex_zooms_in_when_unsure_and_clicks_the_close_up_box():
+    """Kullanıcının ekranı: 3440x1440 küçülünce Jev 'var mı? 0.68' dedi. Kutunun çevresine yakından bakınca emin."""
+    obs = WebViewObserver()
+    dec = VisualDecider(obs, visible=0.68, zoom_visible=0.92,
+                        zoom_box={"left": 0.4, "top": 0.275, "right": 0.6, "bottom": 0.475})
+    lines = []
+    res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
+    assert res.status == "done" and obs.clicked == [(0.85, 0.15)]
+    crop = Image.open(__import__("io").BytesIO(dec.zooms[0][1]))
+    assert crop.size == (360, 320)  # pencerenin %30 x %40'ı, asıl çözünürlükte (küçültülmeden)
+    assert any("yakından: var mı? 0.92" in ln for ln in lines)
+
+
+def test_reflex_gives_up_when_close_up_also_unsure():
+    obs = WebViewObserver()
+    res = ReflexLoop(obs, VisualDecider(obs, visible=0.6, zoom_visible=0.3), settle=0).run("Ayarlar'ı aç")
+    assert res.status == "needs_help" and "yakından 0.30" in res.reason and obs.clicked == []
 
 
 def test_reflex_does_not_trust_box_when_target_not_visible():

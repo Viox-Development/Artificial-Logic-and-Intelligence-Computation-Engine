@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field, replace
-from typing import Callable
+from typing import Any, Callable
 
 from alice.decider import Box, Choice, Decider, DeciderError, Noul, padded_fraction, prepare_image
 from alice.reflex.observers import Element, Observation, Observer
@@ -41,6 +41,9 @@ TARGET_VISIBLE = ("Is there a button, link, tab, field or menu item in `screen` 
                   "work toward `goal`?")
 VISIBLE_MIN = 0.7  # "hedef ekranda var mı?" bundan düşükse Box'a güvenilmez (Box her zaman bir kutu döndürür)
 SCREEN_REF = "alice-screen-6f1c0d2e"  # görselin istekteki yer tutucusu: metinde kazara geçemeyecek bir dize
+ZOOM_REF = "alice-zoom-3b8e91a7"
+ZOOM_MIN = 0.4  # "var mı?" en az bu kadarsa kutunun çevresi yakından bir kez daha sorulur
+ZOOM_SPAN = (0.3, 0.4)  # yakın görüntü en az pencerenin bu kadarı (genişlik, yükseklik)
 
 _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{3,}", re.U)
 
@@ -116,8 +119,9 @@ class ReflexLoop:
         self.visual = True  # görsel istek bir kez reddedilirse (izin yok, görüntü kabul edilmedi) bu çalışmada kapanır
         self._no_look = ""  # ekrana neden bakılamadığı (son söylenen)
 
-    def _look(self) -> tuple[bytes, tuple[float, float]] | None:
-        """Pencerenin Jev'e gidecek görüntüsü ve Box kesirlerini asıl görüntüye çevirme çarpanı; olmuyorsa None."""
+    def _look(self) -> tuple[bytes, tuple[float, float], Any] | None:
+        """Pencerenin Jev'e gidecek görüntüsü, Box kesirlerini asıl görüntüye çevirme çarpanı ve asıl görüntü;
+        olmuyorsa None."""
         snap = getattr(self.obs, "snapshot", None)
         why = ("" if self.visual else "görsel istek bu çalışmada reddedildi") or \
               ("" if callable(snap) else "bu gözlemci ekran görüntüsü alamıyor") or \
@@ -136,7 +140,30 @@ class ReflexLoop:
                 self.emit(f"ekrana bakılmıyor, sadece erişilebilirlik ağacıyla devam: {why}")
                 self._no_look = why
             return None
-        return prepare_image(img), padded_fraction(img.size)
+        return prepare_image(img), padded_fraction(img.size), img
+
+    def _zoom(self, goal: str, img: Any, box: tuple[float, float, float, float]) -> tuple[float, float, float] | None:
+        """Kutunun çevresini asıl çözünürlükte kırpıp Jev'e yakından tekrar sor. Geniş ekranda (3440x1440) bütün
+        pencere 1568 piksele küçülünce yazılar okunmuyor, Box kabaca doğru yeri gösterse de "var mı?" düşük
+        kalıyordu. (var mı?, x, y) pencere kesirleriyle; olmazsa None."""
+        l, t, r, b = box
+        w, h = img.size
+        hw, hh = max((r - l) * 1.5, ZOOM_SPAN[0] / 2), max((b - t) * 1.5, ZOOM_SPAN[1] / 2)
+        cx, cy = min(max((l + r) / 2, hw), 1 - hw), min(max((t + b) / 2, hh), 1 - hh)
+        x0, y0, x1, y1 = max(0.0, cx - hw), max(0.0, cy - hh), min(1.0, cx + hw), min(1.0, cy + hh)
+        crop = img.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
+        try:
+            d = self.decider.decide(
+                {"goal": goal, "screen": ZOOM_REF, "note": "`screen` is a zoomed-in part of the window"},
+                {"target_visible": Noul(TARGET_VISIBLE), "target": Box(TARGET)}, images={ZOOM_REF: prepare_image(crop)})
+        except DeciderError as e:
+            self.emit(f"yakından bakılamadı: {e}")
+            return None
+        zb = d["target"].value
+        sx, sy = padded_fraction(crop.size)
+        fx = x0 + (zb["left"] + zb["right"]) / 2 * sx * (x1 - x0)
+        fy = y0 + (zb["top"] + zb["bottom"]) / 2 * sy * (y1 - y0)
+        return d["target_visible"].value, min(1.0, fx), min(1.0, fy)
 
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None) -> ReflexResult:
         if hasattr(self.obs, "goal"):
@@ -200,7 +227,7 @@ class ReflexLoop:
 
             if done.value >= 0.85 or nxt.value == "done":
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, ob.title, ob.location)
-            if (seen_on_screen is not None and seen_on_screen >= VISIBLE_MIN and nxt.value != VISUAL_KEY
+            if (seen_on_screen is not None and seen_on_screen >= ZOOM_MIN and nxt.value != VISUAL_KEY
                     and (nxt.value == "stuck" or nxt.confidence < self.min_conf)):
                 # Seçeneklerde yok (ör. WebView2 penceresi ağaçta sadece "Document") ama Jev hedefi ekranda görüyor:
                 # pes etmek yerine gördüğü yere tıkla.
@@ -211,13 +238,22 @@ class ReflexLoop:
             if nxt.value == VISUAL_KEY:
                 # Box her zaman bir kutu döndürür: "ekranda var mı?" düşükse kutuya güvenme, beyne bırak.
                 seen = d["target_visible"].value
-                if seen < VISIBLE_MIN:
-                    return ReflexResult("needs_help", step - 1, f"ekranda tıklanacak şey bulunamadı (var mı? {seen:.2f})",
-                                        log, ob.title, ob.location)
                 b = d["target"].value
                 sx, sy = look[1] if look else (1.0, 1.0)
-                fx = min(1.0, (b["left"] + b["right"]) / 2 * sx)
-                fy = min(1.0, (b["top"] + b["bottom"]) / 2 * sy)
+                box = (min(1.0, b["left"] * sx), min(1.0, b["top"] * sy), min(1.0, b["right"] * sx),
+                       min(1.0, b["bottom"] * sy))
+                fx, fy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+                close = self._zoom(goal, look[2], box) if look is not None and seen >= ZOOM_MIN else None
+                if close is not None:
+                    self.emit(f"[{step}] yakından: var mı? {close[0]:.2f}, kutu ({close[1]:.2f}, {close[2]:.2f}) "
+                              f"(uzaktan {seen:.2f}, ({fx:.2f}, {fy:.2f}))")
+                    if close[0] >= VISIBLE_MIN:
+                        seen, fx, fy = close
+                if seen < VISIBLE_MIN:
+                    near = f", yakından {close[0]:.2f}" if close is not None else ""
+                    return ReflexResult("needs_help", step - 1,
+                                        f"ekranda tıklanacak şey bulunamadı (var mı? {seen:.2f}{near})",
+                                        log, ob.title, ob.location)
                 last_keys.append(f"{VISUAL_KEY}@{fx:.2f},{fy:.2f}")
                 if len(last_keys) >= 3 and len(set(last_keys[-3:])) == 1:
                     return ReflexResult("needs_help", step - 1, "aynı yere tekrar tekrar tıklanıyor",
