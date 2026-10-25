@@ -86,6 +86,11 @@ _QUOTA_HINTS = ("per day", "daily", "quota", "rpd", "tokens per day", "free-mode
 _DAILY_HINTS = ("per day", "daily", "rpd", "tokens per day", "free-models-per-day")
 _TOO_LARGE_HINTS = ("context length", "context_length", "maximum context", "too long", "too large",
                     "reduce the length", "request_too_large", "tokens per minute", "max_tokens")
+# 401/403 ama sorun anahtarda değil, o modelde: "Model ... is not available on the Workers Free plan" (Cloudflare),
+# "you do not have access to model ..." gibi. "auth" sayılınca sağlayıcının BÜTÜN modelleri kapanıyordu.
+_MODEL_DENIED_HINTS = ("not available on the workers", "requires a paid plan", "not available on your plan",
+                       "not available on the free", "do not have access to model", "does not have access to model",
+                       "not have access to the model", "model is not available")
 _NOT_FOUND_HINTS = ("model not found", "does not exist", "no endpoints found", "not a valid model",
                     "model_not_found", "unknown model", "is not supported", "decommissioned", "deprecated")
 
@@ -152,6 +157,8 @@ def classify_error(status: int, body: str, headers: dict[str, str] | None = None
     short = summarize_body(body)
     if status in (401, 403):
         # OpenRouter bazı moderasyon/quota hatalarında da 403 döner.
+        if any(h in low for h in _MODEL_DENIED_HINTS):
+            return ProviderError("not_found", short, status)  # sadece bu model kapanır
         if any(h in low for h in _QUOTA_HINTS):
             return ProviderError("quota", short, status, retry_after)
         return ProviderError("auth", short, status)

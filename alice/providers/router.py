@@ -34,6 +34,7 @@ from alice.providers import context, ranking, thinking
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
                                             redact)
 
+TIMEOUT_COOLDOWN = 600.0  # sn: zaman aşımına uğrayan model bu kadar atlanır
 COOLDOWNS = {"rate_limit": 20.0, "quota": 3600.0, "server": 30.0, "network": 30.0, "unreachable": 600.0}
 
 
@@ -579,6 +580,10 @@ class Router:
                 self.cooldown_until[ref] = now + 60
         else:
             base = COOLDOWNS.get(e.kind, 30.0)
+            if e.kind == "network" and "zaman aşımı" in str(e):
+                # Cevap vermeden takılan model (NVIDIA'da GLM-5.3 gibi) 30 sn sonra yine denenince her istek
+                # zaman aşımını (180 sn) baştan bekliyordu: bir süre sıradakiyle devam et.
+                base = TIMEOUT_COOLDOWN
             wait = base
             if e.retry_after and e.kind == "rate_limit":
                 wait = e.retry_after

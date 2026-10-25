@@ -49,7 +49,7 @@ from alice.config import Config, alice_home, init_home, load_config, refresh_hom
 from alice.decider import Decider
 from alice.memory import attach_memory, shared_memory
 from alice.permissions import MODES, Permissions
-from alice.providers.router import AllProvidersFailed, Router, parse_ref
+from alice.providers.router import Router, parse_ref
 from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
 from alice.tools.base import ToolResult
 
@@ -620,32 +620,17 @@ def doctor(cfg: Config) -> int:
     console.print(f"[bold]ALICE home:[/] {alice_home()}  config: {cfg.path or '(varsayılan)'}")
     _doctor_update(cfg)
     _doctor_connect(cfg)
+    from alice.doctor import probe_providers, run_all
+
     t = Table(title="Sağlayıcılar")
     for c in ("sağlayıcı", "anahtar", "test modeli", "sonuç"):
         t.add_column(c)
-    refs_by_provider: dict[str, str] = {}
-    for chain in cfg.roles.values():
-        for ref in chain:
-            p = ref.split(":", 1)[0]
-            if p in router.providers_cfg:  # "auto" bir sağlayıcı değil
-                refs_by_provider.setdefault(p, ref)
-    from alice.doctor import run_all, test_ref
-
-    for name, pc in router.providers_cfg.items():
-        key = "gerekmez" if not pc.needs_key else ("var" if pc.api_key else f"[dim]{pc.api_key_env} yok[/]")
-        ref = test_ref(router, name, pc, refs_by_provider.get(name, "")) if pc.enabled else ""
-        if not getattr(pc, "auto", True) and name not in refs_by_provider:
-            t.add_row(name, key, "", "[dim]krediyle çalışır, test edilmedi (elle seç)[/]")
-            continue
-        if not pc.enabled or not ref:
-            t.add_row(name, key, ref, "[dim]atlandı[/]")
-            continue
-        t0 = time.monotonic()
-        try:
-            res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=50)
-            t.add_row(name, key, ref, f"[green]çalışıyor[/] {time.monotonic() - t0:.1f} sn: {res.text.strip()[:20]!r}")
-        except AllProvidersFailed as e:
-            t.add_row(name, key, ref, f"[red]{e.errors[-1][:110] if e.errors else 'hata'}[/]")
+    color = {"ok": "green", "fail": "red"}
+    for row in probe_providers(cfg):
+        detail = ("çalışıyor " if row["status"] == "ok" else "") + row["detail"]
+        key = row["key"] if row["key"] != "yok" else f"[dim]{row['env']} yok[/]"
+        c = color.get(row["status"])
+        t.add_row(row["name"], key, row["model"], f"[{c}]{escape(detail)}[/]" if c else f"[dim]{escape(detail)}[/]")
     console.print(t)
 
     decider = Decider.from_config(cfg, router)

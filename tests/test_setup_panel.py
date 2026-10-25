@@ -176,3 +176,68 @@ def test_doctor_runs_in_background(workdir):
         assert client.post("/api/setup/action", json={"action": "nope"}).status_code == 400
     finally:
         srv.stop()
+
+
+def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
+    # Kullanıcının ekranı: Z.ai "max_tokens'a takıldı", Ollama kırmızı ✗, NVIDIA 180 sn sonra zaman aşımı.
+    from alice.doctor import PROBE_TOKENS, probe_providers
+    from alice.providers.openai_compat import ProviderError
+    from tests.conftest import FakeProvider
+
+    monkeypatch.setenv("ZK", "k")
+    monkeypatch.setenv("NK", "k")
+    monkeypatch.setenv("SK", "k")
+    prov = {
+        "zai": {"base_url": "http://z", "api_key_env": "ZK", "models": ["glm-4.7-flash"]},
+        "nvidia": {"base_url": "http://n", "api_key_env": "NK", "models": ["glm-5.3"]},
+        "ollama": {"base_url": "http://localhost:11434/v1", "api_key_env": "", "models": ["qwen3:8b"]},
+        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # anahtar var, model bilinmiyor
+        "mistral": {"base_url": "http://m", "api_key_env": "MK", "models": ["x"]},  # anahtar yok
+    }
+    seen = {}
+
+    def script(name):
+        def reply(model, messages, tools, **kw):
+            seen[name] = kw.get("max_tokens")
+            if name == "nvidia":
+                return ProviderError("network", "zaman aşımı (ReadTimeout)")
+            if name == "ollama":
+                return ProviderError("unreachable", "bağlanılamadı (ConnectError)")
+            return "ok"
+        return reply
+
+    from alice.providers import ranking
+
+    monkeypatch.setattr(ranking, "load_cache", lambda path=None: {})
+    rows = {r["name"]: r for r in probe_providers(make_config({"brain": ["auto"]}, prov),
+                                                    factory=lambda pc: FakeProvider(pc.name, script(pc.name)))}
+    assert rows["zai"]["status"] == "ok" and seen["zai"] == PROBE_TOKENS >= 400  # düşünen model cevaba ulaşsın
+    assert rows["nvidia"]["status"] == "fail" and "cevap vermedi" in rows["nvidia"]["detail"]
+    assert rows["ollama"]["status"] == "off" and "kurmadıysan sorun değil" in rows["ollama"]["detail"]
+    assert rows["samba"]["status"] == "off" and "Yeniden ölç" in rows["samba"]["detail"]
+    assert rows["mistral"]["status"] == "off" and "MK" in rows["mistral"]["detail"]
+
+
+def test_timed_out_model_is_skipped_for_ten_minutes():
+    from alice.providers import router as router_mod
+    from alice.providers.openai_compat import ProviderError
+    from alice.providers.router import Router
+    from tests.conftest import FakeProvider
+
+    calls = []
+
+    def reply(name):
+        def r(model, messages, tools, **kw):
+            calls.append(name)
+            return ProviderError("network", "zaman aşımı (ReadTimeout)") if name == "a" else "ok"
+        return r
+
+    rt = Router(make_config({"brain": ["a:m", "b:m"]}), provider_factory=lambda pc: FakeProvider(pc.name, reply(pc.name)),
+                max_wait=0)
+    rt.chat("brain", [{"role": "user", "content": "x"}])
+    import time
+
+    left = rt.cooldown_until["a:m"] - time.monotonic()
+    assert left > router_mod.TIMEOUT_COOLDOWN - 5  # 30 sn değil: her istekte zaman aşımını baştan beklemesin
+    rt.chat("brain", [{"role": "user", "content": "y"}])
+    assert calls == ["a", "b", "b"]

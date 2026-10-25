@@ -404,7 +404,8 @@ base_url = "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_I
 api_key_env = "CLOUDFLARE_API_TOKEN"
 vision_models = ["*vision*", "*gemma-4*", "*llama-4*"]
 max_input_tokens = 128000
-models = ["@cf/moonshotai/kimi-k2.5", "@cf/zai-org/glm-4.7-flash", "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+# Kimi K2 ücretsiz planda yok (kimi-k2.5 artık paralı k2.6'ya yönleniyor), listede değil.
+models = ["@cf/zai-org/glm-4.7-flash", "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
           "@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-4-scout-17b-16e-instruct"]
 
 [providers.ollama]
@@ -885,14 +886,20 @@ def load_config(path: Path | None = None, cwd: Path | None = None) -> Config:
 
 # `alice init` eski varsayılanları config.toml'a yazmıştı. Kullanıcı bunlara dokunmadıysa yeni varsayılan geçerli
 # olsun (ör. ana modelin GLM 5.3 olması); kullanıcının değiştirdiği değerler olduğu gibi kalır.
+# Bölüm adı noktalı olabilir ("providers.cloudflare").
 LEGACY_DEFAULTS: list[tuple[tuple[str, str], Any]] = [
     (("roles", "brain"), ["auto", "ollama:qwen3:8b"]),
+    (("providers.cloudflare", "models"), ["@cf/moonshotai/kimi-k2.5", "@cf/zai-org/glm-4.7-flash",
+                                          "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/google/gemma-4-26b-a4b-it",
+                                          "@cf/meta/llama-4-scout-17b-16e-instruct"]),
 ]
 
 
 def _drop_legacy_defaults(user: dict[str, Any]) -> None:
     for (section, key), old in LEGACY_DEFAULTS:
-        sec = user.get(section)
+        sec: Any = user
+        for part in section.split("."):
+            sec = sec.get(part) if isinstance(sec, dict) else None
         if isinstance(sec, dict) and sec.get(key) == old:
             del sec[key]
 

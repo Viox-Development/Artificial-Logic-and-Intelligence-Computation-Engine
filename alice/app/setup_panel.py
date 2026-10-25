@@ -143,35 +143,11 @@ class SetupPanel:
 
     def _run_doctor(self, job: Job) -> dict[str, Any]:
         from alice.decider import Choice, Decider, DeciderError, Noul
-        from alice.doctor import run_all, test_ref
-        from alice.providers.router import AllProvidersFailed, Router
+        from alice.doctor import probe_providers, run_all
+        from alice.providers.router import Router
 
+        providers = probe_providers(self.cfg, emit=job.say)
         router = Router(self.cfg, max_wait=0)
-        refs: dict[str, str] = {}
-        for chain in self.cfg.roles.values():
-            for ref in chain:
-                p = ref.split(":", 1)[0]
-                if p in router.providers_cfg:
-                    refs.setdefault(p, ref)
-        providers = []
-        for name, pc in router.providers_cfg.items():
-            row = {"name": name, "key": "gerekmez" if not pc.needs_key else ("var" if pc.api_key else "yok"),
-                   "env": pc.api_key_env or "", "model": "", "status": "skip", "detail": ""}
-            ref = test_ref(router, name, pc, refs.get(name, "")) if pc.enabled else ""
-            if not getattr(pc, "auto", True) and name not in refs:
-                row["detail"] = "krediyle çalışır, test edilmedi"
-            elif not pc.enabled or not ref:
-                row["detail"] = "anahtar yok" if row["key"] == "yok" else "atlandı"
-            else:
-                job.say(f"{name} deneniyor…")
-                row["model"] = ref
-                t0 = time.monotonic()
-                try:
-                    res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=50)
-                    row.update(status="ok", detail=f"{time.monotonic() - t0:.1f} sn: {res.text.strip()[:20]!r}")
-                except AllProvidersFailed as e:
-                    row.update(status="fail", detail=(e.errors[-1] if e.errors else "hata")[:160])
-            providers.append(row)
         job.say("karar motoru deneniyor…")
         decider = Decider.from_config(self.cfg, router)
         try:

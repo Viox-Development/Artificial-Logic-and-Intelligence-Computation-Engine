@@ -324,4 +324,28 @@ def test_cloudflare_needs_account_id(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acc123")
     pc = load_config().providers()["cloudflare"]
     assert pc.enabled and "/accounts/acc123/ai/v1" in pc.base_url
-    assert "@cf/moonshotai/kimi-k2.5" in pc.models
+    assert "@cf/zai-org/glm-4.7-flash" in pc.models and not any("kimi" in m for m in pc.models)  # Kimi paralı
+
+
+def test_old_cloudflare_list_with_paid_kimi_is_replaced(monkeypatch):
+    # Eski `alice init` config.toml'a Kimi'li listeyi yazmıştı; kullanıcı dokunmadıysa yeni liste geçerli.
+    from alice.config import LEGACY_DEFAULTS, alice_home, init_home, load_config
+
+    old = next(v for (sec, key), v in LEGACY_DEFAULTS if sec == "providers.cloudflare")
+    init_home()
+    p = alice_home() / "config.toml"
+    p.write_text(p.read_text(encoding="utf-8").replace(
+        'models = ["@cf/zai-org/glm-4.7-flash"', 'models = ["@cf/moonshotai/kimi-k2.5", "@cf/zai-org/glm-4.7-flash"', 1),
+        encoding="utf-8")
+    assert old[0] in p.read_text(encoding="utf-8")
+    assert not any("kimi" in m for m in load_config().data["providers"]["cloudflare"]["models"])
+    p.write_text(p.read_text(encoding="utf-8").replace(old[0], "@cf/benim/modelim", 1), encoding="utf-8")
+    assert load_config().data["providers"]["cloudflare"]["models"][0] == "@cf/benim/modelim"  # elle değiştirdiyse kalır
+
+
+def test_model_not_on_free_plan_does_not_kill_whole_provider():
+    from alice.providers.openai_compat import classify_error
+
+    body = '{"errors":[{"message":"AiError: Model @cf/moonshotai/kimi-k2.6 is not available on the Workers Free plan"}]}'
+    assert classify_error(403, body).kind == "not_found"
+    assert classify_error(401, '{"error":"invalid api key"}').kind == "auth"

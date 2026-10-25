@@ -235,3 +235,58 @@ def test_ref(router, name: str, pc: Any, explicit: str = "") -> str:
         pass
     models = getattr(pc, "models", None) or []
     return f"{name}:{models[0]}" if models else ""
+
+
+PROBE_TIMEOUT = 30.0  # sn: "Hepsini dene"de bir sağlayıcı en fazla bu kadar beklenir (normalde 180 sn)
+PROBE_TOKENS = 512  # düşünen modeller (GLM Flash) önce düşünür; 50 token'da cevaba gelmeden kesiliyordu
+
+
+def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
+                    timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
+    """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
+    status: ok | fail | off (anahtar yok, kurulu değil, elle seçilen) | skip."""
+    from alice.providers.openai_compat import OpenAICompatProvider
+    from alice.providers.router import AllProvidersFailed, Router
+
+    router = Router(cfg, max_wait=0, provider_factory=factory or (lambda pc: OpenAICompatProvider(pc, timeout=timeout)))
+    explicit: dict[str, str] = {}
+    for chain in cfg.roles.values():
+        for ref in chain:
+            p = ref.split(":", 1)[0]
+            if p in router.providers_cfg:  # "auto" bir sağlayıcı değil
+                explicit.setdefault(p, ref)
+    rows = []
+    for name, pc in router.providers_cfg.items():
+        key = "gerekmez" if not pc.needs_key else ("var" if pc.api_key else "yok")
+        row = {"name": name, "key": key, "env": pc.api_key_env or "", "model": "", "status": "off", "detail": ""}
+        rows.append(row)
+        if not getattr(pc, "auto", True) and name not in explicit:
+            row["detail"] = "krediyle çalışır, test edilmedi (elle seçilir)"
+            continue
+        if not pc.enabled:
+            row["detail"] = (f"anahtar yok ({pc.api_key_env})" if key == "yok"
+                             else "hesap kimliği eksik" if "${" in pc.base_url else "kapalı")
+            continue
+        ref = test_ref(router, name, pc, explicit.get(name, ""))
+        if not ref:
+            row["detail"] = "anahtar var ama hangi modelinin çalıştığı henüz bilinmiyor: Modeller → Yeniden ölç"
+            continue
+        emit(f"{name} deneniyor…")
+        row["model"] = ref
+        t0 = time.monotonic()
+        try:
+            res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=PROBE_TOKENS)
+            row.update(status="ok", detail=f"{time.monotonic() - t0:.1f} sn")
+        except AllProvidersFailed as e:
+            err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
+            if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
+                row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
+            elif "zaman aşımı" in err:
+                row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
+                                                 "ALICE bir süre sıradaki modelle devam eder")
+            else:
+                row.update(status="fail", detail=err[:200])
+        else:
+            if not (res.text or "").strip():
+                row.update(status="fail", detail="boş cevap döndü")
+    return rows
