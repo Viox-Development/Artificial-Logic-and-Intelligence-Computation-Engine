@@ -668,6 +668,11 @@ def _fake_app(monkeypatch, ready=True):
 
     monkeypatch.setattr(server, "AppState", State)
     monkeypatch.setattr(server, "AppServer", Server)
+    from alice import updater
+
+    # Gerçek güncelleme kontrolü deponun git durumuna bakıyor: test dalı main'den farklıysa "yeni sürüm var"
+    # deyip süreci yeniden başlatıyor ve test işçisini öldürüyordu.
+    monkeypatch.setattr(updater, "startup_update", lambda *a, **k: None)
     monkeypatch.setattr(window, "open_window", lambda url, prefer: seen.update(window=(url, prefer)))
     return seen
 
