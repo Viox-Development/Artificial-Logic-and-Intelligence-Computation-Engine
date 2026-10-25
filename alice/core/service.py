@@ -449,9 +449,14 @@ class Core:
                         self.store.add_event("error", "çekirdek turu hata verdi", repr(e)[:500], "warn", "core")
                     except Exception:  # noqa: BLE001
                         traceback.print_exc()
+                # Tur arasını saniyelik adımlarla bekle: uygulamadan gelen durdurma isteği bir saniyede fark edilsin.
+                # Adım sayısı sınırlı; saat atlasa ya da wait erken dönse de döngü dönüp durmaz.
                 end = t0 + max(1.0, self.interval)
-                while not self.stop_event.is_set() and time.monotonic() < end:
-                    self.stop_event.wait(min(1.0, max(0.0, end - time.monotonic())))
+                for _ in range(int(max(1.0, self.interval)) + 1):
+                    left = end - time.monotonic()
+                    if self.stop_event.is_set() or left <= 0:
+                        break
+                    self.stop_event.wait(min(1.0, left))
                     if _take_stop_request():
                         self.store.add_event("core", "Çekirdek uygulamadan durduruldu", topic="core")
                         self.stop()

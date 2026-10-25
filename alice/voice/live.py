@@ -634,6 +634,7 @@ class LiveSession:
             pre["thread"].start()
 
     PREFETCH_WAIT = 15.0  # sn: önceden açılan bağlantıyı en fazla bu kadar bekle
+    ANSWER_WAIT = 20.0  # sn: kullanıcı konuştu, cevap gelmedi: bu kadar süre oturum boşta sayılmaz
 
     def _settle(self, pre: dict[str, Any]) -> tuple[Any, Exception | None]:
         """Önceden açılan bağlantının sonucunu bekle: (ws, hata). Süre dolduğunda hâlâ açılıyorsa vazgeçildi
@@ -838,7 +839,7 @@ class LiveSession:
                     continue
                 if out.playing or self._bg:
                     touch()
-                elif state["pending"] and time.monotonic() - state.get("asked", 0) < 20:
+                elif state["pending"] and time.monotonic() - state.get("asked", 0) < self.ANSWER_WAIT:
                     touch()  # kullanıcı konuştu, cevap bekleniyor: model düşünürken kapanma
                 idle = self.idle
                 if self.single_turn and state.get("answered") and not state["pending"]:

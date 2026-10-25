@@ -114,3 +114,15 @@ def workdir(tmp_path) -> Path:
     d = tmp_path / "work"
     d.mkdir()
     return d
+
+
+def patch_sleep(monkeypatch, module, fn) -> None:
+    """Sadece `module`'ün gördüğü time.sleep'i değiştir. `monkeypatch.setattr(module.time, "sleep", ...)` süreçteki
+    bütün time.sleep'i değiştirir; paralel testte (pytest-xdist) işçinin kendi iş parçacıkları da sahte sleep'e
+    düşer, KeyboardInterrupt atan sahte sleep işçiyi öldürür."""
+    import time as real_time
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(**{k: getattr(real_time, k) for k in dir(real_time) if not k.startswith("_")})
+    fake.sleep = fn
+    monkeypatch.setattr(module, "time", fake)

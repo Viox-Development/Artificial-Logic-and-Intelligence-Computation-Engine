@@ -7,11 +7,10 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from alice.tools.base import ToolResult
 from alice.voice.live import LiveSession, declarations, sanitize_schema
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +29,12 @@ def test_sanitize_schema_for_gemini():
                                                          "parameters": {"type": "object", "properties": {}}}}])
     assert d == [{"name": "t", "description": "d"}]
 
+
+
+@pytest.fixture(autouse=True)
+def _short_answer_wait(monkeypatch):
+    """Sahte sunucu cevap vermediğinde oturum 20 sn "cevap bekleniyor" diye açık kalıyordu; testlerde kısa tut."""
+    monkeypatch.setattr(LiveSession, "ANSWER_WAIT", 1.5)
 
 class FakeWS:
     def __init__(self, script):

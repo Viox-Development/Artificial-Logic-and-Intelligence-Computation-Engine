@@ -700,7 +700,9 @@ def test_app_cmd_headless_until_ctrl_c(monkeypatch, workdir):
     def sleep(_s):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.time, "sleep", sleep)
+    from tests.conftest import patch_sleep
+
+    patch_sleep(monkeypatch, cli, sleep)
     assert cli.app_cmd(["--cwd", str(workdir), "--window", "none"]) == 0
     assert seen["stopped"] and "window" not in seen
 

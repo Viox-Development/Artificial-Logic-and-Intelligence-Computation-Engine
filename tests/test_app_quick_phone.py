@@ -13,6 +13,7 @@ from PIL import Image
 
 from alice.app import phone, quick
 from alice.config import Config, alice_home, default_config_dict
+from tests.conftest import patch_sleep
 
 
 class FakeServer:
@@ -288,7 +289,7 @@ def test_quick_cmd_prints_and_stops(monkeypatch, capsys):
 
     monkeypatch.setattr(quick, "QuickBar", QB)
     monkeypatch.setattr("alice.config.load_config", lambda: Config(default_config_dict()))
-    monkeypatch.setattr(quick.time, "sleep", interrupt)
+    patch_sleep(monkeypatch, quick, interrupt)
     QB.ok = True
     assert quick.quick_cmd(["--open"]) == 0
     out = capsys.readouterr().out
@@ -420,7 +421,7 @@ def test_phone_cmd(monkeypatch, capsys):
     monkeypatch.setattr(phone, "PhoneServer", PS)
     monkeypatch.setattr(phone, "print_qr", lambda c, t: None)
     monkeypatch.setattr("alice.config.load_config", lambda: Config(default_config_dict()))
-    monkeypatch.setattr(phone.time, "sleep", interrupt)
+    patch_sleep(monkeypatch, phone, interrupt)
     assert phone.phone_cmd(["--new-token"]) == 0
     out = capsys.readouterr().out
     assert made[0].new_token and made[0].stopped and "http://ip:1/quick?t=T" in out and "X-Alice-Token: T" in out
