@@ -1337,6 +1337,16 @@ function setupPane(pane) {
       c2.appendChild(it);
     }
     body.appendChild(c2);
+    // ChatGPT hesabıyla giriş (Codex limiti; ücretsiz plan dahil)
+    const cg = d.chatgpt || {};
+    const c2b = card(cg.logged_in ? "ChatGPT bağlı ✓" : "ChatGPT ile giriş",
+      cg.logged_in ? `${cg.email || "hesap"}${cg.plan ? " · " + cg.plan : ""}. Modeller ölçülünce otomatik sıraya girer; limit dolunca sıradakine geçilir.`
+        : "API anahtarı olmadan ChatGPT hesabınla (ücretsiz plan dahil) GPT modelleri. Kullanım planının Codex limitinden düşer. Resmi olarak onaylı değil (OpenCode da aynı yolu kullanıyor).",
+      cg.logged_in ? btn("Çıkış yap", () => act("chatgpt_logout").then(done("ChatGPT oturumu kapatıldı")))
+        : btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : "Giriş yap", () => act("chatgpt_login").then(done()), cg.state !== "running"));
+    c2b.appendChild(jobLines(cg));
+    if (cg.state === "done" && cg.lines && cg.lines.length) c2b.appendChild(el("small", "enroll-note", cg.lines.slice(-1)[0]));
+    body.appendChild(c2b);
     // Google
     body.appendChild(el("div", "sec", "Google Takvim ve Gmail"));
     const g = d.google;
@@ -1424,7 +1434,7 @@ function setupPane(pane) {
       body.appendChild(card("Masaüstü ve Başlat menüsü", "ALICE'i Windows tuşuna basıp \"ALICE\" yazarak aç.",
         btn("Kısayol oluştur", () => act("shortcut").then(done("kısayol oluşturuldu")))));
     }
-    return doc.state === "running" || mo.state === "running";
+    return doc.state === "running" || mo.state === "running" || (d.chatgpt || {}).state === "running";
   }
   let shown = false;
   function load() {

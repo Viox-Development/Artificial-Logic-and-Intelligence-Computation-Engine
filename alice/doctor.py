@@ -308,10 +308,10 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
     """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
     status: ok | warn (geçici: yoğun/hız sınırı) | fail | off (anahtar yok, kurulu değil, elle seçilen)."""
-    from alice.providers.openai_compat import OpenAICompatProvider
+    from alice.providers.chatgpt import make_client
     from alice.providers.router import AllProvidersFailed, Router
 
-    router = Router(cfg, max_wait=0, provider_factory=factory or (lambda pc: OpenAICompatProvider(pc, timeout=timeout)))
+    router = Router(cfg, max_wait=0, provider_factory=factory or (lambda pc: make_client(pc, timeout=timeout)))
     explicit: dict[str, str] = {}
     for chain in cfg.roles.values():
         for ref in chain:

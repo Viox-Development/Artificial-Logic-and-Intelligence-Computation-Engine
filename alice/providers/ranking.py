@@ -58,7 +58,7 @@ PROBE_TIMEOUT = 20.0  # 20 sn içinde araç çağrısı yapamayan model zaten g�
 PER_PROVIDER = 15
 # OpenRouter'ın ücretsiz modelleri hesap başına günlük ortak bir sınırı paylaşıyor (kredisiz hesapta ~50 istek):
 # günlük ölçüm bunun küçük bir kısmını harcasın.
-PROVIDER_CAP = {"openrouter": 6}
+PROVIDER_CAP = {"openrouter": 6, "chatgpt": 3}  # ChatGPT: ücretsiz planın Codex limiti küçük
 # Kota hesap genelinde olan sağlayıcılar: bir modelde kota hatası gelince diğerleri denenmez (hepsi aynı kotada).
 ACCOUNT_QUOTA = ("openrouter",)
 SLOW = 3.0  # saniye: beyin rolünde bundan yavaş modeller geri itilir
@@ -229,12 +229,14 @@ def _probe_specs() -> list[dict[str, Any]]:
 
 def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: float = PROBE_TIMEOUT) -> Probe:
     """Tek bir modeli gerçek bir araç çağrısı isteğiyle dene. Router'ın ceza mekanizmasına dokunmaz."""
-    from alice.providers.openai_compat import OpenAICompatProvider, ProviderError, redact
+    from alice.providers.openai_compat import ProviderError, redact
     from alice.providers.router import clean_messages, is_gemini, parse_ref
 
     p, model = parse_ref(ref)
     pc = router.providers_cfg[p]
-    client = OpenAICompatProvider(pc, timeout=timeout)
+    from alice.providers.chatgpt import make_client
+
+    client = make_client(pc, timeout=timeout)
     msgs = clean_messages([
         {"role": "system", "content": "You are ALICE, an agent on the user's Windows PC. Use tools to act."},
         {"role": "user", "content": PROBE_PROMPT},

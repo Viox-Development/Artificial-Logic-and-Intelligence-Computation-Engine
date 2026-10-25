@@ -32,6 +32,7 @@ from typing import Any, Callable, Protocol
 
 from alice.config import Config, ProviderConfig, alice_home
 from alice.providers import context, ranking, thinking
+from alice.providers.chatgpt import make_client
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
                                             redact)
 
@@ -220,7 +221,7 @@ class Router:
     ):
         self.config = config
         self.providers_cfg = config.providers()
-        self._factory = provider_factory or (lambda pc: OpenAICompatProvider(pc))
+        self._factory = provider_factory or make_client
         self._real_clients = provider_factory is None
         self._probe_checked = False
         self._clients: dict[str, Any] = {}

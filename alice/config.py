@@ -333,6 +333,13 @@ api_key_env = "GEMINI_API_KEY"
 vision_models = ["gemini-*"]
 max_input_tokens = 1000000
 
+# ChatGPT hesabıyla giriş (ücretsiz plan dahil, Codex limiti): Ayarlar → Kurulum → ChatGPT ile giriş.
+[providers.chatgpt]
+base_url = "https://chatgpt.com/backend-api/codex"
+auth = "chatgpt"
+vision_models = ["gpt-*"]
+max_input_tokens = 200000
+
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
@@ -777,6 +784,8 @@ class ProviderConfig:
     # false: otomatik sıralamaya ("auto" zinciri) hiç girmez, sadece elle seçilince kullanılır (krediyle çalışan
     # Vercel AI Gateway gibi: otomatik zincire girse aylık krediyi bir günde yakardı).
     auto: bool = True
+    # "chatgpt": API anahtarı yerine ChatGPT hesabıyla giriş (alice/providers/chatgpt.py)
+    auth: str = ""
 
     @property
     def api_key(self) -> str | None:
@@ -792,6 +801,10 @@ class ProviderConfig:
     def enabled(self) -> bool:
         if "${" in self.base_url:  # adresteki ortam değişkeni (Cloudflare hesap kimliği) tanımlı değil
             return False
+        if self.auth == "chatgpt":
+            from alice.providers.chatgpt import logged_in
+
+            return logged_in()
         return not self.needs_key or self.api_key is not None
 
     def supports_vision(self, model: str) -> bool:
@@ -833,6 +846,7 @@ class Config:
                 headers=dict(p.get("headers", {})),
                 models=[str(m) for m in p.get("models", [])],
                 auto=bool(p.get("auto", True)),
+                auth=str(p.get("auth", "")),
             )
         return out
 

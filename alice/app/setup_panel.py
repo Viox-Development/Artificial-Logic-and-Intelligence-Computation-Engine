@@ -79,11 +79,13 @@ class SetupPanel:
         self.cfg, self.router, self.system = cfg, router, system
         self.doctor = Job()
         self.models = Job()
+        self.chatgpt = Job()
 
     # ------------------------------------------------------------------ görünüm
     def view(self) -> dict[str, Any]:
         from alice import plugins
         from alice.providers import ranking
+        from alice.providers import chatgpt
         from alice.setup_google import STEPS, find_downloaded_json
 
         cache = ranking.load_cache()
@@ -96,6 +98,7 @@ class SetupPanel:
             "google": {"steps": [{"title": t, "url": u, "how": h} for t, u, h in STEPS],
                        "client": bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
                        "found_json": found.name if found else ""},
+            "chatgpt": {**chatgpt.status(), **self.chatgpt.view()},
             "phone": self._phone(),
             "dcs": self._dcs(),
             "plugins": {"dir": str(plugins.plugin_dir()), "errors": plugins.errors(),
@@ -127,7 +130,8 @@ class SetupPanel:
 
     # ------------------------------------------------------------------ işlemler
     ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
-               "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut"}
+               "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut", "chatgpt_login",
+               "chatgpt_logout"}
 
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action) if action in self.ACTIONS else None
@@ -238,6 +242,27 @@ class SetupPanel:
         return {"ok": True}
 
     # Google
+    def _chatgpt_login(self, d: dict[str, Any]) -> dict[str, Any]:
+        """Tarayıcıda ChatGPT girişi; olunca modelleri ölçülsün diye router'daki istemci yenilenir."""
+        from alice.providers import chatgpt
+
+        def run(job: Job) -> dict[str, Any]:
+            job.say("tarayıcıda ChatGPT girişi açılıyor; giriş yapıp izin ver (5 dk içinde)")
+            info = chatgpt.login(emit=job.say)
+            dead = getattr(self.router, "dead_providers", None)
+            if isinstance(dead, set):
+                dead.discard("chatgpt")
+            job.say(f"giriş tamam: {info.get('email') or 'ChatGPT hesabı'} ({info.get('plan') or 'plan bilinmiyor'})")
+            job.say("modelleri sıraya almak için 'Ücretsiz modelleri ölç'e bas")
+            return {"email": info.get("email", ""), "plan": info.get("plan", "")}
+
+        return self.chatgpt.start(run)
+
+    def _chatgpt_logout(self, d: dict[str, Any]) -> dict[str, Any]:
+        from alice.providers import chatgpt
+
+        return {"ok": chatgpt.logout()}
+
     def _google_open(self, d: dict[str, Any]) -> dict[str, Any]:
         import webbrowser
 
