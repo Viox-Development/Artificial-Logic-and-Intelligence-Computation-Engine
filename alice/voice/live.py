@@ -96,10 +96,11 @@ Hangi ad olduğundan emin değilsen işe başlamadan tek kısa soruyla teyit et.
 Konuşmanın ilk mesajı yazıyla gelirse, kullanıcının sesinin yerel yazı dökümüdür; sonunda [hafızadan ...] notu
 olabilir, o kullanıcının sözü değil, ilgili eski bilgilerdir.
 # Ne zaman think
-Bilgi, açıklama, tavsiye, karşılaştırma, hesap, kod/teknik soru, plan, "neden/nasıl" soruları, güncel şeyler (haber,
-fiyat, maç, sürüm, hava dışındaki her güncel bilgi) ya da cevabından emin olmadığın her soruda ÖNCE think aracını çağır
-(önce tek kısa doğal cümle söyle, ör. "Bir düşüneyim.") ve gelen cevabı kendi sesinle, anlamını bozmadan söyle; bilgi
-ekleme. Selamlaşma, saat/tarih, basit komutlar (aç, kapat, çal, ses) ve kısa sohbet için çağırma.
+think yavaştır (onlarca saniye), sadece gerçekten gerektiğinde çağır: güncel bilgi (haber, fiyat, maç, sürüm), web'de
+araştırma, birkaç adımlı akıl yürütme, kod/teknik sorun, hesap, plan. Önce tek kısa doğal cümle söyle ("Bir bakayım.")
+ve gelen cevabı kendi sesinle, anlamını bozmadan söyle; bilgi ekleme.
+Kendin cevapla, think ÇAĞIRMA: kelime anlamı ve çeviri ("destitute ne demek"), genel kültür, ekranda gördüğünü
+yorumlama, oyundaki seçenekler hakkında fikir, selamlaşma, saat/tarih, basit komutlar ve kısa sohbet.
 # Konuşma tarzın
 Sistem istemindeki kişilik ("Your personality") sesli konuşmada da sensin: aynı karakter, aynı ton. Sen dili kullan;
 "siz", "efendim", "buyurun" yok. Müşteri hizmetleri cümleleri kesinlikle yok: "size nasıl yardımcı olabilirim",
@@ -453,7 +454,8 @@ class LiveSession:
         self._turn: dict[str, Any] = {"n": 0, "last": None}
         # think: zor soruları beyin modeline devret (Live'ın flash ses modeli bilgi/akıl yürütmede zayıf kalıyordu).
         self.think = bool(v.get("live_think", True))
-        self.think_timeout = float(v.get("live_think_timeout", 45))
+        # Bu kadar sn'de cevap yoksa model "uzun sürüyor" der ve konuşma serbest kalır (eskiden 45 sn sessizlik).
+        self.think_timeout = float(v.get("live_think_timeout", 25))
         self.think_steps = int(v.get("live_think_steps", 6))
         # Az önceki konuşma: oturum 5 sn sessizlikte kapanıyor; yenisi bu kadar dakikalık geçmişi bilerek açılır.
         self.history_minutes = float(v.get("live_history_minutes", 30))
@@ -944,20 +946,34 @@ class LiveSession:
         self._bg += 1  # düşünürken konuşma kapanmasın; _think_thread bitince azaltır
         self.log(f"live think: {question[:200]}")
 
+        released = [False]
+
+        def release() -> None:
+            """Düşünme artık oturumu açık tutmasın: 189 sn süren bir think boyunca Live açık kalıp Discord'daki
+            konuşmalara cevap veriyordu. Bir kez çağrılır (zaman aşımında ya da bitince)."""
+            with lock:
+                if released[0]:
+                    return
+                released[0] = True
+            self._bg -= 1
+            self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
+
         def too_slow() -> None:
-            respond("Düşünmek uzun sürüyor; kullanıcıya biraz daha süreceğini söyle. Cevap gelince sana ayrıca "
+            respond("Düşünmek uzun sürüyor; kullanıcıya biraz daha süreceğini kısaca söyle. Cevap gelince sana ayrıca "
                     "yazacağım, o zaman söyle.")
             self.log("live think zaman aşımı: cevap gelince konuşmaya yazılacak")
+            release()
 
         timer = threading.Timer(self.think_timeout, too_slow)
         timer.daemon = True
         timer.start()
         threading.Thread(target=self._think_thread, args=(ws, question, str(args.get("context") or ""), respond,
-                                                          answered, lock, timer, time.monotonic()),
+                                                          answered, lock, timer, time.monotonic(), release),
                          daemon=True, name="alice-live-think").start()
 
     def _think_thread(self, ws, question: str, context: str, respond: Callable[[str], None], answered: list[bool],
-                      lock: threading.Lock, timer: threading.Timer, t0: float) -> None:
+                      lock: threading.Lock, timer: threading.Timer, t0: float,
+                      release: Callable[[], None] | None = None) -> None:
         try:
             try:
                 answer = self.think_answer(question, context)
@@ -982,8 +998,11 @@ class LiveSession:
             except Exception:  # noqa: BLE001
                 pass
         finally:
-            self._bg -= 1
-            self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
+            if release is not None:
+                release()
+            else:
+                self._bg -= 1
+                self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
 
     def think_answer(self, question: str, context: str = "") -> str:
         """Beyin modeline sor: sadece okuyan araçlar (web, dosya okuma, hafıza, projeler), az adım."""

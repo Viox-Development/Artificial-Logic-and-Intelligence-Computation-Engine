@@ -495,3 +495,28 @@ def test_think_runs_one_at_a_time_and_drops_stale_answers(monkeypatch):
         time.sleep(0.02)
     assert [m for m in sent if "toolResponse" in m]  # "uzun sürüyor" cevabı gitti
     assert not [m for m in sent if "clientContent" in m]  # dakikalar sonra gelen cevap okunmadı
+
+
+def test_slow_think_does_not_keep_the_session_open(monkeypatch):
+    # voice.log 25 Ekim 01:46: think 189 sn sürdü, o sürede Live açık kalıp Discord'daki konuşmalara cevap verdi.
+    s, ws, results = _guard_session()
+    s._bg = 0
+    gate = threading.Event()
+    s.think_answer = lambda q, c="": gate.wait(5) and "cevap"
+    s.think_timeout = 0.05
+    s._run_think(ws, {"id": "1", "name": "think", "args": {"question": "zor soru"}})
+    assert s._bg == 1 and s._thinking == 1
+    deadline = time.monotonic() + 2
+    while s._bg and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert s._bg == 0 and s._thinking == 0  # zaman aşımında serbest: oturum kapanabilir, yeni soru düşünülebilir
+    assert "uzun sürüyor" in results()[0]
+    gate.set()
+    time.sleep(0.2)
+    assert s._bg == 0 and s._thinking == 0  # bitince ikinci kez azaltılmadı
+
+
+def test_live_prompt_keeps_simple_questions_off_think():
+    from alice.voice.live import LIVE_PROMPT
+
+    assert "destitute ne demek" in LIVE_PROMPT and "think ÇAĞIRMA" in LIVE_PROMPT
