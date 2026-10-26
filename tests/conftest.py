@@ -60,6 +60,15 @@ def no_project_scan(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_keyboard(monkeypatch):
+    """Testler gerçek klavye girdisi göndermesin (send_unicode Windows'ta öndeki pencereye yazar). Bir test kendi
+    sahtesini koyabilir."""
+    from alice.tools import computer
+
+    monkeypatch.setattr(computer, "send_unicode", lambda text: False)
+
+
+@pytest.fixture(autouse=True)
 def clear_web_cache(monkeypatch):
     """web_fetch/web_search ve bağlantı önbellekleri testler arasında sızmasın; tekrar deneme beklemesin."""
     from alice.connect import runner

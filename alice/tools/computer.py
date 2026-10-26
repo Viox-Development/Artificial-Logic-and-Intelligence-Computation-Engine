@@ -126,10 +126,43 @@ def to_real(ctx: ToolContext, x: float, y: float) -> tuple[int, int]:
 PASTE_OVER = 40  # karakter: bundan uzun ya da çok satırlı metin tuş tuş değil panodan yapıştırılır
 
 
+def send_unicode(text: str) -> bool:
+    """Windows: karakterleri tuş kodu değil Unicode olarak gönder (SendInput, KEYEVENTF_UNICODE). Klavye düzeninden
+    bağımsız: pyautogui ABD düzenine göre tuşa basıyor, Türkçe Q klavyede '1234*5678=' yazılınca '*' kayboluyordu.
+    Windows dışında False (çağıran başka yolla yazar)."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class INPUT(ctypes.Structure):
+        class _U(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT), ("pad", ctypes.c_byte * 32)]
+
+        _anonymous_ = ("u",)
+        _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+    unicode_flag, keyup = 0x0004, 0x0002
+    for ch in text:
+        events = (INPUT * 2)()
+        for n, flags in enumerate((unicode_flag, unicode_flag | keyup)):
+            events[n].type = 1  # INPUT_KEYBOARD
+            events[n].ki = KEYBDINPUT(0, ord(ch), flags, 0, 0)
+        ctypes.windll.user32.SendInput(2, ctypes.byref(events), ctypes.sizeof(INPUT))
+        time.sleep(0.01)
+    return True
+
+
 def type_text(text: str) -> None:
     pg = _pyautogui()
     if text.isascii() and "\n" not in text and len(text) <= PASTE_OVER:
-        pg.write(text, interval=0.01)
+        # Harf, rakam ve boşluk her düzende aynı tuşta; işaretler ('*', '=', '@') değil: onlar Unicode gider.
+        if all(c.isalnum() or c == " " for c in text) or not send_unicode(text):
+            pg.write(text, interval=0.01)
         return
     # Türkçe karakterler pyautogui.write ile yazılamıyor; çok satırlı/uzun metin de tuş tuş yazılınca kayboluyor
     # (Not Defteri'ne 1-10 satır satır yazılınca dosyada sadece "9, 10" kalmıştı): panodan yapıştır.

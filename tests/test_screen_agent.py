@@ -493,6 +493,49 @@ def test_keyboard_typing_combos_and_holding_on_desktop(monkeypatch):
     assert calls[6] == ("hotkey", ("ctrl", "shift", "s"))  # aynı anda
 
 
+def test_symbols_are_sent_as_unicode_not_layout_keys(monkeypatch):
+    """Türkçe Q klavyede pyautogui '1234*5678=' yazınca '*' kayboldu (ABD düzenine göre tuşa basıyor)."""
+    from alice.tools import computer
+
+    calls = []
+
+    class PG:
+        def __getattr__(self, name):
+            return lambda *a, **k: calls.append((name, a))
+
+    monkeypatch.setattr(computer, "_pyautogui", lambda: PG())
+    monkeypatch.setattr(computer, "send_unicode", lambda t: calls.append(("unicode", t)) or True)
+    computer.type_text("1234*5678=")
+    computer.type_text("merhaba 42")
+    assert calls == [("unicode", "1234*5678="), ("write", ("merhaba 42",))]  # harf/rakam her düzende aynı
+    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # Windows dışı: eski yol
+    calls.clear()
+    computer.type_text("a*b")
+    assert calls == [("write", ("a*b",))]
+
+
+def test_reflex_refuses_wrong_foreground_window(monkeypatch):
+    """Başlık verilmedi, hedef Not Defteri'ni söylüyor ama önde Hesap Makinesi var: 1-10 hesap makinesine yazılmıştı."""
+    import pytest
+
+    from alice.reflex import observers
+    from alice.reflex.observers import app_name, named_window
+    from alice.tools.base import ToolError
+
+    assert app_name("*sayilar.txt, Not Defteri") == "Not Defteri"
+    assert app_name("refleks-test - File Explorer") == "File Explorer"
+    wins = ["Hesap Makinesi", "*1, Not Defteri", "cizim.png - Paint"]
+    goal = "Not Defteri'ne 1'den 10'a kadar sayıları yaz"
+    assert named_window(goal, "Hesap Makinesi", wins) == "Not Defteri"
+    assert named_window(goal, "*1, Not Defteri", wins) == ""  # zaten önde
+    assert named_window("1234 çarpı 5678 hesapla", "Hesap Makinesi", wins) == ""  # başka pencere adı yok
+    monkeypatch.setattr(observers, "foreground_title", lambda: "Hesap Makinesi")
+    monkeypatch.setattr(observers, "_open_windows", lambda: wins)
+    with pytest.raises(ToolError, match="title='Not Defteri'"):
+        observers.DesktopObserver(None, None, goal)
+    observers.DesktopObserver(None, "Not Defteri", goal)  # başlık verildiyse sorun yok
+
+
 def test_long_or_multiline_text_is_pasted(monkeypatch):
     """Not Defteri'ne 1-10 satır satır tuşlanınca dosyada sadece '9, 10' kalmıştı: çok satırlı metin panodan."""
     import pyperclip
@@ -509,8 +552,9 @@ def test_long_or_multiline_text_is_pasted(monkeypatch):
     monkeypatch.setattr(computer.time, "sleep", lambda s: None)
     monkeypatch.setattr(pyperclip, "paste", lambda: board["v"])
     monkeypatch.setattr(pyperclip, "copy", lambda t: board.update(v=t) or calls.append(("copy", (t,))))
+    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # testte gerçek girdi gönderilmesin
     computer.type_text("1234*5678=")
-    assert calls == [("write", ("1234*5678=",))]  # kısa tek satır: tuş tuş (hesap makinesi)
+    assert calls == [("write", ("1234*5678=",))]  # kısa tek satır: panoya gitmez (hesap makinesi)
     calls.clear()
     computer.type_text("1\n2\n3")
     assert calls[:2] == [("copy", ("1\n2\n3",)), ("hotkey", ("ctrl", "v"))] and board["v"] == "eski pano"

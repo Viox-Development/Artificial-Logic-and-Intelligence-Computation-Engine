@@ -54,6 +54,38 @@ def window_union(rects: list[tuple[int, int, int, int]], screen: tuple[int, int,
     return l, t, r - l, b - t
 
 
+def app_name(title: str) -> str:
+    """'*sayilar.txt, Not Defteri' -> 'Not Defteri'; 'refleks-test - File Explorer' -> 'File Explorer'."""
+    for sep in (" - ", ", ", " — ", " | "):
+        if sep in title:
+            title = title.rsplit(sep, 1)[1]
+    return title.strip(" *")
+
+
+def named_window(goal: str, front: str, windows: list[str]) -> str:
+    """Hedef, öndeki değil başka bir açık pencerenin uygulama adını geçiriyorsa o adı döndür; yoksa ''."""
+    from alice.reflex.perceive import words
+
+    gw = set(words(goal))
+
+    def mentioned(title: str) -> bool:
+        ws = [w for w in words(app_name(title)) if len(w) > 2]
+        return bool(ws) and all(any(g.startswith(w) for g in gw) for w in ws)  # "Defteri'ne" -> "defteri"
+
+    if not front.strip() or mentioned(front):
+        return ""
+    return next((app_name(w) for w in windows if w.strip() and w != front and mentioned(w)), "")
+
+
+def _open_windows() -> list[str]:
+    try:
+        from alice.tools.desktop import list_windows
+
+        return list_windows()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def foreground_title() -> str:
     """Öndeki pencerenin başlığı (Windows dışında boş)."""
     import sys
@@ -309,6 +341,13 @@ class DesktopObserver:
             # basıyordu (reflex uygulama açmaz).
             raise ToolError("öndeki pencere ALICE'in kendisi; hedef pencereyi önce app/windows aracıyla açıp öne "
                             "getir ve title ver (ör. title='Not Defteri')")
+        if not (window_title or "").strip() and goal:
+            other = named_window(goal, foreground_title(), _open_windows())
+            if other:
+                # Başlık verilmedi, hedef başka bir açık pencereyi adlandırıyor: "Not Defteri'ne 1-10 yaz" öndeki
+                # Hesap Makinesi'ne yazılmıştı.
+                raise ToolError(f"hedef '{other}' penceresinden söz ediyor ama öndeki pencere "
+                                f"'{foreground_title()}'; title='{other}' ver")
         self._rect: tuple[int, int, int, int] | None = None  # son ekran görüntüsünün ekrandaki yeri
 
     def screen(self, goal: str = "") -> Screen:
