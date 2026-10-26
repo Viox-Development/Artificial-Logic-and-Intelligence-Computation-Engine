@@ -231,3 +231,9 @@ def test_noul_criteria_go_to_jev():
                     client=httpx.Client(transport=httpx.MockTransport(handler)))
     eng.decide({"goal": "g"}, {"done": Noul("Is it done?", {"true": "yes case", "false": "no case"})})
     assert sent["questions"]["done"]["criteria"] == {"true": "yes case", "false": "no case"}
+
+
+def test_browser_snapshot_lists_drag_sources_and_drop_targets():
+    from alice.tools.browser import SNAPSHOT_JS
+
+    assert "[draggable=true]" in SNAPSHOT_JS and "[ondrop]" in SNAPSHOT_JS

@@ -23,7 +23,7 @@ SNAPSHOT_JS = r"""
 (limit) => {
   const sel = 'a[href],button,input:not([type=hidden]),textarea,select,summary,[role=button],[role=link],' +
               '[role=tab],[role=menuitem],[role=checkbox],[role=option],[role=combobox],[role=textbox],' +
-              '[role=searchbox],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+              '[role=searchbox],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"]),[draggable=true],[ondrop]';
   document.querySelectorAll('[data-alice-id]').forEach(e => e.removeAttribute('data-alice-id'));
   const out = [];
   const vh = window.innerHeight, vw = window.innerWidth;
