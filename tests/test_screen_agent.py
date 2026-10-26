@@ -510,11 +510,18 @@ def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
                 self.display = "7.006.652"
 
     obs = Calc()
-    brain = Brain([{"action": "type_keys"}, {"done": 0.95}])
+    brain = Brain([{"done": 0.95}])
     res = ScreenAgent(obs, brain, settle=0).run("1234 çarpı 5678", text="1234*5678=", keys=["ctrl+shift+s"])
+    # Ana model metni verdiyse ilk adımda Jev'e sorulmadan yazılır (Jev "İki" tuşuna tıklamayı seçmişti).
     assert res.status == "done" and obs.acts == [("type_keys", None, "1234*5678=", "", None)]
-    assert "type_keys" in brain.calls[0][1]["action"].criteria
+    assert len(brain.calls) == 1 and "type_keys" in brain.calls[0][1]["action"].criteria
     assert "Press ctrl+shift+s" in brain.calls[0][1]["key"].criteria.values()  # aracın verdiği kombinasyon
     report = res.report()
     assert "ekranda başa göre çıkan: Gösterim 7.006.652" in report and "kaybolan: Gösterim 0" in report
-    assert "typed '1234*5678=' on the keyboard" in brain.calls[1][0]["recent_actions"][0]
+    assert brain.calls[0][0]["recent_actions"][0].startswith("typed '1234*5678=' on the keyboard -> screen changed")
+
+    # Jev kendisi klavyeyle yazmayı seçerse metin hedeften üretilir.
+    obs = Calc()
+    brain = Brain([{"action": "type_keys"}, {"done": 0.95}])
+    res = ScreenAgent(obs, brain, text_writer=lambda goal, where: "1234*5678=", settle=0).run("1234 çarpı 5678")
+    assert res.status == "done" and obs.acts[0][:3] == ("type_keys", None, "1234*5678=")

@@ -56,6 +56,11 @@ calculator instead of clicking its buttons), shortcuts and key combinations (pas
 menus. Its report includes what changed on screen, so you usually do not need a screenshot afterwards. If it \
 returns needs_help, continue from where it stopped (`ui_elements`/`ui_act`, then `computer_task`, which is slow: \
 5-15 s per step). Each extra tool call costs you a full model turn, so prefer one `reflex` call with a complete goal.
+A `reflex` "done" is the decider's judgment, not proof. When the result can be checked without the screen (a file \
+saved, moved or renamed, a folder created), check it with `list_dir`/`glob` before telling the user it is done, and \
+for a saved file also check that its real type matches the extension (look at its first bytes with `run_command`; \
+e.g. a .png must start with PNG). In a test, a file was "moved" two folders up and a ".png" saved by Paint was really a HEIF image, and both \
+were reported as done.
 4. To play a game over many \
 turns (turn-based strategy, card or puzzle games), use `game` instead: it learns the game and its rules while \
 playing (lessons from what actually happened on screen). Read the board with `game action=look`, not with a \
