@@ -493,6 +493,29 @@ def test_keyboard_typing_combos_and_holding_on_desktop(monkeypatch):
     assert calls[6] == ("hotkey", ("ctrl", "shift", "s"))  # aynı anda
 
 
+def test_long_or_multiline_text_is_pasted(monkeypatch):
+    """Not Defteri'ne 1-10 satır satır tuşlanınca dosyada sadece '9, 10' kalmıştı: çok satırlı metin panodan."""
+    import pyperclip
+
+    from alice.tools import computer
+
+    calls, board = [], {"v": "eski pano"}
+
+    class PG:
+        def __getattr__(self, name):
+            return lambda *a, **k: calls.append((name, a))
+
+    monkeypatch.setattr(computer, "_pyautogui", lambda: PG())
+    monkeypatch.setattr(computer.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pyperclip, "paste", lambda: board["v"])
+    monkeypatch.setattr(pyperclip, "copy", lambda t: board.update(v=t) or calls.append(("copy", (t,))))
+    computer.type_text("1234*5678=")
+    assert calls == [("write", ("1234*5678=",))]  # kısa tek satır: tuş tuş (hesap makinesi)
+    calls.clear()
+    computer.type_text("1\n2\n3")
+    assert calls[:2] == [("copy", ("1\n2\n3",)), ("hotkey", ("ctrl", "v"))] and board["v"] == "eski pano"
+
+
 def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
     """Hesap makinesinde tuşlara tek tek tıklatıp adım sınırına takılıyordu; sonucu okumak için de ayrı tur gerekiyordu."""
 
@@ -519,6 +542,13 @@ def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
     report = res.report()
     assert "ekranda başa göre çıkan: Gösterim 7.006.652" in report and "kaybolan: Gösterim 0" in report
     assert brain.calls[0][0]["recent_actions"][0].startswith("typed '1234*5678=' on the keyboard -> screen changed")
+
+    # Önceki girdi temizlenir: önceki işlemden kalan "2"nin arkasına yazılmıştı (212345678).
+    obs = Calc()
+    brain = Brain([{"done": 0.95}])
+    ScreenAgent(obs, brain, settle=0).run("1234 çarpı 5678", text="1234*5678=", press_first=["escape"])
+    assert obs.acts[:2] == [("press_key", None, "", "escape", None), ("type_keys", None, "1234*5678=", "", None)]
+    assert brain.calls[0][0]["recent_actions"][0].startswith("pressed escape, then typed '1234*5678='")
 
     # Jev kendisi klavyeyle yazmayı seçerse metin hedeften üretilir.
     obs = Calc()

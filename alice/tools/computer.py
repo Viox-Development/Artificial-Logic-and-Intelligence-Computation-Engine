@@ -123,12 +123,16 @@ def to_real(ctx: ToolContext, x: float, y: float) -> tuple[int, int]:
     return int(s["left"] + x * s["scale"]), int(s["top"] + y * s["scale"])
 
 
+PASTE_OVER = 40  # karakter: bundan uzun ya da çok satırlı metin tuş tuş değil panodan yapıştırılır
+
+
 def type_text(text: str) -> None:
     pg = _pyautogui()
-    if text.isascii():
+    if text.isascii() and "\n" not in text and len(text) <= PASTE_OVER:
         pg.write(text, interval=0.01)
         return
-    # Türkçe karakterler pyautogui.write ile yazılamıyor; panodan yapıştır.
+    # Türkçe karakterler pyautogui.write ile yazılamıyor; çok satırlı/uzun metin de tuş tuş yazılınca kayboluyor
+    # (Not Defteri'ne 1-10 satır satır yazılınca dosyada sadece "9, 10" kalmıştı): panodan yapıştır.
     try:
         import pyperclip
     except ImportError as e:

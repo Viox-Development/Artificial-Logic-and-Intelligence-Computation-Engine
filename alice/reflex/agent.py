@@ -223,10 +223,12 @@ class ScreenAgent:
 
     # ------------------------------------------------------------------ döngü
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None,
-            notes: str | Callable[[Screen], str] = "", text: str = "", keys: list[str] | None = None) -> ReflexResult:
+            notes: str | Callable[[Screen], str] = "", text: str = "", keys: list[str] | None = None,
+            press_first: list[str] | None = None) -> ReflexResult:
         """notes: sabit metin ya da her adımda ekrana göre seçen bir fonksiyon (oyunda: ekrandakine uyan dersler).
         text: klavyeyle pencereye yazılacak metin (type_keys). keys: seçeneklere eklenecek tuşlar/kombinasyonlar."""
         self._keyboard_text, self._extra_keys, self._first = text, list(keys or []), None
+        self._press_first = list(press_first or [])  # yazmadan önce: ör. escape (önceki girdi kalmasın)
         res = self._run(goal, max_steps, inputs or {}, notes)
         if self._first is not None and self.last is not None:
             # Ekranın başa göre değişen kısmı rapora: ana model sonucu (hesap makinesindeki sayı) okumak için ayrı
@@ -299,12 +301,17 @@ class ScreenAgent:
                 # Ana model "bunu klavyeyle yaz" dediyse karar Jev'in değil: Hesap Makinesi'nde text='2^20=' verildiği
                 # halde Jev "İki" tuşuna tıklamayı seçmişti. Önce yazılır, Jev kalanından devam eder.
                 try:
+                    # Önce temizle: Hesap Makinesi'nde önceki işlemden kalan "2"nin arkasına yazılmıştı (212345678).
+                    for k in getattr(self, "_press_first", []):
+                        self.obs.act("press_key", None, keys=k)
                     self.obs.act("type_keys", None, text=self._keyboard_text)
                 except Exception as e:  # noqa: BLE001
                     log.append(f"{step}. klavyeyle yazma -> HATA {e}")
                     history.append(f"type_keys failed: {str(e)[:120]}")
                 else:
-                    history.append(f"typed '{self._keyboard_text[:40]}' on the keyboard")
+                    first = getattr(self, "_press_first", [])
+                    history.append((f"pressed {', '.join(first)}, then " if first else "")
+                                   + f"typed '{self._keyboard_text[:40]}' on the keyboard")
                     log.append(f"{step}. {history[-1]}")
                 self._keyboard_text = ""
                 time.sleep(self.settle)

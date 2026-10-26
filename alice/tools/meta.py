@@ -164,8 +164,8 @@ class Reflex(Tool):
         "tıklama, sağ/çift tık, alana yazma, pencereye klavyeyle yazma, tuş ya da kombinasyon (ctrl+shift+s), tuşu "
         "basılı tutma, sürükle-bırak, kaydırma. Sonuçta ekranın başa göre değişen yazıları da gelir.\n"
         "- Kullan: 'Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'kartı sağdaki sütuna sürükle'.\n"
-        "- Klavye işi tek adımdır: hesap makinesinde tuşlara tıklatma, text='1234*5678=' ver; gereken "
-        "kombinasyonları keys'e yaz.\n"
+        "- Klavye işi tek adımdır: hesap makinesinde tuşlara tıklatma, text='1234*5678=', press_first=['escape'] "
+        "ver; kombinasyonları keys'e yaz.\n"
         "- Uygulama açmaz: önce app/windows aracıyla aç, sonra title ver (boşsa öndeki pencere).\n"
         "- Büyük işlerde sen planla: işi kısa hedeflere böl, her biri için reflex çağır; oyun kuralları, strateji "
         "ya da ekranda neyin ne olduğunu notes'a yaz (İngilizce daha iyi).\n"
@@ -187,6 +187,9 @@ class Reflex(Tool):
                  "'1234*5678='."},
         "keys": {"type": "array", "items": {"type": "string", "description": "Tuş ya da kombinasyon, ör. 'shift+w'."},
                  "description": "Seçeneklere eklenecek tuşlar/kombinasyonlar (aynı anda basılır)."},
+        "press_first": {"type": "array", "items": {"type": "string", "description": "Tuş, ör. 'escape'."},
+                        "description": "text yazılmadan önce basılacak tuşlar: önceki girdiyi temizlemek için "
+                                       "(hesap makinesinde 'escape', alanda 'ctrl+a')."},
         "hold_seconds": {"type": "number", "description": "Tuş basılı tutulacaksa kaç saniye. Varsayılan 1."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 20."},
     }, ["goal", "target"])
@@ -194,7 +197,8 @@ class Reflex(Tool):
 
     def run(self, ctx: ToolContext, goal: str, target: str, url: str | None = None, title: str | None = None,
             inputs: dict[str, str] | None = None, notes: str = "", max_steps: int = 20, text: str = "",
-            keys: list[str] | None = None, hold_seconds: float | None = None) -> ToolResult:
+            keys: list[str] | None = None, hold_seconds: float | None = None,
+            press_first: list[str] | None = None) -> ToolResult:
         from alice.config import alice_home
         from alice.reflex.agent import ScreenAgent, make_translator
         from alice.reflex.loop import make_text_writer
@@ -210,7 +214,7 @@ class Reflex(Tool):
                            emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         if hold_seconds:
             observer.hold_seconds = max(0.05, min(float(hold_seconds), 10.0))
-        extra = {k: v for k, v in (("text", text), ("keys", keys)) if v}
+        extra = {k: v for k, v in (("text", text), ("keys", keys), ("press_first", press_first)) if v}
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "", **extra)
         verdict = reflex_verdict(getattr(res, "status", ""))
         return ToolResult(res.report() + ("\n" + verdict if verdict else ""),
