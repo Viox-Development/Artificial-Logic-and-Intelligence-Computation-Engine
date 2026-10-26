@@ -346,9 +346,21 @@ def make_text_writer(router) -> Callable[[str, str], str]:
 
     def write(goal: str, field_desc: str) -> str:
         res = router.chat("fast", [
-            {"role": "system", "content": "Return ONLY the exact text to type into the field. No quotes, no explanation."},
+            {"role": "system", "content": "Return ONLY the exact text to type into the field. No quotes, no "
+             "explanation. If the goal asks for several lines (a list, numbers one under another), put each on its "
+             "own line."},
             {"role": "user", "content": f"Goal: {goal}\nField: {field_desc}\nText to type:"},
-        ], temperature=0, max_tokens=200)
-        return res.text.strip().strip('"').strip("'").splitlines()[0] if res.text.strip() else ""
+        ], temperature=0, max_tokens=400)
+        return clean_typed(res.text)
 
     return write
+
+
+def clean_typed(text: str) -> str:
+    """Modelin yazılacak metni: tırnak ve kod bloğu çitleri atılır, satırlar korunur. Sadece ilk satır alınıyordu:
+    "1'den 10'a alt alta yaz" hedefinde 20 adım boyunca "1, Enter" yazıldı."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        t = t.rsplit("```", 1)[0]
+    return t.strip().strip('"').strip("'")

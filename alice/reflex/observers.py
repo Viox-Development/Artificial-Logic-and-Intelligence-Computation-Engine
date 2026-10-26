@@ -361,6 +361,7 @@ class DesktopObserver:
         self._seen: set[str] | None = None
         self.changed: list[tuple[float, float, float, float]] | None = None
         self._hwnd = 0
+        self._unparked = False  # görev başında köşede park halindeki fare bir kez ortaya alınır
         if not (window_title or "").strip() and goal and "alice" not in goal.lower() \
                 and foreground_title().strip() == "ALICE":
             # Öndeki pencere ALICE'in kendi sohbeti: "Not Defteri'ni aç, Ctrl+S'ye bas" burada Escape ve Ctrl+S'ye
@@ -387,6 +388,15 @@ class DesktopObserver:
             except Exception:  # noqa: BLE001 - başlıkla bulunamazsa öndeki pencereyle devam
                 pass
         img = self.snapshot(self._target_hwnd())
+        if not self._unparked and self._rect is not None:
+            self._unparked = True
+            try:
+                from alice.tools.computer import unpark_mouse
+
+                left, top, w, h = self._rect
+                unpark_mouse(left + w // 2, top + h // 2)  # köşede bekleyen fare yazmayı engellemesin
+            except Exception:  # noqa: BLE001
+                pass
         title, raw = collect_ui_elements(self.ctx, self.title, limit=200, hwnd=self._window())
         # Oyunda pencerenin Kapat düğmesi hiç seçenek olmaz: "ayarları X ile kapat" Unciv'i kapatmıştı.
         chrome_goal = "" if self.diff else self.goal

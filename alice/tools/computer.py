@@ -78,6 +78,25 @@ def _pyautogui():
     return pyautogui
 
 
+def _unpark_mouse(x: int, y: int) -> bool:
+    """Fare görev başlarken zaten bir acil durdurma köşesinde park halindeyse (x, y)'ye al; aldıysa True. Bu bir "dur"
+    isteği değil: genel sınavda fare köşede beklediği için ilk iki görevde hiçbir tuşa basılamadı. Görev sırasında
+    köşeye götürülen fare ise eskisi gibi durdurur."""
+    pg = _pyautogui()
+    px, py = pg.position()
+    if not any(abs(px - cx) <= 1 and abs(py - cy) <= 1 for cx, cy in pg.FAILSAFE_POINTS):
+        return False
+    pg.FAILSAFE = False
+    try:
+        pg.moveTo(x, y)
+    finally:
+        pg.FAILSAFE = True
+    return True
+
+
+unpark_mouse = _unpark_mouse  # testler bunu sahtesiyle değiştirir (gerçek fare oynamasın)
+
+
 def _desktop_corners() -> list[tuple[int, int]]:
     """Acil durdurma köşeleri bütün masaüstünün (tüm monitörler) köşeleri olsun. pyautogui ana monitörün köşelerini
     kullanıyor: solda ikinci monitör varken (0,0) iki ekranın arası, fare orada durunca klavyeyle yazma iptal oluyordu.

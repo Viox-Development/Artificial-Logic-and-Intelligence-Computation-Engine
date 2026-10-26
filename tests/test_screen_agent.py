@@ -736,3 +736,36 @@ def test_multiline_text_is_not_typed_into_a_one_line_field():
 
     assert wrong_field("Edit 'Dosya adı:' in window 'Farklı kaydet'", "1\n2") and not wrong_field("Document 'x'", "1\n2")
     assert not wrong_field("Edit 'Ara'", "lofi")
+
+
+def test_text_writer_keeps_all_lines():
+    """Sadece ilk satır alınıyordu: '1'den 10'a alt alta yaz' hedefinde 20 adım boyunca '1, Enter' yazıldı."""
+    from alice.reflex.loop import clean_typed
+
+    assert clean_typed("1\n2\n3") == "1\n2\n3"
+    assert clean_typed('```\n1\n2\n```') == "1\n2"
+    assert clean_typed('"merhaba"') == "merhaba"
+
+
+def test_parked_mouse_is_moved_off_the_corner(monkeypatch):
+    """Fare görev başında köşede bekliyordu; acil durdurma ilk iki görevde her tuşu iptal etti."""
+    from alice.tools import computer
+
+    real = computer._unpark_mouse  # conftest'in sahtesi değil, gerçeği
+    calls = []
+
+    class PG:
+        FAILSAFE, FAILSAFE_POINTS = True, [(-3440, 0), (3439, 1439)]
+        pos = (-3440, 0)
+
+        def position(self):
+            return self.pos
+
+        def moveTo(self, x, y):
+            calls.append(("move", x, y, self.FAILSAFE))
+
+    pg = PG()
+    monkeypatch.setattr(computer, "_pyautogui", lambda: pg)
+    assert real(500, 400) and calls == [("move", 500, 400, False)] and pg.FAILSAFE  # geçici kapatıp geri açtı
+    pg.pos = (100, 100)
+    assert not real(500, 400) and len(calls) == 1  # köşede değilse dokunmaz

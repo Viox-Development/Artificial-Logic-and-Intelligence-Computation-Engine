@@ -66,6 +66,7 @@ def no_real_keyboard(monkeypatch):
     from alice.tools import computer
 
     monkeypatch.setattr(computer, "send_unicode", lambda text: False)
+    monkeypatch.setattr(computer, "unpark_mouse", lambda x, y: False)  # gerçek fare de oynamasın
 
 
 @pytest.fixture(autouse=True)
