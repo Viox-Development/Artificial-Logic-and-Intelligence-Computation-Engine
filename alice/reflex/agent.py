@@ -294,6 +294,12 @@ class ScreenAgent:
                 advice = self.consult(situation) or {}
             except Exception:  # noqa: BLE001 - danışma olmazsa ana modele dönülür
                 break
+            answer = " ".join(str(advice.get("answer") or "").split())
+            if answer:
+                # Hedef bir şeyi okumaktı ve ekranda görünüyor (Gece ışığı: "Off"): danışman sıradaki adım yerine
+                # cevabı "adım" diye dönünce refleks onu hedef gibi denemişti.
+                log.append(f"(danışma {n}) ekranda: {answer}")
+                return ReflexResult("done", steps, f"ekranda görülen: {answer}", log, res.title, res.location)
             hint = " ".join(str(advice.get("next") or "").split())
             if not hint or advice.get("give_up"):
                 break
@@ -662,8 +668,9 @@ def make_consultant(router) -> Callable[[dict[str, Any]], dict[str, Any]]:
              "situation, give the single next concrete step on this screen, naming exactly what to click, type or "
              "press as it appears on screen (one short sentence). If the goal cannot be reached from here or needs "
              "the user (login, payment, a decision), set give_up. Never suggest sending, paying, deleting or accepting "
-             "terms unless the goal explicitly asks for it. Answer with JSON only: "
-             '{"next": "...", "give_up": false}'},
+             "terms unless the goal explicitly asks for it. If the goal only asks to read or check something and the "
+             "screen already shows it, put what it shows in answer and leave next empty. Answer with JSON only: "
+             '{"next": "...", "answer": "", "give_up": false}'},
             {"role": "user", "content": _json.dumps(situation, ensure_ascii=False)}], temperature=0, max_tokens=200)
         m = re.search(r"\{.*\}", res.text or "", re.S)
         return _json.loads(m.group(0)) if m else {}

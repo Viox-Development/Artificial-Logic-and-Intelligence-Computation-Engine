@@ -523,6 +523,10 @@ def codex_prompt(client: httpx.Client) -> str:
 class ChatGPTProvider(OpenAICompatProvider):
     """Codex arka ucu üzerinden ChatGPT modelleri. Router için OpenAICompatProvider ile aynı arayüz."""
 
+    # İlk veri normalde 1-4 sn'de geliyor (düşünme özeti de veri sayılır). 90 sn beklenince takılan tek bir istek
+    # yönlendiricinin tekrarlarıyla bir görevi ~280 sn bekletmişti.
+    FIRST_DATA = 30.0
+
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
         super().__init__(cfg, timeout, client)
         self.session = str(uuid.uuid4())

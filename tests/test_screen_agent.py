@@ -686,3 +686,8 @@ def test_stuck_agent_consults_and_continues_without_the_main_model():
     agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
     agent.consult = lambda situation: {"give_up": True}
     assert agent.run("x").status == "needs_help"  # danışman vazgeçerse ana modele döner
+    # Okuma hedefi: cevap ekranda görünüyorsa danışman cevabı verir, refleks onu hedef sanıp denemez.
+    agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
+    agent.consult = lambda situation: {"next": "", "answer": "Off: Night light is off"}
+    res = agent.run("gece ışığı açık mı bak")
+    assert res.status == "done" and "Off: Night light is off" in res.reason
