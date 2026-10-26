@@ -125,7 +125,7 @@ def fake_reflex(monkeypatch):
     monkeypatch.setattr(agent_mod, "make_translator", lambda router: ("translate", router))
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda router: ("writer", router))
     monkeypatch.setattr(obs_mod, "BrowserObserver", lambda ctx, url: ("browser", url))
-    monkeypatch.setattr(obs_mod, "DesktopObserver", lambda ctx, title: ("desktop", title))
+    monkeypatch.setattr(obs_mod, "DesktopObserver", lambda ctx, title, *a, **k: ("desktop", title))
     return rec
 
 

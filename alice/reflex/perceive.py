@@ -29,7 +29,8 @@ ECHO_SHARE = 0.6  # yazının kelimelerinin bu kadarı hedefte geçiyorsa hedefi
 
 
 def words(s: str) -> list[str]:
-    return [w.lower().replace("ı", "i").replace("İ", "i") for w in _WORD.findall(s or "")]
+    # İ önce: "ALİCE".lower() "ali̇ce" olur (birleşik nokta) ve "alice" ile eşleşmezdi.
+    return [w.replace("İ", "i").replace("I", "i").lower().replace("ı", "i") for w in _WORD.findall(s or "")]
 
 
 @dataclass
@@ -86,12 +87,17 @@ class Screen:
         return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
-def is_goal_echo(text: str, goal: str) -> bool:
-    """Ekrandaki yazı hedefin kendisi mi (sohbet penceresinde görünen kullanıcı mesajı)?"""
-    tw, gw = words(text), set(words(goal))
-    if len(tw) < 3 or not gw:
+def is_goal_echo(text: str, goal: str, echoes: tuple[str, ...] = ()) -> bool:
+    """Ekrandaki yazı hedefin kendisi mi (sohbet penceresinde görünen kullanıcı mesajı)? echoes: kullanıcının asıl
+    mesajı gibi başka kaynaklar; beyin modeli hedefi yeniden yazınca ekrandaki mesaj hedefle yarı yarıya örtüşüyordu."""
+    tw = words(text)
+    if len(tw) < 3:
         return False
-    return sum(w in gw for w in tw) / len(tw) >= ECHO_SHARE
+    for src in (goal, *echoes):
+        gw = set(words(src))
+        if gw and sum(w in gw for w in tw) / len(tw) >= ECHO_SHARE:
+            return True
+    return False
 
 
 def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
@@ -105,12 +111,20 @@ def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float,
 
 
 def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, float]]], goal: str,
-                limit: int = MAX_ITEMS) -> list[Item]:
+                limit: int = MAX_ITEMS, echoes: tuple[str, ...] = ()) -> list[Item]:
     """Erişilebilirlik öğeleri + OCR satırları -> numaralı, tekrarsız, hedefe göre sıralı liste."""
-    items = [i for i in ax if i.label or i.editable]
+    items: list[Item] = []
+    for i in ax:
+        if not (i.label or i.editable):
+            continue
+        # Aynı kontrol ağaçta iç içe iki kez görünebiliyor (Gezgin'in iki 'Address Bar'ı): iki seçenek oyu bölüyordu.
+        if i.rect and any(o.role == i.role and o.label.strip().lower() == i.label.strip().lower() and o.rect
+                          and _overlap(i.rect, o.rect) > 0.8 and _overlap(o.rect, i.rect) > 0.8 for o in items):
+            continue
+        items.append(i)
     for text, rect in ocr:
         text = " ".join(text.split())
-        if not text or is_goal_echo(text, goal):
+        if not text or is_goal_echo(text, goal, echoes):
             continue
         # OCR satırı bir kontrolün içinde ve aynı yazıysa ayrı seçenek olmasın: kontrol "ax+ocr" olur.
         host = next((i for i in items if i.rect and i.source != "ocr" and _overlap(rect, i.rect) > 0.6
@@ -131,7 +145,9 @@ def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, 
         for i in same:
             if i.rect is None:
                 continue
-            row = [o.label for o in items if o is not i and o.rect and o.label.strip().lower() != i.label.strip().lower()
+            # Pencereyi kaplayan öğe (WebView'in Document'ı) her satırın "komşusu" olurdu.
+            row = [o.label for o in items if o is not i and o.rect and o.rect[3] - o.rect[1] < 0.1
+                   and o.label.strip().lower() != i.label.strip().lower()
                    and abs(((o.rect[1] + o.rect[3]) / 2) - ((i.rect[1] + i.rect[3]) / 2)) < 0.02][:2]
             if row:
                 i.context = "in the row of " + ", ".join(f"'{r[:30]}'" for r in row)
@@ -200,16 +216,34 @@ def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, in
     return out
 
 
+def _wait(op: Any) -> Any:
+    """WinRT IAsyncOperation'ı bekle. Coroutine değil, sadece await edilebilir; asyncio.run onu kabul etmez. Çağıran
+    zaten bir olay döngüsünün içindeyse (çekirdek) asyncio.run patlar: o zaman ayrı bir iş parçacığında beklenir."""
+    import asyncio
+
+    async def go() -> Any:
+        return await op
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(go())
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as ex:
+        return ex.submit(asyncio.run, go()).result()
+
+
 def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     """Windows.Media.Ocr: satır metni ve piksel kutusu (x, y, en, boy). Motor en fazla max_image_dimension piksel
     kenar okuyor: daha büyük (3440 genişlik) pencere küçültülür, kutular geri ölçeklenir."""
-    import asyncio
-
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.storage.streams import DataWriter
 
+    from winrt.windows.media.ocr import OcrEngine
+
     eng = _engine()
-    limit = int(getattr(eng, "max_image_dimension", 0) or 0) or 4000
+    limit = int(getattr(OcrEngine, "max_image_dimension", 0) or 0) or 4000  # statik: örnekte yok
     scale = min(1.0, limit / max(img.size))
     src = img if scale >= 1.0 else img.resize((int(img.width * scale), int(img.height * scale)))
     rgba = src.convert("RGBA")
@@ -217,7 +251,7 @@ def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     writer.write_bytes(rgba.tobytes())
     bmp = SoftwareBitmap.create_copy_from_buffer(writer.detach_buffer(), BitmapPixelFormat.RGBA8, rgba.width,
                                                  rgba.height, BitmapAlphaMode.PREMULTIPLIED)
-    result = asyncio.run(eng.recognize_async(bmp))
+    result = _wait(eng.recognize_async(bmp))
     out = []
     for line in result.lines:
         rects = [wd.bounding_rect for wd in line.words]

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from alice.reflex.perceive import Item, Screen, build_items, ocr_available, ocr_image
-from alice.tools.base import ToolContext
+from alice.tools.base import ToolContext, ToolError
 
 EDITABLE_TAGS = {"input", "textarea"}
 EDITABLE_ROLES = {"textbox", "searchbox", "combobox", "Edit", "ComboBox", "Document"}
@@ -16,6 +16,46 @@ EDITABLE_ROLES = {"textbox", "searchbox", "combobox", "Edit", "ComboBox", "Docum
 WINDOW_CHROME = {"system", "sistem", "restore", "move", "size", "minimize", "maximize", "close", "geri yükle",
                  "taşı", "boyut", "boyutlandır", "simge durumuna küçült", "ekranı kapla", "kapat", "önceki boyut"}
 CHROME_GOAL = ("kapat", "küçült", "büyüt", "close", "minimize", "maximize", "ekranı kapla")
+
+
+# WebView2 uygulamaları (ALICE'in kendisi) içerikle aynı yerde görünmez bir Chromium sekme şeridi bildiriyor:
+# "ALICE - Memory usage - 31.8 MB" sekmesi, "New Tab", "Close tab". Ekranda yoklar; tıklanırsa ne olacağı belirsiz.
+TAB_STRIP = {"new tab", "close tab", "yeni sekme", "sekmeyi kapat"}
+
+
+def is_phantom_tab(role: str, name: str, rect: Any, docs: list[Any]) -> bool:
+    """Sayfanın (Document) içinde kalan Chromium sekme şeridi öğesi mi? Gerçek tarayıcıda şerit sayfanın üstündedir."""
+    n = name.strip().lower()
+    if not ((role == "TabItem" and "memory usage" in n) or (role == "Button" and n in TAB_STRIP)) or not rect:
+        return False
+    t = 8  # piksel: şerit sayfanın kenarından birkaç piksel taşabiliyor
+    return any(d[0] - t <= rect[0] and d[1] - t <= rect[1] and rect[2] <= d[2] + t and rect[3] <= d[3] + t
+               for d in docs)
+
+
+def window_union(rects: list[tuple[int, int, int, int]], screen: tuple[int, int, int, int]
+                 ) -> tuple[int, int, int, int] | None:
+    """Pencere ve diyaloglarının (sol, üst, sağ, alt) birleşimi, ekrana kırpılmış -> (sol, üst, en, boy)."""
+    if not rects:
+        return None
+    l, t = max(min(r[0] for r in rects), screen[0]), max(min(r[1] for r in rects), screen[1])
+    r, b = min(max(r[2] for r in rects), screen[2]), min(max(r[3] for r in rects), screen[3])
+    if r - l < 50 or b - t < 50:
+        return None
+    return l, t, r - l, b - t
+
+
+def foreground_title() -> str:
+    """Öndeki pencerenin başlığı (Windows dışında boş)."""
+    import sys
+
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.windll.user32.GetWindowTextW(ctypes.windll.user32.GetForegroundWindow(), buf, 512)
+    return buf.value
 
 
 def is_window_chrome(role: str, name: str, goal: str = "") -> bool:
@@ -199,10 +239,18 @@ class BrowserObserver:
 class DesktopObserver:
     kind = "desktop"
 
-    def __init__(self, ctx: ToolContext, window_title: str | None = None, goal: str = ""):
+    def __init__(self, ctx: ToolContext, window_title: str | None = None, goal: str = "",
+                 echoes: tuple[str, ...] = ()):
         self.ctx = ctx
         self.title = window_title
         self.goal = goal
+        self.echoes = echoes  # ekranda görünüp hedef sanılmaması gereken yazılar (kullanıcının sohbet mesajı)
+        if not (window_title or "").strip() and goal and "alice" not in goal.lower() \
+                and foreground_title().strip() == "ALICE":
+            # Öndeki pencere ALICE'in kendi sohbeti: "Not Defteri'ni aç, Ctrl+S'ye bas" burada Escape ve Ctrl+S'ye
+            # basıyordu (reflex uygulama açmaz).
+            raise ToolError("öndeki pencere ALICE'in kendisi; hedef pencereyi önce app/windows aracıyla açıp öne "
+                            "getir ve title ver (ör. title='Not Defteri')")
         self._rect: tuple[int, int, int, int] | None = None  # son ekran görüntüsünün ekrandaki yeri
 
     def screen(self, goal: str = "") -> Screen:
@@ -215,11 +263,17 @@ class DesktopObserver:
                 focus_window(self.title)  # görüntü öndeki pencereden alınıyor
             except Exception:  # noqa: BLE001 - başlıkla bulunamazsa öndeki pencereyle devam
                 pass
-        img = self.snapshot()
+        img = self.snapshot(self._target_hwnd())
         title, raw = collect_ui_elements(self.ctx, self.title, limit=200)
         ax: list[Item] = []
+        docs = [i["rect"] for i in raw if i["role"] == "Document" and i.get("rect")]
         for i in raw:
-            if not i["enabled"] or is_window_chrome(i["role"], i["name"], self.goal):
+            if not i["enabled"] or is_window_chrome(i["role"], i["name"], self.goal) \
+                    or is_phantom_tab(i["role"], i["name"], i.get("rect"), docs):
+                continue
+            if i["role"] == "Document" and i["name"].strip() in ("", title.strip()):
+                # WebView uygulamasının sayfa gövdesi (adsız 'view_1055' ya da pencere başlığıyla aynı): bütün
+                # pencereyi kaplar; tıklanırsa pencerenin ortasına, yazılırsa nereye gittiği belirsiz.
                 continue
             ax.append(Item("", "ax", i["role"], i["name"] or i["auto_id"], self._frac(i.get("rect")), i["value"],
                            i["role"] in EDITABLE_ROLES, ref=i["id"]))
@@ -229,7 +283,7 @@ class DesktopObserver:
                 lines = ocr_image(img)
             except Exception:  # noqa: BLE001 - OCR olmazsa ağaçla devam
                 lines = []
-        return Screen(title, "desktop", build_items(ax, lines, self.goal), image=img)
+        return Screen(title, "desktop", build_items(ax, lines, self.goal, echoes=self.echoes), image=img)
 
     def _frac(self, rect: Any) -> tuple[float, float, float, float] | None:
         """Ekran pikseli (sol, üst, sağ, alt) -> son görüntülenen pencereye göre 0-1."""
@@ -299,8 +353,30 @@ class DesktopObserver:
                for i in items if i["enabled"] and not is_window_chrome(i["role"], i["name"], self.goal)]
         return Observation(title, "desktop", els)
 
-    def snapshot(self):
-        """Öndeki pencerenin görüntüsü (Windows). Pencere bulunamazsa None: reflex görselsiz devam eder."""
+    def _target_hwnd(self) -> int:
+        """Görüntüsü alınacak pencere. Öndeki pencere hedefin kendisi ya da onun açtığı bir diyalogsa (Kaydet): 0,
+        yani öndeki. Windows hedefi öne almayı reddettiyse hedefin kendisi; yoksa öğeler hedeften, görüntü ve konumlar
+        başka bir pencereden gelir ve tıklamalar kayar."""
+        import sys
+
+        if sys.platform != "win32" or not self.title:
+            return 0
+        import ctypes
+
+        from alice.tools.desktop import _foreground_uia
+
+        try:
+            target = int(_foreground_uia(self.title).handle or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+        fg = ctypes.windll.user32.GetForegroundWindow()
+        if not target or fg == target or ctypes.windll.user32.GetAncestor(fg, 3) == target:  # 3: GA_ROOTOWNER
+            return 0
+        return target
+
+    def snapshot(self, hwnd: int = 0):
+        """Öndeki (ya da verilen) pencerenin görüntüsü (Windows). Pencere bulunamazsa None: reflex görselsiz devam
+        eder."""
         import sys
 
         if sys.platform != "win32":
@@ -314,16 +390,34 @@ class DesktopObserver:
         from alice.tools.computer import _dpi_aware
 
         _dpi_aware()
-        r = wintypes.RECT()
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        if not hwnd or not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r)):
+        u32 = ctypes.windll.user32
+        hwnd = hwnd or u32.GetForegroundWindow()
+        if not hwnd:
             return None
-        w, h = r.right - r.left, r.bottom - r.top
-        if w < 50 or h < 50:
-            return None
+        # Pencere ve açtığı diyaloglar (Not Defteri'nin Kaydet penceresi ana pencereden taşıyor; dışarıda kalan İptal
+        # düğmesinin yeri bilinmiyordu).
+        root = u32.GetAncestor(hwnd, 3) or hwnd  # 3: GA_ROOTOWNER
+        hwnds = [root]
+
+        def owned(h: int, _: int) -> bool:
+            if h != root and u32.IsWindowVisible(h) and u32.GetAncestor(h, 3) == root:
+                hwnds.append(h)
+            return True
+
+        u32.EnumWindows(ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(owned), 0)
+        rects = []
+        for h in hwnds:
+            r = wintypes.RECT()
+            if u32.GetWindowRect(h, ctypes.byref(r)) and r.right - r.left >= 50 and r.bottom - r.top >= 50:
+                rects.append((r.left, r.top, r.right, r.bottom))
         with mss.mss() as sct:
-            raw = sct.grab({"left": r.left, "top": r.top, "width": w, "height": h})
-        self._rect = (r.left, r.top, w, h)
+            v = sct.monitors[0]
+            box = window_union(rects, (v["left"], v["top"], v["left"] + v["width"], v["top"] + v["height"]))
+            if box is None:
+                return None
+            left, top, w, h = box
+            raw = sct.grab({"left": left, "top": top, "width": w, "height": h})
+        self._rect = box
         return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
     def click_at(self, fx: float, fy: float) -> None:

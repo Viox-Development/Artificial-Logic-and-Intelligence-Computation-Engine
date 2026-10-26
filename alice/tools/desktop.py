@@ -678,6 +678,18 @@ def format_ui(title: str, items: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+SET_TEXT_SETTLE = 0.6  # sn: alan değeri geri alıyor mu, bu kadar bekleyip bakılır
+
+
+def _edit_value(el: Any) -> str | None:
+    """Alanın şu anki değeri; okunamıyorsa None (o zaman yazılanın tuttuğu varsayılır, iki kez yazılmasın)."""
+    try:
+        v = el.get_value() if hasattr(el, "get_value") else el.window_text()
+    except Exception:  # noqa: BLE001
+        return None
+    return None if v is None else str(v)
+
+
 def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = None) -> str:
     from alice.tools.computer import as_number
 
@@ -703,10 +715,20 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
             raise ToolError("set_text için text gerekli")
         try:
             el.set_edit_text(text)
+            # Bazı alanlar değeri sessizce geri alıyor: Gezgin'in adres çubuğu düzenleme kipinde değilken ~1 sn sonra
+            # eski adrese dönüyor, Enter de eski klasörü yeniliyordu. Okunabiliyorsa bak; tutmadıysa klavyeyle yaz.
+            time.sleep(SET_TEXT_SETTLE)
+            kept = _edit_value(el)
+            ok = kept is None or kept.strip() == text.strip()
         except Exception:  # noqa: BLE001
-            el.set_focus()
+            ok = False
+        if not ok:
             from alice.tools.computer import press_keys, type_text
 
+            try:
+                el.click_input()
+            except Exception:  # noqa: BLE001
+                el.set_focus()
             press_keys("ctrl+a")
             type_text(text)
     elif action == "type":

@@ -752,7 +752,7 @@ def reflex_cmd(cfg: Config, a: argparse.Namespace) -> int:
         return 1
     finally:
         cleanup(ctx)
-    return 0 if res.status in ("done", "clicked") else 1
+    return 0 if res.status in ("done", "clicked", "likely_done") else 1
 
 
 # ------------------------------------------------------------------- update

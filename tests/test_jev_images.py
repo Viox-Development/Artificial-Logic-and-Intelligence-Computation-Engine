@@ -286,7 +286,7 @@ def test_reflex_tool_states_failure_plainly(monkeypatch):
     from alice.reflex.loop import ReflexResult
     from alice.tools.meta import Reflex
 
-    monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title: SimpleNamespace())
+    monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title, *a, **k: SimpleNamespace())
     from alice.reflex import agent as agent_mod
 
     monkeypatch.setattr(agent_mod, "ScreenAgent", lambda *a, **k: SimpleNamespace(
@@ -331,7 +331,7 @@ def test_reflex_tool_says_click_is_unverified(monkeypatch):
     from alice.reflex.loop import ReflexResult
     from alice.tools.meta import Reflex
 
-    monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title: SimpleNamespace())
+    monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title, *a, **k: SimpleNamespace())
     from alice.reflex import agent as agent_mod
 
     monkeypatch.setattr(agent_mod, "ScreenAgent", lambda *a, **k: SimpleNamespace(

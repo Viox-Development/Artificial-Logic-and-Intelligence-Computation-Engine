@@ -98,7 +98,9 @@ def _named_in_goal(key: str, by_key: dict[str, Element], elements: list[Element]
 
 @dataclass
 class ReflexResult:
-    status: str  # done | clicked (tek tıklamalık hedef, sonuç doğrulanmadı) | needs_help | max_steps | error
+    # done | clicked (tek tıklamalık hedef, sonuç doğrulanmadı) | likely_done (son eylem ekranı değiştirdi, Jev bitti
+    # sanıyor ama emin değil) | needs_help | max_steps | error
+    status: str
     steps: int
     reason: str
     log: list[str] = field(default_factory=list)

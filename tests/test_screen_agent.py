@@ -6,7 +6,7 @@ import json
 
 from PIL import Image
 
-from alice.decider import Answer, Decision, Noul
+from alice.decider import Answer, Decision, Noul, _validate
 from alice.reflex import perceive
 from alice.reflex.agent import ScreenAgent, goal_keys
 from alice.reflex.perceive import Item, Screen, build_items, is_goal_echo
@@ -90,6 +90,7 @@ class Brain:
         self.calls = []
 
     def decide(self, state, questions, images=None):
+        _validate(questions)  # gerçek motor gibi: tek seçenekli Choice reddedilir
         self.calls.append((state, questions, images))
         s = self.steps.pop(0)
         items = {v: k for k, v in questions["item"].criteria.items()} if "item" in questions else {}
@@ -103,6 +104,8 @@ class Brain:
         if items:
             ans["item"] = Answer("choice", key_of(s.get("item", "")), 0.9)
             ans["drop"] = Answer("choice", key_of(s.get("drop", "")), 0.9)
+        if "field" in questions:
+            ans["field"] = Answer("choice", key_of(s.get("field", s.get("item", ""))), 0.9)
         if "target" in questions:
             ans["target_visible"] = Answer("noul", s.get("visible", 0.95), 0.9)
             ans["target"] = Answer("box", s.get("box", {"left": 0.0, "top": 0.1, "right": 0.2, "bottom": 0.2}), 0.8)
@@ -237,3 +240,218 @@ def test_browser_snapshot_lists_drag_sources_and_drop_targets():
     from alice.tools.browser import SNAPSHOT_JS
 
     assert "[draggable=true]" in SNAPSHOT_JS and "[ondrop]" in SNAPSHOT_JS
+
+
+# ------------------------------------------------------------------------------------- gerçek Windows'ta bulunanlar
+def test_words_match_turkish_capital_i():
+    from alice.reflex.perceive import words
+
+    assert words("ALİCE uygulaması") == ["alice", "uygulamasi"] and words("ALICE") == ["alice"]
+
+
+def test_user_message_echo_is_dropped_even_when_goal_was_rephrased():
+    msg = "Şuanda reflex katmanı ile ekrana bakıp projeler kısmındaki ilk projeye tıkla"
+    goal = "ALICE uygulamasında Projeler bölümündeki ilk projeye tıkla"
+    assert not is_goal_echo(msg, goal)  # beyin modeli hedefi yeniden yazınca örtüşme %60'ın altında
+    assert is_goal_echo(msg, goal, (msg,))
+    items = build_items([], [(msg, (0.5, 0.3, 0.9, 0.33)), ("Uydurma bir savunma", (0.02, 0.2, 0.2, 0.22))], goal,
+                        echoes=(msg,))
+    assert [i.label for i in items] == ["Uydurma bir savunma"]
+
+
+def test_duplicate_controls_are_merged_and_big_items_are_not_row_context():
+    ax = [Item("", "ax", "Edit", "Address Bar", (0.18, 0.05, 0.6, 0.08), editable=True, ref=1),
+          Item("", "ax", "Edit", "Address Bar", (0.181, 0.05, 0.6, 0.08), editable=True, ref=2),
+          Item("", "ax", "Document", "Sayfa", (0.0, 0.0, 1.0, 1.0), ref=3),
+          Item("", "ax", "Button", "Sil", (0.8, 0.2, 0.85, 0.22), ref=4),
+          Item("", "ax", "Button", "Sil", (0.8, 0.3, 0.85, 0.32), ref=5)]
+    items = build_items(ax, [], "adres çubuğuna yaz")
+    assert [i.label for i in items].count("Address Bar") == 1
+    assert all("Sayfa" not in i.context for i in items)
+
+
+def test_phantom_webview_tab_strip_and_window_union():
+    from alice.reflex.observers import is_phantom_tab, window_union
+
+    doc = [(10, 30, 1300, 870)]
+    assert is_phantom_tab("TabItem", "ALICE - Memory usage - 31.8 MB", (14, 30, 40, 70), doc)
+    assert is_phantom_tab("Button", "New Tab", (6, 30, 36, 70), doc)  # sayfadan birkaç piksel taşıyor
+    assert not is_phantom_tab("Button", "New Tab", (6, 0, 36, 25), doc)  # gerçek tarayıcı: şerit sayfanın üstünde
+    assert not is_phantom_tab("Button", "Kaydet", (14, 30, 40, 70), doc)
+    # Not Defteri + aşağı taşan Kaydet penceresi; ekranın dışı kırpılır.
+    assert window_union([(590, 640, 2130, 1194), (596, 640, 1796, 1360)], (-1920, 0, 3440, 1440)) == \
+        (590, 640, 1540, 720)
+    assert window_union([(3000, 1400, 3600, 1600)], (0, 0, 3440, 1440)) is None  # ekranda 40 piksel kaldı
+    assert window_union([], (0, 0, 10, 10)) is None
+
+
+def test_desktop_screen_drops_webview_body_and_phantom_tabs(monkeypatch):
+    from alice.reflex import observers
+    from alice.tools import desktop
+
+    def el(i, role, name, rect, auto_id=""):
+        return {"id": i, "role": role, "name": name, "auto_id": auto_id, "value": "", "enabled": True, "rect": rect}
+
+    raw = [el(1, "Document", "ALICE", (156, 228, 1312, 1070)),
+           el(2, "Document", "", (156, 228, 1312, 1070), "view_1055"),
+           el(3, "Button", "Close tab", (172, 230, 188, 245)),
+           el(4, "Button", "Gönder", (1100, 600, 1150, 640))]
+    monkeypatch.setattr(desktop, "collect_ui_elements", lambda ctx, title, limit=200: ("ALICE", raw))
+    monkeypatch.setattr(observers, "ocr_available", lambda: (False, "yok"))
+    obs = observers.DesktopObserver(ctx=None)
+    monkeypatch.setattr(obs, "snapshot", lambda hwnd=0: setattr(obs, "_rect", (156, 198, 1320, 880)))
+    assert [i.label for i in obs.screen("gönder").items] == ["Gönder"]
+
+
+def test_drag_that_worked_is_likely_done_not_failed():
+    steps = [{"action": "drag", "item": "Yapılacaklar", "drop": "Bitti"}, {"action": "wait", "conf": 0.39, "done": 0.79}]
+    res = ScreenAgent(FakeScreen(), Brain(steps), settle=0).run("Yapılacaklar kartını Bitti'ye sürükle")
+    assert res.status == "needs_help"  # FakeScreen sürüklemede ekranı değiştirmiyor: işe yaradığı belli değil
+
+    class Moves(FakeScreen):
+        def act(self, action, item=None, text="", keys="", drop=None):
+            super().act(action, item, text, keys, drop)
+            self.page = "project"
+
+    res = ScreenAgent(Moves(), Brain(steps), settle=0).run("Yapılacaklar kartını Bitti'ye sürükle")
+    assert res.status == "likely_done" and "0.79" in res.reason
+
+
+def test_type_text_goes_to_the_field_and_is_not_repeated():
+    class Explorer(FakeScreen):
+        addr = "C:\\Windows"
+
+        def screen(self, goal=""):
+            items = [Item("i1", "ax", "TreeItem", "Desktop", (0.0, 0.2, 0.1, 0.22), ref=1),
+                     Item("i2", "ax", "Edit", "Address Bar", (0.2, 0.05, 0.6, 0.08), self.addr, editable=True, ref=2)]
+            return Screen(self.addr, "desktop", items)
+
+        def act(self, action, item=None, text="", keys="", drop=None):
+            super().act(action, item, text, keys, drop)
+            if action == "type_text":
+                self.addr = text
+
+    obs = Explorer()
+    brain = Brain([{"action": "type_text", "item": "Desktop", "field": "Address Bar"}] * 4)
+    res = ScreenAgent(obs, brain, settle=0).run("adres çubuğuna C:\\Users yaz", inputs={"adres": "C:\\Users"})
+    assert obs.acts == [("type_text", "Address Bar", "C:\\Users", "", None)]  # ağaçtaki 'Desktop'a değil
+    assert res.status == "needs_help" and "already contains" in res.reason
+
+
+def test_single_field_or_single_item_is_used_without_asking():
+    class Notepad(FakeScreen):
+        def screen(self, goal=""):
+            items = [Item("i1", "ax", "Document", "Metin düzenleyici", (0.0, 0.1, 1.0, 0.9), editable=True, ref=1),
+                     Item("i2", "ax", "MenuItem", "Dosya", (0.0, 0.0, 0.05, 0.05), ref=2)]
+            return Screen("Adsız, Not Defteri", "desktop", items[: 1 if self.page == "project" else 2])
+
+    obs = Notepad()
+    brain = Brain([{"action": "type_text", "item": "Dosya"}, {"done": 0.95}])
+    res = ScreenAgent(obs, brain, settle=0).run("merhaba yaz", inputs={"x": "merhaba"})
+    assert "field" not in brain.calls[0][1] and obs.acts[0][:3] == ("type_text", "Metin düzenleyici", "merhaba")
+    assert res.status == "done"
+
+    obs.page = "project"  # ekranda tek öğe: 'item' sorusu da sorulmaz
+    brain = Brain([{"action": "click"}, {"done": 0.95}])
+    ScreenAgent(obs, brain, settle=0).run("belgeye tıkla ve bitir")
+    assert "item" not in brain.calls[0][1] and obs.acts[-1][:2] == ("click", "Metin düzenleyici")
+
+
+def test_screen_read_is_retried_once(monkeypatch):
+    from alice.reflex import agent
+
+    monkeypatch.setattr(agent, "SCREEN_RETRY", 0)
+
+    class Flaky(FakeScreen):
+        fails = 1
+
+        def screen(self, goal=""):
+            if self.fails:
+                self.fails -= 1
+                raise OSError(-2146233083, None)
+            return super().screen(goal)
+
+    res = ScreenAgent(Flaky(), Brain([{"done": 0.95}]), settle=0).run("bak")
+    assert res.status == "done"
+    obs = Flaky()
+    obs.fails = 2
+    assert ScreenAgent(obs, Brain([]), settle=0).run("bak").status == "error"
+
+
+def test_trace_has_item_list_confidences_and_result(tmp_path):
+    trace = tmp_path / "t.jsonl"
+    ScreenAgent(FakeScreen(), Brain([{"action": "click", "item": "Uydurma bir savunma"}]), settle=0,
+                trace_path=trace).run("Projelerdeki ilk projeye tıkla")
+    rows = [json.loads(x) for x in trace.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["item_conf"] == 0.9 and rows[0]["list"][0].startswith("i1 text 'Uydurma bir savunma'")
+    assert "@(0.02, 0.14, 0.15, 0.16)" in rows[0]["list"][0]
+    assert rows[-1]["result"] == "clicked" and rows[-1]["steps"] == 1
+
+
+def test_ocr_waits_on_winrt_operation_inside_and_outside_event_loop():
+    import asyncio
+
+    class Op:  # IAsyncOperation gibi: coroutine değil, sadece await edilebilir
+        def __await__(self):
+            yield from asyncio.sleep(0).__await__()
+            return "sonuç"
+
+    assert perceive._wait(Op()) == "sonuç"
+
+    async def inside():
+        return perceive._wait(Op())
+
+    assert asyncio.run(inside()) == "sonuç"
+
+
+def test_set_text_falls_back_to_keyboard_when_field_reverts(monkeypatch):
+    from alice.tools import computer, desktop
+
+    calls = []
+
+    class Addr:  # Gezgin'in adres çubuğu: yazılanı kabul eder, sonra eski adrese döner
+        def set_edit_text(self, t):
+            calls.append(("set", t))
+
+        def get_value(self):
+            return "C:\\Windows"
+
+        def click_input(self):
+            calls.append(("click",))
+
+    class Doc(Addr):  # değeri okunamıyor: yazılanın tuttuğu varsayılır, iki kez yazılmaz
+        def get_value(self):
+            raise RuntimeError("desen yok")
+
+    monkeypatch.setattr(desktop, "SET_TEXT_SETTLE", 0)
+    monkeypatch.setattr(computer, "press_keys", lambda k: calls.append(("keys", k)))
+    monkeypatch.setattr(computer, "type_text", lambda t: calls.append(("type", t)))
+    ctx = type("C", (), {"state": {"ui_elems": {5: Addr(), 6: Doc()}}})()
+    desktop.ui_act(ctx, 5, "set_text", "C:\\Users")
+    assert calls == [("set", "C:\\Users"), ("click",), ("keys", "ctrl+a"), ("type", "C:\\Users")]
+    calls.clear()
+    desktop.ui_act(ctx, 6, "set_text", "merhaba")
+    assert calls == [("set", "merhaba")]
+
+
+def test_reflex_refuses_to_type_into_alice_itself(monkeypatch, tmp_path):
+    import pytest
+
+    from alice.reflex import observers
+    from alice.tools.base import ToolContext, ToolError
+    from alice.tools.meta import Reflex, _last_user_text
+
+    monkeypatch.setattr(observers, "foreground_title", lambda: "ALICE")
+    ctx = ToolContext(cwd=tmp_path, config=None, router=object(), decider=object())
+    with pytest.raises(ToolError, match="ALICE'in kendisi"):
+        Reflex().run(ctx, goal="Not Defteri'ni aç, Ctrl+S'ye bas", target="desktop")
+    observers.DesktopObserver(ctx, None, "ALICE'te ilk projeye tıkla")  # hedef ALICE'in kendisiyse olur
+    observers.DesktopObserver(ctx, "Not Defteri", "merhaba yaz")  # pencere verildiyse olur
+
+    ctx.state["agent"] = type("A", (), {"messages": [
+        {"role": "system", "content": "s"}, {"role": "user", "content": "ilk projeye tıkla"},
+        {"role": "user", "content": "devam et", "_nudge": True}]})()
+    assert _last_user_text(ctx) == ("ilk projeye tıkla",)
+    ctx.state["agent"].messages.append({"role": "user", "_display": "ikinci projeye tıkla",
+                                        "content": "ikinci projeye tıkla\n\n[hatırlanan] Uydurma bir savunma sanayi"})
+    assert _last_user_text(ctx) == ("ikinci projeye tıkla",)  # hafıza eki yankı sayılmasın

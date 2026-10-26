@@ -166,6 +166,7 @@ class Reflex(Tool):
         "bakar.\n"
         "- Kullan: 'ekrandaki Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'arama kutusuna X yazıp ilk "
         "sonuca tıkla', 'kartı sağdaki sütuna sürükle', oyunda bir turu oynamak.\n"
+        "- Uygulama açmaz: önce app/windows aracıyla aç, sonra title ver (boşsa öndeki pencere).\n"
         "- Büyük işlerde sen planla: işi kısa hedeflere böl, her biri için reflex çağır; oyun kuralları, strateji "
         "ya da ekranda neyin ne olduğunu notes'a yaz (İngilizce daha iyi).\n"
         "- Sonuç 'needs_help' ise nedenine bak; hedefi değiştir, notes'a bilgi ekle ya da kalanı kendin yap.\n"
@@ -195,7 +196,10 @@ class Reflex(Tool):
 
         if ctx.decider is None or ctx.router is None:
             raise ToolError("karar motoru yapılandırılmamış")
-        observer = BrowserObserver(ctx, url) if target == "browser" else DesktopObserver(ctx, title)
+        if target == "browser":
+            observer = BrowserObserver(ctx, url)
+        else:
+            observer = DesktopObserver(ctx, title, goal, echoes=_last_user_text(ctx))
         loop = ScreenAgent(observer, ctx.decider, make_text_writer(ctx.router), make_translator(ctx.router),
                            emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "")
@@ -204,12 +208,29 @@ class Reflex(Tool):
         verdict = {"done": "SONUÇ: hedef yapıldı.",
                    "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle "
                               "doğru şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
+                   "likely_done": "SONUÇ: son eylem ekranı değiştirdi ve karar motoru hedefin büyük ihtimalle "
+                                  "yapıldığını düşünüyor ama emin değil. Bir ekran görüntüsüyle (ya da dosyaya bakarak) "
+                                  "doğrula, sonra kullanıcıya söyle.",
                    "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya "
                                  "başardı deme; kalanını kendin yap ya da nedenini söyle.",
                    "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
                    "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(getattr(res, "status", ""), "")
         return ToolResult(res.report() + ("\n" + verdict if verdict else ""),
                           is_error=getattr(res, "status", "") == "error")
+
+
+def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:
+    """Kullanıcının son mesajı: sohbet penceresinde görünür; reflex onu ekrandaki bir hedef sanmasın."""
+    for m in reversed(getattr((getattr(ctx, "state", None) or {}).get("agent"), "messages", None) or []):
+        if m.get("role") != "user" or m.get("_nudge"):
+            continue
+        # İçeriğe hafızadan hatırlananlar eklenir (proje adları dahil): onlar da "yankı" sayılınca kenar çubuğundaki
+        # projeler listeden düşüyordu. Kullanıcının yazdığı _display'de.
+        text = m.get("_display") or m.get("content")
+        if isinstance(text, list):
+            text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+        return (text,) if isinstance(text, str) and text else ()
+    return ()
 
 
 class AskUser(Tool):

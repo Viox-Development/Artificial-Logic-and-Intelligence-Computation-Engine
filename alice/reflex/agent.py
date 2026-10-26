@@ -48,12 +48,27 @@ VISUAL_ACTION = "click_unlisted"
 VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`, such as an icon, a picture, "
                     "a map tile or a game piece.")
 DONE_MIN = 0.85
+LIKELY_DONE_MIN = 0.6  # sıradaki eylemden emin değilken, son eylem ekranı değiştirdiyse
+SCREEN_RETRY = 0.5  # sn: ekran okunamazsa bu kadar bekleyip bir kez daha
 MISSING_MIN = 0.7
 VISIBLE_MIN = 0.7
 ZOOM_MIN = 0.4
 KIND_MIN = 0.4  # eylem türünde bundan az eminse beyne bırak
 TRACE_MAX = 2_000_000  # bayt: iz dosyası bundan büyükse yarısı silinir
 _KEY_RX = re.compile(r"\b((?:ctrl|alt|shift|win)\+[\w+]+|f\d{1,2})\b", re.I)
+
+
+def _pick(answers: dict[str, Any], question: str, pool: list[Item]) -> Item | None:
+    """Jev'in seçtiği öğe; tek seçenek olduğu için soru sorulmadıysa o tek öğe."""
+    if question in answers:
+        return next((i for i in pool if i.key == answers[question].value), None)
+    return pool[0] if len(pool) == 1 else None
+
+
+def already_has(value: str, text: str) -> bool:
+    """Alan yazılacak metni zaten içeriyor mu? Değer okunurken 80 karakterde kesiliyor."""
+    v, t = (value or "").strip(), (text or "").strip()
+    return bool(v and t) and (v == t or (len(v) >= 78 and t.startswith(v)))
 
 
 def goal_keys(goal: str) -> list[str]:
@@ -134,10 +149,14 @@ class ScreenAgent:
             "key": Choice("Which key or shortcut should be pressed next for `goal`?",
                           {k: f"Press {k}" for k in keys}),
         }
-        if items:
+        # Choice en az iki seçenek ister; tek seçenek varsa sorulmaz, kod onu kullanır (_pick).
+        if len(items) > 1:
             q["item"] = Choice("Which item in `items` should the next action be done on, to make progress toward "
                                "`goal`?", items)
             q["drop"] = Choice("If an item is dragged next, onto which item in `items` should it be dropped?", items)
+        fields = {i.key: i.describe() for i in scr.items if i.editable}
+        if len(fields) > 1:
+            q["field"] = Choice("If text is typed next, into which input field should it be typed for `goal`?", fields)
         if see:
             q["target_visible"] = Noul("Is the thing `goal` needs to click next visible in `screen`?")
             q["target"] = Box("the thing in `screen` that should be clicked next to work toward `goal`")
@@ -146,7 +165,13 @@ class ScreenAgent:
     # ------------------------------------------------------------------ döngü
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None,
             notes: str = "") -> ReflexResult:
-        inputs = inputs or {}
+        res = self._run(goal, max_steps, inputs or {}, notes)
+        # Sonuç satırı: "clicked"/"done" doğru anda mı geldi, izden görülsün.
+        self._trace({"ts": time.time(), "goal": goal, "result": res.status, "steps": res.steps, "reason": res.reason,
+                     "window": res.title})
+        return res
+
+    def _run(self, goal: str, max_steps: int, inputs: dict[str, str], notes: str) -> ReflexResult:
         en = self._english(goal)
         if en != goal:
             self.emit(f"hedef: {en}")
@@ -159,14 +184,19 @@ class ScreenAgent:
         for step in range(1, max_steps + 1):
             try:
                 scr = self.obs.screen(goal)
-            except Exception as e:  # noqa: BLE001
-                return ReflexResult("error", step - 1, f"ekran okunamadı: {e}", log)
+            except Exception:  # noqa: BLE001 - UIA bazen geçici zaman aşımı veriyor (0x80131505): bir kez daha dene
+                time.sleep(SCREEN_RETRY)
+                try:
+                    scr = self.obs.screen(goal)
+                except Exception as e:  # noqa: BLE001
+                    return ReflexResult("error", step - 1, f"ekran okunamadı: {e}", log)
             sig = scr.signature()
             if history and last_sig and not history[-1].endswith(("changed", "on screen")):
                 # Son eylem işe yaradı mı? Jev bunu okunur geçmişte görür; aynı boşa eylem üçüncü kez yapılmaz.
                 did = history[-1]
                 if sig != last_sig:
                     history[-1] += " -> screen changed"
+                    log[-1] += " (ekran değişti)"  # beyin modeli de görsün: ör. Ctrl+S Kaydet penceresini açtı
                 else:
                     history[-1] += " -> nothing changed on screen"
                     log[-1] += " (ekran değişmedi)"
@@ -203,15 +233,19 @@ class ScreenAgent:
             ms = (time.monotonic() - t0) * 1000
             a = d.answers
             act, done, missing = a["action"], a["done"].value, a["missing"].value
-            item = next((i for i in scr.items if "item" in a and i.key == a["item"].value), None)
+            item = _pick(a, "item", scr.items)
             self.emit(f"[{step}] {act.value} {item.describe() if item and act.value != 'press_key' else ''}"
                       f"{a['key'].value if act.value == 'press_key' else ''} (güven {act.confidence:.2f}, "
                       f"bitti? {done:.2f}, listede yok? {missing:.2f}) {ms:.0f} ms, {len(scr.items)} öğe"
                       + (" [görsel]" if see else ""))
             self._trace({"ts": time.time(), "goal": goal, "goal_en": en, "step": step, "window": scr.title,
                          "items": len(scr.items), "action": act.value, "action_conf": round(act.confidence, 3),
-                         "item": item.describe() if item else None, "done": round(done, 3),
-                         "missing": round(missing, 3), "ms": round(ms), "visual": see})
+                         "item": item.describe() if item else None,
+                         "item_conf": round(a["item"].confidence, 3) if "item" in a else None,
+                         "key": a["key"].value if act.value == "press_key" else None, "done": round(done, 3),
+                         "missing": round(missing, 3), "ms": round(ms), "visual": see,
+                         "list": [f"{i.key} {i.describe()}" + (f" @{tuple(round(v, 3) for v in i.rect)}" if i.rect else "")
+                                  for i in scr.items]})
             if done >= DONE_MIN:
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, scr.title, scr.location)
             choice = act.value
@@ -229,18 +263,33 @@ class ScreenAgent:
             if not choice:
                 return ReflexResult("needs_help", step - 1, "hedefin üzerinde çalışılacak şey ekranda bulunamadı "
                                     f"(listede yok? {missing:.2f})", log, scr.title, scr.location)
+            if (act.confidence < KIND_MIN or choice == "wait") and done >= LIKELY_DONE_MIN and history \
+                    and history[-1].endswith("screen changed"):
+                # Sürükleme işe yaradı (dosya klasöre girdi) ama "bitti?" 0.79'da kaldı ve sıradaki eylemden emin
+                # değil: "yapılamadı" demek yanlış olurdu.
+                return ReflexResult("likely_done", step - 1, f"son eylem ekranı değiştirdi, büyük ihtimalle bitti "
+                                    f"(bitti? {done:.2f})", log, scr.title, scr.location)
             if act.confidence < KIND_MIN:
                 return ReflexResult("needs_help", step - 1, f"ne yapılacağından emin değil (güven {act.confidence:.2f}"
                                     f", en olası: {choice})", log, scr.title, scr.location)
+            if choice == "type_text":
+                # Yazılacak yer ayrı sorulur: "item" sorusunda Jev Gezgin'in sol ağacındaki 'Desktop'u seçip oraya
+                # "yazdırıyordu" (tıklandı, Masaüstü açıldı).
+                item = _pick(a, "field", [i for i in scr.items if i.editable]) or item
             needs_item = choice in ("click", "double_click", "right_click", "type_text", "drag")
             if needs_item and item is None:
                 return ReflexResult("needs_help", step - 1, "ekranda seçilecek öğe yok", log, scr.title, scr.location)
-            drop = next((i for i in scr.items if "drop" in a and i.key == a["drop"].value), None) \
-                if choice == "drag" else None
+            drop = _pick(a, "drop", scr.items) if choice == "drag" else None
             text = key = ""
             try:
                 if choice == "type_text":
                     text = self._text_for(item, en, inputs)
+                    if already_has(item.value, text):
+                        # Aynı yolu adres çubuğuna tekrar tekrar yazıyordu. Eylem yapılmaz; ekran değişmeyeceği için
+                        # tekrar sayacına da girer.
+                        history.append(f"did not type: {item.describe()} already contains '{text[:40]}'")
+                        log.append(f"{step}. yazılmadı: alan zaten '{text[:40]}' içeriyor")
+                        continue
                 if choice == "press_key":
                     key = str(a["key"].value)
                 self.obs.act(choice, item if needs_item else None, text=text, keys=key, drop=drop)
@@ -330,8 +379,9 @@ def make_translator(router) -> Callable[[str], str]:
             return goal
         res = router.chat("fast", [
             {"role": "system", "content": "Translate the user's instruction for a computer-use agent into English. "
-             "Keep names of buttons, menus, files, games and any quoted text exactly as written (do not translate "
-             "them). Return only the translation."},
+             "Keep names of buttons, menus, files, folders, projects, games and any quoted text exactly as written "
+             "(do not translate them, even when a name is an ordinary word, e.g. a folder called 'hedef' stays "
+             "'hedef'). Return only the translation."},
             {"role": "user", "content": goal},
         ], temperature=0, max_tokens=200)
         return res.text.strip().strip('"')
