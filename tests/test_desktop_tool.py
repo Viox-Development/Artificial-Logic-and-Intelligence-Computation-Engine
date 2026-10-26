@@ -609,3 +609,44 @@ def test_clipboard_without_pyperclip(ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyperclip", None)
     with pytest.raises(ToolError, match="pyperclip"):
         desktop.Clipboard().run(ctx, action="get")
+
+
+def test_uri_opens_directly_without_searching(monkeypatch):
+    """Ayarlar sayfası (ms-settings:) aramaya sokulunca 42 sn'de açılmıştı."""
+    if not desktop.IS_WIN:
+        return
+    opened = []
+    monkeypatch.setattr(desktop.os, "startfile", lambda t: opened.append(t), raising=False)
+    monkeypatch.setattr(desktop, "_start_menu_lookup", lambda n: (_ for _ in ()).throw(AssertionError("arandı")))
+    assert desktop.open_app("ms-settings:nightlight") == "açıldı: ms-settings:nightlight"
+    assert opened == ["ms-settings:nightlight"]
+    assert not desktop.URI_RX.match("C:\Windows") and not desktop.URI_RX.match("Not Defteri")
+
+
+def test_desktop_shortcuts_are_not_scanned_recursively(tmp_path, monkeypatch):
+    """Masaüstü alt klasörleriyle taranıyordu: projelerle dolu masaüstünde her uygulama açılışı ~20 sn."""
+    start, desk = tmp_path / "Start", tmp_path / "Desktop"
+    (start / "Araçlar").mkdir(parents=True)
+    (desk / "projeler" / "derin").mkdir(parents=True)
+    (start / "Araçlar" / "Hesap Makinesi.lnk").write_text("x")
+    (desk / "Oyun.lnk").write_text("x")
+    (desk / "projeler" / "derin" / "Gizli Uygulama.lnk").write_text("x")
+    monkeypatch.setattr(desktop, "_shortcut_roots", lambda: [start, desk])
+    desktop._shortcut_cache.clear()
+    names = sorted(p.name for p in desktop._shortcut_files())
+    assert names == ["Hesap Makinesi.lnk", "Oyun.lnk"]  # Başlat menüsü derin, masaüstü sadece üst seviye
+    assert desktop._start_menu_lookup("gizli uygulama") is None
+
+
+def test_failsafe_corners_cover_all_monitors(monkeypatch):
+    from alice.tools import computer
+
+    if not computer.sys.platform.startswith("win"):
+        return
+    import ctypes
+
+    metrics = {76: -3440, 77: 0, 78: 6880, 79: 1440}
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", lambda i: metrics[i])
+    corners = computer._desktop_corners()
+    assert (0, 0) not in corners  # iki monitörün arası: fare orada durabiliyor
+    assert corners == [(-3440, 0), (-3440, 1439), (3439, 0), (3439, 1439)]

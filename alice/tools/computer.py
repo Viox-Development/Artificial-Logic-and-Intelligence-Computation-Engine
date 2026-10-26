@@ -72,7 +72,26 @@ def _pyautogui():
         raise ToolError("pyautogui kurulu değil: pip install 'alice-harness[computer]'") from e
     pyautogui.FAILSAFE = True
     pyautogui.PAUSE = 0.05
+    corners = _desktop_corners()
+    if corners:
+        pyautogui.FAILSAFE_POINTS = corners
     return pyautogui
+
+
+def _desktop_corners() -> list[tuple[int, int]]:
+    """Acil durdurma köşeleri bütün masaüstünün (tüm monitörler) köşeleri olsun. pyautogui ana monitörün köşelerini
+    kullanıyor: solda ikinci monitör varken (0,0) iki ekranın arası, fare orada durunca klavyeyle yazma iptal oluyordu.
+    Windows dışında boş (pyautogui'nin kendi köşeleri kalır)."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+
+    m = ctypes.windll.user32.GetSystemMetrics
+    left, top, w, h = m(76), m(77), m(78), m(79)  # SM_X/YVIRTUALSCREEN, SM_CX/CYVIRTUALSCREEN
+    if w <= 0 or h <= 0:
+        return []
+    right, bottom = left + w - 1, top + h - 1
+    return [(left, top), (left, bottom), (right, top), (right, bottom)]
 
 
 def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple[str, str]:

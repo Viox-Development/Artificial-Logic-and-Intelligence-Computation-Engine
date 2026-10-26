@@ -157,23 +157,42 @@ def _shortcut_roots() -> list[Path]:
             Path.home() / "Desktop", Path(os.environ.get("PUBLIC", r"C:\Users\Public")) / "Desktop"]
 
 
-def _start_menu_lookup(name: str) -> Path | None:
+SHORTCUT_SUFFIXES = (".lnk", ".url", ".appref-ms")
+# URI (ms-settings:, mailto:, steam://...); şema en az iki harf, yani "C:\..." sürücü harfi eşleşmez
+URI_RX = re.compile(r"^[a-z][a-z0-9+.-]+:", re.I)
+SHORTCUT_TTL = 60.0  # sn: kısayol listesi bu kadar önbellekte
+_shortcut_cache: dict[tuple[str, ...], tuple[float, list[Path]]] = {}
+
+
+def _shortcut_files() -> list[Path]:
+    """Başlat menüsü (alt klasörleriyle) ve masaüstü (sadece üst seviye) kısayolları, kısa süre önbellekli. Masaüstü
+    de alt klasörleriyle taranıyordu: projeler ve videolarla dolu bir masaüstünde her uygulama açılışı ~20 sn sürdü."""
     roots = _shortcut_roots()
+    key = tuple(str(r) for r in roots)
+    hit = _shortcut_cache.get(key)
+    if hit and time.monotonic() - hit[0] < SHORTCUT_TTL:
+        return hit[1]
+    files: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        found = root.glob("*") if root.name.lower() == "desktop" else root.rglob("*")
+        files += [p for p in found if p.suffix.lower() in SHORTCUT_SUFFIXES]
+    _shortcut_cache[key] = (time.monotonic(), files)
+    return files
+
+
+def _start_menu_lookup(name: str) -> Path | None:
     needle = fold(name.strip())
     if not needle:
         return None
     best: Path | None = None
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for p in root.rglob("*"):
-            if p.suffix.lower() not in (".lnk", ".url", ".appref-ms"):
-                continue
-            stem = fold(p.stem)
-            if stem == needle:
-                return p
-            if needle in stem and (best is None or len(stem) < len(best.stem)):
-                best = p
+    for p in _shortcut_files():
+        stem = fold(p.stem)
+        if stem == needle:
+            return p
+        if needle in stem and (best is None or len(stem) < len(best.stem)):
+            best = p
     return best
 
 
@@ -307,12 +326,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
             out.append(f"Başlat uygulaması ({n}): shell:AppsFolder\\{app_id}")
 
     # Başlat menüsü / masaüstü kısayolları (hedef exe'leriyle birlikte)
-    roots = _shortcut_roots()
-    lnks: list[Path] = []
-    for root in roots:
-        if root.is_dir():
-            lnks += [p for p in root.rglob("*") if p.suffix.lower() in (".lnk", ".url", ".appref-ms")
-                     and needle in _norm(p.stem)]
+    lnks = [p for p in _shortcut_files() if needle in _norm(p.stem)]
     targets = _resolve_lnks(lnks[:20])
     for lnk in lnks[:20]:
         t = targets.get(lnk, "")
@@ -415,6 +429,10 @@ def open_app(target: str) -> str:
     if not target:  # Windows'ta Path("") "." olur: boş hedef çalışma klasörünü açıyordu
         raise ToolError("açılacak hedef boş")
     if IS_WIN:
+        if URI_RX.match(target):
+            # ms-settings:nightlight, mailto:, steam:// ... doğrudan: aramaya sokulunca Ayarlar sayfası 42 sn'de açılmıştı.
+            os.startfile(target)  # type: ignore[attr-defined]
+            return f"açıldı: {target}"
         p = Path(os.path.expandvars(target)).expanduser()
         if p.exists() or "://" in target or shutil.which(target):
             os.startfile(str(p) if p.exists() else (shutil.which(target) or target))  # type: ignore[attr-defined]
