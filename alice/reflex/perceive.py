@@ -333,6 +333,25 @@ def ocr_changed(img: Any, prev_lines: list[tuple[str, Rect]], regions: list[Rect
     return out
 
 
+CHANGES_MAX = 12  # her yönde en fazla bu kadar yazı
+
+
+def screen_changes(before: list[Item], after: list[Item]) -> dict[str, list[str]]:
+    """İki ekran arasında çıkan ve kaybolan yazılar (kodun kesin bildiği kanıt). Tur sayacı, yıl, altın gibi değerler
+    hangi oyunda olursa olsun burada görünür: 'Turn 3' kaybolur, 'Turn 4' çıkar."""
+    def labels(items: list[Item]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for i in items:
+            text = " ".join(i.label.split())
+            if len(text) >= 2:
+                out.setdefault(text.lower(), text)
+        return out
+
+    a, b = labels(before), labels(after)
+    return {"appeared": [b[k] for k in b if k not in a][:CHANGES_MAX],
+            "disappeared": [a[k] for k in a if k not in b][:CHANGES_MAX]}
+
+
 def mark_fresh(items: list[Item], before: set[str] | None) -> set[str]:
     """Önceki gözlemde olmayan öğeleri 'new' işaretle; bu gözlemin öğe kümesini döndür. before None: ilk gözlem."""
     now = {f"{i.role}|{i.label.strip().lower()}" for i in items}

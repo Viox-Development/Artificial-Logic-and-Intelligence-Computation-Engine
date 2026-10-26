@@ -27,7 +27,7 @@ from typing import Any, Callable
 from alice.decider import Box, Choice, DeciderError, Noul, padded_fraction, prepare_image
 from alice.reflex.loop import ReflexResult, single_click_goal
 from alice.reflex.observers import KEYS, WAIT_SECONDS
-from alice.reflex.perceive import Item, Screen
+from alice.reflex.perceive import Item, Screen, screen_changes
 
 SCREEN_REF = "alice-screen-9d2f4b71"
 ZOOM_REF = "alice-zoom-5e8a03c6"
@@ -90,6 +90,10 @@ class ScreenAgent:
         self.trace_path = trace_path
         self.visual = True
         self.last: Screen | None = None  # son okunan ekran (oyun turunun özetinde yeni çıkan yazılar için)
+        # Oyun oturumu açar: Jev'e turun başından beri değişenler gider, her eylemin kanıtı (ne çıktı, ne kayboldu)
+        # yansıtma için self.evidence'ta tutulur.
+        self.track_changes = False
+        self.evidence: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ yardımcılar
     def _english(self, goal: str) -> str:
@@ -143,7 +147,9 @@ class ScreenAgent:
             "action": Choice("Which kind of action should be done next to make progress toward `goal`?", kinds),
             "done": Noul("Has `goal` already been fully achieved?", {
                 "true": "`items` and `window` show the end state `goal` asks for, or `recent_actions` show that its "
-                        "last required action already worked.",
+                        "last required action already worked."
+                        + (" `changes_since_start` lists what appeared and disappeared on screen since the start; "
+                           "the change `goal` asks for is among them." if self.track_changes else ""),
                 "false": "Something `goal` asks for has not happened yet."}),
             "missing": Noul("Is the thing `goal` needs to act on next absent from `items`?", {
                 "true": "No entry in `items` is the control, text or object to act on next.",
@@ -166,14 +172,16 @@ class ScreenAgent:
 
     # ------------------------------------------------------------------ döngü
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None,
-            notes: str = "") -> ReflexResult:
+            notes: str | Callable[[Screen], str] = "") -> ReflexResult:
+        """notes: sabit metin ya da her adımda ekrana göre seçen bir fonksiyon (oyunda: ekrandakine uyan dersler)."""
         res = self._run(goal, max_steps, inputs or {}, notes)
         # Sonuç satırı: "clicked"/"done" doğru anda mı geldi, izden görülsün.
         self._trace({"ts": time.time(), "goal": goal, "result": res.status, "steps": res.steps, "reason": res.reason,
                      "window": res.title})
         return res
 
-    def _run(self, goal: str, max_steps: int, inputs: dict[str, str], notes: str) -> ReflexResult:
+    def _run(self, goal: str, max_steps: int, inputs: dict[str, str],
+             notes: str | Callable[[Screen], str]) -> ReflexResult:
         en = self._english(goal)
         if en != goal:
             self.emit(f"hedef: {en}")
@@ -184,6 +192,9 @@ class ScreenAgent:
         visits: dict[tuple[str, ...], int] = {}  # (ekran imzası, eylem) -> kaç kez yapıldı
         scr = Screen("", "")
         last_sig = ""
+        start_items: list[Item] | None = None
+        prev_items: list[Item] = []
+        self.evidence = []
         for step in range(1, max_steps + 1):
             try:
                 scr = self.obs.screen(goal)
@@ -204,16 +215,29 @@ class ScreenAgent:
                 else:
                     history[-1] += " -> nothing changed on screen"
                     log[-1] += " (ekran değişmedi)"
+                if self.track_changes:
+                    # Yansıtmanın kanıtı: bu eylemden sonra ne çıktı, ne kayboldu (kod biliyor, model uydurmasın).
+                    self.evidence.append({"action": history[-1], "changed": sig != last_sig,
+                                          **screen_changes(prev_items, scr.items)})
+                if sig == last_sig:
                     tried[did] = tried.get(did, 0) + 1
                     if tried[did] >= 2:
                         return ReflexResult("needs_help", step - 1, f"aynı eylem iki kez ekranı değiştirmedi: {did}",
                                             log, scr.title, scr.location)
             last_sig = sig
+            prev_items = scr.items
+            if start_items is None:
+                start_items = scr.items
             see = self._can_see(scr)
             state: dict[str, Any] = {"goal": en, "window": scr.title, "items": {i.key: i.describe() for i in scr.items},
                                      "recent_actions": history[-6:] or ["none yet"]}
-            if notes:
-                state["notes"] = notes
+            if self.track_changes and history:
+                # "Bitti mi?" için kodun bildiği gerçek: turun başından beri ekranda ne değişti. Tur sayacı, yıl, kaynak
+                # sayıları her oyunda burada görünür; oyuna özel kural yazmak gerekmez.
+                state["changes_since_start"] = screen_changes(start_items, scr.items)
+            note_text = notes(scr) if callable(notes) else notes
+            if note_text:
+                state["notes"] = note_text
             if en != goal:
                 state["goal_original_language"] = goal
             images = None
@@ -323,6 +347,10 @@ class ScreenAgent:
                 after = self._safe_screen(goal)
                 if after is not None and after.signature() != sig:
                     log[-1] += " (ekran değişti)"
+                    self.last = after
+                    if self.track_changes:
+                        self.evidence.append({"action": history[-1], "changed": True,
+                                              **screen_changes(scr.items, after.items)})
                     return ReflexResult("clicked", step, f"tıklandı: {item.describe(False)}", log, after.title,
                                         after.location)
         return ReflexResult("max_steps", max_steps, "adım limiti doldu", log, scr.title, scr.location)

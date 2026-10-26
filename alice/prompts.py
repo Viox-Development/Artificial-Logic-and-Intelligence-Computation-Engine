@@ -53,8 +53,8 @@ then action=open shows the result) instead of clicking in Blender's window, whic
 3. Desktop apps on Windows: `ui_elements` lists the foreground window's controls with IDs, then `ui_act`.
 4. Repetitive or simple UI navigation with a clear goal: delegate to `reflex` (System One fast decision loop, \
 ~100-500 ms per step). If it returns needs_help, continue yourself from where it stopped. To play a game over many \
-turns (turn-based strategy like Unciv, card or puzzle games), use `game` instead: it keeps the game's notes and turn \
-summaries; add what you learn with action=note.
+turns (turn-based strategy, card or puzzle games), use `game` instead: it learns the game while playing (lessons \
+from what actually happened on screen) and keeps turn summaries.
 5. Last resort: `computer` with screenshots and pixel coordinates (use grid=true for precise clicks). Always take a \
 fresh screenshot before clicking coordinates, and after acting to confirm.
 Games (DCS, War Thunder etc.) usually ignore UI Automation; use `computer` key presses there, and keep in mind that \

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
 
 from alice.reflex import perceive
-from alice.reflex.game import STARTER_NOTES, GameSession, game_key, summarize_turn
+from alice.reflex.game import GameSession, code_lessons, discover, game_key, reflect
 from alice.reflex.perceive import Item, changed_regions, mark_fresh, ocr_changed
 
 
@@ -133,45 +132,149 @@ def test_back_and_forth_loop_is_stopped():
     assert res.status == "needs_help" and "döngü" in res.reason and obs.acts == 4
 
 
+def test_agent_gives_jev_changes_since_start_and_keeps_evidence():
+    """Oyundan bağımsız 'bitti mi?': tur sayacı gibi değerler 'kaybolan/çıkan' olarak görünür."""
+    from alice.decider import Answer, Decision
+    from alice.reflex.agent import ScreenAgent
+    from alice.reflex.perceive import Screen
+
+    class Board:
+        turn = 1
+
+        def screen(self, goal=""):
+            return Screen("Game", "desktop", [Item("i1", "ocr", "text", f"Turn {self.turn}", (0.9, 0.0, 1.0, 0.05)),
+                                              Item("i2", "ocr", "text", "End turn", (0.9, 0.9, 1.0, 0.95))])
+
+        def act(self, action, item=None, **k):
+            self.turn += 1
+
+    class Brain:
+        supports_images = False
+        states = []
+
+        def decide(self, state, questions, images=None):
+            self.states.append((state, questions))
+            done = 0.9 if "changes_since_start" in state else 0.05
+            return Decision({"action": Answer("choice", "click", 0.9), "done": Answer("noul", done, 0.9),
+                             "missing": Answer("noul", 0.05, 0.9), "key": Answer("choice", "enter", 0.9),
+                             "item": Answer("choice", "i2", 0.9), "drop": Answer("choice", "i1", 0.9)}, "fake", 0.01)
+
+    agent = ScreenAgent(Board(), Brain(), settle=0)
+    agent.track_changes = True
+    res = agent.run("end the turn", notes=lambda scr: f"seen {len(scr.items)} items")
+    assert res.status == "done"
+    first, second = Brain.states[0][0], Brain.states[1][0]
+    assert "changes_since_start" not in first and first["notes"] == "seen 2 items"  # notlar ekrana göre seçiliyor
+    assert second["changes_since_start"] == {"appeared": ["Turn 2"], "disappeared": ["Turn 1"]}
+    assert "changes_since_start" in Brain.states[0][1]["done"].criteria["true"]
+    assert agent.evidence == [{"action": "clicked text 'End turn' (bottom-right) -> screen changed", "changed": True,
+                               "appeared": ["Turn 2"], "disappeared": ["Turn 1"]}]
+    plain = ScreenAgent(Board(), Brain(), settle=0)  # oyun dışında reflex eskisi gibi
+    plain.run("end the turn", max_steps=2)
+    assert "changes_since_start" not in Brain.states[-1][0] and plain.evidence == []
+
+
 # ------------------------------------------------------------------------------------------- oturum
 def test_session_notes_turns_and_context(tmp_path):
     assert game_key(" Unciv ") == "unciv" and game_key("Slay the Spire!") == "slay-the-spire"
-    s = GameSession.open(tmp_path, "Unciv")
-    assert s.notes() == STARTER_NOTES["unciv"] and s.turn == 0
-    assert s.add_note("Settlers should found the capital on turn 1.")
-    assert not s.add_note("settlers should found the capital on turn 1.")  # aynısı
+    s = GameSession.open(tmp_path, "Kart Oyunu")
+    assert s.notes() == [] and s.lessons() == [] and s.turn == 0  # koda yazılı hazır not yok
+    assert s.add_note("The user wants an aggressive strategy.")
+    assert not s.add_note("the user wants an aggressive strategy.")  # aynısı
     for n in range(5):
         s.record(f"goal {n}", "done", 2, f"summary {n}")
     ctx = s.context()
-    assert ctx.startswith("Game: Unciv.") and "Settlers should found" in ctx
+    assert ctx.startswith("Game: Kart Oyunu.") and "aggressive strategy" in ctx
     assert "turn 5: summary 4" in ctx and "summary 1" not in ctx  # son üç tur
-    again = GameSession.open(tmp_path, "unciv", "Unciv 4.")
-    assert again.turn == 5 and again.title == "Unciv 4." and again.notes()[-1].startswith("Settlers")
-    assert GameSession.open(tmp_path, "Bilinmeyen Oyun").notes() == []
+    again = GameSession.open(tmp_path, "kart oyunu", "Kart")
+    assert again.turn == 5 and again.title == "Kart"
 
 
-def test_summarize_turn():
+def test_lessons_add_confirm_contradict_and_relevance(tmp_path):
+    s = GameSession.open(tmp_path, "X")
+    out = s.apply({"add": [{"trigger": "", "do": "Never quit to the main menu.", "kind": "rule"},
+                           {"trigger": "Exit City", "do": "Leave the city screen before ending the turn."}]},
+                  source="prior")
+    assert out["add"] == 2 and all(r["source"] == "prior" and r["score"] == 0 for r in s.lessons())
+    a, b = s.lessons()
+    assert s.apply({"add": [{"trigger": "Exit City", "do": "leave the city screen before ending the turn."}]})["add"] == 0
+    s.apply({"confirm": [b["id"]], "contradict": [a["id"]]})  # yanlış çıkan prior ders düşer
+    (left,) = s.lessons()
+    assert left["id"] == b["id"] and left["score"] == 1 and left["source"] == "seen"
+    s.apply({"edit": [{"id": b["id"], "do": "Click 'Exit City' first."}],
+             "add": [{"do": f"lesson {n}", "kind": "nonsense"} for n in range(6)]})
+    assert len(s.lessons()) == 4 and s.lessons()[0]["do"] == "Click 'Exit City' first."  # turda en fazla 3 yeni
+    # Keşif bir keresinde "istenirse hesabınla giriş yap" yazmıştı: oyun oturumu kullanıcı adına onay/giriş yapmaz.
+    assert s.apply({"add": [{"do": "Log in with your Microsoft account if prompted."},
+                            {"do": "Accept the privacy terms to continue."},
+                            {"do": "Avoid clicking ads or the Buy button."}]})["add"] == 1
+    assert s.lessons()[1]["kind"] == "ui"
+    # Tetik ekranda görülen bir yazı olmalı: modelin kendi cümlesi ("clicked something ...") hiçbir ekrana uymaz.
+    out = s.apply({"add": [{"trigger": "clicked something visible on screen at left-top", "do": "Aim better."},
+                           {"trigger": "Gold: 10", "do": "Gold is shown at the top."}]},
+                  seen_texts=["Gold: 10", "Exit City"])
+    assert out["add"] == 1 and s.lessons()[-1]["trigger"] == "Gold: 10"
+    rel = s.relevant(["Gold: 10", "Exit City"])
+    assert {r["trigger"] for r in rel[:2]} == {"Gold: 10", "Exit City"}  # ekrana uyanlar tetiksizlerden önce
+    assert all(r["trigger"] != "Exit City" for r in s.relevant(["Gold: 10"]))  # ekranda yoksa gelmez
+    ctx = s.context(["Exit City"])
+    assert "When 'Exit City' is on screen: Click 'Exit City' first." in ctx
+
+
+def test_code_lessons_from_clicks_that_changed_nothing():
+    ev = [{"action": "clicked text 'Pick a construction' (top-left) -> nothing changed on screen", "changed": False},
+          {"action": "clicked text 'Pick a construction' (top-left) -> nothing changed on screen", "changed": False},
+          {"action": "clicked text 'Gold' (top-left) -> nothing changed on screen", "changed": False},
+          {"action": "clicked text 'Warrior' (middle-left) -> screen changed", "changed": True}]
+    (lesson,) = code_lessons(ev)["add"]
+    assert lesson["trigger"] == "Pick a construction" and "changes nothing" in lesson["do"]
+    loop = [{"action": "clicked Button 'KLONDIKE' (middle-left) -> screen changed", "changed": True}] * 3 + \
+        [{"action": "ekranda görülen yere tıklandı", "changed": False}]
+    (lesson,) = code_lessons(loop)["add"]
+    assert lesson["trigger"] == "KLONDIKE" and "back and forth" in lesson["do"]
+
+
+def test_reflect_uses_evidence_and_falls_back():
     got = {}
 
     def chat(messages):
         got["msgs"] = messages
-        return "Ended turn 3; a new city screen\nopened."
+        return ('```json\n{"summary": "Ended the turn; the counter moved to Turn 2.", '
+                '"add": [{"trigger": "End turn", "do": "End turn advances the counter.", "kind": "ui"}], '
+                '"confirm": ["l1"]}\n```')
 
-    out = summarize_turn(chat, "end the turn", "done", ["1. clicked text 'Next turn'"], ["Pick construction"])
-    assert out == "Ended turn 3; a new city screen opened."
-    assert "Pick construction" in got["msgs"][1]["content"] and "clicked text 'Next turn'" in got["msgs"][1]["content"]
+    ev = [{"action": "clicked text 'End turn' -> screen changed", "changed": True, "appeared": ["Turn 2"],
+           "disappeared": ["Turn 1"]}]
+    summary, ops = reflect(chat, "G", "end the turn", "done", "hedefe ulaşıldı", ev,
+                           [{"id": "l1", "trigger": "", "do": "Turns end with 'End turn'.", "source": "prior"}])
+    assert summary == "Ended the turn; the counter moved to Turn 2." and ops["confirm"] == ["l1"]
+    sent = got["msgs"][1]["content"]
+    assert "appeared: Turn 2 | disappeared: Turn 1" in sent and "l1: Turns end with 'End turn'. (unverified)" in sent
+    assert reflect(lambda m: "The", "G", "g", "done", "", [], [])[0] == "g -> done"  # yarım cevap
 
     def broken(messages):
         raise RuntimeError("kota")
 
-    assert summarize_turn(broken, "end the turn", "needs_help", ["1. pressed enter"], []) == \
-        "end the turn -> needs_help; last: 1. pressed enter"
-    assert summarize_turn(None, "g", "done", [], []) == "g -> done"
-    assert summarize_turn(lambda m: "The", "end the turn", "done", [], []) == "end the turn -> done"  # yarım cevap
+    assert reflect(broken, "G", "g", "needs_help", "", ev, []) == \
+        ("g -> needs_help; last: 1. clicked text 'End turn' -> screen changed | appeared: Turn 2 | disappeared: Turn 1",
+         {})
+    assert reflect(None, "G", "g", "done", "", [], []) == ("g -> done", {})
+
+
+def test_discover_writes_prior_lessons_from_first_screen():
+    got = {}
+
+    def chat(messages):
+        got["msgs"] = messages
+        return '{"add": [{"trigger": "Start new game", "do": "Start a game from here.", "kind": "ui"}]}'
+
+    ops = discover(chat, "Some Game", ["Start new game", "Options"])
+    assert ops["add"][0]["trigger"] == "Start new game" and "- Options" in got["msgs"][1]["content"]
+    assert discover(lambda m: "bilmiyorum", "G", []) == {} and discover(None, "G", []) == {}
 
 
 # ------------------------------------------------------------------------------------------- araç
-def test_game_tool_start_turn_note_end(monkeypatch, tmp_path):
+def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     import alice.config as config
     import alice.reflex.agent as agent_mod
     import alice.reflex.observers as obs_mod
@@ -181,37 +284,51 @@ def test_game_tool_start_turn_note_end(monkeypatch, tmp_path):
 
     monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
     made = []
-    monkeypatch.setattr(obs_mod, "DesktopObserver", lambda ctx, title, goal, diff: made.append((title, diff)) or
-                        SimpleNamespace(title=title))
+
+    class Obs:
+        def __init__(self, ctx, title, goal, diff):
+            made.append((title, diff))
+
+        def screen(self, goal=""):
+            return SimpleNamespace(items=[Item("i1", "ocr", "text", "Start new game"), Item("i2", "ocr", "text", "Exit")])
+
+    monkeypatch.setattr(obs_mod, "DesktopObserver", Obs)
     runs = []
 
     class FakeAgent:
         def __init__(self, observer, *a, **k):
             self.observer = observer
-            self.last = SimpleNamespace(items=[Item("i1", "ocr", "text", "Pick a tech", fresh=True),
-                                               Item("i2", "ocr", "text", "Gold: 10")])
+            self.track_changes = False
+            self.evidence = []
+            self.last = SimpleNamespace(items=[Item("i1", "ocr", "text", "Exit")])
 
         def run(self, goal, max_steps, notes):
-            runs.append((self.observer, goal, notes))
-            return ReflexResult("done", 2, "hedefe ulaşıldı", ["1. clicked text 'Next turn'"], "Unciv", "desktop")
+            screen = SimpleNamespace(items=[Item("i1", "ocr", "text", "Start new game")])
+            runs.append((self.observer, goal, notes(screen), self.track_changes))
+            self.evidence = [{"action": "clicked text 'Exit' (top) -> nothing changed on screen", "changed": False}] * 2
+            return ReflexResult("needs_help", 2, "aynı eylem iki kez ekranı değiştirmedi", [], "G", "desktop")
 
     monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
     monkeypatch.setattr(agent_mod, "make_translator", lambda router: None)
-    router = SimpleNamespace(chat=lambda role, msgs, **k: SimpleNamespace(text="Turn ended; a tech must be picked."))
-    ctx = ToolContext(cwd=tmp_path, config=None, router=router, decider=object())
+
+    def chat(role, msgs, **k):
+        if "never played" in msgs[0]["content"]:  # keşif
+            return SimpleNamespace(text='{"add": [{"trigger": "Start new game", "do": "Begin here."}]}')
+        return SimpleNamespace(text='{"summary": "Tried Exit twice; nothing happened.", "confirm": ["l1"]}')
+
+    ctx = ToolContext(cwd=tmp_path, config=None, router=SimpleNamespace(chat=chat), decider=object())
     tool = Game()
     assert tool.risk_for({"action": "status"}) == "read" and tool.risk_for({"action": "turn"}) == tool.risk
+    out = tool.run(ctx, "start", game="Hiç Görülmemiş Oyun").text
+    assert "1 başlangıç dersi" in out and "Begin here. (unverified)" in out
+    r = tool.run(ctx, "turn", goal="start a game")
+    assert made == [("Hiç Görülmemiş Oyun", True)]  # keşifteki gözlemci turda da kullanılıyor
+    observer, goal, notes, tracked = runs[0]
+    assert tracked and "When 'Start new game' is on screen: Begin here." in notes
+    assert "özet: Tried Exit twice" in r.text and "+1 yeni, 1 doğrulandı" in r.text  # kodun dersi + modelin onayı
+    lessons = {x["do"]: x for x in GameSession.open(tmp_path, "Hiç Görülmemiş Oyun").lessons()}
+    assert lessons["Begin here."]["source"] == "seen"
+    assert any(d.startswith("Clicking 'Exit' changes nothing") for d in lessons)
+    assert "2 ders" in tool.run(ctx, "status").text
+    assert "toplam 1 tur" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
 
-    out = tool.run(ctx, "start", game="Unciv").text
-    assert "Next turn" in out and "0 tur" in out
-    assert "eklendi" in tool.run(ctx, "note", note="Capital is on the river.").text
-    r1 = tool.run(ctx, "turn", goal="end the turn")
-    r2 = tool.run(ctx, "turn", goal="pick Pottery")
-    assert made == [("Unciv", True)]  # gözlemci turlar arasında aynı: neyin değiştiği turdan tura görülür
-    assert runs[0][0] is runs[1][0] and "Capital is on the river." in runs[0][2]
-    assert "turn 1: Turn ended; a tech must be picked." in runs[1][2]  # önceki turun özeti bağlamda
-    assert "tur 2" in r2.text and "özet: Turn ended" in r1.text and "SONUÇ: hedef yapıldı." in r1.text
-    rows = [json.loads(x) for x in (tmp_path / "games" / "unciv" / "turns.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert [r["goal"] for r in rows] == ["end the turn", "pick Pottery"] and rows[0]["status"] == "done"
-    assert "2 tur" in tool.run(ctx, "status").text
-    assert "toplam 2 tur" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
