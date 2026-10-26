@@ -249,6 +249,17 @@ def test_words_match_turkish_capital_i():
     assert words("ALİCE uygulaması") == ["alice", "uygulamasi"] and words("ALICE") == ["alice"]
 
 
+def test_button_named_in_goal_is_not_an_echo():
+    # Unciv ana menüsü: hedef "start a new game" iken "Start new game" düğmesi yankı sanılıp atılıyordu.
+    assert not is_goal_echo("Start new game", "start a new game")
+    items = build_items([], [("Start new game", (0.3, 0.5, 0.5, 0.55)), ("Load game", (0.3, 0.6, 0.5, 0.65))],
+                        "start a new game")
+    assert items[0].label == "Start new game"
+    longer = [("Click on the Start new game button", (0.1, 0.1, 0.5, 0.12))]
+    assert build_items([], longer, "click on the start new game button") == []
+    assert len(build_items([], longer, "click on the start new game button", drop_echo=False)) == 1  # oyun penceresi
+
+
 def test_user_message_echo_is_dropped_even_when_goal_was_rephrased():
     msg = "Şuanda reflex katmanı ile ekrana bakıp projeler kısmındaki ilk projeye tıkla"
     goal = "ALICE uygulamasında Projeler bölümündeki ilk projeye tıkla"
@@ -296,7 +307,7 @@ def test_desktop_screen_drops_webview_body_and_phantom_tabs(monkeypatch):
            el(2, "Document", "", (156, 228, 1312, 1070), "view_1055"),
            el(3, "Button", "Close tab", (172, 230, 188, 245)),
            el(4, "Button", "Gönder", (1100, 600, 1150, 640))]
-    monkeypatch.setattr(desktop, "collect_ui_elements", lambda ctx, title, limit=200: ("ALICE", raw))
+    monkeypatch.setattr(desktop, "collect_ui_elements", lambda ctx, title, limit=200, **k: ("ALICE", raw))
     monkeypatch.setattr(observers, "ocr_available", lambda: (False, "yok"))
     obs = observers.DesktopObserver(ctx=None)
     monkeypatch.setattr(obs, "snapshot", lambda hwnd=0: setattr(obs, "_rect", (156, 198, 1320, 880)))

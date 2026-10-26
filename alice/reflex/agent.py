@@ -50,6 +50,7 @@ VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`,
 DONE_MIN = 0.85
 LIKELY_DONE_MIN = 0.6  # sıradaki eylemden emin değilken, son eylem ekranı değiştirdiyse
 SCREEN_RETRY = 0.5  # sn: ekran okunamazsa bu kadar bekleyip bir kez daha
+LOOP_MAX = 2  # aynı ekranda aynı eylem bundan fazla yapılmaz (A-B-A-B gidip gelme)
 MISSING_MIN = 0.7
 VISIBLE_MIN = 0.7
 ZOOM_MIN = 0.4
@@ -88,6 +89,7 @@ class ScreenAgent:
         self.settle = settle
         self.trace_path = trace_path
         self.visual = True
+        self.last: Screen | None = None  # son okunan ekran (oyun turunun özetinde yeni çıkan yazılar için)
 
     # ------------------------------------------------------------------ yardımcılar
     def _english(self, goal: str) -> str:
@@ -179,6 +181,7 @@ class ScreenAgent:
         log: list[str] = []
         history: list[str] = []  # Jev'e giden okunur geçmiş
         tried: dict[str, int] = {}  # eylem -> ekran değiştirmeden kaç kez denendi
+        visits: dict[tuple[str, ...], int] = {}  # (ekran imzası, eylem) -> kaç kez yapıldı
         scr = Screen("", "")
         last_sig = ""
         for step in range(1, max_steps + 1):
@@ -190,6 +193,7 @@ class ScreenAgent:
                     scr = self.obs.screen(goal)
                 except Exception as e:  # noqa: BLE001
                     return ReflexResult("error", step - 1, f"ekran okunamadı: {e}", log)
+            self.last = scr
             sig = scr.signature()
             if history and last_sig and not history[-1].endswith(("changed", "on screen")):
                 # Son eylem işe yaradı mı? Jev bunu okunur geçmişte görür; aynı boşa eylem üçüncü kez yapılmaz.
@@ -280,6 +284,14 @@ class ScreenAgent:
             if needs_item and item is None:
                 return ReflexResult("needs_help", step - 1, "ekranda seçilecek öğe yok", log, scr.title, scr.location)
             drop = _pick(a, "drop", scr.items) if choice == "drag" else None
+            # Aynı ekranda aynı eylem üçüncü kez: döngü. Unciv'de 'Pick a tech!' ile 'Close' arasında 15 adım gidip
+            # geldi; her tıklama ekranı değiştirdiği için "ekran değişmedi" koruması yakalamıyordu.
+            move = (sig, choice, item.describe(False) if needs_item and item else "",
+                    drop.describe(False) if drop else "", str(a["key"].value) if choice == "press_key" else "")
+            visits[move] = visits.get(move, 0) + 1
+            if visits[move] > LOOP_MAX:
+                return ReflexResult("needs_help", step - 1, f"döngüye girdi: aynı ekranda aynı eylem {LOOP_MAX + 1}. "
+                                    f"kez ({choice} {move[2]})".strip(), log, scr.title, scr.location)
             text = key = ""
             try:
                 if choice == "type_text":
@@ -287,7 +299,7 @@ class ScreenAgent:
                     if already_has(item.value, text):
                         # Aynı yolu adres çubuğuna tekrar tekrar yazıyordu. Eylem yapılmaz; ekran değişmeyeceği için
                         # tekrar sayacına da girer.
-                        history.append(f"did not type: {item.describe()} already contains '{text[:40]}'")
+                        history.append(f"did not type: {item.describe(False)} already contains '{text[:40]}'")
                         log.append(f"{step}. yazılmadı: alan zaten '{text[:40]}' içeriyor")
                         continue
                 if choice == "press_key":
@@ -301,9 +313,9 @@ class ScreenAgent:
             said = {"click": "clicked", "double_click": "double-clicked", "right_click": "right-clicked",
                     "type_text": f"typed '{text[:40]}' into", "drag": "dragged", "press_key": f"pressed {key}",
                     "scroll_down": "scrolled down", "scroll_up": "scrolled up", "wait": f"waited {WAIT_SECONDS:g}s"}
-            what = item.describe() if needs_item and item else ""
+            what = item.describe(False) if needs_item and item else ""
             if choice == "drag" and drop is not None:
-                what += f" onto {drop.describe()}"
+                what += f" onto {drop.describe(False)}"
             history.append(f"{said.get(choice, choice)} {what}".strip())
             log.append(f"{step}. {history[-1]}")
             time.sleep(self.settle)
@@ -311,7 +323,7 @@ class ScreenAgent:
                 after = self._safe_screen(goal)
                 if after is not None and after.signature() != sig:
                     log[-1] += " (ekran değişti)"
-                    return ReflexResult("clicked", step, f"tıklandı: {item.describe()}", log, after.title,
+                    return ReflexResult("clicked", step, f"tıklandı: {item.describe(False)}", log, after.title,
                                         after.location)
         return ReflexResult("max_steps", max_steps, "adım limiti doldu", log, scr.title, scr.location)
 

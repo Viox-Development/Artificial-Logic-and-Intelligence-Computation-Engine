@@ -6,7 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from alice.reflex.perceive import Item, Screen, build_items, ocr_available, ocr_image
+from alice.reflex.perceive import (Item, Screen, build_items, changed_regions, mark_fresh, ocr_available, ocr_changed,
+                                   ocr_image)
 from alice.tools.base import ToolContext, ToolError
 
 EDITABLE_TAGS = {"input", "textarea"}
@@ -58,13 +59,27 @@ def foreground_title() -> str:
     return buf.value
 
 
-def is_window_chrome(role: str, name: str, goal: str = "") -> bool:
+def is_window_chrome(role: str, name: str, goal: str = "", title: str = "") -> bool:
     if role == "TitleBar":
         return True
     if role in ("MenuBar", "MenuItem", "Button") and name.strip().lower() in WINDOW_CHROME:
         # Pencereyi kapatmak/küçültmek hedefin kendisiyse düğmeler kalsın; sistem menüsü hiç gerekmez.
-        return not (role == "Button" and any(w in goal.lower() for w in CHROME_GOAL))
+        return not (role == "Button" and wants_window_chrome(goal, title))
     return False
+
+
+def wants_window_chrome(goal: str, title: str = "") -> bool:
+    """Hedef pencerenin kendisini kapatmak/küçültmek mi? 'Ayarlar katmanını X ile kapat' (Unciv) değil: orada pencerenin
+    Kapat düğmesi listede kaldı ve oyun kapandı. Pencere/uygulama ya da pencerenin adı geçmeli."""
+    g = goal.lower()
+    if not any(w in g for w in CHROME_GOAL):
+        return False
+    if any(w in g for w in ("pencere", "window", "uygulama", "program", "app")):
+        return True
+    from alice.reflex.perceive import words
+
+    gw = set(words(goal))
+    return any(w in gw for w in words(title) if len(w) > 2)
 
 
 @dataclass
@@ -240,11 +255,19 @@ class DesktopObserver:
     kind = "desktop"
 
     def __init__(self, ctx: ToolContext, window_title: str | None = None, goal: str = "",
-                 echoes: tuple[str, ...] = ()):
+                 echoes: tuple[str, ...] = (), diff: bool = False):
         self.ctx = ctx
         self.title = window_title
         self.goal = goal
         self.echoes = echoes  # ekranda görünüp hedef sanılmaması gereken yazılar (kullanıcının sohbet mesajı)
+        # diff (oyun oturumu): önceki kare tutulur; yalnızca değişen bölgeler yeniden okunur, yeni öğeler 'new' olur.
+        # Gözlemci turlar boyunca yaşar: "bu turda ne değişti" de görülür.
+        self.diff = diff
+        self._prev_img: Any = None
+        self._prev_lines: list[tuple[str, tuple[float, float, float, float]]] = []
+        self._seen: set[str] | None = None
+        self.changed: list[tuple[float, float, float, float]] | None = None
+        self._hwnd = 0
         if not (window_title or "").strip() and goal and "alice" not in goal.lower() \
                 and foreground_title().strip() == "ALICE":
             # Öndeki pencere ALICE'in kendi sohbeti: "Not Defteri'ni aç, Ctrl+S'ye bas" burada Escape ve Ctrl+S'ye
@@ -264,11 +287,13 @@ class DesktopObserver:
             except Exception:  # noqa: BLE001 - başlıkla bulunamazsa öndeki pencereyle devam
                 pass
         img = self.snapshot(self._target_hwnd())
-        title, raw = collect_ui_elements(self.ctx, self.title, limit=200)
+        title, raw = collect_ui_elements(self.ctx, self.title, limit=200, hwnd=self._window())
+        # Oyunda pencerenin Kapat düğmesi hiç seçenek olmaz: "ayarları X ile kapat" Unciv'i kapatmıştı.
+        chrome_goal = "" if self.diff else self.goal
         ax: list[Item] = []
         docs = [i["rect"] for i in raw if i["role"] == "Document" and i.get("rect")]
         for i in raw:
-            if not i["enabled"] or is_window_chrome(i["role"], i["name"], self.goal) \
+            if not i["enabled"] or is_window_chrome(i["role"], i["name"], chrome_goal, title) \
                     or is_phantom_tab(i["role"], i["name"], i.get("rect"), docs):
                 continue
             if i["role"] == "Document" and i["name"].strip() in ("", title.strip()):
@@ -278,12 +303,19 @@ class DesktopObserver:
             ax.append(Item("", "ax", i["role"], i["name"] or i["auto_id"], self._frac(i.get("rect")), i["value"],
                            i["role"] in EDITABLE_ROLES, ref=i["id"]))
         lines: list[tuple[str, tuple[float, float, float, float]]] = []
+        regions = changed_regions(self._prev_img, img) if self.diff else None
         if img is not None and ocr_available()[0]:
             try:
-                lines = ocr_image(img)
+                lines = ocr_changed(img, self._prev_lines, regions) if self.diff else ocr_image(img)
             except Exception:  # noqa: BLE001 - OCR olmazsa ağaçla devam
                 lines = []
-        return Screen(title, "desktop", build_items(ax, lines, self.goal, echoes=self.echoes), image=img)
+        # Oyun penceresinde sohbet yok: hedefi tekrarlayan yazı yankı değil, hedefin kendisi (düğme).
+        items = build_items(ax, lines, self.goal, echoes=self.echoes, drop_echo=not self.diff)
+        if self.diff:
+            self._prev_img, self._prev_lines = img, lines
+            self._seen = mark_fresh(items, self._seen)
+            self.changed = regions
+        return Screen(title, "desktop", items, image=img)
 
     def _frac(self, rect: Any) -> tuple[float, float, float, float] | None:
         """Ekran pikseli (sol, üst, sağ, alt) -> son görüntülenen pencereye göre 0-1."""
@@ -350,8 +382,27 @@ class DesktopObserver:
 
         title, items = collect_ui_elements(self.ctx, self.title, limit=150)
         els = [Element(i["id"], i["role"], i["name"] or i["auto_id"], i["role"] in EDITABLE_ROLES, i["value"])
-               for i in items if i["enabled"] and not is_window_chrome(i["role"], i["name"], self.goal)]
+               for i in items if i["enabled"] and not is_window_chrome(i["role"], i["name"], self.goal, title)]
         return Observation(title, "desktop", els)
+
+    def _window(self) -> int:
+        """Başlığı verilen pencerenin tutamacı, önbellekli: başlıkla aramak bütün pencereleri taramak (~1,5 sn) ve her
+        adımda iki kez yapılıyordu. Pencere kapandıysa yeniden aranır; bulunamazsa 0."""
+        import sys
+
+        if sys.platform != "win32" or not self.title:
+            return 0
+        import ctypes
+
+        if self._hwnd and ctypes.windll.user32.IsWindow(self._hwnd):
+            return self._hwnd
+        from alice.tools.desktop import _foreground_uia
+
+        try:
+            self._hwnd = int(_foreground_uia(self.title).handle or 0)
+        except Exception:  # noqa: BLE001
+            self._hwnd = 0
+        return self._hwnd
 
     def _target_hwnd(self) -> int:
         """Görüntüsü alınacak pencere. Öndeki pencere hedefin kendisi ya da onun açtığı bir diyalogsa (Kaydet): 0,
@@ -363,11 +414,8 @@ class DesktopObserver:
             return 0
         import ctypes
 
-        from alice.tools.desktop import _foreground_uia
-
-        try:
-            target = int(_foreground_uia(self.title).handle or 0)
-        except Exception:  # noqa: BLE001
+        target = self._window()
+        if not target:
             return 0
         fg = ctypes.windll.user32.GetForegroundWindow()
         if not target or fg == target or ctypes.windll.user32.GetAncestor(fg, 3) == target:  # 3: GA_ROOTOWNER

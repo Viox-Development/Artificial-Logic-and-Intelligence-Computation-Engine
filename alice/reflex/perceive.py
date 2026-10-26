@@ -26,6 +26,7 @@ from typing import Any, Callable
 _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{2,}", re.U)
 MAX_ITEMS = 60
 ECHO_SHARE = 0.6  # yazının kelimelerinin bu kadarı hedefte geçiyorsa hedefin yankısıdır (kullanıcının mesajı)
+ECHO_MIN_WORDS = 4  # daha kısası düğme adıdır: "Start new game" hedefi "start a new game" iken atılıyordu
 
 
 def words(s: str) -> list[str]:
@@ -46,6 +47,7 @@ class Item:
     editable: bool = False
     context: str = ""
     ref: Any = None  # gözlemcinin eylem için kullandığı tutamak (UIA öğe numarası, DOM numarası)
+    fresh: bool = False  # önceki gözlemde yoktu (oyunda: bu adımda/turda yeni çıkan)
 
     @property
     def center(self) -> tuple[float, float] | None:
@@ -62,12 +64,13 @@ class Item:
         row = "top" if c[1] < 1 / 3 else "bottom" if c[1] > 2 / 3 else "middle"
         return "center" if col == row == "middle" else f"{row}-{col}"
 
-    def describe(self) -> str:
+    def describe(self, mark_new: bool = True) -> str:
+        """mark_new=False: geçmiş satırları için (aynı eylem 'new' işareti yüzünden farklı görünmesin)."""
         kind = "text" if self.source == "ocr" else (self.role or "control")
         s = f"{kind} '{self.label[:80]}'"
         if self.value:
             s += f" (value '{self.value[:40]}')"
-        extra = "; ".join(x for x in (self.where(), self.context) if x)
+        extra = "; ".join(x for x in (self.where(), self.context, "new" if self.fresh and mark_new else "") if x)
         return s + (f" ({extra})" if extra else "")
 
 
@@ -91,7 +94,7 @@ def is_goal_echo(text: str, goal: str, echoes: tuple[str, ...] = ()) -> bool:
     """Ekrandaki yazı hedefin kendisi mi (sohbet penceresinde görünen kullanıcı mesajı)? echoes: kullanıcının asıl
     mesajı gibi başka kaynaklar; beyin modeli hedefi yeniden yazınca ekrandaki mesaj hedefle yarı yarıya örtüşüyordu."""
     tw = words(text)
-    if len(tw) < 3:
+    if len(tw) < ECHO_MIN_WORDS:
         return False
     for src in (goal, *echoes):
         gw = set(words(src))
@@ -111,7 +114,7 @@ def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float,
 
 
 def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, float]]], goal: str,
-                limit: int = MAX_ITEMS, echoes: tuple[str, ...] = ()) -> list[Item]:
+                limit: int = MAX_ITEMS, echoes: tuple[str, ...] = (), drop_echo: bool = True) -> list[Item]:
     """Erişilebilirlik öğeleri + OCR satırları -> numaralı, tekrarsız, hedefe göre sıralı liste."""
     items: list[Item] = []
     for i in ax:
@@ -124,7 +127,7 @@ def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, 
         items.append(i)
     for text, rect in ocr:
         text = " ".join(text.split())
-        if not text or is_goal_echo(text, goal, echoes):
+        if not text or (drop_echo and is_goal_echo(text, goal, echoes)):
             continue
         # OCR satırı bir kontrolün içinde ve aynı yazıysa ayrı seçenek olmasın: kontrol "ax+ocr" olur.
         host = next((i for i in items if i.rect and i.source != "ocr" and _overlap(rect, i.rect) > 0.6
@@ -263,3 +266,77 @@ def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
         y1 = max(r.y + r.height for r in rects)
         out.append((line.text, (int(x0 / scale), int(y0 / scale), int((x1 - x0) / scale), int((y1 - y0) / scale))))
     return out
+
+
+# ------------------------------------------------------------------------------- sadece değişen kısımlar (oyunlar)
+Rect = tuple[float, float, float, float]
+DIFF_GRID = (16, 9)  # ekran bu kadar hücreye bölünür
+DIFF_PIXEL = 30  # gri tonda bu kadar farklı piksel "değişmiş" sayılır
+DIFF_CELL = 0.004  # hücrenin bu kadarı değiştiyse hücre değişmiş (tek bir sayının değişmesini de yakalar)
+FULL_OCR_SHARE = 0.5  # ekranın yarısından fazlası değiştiyse hepsi baştan okunur
+
+
+def changed_regions(prev: Any, cur: Any, grid: tuple[int, int] = DIFF_GRID) -> list[Rect] | None:
+    """İki kare arasında değişen bölgeler (kesirli kutular). None: karşılaştırılamaz, her yer yeni sayılır.
+
+    Ekran ızgaraya bölünür; değişen komşu hücreler tek kutuda birleşir. Oyunda bir tur sonra haritanın çoğu aynı
+    kalıyor: yalnızca yeni çıkan pencere, değişen kaynak sayısı ya da hareket eden birim yeniden okunur."""
+    from PIL import Image, ImageChops
+
+    if prev is None or cur is None or prev.size != cur.size:
+        return None
+    diff = ImageChops.difference(prev.convert("L"), cur.convert("L")).point(lambda v: 255 if v > DIFF_PIXEL else 0)
+    gw, gh = grid
+    cells = diff.resize((gw, gh), Image.BOX).load()
+    hot = {(x, y) for y in range(gh) for x in range(gw) if cells[x, y] > 255 * DIFF_CELL}
+    out: list[Rect] = []
+    while hot:
+        stack, comp = [hot.pop()], []
+        while stack:
+            x, y = stack.pop()
+            comp.append((x, y))
+            for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if n in hot:
+                    hot.remove(n)
+                    stack.append(n)
+        xs, ys = [c[0] for c in comp], [c[1] for c in comp]
+        out.append((min(xs) / gw, min(ys) / gh, (max(xs) + 1) / gw, (max(ys) + 1) / gh))
+    return sorted(out, key=lambda r: (r[1], r[0]))
+
+
+def _touches(a: Rect, b: Rect) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def ocr_changed(img: Any, prev_lines: list[tuple[str, Rect]], regions: list[Rect] | None,
+                recognize: Callable[[Any], list[tuple[str, tuple[int, int, int, int]]]] | None = None
+                ) -> list[tuple[str, Rect]]:
+    """Önceki satırların değişmeyenleri + değişen bölgelerin yeniden okunması. Bölgeye değen eski satırlar da
+    bölgeye katılır (yarısı değişen bir satır yarım okunmasın)."""
+    if regions is None or sum((r[2] - r[0]) * (r[3] - r[1]) for r in regions) > FULL_OCR_SHARE:
+        return ocr_image(img, recognize)
+    keep, grown = list(prev_lines), []
+    for reg in regions:
+        hit = [ln for ln in keep if _touches(ln[1], reg)]
+        keep = [ln for ln in keep if ln not in hit]
+        grown.append((min([reg[0]] + [h[1][0] for h in hit]), min([reg[1]] + [h[1][1] for h in hit]),
+                      max([reg[2]] + [h[1][2] for h in hit]), max([reg[3]] + [h[1][3] for h in hit])))
+    w, h = img.size
+    out = keep
+    for l, t, r, b in grown:
+        box = (int(l * w), int(t * h), max(int(r * w), int(l * w) + 40), max(int(b * h), int(t * h) + 40))
+        crop = img.crop(box)
+        cw, ch = crop.size
+        for text, (cl, ct, cr, cb) in ocr_image(crop, recognize):
+            out.append((text, ((box[0] + cl * cw) / w, (box[1] + ct * ch) / h, min(1.0, (box[0] + cr * cw) / w),
+                               min(1.0, (box[1] + cb * ch) / h))))
+    return out
+
+
+def mark_fresh(items: list[Item], before: set[str] | None) -> set[str]:
+    """Önceki gözlemde olmayan öğeleri 'new' işaretle; bu gözlemin öğe kümesini döndür. before None: ilk gözlem."""
+    now = {f"{i.role}|{i.label.strip().lower()}" for i in items}
+    if before is not None:
+        for i in items:
+            i.fresh = f"{i.role}|{i.label.strip().lower()}" not in before
+    return now

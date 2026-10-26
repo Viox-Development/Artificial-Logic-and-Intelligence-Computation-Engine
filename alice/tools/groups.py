@@ -30,11 +30,13 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
              "çok adımlı iş planı ve yapılacaklar listesi, alt ajan, arka plandaki komutun çıktısı/durdurma, beceriler",
              r"önce .* sonra|ardından|sonra da|adım adım|planla|alt ajan|arka planda|background|sunucu(yu)? başlat|"
              r"dev server|npm run|\bwatch\b|beceri|skill"),
-    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex", "app", "windows"},
-                "uygulama/pencere açma-kapama, ekran görüntüsü, fare/klavye, masaüstü uygulamalarında tıklama, pano",
+    "desktop": ({"computer", "computer_task", "ui_elements", "ui_act", "clipboard", "reflex", "app", "windows", "game"},
+                "uygulama/pencere açma-kapama, ekran görüntüsü, fare/klavye, masaüstü uygulamalarında tıklama, pano, "
+                "oyun oturumu (turlar, notlar)",
                 r"tıkla|ekran|pencere|fare|mouse|klavye|screenshot|buton|düğme|menü|click|screen|pano|kopyala|"
                 r"yapıştır|clipboard|oyun|ayarlar|uygulamada|arayüz|simge|ikon|whatsapp|instagram|insta\b|"
-                r"tiktok|dm at|mesaj at|uygulama|\baç|kapat|başlat|küçült|sekme"),
+                r"tiktok|dm at|mesaj at|uygulama|\baç|kapat|başlat|küçült|sekme|unciv|sıra tabanlı|strateji oyunu|"
+                r"tur(u|unu)? (oyna|bitir|geç)"),
     "browser": ({"browser"}, "kullanıcının tarayıcısında web sayfası okuma, tıklama, form doldurma",
                 r"site|tarayıcı|browser|chrome|edge|firefox|opera|google|sayfa|link|https?://|www\.|\.com|"
                 r"giriş yap|login|online|internetten|instagram|twitter|github|e-?posta|mail"),

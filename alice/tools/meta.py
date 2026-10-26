@@ -203,20 +203,24 @@ class Reflex(Tool):
         loop = ScreenAgent(observer, ctx.decider, make_text_writer(ctx.router), make_translator(ctx.router),
                            emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "")
-        # Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
-        # başardı" diyordu (needs_help sonucunda bile).
-        verdict = {"done": "SONUÇ: hedef yapıldı.",
-                   "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle "
-                              "doğru şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
-                   "likely_done": "SONUÇ: son eylem ekranı değiştirdi ve karar motoru hedefin büyük ihtimalle "
-                                  "yapıldığını düşünüyor ama emin değil. Bir ekran görüntüsüyle (ya da dosyaya bakarak) "
-                                  "doğrula, sonra kullanıcıya söyle.",
-                   "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya "
-                                 "başardı deme; kalanını kendin yap ya da nedenini söyle.",
-                   "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
-                   "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(getattr(res, "status", ""), "")
+        verdict = reflex_verdict(getattr(res, "status", ""))
         return ToolResult(res.report() + ("\n" + verdict if verdict else ""),
                           is_error=getattr(res, "status", "") == "error")
+
+
+def reflex_verdict(status: str) -> str:
+    """Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
+    başardı" diyordu (needs_help sonucunda bile)."""
+    return {"done": "SONUÇ: hedef yapıldı.",
+            "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle doğru "
+                       "şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
+            "likely_done": "SONUÇ: son eylem ekranı değiştirdi ve karar motoru hedefin büyük ihtimalle yapıldığını "
+                           "düşünüyor ama emin değil. Bir ekran görüntüsüyle (ya da dosyaya bakarak) doğrula, sonra "
+                           "kullanıcıya söyle.",
+            "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya başardı "
+                          "deme; kalanını kendin yap ya da nedenini söyle.",
+            "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
+            "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(status, "")
 
 
 def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:

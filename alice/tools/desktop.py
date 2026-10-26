@@ -608,12 +608,18 @@ def _foreground_uia(title: str | None):
 
 
 def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int = 150,
-                        budget: float = 5.0) -> tuple[str, list[dict[str, Any]]]:
-    """Öndeki (ya da başlığı verilen) pencerenin etkileşimli öğelerini topla. Chromium/WebView2 tabanlı
-    uygulamalarda (WhatsApp, Discord...) ağaç çok büyük: budget saniyede ne bulunduysa onunla dön."""
+                        budget: float = 5.0, hwnd: int = 0) -> tuple[str, list[dict[str, Any]]]:
+    """Öndeki (ya da başlığı/tutamacı verilen) pencerenin etkileşimli öğelerini topla. Chromium/WebView2 tabanlı
+    uygulamalarda (WhatsApp, Discord...) ağaç çok büyük: budget saniyede ne bulunduysa onunla dön. hwnd: pencereyi
+    başlıkla aramak bütün pencereleri taramak demek (~1 sn); reflex her adımda aynı pencereye bakıyor."""
     if not IS_WIN:
         raise ToolError("ui_elements şimdilik sadece Windows'ta (UI Automation). Linux/macOS'ta computer aracını kullan.")
-    win = _foreground_uia(title)
+    if hwnd:
+        from pywinauto import Desktop
+
+        win = Desktop(backend="uia").window(handle=hwnd).wrapper_object()
+    else:
+        win = _foreground_uia(title)
     deadline = time.monotonic() + budget
     if hasattr(win, "iter_descendants"):
         descendants = win.iter_descendants(depth=14)  # tembel: süre dolunca durabilelim

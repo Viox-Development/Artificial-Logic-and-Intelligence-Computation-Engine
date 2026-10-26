@@ -110,6 +110,10 @@ def test_window_chrome_is_not_offered():
     assert is_window_chrome("MenuItem", "Kapat") and is_window_chrome("TitleBar", "ALICE")
     assert is_window_chrome("Button", "Close") and not is_window_chrome("Button", "Close", goal="pencereyi kapat")
     assert not is_window_chrome("Button", "Ayarlar") and not is_window_chrome("MenuItem", "Save")
+    # "Ayarlar katmanını X ile kapat" pencerenin kendisi değil: Unciv'de Kapat düğmesine basılıp oyun kapanmıştı.
+    assert is_window_chrome("Button", "Close", goal="close the settings overlay with the large X", title="Unciv")
+    assert not is_window_chrome("Button", "Close", goal="Not Defteri'ni kapat", title="*merhaba, Not Defteri")
+    assert not is_window_chrome("Button", "Close", goal="close the app", title="Unciv")
 
 
 class WebViewObserver:
