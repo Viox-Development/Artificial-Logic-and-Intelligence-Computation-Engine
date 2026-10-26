@@ -287,8 +287,11 @@ def test_reflex_tool_states_failure_plainly(monkeypatch):
     from alice.tools.meta import Reflex
 
     monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title: SimpleNamespace())
-    monkeypatch.setattr(loop_mod, "ReflexLoop", lambda *a, **k: SimpleNamespace(
+    from alice.reflex import agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "ScreenAgent", lambda *a, **k: SimpleNamespace(
         run=lambda goal, **kw: ReflexResult("needs_help", 1, "düşük güven (0.26)")))
+    monkeypatch.setattr(agent_mod, "make_translator", lambda r: None)
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda r: None)
     ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
     out = Reflex().run(ctx, goal="Ayarlar'ı aç", target="desktop")
@@ -329,8 +332,11 @@ def test_reflex_tool_says_click_is_unverified(monkeypatch):
     from alice.tools.meta import Reflex
 
     monkeypatch.setattr(observers, "DesktopObserver", lambda ctx, title: SimpleNamespace())
-    monkeypatch.setattr(loop_mod, "ReflexLoop", lambda *a, **k: SimpleNamespace(
+    from alice.reflex import agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "ScreenAgent", lambda *a, **k: SimpleNamespace(
         run=lambda goal, **kw: ReflexResult("clicked", 1, "tıklandı")))
+    monkeypatch.setattr(agent_mod, "make_translator", lambda r: None)
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda r: None)
     ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
     out = Reflex().run(ctx, goal="ilk projeye tıkla", target="desktop").text

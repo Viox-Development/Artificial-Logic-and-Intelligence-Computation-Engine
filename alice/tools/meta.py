@@ -160,39 +160,45 @@ class Task(Tool):
 class Reflex(Tool):
     name = "reflex"
     description = (
-        "Ekranda görünen bir şeye tıklama, bir alana yazma gibi kısa ve net bir arayüz hedefini hızlıca yapar "
-        "(adım başına ~0,1-0,5 sn). Sayfayı öğe listesiyle okur; her sitede ve uygulamada aynı çalışır.\n"
+        "Ekranda/tarayıcıda bir hedefi Jev'le hızlıca yapar (adım başına ~0,3-1 sn): ekranı okur (erişilebilirlik "
+        "ağacı + ekrandaki yazılar), her adımda ne yapılacağını seçer ve uygular: tıklama, çift tıklama, sağ tık, "
+        "yazma, tuş/kısayol, sürükle-bırak, kaydırma, bekleme. Her eylemden sonra ekranın değişip değişmediğine "
+        "bakar.\n"
         "- Kullan: 'ekrandaki Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'arama kutusuna X yazıp ilk "
-        "sonuca tıkla'.\n"
-        "- Kullanma: birçok adımlı, ekranı izleyerek yapılacak işler (computer_task).\n"
-        "- Sonuç 'needs_help' ise kalan kısmı browser snapshot/click ya da ui_elements/ui_act ile sen bitir.\n"
-        "- TypeSafe anahtarı varsa pencerenin görüntüsüne de bakar: içi okunamayan pencerelerde (web tabanlı "
-        "uygulamalar, oyun menüleri) ekranda gördüğü düğmeye tıklayabilir."
+        "sonuca tıkla', 'kartı sağdaki sütuna sürükle', oyunda bir turu oynamak.\n"
+        "- Büyük işlerde sen planla: işi kısa hedeflere böl, her biri için reflex çağır; oyun kuralları, strateji "
+        "ya da ekranda neyin ne olduğunu notes'a yaz (İngilizce daha iyi).\n"
+        "- Sonuç 'needs_help' ise nedenine bak; hedefi değiştir, notes'a bilgi ekle ya da kalanı kendin yap.\n"
+        "- TypeSafe anahtarı varsa listede olmayan şeyleri (ikon, oyun taşı) ekran görüntüsünden de bulabilir."
     )
     parameters = obj({
-        "goal": {"type": "string", "description": "Hedef, ekranda göründüğü adlarla, ör. 'ekrandaki Impossible "
-                 "şarkısına tıkla'."},
+        "goal": {"type": "string", "description": "Kısa ve somut hedef, ekranda göründüğü adlarla, ör. 'ekrandaki "
+                 "Impossible şarkısına tıkla'."},
         "target": {"type": "string", "enum": ["browser", "desktop"],
                    "description": "browser: kullanıcının tarayıcısında öndeki sekme | desktop: masaüstü penceresi."},
         "url": {"type": "string", "description": "browser için: önce bu adrese git. Boş: öndeki sekmede kal."},
         "title": {"type": "string", "description": "desktop için pencere başlığından bir parça. Boş: öndeki pencere."},
         "inputs": {"type": "object", "additionalProperties": {"type": "string"},
                    "description": "Doldurulacak alanlar: alan adından parça -> yazılacak metin, ör. {\"ara\": \"lofi\"}."},
+        "notes": {"type": "string", "description": "Karar motoruna bağlam: kurallar, strateji, ekranda neyin ne "
+                  "olduğu, kaçınılacaklar (kısa, tercihen İngilizce)."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 20."},
     }, ["goal", "target"])
     risk = COMPUTER
 
     def run(self, ctx: ToolContext, goal: str, target: str, url: str | None = None, title: str | None = None,
-            inputs: dict[str, str] | None = None, max_steps: int = 20) -> ToolResult:
-        from alice.reflex.loop import ReflexLoop, make_text_writer
+            inputs: dict[str, str] | None = None, notes: str = "", max_steps: int = 20) -> ToolResult:
+        from alice.config import alice_home
+        from alice.reflex.agent import ScreenAgent, make_translator
+        from alice.reflex.loop import make_text_writer
         from alice.reflex.observers import BrowserObserver, DesktopObserver
 
         if ctx.decider is None or ctx.router is None:
             raise ToolError("karar motoru yapılandırılmamış")
         observer = BrowserObserver(ctx, url) if target == "browser" else DesktopObserver(ctx, title)
-        loop = ReflexLoop(observer, ctx.decider, make_text_writer(ctx.router),
-                          min_confidence=float(ctx.config.decider.get("min_confidence", 0.55)), emit=ctx.emit)
-        res = loop.run(goal, max_steps=max_steps, inputs=inputs)
+        loop = ScreenAgent(observer, ctx.decider, make_text_writer(ctx.router), make_translator(ctx.router),
+                           emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
+        res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "")
         # Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
         # başardı" diyordu (needs_help sonucunda bile).
         verdict = {"done": "SONUÇ: hedef yapıldı.",

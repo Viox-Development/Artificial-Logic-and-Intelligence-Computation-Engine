@@ -45,6 +45,8 @@ class Choice:
 @dataclass
 class Noul:
     instructions: str
+    # İsteğe bağlı: "true" ve "false"un somut tarifleri (TypeSafe: false'u "değil X" yerine bir durum olarak yaz).
+    criteria: dict[str, str] | None = None
 
 
 @dataclass
@@ -183,6 +185,8 @@ class JevEngine:
         for k, q in questions.items():
             if isinstance(q, Noul):
                 wire[k] = {"type": "noul", "instructions": q.instructions}
+                if q.criteria:
+                    wire[k]["criteria"] = dict(q.criteria)
             elif isinstance(q, Box):
                 wire[k] = {"type": "box", "instructions": q.instructions}
             else:
@@ -280,7 +284,9 @@ class LLMEngine:
                 lines.append(f'- "{k}" (score): {q.instructions}\n  Levels:\n{lv}')
                 shape[k] = {"score": "<level number>", "confidence": "<0..1>"}
             else:
-                lines.append(f'- "{k}" (yes/no): {q.instructions}')
+                crit = getattr(q, "criteria", None) or {}
+                extra = "".join(f"\n  {side}: {desc}" for side, desc in crit.items())
+                lines.append(f'- "{k}" (yes/no): {q.instructions}{extra}')
                 shape[k] = {"yes_probability": "<0..1>"}
         user = (
             f"STATE:\n{state}\n\nQUESTIONS:\n" + "\n".join(lines)

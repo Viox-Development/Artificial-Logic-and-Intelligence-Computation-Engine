@@ -190,7 +190,11 @@ def test_seconds_until_reset_uses_pacific_midnight_for_gemini():
     assert abs(seconds_until_reset("groq", now=now) - (18 * 3600 + 60)) < 1
 
 
-def test_daily_quota_survives_restart(tmp_path):
+def test_daily_quota_survives_restart(tmp_path, monkeypatch):
+    from alice.providers import router as router_mod
+
+    # Gece yarısına (UTC) birkaç dakika kala koşunca kota zaten sıfırlanmış sayılıyordu: süreyi sabitle.
+    monkeypatch.setattr(router_mod, "seconds_until_reset", lambda *a, **k: 3600.0)
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
     a = FakeProvider("a", [ProviderError("quota", "per day", 429, daily=True)])
     b = FakeProvider("b", ["b1", "b2"])

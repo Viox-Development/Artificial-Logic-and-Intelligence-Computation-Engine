@@ -203,6 +203,17 @@ def check_update_health(cfg) -> Check:
     return Check(name, "ok", "sorun yok" + (f" ({len(bad)} bozuk sürüm atlandı)" if bad else ""))
 
 
+def check_ocr(cfg) -> Check:
+    name = "Ekran okuma (OCR)"
+    from alice.reflex import perceive
+
+    ok, why = perceive.ocr_available()
+    if ok:
+        return Check(name, "ok", "Windows OCR hazır: refleks ekrandaki yazıları da okur")
+    return Check(name, "off", f"{why}; refleks sadece erişilebilirlik ağacıyla çalışır",
+                 "pip install -e .[computer]" if "paket" in why else "")
+
+
 def run_all(cfg, cwd=None, network: bool = True) -> list[Check]:
     return [
         _safe("Google araması", lambda: check_grounding(cfg, network)),
@@ -214,6 +225,7 @@ def run_all(cfg, cwd=None, network: bool = True) -> list[Check]:
         _safe("Komut sandbox'ı", lambda: check_sandbox(cfg)),
         _safe("Dönüşte karşılama", lambda: check_greeting(cfg)),
         _safe("Kurallar, hook, skill", lambda: check_rules(cfg, cwd)),
+        _safe("Ekran okuma (OCR)", lambda: check_ocr(cfg)),
         _safe("Güncelleme sağlığı", lambda: check_update_health(cfg)),
     ]
 

@@ -107,20 +107,22 @@ def test_task_empty_answer(ctx):
 
 @pytest.fixture
 def fake_reflex(monkeypatch):
+    import alice.reflex.agent as agent_mod
     import alice.reflex.loop as loop_mod
     import alice.reflex.observers as obs_mod
 
     rec: dict = {}
 
-    class FakeLoop:
-        def __init__(self, observer, decider, writer, min_confidence, emit):
-            rec.update(observer=observer, decider=decider, writer=writer, min_conf=min_confidence, emit=emit)
+    class FakeAgent:
+        def __init__(self, observer, decider, writer, translate, emit, trace_path):
+            rec.update(observer=observer, decider=decider, writer=writer, translate=translate, trace=trace_path)
 
-        def run(self, goal, max_steps, inputs):
-            rec.update(goal=goal, max_steps=max_steps, inputs=inputs)
+        def run(self, goal, max_steps, inputs, notes):
+            rec.update(goal=goal, max_steps=max_steps, inputs=inputs, notes=notes)
             return SimpleNamespace(report=lambda: "reflex raporu")
 
-    monkeypatch.setattr(loop_mod, "ReflexLoop", FakeLoop)
+    monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
+    monkeypatch.setattr(agent_mod, "make_translator", lambda router: ("translate", router))
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda router: ("writer", router))
     monkeypatch.setattr(obs_mod, "BrowserObserver", lambda ctx, url: ("browser", url))
     monkeypatch.setattr(obs_mod, "DesktopObserver", lambda ctx, title: ("desktop", title))
@@ -142,17 +144,14 @@ def test_reflex_browser(ctx, fake_reflex):
     assert fake_reflex["observer"] == ("browser", "https://x")
     assert fake_reflex["decider"] == "dec" and fake_reflex["writer"] == ("writer", "rtr")
     assert fake_reflex["goal"] == "tıkla" and fake_reflex["max_steps"] == 4
-    assert fake_reflex["inputs"] == {"ara": "abc"}
-    assert fake_reflex["min_conf"] == pytest.approx(float(ctx.config.decider.get("min_confidence", 0.55)))
+    assert fake_reflex["inputs"] == {"ara": "abc"} and fake_reflex["translate"] == ("translate", "rtr")
+    assert fake_reflex["trace"].name == "reflex-trace.jsonl" and fake_reflex["notes"] == ""
 
 
-def test_reflex_desktop_and_min_confidence_from_config(workdir, fake_reflex):
-    cfg = make_config({"brain": ["a:m"]})
-    cfg.data["decider"]["min_confidence"] = "0.8"
-    ctx = ToolContext(cwd=workdir, config=cfg, decider="d", router="r")
-    meta.Reflex().run(ctx, goal="g", target="desktop", title="Not Defteri")
-    assert fake_reflex["observer"] == ("desktop", "Not Defteri")
-    assert fake_reflex["min_conf"] == 0.8
+def test_reflex_desktop_with_notes(workdir, fake_reflex):
+    ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}), decider="d", router="r")
+    meta.Reflex().run(ctx, goal="g", target="desktop", title="Not Defteri", notes="Rules: cards go right")
+    assert fake_reflex["observer"] == ("desktop", "Not Defteri") and fake_reflex["notes"] == "Rules: cards go right"
     assert fake_reflex["max_steps"] == 20 and fake_reflex["inputs"] is None
 
 

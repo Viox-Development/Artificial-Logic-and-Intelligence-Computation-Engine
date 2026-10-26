@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+from alice.reflex.perceive import Item, Screen, build_items, ocr_available, ocr_image
 from alice.tools.base import ToolContext
 
 EDITABLE_TAGS = {"input", "textarea"}
@@ -63,6 +65,24 @@ class Observer(Protocol):
     def press_enter(self) -> None: ...
 
 
+ACTIONS = ("click", "double_click", "right_click", "type_text", "press_key", "drag", "scroll_down", "scroll_up",
+           "wait")
+# Jev'in seçebileceği tuşlar (kapalı küme: Jev metin üretmez). Hedefte başka bir kısayol yazıyorsa o da eklenir.
+KEYS = ("enter", "escape", "tab", "space", "backspace", "delete", "up", "down", "left", "right", "pageup",
+        "pagedown", "home", "end", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z", "ctrl+s", "ctrl+f", "f5")
+WAIT_SECONDS = 1.0
+
+
+def _browser_key(keys: str) -> str:
+    """'ctrl+s' -> 'Control+s' (Playwright adları)."""
+    names = {"ctrl": "Control", "alt": "Alt", "shift": "Shift", "enter": "Enter", "escape": "Escape", "tab": "Tab",
+             "space": " ", "backspace": "Backspace", "delete": "Delete", "up": "ArrowUp", "down": "ArrowDown",
+             "left": "ArrowLeft", "right": "ArrowRight", "pageup": "PageUp", "pagedown": "PageDown", "home": "Home",
+             "end": "End", "win": "Meta", "cmd": "Meta"}
+    return "+".join(names.get(p, p.upper() if len(p) > 1 and p.startswith("f") else p)
+                    for p in keys.lower().replace(" ", "").split("+") if p)
+
+
 class BrowserObserver:
     kind = "browser"
 
@@ -117,6 +137,44 @@ class BrowserObserver:
         self.b.page.mouse.wheel(0, 700 if down else -700)
         self.b.page.wait_for_timeout(300)
 
+    def screen(self, goal: str = "") -> Screen:
+        """Sayfanın öğeleri (DOM'dan; konumları bilinmez) ve görünen alanın görüntüsü."""
+        ob = self.observe()
+        ax = [Item("", "dom", e.kind, e.label, None, e.value, e.editable,
+                   "" if e.in_view else "below, needs scrolling", ref=e.id) for e in ob.elements]
+        try:
+            img = self.snapshot()
+        except Exception:  # noqa: BLE001 - görüntü yedek içindir
+            img = None
+        return Screen(ob.title, ob.location, build_items(ax, [], goal), image=img)
+
+    def act(self, action: str, item: Item | None = None, text: str = "", keys: str = "",
+            drop: Item | None = None) -> None:
+        page = self.b.page
+        if action in ("click", "double_click", "right_click", "type_text", "drag") and item is None:
+            raise ValueError(f"{action} için öğe gerekli")
+        if action == "click":
+            self.click(item.ref)
+        elif action == "double_click":
+            self.b.locator(item.ref).dblclick(timeout=8000)
+        elif action == "right_click":
+            self.b.locator(item.ref).click(button="right", timeout=8000)
+        elif action == "type_text":
+            self.type(item.ref, text, submit=False)
+        elif action == "press_key":
+            page.keyboard.press(_browser_key(keys))
+        elif action == "drag":
+            if drop is None:
+                raise ValueError("sürüklemek için hedef öğe gerekli")
+            self.b.locator(item.ref).drag_to(self.b.locator(drop.ref), timeout=8000)
+        elif action in ("scroll_down", "scroll_up"):
+            self.scroll(action == "scroll_down")
+        elif action == "wait":
+            page.wait_for_timeout(int(WAIT_SECONDS * 1000))
+        else:
+            raise ValueError(f"bilinmeyen eylem: {action}")
+        page.wait_for_timeout(300)
+
     def snapshot(self):
         """Görünen sayfa alanının görüntüsü (Jev'e gösterilir)."""
         import io
@@ -146,6 +204,92 @@ class DesktopObserver:
         self.title = window_title
         self.goal = goal
         self._rect: tuple[int, int, int, int] | None = None  # son ekran görüntüsünün ekrandaki yeri
+
+    def screen(self, goal: str = "") -> Screen:
+        """Pencerenin erişilebilirlik öğeleri + ekrandaki yazılar (OCR), pencereye göre kesirli konumlarıyla."""
+        from alice.tools.desktop import collect_ui_elements, focus_window
+
+        self.goal = goal or self.goal
+        if self.title:
+            try:
+                focus_window(self.title)  # görüntü öndeki pencereden alınıyor
+            except Exception:  # noqa: BLE001 - başlıkla bulunamazsa öndeki pencereyle devam
+                pass
+        img = self.snapshot()
+        title, raw = collect_ui_elements(self.ctx, self.title, limit=200)
+        ax: list[Item] = []
+        for i in raw:
+            if not i["enabled"] or is_window_chrome(i["role"], i["name"], self.goal):
+                continue
+            ax.append(Item("", "ax", i["role"], i["name"] or i["auto_id"], self._frac(i.get("rect")), i["value"],
+                           i["role"] in EDITABLE_ROLES, ref=i["id"]))
+        lines: list[tuple[str, tuple[float, float, float, float]]] = []
+        if img is not None and ocr_available()[0]:
+            try:
+                lines = ocr_image(img)
+            except Exception:  # noqa: BLE001 - OCR olmazsa ağaçla devam
+                lines = []
+        return Screen(title, "desktop", build_items(ax, lines, self.goal), image=img)
+
+    def _frac(self, rect: Any) -> tuple[float, float, float, float] | None:
+        """Ekran pikseli (sol, üst, sağ, alt) -> son görüntülenen pencereye göre 0-1."""
+        if not rect or self._rect is None:
+            return None
+        left, top, w, h = self._rect
+        l, t, r, b = rect
+        fr = ((l - left) / w, (t - top) / h, (r - left) / w, (b - top) / h)
+        if fr[2] <= 0 or fr[3] <= 0 or fr[0] >= 1 or fr[1] >= 1:
+            return None  # pencerenin dışında
+        return tuple(min(1.0, max(0.0, v)) for v in fr)  # type: ignore[return-value]
+
+    def _point(self, item: Item) -> tuple[int, int]:
+        if item.center is None or self._rect is None:
+            raise ValueError(f"'{item.label}' öğesinin ekrandaki yeri bilinmiyor")
+        left, top, w, h = self._rect
+        return round(left + item.center[0] * w), round(top + item.center[1] * h)
+
+    def act(self, action: str, item: Item | None = None, text: str = "", keys: str = "",
+            drop: Item | None = None) -> None:
+        from alice.tools.computer import _pyautogui, press_keys, type_text
+        from alice.tools.desktop import ui_act
+
+        if action in ("click", "double_click", "right_click", "type_text", "drag") and item is None:
+            raise ValueError(f"{action} için öğe gerekli")
+        pg = _pyautogui()
+        if action == "click":
+            if item.source.startswith("ax") and item.ref is not None:
+                ui_act(self.ctx, item.ref, "click")  # erişilebilirlik üzerinden: üstünde açılır pencere olsa da
+            else:
+                pg.click(*self._point(item))
+        elif action == "double_click":
+            pg.doubleClick(*self._point(item))
+        elif action == "right_click":
+            pg.rightClick(*self._point(item))
+        elif action == "type_text":
+            if item.source.startswith("ax") and item.editable and item.ref is not None:
+                ui_act(self.ctx, item.ref, "set_text", text)
+            else:
+                pg.click(*self._point(item))
+                time.sleep(0.15)
+                type_text(text)
+        elif action == "press_key":
+            press_keys(keys)
+        elif action == "drag":
+            if drop is None:
+                raise ValueError("sürüklemek için hedef öğe gerekli")
+            x, y = self._point(item)
+            tx, ty = self._point(drop)
+            pg.moveTo(x, y)
+            pg.dragTo(tx, ty, duration=0.5, button="left")
+        elif action in ("scroll_down", "scroll_up"):
+            if self._rect is not None:
+                left, top, w, h = self._rect
+                pg.moveTo(left + w // 2, top + h // 2)
+            pg.scroll(-600 if action == "scroll_down" else 600)
+        elif action == "wait":
+            time.sleep(WAIT_SECONDS)
+        else:
+            raise ValueError(f"bilinmeyen eylem: {action}")
 
     def observe(self) -> Observation:
         from alice.tools.desktop import collect_ui_elements

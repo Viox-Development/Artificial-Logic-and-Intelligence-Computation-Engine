@@ -49,7 +49,7 @@ ZOOM_SPAN = (0.3, 0.4)  # yakın görüntü en az pencerenin bu kadarı (genişl
 # "bitti mi?" sorusu tıklananın ne olduğunu bilmediği için düşük kalıyor, aynı yere üç kez tıklanıp "yapılamadı"
 # deniyordu. Sonraki adım içeren hedefler (yaz, gönder, sonra...) bu kısa yoldan geçmez.
 _CLICK_GOAL = re.compile(r"tıkla|tikla|click|\bbas\b|basar|\bseç\b|seçer|\baç\b", re.I)
-_MULTI_STEP = re.compile(r"\byaz|gir\b|doldur|gönder|kaydet|sonra|ardından|\bve\b.*(tıkla|yaz|seç)|then|type|"
+_MULTI_STEP = re.compile(r"\byaz|gir\b|doldur|gönder|kaydet|sonra|ardından|\bve\b|,|then|\band\b|type|"
                          r"\bara\b|arat|indir|kopyala|yapıştır", re.I)
 
 

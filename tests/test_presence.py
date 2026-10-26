@@ -54,7 +54,8 @@ def test_silent_without_news_after_first_greeting_and_respects_gap_and_quiet():
     assert g.greet(7200) .startswith("Günaydın")  # günün ilk dönüşü: kısa selam
     assert g.greet(7200) == ""  # aynı gün, söyleyecek bir şey yok: sus
     assert len(sent) == 1
-    g2 = Greeter(cfg(quiet_hours="00:00-23:59"), lambda n: True, idle=lambda: 0.0)
+    g2 = Greeter(cfg(quiet_hours="00:00-23:59"), lambda n: True, idle=lambda: 0.0,
+                 clock=lambda: datetime(2026, 10, 22, 12))  # 23:59-00:00 arası koşunca sessiz saat dışında kalıyordu
     g2.away_since = time.time() - 9000
     assert not g2.tick()  # sessiz saatler
     g3 = Greeter(cfg(), lambda n: True, idle=lambda: 0.0)

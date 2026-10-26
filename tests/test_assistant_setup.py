@@ -20,7 +20,7 @@ from tests.conftest import FakeProvider, make_config
 def test_doctor_checks_run_offline(workdir):
     checks = doctor.run_all(make_config({"brain": ["a:m"]}), workdir, network=False)
     names = [c.name for c in checks]
-    assert len(checks) == 10 and "Gmail" in names and "Komut sandbox'ı" in names
+    assert len(checks) == 11 and "Gmail" in names and "Komut sandbox'ı" in names
     assert all(c.status in ("ok", "warn", "off", "fail") for c in checks)
     gm = next(c for c in checks if c.name == "Gmail")
     assert gm.status == "off" and "alice setup google" in gm.fix
@@ -31,7 +31,7 @@ def test_doctor_one_broken_check_does_not_stop_others(monkeypatch, workdir):
     monkeypatch.setattr(doctor, "check_memory", lambda cfg: 1 / 0)
     checks = doctor.run_all(make_config({"brain": ["a:m"]}), workdir, network=False)
     mem = next(c for c in checks if c.name == "Hafıza")
-    assert mem.status == "fail" and "ZeroDivisionError" in mem.detail and len(checks) == 10
+    assert mem.status == "fail" and "ZeroDivisionError" in mem.detail and len(checks) == 11
 
 
 def test_doctor_tests_providers_even_with_auto_roles(monkeypatch):
@@ -119,7 +119,7 @@ def test_assistant_tab_status_settings_rules_and_gmail(app, workdir, isolated_ho
     persist_allow(workdir, "run_command(git status*)")
     store.save("gmail:okul", access_token="t", expires_at=time.time() + 3600, email="h@okul.edu")
     d = client.get("/api/assistant").json()
-    assert len(d["checks"]) == 10 and d["settings"]["agent.sandbox"] == "auto"
+    assert len(d["checks"]) == 11 and d["settings"]["agent.sandbox"] == "auto"
     assert {"kind": "allow", "rule": "run_command(git status*)", "source": "project"} in d["rules"]
     assert d["gmail"] == [{"account": "okul", "email": "h@okul.edu"}] and d["google_ready"] is False
 
