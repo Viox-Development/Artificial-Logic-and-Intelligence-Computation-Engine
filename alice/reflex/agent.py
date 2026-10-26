@@ -50,6 +50,13 @@ ACTION_CRITERIA = {
 }
 VISUAL_ACTION = "click_unlisted"
 VISUAL_DRAG = "drag_unlisted"
+
+
+def grab_box(verb: str) -> str:
+    """Kutunun nereyi göstermesi gerektiği: şeyin görünen ve üstü kapalı olmayan kısmı. Üst üste binmiş kartlarda Q♠'nin
+    kutusunun ortası üstündeki J♥'ye düşüyor, J♥ tek başına taşınamadığı için hiçbir şey olmuyordu."""
+    return (f"the visible, uncovered part of the thing in `screen` that should be {verb} next to work toward `goal`, "
+            f"where it can be {verb} without touching anything lying on top of it")
 VISUAL_DRAG_CRITERION = ("Drag something visible in `screen` that is not in `items`, such as a card, a game piece or a "
                          "unit, and drop it somewhere else in `screen`.")
 VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`, such as an icon, a picture, "
@@ -182,11 +189,11 @@ class ScreenAgent:
             q["field"] = Choice("If text is typed next, into which input field should it be typed for `goal`?", fields)
         if see:
             q["target_visible"] = Noul("Is the thing `goal` needs to click next visible in `screen`?")
-            q["target"] = Box("the thing in `screen` that should be clicked next to work toward `goal`")
+            q["target"] = Box(grab_box("clicked"))
             if VISUAL_DRAG in kinds:
                 # Kart, taş, birim yazı değil: listede yoklar, sürüklemek için de ekrandan bulunmaları gerekiyor.
                 q["drag_visible"] = Noul("Is the thing `goal` needs to drag next visible in `screen`?")
-                q["drag_source"] = Box("the thing in `screen` that should be dragged next to work toward `goal`")
+                q["drag_source"] = Box(grab_box("grabbed and dragged"))
                 q["drop_place"] = Box("the place in `screen` where the dragged thing should be dropped for `goal`")
         if see and compare:
             # "Tamamen başarıldı mı?" soyut kaldı (Solitaire'de kart çekildiği halde 0.1). Gözlenebilir tek yargı:
@@ -336,7 +343,7 @@ class ScreenAgent:
             if missing >= MISSING_MIN and choice in ("click", "double_click", "right_click", "type_text", "drag"):
                 choice = (VISUAL_DRAG if choice == "drag" and "drag_source" in a else VISUAL_ACTION) if see else ""
             if choice == VISUAL_DRAG:
-                res = self._visual_drag(step, scr, a, log, history)
+                res = self._visual_drag(step, scr, en, a, log, history)
                 if isinstance(res, ReflexResult):
                     return res
                 time.sleep(self.settle)
@@ -456,7 +463,7 @@ class ScreenAgent:
         history.append(f"clicked something visible on screen at {place(fx, fy)}")
         return None
 
-    def _visual_drag(self, step: int, scr: Screen, a: dict[str, Any], log: list[str],
+    def _visual_drag(self, step: int, scr: Screen, goal: str, a: dict[str, Any], log: list[str],
                      history: list[str]) -> ReflexResult | None:
         """Listede olmayan bir şeyi (kart, taş, birim) ekranda görülen yerden alıp görülen yere bırak."""
         seen = a["drag_visible"].value if "drag_visible" in a else 0.0
@@ -469,6 +476,11 @@ class ScreenAgent:
             return min(1.0, (b["left"] + b["right"]) / 2 * sx), min(1.0, (b["top"] + b["bottom"]) / 2 * sy)
 
         (fx, fy), (tx, ty) = center(a["drag_source"].value), center(a["drop_place"].value)
+        b = a["drag_source"].value
+        box = (min(1.0, b["left"] * sx), min(1.0, b["top"] * sy), min(1.0, b["right"] * sx), min(1.0, b["bottom"] * sy))
+        close = self._zoom(goal, scr.image, box, "grabbed and dragged")  # tutulacak yere yakından bak
+        if close is not None and close[0] >= VISIBLE_MIN:
+            fx, fy = close[1], close[2]
         try:
             self.obs.drag_at(fx, fy, tx, ty)
         except Exception as e:  # noqa: BLE001
@@ -479,7 +491,8 @@ class ScreenAgent:
         history.append(f"dragged something visible on screen from {place(fx, fy)} to {place(tx, ty)}")
         return None
 
-    def _zoom(self, goal: str, img: Any, box: tuple[float, float, float, float]) -> tuple[float, float, float] | None:
+    def _zoom(self, goal: str, img: Any, box: tuple[float, float, float, float],
+              verb: str = "clicked") -> tuple[float, float, float] | None:
         l, t, r, b = box
         w, h = img.size
         hw, hh = max((r - l) * 1.5, 0.15), max((b - t) * 1.5, 0.2)
@@ -488,8 +501,9 @@ class ScreenAgent:
         crop = img.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
         try:
             d = self.decider.decide({"goal": goal, "screen": ZOOM_REF, "note": "`screen` is a zoomed-in part of the window"},
-                                    {"target_visible": Noul("Is the thing `goal` needs to click next visible in `screen`?"),
-                                     "target": Box("the thing in `screen` that should be clicked next to work toward `goal`")},
+                                    {"target_visible": Noul(f"Is the thing that should be {verb} next for `goal` "
+                                                            "visible in `screen`?"),
+                                     "target": Box(grab_box(verb))},
                                     images={ZOOM_REF: prepare_image(crop)})
         except DeciderError:
             return None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolResult, obj
@@ -9,6 +10,8 @@ from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolR
 STATE_KEY = "game_session"
 DEFAULT_PLAY = "Make the best legal next move."
 BOARD_SHOWN = 2500  # karakter: sonuçta gösterilen tahta
+SECOND_READ_TEMPERATURE = 0.5  # masanın ikinci, bağımsız okuması
+AFTER_MOVE_WAIT = 1.2  # sn: hamleden sonra masayı okumadan önce (animasyon)
 
 
 class Game(Tool):
@@ -80,12 +83,12 @@ class Game(Tool):
 
     # ------------------------------------------------------------------ modeller
     @staticmethod
-    def _chat(ctx: ToolContext, role: str = "fast", max_tokens: int = 700):
+    def _chat(ctx: ToolContext, role: str = "fast", max_tokens: int = 700, temperature: float = 0):
         if ctx.router is None:
             return None
 
         def chat(messages: list[dict[str, Any]]) -> str:
-            return ctx.router.chat(role, messages, temperature=0, max_tokens=max_tokens).text
+            return ctx.router.chat(role, messages, temperature=temperature, max_tokens=max_tokens).text
 
         return chat
 
@@ -115,10 +118,10 @@ class Game(Tool):
         return (f"ana model ekrana bakıp oyunu tanıdı: {identified or 'bilinmiyor'}; {n} başlangıç dersi "
                 "(kurallar dahil, doğrulanmamış)\n")
 
-    def _read_board(self, ctx: ToolContext, sess: Any, image: Any) -> str:
+    def _read_board(self, ctx: ToolContext, sess: Any, image: Any, temperature: float = 0) -> str:
         from alice.reflex.game import look_board
 
-        return look_board(self._chat(ctx, "vision", 1500), sess.name, image, sess.lessons())
+        return look_board(self._chat(ctx, "vision", 1500, temperature), sess.name, image, sess.lessons())
 
     def _look(self, ctx: ToolContext, sess: Any) -> str:
         try:
@@ -126,6 +129,15 @@ class Game(Tool):
         except Exception as e:  # noqa: BLE001
             return f"(ekran okunamadı: {e})"
         return self._read_board(ctx, sess, img)
+
+    def _look_twice(self, ctx: ToolContext, sess: Any) -> tuple[str, str]:
+        """Aynı kareyi iki kez oku, ikincisini biraz çeşitlilikle (sıcaklık 0'da aynı cevap gelir, bilgi katmaz);
+        planlayıcı sadece iki okumanın uyuştuğu taşlara dayanır."""
+        try:
+            img = self._observer(ctx, sess, "").screen("").image
+        except Exception as e:  # noqa: BLE001
+            return f"(ekran okunamadı: {e})", ""
+        return self._read_board(ctx, sess, img), self._read_board(ctx, sess, img, SECOND_READ_TEMPERATURE)
 
     # ------------------------------------------------------------------ oynama
     def _play(self, ctx: ToolContext, sess: Any, goal: str, max_steps: int) -> ToolResult:
@@ -137,9 +149,9 @@ class Game(Tool):
         if not any(r.get("kind") == "rule" for r in sess.lessons()):
             # Başlangıçta menü vardı ya da oyun tanınamadı; masa/harita şimdi görünüyorsa ana model tekrar tanısın.
             self._discover(ctx, sess)
-        board = self._look(ctx, sess)
+        board, board2 = self._look_twice(ctx, sess)
         recent = [f"turn {t['turn']}: {t['summary']}" for t in sess.turns()[-3:] if t.get("summary")]
-        plan = plan_move(self._chat(ctx, "brain", 600), sess.name, goal, board, sess.lessons(), recent)
+        plan = plan_move(self._chat(ctx, "brain", 600), sess.name, goal, board, sess.lessons(), recent, board2)
         if not plan:
             return ToolResult(f"hamle seçilemedi (tahta ya da plan yok).\ntahta:\n{board[:BOARD_SHOWN]}", is_error=True)
         # Planlayıcının dayandığı ama henüz bilinmeyen kurallar: doğrulanmamış kural olarak yazılır, hamlenin sonucu
@@ -168,7 +180,12 @@ class Game(Tool):
             if intent else ""
         res = agent.run(goal, max_steps=max_steps,
                         notes=lambda scr: sess.context([i.label for i in scr.items]) + why)
-        board_after = self._look(ctx, sess) if intent else ""  # kart/taş yazı değil: beklenen oldu mu, görerek
+        board_after = ""
+        if intent:
+            # Kart/taş yazı değil: beklenen oldu mu, görerek. Önce animasyon bitsin: Solitaire'de kart çekilmişti ama
+            # masa açılma animasyonu bitmeden okunup "değişmedi" denmişti.
+            time.sleep(AFTER_MOVE_WAIT)
+            board_after = self._look(ctx, sess)
         visible = [i.label for i in (agent.last.items if agent.last else [])]
         seen = visible + [t for e in agent.evidence for t in e.get("appeared", []) + e.get("disappeared", [])]
         summary, ops = reflect(self._chat(ctx), sess.name, goal, res.status, res.reason, agent.evidence,

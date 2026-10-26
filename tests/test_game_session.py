@@ -380,6 +380,7 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     from alice.tools.game import STATE_KEY, Game
 
     monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
+    monkeypatch.setattr("alice.tools.game.AFTER_MOVE_WAIT", 0)
     made = []
 
     class Obs:
@@ -506,7 +507,9 @@ def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path)
     from alice.tools.game import Game
 
     monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
-    boards = iter(["Column 3: 4 of clubs. Column 6: 5 of diamonds.", "Column 6: 5 of diamonds, 4 of clubs."])
+    monkeypatch.setattr("alice.tools.game.AFTER_MOVE_WAIT", 0)
+    boards = iter(["Column 3: 4 of clubs. Column 6: 5 of diamonds.", "Column 3: 4 of spades. Column 6: 5 of diamonds.",
+                   "Column 6: 5 of diamonds, 4 of clubs."])
 
     class Obs:
         def __init__(self, *a, **k):
@@ -530,13 +533,14 @@ def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path)
 
     monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
     monkeypatch.setattr(agent_mod, "make_translator", lambda router: None)
-    calls = []
+    calls, planned = [], []
 
     def chat(role, msgs, **k):
         calls.append(role)
         if role == "vision":
             return SimpleNamespace(text=next(boards))
         if "choose the next single move" in msgs[0]["content"]:
+            planned.append(msgs[1]["content"])
             return SimpleNamespace(text='{"move": "Click the 4 of clubs", "why": "l1", "expect": "4 moves onto 5", '
                                         '"rules_used": ["l1"]}')
         return SimpleNamespace(text='{"summary": "Moved the 4 of clubs onto the 5 of diamonds.", "confirm": ["l1"]}')
@@ -551,7 +555,8 @@ def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path)
     r = tool.run(ctx, "play").text
     goal, notes = runs[0]
     assert goal == "Click the 4 of clubs" and "Expected: 4 moves onto 5" in notes  # Jev planlanan hamleyi yapıyor
-    assert calls == ["vision", "brain", "vision", "fast"]  # bak, planla, (oyna), tekrar bak, kıyasla
+    assert calls == ["vision", "vision", "brain", "vision", "fast"]  # iki okuma, planla, (oyna), tekrar bak, kıyasla
+    assert "Second, independent reading of the same board:\nColumn 3: 4 of spades" in planned[0]
     assert "hamle: Click the 4 of clubs" in r and "tahta şimdi:\nColumn 6: 5 of diamonds, 4 of clubs." in r
     assert "1 doğrulandı" in r
     (rule,) = [x for x in GameSession.open(tmp_path, "Solitaire").lessons() if x["kind"] == "rule"]
@@ -568,6 +573,7 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
     from alice.tools.game import Game
 
     monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
+    monkeypatch.setattr("alice.tools.game.AFTER_MOVE_WAIT", 0)
     monkeypatch.setattr(obs_mod, "DesktopObserver", lambda *a, **k: SimpleNamespace(
         screen=lambda goal="": SimpleNamespace(items=[], image=frame())))
     made = []
@@ -640,9 +646,14 @@ def test_agent_stops_after_first_change_and_drags_what_it_sees():
 
         def __init__(self, visible=0.9):
             self.visible = visible
-            self.kinds = []
+            self.kinds, self.zoomed = [], []
 
         def decide(self, state, questions, images=None):
+            if "action" not in questions:  # yakından bakış: tutulacak (üstü açık) kısım
+                self.zoomed.append(questions["target"].instructions)
+                return Decision({"target_visible": Answer("noul", self.visible, 0.9),
+                                 "target": Answer("box", {"left": 0.0, "top": 0.0, "right": 0.1, "bottom": 0.1}, 0.9)},
+                                "fake", 0.01)
             self.kinds.append(set(questions["action"].criteria))
             box = {"left": 0.1, "top": 0.1, "right": 0.2, "bottom": 0.2}
             drop = {"left": 0.5, "top": 0.5, "right": 0.6, "bottom": 0.6}
@@ -659,6 +670,8 @@ def test_agent_stops_after_first_change_and_drags_what_it_sees():
     res = agent.run("Drag the 4 of clubs onto the 5 of diamonds", max_steps=5)
     assert res.status == "acted" and len(board.drags) == 1  # sürüklendi, ekran değişti, durdu
     assert "drag_unlisted" in brain.kinds[0]
+    assert "uncovered part" in brain.zoomed[0] and "grabbed" in brain.zoomed[0]  # tutulacak yere yakından bakıldı
+    assert board.drags[0][:2] != (0.15, 0.15)  # kaba kutunun ortası değil, yakından bulunan tutma noktası
     assert agent.evidence[0]["action"].startswith("dragged something visible on screen from")
 
     board = Board()

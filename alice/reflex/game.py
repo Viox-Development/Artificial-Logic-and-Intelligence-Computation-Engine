@@ -315,21 +315,25 @@ def look_board(ask: Ask | None, game: str, image: Any, lessons: list[dict[str, A
 
 
 def plan_move(chat: Chat | None, game: str, goal: str, board: str, lessons: list[dict[str, Any]],
-              recent: list[str]) -> dict[str, Any]:
+              recent: list[str], board2: str = "") -> dict[str, Any]:
     """Tahta + kurallar + hedef -> tek somut hamle: ekranda ne yapılacağı (Jev'in uygulayacağı kısa hedef), neden ve ne
     değişmesi beklendiği. Kural akıl yürütme ister: Jev oynanabilir kartı seçemiyordu (7♣'e tıkladı, 4♣ oynanırdı).
     Karar ve gerekçe açık yazılır ki yansıtma beklenenle olanı kıyaslayıp kuralı düzeltebilsin."""
     if chat is None or not board:
         return {}
     others = "\n".join(f"- {r['do']}" for r in lessons if r.get("kind") != "rule")[:3000]
-    facts = (f"Game: {game}\nWhat the player wants now: {goal}\n\nBoard:\n{board}\n\nRules known so far:\n"
+    # İki bağımsız okuma: görüntü modeli bazen masayı yanlış okuyor ("4♦, 4♣'nin üstünde"); imkânsız hamle denendi.
+    second = f"\n\nSecond, independent reading of the same board:\n{board2}" if board2 and board2 != board else ""
+    facts = (f"Game: {game}\nWhat the player wants now: {goal}\n\nBoard:\n{board}{second}\n\nRules known so far:\n"
              f"{rule_text(lessons) or '(none yet)'}\n\nOther lessons:\n{others or '(none)'}"
              + ("\n\nRecent turns:\n" + "\n".join(recent) if recent else ""))
     try:
         out = chat([
             {"role": "system", "content":
              "You choose the next single move in a computer game for an agent that can click, drag, type and press "
-             "keys. Use the board description and the rules; check that the move is legal under them. Prefer moves "
+             "keys. Use the board description and the rules; check that the move is legal under them. If two "
+             "readings of the board are given, trust only what both agree on: when they disagree about a card or "
+             "piece your move needs, choose another move whose pieces both readings agree on. Prefer moves "
              "the rules mark as good; if no move is possible, say what the game offers instead (for example drawing "
              "a card or ending the turn). Describe the move as one short on-screen action naming what to click or "
              "drag by what is visible (for example: Click the 4 of clubs at the top of the third column). "
