@@ -114,6 +114,19 @@ def test_window_chrome_is_not_offered():
     assert is_window_chrome("Button", "Close", goal="close the settings overlay with the large X", title="Unciv")
     assert not is_window_chrome("Button", "Close", goal="Not Defteri'ni kapat", title="*merhaba, Not Defteri")
     assert not is_window_chrome("Button", "Close", goal="close the app", title="Unciv")
+    # UWP: adın sonuna pencere başlığı ekleniyor.
+    assert is_window_chrome("Button", "Close Solitaire & Casual Games", title="Solitaire & Casual Games")
+    assert is_window_chrome("Button", "Minimize Solitaire & Casual Games", title="Solitaire & Casual Games")
+    assert not is_window_chrome("Button", "Close Tab", title="Solitaire & Casual Games")
+
+
+def test_phantom_tabs_any_language():
+    from alice.reflex.observers import is_phantom_tab
+
+    doc = [(0, 30, 1000, 800)]
+    assert is_phantom_tab("TabItem", "about:blank - Bellek kullanımı - 17,9 MB", (5, 30, 40, 60), doc)
+    assert is_phantom_tab("TabItem", "about:blank - Bellek kullanımı - 17,9 MB", None, [], anywhere=True)
+    assert not is_phantom_tab("TabItem", "Gelen kutusu - Gmail", (5, 30, 40, 60), doc)
 
 
 class WebViewObserver:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -22,12 +23,19 @@ CHROME_GOAL = ("kapat", "küçült", "büyüt", "close", "minimize", "maximize",
 # WebView2 uygulamaları (ALICE'in kendisi) içerikle aynı yerde görünmez bir Chromium sekme şeridi bildiriyor:
 # "ALICE - Memory usage - 31.8 MB" sekmesi, "New Tab", "Close tab". Ekranda yoklar; tıklanırsa ne olacağı belirsiz.
 TAB_STRIP = {"new tab", "close tab", "yeni sekme", "sekmeyi kapat"}
+# Dilden bağımsız: "X - Memory usage - 31.8 MB", "about:blank - Bellek kullanımı - 17,9 MB" (Solitaire, Türkçe Windows).
+MEMORY_TAB_RX = re.compile(r" - [^-]+ - [\d.,]+ ?[kmg]b$")
 
 
-def is_phantom_tab(role: str, name: str, rect: Any, docs: list[Any]) -> bool:
-    """Sayfanın (Document) içinde kalan Chromium sekme şeridi öğesi mi? Gerçek tarayıcıda şerit sayfanın üstündedir."""
+def is_phantom_tab(role: str, name: str, rect: Any, docs: list[Any], anywhere: bool = False) -> bool:
+    """Sayfanın (Document) içinde kalan Chromium sekme şeridi öğesi mi? Gerçek tarayıcıda şerit sayfanın üstündedir.
+    anywhere (oyun oturumu): sekme şeridi hiçbir zaman seçenek değil, nerede olursa olsun atılır."""
     n = name.strip().lower()
-    if not ((role == "TabItem" and "memory usage" in n) or (role == "Button" and n in TAB_STRIP)) or not rect:
+    if not ((role == "TabItem" and MEMORY_TAB_RX.search(n)) or (role == "Button" and n in TAB_STRIP)):
+        return False
+    if anywhere:
+        return True
+    if not rect:
         return False
     t = 8  # piksel: şerit sayfanın kenarından birkaç piksel taşabiliyor
     return any(d[0] - t <= rect[0] and d[1] - t <= rect[1] and rect[2] <= d[2] + t and rect[3] <= d[3] + t
@@ -62,7 +70,11 @@ def foreground_title() -> str:
 def is_window_chrome(role: str, name: str, goal: str = "", title: str = "") -> bool:
     if role == "TitleBar":
         return True
-    if role in ("MenuBar", "MenuItem", "Button") and name.strip().lower() in WINDOW_CHROME:
+    n = name.strip().lower()
+    if title.strip() and n.endswith(" " + title.strip().lower()):
+        # UWP pencereleri adın sonuna başlığı ekliyor: "Close Solitaire & Casual Games" filtreden kaçıyordu.
+        n = n[: -len(title.strip()) - 1].strip()
+    if role in ("MenuBar", "MenuItem", "Button") and n in WINDOW_CHROME:
         # Pencereyi kapatmak/küçültmek hedefin kendisiyse düğmeler kalsın; sistem menüsü hiç gerekmez.
         return not (role == "Button" and wants_window_chrome(goal, title))
     return False
@@ -294,7 +306,7 @@ class DesktopObserver:
         docs = [i["rect"] for i in raw if i["role"] == "Document" and i.get("rect")]
         for i in raw:
             if not i["enabled"] or is_window_chrome(i["role"], i["name"], chrome_goal, title) \
-                    or is_phantom_tab(i["role"], i["name"], i.get("rect"), docs):
+                    or is_phantom_tab(i["role"], i["name"], i.get("rect"), docs, anywhere=self.diff):
                 continue
             if i["role"] == "Document" and i["name"].strip() in ("", title.strip()):
                 # WebView uygulamasının sayfa gövdesi (adsız 'view_1055' ya da pencere başlığıyla aynı): bütün

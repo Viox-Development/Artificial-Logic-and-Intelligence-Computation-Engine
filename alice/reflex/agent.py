@@ -27,10 +27,14 @@ from typing import Any, Callable
 from alice.decider import Box, Choice, DeciderError, Noul, padded_fraction, prepare_image
 from alice.reflex.loop import ReflexResult, single_click_goal
 from alice.reflex.observers import KEYS, WAIT_SECONDS
-from alice.reflex.perceive import Item, Screen, screen_changes
+from alice.reflex.perceive import (Item, Screen, changed_crops, changed_places, image_changed, image_key,
+                                   screen_changes)
 
 SCREEN_REF = "alice-screen-9d2f4b71"
 ZOOM_REF = "alice-zoom-5e8a03c6"
+START_REF = "alice-start-3c71e0a9"  # oyun turunun başındaki ekran
+START_CROP_REF = "alice-startcrop-6b2d94e0"  # değişen bölge, turun başında
+NOW_CROP_REF = "alice-nowcrop-a81f5c37"  # aynı bölge, şimdi
 
 ACTION_CRITERIA = {
     "click": "Click one item (a button, link, tab, menu entry, cell or piece of text).",
@@ -48,6 +52,7 @@ VISUAL_ACTION = "click_unlisted"
 VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`, such as an icon, a picture, "
                     "a map tile or a game piece.")
 DONE_MIN = 0.85
+CHANGED_MIN = 0.75  # görsel kıyas (changed_as_asked) gözlenebilir tek yargı: TypeSafe'in 0.7 'evet' eşiğine yakın
 LIKELY_DONE_MIN = 0.6  # sıradaki eylemden emin değilken, son eylem ekranı değiştirdiyse
 SCREEN_RETRY = 0.5  # sn: ekran okunamazsa bu kadar bekleyip bir kez daha
 LOOP_MAX = 2  # aynı ekranda aynı eylem bundan fazla yapılmaz (A-B-A-B gidip gelme)
@@ -134,7 +139,8 @@ class ScreenAgent:
             raise DeciderError("yazılacak metin yok (inputs ver)")
         return self.text_writer(goal, item.describe())
 
-    def _questions(self, scr: Screen, keys: list[str], see: bool) -> dict[str, Any]:
+    def _questions(self, scr: Screen, keys: list[str], see: bool,
+                   compare: tuple[str, str] | None = None) -> dict[str, Any]:
         items = {i.key: i.describe() for i in scr.items}
         kinds = dict(ACTION_CRITERIA)
         if not any(i.editable for i in scr.items) and not any(i.source == "ocr" for i in scr.items):
@@ -148,8 +154,9 @@ class ScreenAgent:
             "done": Noul("Has `goal` already been fully achieved?", {
                 "true": "`items` and `window` show the end state `goal` asks for, or `recent_actions` show that its "
                         "last required action already worked."
-                        + (" `changes_since_start` lists what appeared and disappeared on screen since the start; "
-                           "the change `goal` asks for is among them." if self.track_changes else ""),
+                        + (" `changes_since_start` lists what appeared and disappeared on screen since the start, "
+                           "and `screen_at_start` shows the screen before the first action; the change `goal` asks "
+                           "for is visible in them." if self.track_changes else ""),
                 "false": "Something `goal` asks for has not happened yet."}),
             "missing": Noul("Is the thing `goal` needs to act on next absent from `items`?", {
                 "true": "No entry in `items` is the control, text or object to act on next.",
@@ -168,6 +175,17 @@ class ScreenAgent:
         if see:
             q["target_visible"] = Noul("Is the thing `goal` needs to click next visible in `screen`?")
             q["target"] = Box("the thing in `screen` that should be clicked next to work toward `goal`")
+        if see and compare:
+            # "Tamamen başarıldı mı?" soyut kaldı (Solitaire'de kart çekildiği halde 0.1). Gözlenebilir tek yargı:
+            # istenen değişiklik önceki karede yok, şimdikinde var mı? Değişen bölge varsa onun büyük kırpıntıları
+            # kıyaslanır (EFR): küçültülmüş tam ekranda kartın rakamı birkaç piksel kalıyordu.
+            before, after = compare
+            q["changed_as_asked"] = Noul(f"Does `{after}` show the change `goal` asks for, which `{before}` "
+                                         "does not show?", {
+                "true": f"Something `goal` asks to happen, such as a card drawn, a piece moved or a screen opened, is "
+                        f"visible in `{after}` but not in `{before}`.",
+                "false": f"Everything `goal` is about looks the same in `{after}` as in `{before}`, or the "
+                         "difference is something else."})
         return q
 
     # ------------------------------------------------------------------ döngü
@@ -194,6 +212,8 @@ class ScreenAgent:
         last_sig = ""
         start_items: list[Item] | None = None
         prev_items: list[Item] = []
+        prev_image: Any = None
+        start_image: Any = None
         self.evidence = []
         for step in range(1, max_steps + 1):
             try:
@@ -209,7 +229,8 @@ class ScreenAgent:
             if history and last_sig and not history[-1].endswith(("changed", "on screen")):
                 # Son eylem işe yaradı mı? Jev bunu okunur geçmişte görür; aynı boşa eylem üçüncü kez yapılmaz.
                 did = history[-1]
-                if sig != last_sig:
+                changed = sig != last_sig or image_changed(prev_image, scr.image)
+                if changed:
                     history[-1] += " -> screen changed"
                     log[-1] += " (ekran değişti)"  # beyin modeli de görsün: ör. Ctrl+S Kaydet penceresini açtı
                 else:
@@ -217,17 +238,18 @@ class ScreenAgent:
                     log[-1] += " (ekran değişmedi)"
                 if self.track_changes:
                     # Yansıtmanın kanıtı: bu eylemden sonra ne çıktı, ne kayboldu (kod biliyor, model uydurmasın).
-                    self.evidence.append({"action": history[-1], "changed": sig != last_sig,
-                                          **screen_changes(prev_items, scr.items)})
-                if sig == last_sig:
+                    self.evidence.append({"action": history[-1], "changed": changed,
+                                          **screen_changes(prev_items, scr.items),
+                                          "changed_places": changed_places(prev_image, scr.image) if changed else []})
+                if not changed:
                     tried[did] = tried.get(did, 0) + 1
                     if tried[did] >= 2:
                         return ReflexResult("needs_help", step - 1, f"aynı eylem iki kez ekranı değiştirmedi: {did}",
                                             log, scr.title, scr.location)
             last_sig = sig
-            prev_items = scr.items
+            prev_items, prev_image = scr.items, scr.image
             if start_items is None:
-                start_items = scr.items
+                start_items, start_image = scr.items, scr.image
             see = self._can_see(scr)
             state: dict[str, Any] = {"goal": en, "window": scr.title, "items": {i.key: i.describe() for i in scr.items},
                                      "recent_actions": history[-6:] or ["none yet"]}
@@ -241,12 +263,24 @@ class ScreenAgent:
             if en != goal:
                 state["goal_original_language"] = goal
             images = None
+            compare: tuple[str, str] | None = None
             if see:
                 state["screen"] = SCREEN_REF
                 images = {SCREEN_REF: prepare_image(scr.image)}
+                if self.track_changes and history and start_image is not None:
+                    # Önce/sonra (Cradle, EFR): yazısız değişimi (kart açıldı, birim yürüdü) Jev görerek kıyaslasın.
+                    state["screen_at_start"] = START_REF
+                    images[START_REF] = prepare_image(start_image)
+                    compare = ("screen_at_start", "screen")
+                    crops = changed_crops(start_image, scr.image)
+                    if crops is not None:
+                        state["changed_part_at_start"], state["changed_part_now"] = START_CROP_REF, NOW_CROP_REF
+                        images[START_CROP_REF], images[NOW_CROP_REF] = prepare_image(crops[0]), prepare_image(crops[1])
+                        compare = ("changed_part_at_start", "changed_part_now")
             t0 = time.monotonic()
             try:
-                d = self.decider.decide(state, self._questions(scr, keys, see), images=images)
+                d = self.decider.decide(state, self._questions(scr, keys, see, compare),
+                                        images=images)
             except DeciderError as e:
                 if images is None:
                     return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, scr.title, scr.location)
@@ -254,6 +288,8 @@ class ScreenAgent:
                 self.emit(f"görsel karar olmadı, görselsiz devam: {e}")
                 see = False
                 state.pop("screen", None)
+                for k in ("screen_at_start", "changed_part_at_start", "changed_part_now"):
+                    state.pop(k, None)
                 try:
                     d = self.decider.decide(state, self._questions(scr, keys, False))
                 except DeciderError as e2:
@@ -261,6 +297,8 @@ class ScreenAgent:
             ms = (time.monotonic() - t0) * 1000
             a = d.answers
             act, done, missing = a["action"], a["done"].value, a["missing"].value
+            if "changed_as_asked" in a:  # görerek kıyas: istenen değişiklik oldu mu (kod iki yargıdan birini yeter sayar)
+                done = max(done, a["changed_as_asked"].value)
             item = _pick(a, "item", scr.items)
             self.emit(f"[{step}] {act.value} {item.describe() if item and act.value != 'press_key' else ''}"
                       f"{a['key'].value if act.value == 'press_key' else ''} (güven {act.confidence:.2f}, "
@@ -272,9 +310,11 @@ class ScreenAgent:
                          "item_conf": round(a["item"].confidence, 3) if "item" in a else None,
                          "key": a["key"].value if act.value == "press_key" else None, "done": round(done, 3),
                          "missing": round(missing, 3), "ms": round(ms), "visual": see,
+                         "changed_as_asked": round(a["changed_as_asked"].value, 3) if "changed_as_asked" in a else None,
                          "list": [f"{i.key} {i.describe()}" + (f" @{tuple(round(v, 3) for v in i.rect)}" if i.rect else "")
                                   for i in scr.items]})
-            if done >= DONE_MIN:
+            seen_change = a["changed_as_asked"].value if "changed_as_asked" in a else 0.0
+            if done >= DONE_MIN or seen_change >= CHANGED_MIN:
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, scr.title, scr.location)
             choice = act.value
             if missing >= MISSING_MIN and choice in ("click", "double_click", "right_click", "type_text", "drag"):
@@ -282,6 +322,10 @@ class ScreenAgent:
             if choice == VISUAL_ACTION:
                 res = self._visual_click(step, scr, en, a, log, history)
                 if isinstance(res, ReflexResult):
+                    if res.status == "needs_help" and done >= LIKELY_DONE_MIN and history                             and history[-1].endswith("screen changed"):
+                        # Kart çekildi (görsel kıyas 0.8), Jev sıradaki tıklanacak şeyi bulamadı: "yapılamadı" değil.
+                        return ReflexResult("likely_done", step - 1, f"son eylem ekranı değiştirdi, büyük ihtimalle "
+                                            f"bitti (bitti? {done:.2f})", log, scr.title, scr.location)
                     return res
                 if single_click_goal(goal):
                     return ReflexResult("clicked", step, "ekranda hedef görülen yere tıklandı", log, scr.title,
@@ -310,12 +354,12 @@ class ScreenAgent:
             drop = _pick(a, "drop", scr.items) if choice == "drag" else None
             # Aynı ekranda aynı eylem üçüncü kez: döngü. Unciv'de 'Pick a tech!' ile 'Close' arasında 15 adım gidip
             # geldi; her tıklama ekranı değiştirdiği için "ekran değişmedi" koruması yakalamıyordu.
-            move = (sig, choice, item.describe(False) if needs_item and item else "",
+            move = (sig, image_key(scr.image), choice, item.describe(False) if needs_item and item else "",
                     drop.describe(False) if drop else "", str(a["key"].value) if choice == "press_key" else "")
             visits[move] = visits.get(move, 0) + 1
             if visits[move] > LOOP_MAX:
                 return ReflexResult("needs_help", step - 1, f"döngüye girdi: aynı ekranda aynı eylem {LOOP_MAX + 1}. "
-                                    f"kez ({choice} {move[2]})".strip(), log, scr.title, scr.location)
+                                    f"kez ({choice} {move[3]})".strip(), log, scr.title, scr.location)
             text = key = ""
             try:
                 if choice == "type_text":
@@ -345,12 +389,13 @@ class ScreenAgent:
             time.sleep(self.settle)
             if choice == "click" and single_click_goal(goal) and item is not None:
                 after = self._safe_screen(goal)
-                if after is not None and after.signature() != sig:
+                if after is not None and (after.signature() != sig or image_changed(scr.image, after.image)):
                     log[-1] += " (ekran değişti)"
                     self.last = after
                     if self.track_changes:
                         self.evidence.append({"action": history[-1], "changed": True,
-                                              **screen_changes(scr.items, after.items)})
+                                              **screen_changes(scr.items, after.items),
+                                              "changed_places": changed_places(scr.image, after.image)})
                     return ReflexResult("clicked", step, f"tıklandı: {item.describe(False)}", log, after.title,
                                         after.location)
         return ReflexResult("max_steps", max_steps, "adım limiti doldu", log, scr.title, scr.location)

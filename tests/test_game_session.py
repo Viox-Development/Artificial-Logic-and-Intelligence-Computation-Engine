@@ -99,6 +99,95 @@ def test_desktop_observer_diff_mode_reads_changes_only(monkeypatch):
     assert labels == {"Gold: 10": False, "Next turn": True}
 
 
+def test_image_change_counts_when_text_stays_the_same():
+    """Solitaire: desteye tıklayınca kart açılıyor ama OCR kart yüzünü okumuyor; yazı imzası aynı kalınca "ekran
+    değişmedi" denip tekrar koruması durduruyordu."""
+    from alice.decider import Answer, Decision
+    from alice.reflex.agent import ScreenAgent
+    from alice.reflex.perceive import Screen, image_changed
+
+    base = frame((100, 100, 210, 250))
+    card = frame((100, 100, 210, 250), (250, 100, 360, 250))  # yanda yeni bir kart
+    caret = base.copy()
+    caret.paste((255, 255, 255), (800, 400, 802, 420))  # yanıp sönen imleç
+    assert image_changed(base, card) and not image_changed(base, caret) and not image_changed(None, base)
+
+    class Table:
+        n = 0
+
+        def screen(self, goal=""):
+            img = frame((100, 100, 210, 250), *[(250 + 120 * k, 100, 360 + 120 * k, 250) for k in range(self.n)])
+            return Screen("Solitaire", "desktop", [Item("i1", "ocr", "text", "Puan: 5", (0.9, 0.0, 1.0, 0.05)),
+                                                   Item("i2", "ocr", "text", "Yeni", (0.1, 0.95, 0.2, 1.0))], image=img)
+
+        def act(self, action, item=None, **k):
+            self.n += 1
+
+    class Brain:
+        supports_images = False
+
+        def decide(self, state, questions, images=None):
+            return Decision({"action": Answer("choice", "click", 0.9), "done": Answer("noul", 0.05, 0.9),
+                             "missing": Answer("noul", 0.05, 0.9), "key": Answer("choice", "enter", 0.9),
+                             "item": Answer("choice", "i1", 0.9), "drop": Answer("choice", "i2", 0.9)}, "fake", 0.01)
+
+    agent = ScreenAgent(Table(), Brain(), settle=0)
+    agent.track_changes = True
+    res = agent.run("draw cards", max_steps=3)
+    assert res.status == "max_steps"  # durdurulmadı: her tıklama kart açtı
+    assert all(e["changed"] for e in agent.evidence) and agent.evidence[0]["action"].endswith("screen changed")
+    # Yazısız değişimin yeri kanıtta: yansıtma 'menülerde kayboldun' diye uydurmasın.
+    assert agent.evidence[0]["changed_places"] == ["top-left"]
+    from alice.reflex.game import evidence_lines
+
+    assert evidence_lines(agent.evidence[:1])[0].endswith("| picture changed at: top-left")
+
+    class Seeing(Brain):
+        supports_images = True
+        seen = []
+
+        def decide(self, state, questions, images=None):
+            self.seen.append((dict(state), dict(images or {})))
+            return super().decide(state, questions, images)
+
+    class TableWithClick(Table):
+        def click_at(self, fx, fy):
+            self.n += 1
+
+    agent = ScreenAgent(TableWithClick(), Seeing(), settle=0)
+    agent.track_changes = True
+    agent.run("draw cards", max_steps=2)
+    first, second = Seeing.seen[0], Seeing.seen[1]
+    assert "screen_at_start" not in first[0] and second[0]["screen_at_start"] in second[1]  # önce/sonra görüntüsü
+
+    class Compares(Brain):
+        supports_images = True
+        asked = []
+
+        def decide(self, state, questions, images=None):
+            self.asked.append("changed_as_asked" in questions)
+            d = super().decide(state, questions, images)
+            if "changed_as_asked" in questions:  # "tamamen bitti mi" düşük, görsel kıyas yüksek
+                d.answers["changed_as_asked"] = Answer("noul", 0.8, 0.9)  # canlıda kart çekilince görülen
+            return d
+
+    agent = ScreenAgent(TableWithClick(), Compares(), settle=0)
+    agent.track_changes = True
+    res = agent.run("draw one card", max_steps=5)
+    assert Compares.asked == [False, True] and res.status == "done" and res.steps == 1
+    # Değişen bölge küçükse Jev'e o bölgenin önce/sonra kırpıntısı gider, soru da onlara bakar.
+    state, images = Seeing.seen[1]
+    assert images[state["changed_part_now"]] and images[state["changed_part_at_start"]]
+    from alice.reflex.perceive import changed_crops
+
+    before, after = changed_crops(base, card)
+    assert before.size == after.size and before.width < base.width // 3
+    assert changed_crops(base, base.copy()) is None and changed_crops(base, frame((0, 0, 1599, 899))) is None
+    clock = frame((100, 100, 210, 250), (250, 100, 360, 250), (1540, 10, 1590, 30))  # kart + sağ üstte saat
+    before, after = changed_crops(base, clock)
+    assert after.width < 600  # saate kadar uzanmadı, kartın etrafı
+
+
 def test_back_and_forth_loop_is_stopped():
     """Unciv: 'Pick a tech!' tech ekranını açıyor, 'Close' kapatıyor; her tıklama ekranı değiştirdiği için eski koruma
     15 adım boyunca durmadı."""
@@ -168,7 +257,7 @@ def test_agent_gives_jev_changes_since_start_and_keeps_evidence():
     assert second["changes_since_start"] == {"appeared": ["Turn 2"], "disappeared": ["Turn 1"]}
     assert "changes_since_start" in Brain.states[0][1]["done"].criteria["true"]
     assert agent.evidence == [{"action": "clicked text 'End turn' (bottom-right) -> screen changed", "changed": True,
-                               "appeared": ["Turn 2"], "disappeared": ["Turn 1"]}]
+                               "appeared": ["Turn 2"], "disappeared": ["Turn 1"], "changed_places": []}]
     plain = ScreenAgent(Board(), Brain(), settle=0)  # oyun dışında reflex eskisi gibi
     plain.run("end the turn", max_steps=2)
     assert "changes_since_start" not in Brain.states[-1][0] and plain.evidence == []

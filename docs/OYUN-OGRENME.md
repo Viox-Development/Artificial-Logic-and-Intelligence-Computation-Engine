@@ -46,5 +46,16 @@ değerler hangi oyunda olursa olsun burada görünür. `done` sorusunun ölçüt
 Her adımda Jev'e giden `notes`: `when`'i ekrandaki yazılarla eşleşen dersler + genel (tetiksiz) dersler, puanı yüksek
 olanlar önce, sınırlı sayıda. Sonraki tura son üç tur özeti de gider.
 
+### Yazısız değişim (Solitaire'den sonra)
+İlk sürüm "ekran değişti mi?" sorusunu sadece okunan yazılarla cevaplıyordu. Solitaire'de desteye doğru tıklanıyor ve
+kart açılıyordu ama OCR kart yüzünü okumadığı için "değişmedi" deniyor, tekrar koruması durduruyor, yansıtma da "menülerde
+kayboldun" diye yanlış ders uyduruyordu. Düzeltmeler:
+- değişim yazı **ya da** görüntüyle ölçülür (`image_changed`, karenin ≥ %0,1'i; yanıp sönen imleç sayılmaz);
+- döngü anahtarına görüntünün kaba parmak izi girer (desteden art arda çekmek döngü değil);
+- kanıtta yazısız değişimin yeri yazılır ("picture changed at: top-middle");
+- Jev'e turun başındaki ekran ve **en büyük değişen bölgenin önce/sonra kırpıntısı** verilir (EFR gibi; saat gibi küçük
+  değişimler elenir) ve soyut "tamamen bitti mi?" yerine gözlenebilir tek yargı sorulur: "istenen değişiklik öncekinde
+  yok, şimdikinde var mı?". Canlıda kart çekildikten sonra bu yargı 0,36'dan 0,80'e çıktı; eşik 0,75.
+
 ### Ölçüm
 Doğrulama Unciv'e bakarak değil, hiç not olmadan ikinci bir oyunla yapılır.

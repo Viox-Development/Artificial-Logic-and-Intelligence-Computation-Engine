@@ -266,6 +266,9 @@ def evidence_lines(evidence: list[dict[str, Any]]) -> list[str]:
             line += " | appeared: " + "; ".join(e["appeared"])
         if e.get("disappeared"):
             line += " | disappeared: " + "; ".join(e["disappeared"])
+        if e.get("changed_places"):
+            # Yazısız değişim (kart açıldı, birim yürüdü): nerede olduğu, model yorumlasın diye.
+            line += " | picture changed at: " + ", ".join(e["changed_places"])
         out.append(line)
     return out
 

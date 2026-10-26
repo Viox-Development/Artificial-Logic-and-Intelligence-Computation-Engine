@@ -29,6 +29,25 @@ ECHO_SHARE = 0.6  # yazının kelimelerinin bu kadarı hedefte geçiyorsa hedefi
 ECHO_MIN_WORDS = 4  # daha kısası düğme adıdır: "Start new game" hedefi "start a new game" iken atılıyordu
 
 
+def place(x: float, y: float) -> str:
+    """Kesirli nokta -> 'top-left' / 'center' (Jev sayıları karşılaştıramaz; üçte birlik bölgeler)."""
+    col = "left" if x < 1 / 3 else "right" if x > 2 / 3 else "middle"
+    row = "top" if y < 1 / 3 else "bottom" if y > 2 / 3 else "middle"
+    return "center" if col == row == "middle" else f"{row}-{col}"
+
+
+def changed_places(prev: Any, cur: Any) -> list[str]:
+    """Değişen bölgelerin yerleri, okunur: yazısız değişimi (kart açıldı, birim yürüdü) yansıtma da görsün. Solitaire'de
+    kanıtta sadece 'görülen yere tıklandı' yazınca model 'menülerde kayboldun' diye yanlış ders uydurmuştu."""
+    regions = changed_regions(prev, cur) or []
+    out: list[str] = []
+    for l, t, r, b in regions:
+        p = place((l + r) / 2, (t + b) / 2)
+        if p not in out:
+            out.append(p)
+    return out
+
+
 def words(s: str) -> list[str]:
     # İ önce: "ALİCE".lower() "ali̇ce" olur (birleşik nokta) ve "alice" ile eşleşmezdi.
     return [w.replace("İ", "i").replace("I", "i").lower().replace("ı", "i") for w in _WORD.findall(s or "")]
@@ -58,11 +77,7 @@ class Item:
 
     def where(self) -> str:
         c = self.center
-        if c is None:
-            return ""
-        col = "left" if c[0] < 1 / 3 else "right" if c[0] > 2 / 3 else "middle"
-        row = "top" if c[1] < 1 / 3 else "bottom" if c[1] > 2 / 3 else "middle"
-        return "center" if col == row == "middle" else f"{row}-{col}"
+        return "" if c is None else place(*c)
 
     def describe(self, mark_new: bool = True) -> str:
         """mark_new=False: geçmiş satırları için (aynı eylem 'new' işareti yüzünden farklı görünmesin)."""
@@ -302,6 +317,54 @@ def changed_regions(prev: Any, cur: Any, grid: tuple[int, int] = DIFF_GRID) -> l
         xs, ys = [c[0] for c in comp], [c[1] for c in comp]
         out.append((min(xs) / gw, min(ys) / gh, (max(xs) + 1) / gw, (max(ys) + 1) / gh))
     return sorted(out, key=lambda r: (r[1], r[0]))
+
+
+IMAGE_CHANGE = 0.001  # karenin bu kadarı değiştiyse ekran değişmiş sayılır (yanıp sönen imleç ~%0,003, bir kart ~%0,3)
+
+
+def image_changed(prev: Any, cur: Any) -> bool:
+    """Görüntü anlamlı ölçüde değişti mi? Yazı imzası yazısız değişimi görmüyor: Solitaire'de desteye tıklayınca kart
+    açılıyordu ama OCR kart yüzünü okuyamadığı için "ekran değişmedi" deniyor, tekrar koruması durduruyordu."""
+    if prev is None or cur is None:
+        return False
+    if prev.size != cur.size:
+        return True
+    from PIL import ImageChops
+
+    diff = ImageChops.difference(prev.convert("L"), cur.convert("L")).point(lambda v: 255 if v > DIFF_PIXEL else 0)
+    return diff.histogram()[255] / (cur.width * cur.height) >= IMAGE_CHANGE
+
+
+CROP_MAX_SHARE = 0.5  # değişen bölge ekranın yarısından büyükse kırpmanın anlamı yok, tam ekran kıyaslanır
+
+
+def changed_crops(prev: Any, cur: Any) -> tuple[Any, Any] | None:
+    """Değişen bölgelerin (bir hücre payla) önce/sonra kırpıntıları. Tam ekran Jev'e küçültülerek gidiyor; 3440
+    piksellik pencerede kartın rakamı birkaç piksele iniyordu. Evidence-First Reflection gibi: önce nerede değiştiğini
+    bul, oraya yakından bak. Değişim yoksa ya da çok büyükse None."""
+    regions = changed_regions(prev, cur)
+    if not regions:
+        return None
+    # Birleşim değil en büyük bölge: Solitaire'de sağ üstteki saat her dakika değişiyor; birleşim desteden saate kadar
+    # uzayıp yarım ekranı aşıyor, kırpma iptal oluyordu.
+    big = max(regions, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
+    gw, gh = DIFF_GRID
+    l, t = max(0.0, big[0] - 1 / gw), max(0.0, big[1] - 1 / gh)
+    r_, b = min(1.0, big[2] + 1 / gw), min(1.0, big[3] + 1 / gh)
+    if (r_ - l) * (b - t) > CROP_MAX_SHARE:
+        return None
+    w, h = cur.size
+    box = (int(l * w), int(t * h), int(r_ * w), int(b * h))
+    return prev.crop(box), cur.crop(box)
+
+
+def image_key(img: Any) -> str:
+    """Görüntünün kaba parmak izi (64x36 gri, 8 ton). Döngü koruması aynı ekrana geri dönülmesini bununla da tanır:
+    yazısı aynı kalıp görüntüsü değişen ekranda (desteden art arda kart çekmek) döngü sanılmasın."""
+    if img is None:
+        return ""
+    small = img.convert("L").resize((64, 36)).point(lambda v: v // 32)
+    return hashlib.sha1(small.tobytes()).hexdigest()[:12]
 
 
 def _touches(a: Rect, b: Rect) -> bool:
