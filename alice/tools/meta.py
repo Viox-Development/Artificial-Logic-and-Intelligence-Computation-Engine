@@ -219,6 +219,7 @@ def reflex_verdict(status: str) -> str:
                            "kullanıcıya söyle.",
             "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya başardı "
                           "deme; kalanını kendin yap ya da nedenini söyle.",
+            "acted": "SONUÇ: bir eylem yapıldı ve ekran değişti; istenenin olup olmadığı ayrıca doğrulanmalı.",
             "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
             "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(status, "")
 

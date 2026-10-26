@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
 
 from alice.reflex import perceive
-from alice.reflex.game import GameSession, code_lessons, discover, game_key, reflect
+from alice.reflex.game import GameSession, code_lessons, discover, game_key, look_board, plan_move, reflect
 from alice.reflex.perceive import Item, changed_regions, mark_fresh, ocr_changed
 
 
@@ -308,6 +309,9 @@ def test_lessons_add_confirm_contradict_and_relevance(tmp_path):
     assert all(r["trigger"] != "Exit City" for r in s.relevant(["Gold: 10"]))  # ekranda yoksa gelmez
     ctx = s.context(["Exit City"])
     assert "When 'Exit City' is on screen: Click 'Exit City' first." in ctx
+    # Kurallar Jev'e her adımda ilk sırada gider (ekrana uyan arayüz derslerinden de önce).
+    s.apply({"add": [{"do": "A black card goes on a red card one rank higher.", "kind": "rule"}]})
+    assert s.relevant(["Gold: 10", "Exit City"])[0]["kind"] == "rule"
 
 
 def test_code_lessons_from_clicks_that_changed_nothing():
@@ -359,6 +363,10 @@ def test_discover_writes_prior_lessons_from_first_screen():
 
     ops = discover(chat, "Some Game", ["Start new game", "Options"])
     assert ops["add"][0]["trigger"] == "Start new game" and "- Options" in got["msgs"][1]["content"]
+    # Ana model ekranın okunmuş halini de görüp hangi oyun olduğunu kendisi çıkarıyor.
+    discover(chat, "Microsoft Solitaire Collection", ["Yeni"], board="Seven tableau columns; stock at top-left.")
+    assert "Seven tableau columns" in got["msgs"][1]["content"]
+    assert "work out exactly which game" in got["msgs"][0]["content"] and "identified" in got["msgs"][0]["content"]
     assert discover(lambda m: "bilmiyorum", "G", []) == {} and discover(None, "G", []) == {}
 
 
@@ -379,7 +387,8 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
             made.append((title, diff))
 
         def screen(self, goal=""):
-            return SimpleNamespace(items=[Item("i1", "ocr", "text", "Start new game"), Item("i2", "ocr", "text", "Exit")])
+            return SimpleNamespace(items=[Item("i1", "ocr", "text", "Start new game"), Item("i2", "ocr", "text", "Exit")],
+                                   image=frame())
 
     monkeypatch.setattr(obs_mod, "DesktopObserver", Obs)
     runs = []
@@ -402,14 +411,16 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
 
     def chat(role, msgs, **k):
         if "never played" in msgs[0]["content"]:  # keşif
-            return SimpleNamespace(text='{"add": [{"trigger": "Start new game", "do": "Begin here."}]}')
+            return SimpleNamespace(text='{"identified": "Klondike in a solitaire collection", '
+                                        '"add": [{"trigger": "Start new game", "do": "Begin here."}]}')
         return SimpleNamespace(text='{"summary": "Tried Exit twice; nothing happened.", "confirm": ["l1"]}')
 
     ctx = ToolContext(cwd=tmp_path, config=None, router=SimpleNamespace(chat=chat), decider=object())
     tool = Game()
     assert tool.risk_for({"action": "status"}) == "read" and tool.risk_for({"action": "turn"}) == tool.risk
     out = tool.run(ctx, "start", game="Hiç Görülmemiş Oyun").text
-    assert "1 başlangıç dersi" in out and "Begin here. (unverified)" in out
+    assert "oyunu tanıdı: Klondike in a solitaire collection; 1 başlangıç dersi" in out
+    assert "Begin here. (unverified)" in out and "Identified game: Klondike" in out  # Jev de görüyor
     r = tool.run(ctx, "turn", goal="start a game")
     assert made == [("Hiç Görülmemiş Oyun", True)]  # keşifteki gözlemci turda da kullanılıyor
     observer, goal, notes, tracked = runs[0]
@@ -420,4 +431,237 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     assert any(d.startswith("Clicking 'Exit' changes nothing") for d in lessons)
     assert "2 ders" in tool.run(ctx, "status").text
     assert "toplam 1 tur" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
+
+
+# ------------------------------------------------------------------------------------------- kurallar
+RULES = [{"id": "l1", "trigger": "", "do": "A card goes on a card one rank higher of the opposite colour.",
+          "kind": "rule", "score": 0, "source": "prior"},
+         {"id": "l2", "trigger": "", "do": "Click the stock to draw.", "kind": "ui", "score": 1, "source": "seen"}]
+
+
+def test_look_board_sends_window_image_and_rules():
+    got = {}
+
+    def ask(messages):
+        got["parts"] = messages[0]["content"]
+        return "Column 3: 4 of clubs on top. Column 6: 5 of diamonds on top."
+
+    board = look_board(ask, "Klondike", frame((10, 10, 50, 50)).resize((3000, 1200)), RULES)
+    assert board.startswith("Column 3")
+    text, image = got["parts"][0]["text"], got["parts"][1]
+    assert "rank and suit" in text and "l1: A card goes on a card one rank higher" in text and "(unverified)" in text
+    assert "Click the stock" not in text  # sadece kurallar, arayüz dersleri değil
+    assert image["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert look_board(None, "G", frame(), []) == "" and look_board(ask, "G", None, []) == ""
+
+    def broken(messages):
+        raise RuntimeError("kota")
+
+    assert look_board(broken, "G", frame(), []).startswith("(tahta okunamadı")
+
+
+def test_plan_move_uses_board_rules_and_checks_answer():
+    got = {}
+
+    def chat(messages):
+        got["msgs"] = messages
+        return ('{"move": "Click the 4 of clubs at the top of the third column", "why": "l1: black 4 on red 5", '
+                '"expect": "the 4 of clubs moves onto the 5 of diamonds", "rules_used": ["l1"]}')
+
+    plan = plan_move(chat, "Klondike", "Make the best legal next move.", "Column 3: 4 of clubs", RULES,
+                     ["turn 3: drew a card"])
+    assert plan["move"].startswith("Click the 4 of clubs") and plan["rules_used"] == ["l1"]
+    sent = got["msgs"][1]["content"]
+    assert "Column 3: 4 of clubs" in sent and "l1: A card goes on" in sent and "turn 3: drew a card" in sent
+    assert "Click the stock to draw." in sent  # diğer dersler de bağlamda
+    assert plan_move(lambda m: '{"why": "x"}', "G", "g", "board", [], []) == {}  # hamlesiz cevap
+    assert plan_move(chat, "G", "g", "", [], []) == {}  # tahta yoksa plan yok
+
+
+def test_reflect_compares_expected_move_with_what_happened():
+    got = {}
+
+    def chat(messages):
+        got["msgs"] = messages
+        return ('{"summary": "The 4 of clubs did not move; the rule was wrong.", '
+                '"edit": [{"id": "l1", "do": "Only kings go to empty columns."}], "contradict": ["l1"]}')
+
+    intent = {"move": "Click the 4 of clubs", "why": "l1", "expect": "4 moves onto 5", "rules_used": ["l1"]}
+    ev = [{"action": "clicked something visible on screen at middle-left -> nothing changed on screen",
+           "changed": False}]
+    summary, ops = reflect(chat, "Klondike", "Click the 4 of clubs", "needs_help", "x", ev, RULES, [], intent=intent,
+                           board_after="Column 3: 4 of clubs still on top")
+    sent, system = got["msgs"][1]["content"], got["msgs"][0]["content"]
+    assert "Planned move: Click the 4 of clubs" in sent and "Expected change: 4 moves onto 5" in sent
+    assert "Rules it relied on: l1" in sent and "Board after the turn:\nColumn 3: 4 of clubs still on top" in sent
+    assert "contradict or edit the rule" in system and ops["contradict"] == ["l1"]
+
+
+def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path):
+    import alice.config as config
+    import alice.reflex.agent as agent_mod
+    import alice.reflex.observers as obs_mod
+    from alice.reflex.loop import ReflexResult
+    from alice.tools.base import ToolContext
+    from alice.tools.game import Game
+
+    monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
+    boards = iter(["Column 3: 4 of clubs. Column 6: 5 of diamonds.", "Column 6: 5 of diamonds, 4 of clubs."])
+
+    class Obs:
+        def __init__(self, *a, **k):
+            pass
+
+        def screen(self, goal=""):
+            return SimpleNamespace(items=[Item("i1", "ocr", "text", "Yeni")], image=frame())
+
+    monkeypatch.setattr(obs_mod, "DesktopObserver", Obs)
+    runs = []
+
+    class FakeAgent:
+        def __init__(self, observer, *a, **k):
+            self.evidence, self.last, self.track_changes = [], None, False
+
+        def run(self, goal, max_steps, notes):
+            runs.append((goal, notes(SimpleNamespace(items=[]))))
+            self.evidence = [{"action": "clicked something visible on screen at middle-left -> screen changed",
+                              "changed": True, "changed_places": ["center"]}]
+            return ReflexResult("done", 1, "hedefe ulaşıldı", ["1. tıklandı"], "Solitaire", "desktop")
+
+    monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
+    monkeypatch.setattr(agent_mod, "make_translator", lambda router: None)
+    calls = []
+
+    def chat(role, msgs, **k):
+        calls.append(role)
+        if role == "vision":
+            return SimpleNamespace(text=next(boards))
+        if "choose the next single move" in msgs[0]["content"]:
+            return SimpleNamespace(text='{"move": "Click the 4 of clubs", "why": "l1", "expect": "4 moves onto 5", '
+                                        '"rules_used": ["l1"]}')
+        return SimpleNamespace(text='{"summary": "Moved the 4 of clubs onto the 5 of diamonds.", "confirm": ["l1"]}')
+
+    ctx = ToolContext(cwd=tmp_path, config=None, router=SimpleNamespace(chat=chat), decider=object())
+    tool = Game()
+    from alice.reflex.game import GameSession
+
+    GameSession.open(tmp_path, "Solitaire").apply({"add": [RULES[0]]}, source="prior")
+    tool.run(ctx, "start", game="Solitaire")
+    assert tool.risk_for({"action": "play"}) == tool.risk and tool.risk_for({"action": "look"}) == "read"
+    r = tool.run(ctx, "play").text
+    goal, notes = runs[0]
+    assert goal == "Click the 4 of clubs" and "Expected: 4 moves onto 5" in notes  # Jev planlanan hamleyi yapıyor
+    assert calls == ["vision", "brain", "vision", "fast"]  # bak, planla, (oyna), tekrar bak, kıyasla
+    assert "hamle: Click the 4 of clubs" in r and "tahta şimdi:\nColumn 6: 5 of diamonds, 4 of clubs." in r
+    assert "1 doğrulandı" in r
+    (rule,) = [x for x in GameSession.open(tmp_path, "Solitaire").lessons() if x["kind"] == "rule"]
+    assert rule["source"] == "seen" and rule["score"] == 1  # oynayarak doğrulanan kural
+
+
+def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_path):
+    """Kurallar oyunun adından değil tahtadan çıkar; hamle olup olmadığına tıklama sayısı değil tahta karar verir."""
+    import alice.config as config
+    import alice.reflex.agent as agent_mod
+    import alice.reflex.observers as obs_mod
+    from alice.reflex.loop import ReflexResult
+    from alice.tools.base import ToolContext
+    from alice.tools.game import Game
+
+    monkeypatch.setattr(config, "alice_home", lambda: tmp_path)
+    monkeypatch.setattr(obs_mod, "DesktopObserver", lambda *a, **k: SimpleNamespace(
+        screen=lambda goal="": SimpleNamespace(items=[], image=frame())))
+    made = []
+
+    class FakeAgent:
+        def __init__(self, *a, **k):
+            self.evidence, self.last, self.track_changes, self.stop_after_change = [], None, False, False
+            made.append(self)
+
+        def run(self, goal, max_steps, notes):
+            # Jev "bitti" demedi ama tıklama işe yaramıştı; tersi de olabilir: karar tahtanın.
+            return ReflexResult("acted", 1, "eylem ekranı değiştirdi", ["1. tıklandı (ekran değişti)"], "S", "desktop")
+
+    monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
+    monkeypatch.setattr(agent_mod, "make_translator", lambda router: None)
+    happened = iter([True, False])
+
+    def chat(role, msgs, **k):
+        if role == "vision":
+            return SimpleNamespace(text="Column 3: 4 of clubs. Column 6: 5 of diamonds.")
+        if "never played" in msgs[0]["content"]:  # keşif: oyun adından kural çıkmadı
+            return SimpleNamespace(text="{}")
+        if "choose the next single move" in msgs[0]["content"]:
+            return SimpleNamespace(text='{"move": "Click the 4 of clubs", "why": "black on red", "expect": "4 on 5", '
+                                        '"rules_used": [], "rules_new": ["A card goes on one rank higher of the '
+                                        'opposite colour."]}')
+        return SimpleNamespace(text=json.dumps({"summary": "Checked the board after the move.",
+                                                "expected_happened": next(happened)}))
+
+    ctx = ToolContext(cwd=tmp_path, config=None, router=SimpleNamespace(chat=chat), decider=object())
+    tool = Game()
+    tool.run(ctx, "start", game="Kart")
+    first = tool.run(ctx, "play").text
+    assert made[0].stop_after_change and made[0].track_changes  # hamle: ilk değişimde dur
+    assert "SONUÇ: hedef yapıldı." in first
+    second = tool.run(ctx, "play").text
+    assert "OLMADI (tahtaya göre)" in second
+    rows = GameSession.open(tmp_path, "Kart")
+    assert [t["status"] for t in rows.turns()] == ["done", "failed"]
+    rules = [r for r in rows.lessons() if r["kind"] == "rule"]
+    assert len(rules) == 1 and rules[0]["source"] == "prior" and "opposite colour" in rules[0]["do"]  # bir kez
+
+
+def test_agent_stops_after_first_change_and_drags_what_it_sees():
+    from alice.decider import Answer, Decision
+    from alice.reflex.agent import ScreenAgent
+    from alice.reflex.perceive import Screen
+
+    class Board:
+        def __init__(self):
+            self.n, self.drags = 0, []
+
+        def screen(self, goal=""):
+            img = frame((100, 100, 200, 250), *[(300 + 120 * k, 100, 400, 250) for k in range(self.n)])
+            return Screen("Kart", "desktop", [Item("i1", "ocr", "text", "Yeni", (0.1, 0.95, 0.2, 1.0)),
+                                              Item("i2", "ocr", "text", "Puan: 5", (0.9, 0.0, 1.0, 0.05))], image=img)
+
+        def act(self, *a, **k):
+            self.n += 1
+
+        def click_at(self, fx, fy):
+            self.n += 1
+
+        def drag_at(self, fx, fy, tx, ty):
+            self.drags.append((round(fx, 2), round(fy, 2), round(tx, 2), round(ty, 2)))
+            self.n += 1
+
+    class Brain:
+        supports_images = True
+
+        def __init__(self, visible=0.9):
+            self.visible = visible
+            self.kinds = []
+
+        def decide(self, state, questions, images=None):
+            self.kinds.append(set(questions["action"].criteria))
+            box = {"left": 0.1, "top": 0.1, "right": 0.2, "bottom": 0.2}
+            drop = {"left": 0.5, "top": 0.5, "right": 0.6, "bottom": 0.6}
+            return Decision({"action": Answer("choice", "drag", 0.9), "done": Answer("noul", 0.05, 0.9),
+                             "missing": Answer("noul", 0.9, 0.9), "key": Answer("choice", "enter", 0.9),
+                             "item": Answer("choice", "i1", 0.9), "drop": Answer("choice", "i2", 0.9),
+                             "target_visible": Answer("noul", 0.9, 0.9), "target": Answer("box", box, 0.9),
+                             "drag_visible": Answer("noul", self.visible, 0.9), "drag_source": Answer("box", box, 0.9),
+                             "drop_place": Answer("box", drop, 0.9)}, "fake", 0.01)
+
+    board, brain = Board(), Brain()
+    agent = ScreenAgent(board, brain, settle=0)
+    agent.track_changes = agent.stop_after_change = True
+    res = agent.run("Drag the 4 of clubs onto the 5 of diamonds", max_steps=5)
+    assert res.status == "acted" and len(board.drags) == 1  # sürüklendi, ekran değişti, durdu
+    assert "drag_unlisted" in brain.kinds[0]
+    assert agent.evidence[0]["action"].startswith("dragged something visible on screen from")
+
+    board = Board()
+    res = ScreenAgent(board, Brain(visible=0.2), settle=0).run("drag the card", max_steps=3)
+    assert res.status == "needs_help" and "sürüklenecek" in res.reason and board.drags == []
 

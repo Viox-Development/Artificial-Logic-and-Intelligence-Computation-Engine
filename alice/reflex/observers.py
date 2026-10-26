@@ -255,6 +255,15 @@ class BrowserObserver:
         self.b.page.mouse.click(fx * size["width"], fy * size["height"])
         self.b.page.wait_for_timeout(500)
 
+    def drag_at(self, fx: float, fy: float, tx: float, ty: float) -> None:
+        size = self.b.page.viewport_size or self.b.page.evaluate("({width: innerWidth, height: innerHeight})")
+        m = self.b.page.mouse
+        m.move(fx * size["width"], fy * size["height"])
+        m.down()
+        m.move(tx * size["width"], ty * size["height"], steps=12)
+        m.up()
+        self.b.page.wait_for_timeout(500)
+
     def back(self) -> None:
         self.b.page.go_back(wait_until="domcontentloaded")
 
@@ -487,6 +496,17 @@ class DesktopObserver:
             raise RuntimeError("önce ekran görüntüsü alınmalı")
         left, top, w, h = self._rect
         _pyautogui().click(round(left + fx * w), round(top + fy * h))
+
+    def drag_at(self, fx: float, fy: float, tx: float, ty: float) -> None:
+        """Görüntüde görülen bir yerden diğerine sürükle (0-1 kesir): kart, taş, birim."""
+        from alice.tools.computer import _pyautogui
+
+        if self._rect is None:
+            raise RuntimeError("önce ekran görüntüsü alınmalı")
+        left, top, w, h = self._rect
+        pg = _pyautogui()
+        pg.moveTo(round(left + fx * w), round(top + fy * h))
+        pg.dragTo(round(left + tx * w), round(top + ty * h), duration=0.5, button="left")
 
     def click(self, element_id: int) -> None:
         from alice.tools.desktop import ui_act

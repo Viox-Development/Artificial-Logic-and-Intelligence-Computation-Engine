@@ -57,5 +57,31 @@ kayboldun" diye yanlış ders uyduruyordu. Düzeltmeler:
   değişimler elenir) ve soyut "tamamen bitti mi?" yerine gözlenebilir tek yargı sorulur: "istenen değişiklik öncekinde
   yok, şimdikinde var mı?". Canlıda kart çekildikten sonra bu yargı 0,36'dan 0,80'e çıktı; eşik 0,75.
 
+### Kuralları oynayarak öğrenmek (Cogito, Ergo Ludo döngüsü)
+Jev bir yargı modeli, kural motoru değil: "hangi kart oynanabilir?" kural bilgisi ve akıl yürütme ister (Solitaire'de 7♣'e
+tıkladı, oynanabilir kart 4♣'ydi). Beyin modelin genel ekran görüntüsü de 3440 pikseli 1366'ya indirdiği için tahtayı
+yanlış okuyordu ("menüde kaldık"). Bu yüzden `game` aracında katmanlar ayrıldı:
+- `look`: oyun penceresi tam çözünürlükte görüntü modeline (vision rolü) okutulur, tahta metne çevrilir (kart değerleri,
+  sütunlar, sayılar). Bilinen kurallar istemde verilir ki neye dikkat edileceği bilinsin; oyun bilgisi koda yazılmaz.
+- `play`: tahta + kurallar + son turlar -> planlayıcı (beyin rolü) tek yasal hamle seçer: ekranda ne yapılacak, neden
+  (hangi kural), ne değişmeli. Henüz ders olmayan bir kurala dayanıyorsa onu `rules_new` ile söyler; doğrulanmamış kural
+  olarak yazılır. Keşif oyunun adından kural çıkaramayabilir ("Microsoft Solitaire Collection" bir koleksiyon); kurallar
+  tahtadan çıkar.
+- Jev hamleyi yapar ve ekranı değiştiren ilk eylemden sonra durur (`stop_after_change`). Listede olmayan şeyler için görsel
+  sürükleme var (sürüklenecek şey + bırakılacak yer kutuları, ikisi için "var mı?").
+- Doğrulama tahtadan: hamleden sonra tekrar `look`; yansıtma beklenenle olanı kıyaslar ve `expected_happened` der. Tur
+  sonucu buna göre kaydedilir (tıklama sayısına göre değil). Olduysa dayandığı kurallar doğrulanır; hiçbir şey değişmediyse
+  hamle yasa dışıydı, kural düzeltilir ya da düşürülür; başka bir şey değiştiyse tıklama ıskalamıştır, kural kalır, arayüz
+  dersi yazılır.
+
+Oyunu ana model tanır (kullanıcının önerisi): `start`'ta ve hiç kural yokken ilk `play`'de görüntü modeli pencereyi okur,
+ana model (beyin rolü) bu okumaya bakıp tam olarak hangi oyun/mod açık olduğunu çıkarır ("Microsoft Solitaire Collection"
+bir koleksiyon; masa görülünce Klondike olduğu anlaşılır), kuralları ve arayüzü doğrulanmamış ders olarak yazar.
+Tanınan oyun nota geçer; kurallar Jev'e her adımda ilk sırada gider ve oynarken doğrulanır ya da düzeltilir.
+
+Canlı: Solitaire'de 4 `play`'den 3'ü başarılı hamle (6♥ -> 7♣, 5♣ -> 6♥, A♠ temel); dördüncüsü (4♣ -> 5♦) aslında ilk
+tıklamada olmuştu ama eski akış onu "yapılamadı" sayıp yanlış kural ("sürüklemek şart") yazmıştı; tahtadan doğrulama bunun
+için eklendi.
+
 ### Ölçüm
 Doğrulama Unciv'e bakarak değil, hiç not olmadan ikinci bir oyunla yapılır.

@@ -27,7 +27,7 @@ from typing import Any, Callable
 from alice.decider import Box, Choice, DeciderError, Noul, padded_fraction, prepare_image
 from alice.reflex.loop import ReflexResult, single_click_goal
 from alice.reflex.observers import KEYS, WAIT_SECONDS
-from alice.reflex.perceive import (Item, Screen, changed_crops, changed_places, image_changed, image_key,
+from alice.reflex.perceive import (Item, Screen, changed_crops, changed_places, image_changed, image_key, place,
                                    screen_changes)
 
 SCREEN_REF = "alice-screen-9d2f4b71"
@@ -49,6 +49,9 @@ ACTION_CRITERIA = {
     "wait": "Wait because the screen is loading, animating, or it is not the user's turn yet.",
 }
 VISUAL_ACTION = "click_unlisted"
+VISUAL_DRAG = "drag_unlisted"
+VISUAL_DRAG_CRITERION = ("Drag something visible in `screen` that is not in `items`, such as a card, a game piece or a "
+                         "unit, and drop it somewhere else in `screen`.")
 VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`, such as an icon, a picture, "
                     "a map tile or a game piece.")
 DONE_MIN = 0.85
@@ -98,6 +101,9 @@ class ScreenAgent:
         # Oyun oturumu açar: Jev'e turun başından beri değişenler gider, her eylemin kanıtı (ne çıktı, ne kayboldu)
         # yansıtma için self.evidence'ta tutulur.
         self.track_changes = False
+        # Oyunda hamle: ekranı değiştiren ilk eylemden sonra dur. Solitaire'de ilk tıklama 4♣'yi taşımıştı ama Jev
+        # bunu tanımayıp tıklamaya devam etti; doğrulamayı tahtayı okuyan model yapar (Voyager, Cradle).
+        self.stop_after_change = False
         self.evidence: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ yardımcılar
@@ -149,6 +155,8 @@ class ScreenAgent:
             kinds.pop("drag")
         if see:
             kinds[VISUAL_ACTION] = VISUAL_CRITERION
+            if callable(getattr(self.obs, "drag_at", None)):
+                kinds[VISUAL_DRAG] = VISUAL_DRAG_CRITERION
         q: dict[str, Any] = {
             "action": Choice("Which kind of action should be done next to make progress toward `goal`?", kinds),
             "done": Noul("Has `goal` already been fully achieved?", {
@@ -175,6 +183,11 @@ class ScreenAgent:
         if see:
             q["target_visible"] = Noul("Is the thing `goal` needs to click next visible in `screen`?")
             q["target"] = Box("the thing in `screen` that should be clicked next to work toward `goal`")
+            if VISUAL_DRAG in kinds:
+                # Kart, taş, birim yazı değil: listede yoklar, sürüklemek için de ekrandan bulunmaları gerekiyor.
+                q["drag_visible"] = Noul("Is the thing `goal` needs to drag next visible in `screen`?")
+                q["drag_source"] = Box("the thing in `screen` that should be dragged next to work toward `goal`")
+                q["drop_place"] = Box("the place in `screen` where the dragged thing should be dropped for `goal`")
         if see and compare:
             # "Tamamen başarıldı mı?" soyut kaldı (Solitaire'de kart çekildiği halde 0.1). Gözlenebilir tek yargı:
             # istenen değişiklik önceki karede yok, şimdikinde var mı? Değişen bölge varsa onun büyük kırpıntıları
@@ -241,6 +254,9 @@ class ScreenAgent:
                     self.evidence.append({"action": history[-1], "changed": changed,
                                           **screen_changes(prev_items, scr.items),
                                           "changed_places": changed_places(prev_image, scr.image) if changed else []})
+                if changed and self.stop_after_change:
+                    return ReflexResult("acted", step - 1, "eylem ekranı değiştirdi; istenen olup olmadığı ayrıca "
+                                        "doğrulanacak", log, scr.title, scr.location)
                 if not changed:
                     tried[did] = tried.get(did, 0) + 1
                     if tried[did] >= 2:
@@ -318,7 +334,13 @@ class ScreenAgent:
                 return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, scr.title, scr.location)
             choice = act.value
             if missing >= MISSING_MIN and choice in ("click", "double_click", "right_click", "type_text", "drag"):
-                choice = VISUAL_ACTION if see else ""
+                choice = (VISUAL_DRAG if choice == "drag" and "drag_source" in a else VISUAL_ACTION) if see else ""
+            if choice == VISUAL_DRAG:
+                res = self._visual_drag(step, scr, a, log, history)
+                if isinstance(res, ReflexResult):
+                    return res
+                time.sleep(self.settle)
+                continue
             if choice == VISUAL_ACTION:
                 res = self._visual_click(step, scr, en, a, log, history)
                 if isinstance(res, ReflexResult):
@@ -431,8 +453,30 @@ class ScreenAgent:
             history.append(f"click on screen failed: {str(e)[:120]}")
             return None
         log.append(f"{step}. ekranda görülen yere tıklandı ({fx:.2f}, {fy:.2f}) var mı? {seen:.2f}")
-        history.append(f"clicked something visible on screen at {'left' if fx < 1/3 else 'right' if fx > 2/3 else 'middle'}"
-                       f"-{'top' if fy < 1/3 else 'bottom' if fy > 2/3 else 'middle'}")
+        history.append(f"clicked something visible on screen at {place(fx, fy)}")
+        return None
+
+    def _visual_drag(self, step: int, scr: Screen, a: dict[str, Any], log: list[str],
+                     history: list[str]) -> ReflexResult | None:
+        """Listede olmayan bir şeyi (kart, taş, birim) ekranda görülen yerden alıp görülen yere bırak."""
+        seen = a["drag_visible"].value if "drag_visible" in a else 0.0
+        if seen < VISIBLE_MIN or "drop_place" not in a:
+            return ReflexResult("needs_help", step - 1, f"sürüklenecek şey ekranda bulunamadı (var mı? {seen:.2f})",
+                                log, scr.title, scr.location)
+        sx, sy = padded_fraction(scr.image.size)
+
+        def center(b: dict[str, float]) -> tuple[float, float]:
+            return min(1.0, (b["left"] + b["right"]) / 2 * sx), min(1.0, (b["top"] + b["bottom"]) / 2 * sy)
+
+        (fx, fy), (tx, ty) = center(a["drag_source"].value), center(a["drop_place"].value)
+        try:
+            self.obs.drag_at(fx, fy, tx, ty)
+        except Exception as e:  # noqa: BLE001
+            log.append(f"{step}. ekranda sürükleme -> HATA {e}")
+            history.append(f"drag on screen failed: {str(e)[:120]}")
+            return None
+        log.append(f"{step}. ekranda görülen şey sürüklendi ({fx:.2f}, {fy:.2f}) -> ({tx:.2f}, {ty:.2f})")
+        history.append(f"dragged something visible on screen from {place(fx, fy)} to {place(tx, ty)}")
         return None
 
     def _zoom(self, goal: str, img: Any, box: tuple[float, float, float, float]) -> tuple[float, float, float] | None:
