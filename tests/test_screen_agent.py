@@ -599,3 +599,90 @@ def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
     brain = Brain([{"action": "type_keys"}, {"done": 0.95}])
     res = ScreenAgent(obs, brain, text_writer=lambda goal, where: "1234*5678=", settle=0).run("1234 çarpı 5678")
     assert res.status == "done" and obs.acts[0][:3] == ("type_keys", None, "1234*5678=")
+
+
+# ------------------------------------------------------------------------------- harness ilkeleri (jev-mcp gibi)
+class Panel(FakeScreen):
+    """Üç düğmeli ekran; 'Kaydet' bir şey yapmaz, 'Gönder' gönderir, 'Ayarlar' ayar ekranını açar."""
+
+    def __init__(self):
+        super().__init__()
+        self.page = "main"
+
+    def screen(self, goal=""):
+        if self.page == "settings":
+            return Screen("Ayarlar", "desktop", [Item("i1", "ax", "Text", "Ayarlar açık", (0.1, 0.1, 0.5, 0.2))])
+        return Screen("Uygulama", "desktop", [Item("i1", "ax", "Button", "Kaydet", (0.1, 0.9, 0.2, 0.95), ref=1),
+                                              Item("i2", "ax", "Button", "Ayarlar", (0.3, 0.9, 0.4, 0.95), ref=2),
+                                              Item("i3", "ax", "Button", "Gönder", (0.8, 0.9, 0.9, 0.95), ref=3)])
+
+    def act(self, action, item=None, text="", keys="", drop=None):
+        self.acts.append((action, item.label if item else None))
+        if item is not None and item.label == "Ayarlar":
+            self.page = "settings"
+
+
+class ProbBrain:
+    """Her adımda verilen olasılıklarla öğe seçen sahte Jev; ikinci bakış sorusunu da cevaplar."""
+
+    supports_images = False
+
+    def __init__(self, steps, second=None):
+        self.steps, self.second, self.calls = list(steps), second, []
+
+    def decide(self, state, questions, images=None):
+        self.calls.append((state, questions))
+        if set(questions) == {"item"}:  # ikinci bakış
+            pool = questions["item"].criteria
+            pick = self.second if self.second in pool else next(iter(pool))
+            return Decision({"item": Answer("choice", pick, 0.9, {pick: 0.9})}, "fake", 0.01)
+        s = self.steps.pop(0)
+        probs = s.get("probs", {"i1": 1.0})
+        top = max(probs, key=probs.get)
+        return Decision({"action": Answer("choice", s.get("action", "click"), 0.9),
+                         "done": Answer("noul", s.get("done", 0.05), 0.9), "missing": Answer("noul", 0.05, 0.9),
+                         "key": Answer("choice", "enter", 0.9), "item": Answer("choice", top, probs[top], probs),
+                         "drop": Answer("choice", top, 0.9)}, "fake", 0.01)
+
+
+def test_irreversible_button_needs_confirmation():
+    obs = Panel()
+    res = ScreenAgent(obs, ProbBrain([{"probs": {"i3": 0.95, "i1": 0.05}}]), settle=0).run("mesajı gönder")
+    assert res.status == "needs_confirmation" and "Gönder" in res.reason and obs.acts == []
+    obs = Panel()
+    agent = ScreenAgent(obs, ProbBrain([{"probs": {"i3": 0.95, "i1": 0.05}}, {"done": 0.95}]), settle=0)
+    agent.allow_irreversible = True  # kullanıcı açıkça istedi
+    assert agent.run("mesajı gönder").status == "done" and obs.acts == [("click", "Gönder")]
+
+
+def test_candidate_that_did_nothing_is_not_picked_again():
+    obs = Panel()
+    brain = ProbBrain([{"probs": {"i1": 0.7, "i2": 0.3}}, {"probs": {"i1": 0.7, "i2": 0.3}}, {"done": 0.95}])
+    res = ScreenAgent(obs, brain, settle=0).run("ayarları aç")
+    assert obs.acts == [("click", "Kaydet"), ("click", "Ayarlar")] and res.status in ("done", "clicked")
+    assert brain.calls[1][0]["tried_here_without_effect"] == ["Button 'Kaydet' (bottom-left)"]  # kodun gerçeği
+
+
+def test_second_look_when_unsure():
+    obs = Panel()
+    brain = ProbBrain([{"probs": {"i1": 0.45, "i2": 0.4, "i3": 0.15}}, {"done": 0.95}], second="i2")
+    ScreenAgent(obs, brain, settle=0).run("ayarları aç")
+    second = [q for _, q in brain.calls if set(q) == {"item"}]
+    assert len(second) == 1 and set(second[0]["item"].criteria) == {"i1", "i2", "i3"}  # en iyi adaylar
+    assert obs.acts == [("click", "Ayarlar")]  # iki bakışın ortalaması
+
+
+def test_stuck_agent_consults_and_continues_without_the_main_model():
+    obs = Panel()
+    brain = ProbBrain([{"action": "click", "probs": {"i1": 1.0}}, {"action": "click", "probs": {"i1": 1.0}},
+                       {"probs": {"i2": 1.0}}, {"done": 0.95}, {"done": 0.95}])
+    asked = []
+    agent = ScreenAgent(obs, brain, settle=0)
+    agent.consult = lambda situation: asked.append(situation) or {"next": "Click the Ayarlar button"}
+    res = agent.run("ayarlarda bildirimleri bul")
+    assert res.status == "done" and asked and asked[0]["stuck_because"].startswith("aynı eylem")
+    assert "Button 'Ayarlar' (bottom-middle)" in asked[0]["on_screen"]
+    assert "(danışma 1) Click the Ayarlar button" in res.log and ("click", "Ayarlar") in obs.acts
+    agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
+    agent.consult = lambda situation: {"give_up": True}
+    assert agent.run("x").status == "needs_help"  # danışman vazgeçerse ana modele döner

@@ -191,6 +191,9 @@ class Reflex(Tool):
                         "description": "text yazılmadan önce basılacak tuşlar: önceki girdiyi temizlemek için "
                                        "(hesap makinesinde 'escape', alanda 'ctrl+a')."},
         "hold_seconds": {"type": "number", "description": "Tuş basılı tutulacaksa kaç saniye. Varsayılan 1."},
+        "allow_irreversible": {"type": "boolean", "description": "Sadece kullanıcı açıkça istediyse true: gönder, "
+                               "öde, sil, satın al, onayla/kabul gibi geri alınamaz düğmelere basılabilir. Varsayılan "
+                               "false: refleks böyle bir düğmede durur (needs_confirmation)."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 20."},
     }, ["goal", "target"])
     risk = COMPUTER
@@ -198,9 +201,9 @@ class Reflex(Tool):
     def run(self, ctx: ToolContext, goal: str, target: str, url: str | None = None, title: str | None = None,
             inputs: dict[str, str] | None = None, notes: str = "", max_steps: int = 20, text: str = "",
             keys: list[str] | None = None, hold_seconds: float | None = None,
-            press_first: list[str] | None = None) -> ToolResult:
+            press_first: list[str] | None = None, allow_irreversible: bool = False) -> ToolResult:
         from alice.config import alice_home
-        from alice.reflex.agent import ScreenAgent, make_translator
+        from alice.reflex.agent import ScreenAgent, make_consultant, make_translator
         from alice.reflex.loop import make_text_writer
         from alice.reflex.observers import BrowserObserver, DesktopObserver
 
@@ -214,6 +217,8 @@ class Reflex(Tool):
                            emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         if hold_seconds:
             observer.hold_seconds = max(0.05, min(float(hold_seconds), 10.0))
+        loop.allow_irreversible = bool(allow_irreversible)
+        loop.consult = make_consultant(ctx.router)  # takılınca içeriden danış, ana modele tam tur harcatma
         extra = {k: v for k, v in (("text", text), ("keys", keys), ("press_first", press_first)) if v}
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "", **extra)
         verdict = reflex_verdict(getattr(res, "status", ""))
@@ -233,6 +238,8 @@ def reflex_verdict(status: str) -> str:
             "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya başardı "
                           "deme; kalanını kendin yap ya da nedenini söyle.",
             "acted": "SONUÇ: bir eylem yapıldı ve ekran değişti; istenenin olup olmadığı ayrıca doğrulanmalı.",
+            "needs_confirmation": "SONUÇ: DURDU, geri alınamaz olabilecek bir düğme (gönder/öde/sil/onayla). Kullanıcı "
+                                  "bunu açıkça istemediyse ona sor; istediyse allow_irreversible=true ile tekrar çağır.",
             "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
             "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(status, "")
 

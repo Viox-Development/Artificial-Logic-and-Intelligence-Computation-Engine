@@ -69,6 +69,15 @@ CHANGED_MIN = 0.75  # görsel kıyas (changed_as_asked) gözlenebilir tek yargı
 LIKELY_DONE_MIN = 0.6  # sıradaki eylemden emin değilken, son eylem ekranı değiştirdiyse
 SCREEN_RETRY = 0.5  # sn: ekran okunamazsa bu kadar bekleyip bir kez daha
 LOOP_MAX = 2  # aynı ekranda aynı eylem bundan fazla yapılmaz (A-B-A-B gidip gelme)
+ITEM_SURE = 0.6  # öğe seçiminde en iyi aday bunun altındaysa ikinci bakış
+SECOND_LOOK_MIN = 0.15  # ikinci aday en az bu kadar olası olmalı (yoksa ikinci bakışa gerek yok)
+SECOND_LOOK_TOP = 4  # ikinci bakışta kıyaslanan aday sayısı
+MAX_CONSULTS = 2  # bir refleks çağrısında en fazla bu kadar iç danışma
+CONSULT_STEPS = 6  # danışmadan gelen adım için en fazla adım
+# Geri alınamaz olabilecek düğmeler (Türkçe ekler için sadece baştan sınır): gönder, öde, sil, satın al, onayla...
+RISKY_RX = re.compile(r"(?<![\w])(gönder|send|sil|delete|remove|kaldır|satın|buy|purchase|öde|pay|sipariş|order|"
+                      r"checkout|yayınla|publish|post|paylaş|share|kabul|accept|agree|onayla|confirm|abone|"
+                      r"subscribe|uninstall|format|boşalt|empty trash)", re.I)
 MISSING_MIN = 0.7
 VISIBLE_MIN = 0.7
 ZOOM_MIN = 0.4
@@ -114,6 +123,10 @@ class ScreenAgent:
         # Oyunda hamle: ekranı değiştiren ilk eylemden sonra dur. Solitaire'de ilk tıklama 4♣'yi taşımıştı ama Jev
         # bunu tanımayıp tıklamaya devam etti; doğrulamayı tahtayı okuyan model yapar (Voyager, Cradle).
         self.stop_after_change = False
+        # Kullanıcı açıkça istediyse (mesajı gönder, dosyayı sil) geri alınamaz düğmelere basılabilir.
+        self.allow_irreversible = False
+        # Takılınca sıradaki somut adımı soran fonksiyon (durum sözlüğü -> {"next": "...", "give_up": bool}).
+        self.consult: Callable[[dict[str, Any]], dict[str, Any]] | None = None
         self.evidence: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ yardımcılar
@@ -154,6 +167,30 @@ class ScreenAgent:
         if self.text_writer is None:
             raise DeciderError("yazılacak metin yok (inputs ver)")
         return self.text_writer(goal, item.describe())
+
+    def _steady_item(self, state: dict[str, Any], scr: Screen, ans: Any, images: dict[str, Any] | None,
+                     dead: set[str]) -> Item | None:
+        """Öğe seçimini sağlamlaştır (jev-mcp'nin eşikleri gibi; karar kodda):
+        - bu ekranda daha önce bir şey değiştirmemiş öğe seçildiyse sıradaki aday;
+        - en iyi aday kararsızsa (< ITEM_SURE) en iyi birkaç aday için ikinci bakış, iki bakışın ortalaması."""
+        probs = {k: v for k, v in (ans.probabilities or {}).items()
+                 if not any(i.key == k and i.describe(False) in dead for i in scr.items)}
+        if not probs:
+            return None
+        top = sorted(probs, key=probs.get, reverse=True)[:SECOND_LOOK_TOP]
+        if probs[top[0]] < ITEM_SURE and len(top) > 1 and probs[top[1]] >= SECOND_LOOK_MIN:
+            pool = {i.key: i.describe() for i in scr.items if i.key in top}
+            try:
+                d = self.decider.decide(state, {"item": Choice("Which item in `items` should the next action be done "
+                                                               "on, to make progress toward `goal`?", pool)},
+                                        images=images)
+                second = d["item"].probabilities or {d["item"].value: 1.0}
+                total = sum(probs[k] for k in top) or 1.0
+                mixed = {k: (probs[k] / total + second.get(k, 0.0)) / 2 for k in top}
+                top = sorted(mixed, key=mixed.get, reverse=True)
+            except DeciderError:
+                pass
+        return next((i for i in scr.items if i.key == top[0]), None)
 
     def _keyboard(self, goal: str, inputs: dict[str, str]) -> str:
         """Pencereye klavyeyle yazılacak metin: araçtan gelen text, tek bir input, yoksa hızlı model hedeften üretir."""
@@ -230,6 +267,7 @@ class ScreenAgent:
         self._keyboard_text, self._extra_keys, self._first = text, list(keys or []), None
         self._press_first = list(press_first or [])  # yazmadan önce: ör. escape (önceki girdi kalmasın)
         res = self._run(goal, max_steps, inputs or {}, notes)
+        res = self._consult_loop(goal, max_steps, inputs or {}, notes, res)
         if self._first is not None and self.last is not None:
             # Ekranın başa göre değişen kısmı rapora: ana model sonucu (hesap makinesindeki sayı) okumak için ayrı
             # refleks ve ekran görüntüsü turu harcıyordu.
@@ -237,6 +275,40 @@ class ScreenAgent:
         # Sonuç satırı: "clicked"/"done" doğru anda mı geldi, izden görülsün.
         self._trace({"ts": time.time(), "goal": goal, "result": res.status, "steps": res.steps, "reason": res.reason,
                      "window": res.title})
+        return res
+
+    def _consult_loop(self, goal: str, max_steps: int, inputs: dict[str, str], notes: Any,
+                      res: ReflexResult) -> ReflexResult:
+        """Takılınca içeriden danış (jev-mcp'nin consult'u): ana modele tam bir tur harcatıp yeni refleks başlatmak
+        yerine kısa bir istemle sıradaki somut adımı sor, onu yap, asıl hedefe devam et. Genel sınavda sürenin çoğu
+        needs_help -> ana model turu -> yeni refleks döngüsündeydi."""
+        if self.consult is None:
+            return res
+        log, steps = list(res.log), res.steps
+        for n in range(1, MAX_CONSULTS + 1):
+            if res.status != "needs_help" or steps >= max_steps:
+                break
+            situation = {"goal": goal, "window": res.title, "stuck_because": res.reason, "recent_steps": log[-8:],
+                         "on_screen": [i.describe(False) for i in (self.last.items if self.last else [])][:40]}
+            try:
+                advice = self.consult(situation) or {}
+            except Exception:  # noqa: BLE001 - danışma olmazsa ana modele dönülür
+                break
+            hint = " ".join(str(advice.get("next") or "").split())
+            if not hint or advice.get("give_up"):
+                break
+            self.emit(f"danışma {n}: {hint}")
+            log.append(f"(danışma {n}) {hint}")
+            sub = self._run(hint, min(CONSULT_STEPS, max_steps - steps), inputs, notes)
+            log += sub.log
+            steps += sub.steps
+            if sub.status in ("error", "needs_confirmation"):
+                res = sub
+                break
+            res = self._run(goal, max(1, max_steps - steps), inputs, notes)
+            log += res.log
+            steps += res.steps
+        res.log, res.steps = log, steps
         return res
 
     def _run(self, goal: str, max_steps: int, inputs: dict[str, str],
@@ -250,6 +322,8 @@ class ScreenAgent:
         history: list[str] = []  # Jev'e giden okunur geçmiş
         tried: dict[str, int] = {}  # eylem -> ekran değiştirmeden kaç kez denendi
         visits: dict[tuple[str, ...], int] = {}  # (ekran imzası, eylem) -> kaç kez yapıldı
+        dead: dict[str, set[str]] = {}  # ekran imzası -> o ekranda bir şey değiştirmeyen öğeler
+        last_item = ""  # son eylemin öğesi (işe yaramazsa dead'e girer)
         scr = Screen("", "")
         last_sig = ""
         start_items: list[Item] | None = None
@@ -287,11 +361,15 @@ class ScreenAgent:
                     return ReflexResult("acted", step - 1, "eylem ekranı değiştirdi; istenen olup olmadığı ayrıca "
                                         "doğrulanacak", log, scr.title, scr.location)
                 if not changed:
+                    if last_item:
+                        # Bu ekranda işe yaramadı: aynı ekranda bir daha seçilmez, sıradaki aday denenir (jev-mcp gibi).
+                        dead.setdefault(last_sig, set()).add(last_item)
                     tried[did] = tried.get(did, 0) + 1
                     if tried[did] >= 2:
                         return ReflexResult("needs_help", step - 1, f"aynı eylem iki kez ekranı değiştirmedi: {did}",
                                             log, scr.title, scr.location)
             last_sig = sig
+            last_item = ""
             prev_items, prev_image = scr.items, scr.image
             if getattr(self, "_first", None) is None:
                 self._first = scr
@@ -319,6 +397,9 @@ class ScreenAgent:
             see = self._can_see(scr)
             state: dict[str, Any] = {"goal": en, "window": scr.title, "items": {i.key: i.describe() for i in scr.items},
                                      "recent_actions": history[-6:] or ["none yet"]}
+            if dead.get(sig):
+                # Kodun bildiği gerçek (typesafe-computer-use: "actions already tried on the current screen").
+                state["tried_here_without_effect"] = sorted(dead[sig])
             if self.track_changes and history:
                 # "Bitti mi?" için kodun bildiği gerçek: turun başından beri ekranda ne değişti. Tur sayacı, yıl, kaynak
                 # sayıları her oyunda burada görünür; oyuna özel kural yazmak gerekmez.
@@ -366,6 +447,8 @@ class ScreenAgent:
             if "changed_as_asked" in a:  # görerek kıyas: istenen değişiklik oldu mu (kod iki yargıdan birini yeter sayar)
                 done = max(done, a["changed_as_asked"].value)
             item = _pick(a, "item", scr.items)
+            if item is not None and "item" in a:
+                item = self._steady_item(state, scr, a["item"], images, dead.get(sig, set())) or item
             self.emit(f"[{step}] {act.value} {item.describe() if item and act.value != 'press_key' else ''}"
                       f"{a['key'].value if act.value == 'press_key' else ''} (güven {act.confidence:.2f}, "
                       f"bitti? {done:.2f}, listede yok? {missing:.2f}) {ms:.0f} ms, {len(scr.items)} öğe"
@@ -423,6 +506,12 @@ class ScreenAgent:
             needs_item = choice in ("click", "double_click", "right_click", "type_text", "drag")
             if needs_item and item is None:
                 return ReflexResult("needs_help", step - 1, "ekranda seçilecek öğe yok", log, scr.title, scr.location)
+            if choice in ("click", "double_click", "drag") and item is not None and not self.allow_irreversible \
+                    and RISKY_RX.search(item.label):
+                # Geri alınamaz olabilecek adım: kullanıcının açık isteği olmadan yapılmaz (jev-mcp'nin güvenlik
+                # kapısı gibi; karar kodda). Solitaire'in gizlilik onayı başka araçla kabul edilmişti.
+                return ReflexResult("needs_confirmation", step - 1, f"'{item.label[:60]}' geri alınamaz bir iş yapabilir "
+                                    "(gönderme, ödeme, silme, onay/kabul)", log, scr.title, scr.location)
             drop = _pick(a, "drop", scr.items) if choice == "drag" else None
             # Aynı ekranda aynı eylem üçüncü kez: döngü. Unciv'de 'Pick a tech!' ile 'Close' arasında 15 adım gidip
             # geldi; her tıklama ekranı değiştirdiği için "ekran değişmedi" koruması yakalamıyordu.
@@ -461,6 +550,7 @@ class ScreenAgent:
             if choice == "drag" and drop is not None:
                 what += f" onto {drop.describe(False)}"
             history.append(f"{said.get(choice, choice)} {what}".strip())
+            last_item = item.describe(False) if needs_item and item else ""
             log.append(f"{step}. {history[-1]}")
             time.sleep(self.settle)
             if choice == "click" and single_click_goal(goal) and item is not None:
@@ -559,6 +649,26 @@ class ScreenAgent:
         fx = x0 + (zb["left"] + zb["right"]) / 2 * sx * (x1 - x0)
         fy = y0 + (zb["top"] + zb["bottom"]) / 2 * sy * (y1 - y0)
         return d["target_visible"].value, min(1.0, fx), min(1.0, fy)
+
+
+def make_consultant(router) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Takılan refleks için tek kısa çağrı: sohbet geçmişi yok, sadece hedef ve o anki ekran. Ana modelin bütün araç
+    tanımlarıyla tam bir turundan çok daha hızlı."""
+    import json as _json
+
+    def consult(situation: dict[str, Any]) -> dict[str, Any]:
+        res = router.chat("brain", [
+            {"role": "system", "content": "A fast on-screen agent got stuck while working toward a goal. From the "
+             "situation, give the single next concrete step on this screen, naming exactly what to click, type or "
+             "press as it appears on screen (one short sentence). If the goal cannot be reached from here or needs "
+             "the user (login, payment, a decision), set give_up. Never suggest sending, paying, deleting or accepting "
+             "terms unless the goal explicitly asks for it. Answer with JSON only: "
+             '{"next": "...", "give_up": false}'},
+            {"role": "user", "content": _json.dumps(situation, ensure_ascii=False)}], temperature=0, max_tokens=200)
+        m = re.search(r"\{.*\}", res.text or "", re.S)
+        return _json.loads(m.group(0)) if m else {}
+
+    return consult
 
 
 def make_translator(router) -> Callable[[str], str]:
