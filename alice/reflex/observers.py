@@ -86,6 +86,32 @@ def _open_windows() -> list[str]:
         return []
 
 
+def focused_control() -> str:
+    """Klavye odağındaki denetim ve içinde bulunduğu pencere (en yakın Window atası: diyalogsa diyaloğun adı), ör.
+    "Edit 'Dosya adı:' in window 'Farklı kaydet'". Kodun bildiği gerçek (typesafe-computer-use 'focused field'):
+    Not Defteri'ne yazılacak 1-10, açık kalmış Kaydet penceresinin dosya adı alanına gitmişti. Okunamazsa ''."""
+    import sys
+
+    if sys.platform != "win32":
+        return ""
+    try:
+        from pywinauto.uia_defines import IUIA
+        from pywinauto.uia_element_info import UIAElementInfo
+
+        el = UIAElementInfo(IUIA().iuia.GetFocusedElement())
+        window, p = "", el.parent
+        for _ in range(20):
+            if p is None or not p.control_type:
+                break
+            if p.control_type == "Window":
+                window = p.name or ""
+                break
+            p = p.parent
+        return f"{el.control_type} '{(el.name or '')[:60]}'" + (f" in window '{window[:60]}'" if window else "")
+    except Exception:  # noqa: BLE001 - odak okunamazsa gerçek verilmez
+        return ""
+
+
 def foreground_title() -> str:
     """Öndeki pencerenin başlığı (Windows dışında boş)."""
     import sys
@@ -389,7 +415,7 @@ class DesktopObserver:
             self._prev_img, self._prev_lines = img, lines
             self._seen = mark_fresh(items, self._seen)
             self.changed = regions
-        return Screen(title, "desktop", items, image=img)
+        return Screen(title, "desktop", items, focused=focused_control(), image=img)
 
     def _frac(self, rect: Any) -> tuple[float, float, float, float] | None:
         """Ekran pikseli (sol, üst, sağ, alt) -> son görüntülenen pencereye göre 0-1."""

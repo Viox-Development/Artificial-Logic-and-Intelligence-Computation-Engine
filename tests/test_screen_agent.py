@@ -691,3 +691,48 @@ def test_stuck_agent_consults_and_continues_without_the_main_model():
     agent.consult = lambda situation: {"next": "", "answer": "Off: Night light is off"}
     res = agent.run("gece ışığı açık mı bak")
     assert res.status == "done" and "Off: Night light is off" in res.reason
+
+
+def test_draw_across_sweeps_the_canvas_not_a_tiny_drag():
+    """Paint'te Jev'in sürükleme kutuları aynı noktayı gösterdi (2 piksel); çizim için alan boydan boya taranır."""
+
+    class Canvas(Panel):
+        drags: list = []
+
+        def screen(self, goal=""):
+            return Screen("Paint", "desktop", [Item("i1", "ax", "Button", "Dikdörtgen", (0.1, 0.05, 0.15, 0.1), ref=1),
+                                               Item("i2", "ax", "Pane", "Tuval", (0.1, 0.2, 0.9, 0.9), ref=2)])
+
+        def drag_at(self, fx, fy, tx, ty):
+            self.drags.append(tuple(round(v, 2) for v in (fx, fy, tx, ty)))
+
+    obs = Canvas()
+    brain = ProbBrain([{"action": "draw_across", "probs": {"i2": 0.9, "i1": 0.1}}, {"done": 0.95}])
+    res = ScreenAgent(obs, brain, settle=0).run("tuvale dikdörtgen çiz")
+    assert res.status == "done" and obs.drags == [(0.3, 0.38, 0.7, 0.72)]  # çeyrekten çeyreğe
+    assert "draw_across" in brain.calls[0][1]["action"].criteria
+    obs = Canvas()
+    obs.drags = []
+    res = ScreenAgent(obs, ProbBrain([{"action": "draw_across", "probs": {"i1": 1.0}}]), settle=0).run("çiz")
+    assert res.status == "needs_help" and obs.drags == []  # düğme alan değil, ekrana bakılamıyor
+
+
+def test_multiline_text_is_not_typed_into_a_one_line_field():
+    """Not Defteri'ne yazılacak 1-10, açık kalmış Kaydet penceresinin dosya adı alanına gitmişti."""
+
+    class Dialog(FakeScreen):
+        def screen(self, goal=""):
+            return Screen("Not Defteri", "desktop", [Item("i1", "ax", "Edit", "Dosya adı:", (0.2, 0.8, 0.6, 0.85),
+                                                          editable=True, ref=1),
+                                                     Item("i2", "ax", "Button", "İptal", (0.8, 0.9, 0.9, 0.95), ref=2)],
+                          focused="Edit 'Dosya adı:' in window 'Farklı kaydet'")
+
+    obs = Dialog()
+    brain = Brain([{"action": "press_key", "key": "escape"}, {"done": 0.95}])
+    ScreenAgent(obs, brain, settle=0).run("1-10 yaz", text="1\n2\n3")
+    assert all(a[0] != "type_keys" for a in obs.acts)  # zorla yazılmadı
+    assert brain.calls[0][0]["keyboard_focus"] == "Edit 'Dosya adı:' in window 'Farklı kaydet'"  # Jev de görüyor
+    from alice.reflex.agent import wrong_field
+
+    assert wrong_field("Edit 'Dosya adı:' in window 'Farklı kaydet'", "1\n2") and not wrong_field("Document 'x'", "1\n2")
+    assert not wrong_field("Edit 'Ara'", "lofi")

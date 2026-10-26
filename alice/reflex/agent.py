@@ -46,6 +46,8 @@ ACTION_CRITERIA = {
     "type_keys": "Type text with the keyboard into the window itself without choosing a field, for example a "
                  "calculation into a calculator, a command into a terminal or a word in a game.",
     "hold_key": "Hold a key or key combination down for a moment, for example to keep moving or running in a game.",
+    "draw_across": "Drag the mouse across one area, such as a canvas, picture or map, from its upper-left part to its "
+                   "lower-right part, for example to draw a shape or select a region.",
     "drag": "Drag one item and drop it onto another place, for example moving a card, unit, file or slider.",
     "scroll_down": "Scroll down because what `goal` needs is probably further down.",
     "scroll_up": "Scroll up because what `goal` needs is probably further up.",
@@ -73,6 +75,7 @@ ITEM_SURE = 0.6  # öğe seçiminde en iyi aday bunun altındaysa ikinci bakış
 SECOND_LOOK_MIN = 0.15  # ikinci aday en az bu kadar olası olmalı (yoksa ikinci bakışa gerek yok)
 SECOND_LOOK_TOP = 4  # ikinci bakışta kıyaslanan aday sayısı
 MAX_CONSULTS = 2  # bir refleks çağrısında en fazla bu kadar iç danışma
+DRAW_MIN_AREA = 0.04  # draw_across: öğe pencerenin bu kadarından küçükse alan değil (düğme), Jev'in gördüğü alan kullanılır
 CONSULT_STEPS = 6  # danışmadan gelen adım için en fazla adım
 # Geri alınamaz olabilecek düğmeler (Türkçe ekler için sadece baştan sınır): gönder, öde, sil, satın al, onayla...
 RISKY_RX = re.compile(r"(?<![\w])(gönder|send|sil|delete|remove|kaldır|satın|buy|purchase|öde|pay|sipariş|order|"
@@ -91,6 +94,11 @@ def _pick(answers: dict[str, Any], question: str, pool: list[Item]) -> Item | No
     if question in answers:
         return next((i for i in pool if i.key == answers[question].value), None)
     return pool[0] if len(pool) == 1 else None
+
+
+def wrong_field(focused: str, text: str) -> bool:
+    """Çok satırlı metin tek satırlık bir alana (Edit, ComboBox) mı yazılacak? Satır sonları boşluğa dönüşür."""
+    return "\n" in text and focused.startswith(("Edit ", "ComboBox "))
 
 
 def already_has(value: str, text: str) -> bool:
@@ -210,6 +218,8 @@ class ScreenAgent:
             kinds.pop("type_text")  # yazılacak alan yok
         if len(scr.items) < 2:
             kinds.pop("drag")
+        if not callable(getattr(self.obs, "drag_at", None)):
+            kinds.pop("draw_across")
         if see:
             kinds[VISUAL_ACTION] = VISUAL_CRITERION
             if callable(getattr(self.obs, "drag_at", None)):
@@ -245,6 +255,9 @@ class ScreenAgent:
                 q["drag_visible"] = Noul("Is the thing `goal` needs to drag next visible in `screen`?")
                 q["drag_source"] = Box(grab_box("grabbed and dragged"))
                 q["drop_place"] = Box("the place in `screen` where the dragged thing should be dropped for `goal`")
+            if "draw_across" in kinds:
+                q["draw_area"] = Box("the empty area in `screen`, such as a canvas, picture or map, where `goal` "
+                                     "wants to draw or select")
         if see and compare:
             # "Tamamen başarıldı mı?" soyut kaldı (Solitaire'de kart çekildiği halde 0.1). Gözlenebilir tek yargı:
             # istenen değişiklik önceki karede yok, şimdikinde var mı? Değişen bölge varsa onun büyük kırpıntıları
@@ -381,7 +394,7 @@ class ScreenAgent:
                 self._first = scr
             if start_items is None:
                 start_items, start_image = scr.items, scr.image
-            if step == 1 and getattr(self, "_keyboard_text", ""):
+            if step == 1 and getattr(self, "_keyboard_text", "") and not wrong_field(scr.focused, self._keyboard_text):
                 # Ana model "bunu klavyeyle yaz" dediyse karar Jev'in değil: Hesap Makinesi'nde text='2^20=' verildiği
                 # halde Jev "İki" tuşuna tıklamayı seçmişti. Önce yazılır, Jev kalanından devam eder.
                 try:
@@ -403,6 +416,8 @@ class ScreenAgent:
             see = self._can_see(scr)
             state: dict[str, Any] = {"goal": en, "window": scr.title, "items": {i.key: i.describe() for i in scr.items},
                                      "recent_actions": history[-6:] or ["none yet"]}
+            if scr.focused:
+                state["keyboard_focus"] = scr.focused  # kodun bildiği gerçek: yazılan metin nereye gider
             if dead.get(sig):
                 # Kodun bildiği gerçek (typesafe-computer-use: "actions already tried on the current screen").
                 state["tried_here_without_effect"] = sorted(dead[sig])
@@ -480,6 +495,12 @@ class ScreenAgent:
                     return res
                 time.sleep(self.settle)
                 continue
+            if choice == "draw_across":
+                res = self._draw_across(step, scr, item, see, a, log, history)
+                if isinstance(res, ReflexResult):
+                    return res
+                time.sleep(self.settle)
+                continue
             if choice == VISUAL_ACTION:
                 res = self._visual_click(step, scr, en, a, log, history)
                 if isinstance(res, ReflexResult):
@@ -541,6 +562,11 @@ class ScreenAgent:
                     key = str(a["key"].value)
                 if choice == "type_keys":
                     text = self._keyboard(en, inputs)
+                    if wrong_field(scr.focused, text):
+                        # Çok satırlı metin tek satırlık alana gidecekti (açık kalmış Kaydet penceresinin dosya adı).
+                        history.append(f"did not type: keyboard focus is in {scr.focused}, a one-line field")
+                        log.append(f"{step}. yazılmadı: odak tek satırlık alanda ({scr.focused})")
+                        continue
                 self.obs.act(choice, item if needs_item else None, text=text, keys=key, drop=drop)
             except Exception as e:  # noqa: BLE001
                 log.append(f"{step}. {choice} -> HATA {e}")
@@ -604,6 +630,34 @@ class ScreenAgent:
             return None
         log.append(f"{step}. ekranda görülen yere tıklandı ({fx:.2f}, {fy:.2f}) var mı? {seen:.2f}")
         history.append(f"clicked something visible on screen at {place(fx, fy)}")
+        return None
+
+    def _draw_across(self, step: int, scr: Screen, item: Item | None, see: bool, a: dict[str, Any], log: list[str],
+                     history: list[str]) -> ReflexResult | None:
+        """Bir alanın içinde boydan boya sürükle (çizmek, alan seçmek). Paint'te Jev'in sürükleme kutuları tuvalin
+        ortasında neredeyse aynı noktayı gösterdi: 2 piksellik sürükleme şekil çizmedi. Alan, büyük bir öğeyse onun
+        kutusu, değilse Jev'in gördüğü boş alan; sol-üst çeyrekten sağ-alt çeyreğe."""
+        area, what = None, ""
+        if item is not None and item.rect and (item.rect[2] - item.rect[0]) * (item.rect[3] - item.rect[1]) >= DRAW_MIN_AREA:
+            area, what = item.rect, item.describe(False)
+        elif see and "draw_area" in a:
+            b = a["draw_area"].value
+            sx, sy = padded_fraction(scr.image.size)
+            area = (b["left"] * sx, b["top"] * sy, min(1.0, b["right"] * sx), min(1.0, b["bottom"] * sy))
+            what = "the area seen on screen"
+        if area is None:
+            return ReflexResult("needs_help", step - 1, "çizilecek/seçilecek alan bulunamadı", log, scr.title,
+                                scr.location)
+        l, t, r, b_ = area
+        fx, fy, tx, ty = l + 0.25 * (r - l), t + 0.25 * (b_ - t), l + 0.75 * (r - l), t + 0.75 * (b_ - t)
+        try:
+            self.obs.drag_at(fx, fy, tx, ty)
+        except Exception as e:  # noqa: BLE001
+            log.append(f"{step}. boydan boya sürükleme -> HATA {e}")
+            history.append(f"draw across failed: {str(e)[:120]}")
+            return None
+        history.append(f"drew across {what} from {place(fx, fy)} to {place(tx, ty)}")
+        log.append(f"{step}. {history[-1]}")
         return None
 
     def _visual_drag(self, step: int, scr: Screen, goal: str, a: dict[str, Any], log: list[str],
