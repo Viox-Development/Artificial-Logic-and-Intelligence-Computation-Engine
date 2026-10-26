@@ -132,12 +132,15 @@ class Observer(Protocol):
     def press_enter(self) -> None: ...
 
 
-ACTIONS = ("click", "double_click", "right_click", "type_text", "press_key", "drag", "scroll_down", "scroll_up",
-           "wait")
+ACTIONS = ("click", "double_click", "right_click", "type_text", "type_keys", "press_key", "hold_key", "drag",
+           "scroll_down", "scroll_up", "wait")
 # Jev'in seçebileceği tuşlar (kapalı küme: Jev metin üretmez). Hedefte başka bir kısayol yazıyorsa o da eklenir.
-KEYS = ("enter", "escape", "tab", "space", "backspace", "delete", "up", "down", "left", "right", "pageup",
-        "pagedown", "home", "end", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z", "ctrl+s", "ctrl+f", "f5")
+KEYS = ("enter", "escape", "tab", "shift+tab", "space", "backspace", "delete", "up", "down", "left", "right",
+        "pageup", "pagedown", "home", "end", "ctrl+home", "ctrl+end", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z",
+        "ctrl+y", "ctrl+s", "ctrl+shift+s", "ctrl+f", "ctrl+n", "ctrl+t", "ctrl+tab", "ctrl+shift+tab", "alt+enter",
+        "f2", "f5")
 WAIT_SECONDS = 1.0
+HOLD_SECONDS = 1.0  # hold_key: tuş(lar) bu kadar basılı kalır (araçtan değiştirilebilir)
 
 
 def _browser_key(keys: str) -> str:
@@ -152,6 +155,7 @@ def _browser_key(keys: str) -> str:
 
 class BrowserObserver:
     kind = "browser"
+    hold_seconds = HOLD_SECONDS
 
     def __init__(self, ctx: ToolContext, start_url: str | None = None):
         from alice.tools.browser import get_browser
@@ -230,6 +234,15 @@ class BrowserObserver:
             self.type(item.ref, text, submit=False)
         elif action == "press_key":
             page.keyboard.press(_browser_key(keys))
+        elif action == "type_keys":
+            page.keyboard.type(text, delay=10)
+        elif action == "hold_key":
+            parts = _browser_key(keys).split("+")
+            for k in parts:
+                page.keyboard.down(k)
+            page.wait_for_timeout(int(self.hold_seconds * 1000))
+            for k in reversed(parts):
+                page.keyboard.up(k)
         elif action == "drag":
             if drop is None:
                 raise ValueError("sürüklemek için hedef öğe gerekli")
@@ -274,6 +287,7 @@ class BrowserObserver:
 
 class DesktopObserver:
     kind = "desktop"
+    hold_seconds = HOLD_SECONDS
 
     def __init__(self, ctx: ToolContext, window_title: str | None = None, goal: str = "",
                  echoes: tuple[str, ...] = (), diff: bool = False):
@@ -357,7 +371,7 @@ class DesktopObserver:
 
     def act(self, action: str, item: Item | None = None, text: str = "", keys: str = "",
             drop: Item | None = None) -> None:
-        from alice.tools.computer import _pyautogui, press_keys, type_text
+        from alice.tools.computer import _pyautogui, hold_keys, press_keys, type_text
         from alice.tools.desktop import ui_act
 
         if action in ("click", "double_click", "right_click", "type_text", "drag") and item is None:
@@ -381,6 +395,10 @@ class DesktopObserver:
                 type_text(text)
         elif action == "press_key":
             press_keys(keys)
+        elif action == "type_keys":
+            type_text(text)  # öndeki pencereye (screen() pencereyi öne aldı): hesap makinesi, terminal, oyun
+        elif action == "hold_key":
+            hold_keys(keys, self.hold_seconds)
         elif action == "drag":
             if drop is None:
                 raise ValueError("sürüklemek için hedef öğe gerekli")

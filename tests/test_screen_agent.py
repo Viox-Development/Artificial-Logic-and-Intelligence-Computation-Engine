@@ -466,3 +466,55 @@ def test_reflex_refuses_to_type_into_alice_itself(monkeypatch, tmp_path):
     ctx.state["agent"].messages.append({"role": "user", "_display": "ikinci projeye tıkla",
                                         "content": "ikinci projeye tıkla\n\n[hatırlanan] Uydurma bir savunma sanayi"})
     assert _last_user_text(ctx) == ("ikinci projeye tıkla",)  # hafıza eki yankı sayılmasın
+
+
+# ------------------------------------------------------------------------------------------- klavye
+def test_keyboard_typing_combos_and_holding_on_desktop(monkeypatch):
+    from alice.reflex import observers
+    from alice.tools import computer
+
+    calls = []
+
+    class PG:
+        def __getattr__(self, name):
+            return lambda *a, **k: calls.append((name, a))
+
+    monkeypatch.setattr(computer, "_pyautogui", lambda: PG())
+    monkeypatch.setattr(computer.time, "sleep", lambda s: calls.append(("sleep", s)))
+    monkeypatch.setattr(computer, "type_text", lambda t: calls.append(("type", t)))
+    obs = observers.DesktopObserver(ctx=None)
+    obs.act("type_keys", text="1234*5678=")
+    obs.hold_seconds = 2
+    obs.act("hold_key", keys="shift+w")
+    obs.act("press_key", keys="ctrl+shift+s")
+    assert calls[0] == ("type", "1234*5678=")  # alan seçmeden öndeki pencereye
+    assert calls[1:6] == [("keyDown", ("shift",)), ("keyDown", ("w",)), ("sleep", 2), ("keyUp", ("w",)),
+                          ("keyUp", ("shift",))]  # birlikte basılı, ters sırayla bırakılır
+    assert calls[6] == ("hotkey", ("ctrl", "shift", "s"))  # aynı anda
+
+
+def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
+    """Hesap makinesinde tuşlara tek tek tıklatıp adım sınırına takılıyordu; sonucu okumak için de ayrı tur gerekiyordu."""
+
+    class Calc(FakeScreen):
+        display = "0"
+
+        def screen(self, goal=""):
+            return Screen("Hesap Makinesi", "desktop", [
+                Item("i1", "ax", "Text", f"Gösterim {self.display}", (0.1, 0.1, 0.9, 0.2)),
+                Item("i2", "ax", "Button", "Eşittir", (0.8, 0.9, 0.9, 0.95), ref=2)])
+
+        def act(self, action, item=None, text="", keys="", drop=None):
+            super().act(action, item, text, keys, drop)
+            if action == "type_keys" and text == "1234*5678=":
+                self.display = "7.006.652"
+
+    obs = Calc()
+    brain = Brain([{"action": "type_keys"}, {"done": 0.95}])
+    res = ScreenAgent(obs, brain, settle=0).run("1234 çarpı 5678", text="1234*5678=", keys=["ctrl+shift+s"])
+    assert res.status == "done" and obs.acts == [("type_keys", None, "1234*5678=", "", None)]
+    assert "type_keys" in brain.calls[0][1]["action"].criteria
+    assert "Press ctrl+shift+s" in brain.calls[0][1]["key"].criteria.values()  # aracın verdiği kombinasyon
+    report = res.report()
+    assert "ekranda başa göre çıkan: Gösterim 7.006.652" in report and "kaybolan: Gösterim 0" in report
+    assert "typed '1234*5678=' on the keyboard" in brain.calls[1][0]["recent_actions"][0]

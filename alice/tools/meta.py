@@ -160,12 +160,12 @@ class Task(Tool):
 class Reflex(Tool):
     name = "reflex"
     description = (
-        "Ekranda/tarayıcıda bir hedefi Jev'le hızlıca yapar (adım başına ~0,3-1 sn): ekranı okur (erişilebilirlik "
-        "ağacı + ekrandaki yazılar), her adımda ne yapılacağını seçer ve uygular: tıklama, çift tıklama, sağ tık, "
-        "yazma, tuş/kısayol, sürükle-bırak, kaydırma, bekleme. Her eylemden sonra ekranın değişip değişmediğine "
-        "bakar.\n"
-        "- Kullan: 'ekrandaki Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'arama kutusuna X yazıp ilk "
-        "sonuca tıkla', 'kartı sağdaki sütuna sürükle', oyunda bir turu oynamak.\n"
+        "Ekranda/tarayıcıda bir hedefi Jev'le hızlıca yapar (adım ~1 sn): ekranı okur, her adımda eylemi seçer: "
+        "tıklama, sağ/çift tık, alana yazma, pencereye klavyeyle yazma, tuş ya da kombinasyon (ctrl+shift+s), tuşu "
+        "basılı tutma, sürükle-bırak, kaydırma. Sonuçta ekranın başa göre değişen yazıları da gelir.\n"
+        "- Kullan: 'Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'kartı sağdaki sütuna sürükle'.\n"
+        "- Klavye işi tek adımdır: hesap makinesinde tuşlara tıklatma, text='1234*5678=' ver; gereken "
+        "kombinasyonları keys'e yaz.\n"
         "- Uygulama açmaz: önce app/windows aracıyla aç, sonra title ver (boşsa öndeki pencere).\n"
         "- Büyük işlerde sen planla: işi kısa hedeflere böl, her biri için reflex çağır; oyun kuralları, strateji "
         "ya da ekranda neyin ne olduğunu notes'a yaz (İngilizce daha iyi).\n"
@@ -183,12 +183,18 @@ class Reflex(Tool):
                    "description": "Doldurulacak alanlar: alan adından parça -> yazılacak metin, ör. {\"ara\": \"lofi\"}."},
         "notes": {"type": "string", "description": "Karar motoruna bağlam: kurallar, strateji, ekranda neyin ne "
                   "olduğu, kaçınılacaklar (kısa, tercihen İngilizce)."},
+        "text": {"type": "string", "description": "Pencereye klavyeyle yazılacak metin (alan seçmeden), ör. "
+                 "'1234*5678='."},
+        "keys": {"type": "array", "items": {"type": "string", "description": "Tuş ya da kombinasyon, ör. 'shift+w'."},
+                 "description": "Seçeneklere eklenecek tuşlar/kombinasyonlar (aynı anda basılır)."},
+        "hold_seconds": {"type": "number", "description": "Tuş basılı tutulacaksa kaç saniye. Varsayılan 1."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 20."},
     }, ["goal", "target"])
     risk = COMPUTER
 
     def run(self, ctx: ToolContext, goal: str, target: str, url: str | None = None, title: str | None = None,
-            inputs: dict[str, str] | None = None, notes: str = "", max_steps: int = 20) -> ToolResult:
+            inputs: dict[str, str] | None = None, notes: str = "", max_steps: int = 20, text: str = "",
+            keys: list[str] | None = None, hold_seconds: float | None = None) -> ToolResult:
         from alice.config import alice_home
         from alice.reflex.agent import ScreenAgent, make_translator
         from alice.reflex.loop import make_text_writer
@@ -202,7 +208,10 @@ class Reflex(Tool):
             observer = DesktopObserver(ctx, title, goal, echoes=_last_user_text(ctx))
         loop = ScreenAgent(observer, ctx.decider, make_text_writer(ctx.router), make_translator(ctx.router),
                            emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
-        res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "")
+        if hold_seconds:
+            observer.hold_seconds = max(0.05, min(float(hold_seconds), 10.0))
+        extra = {k: v for k, v in (("text", text), ("keys", keys)) if v}
+        res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "", **extra)
         verdict = reflex_verdict(getattr(res, "status", ""))
         return ToolResult(res.report() + ("\n" + verdict if verdict else ""),
                           is_error=getattr(res, "status", "") == "error")

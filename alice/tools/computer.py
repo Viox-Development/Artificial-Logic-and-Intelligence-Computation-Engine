@@ -162,14 +162,28 @@ def press_keys(keys: str) -> None:
         pg.hotkey(*parts)
 
 
+def hold_keys(keys: str, seconds: float) -> None:
+    """Tuşları (ör. 'shift+w') birlikte basılı tut, sonra ters sırayla bırak: oyunda koşmak, yürümek."""
+    pg = _pyautogui()
+    alias = {"control": "ctrl", "win": "win", "windows": "win", "return": "enter", "esc": "escape"}
+    parts = [alias.get(k.strip().lower(), k.strip().lower()) for k in keys.replace(" ", "").split("+") if k.strip()]
+    try:
+        for k in parts:
+            pg.keyDown(k)
+        time.sleep(max(0.05, min(float(seconds), 10.0)))
+    finally:
+        for k in reversed(parts):
+            pg.keyUp(k)
+
+
 class Computer(Tool):
     name = "computer"
     description = (
         "Ekranın görüntüsünü alır ve fare/klavyeyi tek tek adımlarla kullanır (düşük seviye).\n"
         "- Önce action=screenshot al; x,y koordinatları o görüntünün piksel uzayındadır. Görmeden koordinat "
         "tahmin etme.\n"
-        "- Birkaç adımlı ekran işleri için computer_task, ekranda tek tıklama/yazma için reflex daha iyi; masaüstü "
-        "öğeleri için ui_elements/ui_act, web sayfaları için browser. Koordinatla tıklama son çaredir.\n"
+        "- Ekran işleri (tek ya da çok adımlı) için önce reflex (hızlı); web sayfaları için browser; reflex "
+        "yapamazsa computer_task. Koordinatla tıklama son çaredir.\n"
         "- 'Ekranda ne var' sorusunda screenshot yeter."
     )
     parameters = obj({
@@ -261,17 +275,16 @@ class Computer(Tool):
 class ComputerTask(Tool):
     name = "computer_task"
     description = (
-        "Bilgisayarı kullanıcı gibi kullanarak çok adımlı bir ekran işini baştan sona yapar: her adımda ekranı görür, "
-        "fare ve klavyeyle tıklar, yazar, kaydırır, sonucu kontrol edip düzeltir. Dakikalar sürebilir (sesli "
-        "konuşmada arka planda çalışır). Her uygulamada çalışır (UI Automation vermeyenler dahil: oyunlar, Blender arayüzü).\n"
-        "- Kullan: masaüstünde/Windows ayarlarında bir değişiklik, uygulamada menülerden geçmek, mesaj yazıp "
-        "göndermek, form doldurmak, dosya kaydetmek.\n"
-        "- Kullanma: tek tıklık işler (reflex), uygulama açmak (windows open), dosya ya da komut işleri (dosya "
+        "YAVAŞ yedek: ekran görüntüsüne bakan büyük modelle çok adımlı ekran işi yapar (adım başına 5-15 sn, "
+        "dakikalar sürer). Ekran işlerinde önce reflex'i kullan: o da çok adımlıdır (yazma, kısayol, kaydet "
+        "penceresi, menüler) ve adım başına ~1 sn. Not Defteri'ne yazıp kaydetmek bununla 9 dakika sürmüştü.\n"
+        "- Kullan: reflex needs_help dediğinde, ya da ekranda okunabilir öğe/yazı olmayan arayüzlerde.\n"
+        "- Kullanma: reflex'in yapabildiği işler, uygulama açmak (windows open), dosya ya da komut işleri (dosya "
         "araçları, run_command). Aynı anda tek görev çalışır; sürerken tekrar başlatma."
     )
     parameters = obj({
         "goal": {"type": "string", "description": "Yapılacak iş; kullanıcının istediği gibi, adlarıyla, net ve "
-                 "eksiksiz. Ör. 'Not Defteri'ni aç, alışveriş listesi yaz, masaüstüne liste.txt olarak kaydet'."},
+                 "eksiksiz. Ör. 'Blender'ın arayüzünde Render ayarlarını aç'."},
         "monitor": {"type": "integer", "description": "Çalışılacak monitör (1, 2...). Boş: öndeki pencerenin monitörü."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 30."},
     }, ["goal"])

@@ -50,9 +50,13 @@ until the window closes; use `windows action=open` or background=true.
 For 3D modelling in Blender use the `blender` tool (bpy script run headless, errors and the object list come back, \
 then action=open shows the result) instead of clicking in Blender's window, which UI Automation cannot see.
 2. Browser tasks: use the `browser` tool. It returns element lists with IDs; click/type by ID, no pixel guessing.
-3. Desktop apps on Windows: `ui_elements` lists the foreground window's controls with IDs, then `ui_act`.
-4. Repetitive or simple UI navigation with a clear goal: delegate to `reflex` (System One fast decision loop, \
-~100-500 ms per step). If it returns needs_help, continue yourself from where it stopped. To play a game over many \
+3. Desktop apps on Windows: give the on-screen work to `reflex` (System One fast decision loop, ~1 s per step), \
+single or multi-step: clicking, typing into fields, typing on the keyboard (pass `text`, e.g. '1234*5678=' for a \
+calculator instead of clicking its buttons), shortcuts and key combinations (pass them in `keys`), save dialogs, \
+menus. Its report includes what changed on screen, so you usually do not need a screenshot afterwards. If it \
+returns needs_help, continue from where it stopped (`ui_elements`/`ui_act`, then `computer_task`, which is slow: \
+5-15 s per step). Each extra tool call costs you a full model turn, so prefer one `reflex` call with a complete goal.
+4. To play a game over many \
 turns (turn-based strategy, card or puzzle games), use `game` instead: it learns the game and its rules while \
 playing (lessons from what actually happened on screen). Read the board with `game action=look`, not with a \
 downscaled screenshot, and let `game action=play` choose and check legal moves.

@@ -106,10 +106,17 @@ class ReflexResult:
     log: list[str] = field(default_factory=list)
     title: str = ""
     location: str = ""
+    changes: dict[str, list[str]] | None = None  # başa göre ekranda çıkan/kaybolan yazılar
 
     def report(self) -> str:
         head = f"reflex: {self.status} ({self.steps} adım) - {self.reason}\nekran: {self.title} | {self.location}"
-        return head + ("\nadımlar:\n" + "\n".join(self.log[-15:]) if self.log else "")
+        out = head + ("\nadımlar:\n" + "\n".join(self.log[-15:]) if self.log else "")
+        c = self.changes or {}
+        if c.get("appeared") or c.get("disappeared"):
+            # Sonuç (hesap makinesindeki sayı) burada görünür; ana model okumak için ayrı tur harcamaz.
+            out += ("\nekranda başa göre çıkan: " + "; ".join(c.get("appeared") or ["-"])
+                    + "\nkaybolan: " + "; ".join(c.get("disappeared") or ["-"]))
+        return out
 
 
 class ReflexLoop:

@@ -43,6 +43,9 @@ ACTION_CRITERIA = {
     "type_text": "Type text into one input field or editable area.",
     "press_key": "Press a keyboard key or shortcut without choosing an item, for example Enter to confirm, "
                  "Escape to close a dialog, or an arrow key.",
+    "type_keys": "Type text with the keyboard into the window itself without choosing a field, for example a "
+                 "calculation into a calculator, a command into a terminal or a word in a game.",
+    "hold_key": "Hold a key or key combination down for a moment, for example to keep moving or running in a game.",
     "drag": "Drag one item and drop it onto another place, for example moving a card, unit, file or slider.",
     "scroll_down": "Scroll down because what `goal` needs is probably further down.",
     "scroll_up": "Scroll up because what `goal` needs is probably further up.",
@@ -152,6 +155,16 @@ class ScreenAgent:
             raise DeciderError("yazılacak metin yok (inputs ver)")
         return self.text_writer(goal, item.describe())
 
+    def _keyboard(self, goal: str, inputs: dict[str, str]) -> str:
+        """Pencereye klavyeyle yazılacak metin: araçtan gelen text, tek bir input, yoksa hızlı model hedeften üretir."""
+        if getattr(self, "_keyboard_text", ""):
+            return self._keyboard_text
+        if len(inputs) == 1:
+            return next(iter(inputs.values()))
+        if self.text_writer is None:
+            raise DeciderError("klavyeyle yazılacak metin yok (text ver)")
+        return self.text_writer(goal, "the whole window, typed with the keyboard (no field is selected)")
+
     def _questions(self, scr: Screen, keys: list[str], see: bool,
                    compare: tuple[str, str] | None = None) -> dict[str, Any]:
         items = {i.key: i.describe() for i in scr.items}
@@ -210,9 +223,15 @@ class ScreenAgent:
 
     # ------------------------------------------------------------------ döngü
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None,
-            notes: str | Callable[[Screen], str] = "") -> ReflexResult:
-        """notes: sabit metin ya da her adımda ekrana göre seçen bir fonksiyon (oyunda: ekrandakine uyan dersler)."""
+            notes: str | Callable[[Screen], str] = "", text: str = "", keys: list[str] | None = None) -> ReflexResult:
+        """notes: sabit metin ya da her adımda ekrana göre seçen bir fonksiyon (oyunda: ekrandakine uyan dersler).
+        text: klavyeyle pencereye yazılacak metin (type_keys). keys: seçeneklere eklenecek tuşlar/kombinasyonlar."""
+        self._keyboard_text, self._extra_keys, self._first = text, list(keys or []), None
         res = self._run(goal, max_steps, inputs or {}, notes)
+        if self._first is not None and self.last is not None:
+            # Ekranın başa göre değişen kısmı rapora: ana model sonucu (hesap makinesindeki sayı) okumak için ayrı
+            # refleks ve ekran görüntüsü turu harcıyordu.
+            res.changes = screen_changes(self._first.items, self.last.items)
         # Sonuç satırı: "clicked"/"done" doğru anda mı geldi, izden görülsün.
         self._trace({"ts": time.time(), "goal": goal, "result": res.status, "steps": res.steps, "reason": res.reason,
                      "window": res.title})
@@ -223,7 +242,8 @@ class ScreenAgent:
         en = self._english(goal)
         if en != goal:
             self.emit(f"hedef: {en}")
-        keys = list(dict.fromkeys(list(KEYS) + goal_keys(goal)))
+        keys = list(dict.fromkeys(list(KEYS) + goal_keys(goal) + [k.lower().replace(" ", "")
+                                                                   for k in getattr(self, "_extra_keys", [])]))
         log: list[str] = []
         history: list[str] = []  # Jev'e giden okunur geçmiş
         tried: dict[str, int] = {}  # eylem -> ekran değiştirmeden kaç kez denendi
@@ -271,6 +291,8 @@ class ScreenAgent:
                                             log, scr.title, scr.location)
             last_sig = sig
             prev_items, prev_image = scr.items, scr.image
+            if getattr(self, "_first", None) is None:
+                self._first = scr
             if start_items is None:
                 start_items, start_image = scr.items, scr.image
             see = self._can_see(scr)
@@ -399,8 +421,10 @@ class ScreenAgent:
                         history.append(f"did not type: {item.describe(False)} already contains '{text[:40]}'")
                         log.append(f"{step}. yazılmadı: alan zaten '{text[:40]}' içeriyor")
                         continue
-                if choice == "press_key":
+                if choice in ("press_key", "hold_key"):
                     key = str(a["key"].value)
+                if choice == "type_keys":
+                    text = self._keyboard(en, inputs)
                 self.obs.act(choice, item if needs_item else None, text=text, keys=key, drop=drop)
             except Exception as e:  # noqa: BLE001
                 log.append(f"{step}. {choice} -> HATA {e}")
@@ -409,6 +433,8 @@ class ScreenAgent:
                 continue
             said = {"click": "clicked", "double_click": "double-clicked", "right_click": "right-clicked",
                     "type_text": f"typed '{text[:40]}' into", "drag": "dragged", "press_key": f"pressed {key}",
+                    "type_keys": f"typed '{text[:40]}' on the keyboard",
+                    "hold_key": f"held {key} for {getattr(self.obs, 'hold_seconds', 1.0):g}s",
                     "scroll_down": "scrolled down", "scroll_up": "scrolled up", "wait": f"waited {WAIT_SECONDS:g}s"}
             what = item.describe(False) if needs_item and item else ""
             if choice == "drag" and drop is not None:
