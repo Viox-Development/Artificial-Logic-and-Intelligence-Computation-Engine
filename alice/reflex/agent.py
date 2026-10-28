@@ -25,7 +25,7 @@ import time
 from typing import Any, Callable
 
 from alice.decider import Box, Choice, DeciderError, Noul, padded_fraction, prepare_image
-from alice.reflex.loop import ReflexResult, single_click_goal
+from alice.reflex.loop import ReflexResult, login_text, single_click_goal
 from alice.reflex.observers import KEYS, WAIT_SECONDS
 from alice.reflex.perceive import (Item, Screen, changed_crops, changed_places, image_changed, image_key, place,
                                    screen_changes)
@@ -85,6 +85,8 @@ MISSING_MIN = 0.7
 VISIBLE_MIN = 0.7
 ZOOM_MIN = 0.4
 KIND_MIN = 0.4  # eylem türünde bundan az eminse beyne bırak
+ITEM_CLEAR = 0.9  # ...ama öğe bu kadar açıksa ve en olası tür tıklamaysa tıkla
+KIND_FLOOR = 0.3  # (tıklama en az bu kadar olası olmalı)
 TRACE_MAX = 2_000_000  # bayt: iz dosyası bundan büyükse yarısı silinir
 _KEY_RX = re.compile(r"\b((?:ctrl|alt|shift|win)\+[\w+]+|f\d{1,2})\b", re.I)
 
@@ -105,6 +107,11 @@ def already_has(value: str, text: str) -> bool:
     """Alan yazılacak metni zaten içeriyor mu? Değer okunurken 80 karakterde kesiliyor."""
     v, t = (value or "").strip(), (text or "").strip()
     return bool(v and t) and (v == t or (len(v) >= 78 and t.startswith(v)))
+
+
+def login_item(item: Item, *goals: str) -> bool:
+    """Öğe bir giriş/kayıt kontrolü mü ve hedef giriş yapmayı istemiyor mu? (bkz. loop.LOGIN_RX)"""
+    return login_text(f"{item.label} {item.value}", *goals)
 
 
 def goal_keys(goal: str) -> list[str]:
@@ -321,7 +328,7 @@ class ScreenAgent:
             sub = self._run(hint, min(CONSULT_STEPS, max_steps - steps), inputs, notes)
             log += sub.log
             steps += sub.steps
-            if sub.status in ("error", "needs_confirmation"):
+            if sub.status in ("error", "needs_confirmation", "needs_login"):
                 res = sub
                 break
             res = self._run(goal, max(1, max_steps - steps), inputs, notes)
@@ -523,7 +530,11 @@ class ScreenAgent:
                 # değil: "yapılamadı" demek yanlış olurdu.
                 return ReflexResult("likely_done", step - 1, f"son eylem ekranı değiştirdi, büyük ihtimalle bitti "
                                     f"(bitti? {done:.2f})", log, scr.title, scr.location)
-            if act.confidence < KIND_MIN:
+            # Öğe apaçık, tür kararsız: WhatsApp'ta arama kutusu 0.95 ile seçildi ama tıkla/yaz/kaydır oyu bölündü
+            # (tıkla 0.35) ve pes edildi. En olası tür tıklamaysa tıklanır (geri alınamaz düğme kapısı yine geçerli).
+            clear_click = (choice == "click" and item is not None and "item" in a
+                           and a["item"].confidence >= ITEM_CLEAR and act.confidence >= KIND_FLOOR)
+            if act.confidence < KIND_MIN and not clear_click:
                 return ReflexResult("needs_help", step - 1, f"ne yapılacağından emin değil (güven {act.confidence:.2f}"
                                     f", en olası: {choice})", log, scr.title, scr.location)
             if choice == "type_text":
@@ -539,6 +550,9 @@ class ScreenAgent:
                 # kapısı gibi; karar kodda). Solitaire'in gizlilik onayı başka araçla kabul edilmişti.
                 return ReflexResult("needs_confirmation", step - 1, f"'{item.label[:60]}' geri alınamaz bir iş yapabilir "
                                     "(gönderme, ödeme, silme, onay/kabul)", log, scr.title, scr.location)
+            if choice in ("click", "double_click", "type_text") and item is not None and login_item(item, goal, en):
+                return ReflexResult("needs_login", step - 1, f"giriş ekranı: '{item.label[:60]}' kullanıcının "
+                                    "girişini istiyor", log, scr.title, scr.location)
             drop = _pick(a, "drop", scr.items) if choice == "drag" else None
             # Aynı ekranda aynı eylem üçüncü kez: döngü. Unciv'de 'Pick a tech!' ile 'Close' arasında 15 adım gidip
             # geldi; her tıklama ekranı değiştirdiği için "ekran değişmedi" koruması yakalamıyordu.

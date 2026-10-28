@@ -10,11 +10,24 @@ kind = "web"
 url = "https://web.whatsapp.com"
 keywords = "whatsapp|wp\\b|watsap"
 note = "Kişisel hesap için resmî API yok (Cloud API işletme numarası ister). Tarayıcıdan çalışır; ilk açılışta telefondan QR okutman gerekir, sonra oturum açık kalır."
+desktop = "whatsapp_desktop"   # masaüstü uygulaması kuruluysa o kullanılır (oturumu genelde açık, QR gerekmez)
 sends = ["send"]   # başkasına gidiyor: auto modda da onay sorulur
 [whatsapp.flows]
 send = "Sol taraftaki sohbet listesinde {kime} kişisini bul ve sohbetini aç, mesaj yazma kutusuna tıkla, {mesaj} yaz ve Enter'a basarak gönder"
 read = "Sol listeden {kime} sohbetini aç ve son mesajları göster"
 search = "Üstteki arama kutusuna {ne} yaz ve sonuçları göster"
+
+[whatsapp_desktop]
+title = "WhatsApp (masaüstü)"
+kind = "app"
+exe = "WhatsApp"
+window = "WhatsApp"
+keywords = "whatsapp masaüstü|whatsapp uygulama"
+sends = ["send"]   # başkasına gidiyor: auto modda da onay sorulur
+[whatsapp_desktop.flows]
+send = "Sol üstteki \"Search or start a new chat\" arama kutusuna tıkla, {kime} yaz, çıkan {kime} sohbetini aç, alttaki mesaj kutusuna {mesaj} yaz ve Enter'a bas"
+read = "Sol üstteki arama kutusuna {kime} yaz, {kime} sohbetini aç ve son mesajları göster"
+search = "Sol üstteki arama kutusuna {ne} yaz ve sonuçları göster"
 
 [instagram]
 title = "Instagram"

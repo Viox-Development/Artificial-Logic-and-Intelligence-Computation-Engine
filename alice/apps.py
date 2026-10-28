@@ -15,6 +15,7 @@ Bir giriş şöyle:
     url = "https://web.whatsapp.com"
     keywords = "whatsapp|wp"
     note = "İlk açılışta telefondan QR okutman gerekir."
+    desktop = "whatsapp_desktop"      # masaüstü uygulaması kuruluysa o kullanılır
     [whatsapp.flows]
     send = "Sol listeden {kime} sohbetini aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
 
@@ -57,6 +58,7 @@ class App:
     sends: list[str] = field(default_factory=list)  # başkasına giden akışlar: auto modda da onay sorulur
     target: str = ""        # akışlar nerede yürür: browser | desktop (boş: web -> browser, app -> desktop)
     window: str = ""        # desktop için pencere başlığından parça (boş: title ya da exe)
+    desktop: str = ""       # web kaydı: masaüstü uygulaması kuruluysa onun yerine kullanılacak kaydın adı
 
     @property
     def flow_target(self) -> str:
@@ -94,7 +96,7 @@ def _parse(name: str, raw: dict[str, Any]) -> App:
                exe=str(raw.get("exe", "")), keywords=str(raw.get("keywords", "")), note=str(raw.get("note", "")),
                api=str(raw.get("api", "")), flows={str(k): str(v) for k, v in (raw.get("flows") or {}).items()},
                sends=[str(x) for x in raw.get("sends", [])], target=str(raw.get("target", "")),
-               window=str(raw.get("window", "")))
+               window=str(raw.get("window", "")), desktop=str(raw.get("desktop", "")))
 
 
 def _load(p: Path) -> dict[str, dict[str, Any]]:

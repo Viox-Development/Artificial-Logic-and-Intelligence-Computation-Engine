@@ -240,6 +240,9 @@ def reflex_verdict(status: str) -> str:
             "acted": "SONUÇ: bir eylem yapıldı ve ekran değişti; istenenin olup olmadığı ayrıca doğrulanmalı.",
             "needs_confirmation": "SONUÇ: DURDU, geri alınamaz olabilecek bir düğme (gönder/öde/sil/onayla). Kullanıcı "
                                   "bunu açıkça istemediyse ona sor; istediyse allow_irreversible=true ile tekrar çağır.",
+            "needs_login": "SONUÇ: DURDU, giriş/oturum ekranı çıktı (hedef YAPILAMADI). Kullanıcı adına giriş yapma, "
+                           "numara/şifre yazma. Uygulamanın masaüstü sürümü kuruluysa onu dene (app open/flow kuruluysa "
+                           "kendisi seçer); yoksa kullanıcıya giriş yapması gerektiğini söyle.",
             "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
             "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(status, "")
 

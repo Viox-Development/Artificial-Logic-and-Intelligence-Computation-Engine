@@ -769,3 +769,70 @@ def test_parked_mouse_is_moved_off_the_corner(monkeypatch):
     assert real(500, 400) and calls == [("move", 500, 400, False)] and pg.FAILSAFE  # geçici kapatıp geri açtı
     pg.pos = (100, 100)
     assert not real(500, 400) and len(calls) == 1  # köşede değilse dokunmaz
+
+
+# ------------------------------------------------------------------------------- giriş, tırnak, açık öğe
+def test_quoted_target_is_not_an_echo():
+    # Danışman: 'Click the "Search or start a new Chat" box' -> arama kutusu yankı sayılıp listeden atılıyordu.
+    goal = 'Click the "Search or start a new Chat" box and type "Que Mal".'
+    assert not is_goal_echo("q Search or start a new Chat", goal)
+    assert not is_goal_echo("q Şearch or start a new Chat", "Click the “q Şearch or start a new Chat” box")
+    assert is_goal_echo("Que Mal isimli kişiye amk mesajını gönder", "WhatsApp'ta Que Mal isimli kişiye “amk” "
+                        "mesajını gönder")  # kullanıcının kendi mesajı hâlâ yankı
+    items = build_items([], [("q Search or start a new Chat", (0.04, 0.11, 0.11, 0.12)), ("Chats", (0.03, 0.06, 0.05, 0.07))],
+                        goal)
+    assert "q Search or start a new Chat" in [i.label for i in items]
+
+
+class LoginPage(FakeScreen):
+    def screen(self, goal=""):
+        return Screen("WhatsApp", "https://web.whatsapp.com/", [
+            Item("i1", "ax", "button", "Telefon numarası kullanarak giriş yapın", (0.4, 0.6, 0.6, 0.65), ref=1),
+            Item("i2", "ax", "button", "İndir", (0.4, 0.7, 0.5, 0.75), ref=2)])
+
+
+def test_login_screen_is_left_to_the_user():
+    obs = LoginPage()
+    res = ScreenAgent(obs, ProbBrain([{"probs": {"i1": 0.9, "i2": 0.1}}]), settle=0).run(
+        "WhatsApp'ta Que Mal isimli kişiye “amk” mesajını gönder")
+    assert res.status == "needs_login" and "giriş" in res.reason and obs.acts == []
+    obs = LoginPage()  # kullanıcı açıkça giriş yapmayı istediyse dokunabilir
+    res = ScreenAgent(obs, ProbBrain([{"probs": {"i1": 0.9, "i2": 0.1}}, {"done": 0.95}]), settle=0).run(
+        "WhatsApp'a telefon numarasıyla giriş yap")
+    assert obs.acts and obs.acts[0][1] == "Telefon numarası kullanarak giriş yapın"
+
+
+def test_login_stops_consult_too():
+    obs = LoginPage()
+    agent = ScreenAgent(obs, ProbBrain([{"probs": {"i1": 0.9, "i2": 0.1}}]), settle=0)
+    agent.consult = lambda situation: pytest_fail("giriş ekranında danışılmaz")
+    assert agent.run("mesajı gönder").status == "needs_login"
+
+
+def pytest_fail(msg):
+    raise AssertionError(msg)
+
+
+class KindSplitBrain(ProbBrain):
+    """Öğe apaçık (0.95), eylem türü kararsız (tıkla 0.35)."""
+
+    def decide(self, state, questions, images=None):
+        d = super().decide(state, questions, images)
+        if "action" in d.answers:
+            d.answers["action"] = Answer("choice", self.kind, self.kind_conf)
+        return d
+
+
+def test_clear_item_with_unsure_click_is_clicked():
+    obs = Panel()
+    brain = KindSplitBrain([{"probs": {"i2": 0.95, "i1": 0.05}}, {"done": 0.95}])
+    brain.kind, brain.kind_conf = "click", 0.35
+    res = ScreenAgent(obs, brain, settle=0).run("ayarları aç")
+    assert obs.acts == [("click", "Ayarlar")] and res.status in ("done", "clicked")
+    for kind, conf, probs in (("click", 0.35, {"i2": 0.6, "i1": 0.4}),  # öğe de kararsız
+                              ("scroll_down", 0.36, {"i2": 0.95, "i1": 0.05}),  # en olası tür tıklama değil
+                              ("click", 0.2, {"i2": 0.95, "i1": 0.05})):  # tıklama çok zayıf
+        obs = Panel()
+        brain = KindSplitBrain([{"probs": probs}])
+        brain.kind, brain.kind_conf = kind, conf
+        assert ScreenAgent(obs, brain, settle=0).run("ayarları aç").status == "needs_help" and obs.acts == []

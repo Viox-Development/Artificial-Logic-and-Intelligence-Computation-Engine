@@ -6,6 +6,7 @@ derin bağlantısı varsa o kullanılır, kalanı tarayıcı + reflex ile yapıl
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from alice.apps import App, find, registry
@@ -27,19 +28,53 @@ def _open_web(ctx: ToolContext, url: str) -> str:
 
 
 WINDOW_WAIT = 20.0  # saniye: uygulama açılınca penceresinin gelmesi için en fazla
+# Tarayıcı pencereleri: "(7) WhatsApp - Opera" sekmesi masaüstü WhatsApp'ın penceresi sanılmasın.
+BROWSER_TITLE_RX = re.compile(r" - (Opera|Google Chrome|Microsoft.?.?.? ?Edge|Mozilla Firefox|Brave|Vivaldi|Yandex)( |$)")
+_installed: dict[str, bool] = {}
+
+
+def _app_windows(app: App) -> list[str]:
+    from alice.tools.desktop import list_windows
+
+    want = app.window_title.lower()
+    return [w for w in list_windows() if want in w.lower() and not BROWSER_TITLE_RX.search(w)]
+
+
+def desktop_available(app: App) -> bool:
+    """Uygulama açık ya da kurulu mu? Kurulu olma bilgisi süreç boyunca hatırlanır (ilk arama ~2 sn)."""
+    try:
+        if _app_windows(app):
+            return True
+    except Exception:  # noqa: BLE001 - pencere listesi alınamazsa kurulu olup olmadığına bak
+        pass
+    key = (app.exe or app.label).lower()
+    if key not in _installed:
+        from alice.tools.desktop import find_installed_apps
+
+        try:
+            _installed[key] = bool(find_installed_apps(app.exe or app.label, limit=1))
+        except Exception:  # noqa: BLE001
+            _installed[key] = False
+    return _installed[key]
+
+
+def preferred(app: App, apps: dict[str, App]) -> App:
+    """Web kaydının masaüstü karşılığı kuruluysa onu kullan: WhatsApp Web'in oturumu kapalıydı (QR istiyordu) ama
+    kullanıcının masaüstü uygulaması açıktı ve oturumu vardı."""
+    alt = apps.get(app.desktop) if app.desktop else None
+    return alt if alt is not None and desktop_available(alt) else app
 
 
 def _ensure_window(app: App, wait: float = WINDOW_WAIT, sleep=None) -> str:
     """Uygulamanın penceresi yoksa aç, gelmesini bekle, öne al. Bulunan pencere başlığını döndürür."""
     import time
 
-    from alice.tools.desktop import focus_window, list_windows, open_app
+    from alice.tools.desktop import focus_window, open_app
 
     sleep = sleep or time.sleep
-    want = app.window_title.lower()
 
     def find_title() -> str | None:
-        return next((w for w in list_windows() if want in w.lower()), None)
+        return next(iter(_app_windows(app)), None)
 
     title = find_title()
     if title is None:
@@ -51,7 +86,7 @@ def _ensure_window(app: App, wait: float = WINDOW_WAIT, sleep=None) -> str:
         if title is None:
             raise ToolError(f"{app.label} açıldı ama '{app.window_title}' başlıklı pencere {int(wait)} sn içinde "
                             "gelmedi; tarifte window alanını pencerenin gerçek başlığına göre ayarla")
-    focus_window(app.window_title)
+    focus_window(title)
     return title
 
 
@@ -79,6 +114,8 @@ def _describe(apps: dict[str, App]) -> str:
     rows = []
     for a in sorted(apps.values(), key=lambda x: x.name):
         bits = [a.name, f"({a.kind}" + (", masaüstü" if a.flows and a.flow_target == "desktop" else "") + ")"]
+        if a.desktop:
+            bits.append(f"masaüstü kuruluysa: {a.desktop}")
         if a.api:
             bits.append(f"API: {a.api}")
         if a.flows:
@@ -137,6 +174,10 @@ class AppTool(Tool):
         if app is None:
             raise ToolError(f"'{name}' diye bir uygulama tanımı yok. Tanımlılar: {', '.join(sorted(apps))}. "
                             "Yenisini ~/.alice/apps.toml içine ekleyebilirsin.")
+        chosen = preferred(app, apps)
+        if chosen is not app and (action != "flow" or flow in chosen.flows):
+            ctx.emit(f"{app.label}: masaüstü uygulaması kurulu, onunla ({chosen.label})")
+            app = chosen
         if action == "flow":
             if not app.flows:
                 raise ToolError(f"{app.label} için tanımlı akış yok; open ile açıp browser/reflex ile devam et.")

@@ -27,6 +27,8 @@ _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{2,}", re.U)
 MAX_ITEMS = 60
 ECHO_SHARE = 0.6  # yazının kelimelerinin bu kadarı hedefte geçiyorsa hedefin yankısıdır (kullanıcının mesajı)
 ECHO_MIN_WORDS = 4  # daha kısası düğme adıdır: "Start new game" hedefi "start a new game" iken atılıyordu
+# Çift tırnak (düz, kıvrık, açılı) arası. Tek tırnak değil: Türkçede ek ayırır ("WhatsApp'ta").
+QUOTED_RX = re.compile(r'"[^"]*"|“[^”]*”|«[^»]*»|„[^“”]*[“”]')
 
 
 def place(x: float, y: float) -> str:
@@ -112,7 +114,9 @@ def is_goal_echo(text: str, goal: str, echoes: tuple[str, ...] = ()) -> bool:
     if len(tw) < ECHO_MIN_WORDS:
         return False
     for src in (goal, *echoes):
-        gw = set(words(src))
+        # Tırnak içi, ekranda tıklanacak/yazılacak şeyin adıdır, yankı değil: danışman 'Click the "Search or start a
+        # new Chat" box' deyince WhatsApp'ın arama kutusu yankı sayılıp listeden atılmış, refleks 'Chats'e tıklamıştı.
+        gw = set(words(QUOTED_RX.sub(" ", src or "")))
         if gw and sum(w in gw for w in tw) / len(tw) >= ECHO_SHARE:
             return True
     return False

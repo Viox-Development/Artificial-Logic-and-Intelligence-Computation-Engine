@@ -15,6 +15,12 @@ def ctx(workdir):
     return ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
 
 
+@pytest.fixture(autouse=True)
+def masaustu_yok(monkeypatch):
+    """Testler makinedeki kurulu uygulamalara bağlı olmasın: varsayılan, masaüstü sürümü kurulu değil."""
+    monkeypatch.setattr("alice.tools.apps.desktop_available", lambda app: False)
+
+
 # ------------------------------------------------------------------------------- kayıt
 def test_yerlesik_kayit_tutarli():
     reg = apps.registry()
@@ -209,7 +215,8 @@ def test_pencere_yoksa_acilir_gelince_one_alinir(monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.open_app", fake_open)
     monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: focused.append(t) or t)
     title = appsmod._ensure_window(apps.find("spotify"), wait=2, sleep=lambda s: None)
-    assert opened == ["Spotify"] and title == "Spotify Premium" and focused == ["Spotify"]
+    # bulunan pencerenin tam başlığı öne alınır (alt dize bir tarayıcı sekmesini de tutabilirdi)
+    assert opened == ["Spotify"] and title == "Spotify Premium" and focused == ["Spotify Premium"]
 
 
 def test_pencere_zaten_aciksa_tekrar_acilmaz(monkeypatch):
@@ -269,3 +276,47 @@ def test_discord_uygulamasinda_dm_send_sayilir():
     t = AppTool()
     assert t.risk_for({"action": "flow", "name": "discord", "flow": "dm"}) == "send"
     assert t.risk_for({"action": "flow", "name": "discord", "flow": "mute"}) == "computer"
+
+
+# ------------------------------------------------------------------------------- masaüstü tercihi
+def test_masaustu_kuruluysa_web_yerine_o_kullanilir(ctx, monkeypatch):
+    # WhatsApp Web'in oturumu kapalıydı (QR istiyordu), masaüstü uygulaması açıktı: akış masaüstünde yürümeli.
+    seen = {}
+
+    class FakeLoop:
+        def __init__(self, observer, decider, writer, min_confidence=0.0, emit=None):
+            seen["observer"] = observer
+
+        def run(self, goal, max_steps=20, inputs=None):
+            seen["goal"] = goal
+
+            class R:
+                def report(self):
+                    return "done"
+
+            return R()
+
+    monkeypatch.setattr("alice.tools.apps.desktop_available", lambda app: app.name == "whatsapp_desktop")
+    monkeypatch.setattr("alice.reflex.loop.ReflexLoop", FakeLoop)
+    monkeypatch.setattr("alice.reflex.loop.make_text_writer", lambda router: None)
+    monkeypatch.setattr("alice.reflex.observers.DesktopObserver", lambda c, title: {"window": title})
+    monkeypatch.setattr("alice.tools.apps._ensure_window", lambda app, **k: app.window_title)
+    ctx.decider, ctx.router = object(), object()
+    out = AppTool().run(ctx, action="flow", name="wp", flow="send", args={"kime": "Que Mal", "mesaj": "selam"}).text
+    assert seen["observer"] == {"window": "WhatsApp"} and "Que Mal" in seen["goal"]
+    assert "QR" not in out  # web'in notu masaüstünde geçersiz
+    assert AppTool().risk_for({"action": "flow", "name": "wp", "flow": "send"}) == "send"  # onay yine sorulur
+
+    opened = []
+    monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: opened.append(t) or "açıldı")
+    AppTool().run(ctx, action="open", name="whatsapp")
+    assert opened == ["WhatsApp"]
+
+
+def test_masaustu_penceresi_tarayici_sekmesiyle_karismaz(monkeypatch):
+    from alice.tools import apps as appsmod
+
+    monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: ["(7) WhatsApp - Opera", "(7) WhatsApp"])
+    assert appsmod._app_windows(apps.find("whatsapp_desktop")) == ["(7) WhatsApp"]
+    monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: ["(7) WhatsApp - Opera"])
+    assert appsmod._app_windows(apps.find("whatsapp_desktop")) == []

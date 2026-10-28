@@ -99,7 +99,7 @@ def _named_in_goal(key: str, by_key: dict[str, Element], elements: list[Element]
 @dataclass
 class ReflexResult:
     # done | clicked (tek tıklamalık hedef, sonuç doğrulanmadı) | likely_done (son eylem ekranı değiştirdi, Jev bitti
-    # sanıyor ama emin değil) | needs_help | max_steps | error
+    # sanıyor ama emin değil) | needs_help | needs_login (giriş ekranı, kullanıcının işi) | max_steps | error
     status: str
     steps: int
     reason: str
@@ -117,6 +117,18 @@ class ReflexResult:
             out += ("\nekranda başa göre çıkan: " + "; ".join(c.get("appeared") or ["-"])
                     + "\nkaybolan: " + "; ".join(c.get("disappeared") or ["-"]))
         return out
+
+
+# Giriş/kayıt ekranının kontrolleri. Hedef bunu istemiyorsa refleks bunlara dokunmaz: oturumu kapalı WhatsApp Web'de
+# "Telefon numarası kullanarak giriş yapın"a tıklayıp numara alanına yazmaya çalışmıştı. Giriş kullanıcının işi.
+LOGIN_RX = re.compile(r"(?<![\w])(giriş yap|oturum aç|log ?in|sign ?in|sign ?up|kaydol|kayıt ol|üye ol|hesap oluştur|"
+                      r"create (an )?account|şifre|parola|password|telefon numara|phone number|doğrulama kodu|"
+                      r"verification code|qr kod|qr code)", re.I)
+
+
+def login_text(text: str, *goals: str) -> bool:
+    """Yazı bir giriş/kayıt kontrolünün mü, ve hedef(ler) giriş yapmayı istemiyor mu?"""
+    return bool(LOGIN_RX.search(text or "")) and not any(LOGIN_RX.search(g or "") for g in goals)
 
 
 class ReflexLoop:
@@ -295,6 +307,11 @@ class ReflexLoop:
                 return ReflexResult("needs_help", step - 1,
                                     f"düşük güven ({nxt.confidence:.2f}) - '{options.get(nxt.value, nxt.value)}'",
                                     log, ob.title, ob.location)
+            el = by_key.get(nxt.value)
+            if el is not None and login_text(f"{el.label} {el.value}", goal):
+                # Giriş kullanıcının işi (bkz. LOGIN_RX): oturumu kapalı sitede numara yazmaya kalkmasın.
+                return ReflexResult("needs_login", step - 1, f"giriş ekranı: '{el.label[:60]}' kullanıcının girişini "
+                                    "istiyor", log, ob.title, ob.location)
             last_keys.append(nxt.value)
             if len(last_keys) >= 3 and len(set(last_keys[-3:])) == 1:
                 return ReflexResult("needs_help", step - 1, f"aynı aksiyon tekrarlanıyor: {nxt.value}",

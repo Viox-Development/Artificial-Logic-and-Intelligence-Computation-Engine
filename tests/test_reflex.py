@@ -112,3 +112,21 @@ def test_named_target_repeated_on_page_still_counts():
     els.append(Element(4, "a", "Wish You Were Here", False))
     by_key = {"click_4": els[3]}
     assert not _named_in_goal("click_4", by_key, els, "ekrandaki Wish Me Luck şarkısını aç")
+
+
+class LoginObserver(FakeObserver):
+    def observe(self):
+        return Observation("WhatsApp", "https://web.whatsapp.com/",
+                           [Element(1, "button", "Telefon numarası kullanarak giriş yapın", False),
+                            Element(2, "input[tel]", "WhatsApp'a giriş yapmak için telefon numaranızı yazın", True)])
+
+
+def test_login_controls_are_left_to_the_user():
+    for pick in ("click_1", "type_2"):
+        obs = LoginObserver()
+        res = ReflexLoop(obs, ScriptedDecider([(pick, 0.9, 0.0)]), settle=0).run("Que Mal'a selam yaz")
+        assert res.status == "needs_login" and obs.actions == []
+    obs = LoginObserver()  # hedef giriş yapmaksa dokunulur
+    ReflexLoop(obs, ScriptedDecider([("click_1", 0.9, 0.0), ("done", 0.9, 0.95)]), settle=0).run(
+        "telefon numarasıyla giriş yap")
+    assert obs.actions == [("click", 1)]
