@@ -632,3 +632,71 @@ def test_restart_kills_drivers_before_exit(monkeypatch):
     with pytest.raises(SystemExit):
         updater.restart(["x"], delay=0)
     assert calls == ["popen", "kill"]
+
+
+# ------------------------------------------------------------------ takılan çağrı: bekçi ve Durdur
+def _hangs_until_aborted(sess):
+    """Gerçekte sürücü öldürülünce bekleyen Playwright çağrısı "Connection closed" ile döner; onu taklit et."""
+    import time
+
+    def hang(*a, **k):
+        deadline = time.monotonic() + 5
+        while not getattr(sess, "aborted", "") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise TargetClosedError("Page.evaluate: Connection closed while reading from the driver")
+
+    return hang
+
+
+def test_hung_call_is_cut_by_watchdog_and_retried(ctx, monkeypatch):
+    old = make_session(attached=True)
+    old.snapshot = _hangs_until_aborted(old)
+    ctx.state["browser"] = old
+    monkeypatch.setattr(browser, "DEFAULT_BUDGET", 0.1)
+    monkeypatch.setattr(browser, "CONNECT_BUDGET", 0.0)
+    fresh = make_session()
+    fresh.snapshot = lambda limit=120: []
+    monkeypatch.setattr(browser, "BrowserSession", lambda **kw: fresh)
+    r = browser.Browser().run(ctx, "snapshot")
+    assert old.aborted == "timeout" and ctx.state["browser"] is fresh and "snapshot" in r.text
+    assert not ctx.state["browser_busy"]
+
+
+def test_hung_click_is_cut_and_not_repeated(ctx, monkeypatch):
+    old = make_session(attached=True)
+    old.locator = _hangs_until_aborted(old)
+    ctx.state["browser"] = old
+    monkeypatch.setattr(browser, "DEFAULT_BUDGET", 0.1)
+    monkeypatch.setattr(browser, "CONNECT_BUDGET", 0.0)
+    monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("tıklama tekrar edilmemeli"))
+    with pytest.raises(ToolError, match="cevap vermedi"):
+        browser.Browser().run(ctx, "click", element_id=3)
+    assert "browser" not in ctx.state
+
+
+def test_stop_cuts_hung_call_without_retry(ctx, monkeypatch):
+    import threading
+
+    old = make_session(attached=True)
+    old.snapshot = _hangs_until_aborted(old)
+    ctx.state["browser"] = old
+    monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("durdurulunca yeniden denenmemeli"))
+    threading.Timer(0.1, browser.abort_browser, args=(ctx, "stop")).start()
+    with pytest.raises(ToolError, match="durduruldu"):
+        browser.Browser().run(ctx, "snapshot")
+    assert "browser" not in ctx.state
+
+
+def test_abort_leaves_idle_connection_alone(ctx, session):
+    browser.abort_browser(ctx, "stop")  # çalışan çağrı yok: Opera tekrar izin sormasın diye bağlantıya dokunma
+    assert not getattr(session, "aborted", "") and session.alive()
+
+
+def test_dead_bridge_means_dead_session(ctx, monkeypatch):
+    # Köprü tarayıcıyı ölü sayıp kapandı ama Playwright hâlâ bağlı sanıyor: eskiden sonraki çağrı sonsuza dek bekliyordu.
+    s = make_session(attached=True)
+    s._bridge_port = 9339
+    monkeypatch.setattr(browser, "bridge_alive", lambda port, timeout=0.4: False)
+    assert not s.alive()
+    monkeypatch.setattr(browser, "bridge_alive", lambda port, timeout=0.4: True)
+    assert s.alive()

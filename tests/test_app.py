@@ -345,3 +345,25 @@ def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
     r = client.post("/api/update/apply", json={}).json()
     assert r["ok"] and r["restarting"] and "zaten indirilmiş" in r["note"]
     assert restarted.wait(2)
+
+
+def test_stop_restarts_when_tool_never_lets_go(monkeypatch):
+    """Durdur'a rağmen araç bırakmıyorsa sohbet kaydedilip yeniden başlanır (eskiden sonsuza dek "çalışıyor")."""
+    from types import SimpleNamespace
+
+    from alice.app import server
+
+    saved, restarted, events = [], [], []
+    agent = SimpleNamespace(busy=True, messages=[{"role": "system"}], stop=lambda: None,
+                            _repair_after_interrupt=lambda: saved.append("repaired"))
+    fake = SimpleNamespace(agent=agent, _queued=True, STOP_GRACE=0.05, sid="s1", ctx=SimpleNamespace(cwd="."),
+                           bus=SimpleNamespace(publish=events.append), _restart_soon=lambda env=None: restarted.append(env))
+    monkeypatch.setattr(server.sess, "save", lambda sid, msgs, cwd: saved.append(sid))
+    server.AppState._unstick(fake)
+    assert saved == ["repaired", "s1"] and restarted == [{"ALICE_RESUME": "s1"}]
+    assert any("yeniden başlatılıyor" in e.get("text", "") for e in events)
+
+    restarted.clear()
+    agent.busy, fake._queued = False, False  # iş bıraktı: yeniden başlama yok
+    server.AppState._unstick(fake)
+    assert restarted == []

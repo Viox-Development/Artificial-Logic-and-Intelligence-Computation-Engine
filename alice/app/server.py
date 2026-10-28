@@ -331,6 +331,9 @@ class AppState:
 
         attach_memory(self.agent, "uygulama")
         self.sid = sess.new_session_id()
+        resume_sid = os.environ.pop("ALICE_RESUME", "")  # takılan iş yüzünden yeniden başladık: sohbete dön
+        if resume_sid:
+            self.resume(resume_sid)
         self.agent.on_step = lambda: sess.save(self.sid, self.agent.messages, self.ctx.cwd)
         self.token = secrets.token_urlsafe(24)
         # Önizleme adresindeki anahtar ayrı: sitenin kodu onu görse bile sadece proje dosyalarını okuyabilir.
@@ -372,6 +375,30 @@ class AppState:
         self._jobs.put((fn, done))
         if wait is not None:
             done.wait(wait)
+
+    STOP_GRACE = 10.0  # Durdur'dan sonra işin bırakılmasını bu kadar bekle
+
+    def stop(self) -> None:
+        """Durdur düğmesi. Araç her şeye rağmen bırakmıyorsa (cevap vermeyen bir pencere/COM çağrısı) iş thread'i
+        sonsuza dek meşgul kalıyor, ne yeni mesaj ne başka sohbet açılabiliyordu: o zaman sohbeti kaydedip yeniden
+        başla. Ajan thread'e bağlı (Playwright, UI Automation), takılan thread'in yerine yenisini koymak güvenli değil."""
+        self.agent.stop()
+        if self.agent.busy or self._queued:
+            threading.Thread(target=self._unstick, daemon=True, name="alice-unstick").start()
+
+    def _unstick(self) -> None:
+        deadline = time.monotonic() + self.STOP_GRACE
+        while time.monotonic() < deadline:
+            if not (self.agent.busy or self._queued):
+                return
+            time.sleep(0.2)
+        self.bus.publish({"type": "info", "text": "bir araç durdurulamadı; ALICE yeniden başlatılıyor, sohbet korunuyor"})
+        try:
+            self.agent._repair_after_interrupt()  # cevapsız araç çağrısı geçmişte kalmasın
+            sess.save(self.sid, self.agent.messages, self.ctx.cwd)
+        except Exception:  # noqa: BLE001 - kayıt olmasa da yeniden başlamak takılı kalmaktan iyi
+            log_error()
+        self._restart_soon(env={"ALICE_RESUME": self.sid})
 
     def shutdown(self) -> None:
         self._update_stop.set()
@@ -784,7 +811,7 @@ class AppState:
             threading.Thread(target=self._restart_soon, daemon=True, name="alice-restart").start()
         return {"ok": ok, "note": msg, "restarting": ok}
 
-    def _restart_soon(self) -> None:
+    def _restart_soon(self, env: dict[str, str] | None = None) -> None:
         """Cevabın arayüze ulaşması için biraz bekle, sonra aynı komutla yeniden başla."""
         import sys
 
@@ -797,7 +824,7 @@ class AppState:
             pass
         # Yeni süreç açılışta tekrar bakabilsin: bayrağı taşımıyoruz.
         updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]],
-                        env={"ALICE_RESTARTED": ""})
+                        env={"ALICE_RESTARTED": "", **(env or {})})
 
     def watch_updates(self, first: Any = None) -> None:
         """Arka planda periyodik güncelleme kontrolü; bulunca arayüze bildirir."""
@@ -1462,7 +1489,7 @@ def make_handler(state: AppState):
                     r = state.apply_update(force=bool(d.get("force")))
                     return self._json(r, 200 if r.get("ok") else 409)
                 if p == "/api/stop":
-                    state.agent.stop()
+                    state.stop()
                     return self._json({"ok": True})
                 if p == "/api/permission":
                     return self._json({"ok": state.ui.answer(str(d.get("id")), str(d.get("answer")))})

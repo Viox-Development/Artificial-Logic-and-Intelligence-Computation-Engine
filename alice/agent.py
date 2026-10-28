@@ -517,9 +517,11 @@ class Agent:
         """Başka bir thread'den (ör. uygulamadaki Durdur butonu) mevcut turu durdur. Model ya da araç cevabı
         beklenmez; çalışan komutlar da sonlandırılır."""
         self.cancel.set()
+        from alice.tools.browser import abort_browser
         from alice.tools.shell import kill_foreground
 
         kill_foreground(self.ctx)
+        abort_browser(self.ctx, "stop")  # takılan tarayıcı çağrısı (sadece çalışan varsa)
 
     def _interruptible(self, fn, *args: Any, **kwargs: Any) -> Any:
         """fn'i ayrı bir thread'de çalıştır ve bitmesini beklerken durdurma isteğine bak. Durdurulursa beklemeden

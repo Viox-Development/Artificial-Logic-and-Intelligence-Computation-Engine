@@ -11,6 +11,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
@@ -219,6 +220,14 @@ class BrowserSession:
             raise ToolError("playwright kurulu değil: pip install 'alice-harness[browser]' && playwright install chromium") from e
         self._pw = sync_playwright().start()
         _register_exit_cleanup()
+        self.driver_pid = _driver_pid(self._pw)
+        self.aborted = ""  # "timeout" | "stop": sürücü öldürüldü, bu oturum artık kullanılamaz
+        self._bridge_port = None
+        if bridge_port and endpoint:
+            from alice.tools.browser_bridge import endpoint as bridge_endpoint
+
+            if endpoint == bridge_endpoint(bridge_port):
+                self._bridge_port = bridge_port
         try:
             self._start(endpoint, headless, executable)
         except BaseException:
@@ -231,6 +240,13 @@ class BrowserSession:
 
     def alive(self) -> bool:
         """Tarayıcı bağlantısı hâlâ çalışıyor mu (Opera yeniden başladı, köprü kapandı, ALICE penceresi kapatıldı)."""
+        if getattr(self, "aborted", ""):
+            return False
+        port = getattr(self, "_bridge_port", None)
+        if port and not bridge_alive(port):
+            # Köprü tarayıcıyı ölü sayıp kapandığında Playwright bunu fark etmiyor (is_connected True kalıyor) ve
+            # sonraki çağrı ölü sokete gidip sonsuza dek bekliyordu.
+            return False
         try:
             if self._browser is not None:
                 return bool(self._browser.is_connected())
@@ -239,6 +255,22 @@ class BrowserSession:
             return not getattr(self, "_ctx_closed", False)
         except Exception:  # noqa: BLE001
             return False
+
+    def abort(self, reason: str) -> None:
+        """Takılan çağrıyı kes: Playwright sürücüsünü öldür, bekleyen her çağrı "Connection closed" ile hemen döner.
+        Başka thread'den (bekçi, Durdur düğmesi) çağrılabilir; kullanıcının tarayıcısına dokunmaz."""
+        if getattr(self, "aborted", ""):
+            return
+        self.aborted = reason
+        pid = getattr(self, "driver_pid", None)
+        if not pid:
+            return
+        try:
+            import psutil
+
+            psutil.Process(pid).kill()
+        except Exception:  # noqa: BLE001 - süreç zaten bitmiş olabilir
+            pass
 
     def _mark_closed(self, *_: Any) -> None:
         self._ctx_closed = True
@@ -376,10 +408,17 @@ class BrowserSession:
 
     def close(self) -> None:
         try:
-            if not self.attached:  # kullanıcının kendi tarayıcısını kapatma, sadece bağlantıyı bırak
+            if not self.attached and not getattr(self, "aborted", ""):  # kullanıcının tarayıcısını kapatma, bağlantıyı bırak
                 self.ctx.close()
         finally:
             self._pw.stop()
+
+
+def _driver_pid(pw: Any) -> int | None:
+    try:
+        return int(pw._impl_obj._connection._transport._proc.pid)
+    except Exception:  # noqa: BLE001 - Playwright iç yapısı değişirse bekçi sadece kesemez
+        return None
 
 
 def _is_closed(page) -> bool:
@@ -438,6 +477,52 @@ RECONNECT_HINT = ("tarayıcı bağlantısı koptu (Opera kapandı, yeniden başl
 def connection_lost(e: BaseException) -> bool:
     msg = f"{type(e).__name__} {e}".lower()
     return any(k in msg for k in _CONNECTION_LOST)
+
+
+# Bir eylemin en uzun süresi (sn). Playwright'ın bazı çağrıları (CDP komutları, ölü bağlantıdaki istekler) süre
+# sınırı tanımıyor; süre dolunca sürücü öldürülür ki ALICE dakikalarca "çalışıyor" diye takılı kalmasın.
+ACTION_BUDGET = {"goto": 120.0, "back": 60.0, "screenshot": 40.0}
+DEFAULT_BUDGET = 45.0
+CONNECT_BUDGET = 70.0  # yeni bağlantı: tarayıcı kullanıcıdan izin isteyebilir (connect_over_cdp 60 sn bekler)
+STOPPED = "durduruldu (kullanıcı kesti)"
+
+
+def abort_browser(ctx: ToolContext, reason: str = "stop") -> None:
+    """Çalışan tarayıcı çağrısını kes (Durdur düğmesi, bekçi). Başka thread'den çağrılır. Çağrı yoksa bağlantıya
+    dokunmaz: boşuna koparılırsa tarayıcı tekrar izin sorabilir."""
+    b = ctx.state.get("browser")
+    if b is not None and ctx.state.get("browser_busy"):
+        b.abort(reason)
+
+
+class _Watchdog:
+    """Eylem süresini aşarsa o anki oturumu keser. Oturum eylemin içinde açılabildiği için ateşlendiği anda bakar."""
+
+    def __init__(self, ctx: ToolContext, seconds: float):
+        self.timer = threading.Timer(seconds, abort_browser, args=(ctx, "timeout"))
+        self.timer.daemon = True
+
+    def __enter__(self) -> "_Watchdog":
+        self.timer.start()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.timer.cancel()
+
+
+def budget_for(ctx: ToolContext, action: str) -> float:
+    b = ctx.state.get("browser")
+    fresh = b is None or not b.alive()
+    return ACTION_BUDGET.get(action, DEFAULT_BUDGET) + (CONNECT_BUDGET if fresh else 0.0)
+
+
+def _aborted(ctx: ToolContext) -> str:
+    return str(getattr(ctx.state.get("browser"), "aborted", "") or "")
+
+
+def _timeout_hint(action: str) -> str:
+    return (f"tarayıcı '{action}' için cevap vermedi (bağlantı takıldı); bağlantı kesildi ve sıfırlandı. İşlem yapılmış "
+            "olabilir: browser action=snapshot ile sayfaya bak.")
 
 
 def drop_browser(ctx: ToolContext) -> None:
@@ -524,26 +609,43 @@ class Browser(Tool):
 
     def run(self, ctx: ToolContext, action: str, **kw: Any) -> ToolResult:
         try:
-            return self._run(ctx, action, **kw)
+            return self._guarded(ctx, action, kw)
         except ToolError:
             raise
         except Exception as e:  # noqa: BLE001
             if action == "close" or not connection_lost(e):
                 raise
             # Bağlantı ölmüş: oturumu at ki ALICE "browser has been closed" deyip orada kalmasın.
+            reason = _aborted(ctx)
             drop_browser(ctx)
+            if reason == "stop":
+                raise ToolError(STOPPED) from e
             if action not in RETRY_SAFE:
-                raise ToolError(RECONNECT_HINT) from e
+                raise ToolError(_timeout_hint(action) if reason == "timeout" else RECONNECT_HINT) from e
         try:
-            return self._run(ctx, action, **kw)  # yeni bağlantıyla bir kez daha
+            return self._guarded(ctx, action, kw)  # yeni bağlantıyla bir kez daha
         except ToolError:
             raise
         except Exception as e:  # noqa: BLE001
             if not connection_lost(e):
                 raise
+            reason = _aborted(ctx)
             drop_browser(ctx)
+            if reason == "stop":
+                raise ToolError(STOPPED) from e
+            if reason == "timeout":
+                raise ToolError(_timeout_hint(action) + " Yeni bağlantıyla da olmadı: tarayıcıyı kapatıp aç ya da "
+                                "windows/ui_act ile kullanıcının sekmelerinde çalış.") from e
             raise ToolError("tarayıcıya yeniden bağlanılamadı: Opera açık mı, opera://inspect'te 'Allow remote "
                             "debugging' açık mı? İzin penceresi çıktıysa onayla.") from e
+
+    def _guarded(self, ctx: ToolContext, action: str, kw: dict[str, Any]) -> ToolResult:
+        ctx.state["browser_busy"] = True
+        try:
+            with _Watchdog(ctx, budget_for(ctx, action)):
+                return self._run(ctx, action, **kw)
+        finally:
+            ctx.state["browser_busy"] = False
 
     def _run(self, ctx: ToolContext, action: str, url: str | None = None, element_id: int | None = None,
              text: str | None = None, submit: bool = False, keys: str | None = None, amount: int = 600,
