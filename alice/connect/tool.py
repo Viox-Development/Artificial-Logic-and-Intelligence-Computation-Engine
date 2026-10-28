@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alice.connect import verify
 from alice.connect.manifest import Manifest
 from alice.connect.runner import ConnectError, call, ready, render
 from alice.tools.base import NETWORK, READ, SEND, WRITE, Tool, ToolContext, ToolError, ToolResult
@@ -68,7 +69,9 @@ class ConnectTool(Tool):
             data = call(self.m, act, args)
         except ConnectError as e:
             raise ToolError(str(e)) from e
-        return ToolResult(render(data, act, limit))
+        text = render(data, act, limit)
+        note = verify.after(self.m, act, args, data)
+        return ToolResult(f"{text}\n{note}" if note else text)
 
 
 def connector_tools(cfg: Any = None, emit: Any = None, reserved: set[str] | None = None) -> list[ConnectTool]:

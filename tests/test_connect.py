@@ -499,3 +499,54 @@ def test_akislar_onbellek_kullanmaz(monkeypatch):
     monkeypatch.setattr(runner, "call", lambda m, act, args, cache=True: seen.update(cache=cache) or {})
     FeedMonitor()._call_connector(Feed(name="f", connector="steam", action="library", args={"steamid": "1"}))
     assert seen["cache"] is False
+
+
+# ------------------------------------------------------------------------------ doğrulama
+SPOTIFY = Path(__file__).resolve().parents[1] / "alice" / "connect" / "builtin" / "spotify.toml"
+
+
+def _spotify_fake(monkeypatch, playing_after_open: bool, playing_now: bool = False):
+    """Spotify'ı taklit et: play 204 döner; çalma durumu yerelde açılınca değişir."""
+    from alice.connect import verify
+
+    state = {"playing": playing_now, "opened": []}
+    monkeypatch.setattr(runner, "_sleep", lambda s: None)
+
+    def fake_call(m, act, args, cache=True):
+        return {"is_playing": state["playing"]} if act.name == "now_playing" else {}
+
+    def fake_open(uri):
+        state["opened"].append(uri)
+        state["playing"] = playing_after_open
+        return True
+
+    monkeypatch.setattr(runner, "call", fake_call)
+    monkeypatch.setattr(verify, "_open_local", fake_open)
+    return state
+
+
+def test_spotify_play_calismazsa_uygulamada_acar(monkeypatch):
+    from alice.connect import verify
+
+    m = mf.load_file(SPOTIFY)
+    st = _spotify_fake(monkeypatch, playing_after_open=True)
+    note = verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
+    assert st["opened"] == ["spotify:track:abc"] and "çalıyor" in note
+
+
+def test_spotify_play_calisiyorsa_dokunmaz(monkeypatch):
+    from alice.connect import verify
+
+    m = mf.load_file(SPOTIFY)
+    st = _spotify_fake(monkeypatch, playing_after_open=True, playing_now=True)
+    assert verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {}) == "doğrulandı: çalıyor"
+    assert st["opened"] == []
+
+
+def test_spotify_hic_calmazsa_uyari_verir(monkeypatch):
+    from alice.connect import verify
+
+    m = mf.load_file(SPOTIFY)
+    _spotify_fake(monkeypatch, playing_after_open=False)
+    assert "UYARI" in verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
+    assert verify.after(m, m.actions["pause"], {}, {}) == ""
