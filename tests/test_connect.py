@@ -550,3 +550,30 @@ def test_spotify_hic_calmazsa_uyari_verir(monkeypatch):
     _spotify_fake(monkeypatch, playing_after_open=False)
     assert "UYARI" in verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
     assert verify.after(m, m.actions["pause"], {}, {}) == ""
+
+
+def test_spotify_etkin_cihaz_yoksa_hata_degil_uygulamada_acar(monkeypatch, workdir):
+    # Uygulama boşta/kapalı: Spotify play'e 404 NO_ACTIVE_DEVICE der. Eskiden modele hata dönüyordu ("1 hata").
+    from alice.connect import verify
+
+    m = mf.load_file(SPOTIFY)
+    st = _spotify_fake(monkeypatch, playing_after_open=True)
+    err = runner.ConnectError('Spotify: HTTP 404: {"error": {"status": 404, "reason": "NO_ACTIVE_DEVICE"}}')
+
+    def no_device(mm, act, args, cache=True):
+        if act.name == "play":
+            raise err
+        return {"is_playing": st["playing"]}
+
+    monkeypatch.setattr("alice.connect.tool.call", no_device)
+    monkeypatch.setattr(runner, "call", no_device)
+    monkeypatch.setattr("alice.connect.tool.ready", lambda m: (True, "bağlı"))
+    ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
+    r = ConnectTool(m).run(ctx, action="play", uris=["spotify:track:abc"])
+    assert not r.is_error and "çalıyor" in r.text and st["opened"] == ["spotify:track:abc"]
+
+    st = _spotify_fake(monkeypatch, playing_after_open=False)  # açıldı ama çalmadı
+    monkeypatch.setattr(runner, "call", no_device)
+    assert "UYARI" in verify.recover(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, err)
+    # başka hatalar olduğu gibi kalır
+    assert verify.recover(m, m.actions["play"], {}, runner.ConnectError("HTTP 403 PREMIUM_REQUIRED")) == ""

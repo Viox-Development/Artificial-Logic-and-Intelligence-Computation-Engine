@@ -68,6 +68,9 @@ class ConnectTool(Tool):
         try:
             data = call(self.m, act, args)
         except ConnectError as e:
+            fixed = verify.recover(self.m, act, args, e)
+            if fixed:
+                return ToolResult(fixed, is_error=fixed.startswith("UYARI"))
             raise ToolError(str(e)) from e
         text = render(data, act, limit)
         note = verify.after(self.m, act, args, data)
