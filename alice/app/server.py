@@ -31,7 +31,7 @@ from alice.decider import Decider
 from alice.permissions import MODES, Permissions
 from alice.providers.router import Router, parse_ref
 from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
-from alice.tools.base import ToolResult
+from alice.tools.base import DesktopLock, ToolResult
 
 STATIC = Path(__file__).parent / "static"
 STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "ui.js": "text/javascript",
@@ -91,35 +91,42 @@ class EventBus:
 
 
 class AppUI:
-    """Agent'ın UI sözleşmesini olay yayınına çevirir. İzin soruları cevap gelene kadar bekler."""
+    """Agent'ın UI sözleşmesini olay yayınına çevirir. İzin soruları cevap gelene kadar bekler.
+    Olaylar sohbetin kimliğini (sid) taşır: arkada çalışan sohbetin akışı öndeki sohbete karışmasın."""
 
-    def __init__(self, bus: EventBus):
+    sid = ""
+
+    def __init__(self, bus: EventBus, sid: str = ""):
         self.bus = bus
+        self.sid = sid
         self.pending: dict[str, dict[str, Any]] = {}
         self._answers: dict[str, str] = {}
         self._events: dict[str, threading.Event] = {}
         self.agent: Agent | None = None
 
+    def publish(self, event: dict[str, Any]) -> None:
+        self.bus.publish({**event, "sid": self.sid} if self.sid else event)
+
     def stream_start(self) -> None:
-        self.bus.publish({"type": "stream_start"})
+        self.publish({"type": "stream_start"})
 
     def stream_delta(self, text: str) -> None:
-        self.bus.publish({"type": "delta", "text": text})
+        self.publish({"type": "delta", "text": text})
 
     def thinking_delta(self, text: str) -> None:
-        self.bus.publish({"type": "thinking", "text": text})
+        self.publish({"type": "thinking", "text": text})
 
     def stream_reset(self) -> None:
-        self.bus.publish({"type": "stream_reset"})
+        self.publish({"type": "stream_reset"})
 
     def stream_end(self, text: str, source: str) -> None:
-        self.bus.publish({"type": "stream_end", "text": text, "source": source})
+        self.publish({"type": "stream_end", "text": text, "source": source})
 
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
-        self.bus.publish({"type": "tool_start", "id": call_id, "name": name, "summary": summary})
+        self.publish({"type": "tool_start", "id": call_id, "name": name, "summary": summary})
 
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None:
-        self.bus.publish({"type": "tool_end", "id": call_id, "name": name, "text": result.text[:20000],
+        self.publish({"type": "tool_end", "id": call_id, "name": name, "text": result.text[:20000],
                           "is_error": result.is_error, "diff": result.diff, "images": result.images[:4]})
 
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
@@ -127,7 +134,7 @@ class AppUI:
         ev = threading.Event()
         self._events[pid] = ev
         self.pending[pid] = {"type": "permission", "id": pid, "name": name, "summary": summary, "risk": risk}
-        self.bus.publish(self.pending[pid])
+        self.publish(self.pending[pid])
         while not ev.wait(0.25):
             if self.agent is not None and self.agent.cancel.is_set():
                 self._answers[pid] = "n"
@@ -135,7 +142,7 @@ class AppUI:
         self.pending.pop(pid, None)
         self._events.pop(pid, None)
         ans = self._answers.pop(pid, "n")
-        self.bus.publish({"type": "permission_done", "id": pid, "answer": ans})
+        self.publish({"type": "permission_done", "id": pid, "answer": ans})
         return ans
 
     def answer(self, pid: str, ans: str) -> bool:
@@ -153,7 +160,7 @@ class AppUI:
         self._events[pid] = ev
         self.pending[pid] = {"type": "ask_choice", "id": pid, "question": question, "options": options,
                              "multi": multi}
-        self.bus.publish(self.pending[pid])
+        self.publish(self.pending[pid])
         while not ev.wait(0.25):
             if self.agent is not None and self.agent.cancel.is_set():
                 self._answers[pid] = ""
@@ -161,7 +168,7 @@ class AppUI:
         self.pending.pop(pid, None)
         self._events.pop(pid, None)
         ans = self._answers.pop(pid, "")
-        self.bus.publish({"type": "ask_choice_done", "id": pid, "answer": ans})
+        self.publish({"type": "ask_choice_done", "id": pid, "answer": ans})
         return ans
 
     def answer_choice(self, pid: str, ans: str) -> bool:
@@ -173,7 +180,7 @@ class AppUI:
         return True
 
     def info(self, msg: str) -> None:
-        self.bus.publish({"type": "info", "text": msg})
+        self.publish({"type": "info", "text": msg})
 
 
 def _summary(tools: dict[str, Any], name: str, raw: str) -> str:
@@ -313,48 +320,48 @@ def revert_change(checkpoints: dict[int, dict[str, bytes | None]], path: str) ->
 
 
 # ------------------------------------------------------------------------ durum
-class AppState:
-    def __init__(self, cfg: Config, cwd: Path, mode: str, provider_factory=None):
-        self.cfg = cfg
-        self.bus = EventBus()
-        self.ui = AppUI(self.bus)
-        self.router = Router(cfg, provider_factory=provider_factory,
-                             on_event=lambda s: self.bus.publish({"type": "route", "text": s}))
-        self.decider = Decider.from_config(cfg, self.router)
-        self.ctx = ToolContext(cwd=cwd, config=cfg, router=self.router, decider=self.decider,
-                               emit=lambda s: self.bus.publish({"type": "info", "text": s}))
-        self.agent = Agent(cfg, self.router, all_tools(cfg, self.ctx.emit), self.ctx, Permissions(mode), self.ui, self.decider)
-        self.ui.agent = self.agent
-        self.ctx.state["set_cwd"] = self.set_cwd  # github clone aracı çalışma klasörünü buradan değiştirir
-        self.ctx.state["publish"] = self.bus.publish  # takım paneli canlı güncellensin
+class Chat:
+    """Bir sohbet: kendi ajanı, araç bağlamı ve iş thread'i. Bir sohbet çalışırken başka sohbete geçilip orada da iş
+    verilebilsin diye: geride kalan sohbet arkada sürer, bitince kaydedilip kapanır.
+
+    Thread'e bağlı nesneler (Playwright tarayıcısı, UI Automation) sohbetin bağlamında ve kendi thread'inde kalır; her
+    mesajda yeni thread açmak onları bozardı. Araç nesneleri durumsuz (durum bağlamda), sohbetler arasında paylaşılır.
+    Ekranı/tarayıcıyı süren araçlar sohbetler arasında sırayla kullanılır (bkz. DesktopLock)."""
+
+    def __init__(self, app: "AppState", cwd: Path, mode: str, sid: str = "",
+                 messages: list[dict[str, Any]] | None = None):
         from alice.memory import attach_memory
 
+        self.app = app
+        self.sid = sid or sess.new_session_id()
+        self.ui = AppUI(app.bus, self.sid)
+        self.ctx = ToolContext(cwd=cwd, config=app.cfg, router=app.router, decider=app.decider, emit=self.ui.info)
+        self.agent = Agent(app.cfg, app.router, list(app.tools), self.ctx, Permissions(mode), self.ui, app.decider)
+        self.ui.agent = self.agent
+        self.ctx.state["set_cwd"] = lambda path: app.set_cwd(path, self)  # github clone aracı klasörü değiştirir
+        self.ctx.state["publish"] = app.bus.publish  # takım paneli canlı güncellensin
+        self.ctx.state["teams"] = app.teams  # projeler bütün sohbetlerin
+        self.ctx.state["desktop_lock"] = app.desktop_lock
         attach_memory(self.agent, "uygulama")
-        self.sid = sess.new_session_id()
-        resume_sid = os.environ.pop("ALICE_RESUME", "")  # takılan iş yüzünden yeniden başladık: sohbete dön
-        if resume_sid:
-            self.resume(resume_sid)
-        self.agent.on_step = lambda: sess.save(self.sid, self.agent.messages, self.ctx.cwd)
-        self.token = secrets.token_urlsafe(24)
-        # Önizleme adresindeki anahtar ayrı: sitenin kodu onu görse bile sadece proje dosyalarını okuyabilir.
-        self.preview_token = secrets.token_urlsafe(18)
-        self.allowed_hosts = {"127.0.0.1", "localhost"}  # telefon sunucusunda LAN adresi eklenir
-        self.watch_store = None  # telefon sunucusu: saat verisi buraya yazılır
-        self.quick_pending: dict[str, Any] | None = None  # hızlı bar açılırken doldurulacak metin/görsel
-        self.update: Any = None  # alice.updater.UpdateInfo: açılışta/arka planda bulunan yeni sürüm
-        self._update_lock = threading.Lock()
-        self._update_stop = threading.Event()  # kapanışta arka plan güncelleme döngüsü dursun
-        self._update_waits = (10.0, 60.0)  # ilk bakış, sonraki turlar (sn)
-        self._stt = None
-        # Tüm ajan işleri tek bir kalıcı thread'de çalışır: Playwright tarayıcısı ve UI Automation
-        # nesneleri oluşturuldukları thread'e bağlı, her mesajda yeni thread açmak onları bozar.
+        if messages is not None:
+            self.agent.messages = self.agent.messages[:1] + messages
+        self.agent.on_step = self.save
+        self.queued = False
+        self.abandoned = False  # durdurulamayan iş: thread'i bırakıldı, artık kaydetmez ve arayüze yazmaz
         self._jobs: queue.Queue = queue.Queue()
-        self._queued = False
-        self._worker = threading.Thread(target=self._work, daemon=True, name="alice-agent")
-        self._worker.start()
-        # MCP sunucuları (npx ile açılanlar yavaş olabilir) arayüzü bekletmesin.
-        self.run_in_worker(lambda: attach_mcp(self.agent, self.ctx,
-                                              emit=lambda s: self.bus.publish({"type": "info", "text": s})))
+        self._thread = threading.Thread(target=self._work, daemon=True, name=f"alice-chat-{self.sid[-6:]}")
+        self._thread.start()
+
+    @property
+    def busy(self) -> bool:
+        return bool(self.agent.busy or self.queued)
+
+    def set_sid(self, sid: str) -> None:
+        self.sid = self.ui.sid = sid
+
+    def save(self) -> None:
+        if not self.abandoned:
+            sess.save(self.sid, self.agent.messages, self.ctx.cwd)
 
     def _work(self) -> None:
         while True:
@@ -370,41 +377,218 @@ class AppState:
                 if done is not None:
                     done.set()
 
-    def run_in_worker(self, fn, wait: float | None = None) -> None:
+    def run(self, fn, wait: float | None = None) -> None:
         done = threading.Event()
         self._jobs.put((fn, done))
         if wait is not None:
             done.wait(wait)
 
+    def close(self, wait: float | None = None) -> None:
+        """Araçların bıraktıklarını (tarayıcı bağlantısı, arka plan komutları) kendi thread'inde temizle, thread'i bitir."""
+        self.run(lambda: cleanup(self.ctx), wait=wait)
+        self._jobs.put(None)
+
+
+class AppState:
+    MAX_BACKGROUND = 3  # arkada aynı anda çalışabilecek sohbet sayısı
     STOP_GRACE = 10.0  # Durdur'dan sonra işin bırakılmasını bu kadar bekle
 
-    def stop(self) -> None:
-        """Durdur düğmesi. Araç her şeye rağmen bırakmıyorsa (cevap vermeyen bir pencere/COM çağrısı) iş thread'i
-        sonsuza dek meşgul kalıyor, ne yeni mesaj ne başka sohbet açılabiliyordu: o zaman sohbeti kaydedip yeniden
-        başla. Ajan thread'e bağlı (Playwright, UI Automation), takılan thread'in yerine yenisini koymak güvenli değil."""
-        self.agent.stop()
-        if self.agent.busy or self._queued:
-            threading.Thread(target=self._unstick, daemon=True, name="alice-unstick").start()
+    def __init__(self, cfg: Config, cwd: Path, mode: str, provider_factory=None):
+        self.cfg = cfg
+        self.bus = EventBus()
+        self.router = Router(cfg, provider_factory=provider_factory,
+                             on_event=lambda s: self.bus.publish({"type": "route", "text": s}))
+        self.decider = Decider.from_config(cfg, self.router)
+        self.tools = all_tools(cfg, lambda s: self.bus.publish({"type": "info", "text": s}))
+        self.teams: dict[str, Any] = {}
+        self.desktop_lock = DesktopLock()
+        self._mcp_servers: list[Any] = []
+        self._chats_lock = threading.RLock()
+        self.background: dict[str, Chat] = {}  # öndeki sohbetten ayrılınca çalışmaya devam edenler
+        self.chat = Chat(self, cwd, mode)
+        self.token = secrets.token_urlsafe(24)
+        # Önizleme adresindeki anahtar ayrı: sitenin kodu onu görse bile sadece proje dosyalarını okuyabilir.
+        self.preview_token = secrets.token_urlsafe(18)
+        self.allowed_hosts = {"127.0.0.1", "localhost"}  # telefon sunucusunda LAN adresi eklenir
+        self.watch_store = None  # telefon sunucusu: saat verisi buraya yazılır
+        self.quick_pending: dict[str, Any] | None = None  # hızlı bar açılırken doldurulacak metin/görsel
+        self.update: Any = None  # alice.updater.UpdateInfo: açılışta/arka planda bulunan yeni sürüm
+        self._update_lock = threading.Lock()
+        self._update_stop = threading.Event()  # kapanışta arka plan güncelleme döngüsü dursun
+        self._update_waits = (10.0, 60.0)  # ilk bakış, sonraki turlar (sn)
+        self._stt = None
+        # MCP sunucuları (npx ile açılanlar yavaş olabilir) arayüzü bekletmesin. Sunucular uygulamanın, sohbetin değil:
+        # kapanan sohbet onları kapatmasın; araçları sonradan açılan sohbetlere de geçsin.
+        self.run_in_worker(self._attach_mcp)
 
-    def _unstick(self) -> None:
+    def _attach_mcp(self) -> None:
+        chat = self.chat
+        before = set(chat.agent.tools)
+        attach_mcp(chat.agent, chat.ctx, emit=lambda s: self.bus.publish({"type": "info", "text": s}))
+        self._mcp_servers = chat.ctx.state.pop("mcp_servers", [])
+        added = [t for n, t in chat.agent.tools.items() if n not in before]
+        self.tools = self.tools + added
+        with self._chats_lock:
+            for c in [self.chat, *self.background.values()]:
+                for t in added:
+                    c.agent.tools.setdefault(t.name, t)
+
+    # Öndeki sohbet: uç noktalar ve diğer modüller (hızlı bar, telefon) bunlar üzerinden çalışır.
+    @property
+    def agent(self) -> Agent:
+        return self.chat.agent
+
+    @property
+    def ctx(self) -> ToolContext:
+        return self.chat.ctx
+
+    @property
+    def ui(self) -> AppUI:
+        return self.chat.ui
+
+    @property
+    def sid(self) -> str:
+        return self.chat.sid
+
+    @property
+    def _queued(self) -> Any:
+        return self.chat.queued
+
+    @_queued.setter
+    def _queued(self, v: Any) -> None:
+        self.chat.queued = v
+
+    def run_in_worker(self, fn, wait: float | None = None) -> None:
+        self.chat.run(fn, wait)
+
+    def running(self) -> list[str]:
+        """Arkada hâlâ çalışan sohbetler (kenar çubuğunda işaretlenir)."""
+        with self._chats_lock:
+            return [sid for sid, c in self.background.items() if c.busy]
+
+    # ------------------------------------------------------------------ sohbet değiştirme
+    def _make_room(self) -> str | None:
+        """Öndeki sohbet çalışıyorsa arkaya al. Yer yoksa hata metni."""
+        if not self.chat.busy:
+            return None
+        if len(self.running()) >= self.MAX_BACKGROUND:
+            return f"arkada zaten {self.MAX_BACKGROUND} sohbet çalışıyor; birini bitmeden yenisine geçilemez"
+        self.background[self.chat.sid] = self.chat
+        try:
+            self.chat.save()  # ilk adımı bitmemiş olsa da kenar çubuğunda görünsün
+        except OSError:
+            pass
+        return ""
+
+    def _swap_in(self, chat: Chat, old_busy: bool) -> None:
+        """Öne yeni sohbeti al. Eski öndeki boştaysa kapanır; çalışıyorsa _make_room onu arkaya almıştır."""
+        old = self.chat
+        chat.agent.permissions.mode = old.agent.permissions.mode  # izin modu kullanıcının, sohbetin değil
+        self.chat = chat
+        if not old_busy and old is not chat:
+            old.close()
+
+    def new_session(self) -> str | None:
+        """Yeni sohbet. Hata varsa metni döner."""
+        with self._chats_lock:
+            err = self._make_room()
+            if err:
+                return err
+            if err is None:  # öndeki boşta: aynı ajanı (ve tarayıcı bağlantısını) kullanmaya devam et
+                self.ctx.state.pop("team", None)  # takım proje olarak çalışmaya devam eder (Projeler sayfası)
+                self.agent.reset()
+                self.chat.set_sid(sess.new_session_id())
+                return None
+            self._swap_in(Chat(self, self.ctx.cwd, self.agent.permissions.mode), old_busy=True)
+        return None
+
+    def resume(self, sid: str) -> bool:
+        with self._chats_lock:
+            if sid == self.chat.sid:
+                return True
+            if sid in self.background:  # arkada çalışan sohbete dön: diskten değil canlı halinden
+                target = self.background.pop(sid)
+                busy = self.chat.busy
+                if busy and self._make_room():
+                    self.background[sid] = target
+                    return False
+                self._swap_in(target, old_busy=busy)
+                return True
+            loaded = sess.load(sid)
+            if not loaded:
+                return False
+            sid, msgs = loaded
+            err = self._make_room()
+            if err:
+                return False
+            if err is None:
+                self.chat.set_sid(sid)
+                self.agent.messages = self.agent.messages[:1] + msgs
+                return True
+            self._swap_in(Chat(self, self.ctx.cwd, self.agent.permissions.mode, sid=sid, messages=msgs), old_busy=True)
+            return True
+
+    def _finished(self, chat: Chat) -> None:
+        """Sohbetin turu bitti (kendi thread'inde). Öndeki değilse artık işi yok: kapanır."""
+        with self._chats_lock:
+            chat.queued = False
+            if chat is self.chat:
+                return
+            self.background.pop(chat.sid, None)
+        chat.close()
+
+    # ------------------------------------------------------------------ durdurma
+    def stop(self) -> None:
+        """Durdur düğmesi (öndeki sohbet). Araç her şeye rağmen bırakmıyorsa (cevap vermeyen bir pencere/COM çağrısı)
+        sohbetin thread'i sonsuza dek meşgul kalırdı: o zaman sohbet o thread'den ayrılır (bkz. _abandon)."""
+        chat = self.chat
+        chat.agent.stop()
+        if chat.busy:
+            threading.Thread(target=self._unstick, args=(chat,), daemon=True, name="alice-unstick").start()
+
+    def _unstick(self, chat: Chat) -> None:
         deadline = time.monotonic() + self.STOP_GRACE
         while time.monotonic() < deadline:
-            if not (self.agent.busy or self._queued):
+            if not chat.busy:
                 return
             time.sleep(0.2)
-        self.bus.publish({"type": "info", "text": "bir araç durdurulamadı; ALICE yeniden başlatılıyor, sohbet korunuyor"})
+        self._abandon(chat)
+
+    def _abandon(self, chat: Chat) -> None:
+        """Takılan thread'i bırak: sohbet kaydedilir ve öndeyse yeni bir thread'le aynı sohbet açılır. Eski thread bir
+        gün dönerse kaydetmez, arayüze yazmaz, ekranı tutmaz."""
         try:
-            self.agent._repair_after_interrupt()  # cevapsız araç çağrısı geçmişte kalmasın
-            sess.save(self.sid, self.agent.messages, self.ctx.cwd)
-        except Exception:  # noqa: BLE001 - kayıt olmasa da yeniden başlamak takılı kalmaktan iyi
+            chat.agent._repair_after_interrupt()  # cevapsız araç çağrısı geçmişte kalmasın
+            chat.save()
+        except Exception:  # noqa: BLE001 - kayıt olmasa da takılı kalmaktan iyi
             log_error()
-        self._restart_soon(env={"ALICE_RESUME": self.sid})
+        msgs = chat.agent.messages[1:]
+        with self._chats_lock:
+            chat.abandoned = True
+            chat.ui.publish = lambda event: None
+            self.desktop_lock.release(chat.ctx)
+            b = chat.ctx.state.get("browser")
+            if b is not None and hasattr(b, "abort"):
+                b.abort("stop")
+            self.background.pop(chat.sid, None)
+            if chat is self.chat:
+                self.chat = Chat(self, chat.ctx.cwd, chat.agent.permissions.mode, sid=chat.sid, messages=msgs)
+        self.bus.publish({"type": "info", "text": "bir araç durdurulamadı; sohbet kaydedildi ve kaldığı yerden açıldı",
+                          "sid": chat.sid})
+        self.bus.publish({"type": "busy", "value": False, "sid": chat.sid})
+        self.bus.publish({"type": "status", **self.status()})
 
     def shutdown(self) -> None:
         self._update_stop.set()
-        self.agent.stop()
-        self.run_in_worker(lambda: cleanup(self.ctx), wait=10)
-        self._jobs.put(None)
+        with self._chats_lock:
+            chats = [self.chat, *self.background.values()]
+        for c in chats:
+            c.agent.stop()
+        for c in chats:
+            c.close(wait=10 if c is self.chat else 2)
+        from alice.mcp import close_all
+
+        close_all(self._mcp_servers)
 
     def status(self) -> dict[str, Any]:
         a = self.agent
@@ -425,6 +609,7 @@ class AppState:
             "branch": git_branch(self.ctx.cwd),
             "busy": a.busy or self._queued,
             "session": self.sid,
+            "running": self.running(),
             "pending": list(self.ui.pending.values()),
             "brain_chain": self.router.chain("brain"),
             "brain_pinned": "brain" in self.router.role_overrides,
@@ -811,7 +996,7 @@ class AppState:
             threading.Thread(target=self._restart_soon, daemon=True, name="alice-restart").start()
         return {"ok": ok, "note": msg, "restarting": ok}
 
-    def _restart_soon(self, env: dict[str, str] | None = None) -> None:
+    def _restart_soon(self) -> None:
         """Cevabın arayüze ulaşması için biraz bekle, sonra aynı komutla yeniden başla."""
         import sys
 
@@ -824,7 +1009,7 @@ class AppState:
             pass
         # Yeni süreç açılışta tekrar bakabilsin: bayrağı taşımıyoruz.
         updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]],
-                        env={"ALICE_RESTARTED": "", **(env or {})})
+                        env={"ALICE_RESTARTED": ""})
 
     def watch_updates(self, first: Any = None) -> None:
         """Arka planda periyodik güncelleme kontrolü; bulunca arayüze bildirir."""
@@ -1021,44 +1206,45 @@ class AppState:
         return self.router.context_limit(ref) if ref else 0
 
     def send(self, text: str, images: list[str] | None = None) -> tuple[bool, str | None]:
-        if self.agent.busy or self._queued:
+        chat = self.chat
+        if chat.busy:
             return False, "ALICE şu an çalışıyor"
         prompt = text
         if text.startswith("/"):
             from alice.commands import builtin_prompt, expand_custom
 
-            prompt = expand_custom(text, self.ctx.cwd)  # kullanıcının komutu önce (yerleşikler zaten hariç tutulur)
+            prompt = expand_custom(text, chat.ctx.cwd)  # kullanıcının komutu önce (yerleşikler zaten hariç tutulur)
             if prompt is None:
                 prompt = builtin_prompt(text)
                 if prompt is None:
                     return False, f"bilinmeyen komut: {text.split()[0]}"
-        self._queued = True
+        chat.queued = True
         images = images or []
+        agent, pub = chat.agent, chat.ui.publish
 
         def run() -> None:
             try:
-                self.bus.publish({"type": "user", "text": text, "mi": len(self.agent.messages),
-                                  "images": images[:6]})
-                self.bus.publish({"type": "busy", "value": True})
-                self.agent.run_turn(prompt, images=images or None)
+                pub({"type": "user", "text": text, "mi": len(agent.messages), "images": images[:6]})
+                pub({"type": "busy", "value": True})
+                agent.run_turn(prompt, images=images or None)
                 if prompt != text:  # özel komutlarda kullanıcı kendi yazdığını görsün
-                    for m in reversed(self.agent.messages):
+                    for m in reversed(agent.messages):
                         if m.get("role") == "user" and not m.get("_image"):
                             m["_display"] = text
                             break
             except Exception as e:  # noqa: BLE001 - thread içinde hata uygulamayı düşürmesin
-                self.bus.publish({"type": "info", "text": f"beklenmeyen hata: {e}"})
+                chat.ui.publish({"type": "info", "text": f"beklenmeyen hata: {e}"})
                 log_error()
             finally:
                 try:
-                    sess.save(self.sid, self.agent.messages, self.ctx.cwd)
+                    chat.save()
                 except OSError:
                     pass
-                self._queued = False
-                self.bus.publish({"type": "busy", "value": False})
+                self._finished(chat)
+                chat.ui.publish({"type": "busy", "value": False})
                 self.bus.publish({"type": "status", **self.status()})
 
-        self.run_in_worker(run)
+        chat.run(run)
         return True, None
 
     def transcribe(self, data: bytes, filename: str) -> str:
@@ -1069,13 +1255,16 @@ class AppState:
             self._stt = make_stt(self.cfg)
         return self._stt.transcribe_file(data, filename)
 
-    def set_cwd(self, path: Path) -> None:
-        """Çalışma klasörünü değiştir, sistem istemindeki klasörü güncelle ve sonraki açılış için hatırla."""
+    def set_cwd(self, path: Path, chat: Chat | None = None) -> None:
+        """Çalışma klasörünü değiştir, sistem istemindeki klasörü güncelle ve sonraki açılış için hatırla.
+        chat: klasörü değişen sohbet (arkadaki bir sohbetin github aracı öndekinin klasörünü değiştirmesin)."""
         from alice.prompts import build_system_prompt
 
-        self.ctx.cwd = path
-        if self.agent.messages and self.agent.messages[0].get("role") == "system":
-            self.agent.messages[0]["content"] = build_system_prompt(path)
+        chat = chat or self.chat
+        chat.ctx.cwd = path
+        msgs = chat.agent.messages
+        if msgs and msgs[0].get("role") == "system":
+            msgs[0]["content"] = build_system_prompt(path)
         try:
             alice_home().mkdir(parents=True, exist_ok=True)
             (alice_home() / "last_cwd").write_text(str(path), encoding="utf-8")
@@ -1108,19 +1297,6 @@ class AppState:
         except OSError:
             pass
         return {"text": text, "restored": restored}
-
-    def new_session(self) -> None:
-        self.ctx.state.pop("team", None)  # takım proje olarak çalışmaya devam eder (Projeler sayfası)
-        self.agent.reset()
-        self.sid = sess.new_session_id()
-
-    def resume(self, sid: str) -> bool:
-        loaded = sess.load(sid)
-        if not loaded:
-            return False
-        self.sid, msgs = loaded
-        self.agent.messages = self.agent.messages[:1] + msgs
-        return True
 
 
 def _user_name() -> str:
@@ -1535,16 +1711,19 @@ def make_handler(state: AppState):
                         return self._json({"ok": False}, 400)
                     state.agent.permissions.mode = mode
                     return self._json({"ok": True, **state.status()})
-                if (state.agent.busy or state._queued) and p in ("/api/new", "/api/resume", "/api/cwd", "/api/compact",
-                                                                  "/api/rewind", "/api/changes/revert",
-                                                                  "/api/github/open"):
-                    return self._json({"ok": False, "error": "önce mevcut işi durdur"}, 409)
+                # Sohbet değiştirmek çalışan işi durdurmaz: o sohbet arkada sürer (bkz. Chat).
                 if p == "/api/new":
-                    state.new_session()
-                    return self._json({"ok": True, **state.status()})
+                    err = state.new_session()
+                    return self._json({"ok": not err, "error": err, **state.status()}, 409 if err else 200)
                 if p == "/api/resume":
                     ok = state.resume(str(d.get("id", "")))
-                    return self._json({"ok": ok, "history": display_history(state.agent.messages, state.agent.tools), **state.status()})
+                    return self._json({"ok": ok, "error": None if ok else "sohbet açılamadı (arkada çok fazla iş var "
+                                       "ya da sohbet bulunamadı)",
+                                       "history": display_history(state.agent.messages, state.agent.tools),
+                                       **state.status()})
+                if state.chat.busy and p in ("/api/cwd", "/api/compact", "/api/rewind", "/api/changes/revert",
+                                             "/api/github/open"):
+                    return self._json({"ok": False, "error": "önce mevcut işi durdur"}, 409)
                 if p == "/api/cwd":
                     path = state.ctx.resolve(str(d.get("path", "")))
                     if not path.is_dir():
@@ -1569,6 +1748,8 @@ def make_handler(state: AppState):
                                       200 if ok else 404)
                 if p == "/api/session/delete":
                     sid = str(d.get("id", ""))
+                    if sid in state.running():  # arkada çalışan sohbet bitince kendini yeniden kaydederdi
+                        return self._json({"ok": False, "error": "bu sohbet arkada çalışıyor; önce bitsin"}, 409)
                     f = sess.sessions_dir() / f"{sid}.json"
                     if sid and f.parent == sess.sessions_dir() and f.exists():
                         f.unlink()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,21 @@ def sessions_dir() -> Path:
     return d
 
 
+_issued: set[str] = set()
+_issued_lock = threading.Lock()
+
+
 def new_session_id() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    """Saniyeye kadar zaman. Aynı saniyede açılan sohbetler (biri arkada çalışırken yenisi) aynı dosyaya yazmasın
+    diye gerekirse sonuna -2, -3 eklenir."""
+    base = datetime.now().strftime("%Y%m%d-%H%M%S")
+    with _issued_lock:
+        sid, n = base, 1
+        while sid in _issued or (sessions_dir() / f"{sid}.json").exists():
+            n += 1
+            sid = f"{base}-{n}"
+        _issued.add(sid)
+    return sid
 
 
 def save(session_id: str, messages: list[dict[str, Any]], cwd: Path) -> Path:

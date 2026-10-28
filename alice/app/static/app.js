@@ -905,7 +905,7 @@ function applyStatus(s) {
   // Sadece gelen durumda busy varsa uygula: kısmi güncelleme (ör. model değişimi) eski busy değeriyle işi bitmiş saymasın.
   if (s.busy !== undefined && s.busy !== S.busy) setBusy(s.busy);
   for (const p of st.pending || []) (p.type === "ask_choice" ? onChoice : onPermission)(p);
-  $$(".sess").forEach((b) => b.classList.toggle("active", b.dataset.id === st.session));
+  markSessions();
   if (app.classList.contains("empty")) greet();
 }
 async function refreshStatus() { const s = await api("/api/state"); if (s && s.version) applyStatus(s); }
@@ -984,16 +984,35 @@ function drawSessions() {
     b.addEventListener("click", () => resume(s.id));
     nav.appendChild(b);
   }
-  $$(".sess").forEach((b) => b.classList.toggle("active", b.dataset.id === S.status.session));
+  markSessions();
+}
+// Öndeki sohbet ve arkada hâlâ çalışanlar (bir sohbet çalışırken başka sohbete geçilebilir).
+function markSessions() {
+  const running = new Set(S.status.running || []);
+  $$(".sess").forEach((b) => {
+    b.classList.toggle("active", b.dataset.id === S.status.session);
+    b.classList.toggle("running", running.has(b.dataset.id));
+    if (running.has(b.dataset.id)) b.title = b.title.replace(/^(⏳ arkada çalışıyor\n)?/, "⏳ arkada çalışıyor\n");
+  });
+}
+// Sohbet değişirken: öndekinin bekleyen mesajları yenisine gitmesin, turunun özeti yenisine yazılmasın.
+// Meşgul durumu sessizce bırakılır; yeni sohbetin durumu applyStatus ile gelir.
+function leaveChat() {
+  S.queue = [];
+  if (typeof drawQueue === "function") drawQueue();
+  S.busy = false;
+  setBusy(false);
 }
 $("#sessSearch").addEventListener("input", drawSessions);
 $("#sessSearch").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.target.value = ""; drawSessions(); e.target.blur(); } });
 async function resume(id) {
   // Proje ekranı açıkken sohbete tıklamak önce projeyi kapatır; aynı sohbetse sadece ona dönülür.
   if (S.proj) { closeProject(); drawSessions(); if (id === S.status.session) { closeSideOnMobile(); return; } }
-  if (S.busy) return toast("Önce mevcut işi durdur");
+  if (id === S.status.session) { closeSideOnMobile(); return; }
+  // Çalışan sohbet durmaz: arkada sürer, kenar çubuğunda işaretlenir.
   const r = await api("/api/resume", { id });
   if (!r.ok) return toast(r.error || "Oturum yüklenemedi");
+  leaveChat();
   renderHistory(r.history);
   applyStatus(r);
   refreshChanges();
@@ -1001,9 +1020,10 @@ async function resume(id) {
 }
 async function newChat() {
   if (S.proj) closeProject();
-  if (S.busy) return toast("Önce mevcut işi durdur");
   const r = await api("/api/new", {});
-  if (r.ok) { clearChat(); applyStatus(r); loadSessions(); refreshChanges(); input.focus(); }
+  if (!r.ok) return toast(r.error || "Yeni sohbet açılamadı");
+  leaveChat();
+  clearChat(); applyStatus(r); loadSessions(); refreshChanges(); input.focus();
 }
 async function rewindTo(mi, edit) {
   if (S.busy) return toast("Önce mevcut işi durdur");

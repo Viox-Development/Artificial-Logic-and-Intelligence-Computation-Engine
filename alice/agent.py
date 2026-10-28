@@ -20,7 +20,7 @@ from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
 from alice.providers.openai_compat import ChatResult, StreamCancelled
 from alice.providers.router import AllProvidersFailed, Router, estimate_tokens, strip_images
-from alice.tools.base import DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
+from alice.tools.base import COMPUTER, DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
 # Yutulan hatalar için iz: varsayılan olarak sessiz, `logging.basicConfig(level=logging.DEBUG)` ile görünür.
 log = logging.getLogger(__name__)
@@ -492,6 +492,7 @@ class Agent:
             raise
         finally:
             self.busy = False
+            self._release_desktop()
 
     def _unfinished(self, text: str) -> str:
         """Tur araçlarla iş yaparken cevap verip durduysa ve iş bitmemiş görünüyorsa modele gidecek hatırlatma (boş:
@@ -787,6 +788,8 @@ class Agent:
     def _run_tool(self, tool: Tool, args: dict[str, Any]) -> ToolResult:
         # Araçlar bu thread'de çalışır (Playwright ve UI Automation nesneleri thread'e bağlı). Durdurulunca
         # stop() araçların başlattığı komutları öldürür, böylece bekleyen araç da hemen döner.
+        if not self._take_desktop(tool):
+            return ToolResult("durduruldu (kullanıcı kesti)", is_error=True)
         try:
             return tool.run(self.ctx, **args)
         except ToolError as e:
@@ -797,6 +800,20 @@ class Agent:
             raise
         except Exception as e:  # noqa: BLE001 - araç hatası ajanı düşürmesin, modele dönsün
             return ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+
+    def _take_desktop(self, tool: Tool) -> bool:
+        """Uygulamada aynı anda birden çok sohbet çalışabilir; ekranı/tarayıcıyı süren araç sırayla kullanılır
+        (bkz. DesktopLock). Kilit yoksa (CLI, ses, çekirdek) bir şey yapmaz."""
+        lock = self.ctx.state.get("desktop_lock")
+        if lock is None or getattr(tool, "risk", "") != COMPUTER or lock.held_by(self.ctx):
+            return True
+        return lock.acquire(self.ctx, self.cancel.is_set, on_wait=lambda: self.ui.info(
+            "başka bir sohbet ekranı/tarayıcıyı kullanıyor; o turunu bitirince devam edeceğim"))
+
+    def _release_desktop(self) -> None:
+        lock = self.ctx.state.get("desktop_lock")
+        if lock is not None and not self.is_child:  # alt ajan bitince ana sohbet hâlâ ekranda olabilir
+            lock.release(self.ctx)
 
     # ----------------------------------------------------------------- vision
     def _brain_sees_images(self) -> bool:

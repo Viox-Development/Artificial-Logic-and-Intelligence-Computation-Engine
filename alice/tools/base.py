@@ -51,6 +51,49 @@ class ToolContext:
         return p.resolve()
 
 
+class DesktopLock:
+    """Ekran, fare/klavye ve kullanıcının tarayıcısı tek: aynı anda tek sohbet kullanır. Alan sohbet turu bitene kadar
+    tutar, yarım kalan bir ekran işinin arasına başka sohbet girmesin. Sahip ToolContext'tir (alt ajanlar aynı bağlamı
+    paylaşır, kendi sohbetlerini bekletmezler).
+
+    Sahip değişince önceki sahibin tarayıcı bağlantısı bırakılır: tarayıcı köprüsü tek istemciye hizmet verir, eski
+    bağlantı sessizce ölü kalır ve sonraki çağrısı takılırdı."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self._cond = threading.Condition()
+        self.owner: ToolContext | None = None
+        self.last: ToolContext | None = None
+
+    def held_by(self, ctx: ToolContext) -> bool:
+        return self.owner is ctx
+
+    def acquire(self, ctx: ToolContext, cancelled: Callable[[], bool], on_wait: Callable[[], None] | None = None) -> bool:
+        """Sıra gelene kadar bekle; durdurulursa False."""
+        with self._cond:
+            told = False
+            while self.owner is not None and self.owner is not ctx:
+                if cancelled():
+                    return False
+                if not told and on_wait is not None:
+                    on_wait()
+                    told = True
+                self._cond.wait(0.25)
+            prev, self.owner, self.last = self.last, ctx, ctx
+        if prev is not None and prev is not ctx:
+            b = prev.state.get("browser")
+            if b is not None and hasattr(b, "abort"):
+                b.abort("handoff")
+        return True
+
+    def release(self, ctx: ToolContext) -> None:
+        with self._cond:
+            if self.owner is ctx:
+                self.owner = None
+                self._cond.notify_all()
+
+
 class Tool:
     name: str = ""
     description: str = ""

@@ -80,9 +80,26 @@ function connect() {
   es.onmessage = (m) => {
     let ev;
     try { ev = JSON.parse(m.data); } catch { return; }
+    // Arkada çalışan sohbetin olayları öndeki sohbete çizilmez; sadece haber verilir.
+    if (ev.sid && S.status.session && ev.sid !== S.status.session) return onBackground(ev);
     const h = handlers[ev.type];
     if (h) h(ev);
   };
+}
+
+function sessionTitle(id) {
+  const s = (S.sessions || []).find((x) => x.id === id);
+  return s && s.title ? `“${s.title.slice(0, 40)}”` : "Arkadaki sohbet";
+}
+function onBackground(ev) {
+  if (ev.type === "busy") {
+    if (!ev.value) toast(`${sessionTitle(ev.sid)} bitti`);
+    refreshStatus();
+    loadSessions();
+  } else if (ev.type === "permission" || ev.type === "ask_choice") {
+    toast(`${sessionTitle(ev.sid)} senden onay bekliyor; ona geçince görürsün`);
+    refreshStatus();
+  }
 }
 
 (async function boot() {

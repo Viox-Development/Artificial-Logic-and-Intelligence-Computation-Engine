@@ -165,7 +165,8 @@ def test_all_turns_run_on_same_worker_thread(app):
         events, t = collect(state, lambda e: e["type"] == "status")
         assert client.post("/api/send", json={"text": text}).json()["ok"]
         t.join()
-    assert seen == ["alice-agent", "alice-agent"]
+    # Aynı sohbetin turları hep aynı thread'de (Playwright/UI Automation nesneleri thread'e bağlı).
+    assert len(set(seen)) == 1 and seen[0].startswith("alice-chat-")
 
 
 def test_new_endpoints_rewind_files_commands_images(app, workdir):
@@ -347,23 +348,122 @@ def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
     assert restarted.wait(2)
 
 
-def test_stop_restarts_when_tool_never_lets_go(monkeypatch):
-    """Durdur'a rağmen araç bırakmıyorsa sohbet kaydedilip yeniden başlanır (eskiden sonsuza dek "çalışıyor")."""
-    from types import SimpleNamespace
+# ------------------------------------------------------------------ aynı anda birden çok sohbet
+def _hold_turn(state, release):
+    """Öndeki sohbetin turu release gelene kadar sürsün (uzun süren bir araç gibi); Durdur'u da dinlemez."""
+    agent = state.agent
+    run_turn = agent.run_turn
 
-    from alice.app import server
+    def slow(prompt, **kw):
+        agent.busy = True
+        try:
+            release.wait(10)
+        finally:
+            agent.busy = False
+        return run_turn(prompt, **kw)
 
-    saved, restarted, events = [], [], []
-    agent = SimpleNamespace(busy=True, messages=[{"role": "system"}], stop=lambda: None,
-                            _repair_after_interrupt=lambda: saved.append("repaired"))
-    fake = SimpleNamespace(agent=agent, _queued=True, STOP_GRACE=0.05, sid="s1", ctx=SimpleNamespace(cwd="."),
-                           bus=SimpleNamespace(publish=events.append), _restart_soon=lambda env=None: restarted.append(env))
-    monkeypatch.setattr(server.sess, "save", lambda sid, msgs, cwd: saved.append(sid))
-    server.AppState._unstick(fake)
-    assert saved == ["repaired", "s1"] and restarted == [{"ALICE_RESUME": "s1"}]
-    assert any("yeniden başlatılıyor" in e.get("text", "") for e in events)
+    agent.run_turn = slow
+    return agent
 
-    restarted.clear()
-    agent.busy, fake._queued = False, False  # iş bıraktı: yeniden başlama yok
-    server.AppState._unstick(fake)
-    assert restarted == []
+
+def _wait(cond, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end and not cond():
+        time.sleep(0.05)
+    return cond()
+
+
+def test_other_chat_works_while_one_is_busy(app):
+    state, srv, client, prov = app
+    release = threading.Event()
+    busy_agent = _hold_turn(state, release)
+    prov.script = lambda model, messages, tools, **kw: "cevap " + str(len(messages))
+    assert client.post("/api/send", json={"text": "uzun iş"}).json()["ok"]
+    assert _wait(lambda: state.agent.busy)
+    a_sid = state.sid
+
+    r = client.post("/api/new", json={}).json()  # eskiden "önce mevcut işi durdur"
+    assert r["ok"] and r["session"] != a_sid and not r["busy"] and r["running"] == [a_sid]
+    events, t = collect(state, lambda e: e["type"] == "busy" and e.get("value") is False and e.get("sid") == state.sid)
+    assert client.post("/api/send", json={"text": "kısa soru"}).json()["ok"]
+    t.join()
+    assert state.agent is not busy_agent and state.agent.messages[-1]["content"].startswith("cevap")
+    # Arkadaki sohbetin olayları öndekinden ayrılabilsin: hepsi kendi sid'ini taşır.
+    assert {e.get("sid") for e in events if e["type"] in ("delta", "stream_end", "user")} == {state.sid}
+
+    # Arkadaki sohbete geri dönülür: diskten değil canlı halinden, hâlâ çalışıyor.
+    b_sid = state.sid
+    r = client.post("/api/resume", json={"id": a_sid}).json()
+    assert r["ok"] and r["session"] == a_sid and r["busy"] and state.agent is busy_agent
+    release.set()
+    assert _wait(lambda: not state.agent.busy and not state.running())
+    assert any(m.get("role") == "assistant" for m in busy_agent.messages)
+    assert [s["id"] for s in client.get("/api/sessions").json() if s["id"] in (a_sid, b_sid)]
+
+
+def test_background_chat_finishes_and_closes(app):
+    state, srv, client, prov = app
+    release = threading.Event()
+    busy_agent = _hold_turn(state, release)
+    prov.script = lambda model, messages, tools, **kw: "bitti"
+    client.post("/api/send", json={"text": "uzun iş"})
+    assert _wait(lambda: state.agent.busy)
+    a_sid, a_chat = state.sid, state.chat
+    assert client.post("/api/new", json={}).json()["ok"]
+    assert client.post("/api/session/delete", json={"id": a_sid}).status_code == 409  # çalışırken silinmez
+    release.set()
+    assert _wait(lambda: not state.running() and not a_chat._thread.is_alive())  # bitti, kaydedildi, kapandı
+    from alice import session as sess
+
+    loaded = sess.load(a_sid)
+    assert loaded and loaded[1][-1]["content"] == "bitti" and busy_agent.messages[-1]["content"] == "bitti"
+
+
+def test_background_limit(app, monkeypatch):
+    state, srv, client, prov = app
+    monkeypatch.setattr(AppState, "MAX_BACKGROUND", 1)
+    release = threading.Event()
+    prov.script = lambda model, messages, tools, **kw: "ok"
+    _hold_turn(state, release)
+    client.post("/api/send", json={"text": "1"})
+    assert _wait(lambda: state.agent.busy)
+    assert client.post("/api/new", json={}).json()["ok"]
+    _hold_turn(state, release)
+    client.post("/api/send", json={"text": "2"})
+    assert _wait(lambda: state.agent.busy)
+    r = client.post("/api/new", json={})
+    assert r.status_code == 409 and "arkada" in r.json()["error"]
+    release.set()
+    assert _wait(lambda: not state.running() and not state.agent.busy)
+
+
+def test_stuck_chat_is_abandoned_not_the_app(app, monkeypatch):
+    """Durdur'a rağmen bırakmayan araç: sohbet kaydedilip yeni thread'le açılır; eski thread dönünce bir şey bozmaz."""
+    state, srv, client, prov = app
+    monkeypatch.setattr(AppState, "STOP_GRACE", 0.2)
+    release = threading.Event()
+    stuck = _hold_turn(state, release)
+    prov.script = lambda model, messages, tools, **kw: "ok"
+    client.post("/api/send", json={"text": "takılacak"})
+    assert _wait(lambda: state.agent.busy)
+    sid, old = state.sid, state.chat
+    state.desktop_lock.acquire(old.ctx, lambda: False)  # takılan araç ekranı tutuyordu
+    assert client.post("/api/stop", json={}).json()["ok"]
+    assert _wait(lambda: state.chat is not old)
+    assert state.sid == sid and not state.chat.busy and state.desktop_lock.owner is None
+    events, t = collect(state, lambda e: e["type"] == "busy" and e.get("value") is False and e.get("sid") == sid)
+    assert client.post("/api/send", json={"text": "devam"}).json()["ok"]
+    t.join()
+    assert state.agent.messages[-1]["content"] == "ok" and stuck is not state.agent
+
+    seen = state.bus.subscribe()
+    release.set()  # takılan thread sonunda döndü
+    assert _wait(lambda: not old._thread.is_alive())
+    from alice import session as sess
+
+    saved = sess.load(sid)[1]
+    assert saved[-1]["content"] == "ok" and not any("takılacak" == m.get("_display") for m in saved[-1:])
+    leaked = []
+    while not seen.empty():
+        leaked.append(seen.get())
+    assert not [e for e in leaked if e["type"] in ("delta", "stream_end", "tool_start")]  # eski thread arayüze yazmaz
