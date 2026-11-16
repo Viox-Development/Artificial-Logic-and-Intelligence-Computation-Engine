@@ -46,6 +46,12 @@ def push(origin: Path, msg: str, path: str = "alice/new.py") -> str:
     return git(origin, "rev-parse", "HEAD")
 
 
+@pytest.fixture(autouse=True)
+def main_channel(monkeypatch):
+    """Bu dosyadaki testler dalın ucunu izler; sürüm etiketi kanalı ayrı testlerde."""
+    monkeypatch.setitem(updater.DEFAULTS, "channel", "main")
+
+
 @pytest.fixture
 def offline(monkeypatch):
     """GitHub API'sine hiç gidilmesin: commit listesi boş, CI 'unknown'."""
@@ -506,3 +512,23 @@ def test_baska_surec_guncellerken_depo_kurulmaz(repos, monkeypatch, tmp_path):
         info = updater.check(make_config({"brain": ["a:m"]}))
     assert "başka bir ALICE süreci" in info.error and not (app / ".git").exists()
     assert updater.check(make_config({"brain": ["a:m"]})).error == ""  # kilit bırakılınca kurulur
+
+
+def test_stable_kanal_yalniz_surum_etiketine_gunceller(repos, monkeypatch, offline):
+    clone, origin = repos
+    point_at(monkeypatch, clone)
+    monkeypatch.setitem(updater.DEFAULTS, "channel", "stable")
+    push(origin, "yayınlanmamış iş")
+    info = updater.check(make_config({"brain": ["a:m"]}))
+    assert not info.available and "sürüm yok" in info.error  # main'e birleşen commit tek başına gelmez
+    v1 = push(origin, "sürüm 1")
+    git(origin, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+    git(origin, "tag", "v0.0.9", "HEAD~1")
+    git(origin, "tag", "android-v9.9.9")  # başka etiket aileleri sayılmaz
+    push(origin, "sonraki, henüz yayınlanmadı")
+    info = updater.check(make_config({"brain": ["a:m"]}))
+    assert info.available and info.tag == "v0.1.0" and info.remote == v1
+    ok, msg = updater.apply_update(info, make_config({"brain": ["a:m"]}))
+    assert ok, msg
+    assert git(clone, "rev-parse", "HEAD") == v1  # açıklamalı etiketin commit'i, main'in ucu değil
+    assert not updater.check(make_config({"brain": ["a:m"]})).available

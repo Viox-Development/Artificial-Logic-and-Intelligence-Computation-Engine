@@ -593,11 +593,14 @@ disabled = []       # kapatılacak bağlantı adları, ör. ["discord"]
 paths = []          # ek tanım klasörleri
 
 [update]
-# ALICE kendini GitHub'daki depodan günceller (main'e yeni commit girince).
+# ALICE kendini GitHub'daki depodan günceller.
 # auto   = açılışta sessizce güncelle ve en son sürümle aç (varsayılan)
 # notify = sadece haber ver, güncellemeyi sen başlat
 # off    = hiç bakma
 mode = "auto"
+# stable = sadece yayınlanmış sürümlere (vX.Y.Z etiketleri) güncelle (varsayılan)
+# main   = main'e giren her commit'e güncelle (geliştiriciler için)
+channel = "stable"
 branch = "main"
 check_every_minutes = 60      # uygulama açıkken arka planda bu sıklıkta bakar
 require_green_ci = true       # yeni commit'in CI'ı kırmızıysa otomatik güncelleme yapılmaz
