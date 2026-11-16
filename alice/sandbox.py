@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 IS_WIN = sys.platform == "win32"
+# Ev klasöründe sandbox'ın yazılabilir alanı olamayacak kişisel klasörler (alt klasörleri dahil).
+PERSONAL_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "OneDrive", ".ssh", ".config")
 MODES = ("off", "auto", "on")
 _probe: dict[str, Any] = {}
 
@@ -86,6 +88,18 @@ def boxable(folder: Path) -> str:
     if p == Path(p.anchor) or p == home or p in home.parents or is_system_path(p):
         return (f"{p} sandbox alanı olamaz (ev klasörü, kök ya da sistem klasörü); bir proje klasöründe çalış "
                 "ya da cwd ver")
+    # Kişisel klasörler de olamaz: Windows'ta etiketlenen klasöre düşük seviyeli bir komut dosya bırakabilir.
+    # Downloads etiketlenince oradan açılan kurulum dosyaları da düşük yetkiyle çalışıyordu.
+    from alice.config import alice_home
+
+    personal = [home / n for n in PERSONAL_DIRS] + [alice_home()]
+    for d in personal:
+        try:
+            d = d.resolve()
+        except OSError:
+            continue
+        if p == d or d in p.parents:
+            return (f"{p} sandbox alanı olamaz (kişisel klasör: {d.name}); bir proje klasöründe çalış ya da cwd ver")
     return ""
 
 
@@ -202,6 +216,21 @@ def _labels_path() -> Path:
     return alice_home() / "sandbox_dirs.json"
 
 
+_EXE_FIXED: set[str] = set()
+
+
+def _restore_exes(folder: Path) -> None:
+    """Klasördeki .exe'leri normal (Medium) seviyeye döndür. Windows düşük etiketli bir exe'yi düşük bütünlükle
+    başlatır: proje klasörü etiketlenince .venv/Scripts/python.exe de etiketleniyor, ALICE'in kendisi düşük
+    yetkiyle açılıp ~/.alice'e ve Temp'e yazamıyordu ("attempt to write a readonly database"). Hata olursa sessiz
+    geçilir: etiket sandbox'ın çalışmasını engellemez."""
+    try:
+        subprocess.run(["icacls", str(Path(folder) / "*.exe"), "/setintegritylevel", "M", "/T", "/C", "/Q"],
+                       capture_output=True, text=True, timeout=300, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def label_low(folder: Path) -> None:
     """Klasörü düşük bütünlüklü süreçlerin yazabileceği şekilde bir kez etiketle (alt klasörler dahil)."""
     if not IS_WIN:
@@ -212,11 +241,16 @@ def label_low(folder: Path) -> None:
         done = set()
     key = str(folder).lower()
     if key in done:
+        if key not in _EXE_FIXED:  # eski sürümün etiketlediği klasörde exe'ler hâlâ düşük olabilir
+            _restore_exes(folder)
+            _EXE_FIXED.add(key)
         return
     r = subprocess.run(["icacls", str(folder), "/setintegritylevel", "(OI)(CI)low", "/T", "/C", "/Q"],
                        capture_output=True, text=True, timeout=300, creationflags=0x08000000)
     if r.returncode != 0:
         raise RuntimeError(f"proje klasörü sandbox için hazırlanamadı (icacls): {(r.stderr or r.stdout)[:200]}")
+    _restore_exes(folder)
+    _EXE_FIXED.add(key)
     done.add(key)
     try:
         _labels_path().parent.mkdir(parents=True, exist_ok=True)
