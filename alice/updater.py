@@ -52,7 +52,7 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-REPO = "hayatexe/Artificial-Logic-and-Intelligence-Computation-Engine"
+REPO = "Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine"
 API = "https://api.github.com"
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 WINDOWS = sys.platform == "win32"

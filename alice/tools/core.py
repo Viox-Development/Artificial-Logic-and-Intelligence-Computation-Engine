@@ -255,7 +255,7 @@ def _obj_arg(name: str, v: Any) -> dict[str, Any]:
     except ValueError as e:
         raise ToolError(f"{name} geçerli JSON değil: {e}") from e
     if not isinstance(out, dict):
-        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"hayat\"]}}")
+        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"alice\"]}}")
     return out
 
 
@@ -293,7 +293,7 @@ class Feeds(Tool):
                  "{prev.alan} eski değer, {changed} değişen alanlar."},
         "when": {"type": "string", "description": "Hangi öğe bildirime değer, JSON: any/all/none (kelime listesi), "
                  "regex, fields (alan -> değer ya da liste, \"*\" boş değil), min/max (sayısal), ask (anlama göre "
-                 "evet/hayır sorusu). Ör. '{\"any\": [\"hayat\"], \"none\": [\"bot\"]}'."},
+                 "evet/hayır sorusu). Ör. '{\"any\": [\"alice\"], \"none\": [\"bot\"]}'."},
         "escalate": {"type": "string", "description": "Bu koşul tutarsa önem critical (sessiz saatte de söylenir), "
                      "when ile aynı biçim."},
         "quiet": {"type": "string", "description": "Biriktirilecek saatler, ör. '23:00-08:00'; bitince özet gelir."},

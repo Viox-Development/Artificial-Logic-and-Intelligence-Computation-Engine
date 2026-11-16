@@ -214,7 +214,7 @@ def run_tests(name: str, source: str, test: str, ctx: Any, timeout: float = TEST
     (d / f"{name}.py").write_text(source, encoding="utf-8")
     (d / f"test_{name}.py").write_text(test, encoding="utf-8")
     # Geçici klasör testin kendi klasöründe ve gerçek yolu çözülmüş: kullanıcı klasörü iki adla göründüğünde
-    # (kresu -> Hayat) pytest'in tmp_path'i "normalized and relative path değil" diye çöküyordu.
+    # pytest'in tmp_path'i "normalized and relative path değil" diye çöküyordu.
     basetemp = (d / "tmp").resolve()
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--basetemp={basetemp}",
             f"test_{name}.py"]

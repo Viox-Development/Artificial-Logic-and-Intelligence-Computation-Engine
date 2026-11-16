@@ -3,7 +3,7 @@
 Ucuzdan pahalıya sırayla bakılır, ilk tutmayan koşul öğeyi eler:
 
     [feed.when]
-    any    = ["hayat", "@everyone"]   # metinde en az biri geçmeli
+    any    = ["alice", "@everyone"]   # metinde en az biri geçmeli
     all    = ["dcs", "güncelleme"]    # hepsi geçmeli
     none   = ["bot", "reklam"]        # hiçbiri geçmemeli
     regex  = "\\b(acil|hemen)\\b"      # düzenli ifade (büyük/küçük harf duyarsız)

@@ -94,7 +94,7 @@ Yani reflex modu anahtarsız da çalışıyor, sadece daha yavaş: Jev için bil
 Python 3.10+ lazım (python.org, "Add to PATH" işaretli).
 
 ```powershell
-git clone https://github.com/hayatexe/Artificial-Logic-and-Intelligence-Computation-Engine
+git clone https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine
 cd Artificial-Logic-and-Intelligence-Computation-Engine
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
@@ -221,7 +221,7 @@ quiet = "23:00-08:00"          # gece biriktir, sabah özet olarak gelsin
 agent = "Önemli bir şey varsa bana kısaca söyle"   # opsiyonel: ALICE uyanıp bu işi yapar
 
 [feed.when]                     # hangi mesaj bildirime değer
-any  = ["hayat", "@everyone"]   # en az biri geçsin
+any  = ["alice", "@everyone"]   # en az biri geçsin
 none = ["bot"]                  # bunlar geçmesin
 ask  = "Bu mesaj bana bir şey soruyor ya da acil bir şey mi?"   # anlamına göre karar
 
@@ -523,7 +523,7 @@ command = "ruff format \"$ALICE_TOOL_PATH\""
 
 [[hooks.PreToolUse]]
 matcher = "run_command"
-command = "python C:/Users/hayat/.alice/no_force_push.py"   # komutu stdin'deki JSON'dan okur, yasaksa exit 2
+command = "python C:/Users/you/.alice/no_force_push.py"   # komutu stdin'deki JSON'dan okur, yasaksa exit 2
 
 [[hooks.Stop]]
 command = "pytest -q -x || (echo testler kırık 1>&2 && exit 2)"
@@ -601,7 +601,7 @@ Sonra `/incele performans` yazınca bu metin `$ARGUMENTS` yerine "performans" ko
 ```toml
 [mcp.servers.dosyalar]
 command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/hayat/Projeler"]
+args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you/Projects"]
 
 [mcp.servers.github]
 command = "npx"

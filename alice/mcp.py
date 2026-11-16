@@ -5,7 +5,7 @@ MCP sunucuları vb.). config.toml:
 
     [mcp.servers.dosyalar]
     command = "npx"
-    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/hayat/Projeler"]
+    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you/Projects"]
     # env = { TOKEN = "${GITHUB_TOKEN}" }   # ${AD} ortamdan / .env'den doldurulur
     # enabled = false
     # trust_annotations = true   # sunucunun "readOnlyHint" etiketine güven: o araçlar okuma sayılır (plan modunda

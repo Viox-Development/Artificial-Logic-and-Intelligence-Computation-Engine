@@ -20,7 +20,7 @@ Tanım `~/.alice/feeds.toml`:
     agent = ""                      # dolu: bildirim gidince ALICE uyanır ve bu işi yapar
 
     [feed.when]                     # hangi öğe bildirime değer (bkz. alice/core/conditions.py)
-    any = ["hayat", "@everyone"]
+    any = ["alice", "@everyone"]
     none = ["bot"]
     ask = "Bu mesaj bana bir şey soruyor ya da acil mi?"
 
