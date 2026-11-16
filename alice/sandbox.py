@@ -228,7 +228,7 @@ def _restore_exes(folder: Path) -> None:
         subprocess.run(["icacls", str(Path(folder) / "*.exe"), "/setintegritylevel", "M", "/T", "/C", "/Q"],
                        capture_output=True, text=True, timeout=300, creationflags=0x08000000)
     except (OSError, subprocess.SubprocessError):
-        pass
+        pass  # icacls missing or timed out: the sandbox still works, only the executables keep the low label
 
 
 def label_low(folder: Path) -> None:
