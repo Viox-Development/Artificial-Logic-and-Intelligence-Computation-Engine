@@ -14,23 +14,64 @@ can run whole projects with a team of autonomous agents.
 
 ## What it can do
 
-- **Code and files:** read, write, edit, and search code bases (`grep`, `glob`), apply patches, show colored diffs.
-- **Shell:** run PowerShell and bash commands, start servers in the background and watch their output.
-- **Computer use:** take screenshots, move the mouse, type (including non-ASCII text), and click Windows controls by
-  their UI Automation IDs instead of guessing pixels.
-- **Browser:** drive a real browser with a persistent profile, so sites you logged into once stay logged in.
-- **Reflex mode:** hand small UI goals ("open Settings, go to Privacy, tick this box") to a fast decision model that
-  acts in ~100-500 ms per step, and fall back to the main model when unsure.
-- **Projects:** split big jobs across autonomous agent teams with their own manager, parallel workers, messaging,
-  review councils, and a pull request at the end.
-- **Voice:** wake word ("Hey Alice"), speaker recognition, live conversation, barge-in and "stop" that really stops.
-- **Background core:** watches your PC (CPU, GPU, RAM, disk, apps), runs rules and scheduled tasks, switches modes
-  (focus, gaming, quiet hours), and notifies you on desktop or phone.
-- **Memory:** notes, past conversations, and follow-ups across sessions, all editable from the app.
-- **Connections:** Spotify, Steam, Discord, YouTube, Gmail, GitHub, MCP servers, and any API you describe in TOML.
-- **Phone app:** talk to ALICE, get notifications, and approve actions from Android.
-- **Flight sims:** live threat callouts, checklists, and debriefs for DCS and War Thunder.
-- **Self-updating:** installs new releases on its own, with a smoke test and automatic rollback.
+ALICE ships with about 90 tools. The main groups:
+
+**Coding agent**
+- Read, write, and edit files, multi-file edits and patches, `grep`/`glob`, code intelligence, notebooks, and test runs.
+- Shell commands with background processes you can watch, wait on, and stop.
+- Git and GitHub: commits, branches, pull requests, CI status, and review comments. Watched pull requests are fixed
+  automatically when CI turns red or a trusted review comment arrives.
+- Plan mode, todo lists, sub-agents, custom agent definitions, skills, hooks, and MCP servers, in the style of
+  Claude Code.
+
+**Projects with agent teams**
+- Big jobs run as projects: a manager plans the work, parallel agents build it in their own git worktrees, a review
+  council (critic, advocate, checker, experts) votes on plans and results, and the project ends in a pull request.
+- A preview tab serves and screenshots web projects so the council can check them like a user would.
+
+**Using your computer**
+- Screenshots, mouse, and keyboard, plus Windows UI Automation to click controls by ID instead of guessing pixels.
+- A real browser with a persistent profile, and a browser extension for working in your own Chrome.
+- **Reflex mode:** small UI goals ("open Settings, go to Privacy, tick this box") are handed to a fast decision model
+  that acts in a few hundred milliseconds per step and gives control back to the main model when unsure.
+- Windows, processes, clipboard, Wi-Fi, media, smart TVs, and Android phones over ADB.
+
+**Voice**
+- Wake word ("Hey Alice"), speaker recognition (it ignores other voices), and live conversation over Gemini Live or
+  ChatGPT realtime, with a classic speech-to-text → model → text-to-speech fallback.
+- Barge-in, and "stop" or "I wasn't talking to you" silences it immediately.
+- Local Whisper and local text-to-speech options, so not every sentence goes to the cloud.
+
+**Always on: the background core**
+- Watches CPU, GPU, RAM, disks, and running apps, and warns about overheating, full disks, or memory leaks.
+- Rules in plain language ("tell me if the GPU stays above 80°C for 5 minutes") and scheduled tasks
+  ("every Sunday night back up D:\Unity").
+- Modes (focus, gaming, quiet hours), feeds that watch Discord, YouTube and other services, a daily brief, and a
+  daily self health report.
+- **KAIROS:** a background agent that wakes itself up when it decides to, checks the situation, and acts.
+- **Night cycle:** ALICE reads its own logs at night and fixes repeated mistakes, noisy announcements, and false
+  wake-ups.
+
+**Memory and awareness**
+- Notes, past conversations, and follow-ups across sessions, with a page to review, edit, or delete what it knows.
+- **Time machine** (off by default): text seen on screen goes into a local, encrypted, searchable timeline
+  ("find the link someone shared on Discord last week").
+- An on-screen HUD that draws arrows, cards, and highlights over games, the desktop, and the browser.
+
+**Phone and remote access**
+- Android app to talk to ALICE, get notifications, share permission prompts, and place calls.
+- Smartwatch support (heart rate) and remote access from outside your home network through a relay.
+
+**Connections**
+- Gmail, GitHub, Spotify, Steam, Discord, YouTube, Blender, and any HTTP API you describe in TOML.
+- Plugins that add their own tools.
+
+**Flight sims**
+- Live threat and missile callouts, checklists, kneeboard, debriefs, and coaching from your death patterns for
+  War Thunder and DCS, plus voice commands for DCS wingmen.
+
+**Self-updating**
+- Installs new releases on its own, with a smoke test and automatic rollback if the new version fails to start.
 
 Two interfaces share the same agent: a desktop app and a terminal REPL, both with streaming answers, diffs, a status
 bar, and multi-line input.
@@ -68,10 +109,14 @@ hour; a bad key skips the provider for the session. If one provider goes down, A
 | NVIDIA NIM | Developer program, large open models | brain fallback, coding |
 | Groq | Very fast, small token limits | fast role, reflex decisions |
 | Mistral, SambaNova, Z.ai, Cohere, Cerebras, Cloudflare Workers AI | Free tiers of varying size | fallbacks |
+| ChatGPT account | Sign in with your ChatGPT plan (free plans included) through the Codex login; no API key | only when you pick it |
 | Anthropic, Vercel AI Gateway | Paid or credit-based | only when you pick them |
+| Your own subscriptions (via CLIProxyAPI) | Claude, ChatGPT, and others through a local proxy | only when you pick them |
+| Any OpenAI-compatible server | LM Studio, vLLM, LiteLLM, your own | measured and added automatically |
 | Ollama (local) | Unlimited, offline | last resort in every chain |
 
-Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
+By default the brain chain starts with GLM 5.3 on NVIDIA (1M context), then the best measured free models, then local
+Ollama. Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
 
 ## Install (Windows)
 
@@ -83,8 +128,9 @@ cd Artificial-Logic-and-Intelligence-Computation-Engine
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-The script installs Python 3.11 with winget if needed, creates `.venv`, installs the `computer`, `browser`, `app`,
-`core`, and `voice` extras plus local Whisper, then runs `alice init` and `alice shortcut`. A prebuilt
+The script installs Python 3.11 and Git with winget if they are missing, creates `.venv`, installs the `computer`,
+`browser`, `app`, `core`, and `voice` extras plus local Whisper, downloads Chromium only if neither Chrome nor Edge is
+installed, then runs `alice init` and `alice shortcut`. A prebuilt
 `ALICE-Setup.exe` and the Android APK are on the [Releases](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases) page.
 
 Manual install (also Linux and macOS):
@@ -96,8 +142,23 @@ pip install -e ".[all]"
 alice init
 ```
 
-Optional extras (`pip install -e ".[extra1,extra2]"`): `computer`, `browser`, `app`, `core`, `voice`,
-`voice-local`, `voice-xtts`, `all`, `dev`. If a command needs a missing extra, ALICE tells you which one to install.
+Optional extras (`pip install -e ".[extra1,extra2]"`):
+
+| Extra | Adds |
+|---|---|
+| `computer` | screenshots, mouse and keyboard, clipboard, windows, UI Automation |
+| `browser` | Playwright browser control |
+| `app` | native desktop window (pywebview); without it the app opens in Edge or Chrome app mode |
+| `core` | tray icon for the background core |
+| `voice` | microphone, push-to-talk, voice activity detection, Edge voices, live conversation |
+| `voice-local` | local Whisper and openWakeWord ("Hey Alice") |
+| `voice-xtts` | local XTTS v2 voice |
+| `home` | smart home and TV connections |
+| `claude` | official Anthropic SDK |
+| `all` | `computer`, `browser`, `app`, `core`, `voice`, `home`, `claude` |
+| `dev` | pytest, pytest-xdist, ruff |
+
+If a command needs a missing extra, ALICE tells you which one to install instead of printing a traceback.
 
 ### API keys
 
@@ -143,7 +204,12 @@ alice tasks add "every Sunday night zip D:\Unity into E:\Backup"
 alice update --check                                   # is a new release available?
 ```
 
-In the REPL: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (or Shift+Tab), `/model`, `/think`, `/update`.
+Other commands: `alice voice`, `alice phone`, `alice watch`, `alice connect`, `alice feeds`, `alice notes`,
+`alice brief`, `alice report`, `alice log`, `alice hud`, `alice timeline`, `alice night`, `alice relay`,
+`alice plugins`, `alice reflex`, `alice dcs`, `alice eval`. Every command accepts `--help`.
+
+In the REPL: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (or Shift+Tab), `/model`, `/think`, `/memory`, `/mcp`,
+`/tools`, `/usage`, `/sessions`, `/resume`, `/rewind`, `/compact`, `/update`.
 
 ## Safety
 
@@ -181,7 +247,9 @@ A project's `ALICE.md` (or `CLAUDE.md` / `AGENTS.md`) is read as project instruc
 permission_mode = "auto"
 
 [roles]
-brain  = ["auto", "ollama:qwen3:8b"]   # "auto": measured free models from providers you have keys for
+# "auto": the best measured free models from providers you have keys for
+brain  = ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]
+voice  = ["auto", "ollama:qwen3:8b"]
 fast   = ["auto", "ollama:qwen3:8b"]
 vision = ["auto", "gemini:gemini-flash-lite-latest"]
 
