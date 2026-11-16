@@ -49,7 +49,7 @@ def push(origin: Path, msg: str, path: str = "alice/new.py") -> str:
 @pytest.fixture(autouse=True)
 def main_channel(monkeypatch):
     """Bu dosyadaki testler dalın ucunu izler; sürüm etiketi kanalı ayrı testlerde."""
-    monkeypatch.setitem(updater.DEFAULTS, "channel", "main")
+    monkeypatch.setenv("ALICE_UPDATE_CHANNEL", "main")
 
 
 @pytest.fixture
@@ -517,7 +517,7 @@ def test_baska_surec_guncellerken_depo_kurulmaz(repos, monkeypatch, tmp_path):
 def test_stable_kanal_yalniz_surum_etiketine_gunceller(repos, monkeypatch, offline):
     clone, origin = repos
     point_at(monkeypatch, clone)
-    monkeypatch.setitem(updater.DEFAULTS, "channel", "stable")
+    monkeypatch.setenv("ALICE_UPDATE_CHANNEL", "stable")
     push(origin, "yayınlanmamış iş")
     info = updater.check(make_config({"brain": ["a:m"]}))
     assert not info.available and "sürüm yok" in info.error  # main'e birleşen commit tek başına gelmez

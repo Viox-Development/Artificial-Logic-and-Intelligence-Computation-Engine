@@ -8,7 +8,7 @@ import pytest
 
 from alice import updater
 from tests.conftest import make_config
-from tests.test_updater import git, push, repos  # noqa: F401 - fixture
+from tests.test_updater import git, main_channel, push, repos  # noqa: F401 - fixture (main_channel: autouse)
 
 
 @pytest.fixture

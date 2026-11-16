@@ -88,6 +88,9 @@ def settings(cfg: Any = None) -> dict[str, Any]:
     env = os.environ.get("ALICE_UPDATE_MODE")
     if env in ("auto", "notify", "off"):
         out["mode"] = env
+    channel = os.environ.get("ALICE_UPDATE_CHANNEL")
+    if channel in ("stable", "main"):
+        out["channel"] = channel
     return out
 
 
