@@ -249,8 +249,10 @@ def test_several_accounts_switched_by_hand(isolated_home):
     # yenileme seçili hesabın üstüne yazar, diğerine dokunmaz
     chatgpt.save_auth({"access_token": tokens()["access_token"]}, key="acc1")
     assert chatgpt.load_auth()["refresh_token"] == "r1" and len(chatgpt.accounts()) == 2
-    assert chatgpt.remove("acc1") and chatgpt.load_auth()["email"] == "x@y.z"  # kalan hesap seçilir
-    assert chatgpt.remove() and not chatgpt.logged_in() and not chatgpt.auth_path().exists()
+    removed = chatgpt.remove("acc1")
+    assert removed and chatgpt.load_auth()["email"] == "x@y.z"  # the remaining account is selected
+    removed = chatgpt.remove()
+    assert removed and not chatgpt.logged_in() and not chatgpt.auth_path().exists()
     assert not chatgpt.use("yok")
 
 

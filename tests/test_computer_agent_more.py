@@ -327,7 +327,9 @@ def test_observe_explicit_monitor_and_no_uia(fake_mss, monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.collect_ui_elements", broken)
     shot = Screen(None, max_width=1280, monitor=2).observe()
     assert shot.elements == [] and shot.title == "" and (shot.left, shot.width) == (2000, 640)
-    assert Image.open(io.BytesIO(base64.b64decode(shot.png_b64))).size == (640, 480)  # büyütülmez
+    with Image.open(io.BytesIO(base64.b64decode(shot.png_b64))) as img:
+        size = img.size
+    assert size == (640, 480)  # not enlarged
 
 
 def test_monitor_picks_foreground_window_monitor(monkeypatch):
