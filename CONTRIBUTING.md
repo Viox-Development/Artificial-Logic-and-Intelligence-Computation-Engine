@@ -22,6 +22,7 @@ comment. You only sign once.
 
 ```bash
 pip install -e ".[dev]"
+pre-commit install
 ruff check alice tests
 python -m pytest -q
 ```
