@@ -48,7 +48,7 @@ voice-local = ["faster-whisper>=1.0", "openwakeword>=0.6"]
 # XTTS v2 (yerel, Kore sesini taklit eder). transformers 5 XTTS'i bozuyor.
 voice-xtts = ["coqui-tts>=0.27", "transformers<5"]
 all = ["alice-harness[computer,browser,app,core,voice,home,claude]"]
-dev = ["pytest>=8", "pytest-xdist>=3", "ruff>=0.6", "websockets>=13"]
+dev = ["pre-commit>=3", "pytest>=8", "pytest-xdist>=3", "ruff>=0.6", "websockets>=13"]
 
 [project.scripts]
 alice = "alice.cli:main"
