@@ -1,0 +1,14 @@
+category = "multi-file"
+goal = """
+Add an optional `email` field to the User model (default: empty string). It has to go through the whole app:
+- models.py: the User dataclass gets the field;
+- storage.py: save_users() writes it and load_users() reads it; files written before this change (without
+  "email") must still load;
+- cli.py: `python cli.py list <file>` prints the email as a third column when it is not empty (format:
+  `<id>  <name>  <email>`; users without an email keep the old two-column line);
+- cli.py: `python cli.py add <file> <id> <name> [email]` accepts the email as an optional fourth argument.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"

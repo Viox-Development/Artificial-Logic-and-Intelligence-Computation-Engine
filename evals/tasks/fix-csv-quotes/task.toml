@@ -1,0 +1,15 @@
+category = "bugfix"
+goal = """
+`python report.py data.csv` should print the sum of the `amount` column as `Total: <sum with 2 decimals>`,
+but it crashes on this file. Fix report.py so it reads CSV files correctly, including quoted fields that
+contain commas or quotes. Keep the output format.
+"""
+
+[[check]]
+type = "command"
+run = "python report.py data.csv"
+output = '^Total: 1234\.50\s*$'
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"

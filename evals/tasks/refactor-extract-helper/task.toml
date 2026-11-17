@@ -1,0 +1,22 @@
+category = "refactor"
+goal = """
+format_customer() and format_supplier() in contacts.py contain the same name-cleaning code twice. Extract it
+into one module-level helper function named clean_name(name) and use it from both functions. The behaviour of
+format_customer() and format_supplier() must not change.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"
+
+[[check]]
+type = "file_contains"
+path = "contacts.py"
+pattern = 'def clean_name\('
+
+# The duplicated whitespace-collapsing line must exist only once (inside the helper).
+[[check]]
+type = "file_contains"
+path = "contacts.py"
+pattern = 're\.sub\('
+max_count = 1

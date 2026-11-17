@@ -1,0 +1,26 @@
+category = "shell"
+needs = ["shell", "git"]
+goal = """
+Turn this folder into a git repository and commit all of its files in one commit with the message
+"Initial import". Set the author name to "Eval Bot" and the e-mail to "eval@example.com" for this repository
+only. Then create a lightweight tag named v0.1.0 on that commit. Leave the working tree clean.
+"""
+
+[[check]]
+type = "command"
+run = "git log --format=%s|%an|%ae"
+output = '\AInitial import\|Eval Bot\|eval@example\.com\s*\Z'
+
+[[check]]
+type = "command"
+run = "git status --porcelain"
+output = '\A\s*\Z'
+
+[[check]]
+type = "command"
+run = "git ls-files"
+output = 'src/app\.py'
+
+[[check]]
+type = "command"
+run = "git rev-parse v0.1.0^{commit}"

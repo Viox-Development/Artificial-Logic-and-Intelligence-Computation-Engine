@@ -1,0 +1,10 @@
+category = "bugfix"
+goal = """
+Users of cart.py report two bugs: a brand-new Cart() sometimes already contains items that were added to a
+different cart, and merge_tags() returns tags from earlier, unrelated calls. Find the cause and fix both.
+Keep the public behaviour (signatures and return values) the same otherwise.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"

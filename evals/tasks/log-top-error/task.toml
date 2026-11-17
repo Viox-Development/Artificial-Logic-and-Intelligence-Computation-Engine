@@ -1,0 +1,18 @@
+category = "log-reading"
+goal = """
+app.log is a day of API server logs. Which user_id has the most ERROR lines, and how many ERROR lines does that
+user have? Which error code appears most often across all ERROR lines? Count exactly (don't estimate) and answer
+in your final reply.
+"""
+
+[[check]]
+type = "reply"
+pattern = 'u1203'
+
+[[check]]
+type = "reply"
+pattern = '\b30\b'
+
+[[check]]
+type = "reply"
+pattern = 'E_DB_LOCK'

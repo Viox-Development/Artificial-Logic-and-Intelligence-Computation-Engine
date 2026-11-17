@@ -20,9 +20,9 @@ jobs:
           python-version: "3.12"
       - run: pip install "ruff>=0.6"
       - name: Ruff (hata kuralları)
-        run: ruff check alice tests
+        run: ruff check alice tests evals
       - name: Derleme (SyntaxWarning dahil hata sayılır)
-        run: python -W error -m compileall -q alice tests
+        run: python -W error -m compileall -q alice tests evals
 
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python }})

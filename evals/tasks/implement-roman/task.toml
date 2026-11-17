@@ -1,0 +1,14 @@
+category = "feature"
+goal = """
+Implement the two functions in roman.py exactly as their docstrings describe. Add tests for them in
+tests/test_roman.py.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests/test_roman_hidden.py"
+
+[[check]]
+type = "file_contains"
+path = "tests/test_roman.py"
+pattern = 'def test_'

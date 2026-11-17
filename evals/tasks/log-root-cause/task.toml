@@ -1,0 +1,18 @@
+category = "log-reading"
+goal = """
+Last night's import job failed and import.log is full of errors. Find the root cause: the FIRST error that
+happened. In your final reply name the input file being processed when it happened, the row number, and the
+bad value that caused it.
+"""
+
+[[check]]
+type = "reply"
+pattern = 'customers_07\.csv'
+
+[[check]]
+type = "reply"
+pattern = '\b1832\b'
+
+[[check]]
+type = "reply"
+pattern = 'N/A'

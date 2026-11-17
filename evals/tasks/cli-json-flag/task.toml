@@ -1,0 +1,16 @@
+category = "multi-file"
+goal = """
+`python todo.py list` prints the todos from todos.json as a table. Add a `--json` flag:
+`python todo.py list --json` must print the todos as a JSON array instead (the same objects as in todos.json,
+sorted by id, nothing else on stdout). Put the JSON formatting in formatter.py as a function format_json(todos) that returns the JSON text,
+next to format_table(). Without the flag the output must stay exactly as it is now.
+"""
+
+[[check]]
+type = "command"
+run = "python _check.py"
+
+[[check]]
+type = "file_contains"
+path = "formatter.py"
+pattern = 'def format_json\('

@@ -1,0 +1,9 @@
+category = "bugfix"
+goal = """
+The tests in tests/test_pager.py fail. Find and fix the bugs in pager.py so that all tests pass.
+Do not change the tests.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"

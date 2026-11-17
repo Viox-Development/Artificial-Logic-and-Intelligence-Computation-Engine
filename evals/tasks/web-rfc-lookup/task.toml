@@ -1,0 +1,19 @@
+category = "web"
+needs = ["web"]
+goal = """
+Use a web search to find out which RFC obsoleted RFC 4122 (the original UUID specification), and in which
+month and year that newer RFC was published. Check it on the web rather than answering from memory, and give
+the RFC number, month and year in your final reply.
+"""
+
+[[check]]
+type = "reply"
+pattern = '9562'
+
+[[check]]
+type = "reply"
+pattern = 'May,?\s+2024|2024-05'
+
+[[check]]
+type = "tool_used"
+any = ["web_search", "web_fetch"]

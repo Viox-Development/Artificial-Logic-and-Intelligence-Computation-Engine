@@ -1,0 +1,94 @@
+2026-11-16 02:05:06 INFO  importer: starting nightly import (12 files)
+2026-11-16 02:05:09 INFO  importer: processing customers_01.csv
+2026-11-16 02:05:10 INFO  importer: customers_01.csv: 500 rows
+2026-11-16 02:05:12 INFO  importer: customers_01.csv: 1000 rows
+2026-11-16 02:05:21 INFO  importer: customers_01.csv: 1500 rows
+2026-11-16 02:05:23 INFO  importer: customers_01.csv: 2000 rows
+2026-11-16 02:05:29 INFO  importer: customers_01.csv: done (2304 rows)
+2026-11-16 02:05:30 INFO  importer: processing customers_02.csv
+2026-11-16 02:05:34 INFO  importer: customers_02.csv: 500 rows
+2026-11-16 02:05:35 INFO  importer: customers_02.csv: 1000 rows
+2026-11-16 02:05:37 INFO  importer: customers_02.csv: 1500 rows
+2026-11-16 02:05:44 INFO  importer: customers_02.csv: 2000 rows
+2026-11-16 02:05:51 INFO  importer: customers_02.csv: done (2419 rows)
+2026-11-16 02:05:53 INFO  importer: processing customers_03.csv
+2026-11-16 02:05:55 INFO  importer: customers_03.csv: 500 rows
+2026-11-16 02:06:04 INFO  importer: customers_03.csv: 1000 rows
+2026-11-16 02:06:11 INFO  importer: customers_03.csv: 1500 rows
+2026-11-16 02:06:12 INFO  importer: customers_03.csv: 2000 rows
+2026-11-16 02:06:14 INFO  importer: customers_03.csv: done (2146 rows)
+2026-11-16 02:06:18 INFO  importer: processing customers_04.csv
+2026-11-16 02:06:19 INFO  importer: customers_04.csv: 500 rows
+2026-11-16 02:06:26 INFO  importer: customers_04.csv: 1000 rows
+2026-11-16 02:06:27 INFO  importer: customers_04.csv: 1500 rows
+2026-11-16 02:06:31 INFO  importer: customers_04.csv: 2000 rows
+2026-11-16 02:06:32 INFO  importer: customers_04.csv: 2500 rows
+2026-11-16 02:06:41 WARN  importer: customers_04.csv: row 311 has an empty phone number, stored as NULL
+2026-11-16 02:06:44 INFO  importer: customers_04.csv: done (2545 rows)
+2026-11-16 02:06:49 INFO  importer: processing customers_05.csv
+2026-11-16 02:06:52 INFO  importer: customers_05.csv: 500 rows
+2026-11-16 02:07:01 INFO  importer: customers_05.csv: 1000 rows
+2026-11-16 02:07:03 INFO  importer: customers_05.csv: 1500 rows
+2026-11-16 02:07:08 INFO  importer: customers_05.csv: 2000 rows
+2026-11-16 02:07:17 INFO  importer: customers_05.csv: done (2329 rows)
+2026-11-16 02:07:20 INFO  importer: processing customers_06.csv
+2026-11-16 02:07:24 INFO  importer: customers_06.csv: 500 rows
+2026-11-16 02:07:30 INFO  importer: customers_06.csv: 1000 rows
+2026-11-16 02:07:32 INFO  importer: customers_06.csv: 1500 rows
+2026-11-16 02:07:41 INFO  importer: customers_06.csv: 2000 rows
+2026-11-16 02:07:43 INFO  importer: customers_06.csv: done (2005 rows)
+2026-11-16 02:07:44 INFO  importer: processing customers_07.csv
+2026-11-16 02:07:48 INFO  importer: customers_07.csv: 500 rows
+2026-11-16 02:07:56 INFO  importer: customers_07.csv: 1000 rows
+2026-11-16 02:08:05 INFO  importer: customers_07.csv: 1500 rows
+2026-11-16 02:08:12 INFO  importer: customers_07.csv: 2000 rows
+2026-11-16 02:08:18 INFO  importer: customers_07.csv: 2500 rows
+2026-11-16 02:08:26 ERROR importer: customers_07.csv: row 1832 rejected
+Traceback (most recent call last):
+  File "/srv/importer/run.py", line 88, in import_file
+    rec = parse_row(row, lineno)
+  File "/srv/importer/parse.py", line 41, in parse_row
+    age = int(row["age"])
+ValueError: invalid literal for int() with base 10: 'N/A'
+2026-11-16 02:08:34 WARN  importer: retrying customers_07.csv from row 1832 (attempt 2/3)
+2026-11-16 02:08:40 ERROR db: transaction aborted, rolling back batch 37
+2026-11-16 02:08:45 WARN  importer: retrying customers_07.csv from row 1832 (attempt 3/3)
+2026-11-16 02:08:49 ERROR db: transaction aborted, rolling back batch 37
+2026-11-16 02:08:52 ERROR importer: giving up on customers_07.csv
+2026-11-16 02:08:56 INFO  importer: processing customers_08.csv
+2026-11-16 02:08:58 ERROR db: connection pool exhausted (32/32 in use)
+Traceback (most recent call last):
+  File "/srv/importer/db.py", line 120, in get_conn
+    return pool.get(timeout=5)
+TimeoutError: no free connection after 5.0s
+2026-11-16 02:09:03 ERROR importer: customers_08.csv: failed before row 1
+2026-11-16 02:09:12 INFO  importer: processing customers_09.csv
+2026-11-16 02:09:20 ERROR db: connection pool exhausted (32/32 in use)
+Traceback (most recent call last):
+  File "/srv/importer/db.py", line 120, in get_conn
+    return pool.get(timeout=5)
+TimeoutError: no free connection after 5.0s
+2026-11-16 02:09:26 ERROR importer: customers_09.csv: failed before row 1
+2026-11-16 02:09:34 INFO  importer: processing customers_10.csv
+2026-11-16 02:09:39 ERROR db: connection pool exhausted (32/32 in use)
+Traceback (most recent call last):
+  File "/srv/importer/db.py", line 120, in get_conn
+    return pool.get(timeout=5)
+TimeoutError: no free connection after 5.0s
+2026-11-16 02:09:41 ERROR importer: customers_10.csv: failed before row 1
+2026-11-16 02:09:43 INFO  importer: processing customers_11.csv
+2026-11-16 02:09:52 ERROR db: connection pool exhausted (32/32 in use)
+Traceback (most recent call last):
+  File "/srv/importer/db.py", line 120, in get_conn
+    return pool.get(timeout=5)
+TimeoutError: no free connection after 5.0s
+2026-11-16 02:09:59 ERROR importer: customers_11.csv: failed before row 1
+2026-11-16 02:10:02 INFO  importer: processing customers_12.csv
+2026-11-16 02:10:08 ERROR db: connection pool exhausted (32/32 in use)
+Traceback (most recent call last):
+  File "/srv/importer/db.py", line 120, in get_conn
+    return pool.get(timeout=5)
+TimeoutError: no free connection after 5.0s
+2026-11-16 02:10:11 ERROR importer: customers_12.csv: failed before row 1
+2026-11-16 02:10:19 ERROR importer: nightly import FAILED (6 ok, 6 failed)
+2026-11-16 02:10:26 ERROR alert: paging on-call: import failed with TimeoutError

@@ -1,0 +1,11 @@
+category = "tests"
+goal = """
+slugify.py has no tests. Write pytest tests in tests/test_slugify.py that check every rule described in the
+docstring of slugify(). Do not change slugify.py. The tests must pass.
+"""
+
+# The hidden script runs the tests against the real slugify.py (must pass) and against five broken copies
+# (each one breaks one rule of the docstring). At least four of the five must be caught.
+[[check]]
+type = "command"
+run = "python _mutants.py"

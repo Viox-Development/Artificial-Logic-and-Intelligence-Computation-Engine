@@ -1,0 +1,1 @@
+First error: customers_07.csv row 1832, age value 'N/A' (ValueError).

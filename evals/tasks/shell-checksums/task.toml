@@ -1,0 +1,11 @@
+category = "shell"
+needs = ["shell"]
+goal = """
+Write a file named SHA256SUMS in this folder with the SHA-256 checksum of every file in data/, in the format
+the `sha256sum` tool uses: one line per file, `<64 lowercase hex chars><two spaces>data/<file name>`, sorted by
+file name. Compute the checksums with a command or a script; do not guess them.
+"""
+
+[[check]]
+type = "command"
+run = "python _check.py"

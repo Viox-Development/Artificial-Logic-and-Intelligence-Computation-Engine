@@ -29,6 +29,10 @@ python -m pytest -q
 
 CI runs the same lint and tests on Windows and Linux with Python 3.10, 3.12, and 3.13.
 
+The tests use a fake model. To see how well ALICE actually solves tasks with real models, and whether the review
+council helps, run the agent evals: `python -m evals --models <provider:model,...>`. They need API keys, use model
+quota and are not part of CI. See [evals/README.md](evals/README.md).
+
 ## Pull request checklist
 
 - The change is focused on one thing. Unrelated cleanups go in a separate pull request.

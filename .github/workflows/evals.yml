@@ -1,0 +1,82 @@
+name: Agent evals
+
+# Runs ALICE on the eval tasks in evals/ with real models. Manual only: it spends model quota and needs API keys,
+# so it never runs on push or pull requests. Keys come from repository secrets; providers without a secret are
+# simply unavailable. See evals/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Model chain for every role (provider:model, comma separated)"
+        default: "gemini:gemini-3.5-flash,gemini:gemini-flash-latest,groq:openai/gpt-oss-120b"
+      council:
+        description: "Council: off, on, or both (compare)"
+        default: "both"
+        type: choice
+        options: [both, off, on]
+      only:
+        description: "Only tasks whose id or category contains this (empty = all)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUTF8: "1"
+      ALICE_HOME: ${{ github.workspace }}/.alice-ci
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          git config --global user.name "eval-runner"
+          git config --global user.email "eval-runner@users.noreply.github.com"
+      - name: Check for keys
+        id: keys
+        shell: bash
+        run: |
+          if [ -z "$GEMINI_API_KEY$GROQ_API_KEY$CEREBRAS_API_KEY$OPENROUTER_API_KEY$NVIDIA_API_KEY$MISTRAL_API_KEY" ]; then
+            echo "::warning::No model API key secret is set (GEMINI_API_KEY, GROQ_API_KEY, ...); skipping the evals."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run evals
+        if: steps.keys.outputs.run == 'true'
+        env:
+          MODELS: ${{ inputs.models }}
+          COUNCIL: ${{ inputs.council }}
+          ONLY: ${{ inputs.only }}
+        shell: bash
+        run: |
+          args=(--models "$MODELS" --council "$COUNCIL" --out evals/results/ci)
+          if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); fi
+          python -m evals "${args[@]}"
+          cat evals/results/ci/scoreboard.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.keys.outputs.run == 'true'
+        with:
+          name: eval-results
+          path: evals/results/ci
+          if-no-files-found: ignore

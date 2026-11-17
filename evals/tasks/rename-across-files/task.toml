@@ -1,0 +1,16 @@
+category = "refactor"
+goal = """
+Rename the function `calc` in shop/pricing.py to `calculate_total`. Update every place that uses it,
+including the tests, so that the old name `calc` no longer appears anywhere in the Python code. All tests
+must still pass.
+"""
+
+[[check]]
+type = "command"
+run = "python -m pytest -q tests"
+
+[[check]]
+type = "file_contains"
+path = "**/*.py"
+pattern = '\bcalc\b'
+absent = true
