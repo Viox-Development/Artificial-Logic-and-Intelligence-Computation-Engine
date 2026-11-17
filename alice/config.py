@@ -1395,7 +1395,7 @@ def make_private(path: Path) -> None:
         try:
             os.chmod(path, 0o600)
         except OSError:
-            pass
+            pass  # e.g. a filesystem without POSIX modes: the file still works, it just keeps its permissions
 
 
 def init_home(force: bool = False) -> list[Path]:
