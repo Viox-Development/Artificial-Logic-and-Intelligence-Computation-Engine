@@ -179,7 +179,7 @@ class TaskBook:
         try:
             self._db.execute("PRAGMA journal_mode=WAL")
         except sqlite3.DatabaseError:
-            pass
+            pass  # WAL is only faster; the default journal mode works too (e.g. on some network drives)
         self._db.executescript(_SCHEMA)
         self._db.commit()
 

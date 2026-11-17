@@ -73,7 +73,8 @@ def test_book_crud_state_memory_log(book):
     book.log(t.id, "run", "x")
     assert book.entries(t.id)[0]["kind"] == "run"
     a = book.ask(t.id, "Silinsin mi?")
-    assert book.remove(t.id) and book.get(t.id) is None
+    removed = book.remove(t.id)
+    assert removed and book.get(t.id) is None
     assert book.approval(a.id).status == "rejected"  # a deleted task's question does not stay in the inbox
 
 

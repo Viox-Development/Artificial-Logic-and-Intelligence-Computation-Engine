@@ -277,7 +277,7 @@ def is_project(cwd) -> bool:
             if (d / ".git").exists():
                 return True
     except OSError:
-        pass
+        pass  # unreadable folder (permissions, network drive gone): treat it as not a project
     return False
 
 
