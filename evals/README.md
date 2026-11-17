@@ -72,10 +72,10 @@ to a throwaway file, not your real git config.
 
 ## What it costs
 
-There is no money cost on free tiers, but it uses quota. The first run of the full set (14 tasks, council off and
-on) is in the table below; use it to estimate whether your daily free limits are enough.
-
-COST_TABLE
+There is no money cost on free tiers, but it uses quota. Measured on early runs: one task took 7-14 agent steps
+and 90k-165k agent tokens without the council. With the council, the council members added about 1.5x on top,
+and runs took 2-4 times as long. So a full set (14 tasks, council off and on) is in the order of 5-8 million
+tokens and several hundred requests. Check `results.json` after your first run for exact numbers on your chain.
 
 Pick a chain whose daily budget covers this. One agent step sends the whole conversation (10k-30k tokens), and a
 full set makes several hundred requests. That rules out some free tiers that are fine for chatting:
