@@ -1,4 +1,4 @@
-"""alice/tools/meta.py ve alice/tools/flight.py için birim testleri (ağ yok, oyun yok, gerçek DCS klasörü yok)."""
+"""Unit tests for alice/tools/meta.py and alice/tools/flight.py (no network, no game, no real DCS folder)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def test_todo_write_empty_and_summary(ctx):
 
 def test_memory_read_empty_then_add_and_read(ctx):
     m = meta.Memory()
-    assert m.risk_for({"action": "add"}) == READ  # hafıza yazımı onaysız
+    assert m.risk_for({"action": "add"}) == READ  # memory writes need no approval
     assert m.risk_for({"action": "forget"}) == WRITE
     assert m.run(ctx, action="read").text == "(hafıza boş)"
     assert m.run(ctx, action="add", note="  kullanıcı Türkçe konuşur \n").text.startswith("kaydedildi: ")
@@ -60,7 +60,7 @@ def test_memory_add_requires_note(ctx, note):
     assert meta.Memory().run(ctx, action="read").text == "(hafıza boş)"
 
 
-# ================================================================== meta: Task (alt ajan)
+# ================================================================== meta: Task (subagent)
 
 
 class FakeChild:
@@ -88,7 +88,7 @@ class FakeParent:
 
 @pytest.fixture
 def fake_child(monkeypatch):
-    """Alt ajan kurulumu (alice/subagents.py) sahte çocukla: Task aracının kendi akışı sınanır."""
+    """Subagent setup (alice/subagents.py) with a fake child: the Task tool's own flow is tested."""
     from alice import subagents
 
     def build(parent, kind, ui, ctx):
@@ -169,7 +169,7 @@ def test_reflex_desktop_with_notes(workdir, fake_reflex):
     assert fake_reflex["max_steps"] == 20 and fake_reflex["inputs"] is None
 
 
-# ================================================================== flight: genel
+# ================================================================== flight: general
 
 
 def test_flight_risk_for():
@@ -270,7 +270,7 @@ def test_status_without_hub(ctx, no_hub):
     assert "çalışmıyor" in flight_mod.Flight().run(ctx, action="status").text
 
 
-# ================================================================== flight: son değerlendirme
+# ================================================================== flight: last debrief
 
 
 def _debrief_dict(**over):
@@ -310,7 +310,7 @@ def test_last_debrief_prefers_live_hub(ctx, monkeypatch):
     assert flight_mod.Flight().run(ctx, action="last_debrief").text == "canlı özet\nRapor: /tmp/r.html"
 
 
-# ================================================================== flight: kontrol listesi
+# ================================================================== flight: checklists
 
 
 @pytest.fixture
@@ -337,13 +337,13 @@ def test_checklist_list_empty(ctx, monkeypatch):
 def test_checklist_full_flow(ctx, user_checklist):
     f = flight_mod.Flight()
     assert f.run(ctx, action="checklist_start", name="zz deneme").text == "Zz Deneme Listesi. Adım 1/3: Bir"
-    assert f.run(ctx, action="checklist_prev").text == "Adım 1/3: Bir"  # başta geri gitmez
+    assert f.run(ctx, action="checklist_prev").text == "Adım 1/3: Bir"  # does not go back at the start
     assert f.run(ctx, action="checklist_next").text == "Adım 2/3: İki"
     assert f.run(ctx, action="checklist_next").text == "Adım 3/3: Üç"
     assert f.run(ctx, action="checklist_prev").text == "Adım 2/3: İki"
     f.run(ctx, action="checklist_next")
     assert f.run(ctx, action="checklist_next").text == "Zz Deneme Listesi kontrol listesi tamam."
-    assert "checklist" not in ctx.state  # bitince kapanır
+    assert "checklist" not in ctx.state  # closes when finished
     with pytest.raises(ToolError, match="açık kontrol listesi yok"):
         f.run(ctx, action="checklist_next")
 
@@ -478,7 +478,7 @@ def test_kneeboard_without_dcs_folder(ctx, dcs_env):
 
 
 def test_kneeboard_note_saved_even_when_dcs_missing(ctx, dcs_env):
-    """Mevcut davranış: DCS klasörü yokken not kaydedilir ama araç hata döndürür."""
+    """Current behavior: the note is saved when the DCS folder is missing, but the tool returns an error."""
     import alice.sims.kneeboard as kb
 
     dcs_env["dirs"] = []

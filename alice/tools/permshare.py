@@ -1,5 +1,5 @@
-"""permissions: hep onaylanan işler için "artık sorma" önerisi ve kuralları uygulama.
-share: bir raporu/sayfayı kullanıcının GitHub hesabında gizli bir Gist olarak paylaş, bağlantısını ver."""
+"""permissions: suggests "stop asking" rules for jobs the user always approves, and applies rules.
+share: publish a report/page as a secret Gist on the user's GitHub account and give the link."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ class PermissionsTool(Tool):
     risk = READ
 
     def risk_for(self, args: dict[str, Any]) -> str:
-        # İzin kuralı eklemek sonraki bütün onayları kaldırır: her zaman kullanıcıya sorulur (dış içerik okunmuş bir
-        # turda modelin kendine izin yazmasın).
+        # Adding a permission rule removes all later approvals, so it is always asked of the user (in a turn
+        # where external content was read, the model must not grant itself permission).
         return DANGER if args.get("action") == "apply" else READ
 
     def run(self, ctx: ToolContext, action: str, rules: list[str] | None = None,

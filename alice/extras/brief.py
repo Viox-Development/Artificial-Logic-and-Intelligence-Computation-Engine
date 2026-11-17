@@ -1,7 +1,7 @@
-"""Sabah özeti: hava durumu, bugün staj mı okul mu, dünden kalanlar, gece çalışan görevler.
+"""Morning brief: weather, whether today is internship (staj) or school, leftovers from yesterday, overnight tasks.
 
-Veriyi toplar; söyleme işini ALICE yapar (zamanlanmış görev olarak kurulunca sabah
-bildirim/ses olarak gelir). Hava durumu wttr.in'den (anahtar gerektirmez).
+It only gathers the data; ALICE does the telling (once installed as a scheduled task, it arrives in the morning
+as a notification/voice). Weather comes from wttr.in (no key needed).
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ BRIEF_PROMPT = ("Sabah özetimi hazırla: report aracını kind=morning ile ça�
 
 
 def weather(city: str, client: httpx.Client | None = None, auto: bool = False) -> str:
-    """auto=True ve şehir yoksa konum IP'den bulunur."""
+    """If auto=True and there is no city, the location is found from the IP."""
     if not city and not auto:
         return "hava durumu için config'te [brief] city ayarla"
     c = client or httpx.Client(timeout=8)
@@ -28,7 +28,7 @@ def weather(city: str, client: httpx.Client | None = None, auto: bool = False) -
     except (httpx.HTTPError, ValueError) as e:
         return f"hava durumu alınamadı ({e.__class__.__name__})"
     finally:
-        if client is None:  # kendi açtığımız istemcinin soketleri çekirdekte birikmesin
+        if client is None:  # so the sockets of a client we opened don't pile up in the kernel
             c.close()
     try:
         cur = d["current_condition"][0]

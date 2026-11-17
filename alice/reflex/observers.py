@@ -1,4 +1,4 @@
-"""Reflex döngüsü için gözlemciler: ekranı ID'li aday listesine çevirip aksiyonu uygular."""
+"""Observers for the reflex loop: turn the screen into a candidate list with IDs and apply the action."""
 
 from __future__ import annotations
 
@@ -13,23 +13,23 @@ from alice.tools.base import ToolContext, ToolError
 
 EDITABLE_TAGS = {"input", "textarea"}
 EDITABLE_ROLES = {"textbox", "searchbox", "combobox", "Edit", "ComboBox", "Document"}
-# Pencere çerçevesi: başlık çubuğunun sistem menüsü ve düğmeleri. Uygulamanın kendi içeriği değil; reflex bunları
-# seçenek olarak görünce (ör. içi okunamayan WebView penceresinde) "System" menüsüne tıklıyordu, "Close" da vardı.
+# Window frame (chrome): the title bar's system menu and buttons, not the app's own content. When reflex saw them
+# as options (e.g. in a WebView window with unreadable content) it clicked the "System" menu, and "Close" was there.
 WINDOW_CHROME = {"system", "sistem", "restore", "move", "size", "minimize", "maximize", "close", "geri yükle",
                  "taşı", "boyut", "boyutlandır", "simge durumuna küçült", "ekranı kapla", "kapat", "önceki boyut"}
 CHROME_GOAL = ("kapat", "küçült", "büyüt", "close", "minimize", "maximize", "ekranı kapla")
 
 
-# WebView2 uygulamaları (ALICE'in kendisi) içerikle aynı yerde görünmez bir Chromium sekme şeridi bildiriyor:
-# "ALICE - Memory usage - 31.8 MB" sekmesi, "New Tab", "Close tab". Ekranda yoklar; tıklanırsa ne olacağı belirsiz.
+# WebView2 apps (ALICE itself) report an invisible Chromium tab strip in the same place as the content:
+# the "ALICE - Memory usage - 31.8 MB" tab, "New Tab", "Close tab". Not on screen; clicking them has unclear effects.
 TAB_STRIP = {"new tab", "close tab", "yeni sekme", "sekmeyi kapat"}
-# Dilden bağımsız: "X - Memory usage - 31.8 MB", "about:blank - Bellek kullanımı - 17,9 MB" (Solitaire, Türkçe Windows).
+# Any language: "X - Memory usage - 31.8 MB", "about:blank - Bellek kullanımı - 17,9 MB" (Solitaire, Turkish Windows).
 MEMORY_TAB_RX = re.compile(r" - [^-]+ - [\d.,]+ ?[kmg]b$")
 
 
 def is_phantom_tab(role: str, name: str, rect: Any, docs: list[Any], anywhere: bool = False) -> bool:
-    """Sayfanın (Document) içinde kalan Chromium sekme şeridi öğesi mi? Gerçek tarayıcıda şerit sayfanın üstündedir.
-    anywhere (oyun oturumu): sekme şeridi hiçbir zaman seçenek değil, nerede olursa olsun atılır."""
+    """Is this a Chromium tab strip item inside the page (Document)? In a real browser the strip is above the page.
+    anywhere (game session): the tab strip is never an option; it is discarded wherever it is."""
     n = name.strip().lower()
     if not ((role == "TabItem" and MEMORY_TAB_RX.search(n)) or (role == "Button" and n in TAB_STRIP)):
         return False
@@ -37,14 +37,14 @@ def is_phantom_tab(role: str, name: str, rect: Any, docs: list[Any], anywhere: b
         return True
     if not rect:
         return False
-    t = 8  # piksel: şerit sayfanın kenarından birkaç piksel taşabiliyor
+    t = 8  # pixels: the strip can overflow the page edge by a few pixels
     return any(d[0] - t <= rect[0] and d[1] - t <= rect[1] and rect[2] <= d[2] + t and rect[3] <= d[3] + t
                for d in docs)
 
 
 def window_union(rects: list[tuple[int, int, int, int]], screen: tuple[int, int, int, int]
                  ) -> tuple[int, int, int, int] | None:
-    """Pencere ve diyaloglarının (sol, üst, sağ, alt) birleşimi, ekrana kırpılmış -> (sol, üst, en, boy)."""
+    """Union of window and dialog rects (left, top, right, bottom), clipped to screen -> (left, top, width, height)."""
     if not rects:
         return None
     l, t = max(min(r[0] for r in rects), screen[0]), max(min(r[1] for r in rects), screen[1])
@@ -55,7 +55,7 @@ def window_union(rects: list[tuple[int, int, int, int]], screen: tuple[int, int,
 
 
 def app_name(title: str) -> str:
-    """'*sayilar.txt, Not Defteri' -> 'Not Defteri'; 'refleks-test - File Explorer' -> 'File Explorer'."""
+    """Window title -> app name: '*sayilar.txt, Not Defteri' -> 'Not Defteri'; 'refleks-test - File Explorer' -> 'File Explorer'."""
     for sep in (" - ", ", ", " — ", " | "):
         if sep in title:
             title = title.rsplit(sep, 1)[1]
@@ -63,14 +63,14 @@ def app_name(title: str) -> str:
 
 
 def named_window(goal: str, front: str, windows: list[str]) -> str:
-    """Hedef, öndeki değil başka bir açık pencerenin uygulama adını geçiriyorsa o adı döndür; yoksa ''."""
+    """If the goal names the app of another open window (not the foreground one), return that name; otherwise ''."""
     from alice.reflex.perceive import words
 
     gw = set(words(goal))
 
     def mentioned(title: str) -> bool:
         ws = [w for w in words(app_name(title)) if len(w) > 2]
-        return bool(ws) and all(any(g.startswith(w) for g in gw) for w in ws)  # "Defteri'ne" -> "defteri"
+        return bool(ws) and all(any(g.startswith(w) for g in gw) for w in ws)  # "Defteri'ne" (dative) -> "defteri"
 
     if not front.strip() or mentioned(front):
         return ""
@@ -87,9 +87,9 @@ def _open_windows() -> list[str]:
 
 
 def focused_control() -> str:
-    """Klavye odağındaki denetim ve içinde bulunduğu pencere (en yakın Window atası: diyalogsa diyaloğun adı), ör.
-    "Edit 'Dosya adı:' in window 'Farklı kaydet'". Kodun bildiği gerçek (typesafe-computer-use 'focused field'):
-    Not Defteri'ne yazılacak 1-10, açık kalmış Kaydet penceresinin dosya adı alanına gitmişti. Okunamazsa ''."""
+    """The keyboard-focused control and its window (nearest Window ancestor; the dialog's name if it is one), e.g.
+    "Edit 'Dosya adı:' in window 'Farklı kaydet'". Ground truth from code (typesafe-computer-use 'focused field'):
+    "1-10" meant for Not Defteri (Notepad) went into the file name field of an open Save dialog. '' if unreadable."""
     import sys
 
     if sys.platform != "win32":
@@ -108,12 +108,12 @@ def focused_control() -> str:
                 break
             p = p.parent
         return f"{el.control_type} '{(el.name or '')[:60]}'" + (f" in window '{window[:60]}'" if window else "")
-    except Exception:  # noqa: BLE001 - odak okunamazsa gerçek verilmez
+    except Exception:  # noqa: BLE001 - if focus can't be read, no fabricated value is returned
         return ""
 
 
 def foreground_title() -> str:
-    """Öndeki pencerenin başlığı (Windows dışında boş)."""
+    """Title of the foreground window (empty outside Windows)."""
     import sys
 
     if sys.platform != "win32":
@@ -130,17 +130,17 @@ def is_window_chrome(role: str, name: str, goal: str = "", title: str = "") -> b
         return True
     n = name.strip().lower()
     if title.strip() and n.endswith(" " + title.strip().lower()):
-        # UWP pencereleri adın sonuna başlığı ekliyor: "Close Solitaire & Casual Games" filtreden kaçıyordu.
+        # UWP windows append the title to the name: "Close Solitaire & Casual Games" was slipping through the filter.
         n = n[: -len(title.strip()) - 1].strip()
     if role in ("MenuBar", "MenuItem", "Button") and n in WINDOW_CHROME:
-        # Pencereyi kapatmak/küçültmek hedefin kendisiyse düğmeler kalsın; sistem menüsü hiç gerekmez.
+        # If closing/minimizing the window is the goal itself, keep the buttons; the system menu is never needed.
         return not (role == "Button" and wants_window_chrome(goal, title))
     return False
 
 
 def wants_window_chrome(goal: str, title: str = "") -> bool:
-    """Hedef pencerenin kendisini kapatmak/küçültmek mi? 'Ayarlar katmanını X ile kapat' (Unciv) değil: orada pencerenin
-    Kapat düğmesi listede kaldı ve oyun kapandı. Pencere/uygulama ya da pencerenin adı geçmeli."""
+    """Does the goal close/minimize the window itself? Not 'Ayarlar katmanını X ile kapat' (Unciv),
+    where the window's Close button stayed listed and the game closed. Needs a window/app word or the window's name."""
     g = goal.lower()
     if not any(w in g for w in CHROME_GOAL):
         return False
@@ -181,8 +181,8 @@ class Observer(Protocol):
     kind: str
 
     def observe(self) -> Observation: ...
-    # İsteğe bağlı (görsel reflex): snapshot() -> (PIL görüntü, ...) ya da None; click_at(x, y) görüntünün eni/boyunun
-    # 0-1 kesriyle tıklar.
+    # Optional (visual reflex): snapshot() -> (PIL image, ...) or None; click_at(x, y) clicks at 0-1 fractions
+    # of the image's width/height.
     def click(self, element_id: int) -> None: ...
     def type(self, element_id: int, text: str, submit: bool) -> None: ...
     def scroll(self, down: bool) -> None: ...
@@ -192,17 +192,17 @@ class Observer(Protocol):
 
 ACTIONS = ("click", "double_click", "right_click", "type_text", "type_keys", "press_key", "hold_key", "drag",
            "scroll_down", "scroll_up", "wait")
-# Jev'in seçebileceği tuşlar (kapalı küme: Jev metin üretmez). Hedefte başka bir kısayol yazıyorsa o da eklenir.
+# Keys Jev may pick (a closed set; Jev writes no free text). If the goal names another shortcut, it is added too.
 KEYS = ("enter", "escape", "tab", "shift+tab", "space", "backspace", "delete", "up", "down", "left", "right",
         "pageup", "pagedown", "home", "end", "ctrl+home", "ctrl+end", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z",
         "ctrl+y", "ctrl+s", "ctrl+shift+s", "ctrl+f", "ctrl+n", "ctrl+t", "ctrl+tab", "ctrl+shift+tab", "alt+enter",
         "f2", "f5")
 WAIT_SECONDS = 1.0
-HOLD_SECONDS = 1.0  # hold_key: tuş(lar) bu kadar basılı kalır (araçtan değiştirilebilir)
+HOLD_SECONDS = 1.0  # hold_key: the key(s) stay pressed this long (changeable from the tool)
 
 
 def _browser_key(keys: str) -> str:
-    """'ctrl+s' -> 'Control+s' (Playwright adları)."""
+    """'ctrl+s' -> 'Control+s' (Playwright names)."""
     names = {"ctrl": "Control", "alt": "Alt", "shift": "Shift", "enter": "Enter", "escape": "Escape", "tab": "Tab",
              "space": " ", "backspace": "Backspace", "delete": "Delete", "up": "ArrowUp", "down": "ArrowDown",
              "left": "ArrowLeft", "right": "ArrowRight", "pageup": "PageUp", "pagedown": "PageDown", "home": "Home",
@@ -219,7 +219,7 @@ class BrowserObserver:
         from alice.tools.browser import get_browser
 
         self.ctx = ctx
-        # Kullanıcının kendi tarayıcısı ve o an baktığı sekme (ayrı pencere sadece ayarlarda izin varsa).
+        # The user's own browser and the tab they are looking at (a separate window only if settings allow it).
         self.b = get_browser(ctx)
         if self.b.attached:
             seen = self.b._visible_page()
@@ -252,7 +252,7 @@ class BrowserObserver:
     def _frame(self, loc, label: str) -> None:
         from alice.tools.browser import mark_on_hud
 
-        mark_on_hud(self.b, loc, label)  # HUD kapalıysa ya da ölçülemezse hiçbir şey yapmaz
+        mark_on_hud(self.b, loc, label)  # does nothing if the HUD is off or cannot be measured
 
     def click(self, element_id: int) -> None:
         loc = self.b.locator(element_id)
@@ -274,13 +274,13 @@ class BrowserObserver:
         self.b.page.wait_for_timeout(300)
 
     def screen(self, goal: str = "") -> Screen:
-        """Sayfanın öğeleri (DOM'dan; konumları bilinmez) ve görünen alanın görüntüsü."""
+        """The page's elements (from the DOM; positions unknown) and an image of the visible area."""
         ob = self.observe()
         ax = [Item("", "dom", e.kind, e.label, None, e.value, e.editable,
                    "" if e.in_view else "below, needs scrolling", ref=e.id) for e in ob.elements]
         try:
             img = self.snapshot()
-        except Exception:  # noqa: BLE001 - görüntü yedek içindir
+        except Exception:  # noqa: BLE001 - the image is only a fallback
             img = None
         return Screen(ob.title, ob.location, build_items(ax, [], goal), image=img)
 
@@ -321,7 +321,7 @@ class BrowserObserver:
         page.wait_for_timeout(300)
 
     def snapshot(self):
-        """Görünen sayfa alanının görüntüsü (Jev'e gösterilir)."""
+        """Image of the visible page area (shown to Jev)."""
         import io
 
         from PIL import Image
@@ -359,45 +359,45 @@ class DesktopObserver:
         self.ctx = ctx
         self.title = window_title
         self.goal = goal
-        self.echoes = echoes  # ekranda görünüp hedef sanılmaması gereken yazılar (kullanıcının sohbet mesajı)
-        # diff (oyun oturumu): önceki kare tutulur; yalnızca değişen bölgeler yeniden okunur, yeni öğeler 'new' olur.
-        # Gözlemci turlar boyunca yaşar: "bu turda ne değişti" de görülür.
+        self.echoes = echoes  # text on screen that must not be mistaken for the target (the user's chat message)
+        # diff (game session): the previous frame is kept; only changed regions are re-read, new items become 'new'.
+        # The observer lives across turns, so "what changed in this turn" is visible too.
         self.diff = diff
         self._prev_img: Any = None
         self._prev_lines: list[tuple[str, tuple[float, float, float, float]]] = []
         self._seen: set[str] | None = None
         self.changed: list[tuple[float, float, float, float]] | None = None
         self._hwnd = 0
-        self._unparked = False  # görev başında köşede park halindeki fare bir kez ortaya alınır
+        self._unparked = False  # at task start, a mouse parked in a corner is moved out once
         if not (window_title or "").strip() and goal and "alice" not in goal.lower() \
                 and foreground_title().strip() == "ALICE":
-            # Öndeki pencere ALICE'in kendi sohbeti: "Not Defteri'ni aç, Ctrl+S'ye bas" burada Escape ve Ctrl+S'ye
-            # basıyordu (reflex uygulama açmaz).
+            # The foreground window is ALICE's own chat: "open Notepad, press Ctrl+S" was pressing Escape and Ctrl+S
+            # here (reflex does not open applications).
             raise ToolError("öndeki pencere ALICE'in kendisi; hedef pencereyi önce app/windows aracıyla açıp öne "
                             "getir ve title ver (ör. title='Not Defteri')")
         if not (window_title or "").strip() and goal:
             other = named_window(goal, foreground_title(), _open_windows())
             if other:
-                # Başlık verilmedi, hedef başka bir açık pencereyi adlandırıyor: "Not Defteri'ne 1-10 yaz" öndeki
-                # Hesap Makinesi'ne yazılmıştı.
+                # No title given, and the goal names another open window: "type 1-10 into Notepad" was typed into the
+                # foreground Calculator.
                 raise ToolError(f"hedef '{other}' penceresinden söz ediyor ama öndeki pencere "
                                 f"'{foreground_title()}'; title='{other}' ver")
-        self._rect: tuple[int, int, int, int] | None = None  # son ekran görüntüsünün ekrandaki yeri
+        self._rect: tuple[int, int, int, int] | None = None  # position on screen of the last screenshot
 
     def screen(self, goal: str = "") -> Screen:
-        """Pencerenin erişilebilirlik öğeleri + ekrandaki yazılar (OCR), pencereye göre kesirli konumlarıyla."""
+        """The window's accessibility items + on-screen text (OCR), with positions as fractions of the window."""
         from alice.tools.desktop import collect_ui_elements, focus_window
 
         self.goal = goal or self.goal
         if self.title:
             try:
-                focus_window(self.title)  # görüntü öndeki pencereden alınıyor
+                focus_window(self.title)  # the image is taken from the foreground window
             except ToolError as e:
-                # İstenen pencere yok: öndeki pencereyle devam edilince tuşlar ve tıklamalar ilgisiz pencereye
-                # gidiyordu ('Setup - Sonora' istenmişken ekran 'War Thunder - In battle' idi, 2 Kasım).
+                # The requested window is missing: continuing with the foreground window sent keys and clicks to
+                # another window ('Setup - Sonora' was requested, but the screen was 'War Thunder - In battle', 2 Nov).
                 if "pencere yok" in str(e):
                     raise
-            except Exception:  # noqa: BLE001 - öne alınamadı (odak kilidi vb.): pencere var, öndekiyle devam
+            except Exception:  # noqa: BLE001 - focus failed (focus lock etc.): window exists, continue with foreground
                 pass
         img = self.snapshot(self._target_hwnd())
         if not self._unparked and self._rect is not None:
@@ -406,19 +406,19 @@ class DesktopObserver:
                 from alice.tools.computer import unpark_mouse
 
                 left, top, w, h = self._rect
-                unpark_mouse(left + w // 2, top + h // 2)  # köşede bekleyen fare yazmayı engellemesin
+                unpark_mouse(left + w // 2, top + h // 2)  # a mouse waiting in the corner must not block typing
             except Exception:  # noqa: BLE001
                 pass
         try:
             title, raw = collect_ui_elements(self.ctx, self.title, limit=200, hwnd=self._window())
-        except Exception:  # noqa: BLE001 - UIA bazen COM hatası veriyor (0x80040201, Win+D sonrası masaüstünde
-            # görüldü); bütün refleksi düşürme: kısa bekleyip bir kez daha dene, olmazsa yalnızca OCR ile devam et.
+        except Exception:  # noqa: BLE001 - UIA sometimes raises a COM error (0x80040201, seen on desktop after Win+D);
+            # don't drop the whole reflex: wait briefly and retry once; if that fails, continue with OCR only.
             time.sleep(0.3)
             try:
                 title, raw = collect_ui_elements(self.ctx, self.title, limit=200, hwnd=self._window())
             except Exception:  # noqa: BLE001
                 title, raw = foreground_title(), []
-        # Oyunda pencerenin Kapat düğmesi hiç seçenek olmaz: "ayarları X ile kapat" Unciv'i kapatmıştı.
+        # In a game the window's Close button is never an option: "close the settings with X" had closed Unciv.
         chrome_goal = "" if self.diff else self.goal
         ax: list[Item] = []
         docs = [i["rect"] for i in raw if i["role"] == "Document" and i.get("rect")]
@@ -427,8 +427,8 @@ class DesktopObserver:
                     or is_phantom_tab(i["role"], i["name"], i.get("rect"), docs, anywhere=self.diff):
                 continue
             if i["role"] == "Document" and i["name"].strip() in ("", title.strip()):
-                # WebView uygulamasının sayfa gövdesi (adsız 'view_1055' ya da pencere başlığıyla aynı): bütün
-                # pencereyi kaplar; tıklanırsa pencerenin ortasına, yazılırsa nereye gittiği belirsiz.
+                # A WebView app's page body (unnamed 'view_1055', or the same as the window title): it covers the
+                # whole window; a click lands in the middle of the window, and typing goes to an unclear place.
                 continue
             ax.append(Item("", "ax", i["role"], i["name"] or i["auto_id"], self._frac(i.get("rect")), i["value"],
                            i["role"] in EDITABLE_ROLES, ref=i["id"]))
@@ -437,9 +437,9 @@ class DesktopObserver:
         if img is not None and ocr_available()[0]:
             try:
                 lines = ocr_changed(img, self._prev_lines, regions) if self.diff else ocr_image(img)
-            except Exception:  # noqa: BLE001 - OCR olmazsa ağaçla devam
+            except Exception:  # noqa: BLE001 - if OCR fails, continue with the tree
                 lines = []
-        # Oyun penceresinde sohbet yok: hedefi tekrarlayan yazı yankı değil, hedefin kendisi (düğme).
+        # A game window has no chat, so repeated text is not an echo: it is the target itself (a button).
         items = build_items(ax, lines, self.goal, echoes=self.echoes, drop_echo=not self.diff)
         if self.diff:
             self._prev_img, self._prev_lines = img, lines
@@ -448,18 +448,18 @@ class DesktopObserver:
         return Screen(title, "desktop", items, focused=focused_control(), image=img)
 
     def _frac(self, rect: Any) -> tuple[float, float, float, float] | None:
-        """Ekran pikseli (sol, üst, sağ, alt) -> son görüntülenen pencereye göre 0-1."""
+        """Screen pixel (left, top, right, bottom) -> 0-1 relative to the last displayed window."""
         if not rect or self._rect is None:
             return None
         left, top, w, h = self._rect
         l, t, r, b = rect
         fr = ((l - left) / w, (t - top) / h, (r - left) / w, (b - top) / h)
         if fr[2] <= 0 or fr[3] <= 0 or fr[0] >= 1 or fr[1] >= 1:
-            return None  # pencerenin dışında
+            return None  # outside the window
         return tuple(min(1.0, max(0.0, v)) for v in fr)  # type: ignore[return-value]
 
     def _frame(self, item: Item, action: str) -> None:
-        """HUD açıksa nereye tıklayacağını göster; beklemez (refleks hızlı kalsın), yeri bilinmiyorsa atlar."""
+        """Show the click spot on the HUD if it is open. Doesn't wait (keeps reflex fast); skips if spot unknown."""
         from alice.hud import views
 
         try:
@@ -486,7 +486,7 @@ class DesktopObserver:
         pg = _pyautogui()
         if action == "click":
             if item.source.startswith("ax") and item.ref is not None:
-                ui_act(self.ctx, item.ref, "click")  # erişilebilirlik üzerinden: üstünde açılır pencere olsa da
+                ui_act(self.ctx, item.ref, "click")  # via accessibility, even if a pop-up window is open on top
             else:
                 pg.click(*self._point(item))
         elif action == "double_click":
@@ -503,7 +503,7 @@ class DesktopObserver:
         elif action == "press_key":
             press_keys(keys)
         elif action == "type_keys":
-            type_text(text)  # öndeki pencereye (screen() pencereyi öne aldı): hesap makinesi, terminal, oyun
+            type_text(text)  # to the foreground window (screen() brought it to the front): calculator, terminal, game
         elif action == "hold_key":
             hold_keys(keys, self.hold_seconds)
         elif action == "drag":
@@ -532,8 +532,8 @@ class DesktopObserver:
         return Observation(title, "desktop", els)
 
     def _window(self) -> int:
-        """Başlığı verilen pencerenin tutamacı, önbellekli: başlıkla aramak bütün pencereleri taramak (~1,5 sn) ve her
-        adımda iki kez yapılıyordu. Pencere kapandıysa yeniden aranır; bulunamazsa 0."""
+        """Handle of the window with the given title, cached: a title search scans all windows (~1.5 s), and it
+        was done twice per step. If the window was closed, it is searched again; if not found, 0."""
         import sys
 
         if sys.platform != "win32" or not self.title:
@@ -551,9 +551,9 @@ class DesktopObserver:
         return self._hwnd
 
     def _target_hwnd(self) -> int:
-        """Görüntüsü alınacak pencere. Öndeki pencere hedefin kendisi ya da onun açtığı bir diyalogsa (Kaydet): 0,
-        yani öndeki. Windows hedefi öne almayı reddettiyse hedefin kendisi; yoksa öğeler hedeften, görüntü ve konumlar
-        başka bir pencereden gelir ve tıklamalar kayar."""
+        """Window whose image is captured. If the foreground window is the target or a dialog it opened (Save): 0,
+        i.e. the foreground one. If Windows refused to bring the target to the front, the target itself; otherwise the
+        items come from the target while the image and positions come from another window, and clicks drift."""
         import sys
 
         if sys.platform != "win32" or not self.title:
@@ -569,8 +569,8 @@ class DesktopObserver:
         return target
 
     def snapshot(self, hwnd: int = 0):
-        """Öndeki (ya da verilen) pencerenin görüntüsü (Windows). Pencere bulunamazsa None: reflex görselsiz devam
-        eder."""
+        """Image of the foreground (or given) window (Windows). If no window is found, None: the reflex continues
+        without an image."""
         import sys
 
         if sys.platform != "win32":
@@ -588,8 +588,8 @@ class DesktopObserver:
         hwnd = hwnd or u32.GetForegroundWindow()
         if not hwnd:
             return None
-        # Pencere ve açtığı diyaloglar (Not Defteri'nin Kaydet penceresi ana pencereden taşıyor; dışarıda kalan İptal
-        # düğmesinin yeri bilinmiyordu).
+        # The window and the dialogs it opens (Notepad's Save window sticks out of the main window;
+        # the position of its Cancel button, outside it, was unknown).
         root = u32.GetAncestor(hwnd, 3) or hwnd  # 3: GA_ROOTOWNER
         hwnds = [root]
 
@@ -623,7 +623,7 @@ class DesktopObserver:
         _pyautogui().click(round(left + fx * w), round(top + fy * h))
 
     def drag_at(self, fx: float, fy: float, tx: float, ty: float) -> None:
-        """Görüntüde görülen bir yerden diğerine sürükle (0-1 kesir): kart, taş, birim."""
+        """Drag from one spot seen in the image to another (0-1 fractions): card, piece, unit."""
         from alice.tools.computer import _pyautogui
 
         if self._rect is None:

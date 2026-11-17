@@ -1,5 +1,5 @@
-"""Yerleşik tarayıcı: adres düzeltme, konsol/ağ olayları, ajanın bu tarayıcıyı seçmesi ve preview aracı.
-Gerçek tarayıcı açılmaz (CI'da tarayıcı olmayabilir); DevTools mesajları ve oturum sahte."""
+"""Built-in browser: address bar fixing, console/network events, the agent choosing this browser, and the preview tool.
+Real browser is not opened (a browser may not exist on CI); DevTools messages and the session are fake."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def test_console_and_network_events_are_collected():
     page = object.__new__(bbm.CDPPage)
     page.logs, page._urls = deque(maxlen=50), {}
     page._event("Runtime.consoleAPICalled", {"type": "error", "args": [{"value": "x tanımsız"}]})
-    page._event("Runtime.consoleAPICalled", {"type": "log", "args": [{"value": "sıradan"}]})  # hata değil: alınmaz
+    page._event("Runtime.consoleAPICalled", {"type": "log", "args": [{"value": "sıradan"}]})  # not an error: dropped
     page._event("Runtime.exceptionThrown", {"exceptionDetails": {"exception": {"description": "TypeError: a is null"}}})
     page._event("Network.requestWillBeSent", {"requestId": "1", "request": {"url": "http://localhost/api"}})
     page._event("Network.loadingFailed", {"requestId": "1", "errorText": "net::ERR_CONNECTION_REFUSED"})
@@ -63,13 +63,13 @@ def test_agent_uses_builtin_browser_by_default(monkeypatch, workdir):
     ctx.state["builtin_browser"] = lambda: bb
     s = br.get_browser(ctx)
     assert made[-1] == {"cdp": "http://127.0.0.1:9", "allow_launch": False} and s.builtin and s.headless
-    assert br.get_browser(ctx) is s  # aynı oturum yeniden kullanılır
+    assert br.get_browser(ctx) is s  # the same session is reused
     ctx2 = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}, browser="user"))
     ctx2.state["builtin_browser"] = lambda: bb
     monkeypatch.setattr(br.browser_ext if hasattr(br, "browser_ext") else __import__("alice.tools.browser_ext",
                         fromlist=["hub"]), "hub", lambda: None)
     br.get_browser(ctx2)
-    assert made[-1].get("cdp") != "http://127.0.0.1:9"  # kullanıcı kendi tarayıcısını seçmiş
+    assert made[-1].get("cdp") != "http://127.0.0.1:9"  # the user chose their own browser
 
 
 class FakeBB:
@@ -144,7 +144,7 @@ def test_lock_is_reentrant_safe():
 
 
 def test_devtools_port_does_not_allow_any_origin(monkeypatch, tmp_path):
-    """--remote-allow-origins=* yok: tarayıcıdaki bir sayfa DevTools portuna bağlanıp tarayıcıyı süremez."""
+    """No --remote-allow-origins=*: a page in the browser can't reach the DevTools port and drive the browser."""
     seen = []
     monkeypatch.setattr(bbm.subprocess, "Popen", lambda args, **kw: seen.append(args) or object())
     b = bbm.BuiltinBrowser(tmp_path / "profil")

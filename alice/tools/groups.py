@@ -1,8 +1,8 @@
-"""Araç grupları: her istekte 33 aracın tanımını (~5K token) göndermek yerine sadece gerekenleri gönder.
+"""Tool groups: instead of sending definitions for all 33 tools (~5K tokens) on every request, send only what is needed.
 
-Temel araçlar her zaman gider. Diğer gruplar kullanıcının mesajındaki anahtar kelimelerle, konuşmada
-daha önce kullanılmışlarsa ya da model `load_tools` ile istediğinde eklenir ve o oturum boyunca kalır.
-Daha küçük istek = daha fazla ücretsiz modele sığar, daha hızlı ve daha az kafa karıştırıcı.
+Core tools always go. Other groups are added via keywords in the user's message, if used previously in the conversation,
+or when the model requests via `load_tools`, and stay for the rest of the session.
+Smaller request = fits more free models, faster, and less confusing.
 """
 
 from __future__ import annotations
@@ -13,14 +13,14 @@ from typing import Any
 from alice import plugins
 from alice.tools.base import READ, Tool, ToolContext, ToolError, ToolResult, obj
 
-# Her istekte tam tanımıyla giden araçlar: en sık gerekenler. Diğerleri (Claude Code'daki gibi) sadece adlarıyla
-# sistem talimatında listelenir; kullanıcının sözüne göre kendiliğinden ya da model load_tools deyince yüklenir.
-# Önceden 27 araç her istekte ~9K token tutuyordu: dar bağlamlı/hızlı ücretsiz modeller (Groq, Cerebras) ana model
-# olamıyordu.
+# Tools sent with full definition on every request: the most frequently needed ones. Others (like in Claude Code)
+# are only listed by name in the system prompt; they are loaded automatically based on the user's words or when
+# the model calls load_tools. Previously, 27 tools took ~9K tokens on every request: narrow-context/fast free models
+# (Groq, Cerebras) could not be the main model.
 CORE = {"read_file", "write_file", "edit_file", "list_dir", "glob", "grep", "run_command", "web_fetch", "web_search",
         "memory", "load_tools", "ask_user"}
 
-# grup -> (araçlar, kısa açıklama, anahtar kelime regex'i)
+# group -> (tools, short description, keyword regex)
 GROUPS: dict[str, tuple[set[str], str, str]] = {
     "files": ({"file_ops", "multi_edit", "apply_patch", "notebook_edit", "find_files", "send_file", "next_step",
                "share", "permissions", "hooks", "usage", "code_intel", "mcp_resources"},
@@ -92,7 +92,7 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
     "flight": ({"flight", "dcs_wingman"}, "DCS / War Thunder uçuş verisi, kneeboard, DCS kanat adamlarına emir",
                r"dcs|war ?thunder|uçuş|uçak|kneeboard|pist|iniş|kalkış|simülasyon|sim\b|kanat adam|wingman|"
                r"\bsam\b|bastır|üsse dön"),
-    "connect": (set(),  # araçlar çalışma anında tanımlardan gelir (alice/connect)
+    "connect": (set(),  # tools come from definitions at runtime (alice/connect)
                 "bağlı servisler: Spotify, Steam, Discord, YouTube, eklediğin API'lar",
                 r"spotify|müzik|şark[ıi]|parça|çal\b|duraklat|steam|oyun kütüphanesi|discord|sunucu|kanal|"
                 r"abone|izlenme|playlist|çalma listesi"),
@@ -121,9 +121,9 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
 
 TOOL_TO_GROUP = {name: g for g, (names, _, _) in GROUPS.items() for name in names}
 
-# Büyük gruplarda sözden bütün grubu değil, sadece gereken aracı aç: "YouTube'da lofi aç" için 8 masaüstü aracı ve
-# not/rapor araçları değil, youtube yeter. Burada adı geçen grupların araçları sadece kendi kalıplarıyla açılır;
-# grubun tamamı model load_tools deyince ya da gruptan bir araç kullanılınca açılır.
+# In large groups, open only the tool that is needed, not the whole group: for "YouTube'da lofi aç" (play lofi on
+# YouTube) the youtube tool is enough, not the 8 desktop tools or the notes/report tools. Here the tools of named
+# groups open only by their own patterns; the whole group opens on load_tools or when one of its tools is used.
 TOOL_HINTS: dict[str, str] = {
     "windows": r"\baç|kapat|pencere|uygulama|başlat|küçült|büyüt|sekme|program",
     "computer": r"ekran|screenshot|fare|mouse|klavye|tıkla|sürükle|kaydır|bas\b",
@@ -144,8 +144,8 @@ TOOL_HINTS: dict[str, str] = {
 _HINT_RX = {name: re.compile(rx, re.I) for name, rx in TOOL_HINTS.items()}
 _HINTED_GROUPS = {TOOL_TO_GROUP[n] for n in TOOL_HINTS}
 
-# Bağlantı araçları (alice/connect) çalışma anında tanımlardan geliyor; adları burada tutulur ve
-# "connect" grubuna sayılır. Böylece her isteğe 4-5 servisin şeması eklenmez, gerekince açılır.
+# Connection tools (alice/connect) come from definitions at runtime; their names are kept here and counted in the
+# "connect" group, so the schemas of 4-5 services are not added to every request; they open when needed.
 CONNECT: set[str] = set()
 
 
@@ -155,13 +155,13 @@ def register_connect(names) -> None:
 _RX = {g: re.compile(rx, re.I) for g, (_, _, rx) in GROUPS.items()}
 
 
-# MCP sunucularının araçları (mcp__<sunucu>__<araç>) "mcp:<sunucu>" grubunda; sunucu adı geçince ya da
-# aşağıdaki ek kelimelerle açılır. Bilinen sunucular için ek anahtar kelimeler:
+# MCP server tools (mcp__<server>__<tool>) live in the "mcp:<server>" group; they open when the server name
+# is mentioned or with the extra words below. Extra keywords for known servers:
 MCP_KEYWORDS = {"github": r"git ?hub|\brepo|issue|pull request|\bpr\b|commit|release|branch"}
 
 
 def all_groups() -> dict[str, tuple[set[str], str, str]]:
-    """Yerleşik gruplar + eklenti grupları."""
+    """Built-in groups + plugin groups."""
     return {**GROUPS, **plugins.groups()}
 
 
@@ -183,7 +183,7 @@ def mcp_servers(tool_names) -> set[str]:
 
 
 def groups_for_text(text: str, tool_names=()) -> set[str]:
-    """Kullanıcının sözüne göre açılacaklar: grup adları ve (ipucu olan büyük gruplarda) tek tek araç adları."""
+    """What to open based on the user's words: group names and, for large groups with hints, individual tool names."""
     text = text or ""
     out = {g for g, rx in _RX.items() if g not in _HINTED_GROUPS and rx.search(text)}
     out |= {name for name, rx in _HINT_RX.items() if rx.search(text)}
@@ -196,7 +196,7 @@ def groups_for_text(text: str, tool_names=()) -> set[str]:
 
 
 def visible_tools(tools: dict[str, Tool], enabled: set[str]) -> list[Tool]:
-    """Temel araçlar + açık gruplar + gruba ait olmayanlar (MCP vb.)."""
+    """Core tools + open groups + tools that belong to no group (MCP etc.)."""
     out = []
     always = CORE | plugins.always_tools()
     for name, t in tools.items():
@@ -207,7 +207,7 @@ def visible_tools(tools: dict[str, Tool], enabled: set[str]) -> list[Tool]:
 
 
 def catalog(tools: dict[str, Tool]) -> str:
-    """Sistem talimatına eklenen kısa liste: tanımı her istekte gitmeyen araçların adları, gruplarıyla."""
+    """Short system-prompt list: names (with groups) of tools whose definitions are not sent on each request."""
     always = CORE | plugins.always_tools()
     by_group: dict[str, list[str]] = {}
     for name in tools:
@@ -228,7 +228,7 @@ def catalog(tools: dict[str, Tool]) -> str:
 
 
 def _clip(desc: str, n: int = 62) -> str:
-    """Grup açıklamasını kısalt: ilk virgüle kadar olan kısım çoğu zaman yeterli."""
+    """Shorten a group description: the part up to the first comma is usually enough."""
     desc = " ".join(desc.split())
     if len(desc) <= n:
         return desc
@@ -255,7 +255,7 @@ class LoadTools(Tool):
         servers = mcp_servers(ctx.state.get("tool_names", ()))
         groups_ = all_groups()
         known = set(groups_) | {"mcp:" + s for s in servers}
-        # Araç adı verildiyse grubunu aç (model listedeki araç adını yazabilir).
+        # If a tool name was given, open its group (the model might write the tool name from the list).
         groups = [group_of(g) or g if g not in known else g for g in groups]
         groups = ["mcp:" + g if g in servers else g for g in groups]
         wanted = known if "all" in groups else set(groups)

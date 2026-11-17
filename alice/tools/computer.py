@@ -1,8 +1,8 @@
-"""Ekran, fare ve klavye kontrolü (pixel seviyesinde bilgisayar kullanımı).
+"""Screen, mouse and keyboard control (pixel-level computer use).
 
-Koordinatlar her zaman SON ekran görüntüsünün (küçültülmüş) piksel uzayındadır;
-araç bunları gerçek ekran koordinatına kendisi çevirir. pyautogui FAILSAFE açık:
-fareyi ekranın sol üst köşesine götürmek ALICE'in fare/klavye hareketini anında keser.
+Coordinates are always in the pixel space of the LAST screenshot (downscaled); the tool converts them to real
+screen coordinates itself. pyautogui FAILSAFE is on: moving the mouse to the top-left corner of the screen
+immediately aborts ALICE's mouse/keyboard actions.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ _FALSE = {"false", "0", "no", "off", "hayır", "hayir", "h", "", "none", "null"}
 
 
 def as_bool(value: Any, name: str = "değer") -> bool:
-    """Modelin gönderdiği bayrağı bool'a çevir: "false" metni True sayılmasın (bool("false") is True)."""
+    """Convert a flag sent by the model to bool: the text "false" must not count as True (bool("false") is True)."""
     if value is None or isinstance(value, bool):
         return bool(value)
     if isinstance(value, (int, float)):
@@ -36,7 +36,7 @@ def as_bool(value: Any, name: str = "değer") -> bool:
 
 
 def as_number(value: Any, name: str, kind: type = float) -> Any:
-    """"120", 120.0 gibi değerleri sayıya çevir; çevrilemezse modelin düzeltebileceği bir ToolError."""
+    """"120", 120.0 and similar values to a number; if that fails, raise a ToolError the model can fix."""
     if isinstance(value, bool):
         raise ToolError(f"{name} sayı olmalı, {value} geldi")
     try:
@@ -49,7 +49,7 @@ def as_number(value: Any, name: str, kind: type = float) -> Any:
 
 
 def _dpi_aware() -> None:
-    """Windows'ta ölçekleme (%125/%150) varken mss ile pyautogui'nin aynı pikselleri görmesi için."""
+    """On Windows with display scaling (125%/150%), so that mss and pyautogui see the same pixels."""
     global _DPI_SET
     if _DPI_SET or sys.platform != "win32":
         return
@@ -80,9 +80,9 @@ def _pyautogui():
 
 
 def _unpark_mouse(x: int, y: int) -> bool:
-    """Fare görev başlarken zaten bir acil durdurma köşesinde park halindeyse (x, y)'ye al; aldıysa True. Bu bir "dur"
-    isteği değil: genel sınavda fare köşede beklediği için ilk iki görevde hiçbir tuşa basılamadı. Görev sırasında
-    köşeye götürülen fare ise eskisi gibi durdurur."""
+    """If the mouse is parked in an emergency-stop corner when a task starts, move it to (x, y); return True
+    if it did. This is not a "stop" request: in the general exam the mouse sat in a corner, so no key could
+    be pressed during the first two tasks. A mouse moved into a corner during a task still stops it, as before."""
     pg = _pyautogui()
     px, py = pg.position()
     if not any(abs(px - cx) <= 1 and abs(py - cy) <= 1 for cx, cy in pg.FAILSAFE_POINTS):
@@ -95,18 +95,18 @@ def _unpark_mouse(x: int, y: int) -> bool:
     return True
 
 
-unpark_mouse = _unpark_mouse  # testler bunu sahtesiyle değiştirir (gerçek fare oynamasın)
+unpark_mouse = _unpark_mouse  # tests replace this with a fake (so the real mouse doesn't move)
 
 
 def _desktop_corners() -> list[tuple[int, int]]:
-    """Acil durdurma köşeleri bütün masaüstünün (tüm monitörler) köşeleri olsun. pyautogui ana monitörün köşelerini
-    kullanıyor: solda ikinci monitör varken (0,0) iki ekranın arası, fare orada durunca klavyeyle yazma iptal oluyordu.
-    Windows dışında boş (pyautogui'nin kendi köşeleri kalır)."""
+    """Make the emergency-stop corners the corners of the whole desktop (all monitors). pyautogui uses the main
+    monitor's corners: with a second monitor on the left, (0,0) falls between the two screens, and when the mouse
+    rested there, typing got cancelled. Outside Windows this stays empty (pyautogui's own corners remain)."""
     if sys.platform != "win32":
         return []
     import ctypes
 
-    windll = getattr(ctypes, "windll", None)  # testte platform win32 diye taklit edilince yok
+    windll = getattr(ctypes, "windll", None)  # missing when a test fakes the platform as win32
     if windll is None:
         return []
     m = windll.user32.GetSystemMetrics
@@ -118,7 +118,7 @@ def _desktop_corners() -> list[tuple[int, int]]:
 
 
 def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple[str, str]:
-    """Ekran görüntüsü al, ölçeği ctx.state'e kaydet. (b64 png, açıklama) döner."""
+    """Take a screenshot and save its scale to ctx.state. Returns (b64 png, description)."""
     _dpi_aware()
     try:
         import mss
@@ -138,7 +138,7 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
     max_w = int(ctx.config.agent.get("screenshot_max_width", 1366))
     scale = img.width / max_w if img.width > max_w else 1.0
     if grid:
-        # Izgara, küçültülmüş uzayda her 100 pikselde bir etiketlenecek şekilde orijinale çizilir.
+        # Draw the grid on the original image, labelled every 100 pixels in the downscaled space.
         d = ImageDraw.Draw(img)
         step = 100 * scale
         x = step
@@ -165,13 +165,13 @@ def to_real(ctx: ToolContext, x: float, y: float) -> tuple[int, int]:
     return int(s["left"] + x * s["scale"]), int(s["top"] + y * s["scale"])
 
 
-PASTE_OVER = 40  # karakter: bundan uzun ya da çok satırlı metin tuş tuş değil panodan yapıştırılır
+PASTE_OVER = 40  # characters: longer or multi-line text is pasted from the clipboard, not typed key by key
 
 
 def send_unicode(text: str) -> bool:
-    """Windows: karakterleri tuş kodu değil Unicode olarak gönder (SendInput, KEYEVENTF_UNICODE). Klavye düzeninden
-    bağımsız: pyautogui ABD düzenine göre tuşa basıyor, Türkçe Q klavyede '1234*5678=' yazılınca '*' kayboluyordu.
-    Windows dışında False (çağıran başka yolla yazar)."""
+    """Windows: send the characters as Unicode rather than key codes (SendInput, KEYEVENTF_UNICODE). Independent of
+    the keyboard layout: pyautogui pressed keys by the US layout, so on a Turkish Q keyboard typing '1234*5678='
+    lost the '*'. Returns False outside Windows (the caller types another way)."""
     if sys.platform != "win32":
         return False
     import ctypes
@@ -202,12 +202,12 @@ def send_unicode(text: str) -> bool:
 def type_text(text: str) -> None:
     pg = _pyautogui()
     if text.isascii() and "\n" not in text and len(text) <= PASTE_OVER:
-        # Harf, rakam ve boşluk her düzende aynı tuşta; işaretler ('*', '=', '@') değil: onlar Unicode gider.
+        # Letters, digits and spaces are on the same keys in every layout; symbols ('*', '=', '@') are not: they go as Unicode.
         if all(c.isalnum() or c == " " for c in text) or not send_unicode(text):
             pg.write(text, interval=0.01)
         return
-    # Türkçe karakterler pyautogui.write ile yazılamıyor; çok satırlı/uzun metin de tuş tuş yazılınca kayboluyor
-    # (Not Defteri'ne 1-10 satır satır yazılınca dosyada sadece "9, 10" kalmıştı): panodan yapıştır.
+    # Turkish characters can't be typed with pyautogui.write; multi-line/long text also vanishes when typed key by key
+    # (typing lines 1-10 one by one into Notepad left only "9, 10" in the file): paste from the clipboard.
     try:
         import pyperclip
     except ImportError as e:
@@ -219,8 +219,8 @@ def type_text(text: str) -> None:
         pass
     pyperclip.copy(text)
     pg.hotkey("command" if sys.platform == "darwin" else "ctrl", "v")
-    # Hedef uygulama yapıştırmayı geç işleyebilir (meşgul sekme, WhatsApp): pano erken geri yüklenirse kullanıcının
-    # eski panosu (şifre olabilir) yapıştırılıyordu.
+    # The target app may handle the paste late (a busy tab, WhatsApp): if the clipboard is restored too early, the
+    # user's old clipboard (possibly a password) gets pasted.
     time.sleep(0.5)
     if old is not None:
         try:
@@ -242,7 +242,7 @@ def press_keys(keys: str) -> None:
 
 
 def hold_keys(keys: str, seconds: float) -> None:
-    """Tuşları (ör. 'shift+w') birlikte basılı tut, sonra ters sırayla bırak: oyunda koşmak, yürümek."""
+    """Hold keys such as 'shift+w' down together, then release them in reverse order: running, walking in games."""
     pg = _pyautogui()
     alias = {"control": "ctrl", "win": "win", "windows": "win", "return": "enter", "esc": "escape"}
     parts = [alias.get(k.strip().lower(), k.strip().lower()) for k in keys.replace(" ", "").split("+") if k.strip()]
@@ -329,7 +329,7 @@ class Computer(Tool):
             rx, ry = to_real(ctx, x, y)
             from alice.hud import views
 
-            views.click_target(rx, ry, action)  # HUD açıksa nereye tıklayacağını önceden göster
+            views.click_target(rx, ry, action)  # if the HUD is open, show where the click will land beforehand
             if action in ("click", "double_click", "right_click", "middle_click"):
                 button = {"right_click": "right", "middle_click": "middle"}.get(action, "left")
                 pg.click(rx, ry, clicks=2 if action == "double_click" else 1, button=button, interval=0.08)
@@ -343,7 +343,7 @@ class Computer(Tool):
                 pg.dragTo(tx, ty, duration=0.4, button="left")
             elif action == "scroll":
                 pg.moveTo(rx, ry)
-                # Windows'ta birim wheel delta (120 = bir çentik), X11'de çentik, macOS'ta satır.
+                # Wheel delta unit: 120 = one notch on Windows, one notch on X11, one line on macOS.
                 unit = {"win32": 120, "darwin": 5}.get(sys.platform, 1)
                 pg.scroll(as_number(-5 if amount is None else amount, "amount", int) * unit)
             msg = f"{action} ({x:.0f},{y:.0f})"
@@ -390,7 +390,7 @@ class ComputerTask(Tool):
             def emit(s: str) -> None:
                 ctx.emit(s)
                 log_line(s)
-                if m := re.match(r"(\d+)\. ", s):  # adım bitti: model sıradakini düşünüyor
+                if m := re.match(r"(\d+)\. ", s):  # step finished: the model is now thinking about the next one
                     views.task_step(int(m.group(1)) + 1)
 
             agent = ComputerAgent(Screen(ctx, monitor=max(0, as_number(monitor or 0, "monitor", int))),

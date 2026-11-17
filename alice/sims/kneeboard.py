@@ -1,9 +1,8 @@
-"""Oyun içi kneeboard sayfaları.
+"""In-game kneeboard pages.
 
-DCS, Saved Games\\DCS\\Kneeboard\\ altındaki resimleri kneeboard'da sayfa olarak gösterir
-(uçağa özel olanlar Kneeboard\\<uçak tipi>\\ altında). ALICE görev dosyasından frekansı ve
-waypoint'leri, ayrıca sesle eklediğin notları sayfa yapar. Notlar ~/.alice/kneeboard-notes.json'da
-durur; her değişiklikte sayfalar yeniden çizilir.
+DCS shows the images in Saved Games\\DCS\\Kneeboard\\ on the kneeboard as pages (aircraft-specific ones go under
+Kneeboard\\<aircraft type>\\). ALICE turns the frequency and waypoints from the mission file, plus notes you add
+by voice, into pages. Notes are kept in ~/.alice/kneeboard-notes.json; the pages are redrawn on every change.
 """
 
 from __future__ import annotations
@@ -75,7 +74,7 @@ class Page:
         self.y += 20
 
     def line(self, text: str, size: int = 26, mono: bool = False, color=(30, 30, 30), gap: int = 10) -> bool:
-        """Satır ekle; sayfa dolduysa False."""
+        """Add a line; return False if the page is full."""
         font = _font(size, mono)
         for chunk in _wrap(self.d, text, font, W - 80):
             if self.y + size > H - 40:
@@ -87,7 +86,7 @@ class Page:
 
     def row(self, cols: list[str], xs: list[int], size: int = 26, color=(30, 30, 30), right: set[int] = frozenset()
             ) -> bool:
-        """Tablo satırı: her sütun sabit x konumunda (right'taki sütunlar sağa yaslı, x = sağ kenar)."""
+        """Table row: each column at a fixed x position (columns in right are right-aligned, x = right edge)."""
         if self.y + size > H - 40:
             return False
         font = _font(size)
@@ -149,12 +148,12 @@ def render(mission: MissionInfo | None, notes: list[dict]) -> list:
 
 
 def kneeboard_dirs(saved_games: list[Path]) -> list[Path]:
-    # Kök klasördeki sayfalar her uçakta görünür; uçak klasörüne de yazmak sayfaları ikiler.
+    # Pages in the root folder show up for every aircraft; writing to the aircraft folder too would duplicate them.
     return [d / "Kneeboard" for d in saved_games]
 
 
 def write(pages: list, dirs: list[Path]) -> list[Path]:
-    """Eski ALICE sayfalarını silip yenilerini yaz."""
+    """Delete the old ALICE pages, then write the new ones."""
     written = []
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)

@@ -1,10 +1,11 @@
-"""Uygulamadan "Sesimi tanıt": `alice voice enroll`'un ekranlı hâli.
+""""Sesimi tanıt" ("Enroll my voice") in the app: the UI version of `alice voice enroll`.
 
-Komut satırında okunacak cümle görünmüyor, mikrofonun duyup duymadığı belli olmuyordu. Burada kayıt sunucuda
-(mikrofonun olduğu bilgisayarda) bir iş parçacığında yürür; uygulama view()'i sık sık okuyup okunacak cümleyi,
-mikrofon seviyesini, kaçıncı cümlede olunduğunu ve model indirmesinin ilerlemesini gösterir. Bitince kısa bir
-deneme yapılır. Çalışan çekirdek yeni ses izini kendisi fark eder (SpeakerGate dosyayı izler), yeniden başlatmak
-gerekmez. Tanıtma sürerken okunan "Hey Alice, saat kaç?" ALICE'i uyandırmasın diye enrolling() işareti tutulur.
+On the command line the sentence to read was not shown, and it was unclear whether the mic heard it. Here the
+recording runs on the server (the computer with the mic) in a worker thread. The app reads view() often and shows
+the sentence to read, the mic level, which sentence it is on, and the model download progress. When it finishes,
+a short test is run. The running core notices the new voice print by itself (SpeakerGate watches the file), so no
+restart is needed. While enrolling, the "Hey Alice, saat kaç?" ("Hey Alice, what time is it?") read aloud is covered
+by the enrolling() marker so it does not wake ALICE.
 """
 
 from __future__ import annotations
@@ -18,10 +19,10 @@ from typing import Any, Callable
 
 from alice.voice import speaker_id as sid
 
-LISTEN_SECONDS = 15.0  # bir cümle için bekleme; konuşulmazsa "duyamadım"
-TRIES = 3  # aynı cümle en fazla bu kadar istenir
-MIN_TAKES = 4  # bu kadar cümle alınamazsa profil kaydedilmez
-MAX_TAKE = 7.0  # sn: cümleler kısa; arka plan sesi yüzünden kayıt bitmezse en geç bu kadar sonra alınır
+LISTEN_SECONDS = 15.0  # wait for one sentence; if nothing is said, "duyamadım" ("I couldn't hear")
+TRIES = 3  # the same sentence is requested at most this many times
+MIN_TAKES = 4  # if fewer sentences than this are captured, the profile is not saved
+MAX_TAKE = 7.0  # s: sentences are short; if background sound keeps the take from ending, it is cut here
 
 
 class Cancelled(Exception):
@@ -41,7 +42,7 @@ def _make_vad():
 
 
 class EnrollSession:
-    """Tek seferde bir tanıtma. start()/test()/install() iş parçacığı başlatır, cancel() durdurur, view() durum."""
+    """One enrollment at a time. start()/test()/install() run a worker thread; cancel() stops; view() gives state."""
 
     def __init__(self, mic: Callable[[], Any] = _make_mic, vad: Callable[[], Any] = _make_vad,
                  embedder: Callable[[], Any] | None = None, pip: Callable[[], int] | None = None,
@@ -53,13 +54,13 @@ class EnrollSession:
         self.got_pause = got_pause
         self._lock = threading.Lock()
         self._cancel = threading.Event()
-        self._done = threading.Event()  # "Okudum": şimdiye kadar kaydedileni al
-        self._skip = threading.Event()  # "Bu cümleyi atla"
+        self._done = threading.Event()  # "Okudum" ("I've read it"): take what has been recorded so far
+        self._skip = threading.Event()  # "Bu cümleyi atla" ("skip this sentence")
         self._thread: threading.Thread | None = None
         self._s: dict[str, Any] = {}
         self._reset("idle")
 
-    # ------------------------------------------------------------------ durum
+    # ------------------------------------------------------------------ state
     def _reset(self, state: str, **kw: Any) -> None:
         with self._lock:
             self._s = {"state": state, "step": 0, "total": len(sid.ENROLL_SENTENCES), "sentence": "", "level": 0.0,
@@ -83,7 +84,7 @@ class EnrollSession:
                            "consistency": prof.get("consistency"), "created": prof.get("created")} if prof else None)
         return out
 
-    # ------------------------------------------------------------------ işlemler
+    # ------------------------------------------------------------------ actions
     def _run(self, name: str, fn: Callable[[], None]) -> dict[str, Any]:
         if self.running():
             return {"ok": False, "error": "zaten sürüyor"}
@@ -94,7 +95,7 @@ class EnrollSession:
                 fn()
             except Cancelled:
                 self._reset("cancelled", message="iptal edildi")
-            except Exception as e:  # noqa: BLE001 - ekranda göster, uygulama çökmesin
+            except Exception as e:  # noqa: BLE001 - show it on screen, don't crash the app
                 self._set(state="error", message=str(e) or type(e).__name__, level=0.0, hearing=False)
             finally:
                 try:
@@ -142,7 +143,7 @@ class EnrollSession:
         self._reset("idle", message="ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir")
         return {"ok": True}
 
-    # ------------------------------------------------------------------ adımlar
+    # ------------------------------------------------------------------ steps
     @staticmethod
     def _pip_install() -> int:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -178,19 +179,19 @@ class EnrollSession:
         path.touch()
 
     def _record(self, mic: Any, vad: Any) -> Any:
-        """Bir cümle kaydet; süre dolarsa ya da atlanırsa None. Ekran her karede güncellenir: dinliyor mu, duyuyor mu,
-        kaç saniyedir, ne kadar süre kaldı.
+        """Record one sentence; None if the time runs out or it is skipped. The screen is updated every frame: whether
+        it is listening, whether it hears, how many seconds have passed, how much time is left.
 
-        Cümle sonu: kısa sessizlik, YA DA ses seviyesi konuşmanın çok altına düştü (Discord/oyun sesi açıkken VAD hiç
-        "sessizlik" demiyor, kayıt 12 sn sürüp ekranda hiçbir şey değişmiyordu), YA DA MAX_TAKE saniye doldu, YA DA
-        kullanıcı "Okudum"a bastı."""
+        End of sentence: a short silence, OR the level dropped well below the speech level (while Discord/game audio
+        is on, VAD never reports "silence", and the recording ran 12 s with nothing changing on screen), OR MAX_TAKE
+        seconds have passed, OR the user pressed "Okudum" ("I've read it")."""
         from alice.voice.audio import Audio, rms
 
         frame_s = 0.03
         start_frames, end_frames, quiet_frames = 5, int(0.6 / frame_s), int(0.7 / frame_s)
         t0 = time.monotonic()
         touched = 0.0
-        ring: list[bytes] = []  # cümle gösterildiğinden beri bütün kareler ("Okudum"a basılınca kullanılır)
+        ring: list[bytes] = []  # all frames since the sentence was shown (used when "Okudum" is pressed)
         buf: list[bytes] | None = None
         voiced = silent = quiet = 0
         peak = 0.0
@@ -215,7 +216,7 @@ class EnrollSession:
             if buf is None:
                 voiced = voiced + 1 if speech else 0
                 if voiced >= start_frames:
-                    buf = ring[-(start_frames + 10):]  # konuşmanın başı kesilmesin
+                    buf = ring[-(start_frames + 10):]  # don't cut off the start of the speech
                     peak, silent, quiet = level, 0, 0
             else:
                 buf.append(frame)
@@ -225,7 +226,7 @@ class EnrollSession:
             took = len(buf) * frame_s if buf is not None else 0.0
             self._set(level=round(min(1.0, level * 6), 3), hearing=buf is not None, took=round(took, 1),
                       left=max(0, round(self.listen_seconds - (now - t0))))
-            if self._done.is_set():  # "Okudum": o ana kadarki sesi al
+            if self._done.is_set():  # "Okudum": take the audio up to that moment
                 pcm = b"".join(buf if buf is not None and took >= 1.0 else ring)
                 self._done.clear()
                 if len(pcm) / 32000 >= 1.0 and max((rms(f) for f in (buf or ring)), default=0) > 0.01:
@@ -272,7 +273,7 @@ class EnrollSession:
                         embeddings.append(emb.embed(audio.pcm, audio.rate))
                         with self._lock:
                             self._s["takes"].append(round(audio.seconds, 1))
-                        # Alındığı ekranda görünsün, sonra sıradaki cümle.
+                        # Show that it was taken on screen, then move to the next sentence.
                         self._set(got=f"✓ alındı ({audio.seconds:.1f} sn)", hearing=False, level=0.0)
                         time.sleep(self.got_pause)
                         break

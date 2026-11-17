@@ -1,29 +1,29 @@
-"""`alice eval`: gerçek konuşmalardan test seti. ALICE'in saçmaladığı cümleleri sakla, her değişiklikten sonra tekrar
-oynat, düzeldi mi bozuldu mu gör.
+"""`alice eval`: a test set built from real conversations. Save the sentences ALICE talks nonsense to, replay them
+after every change, and see whether they got fixed or broke.
 
 ~/.alice/evals.toml:
 
   [[case]]
   say = "F-16 ile F-15 arasındaki fark ne"
-  expect = "motor"                 # cevapta geçmeli (regex, büyük/küçük harf duyarsız)
+  expect = "motor"                 # must appear in the reply (regex, case-insensitive)
   forbid = "bilmiyorum|emin değilim"
-  expect_tools = ["web_search"]    # bunlardan en az biri çağrılmalı
+  expect_tools = ["web_search"]    # at least one of these must be called
   forbid_tools = ["run_command"]
-  role = "brain"                   # brain (varsayılan) | voice | fast ya da "sağlayıcı:model"
+  role = "brain"                   # brain (default) | voice | fast or "provider:model"
 
-Vakalar "ask" modunda çalışır ve her onay sorusu otomatik reddedilir: ALICE okur ve araştırır (web, dosya okuma),
-ama değişiklik yapan, ekrana dokunan ya da mesaj gönderen araçlar ÇALIŞMAZ; yine de hangi aracı seçtiği kaydedilir
-(doğru aracı mı seçti, görülür). Test konuşmaları hafızaya yazılmaz. Sonuçlar
-~/.alice/eval-results.json'a yazılır; bir sonraki çalıştırma öncekiyle karşılaştırır.
+Cases run in "ask" mode and every confirmation question is automatically declined: ALICE reads and researches (web, file
+reading), but tools that change something, touch the screen or send messages do NOT run; the tool it chose is still
+recorded (so you can see whether it picked the right one). Test conversations are not written to memory. Results
+are written to ~/.alice/eval-results.json; the next run is compared with the previous one.
 
-  alice eval                       hepsini çalıştır
-  alice eval --only f16            adında/cümlesinde "f16" geçenler
-  alice eval --add "cümle"         yeni vaka (beklentileri dosyada doldur)
-  alice eval --from-log 20         voice.log'daki son 20 cümleyi vaka taslağı olarak ekle
-  alice eval --feedback            beğenmediğin cevaplar (sesle "bu cevap kötüydü" ya da uygulamada 👎)
+  alice eval                       run all
+  alice eval --only f16            those with "f16" in the name or sentence
+  alice eval --add "cümle"         new case (fill in the expectations in the file)
+  alice eval --from-log 20         add the last 20 sentences from voice.log as case drafts
+  alice eval --feedback            answers you didn't like (voice "bu cevap kötüydü", or 👎 in the app)
 
-Beğenmediğin her cevap (feedback aracı ya da uygulamadaki 👎) ~/.alice/feedback.jsonl'a yazılır ve isteğin, kötü
-cevap ve notunla birlikte buraya vaka olarak eklenir; expect/forbid'i doldurunca her çalıştırmada denenir.
+Every answer you didn't like (feedback tool or 👎 in the app) is written to ~/.alice/feedback.jsonl, and the request,
+the bad answer and your note are added here as a case; once you fill in expect/forbid, it is tried on every run.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def load_cases(path: Path | None = None) -> list[Case]:
 
 
 def _toml_str(s: str) -> str:
-    return json.dumps(s, ensure_ascii=False)  # JSON dizgesi geçerli bir TOML temel dizgesidir
+    return json.dumps(s, ensure_ascii=False)  # a JSON string is a valid TOML basic string
 
 
 def add_cases(sayings: list[str], note: str = "", path: Path | None = None) -> int:
@@ -123,8 +123,8 @@ def feedback_path() -> Path:
 
 
 def record_feedback(say: str, reply: str, note: str = "", source: str = "", path: Path | None = None) -> bool:
-    """Beğenilmeyen cevabı kaydet: feedback.jsonl'a satır, evals.toml'a vaka (aynı istek zaten varsa eklenmez).
-    Döner: yeni vaka eklendi mi."""
+    """Save a disliked answer: a line in feedback.jsonl and a case in evals.toml (skipped if the same request exists).
+    Returns: whether a new case was added."""
     say, reply, note = (say or "").strip(), (reply or "").strip(), (note or "").strip()
     try:
         with feedback_path().open("a", encoding="utf-8") as f:
@@ -208,12 +208,12 @@ class _RecUI:
             self.models.append(source)
 
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
-        self.tools.append(name)  # seçtiği araç sayılır ama çalışmaz
+        self.tools.append(name)  # counts as the chosen tool, but does not run
         return "n"
 
 
 def run_case(case: Case, make_agent) -> Outcome:
-    """make_agent() -> konuşması sıfırlanmış bir Agent ("ask" modunda, hafızasız)."""
+    """make_agent() -> an Agent with its conversation reset (in "ask" mode, without memory)."""
     agent = make_agent()
     ui = _RecUI()
     agent.ui = ui
@@ -222,14 +222,14 @@ def run_case(case: Case, make_agent) -> Outcome:
     t0 = time.monotonic()
     try:
         reply = agent.run_turn(case.say, max_steps=12) or ""
-    except Exception as e:  # noqa: BLE001 - bir vaka çökse de set sürsün
+    except Exception as e:  # noqa: BLE001 - even if one case crashes, let the set continue
         reply = f"HATA {type(e).__name__}: {e}"
     reasons = check(case, reply, ui.tools)
     return Outcome(case, not reasons, reply, ui.tools, reasons, time.monotonic() - t0, ui.models[-1] if ui.models else "")
 
 
 def save_results(outcomes: list[Outcome]) -> dict[str, Any]:
-    """Sonuçları yaz; öncekiyle karşılaştırma döndür: {'before': n, 'fixed': [...], 'broken': [...]}."""
+    """Write the results; return comparison with the previous run: {'before': n, 'fixed': [...], 'broken': [...]}."""
     path = results_path()
     try:
         prev = json.loads(path.read_text(encoding="utf-8"))
@@ -247,7 +247,7 @@ def save_results(outcomes: list[Outcome]) -> dict[str, Any]:
 
 
 def run_all(cases: list[Case], on_case=lambda i, o: None, stop=lambda: False, cfg: Any = None) -> list[Outcome]:
-    """Vakaları "ask" modunda, hafızasız bir ajanla sırayla oynat (komut satırı ve uygulama aynı yolu kullanır)."""
+    """Play the cases in order in "ask" mode with a memoryless agent (CLI and app share this path)."""
     from pathlib import Path as _P
 
     from alice.cli import build
@@ -255,7 +255,7 @@ def run_all(cases: list[Case], on_case=lambda i, o: None, stop=lambda: False, cf
     from alice.tools import cleanup
 
     agent, _, ctx = build(cfg or load_config(), _P.home(), "ask")
-    agent.memory = None  # test konuşmaları hafızaya kaydedilmesin (profil sistem isteminde kalır)
+    agent.memory = None  # test conversations are not saved to memory (the profile stays in the system prompt)
     base_role = agent.role
 
     def make_agent():

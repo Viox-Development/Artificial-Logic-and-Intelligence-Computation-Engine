@@ -1,8 +1,9 @@
-"""Ne çalıyor ve onu kontrol et: Windows'un medya oturumları (ses simgesinin yanındaki oynatıcı kutusu).
+"""What is playing and control it: Windows' media sessions (the player box next to the volume icon).
 
-Spotify, Sonora, YouTube Music, tarayıcıdaki video... medya kontrolüne bağlanan her uygulama burada görünür; ALICE
-çalanı okur ve tam o uygulamayı durdurur/geçer. Medya tuşları (extras.media) son odaklanan uygulamaya gidiyordu ve ne
-çaldığını söyleyemiyordu. Windows dışında ya da paket yoksa None/False: çağıran medya tuşlarına düşer.
+Spotify, Sonora, YouTube Music, a video in the browser... every app connected to media control shows up here;
+ALICE reads what is playing and stops/skips in that exact app. Media keys (extras.media) used to go to the last
+focused app and could not say what was playing. Outside Windows or without the package: None/False, and the caller
+falls back to the media keys.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ APPS = {"spotify": "Spotify", "sonora": "Sonora", "chrome": "Chrome", "opera": "
 
 
 def app_name(aumid: str) -> str:
-    """'SpotifyAB.SpotifyMusic_zpdnek!Spotify' / 'sonora.exe' -> okunur ad."""
+    """'SpotifyAB.SpotifyMusic_zpdnek!Spotify' / 'sonora.exe' -> readable name."""
     low = (aumid or "").lower()
     for key, name in APPS.items():
         if key in low:
@@ -38,7 +39,7 @@ def _run(coro_fn: Callable[[], Any]) -> Any:
         return None
     try:
         return asyncio.run(coro_fn())
-    except Exception:  # noqa: BLE001 - paket yok, oturum kapandı, COM hatası: çağıran yedeğe düşer
+    except Exception:  # noqa: BLE001 - no package, session closed, COM error: the caller falls back
         return None
 
 
@@ -50,7 +51,7 @@ async def _session():
 
 
 def now() -> dict[str, Any] | None:
-    """Şu anki medya: {app, title, artist, album, status} ya da None (çalan bir şey yok)."""
+    """Current media: {app, title, artist, album, status}, or None (nothing playing)."""
 
     async def go():
         s = await _session()
@@ -65,7 +66,7 @@ def now() -> dict[str, Any] | None:
 
 
 def control(action: str) -> bool:
-    """Şu anki oturumda play_pause/next/previous/stop/play/pause. Olmadıysa False."""
+    """Send play_pause/next/previous/stop/play/pause to the current session. False if it did not work."""
     method = CONTROL.get(action)
     if method is None:
         return False
@@ -88,7 +89,7 @@ def describe(n: dict[str, Any] | None) -> str:
 
 
 class Watcher:
-    """Parça değişince HUD'da kısa süre "♪ şarkı · sanatçı" göster. Ayrı iş parçacığı, birkaç saniyede bir bakar."""
+    """On track change, briefly show "♪ şarkı · sanatçı" on the HUD. Own thread; checks every few seconds."""
 
     def __init__(self, show: Callable[[dict[str, Any]], Any], every: float = 2.5,
                  read: Callable[[], dict[str, Any] | None] = now):
@@ -106,7 +107,7 @@ class Watcher:
         first = self.last is None
         self.last = key
         if first:
-            return False  # ALICE açılırken zaten çalan şarkıyı duyurma
+            return False  # do not announce the song already playing while ALICE starts
         self.show(n)
         return True
 

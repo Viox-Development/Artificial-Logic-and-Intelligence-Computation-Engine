@@ -1,6 +1,6 @@
-"""alice/tools/desktop.py: pencere eşleme (Türkçe harfler, yanlış pencereyi kapatmama), argüman doğrulama,
-risk sınıfları ve UIA yardımcıları. pygetwindow/pywinauto/pyperclip/wmctrl sahte nesnelerle değiştirilir;
-gerçek pencere ya da süreç kullanılmaz, Linux ve Windows'ta aynı çalışır."""
+"""alice/tools/desktop.py: window matching (Turkish letters, not closing the wrong window), argument validation,
+risk classes and UIA helpers. pygetwindow/pywinauto/pyperclip/wmctrl are replaced with fake objects;
+no real window or process is used, and it behaves the same on Linux and Windows."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class FakeWin:
 
 @pytest.fixture
 def gw(monkeypatch):
-    """macOS yolu (pygetwindow): Windows'a özgü ctypes öne alma çağrılmasın."""
+    """macOS path (pygetwindow): make sure the Windows-only ctypes foreground call is not made."""
     wins = [FakeWin("Belgeler - Dosya Gezgini"), FakeWin("İndirilenler - Dosya Gezgini"),
             FakeWin("a.txt - Not Defteri"), FakeWin("b.txt - Not Defteri"), FakeWin("Not Defteri"), FakeWin("")]
     mod = types.ModuleType("pygetwindow")
@@ -54,7 +54,7 @@ def ctx(workdir):
     return ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
 
 
-# ------------------------------------------------------------ eşleme yardımcıları
+# ------------------------------------------------------------ matching helpers
 
 
 @pytest.mark.parametrize("a,b", [("İNDİRİLENLER", "indirilenler"), ("Işık", "işik"), ("ıŞIK", "IŞIK"),
@@ -68,16 +68,16 @@ def test_norm_matches_turkish_dotted_capital():
 
 
 def test_pick_window_turkish_and_preference(gw):
-    # eskiden "indirilenler" ile "İndirilenler" bulunamıyordu ("İ".lower() == "i̇")
+    # previously "indirilenler" did not find "İndirilenler" ("İ".lower() == "i̇")
     assert desktop.pick_window(gw, "indirilenler").title.startswith("İndirilenler")
-    assert desktop.pick_window(gw, "NOT DEFTERI").title == "Not Defteri"  # tam eşleşme öncelikli
+    assert desktop.pick_window(gw, "NOT DEFTERI").title == "Not Defteri"  # exact match takes priority
     assert desktop.pick_window(gw, "a.txt").title == "a.txt - Not Defteri"
 
 
 def test_pick_window_strict_refuses_ambiguous(gw):
     with pytest.raises(ToolError, match="birden çok pencere"):
         desktop.pick_window(gw, "dosya gezgini", strict=True)
-    # tam başlık verilince tek pencere
+    # a full title matches exactly one window
     assert desktop.pick_window(gw, "Not Defteri", strict=True).title == "Not Defteri"
 
 
@@ -90,10 +90,10 @@ def test_pick_window_empty_title(gw, title):
 def test_pick_window_missing(gw):
     with pytest.raises(ToolError, match="pencere yok") as ei:
         desktop.pick_window(gw, "Discord")
-    assert "Açık pencereler:" in str(ei.value) and "Not Defteri" in str(ei.value)  # model başlığı tahmin etmesin
+    assert "Açık pencereler:" in str(ei.value) and "Not Defteri" in str(ei.value)  # so the model does not have to guess the title
 
 
-# --------------------------------------------------------------- pencere işlemleri
+# --------------------------------------------------------------- window operations
 
 
 def test_list_windows_mac_drops_blank_titles(gw):
@@ -165,7 +165,7 @@ def test_focus_window_linux_reports_missing_window(linux):
     calls, state = linux
     assert desktop.focus_window("Firefox") == "Firefox"
     assert calls[-1] == ["wmctrl", "-a", "Firefox"]
-    state["rc"] = 1  # eskiden sessizce "öne alındı" diyordu
+    state["rc"] = 1  # it used to silently say "öne alındı" (brought to front)
     with pytest.raises(ToolError, match="pencere yok"):
         desktop.focus_window("Yok")
     with pytest.raises(ToolError, match="boş"):
@@ -214,7 +214,7 @@ def test_windows_risk_levels():
     t = desktop.Windows()
     assert t.risk_for({"action": "list"}) == READ
     assert t.risk_for({"action": "find", "target": "x"}) == READ
-    assert t.risk_for({"action": "open", "target": "kur.bat."}) == EXEC  # sondaki nokta kaçış yolu değil
+    assert t.risk_for({"action": "open", "target": "kur.bat."}) == EXEC  # a trailing dot is not a way around the check
     assert t.risk_for({"action": "open", "target": None}) == COMPUTER
     for a in ("close", "minimize", "focus", "navigate"):
         assert t.risk_for({"action": a, "title": "x"}) == COMPUTER
@@ -226,7 +226,7 @@ def test_windows_risk_levels():
 
 @pytest.mark.parametrize("target", ["", "   ", None])
 def test_open_app_rejects_empty_target(target, monkeypatch):
-    monkeypatch.setattr(desktop, "IS_WIN", True)  # Windows'ta Path("") "." -> çalışma klasörü açılıyordu
+    monkeypatch.setattr(desktop, "IS_WIN", True)  # on Windows Path("") is "." and opened the working folder
     with pytest.raises(ToolError, match="boş"):
         desktop.open_app(target)
 
@@ -260,7 +260,7 @@ def test_open_app_windows_rejects_cmd_metacharacters(monkeypatch):
     assert popen == []
 
 
-# --------------------------------------------------------------- Windows aracı
+# --------------------------------------------------------------- Windows tool
 
 
 def test_windows_run_validates_arguments(ctx):
@@ -270,14 +270,14 @@ def test_windows_run_validates_arguments(ctx):
             t.run(ctx, action, target="   ")
     for action in ("focus", "close", "minimize"):
         with pytest.raises(ToolError, match="title gerekli"):
-            t.run(ctx, action, title="  ")  # boşluk başlık ilk pencereyi kapatıyordu
+            t.run(ctx, action, title="  ")  # a blank title used to close the first window
 
 
 def test_windows_run_coerces_new_tab_string(ctx, monkeypatch):
     seen: list = []
     monkeypatch.setattr(desktop, "navigate_tab", lambda target, title, new_tab: seen.append(new_tab) or "ok")
     t = desktop.Windows()
-    t.run(ctx, "navigate", target="github.com", new_tab="false")  # bool("false") True idi: yeni sekme açıyordu
+    t.run(ctx, "navigate", target="github.com", new_tab="false")  # bool("false") was True, so it opened a new tab
     t.run(ctx, "navigate", target="github.com", new_tab="true")
     t.run(ctx, "navigate", target="github.com")
     assert seen == [False, True, None]
@@ -372,7 +372,7 @@ def test_browser_window_title(monkeypatch):
     assert desktop.browser_window_title() == "Opera"
 
 
-# ----------------------------------------------------------- uygulama arama
+# ----------------------------------------------------------- app search
 
 
 def test_match_start_app_turkish_and_exact_first(monkeypatch):
@@ -511,7 +511,7 @@ def test_collect_ui_elements_filters_and_numbers(ctx, monkeypatch):
 
 
 def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
-    """WebView2 Document'ının değeri sayfanın bütün metni: okumak bir dakika sürüyordu."""
+    """The value of a WebView2 Document is the whole page text: reading it took a full minute."""
     class Doc(FakeEl):
         def get_value(self):
             raise AssertionError("Document metni okunmamalı")
@@ -588,7 +588,7 @@ def test_ui_act_click_falls_back_to_click_input(ctx, no_sleep):
     assert [c[0] for c in el.calls] == ["click_input", "double_click_input", "right_click_input", "set_focus"]
 
 
-# ------------------------------------------------------------------ pano
+# ------------------------------------------------------------------ clipboard
 
 
 def test_clipboard_set_requires_text(ctx, monkeypatch):
@@ -596,7 +596,7 @@ def test_clipboard_set_requires_text(ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyperclip", SimpleNamespace(paste=lambda: "", copy=copies.append))
     c = desktop.Clipboard()
     with pytest.raises(ToolError, match="text gerekli"):
-        c.run(ctx, action="set")  # eskiden panoyu sessizce boşaltıyordu
+        c.run(ctx, action="set")  # it used to silently empty the clipboard
     assert copies == []
     assert c.run(ctx, action="set", text=42).text == "panoya kopyalandı"
     assert copies == ["42"]
@@ -613,7 +613,7 @@ def test_clipboard_without_pyperclip(ctx, monkeypatch):
 
 
 def test_uri_opens_directly_without_searching(monkeypatch):
-    """Ayarlar sayfası (ms-settings:) aramaya sokulunca 42 sn'de açılmıştı."""
+    """The Settings page (ms-settings:) had taken 42 s to open once it went through search."""
     if not desktop.IS_WIN:
         return
     opened = []
@@ -625,7 +625,7 @@ def test_uri_opens_directly_without_searching(monkeypatch):
 
 
 def test_desktop_shortcuts_are_not_scanned_recursively(tmp_path, monkeypatch):
-    """Masaüstü alt klasörleriyle taranıyordu: projelerle dolu masaüstünde her uygulama açılışı ~20 sn."""
+    """The desktop was scanned recursively: with a desktop full of projects, each app launch took ~20 s."""
     start, desk = tmp_path / "Start", tmp_path / "Desktop"
     (start / "Araçlar").mkdir(parents=True)
     (desk / "projeler" / "derin").mkdir(parents=True)
@@ -635,7 +635,7 @@ def test_desktop_shortcuts_are_not_scanned_recursively(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop, "_shortcut_roots", lambda: [start, desk])
     desktop._shortcut_cache.clear()
     names = sorted(p.name for p in desktop._shortcut_files())
-    assert names == ["Hesap Makinesi.lnk", "Oyun.lnk"]  # Başlat menüsü derin, masaüstü sadece üst seviye
+    assert names == ["Hesap Makinesi.lnk", "Oyun.lnk"]  # Start menu is scanned deeply, desktop only at the top level
     assert desktop._start_menu_lookup("gizli uygulama") is None
 
 
@@ -649,5 +649,5 @@ def test_failsafe_corners_cover_all_monitors(monkeypatch):
     metrics = {76: -3440, 77: 0, 78: 6880, 79: 1440}
     monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", lambda i: metrics[i])
     corners = computer._desktop_corners()
-    assert (0, 0) not in corners  # iki monitörün arası: fare orada durabiliyor
+    assert (0, 0) not in corners  # the gap between two monitors, where the mouse can rest
     assert corners == [(-3440, 0), (-3440, 1439), (3439, 0), (3439, 1439)]

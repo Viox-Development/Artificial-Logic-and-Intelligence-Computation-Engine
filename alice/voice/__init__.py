@@ -1,11 +1,11 @@
-"""ALICE'in sesi ve kulağı.
+"""ALICE's voice and ears.
 
-  audio     -> PCM yardımcıları, WAV okuma/yazma, çalma (durdurulabilir) ve mikrofon
-  tone      -> söylenecek şeye göre duygu seçimi (sakin, neşeli, ciddi, acil, şakacı)
-  tts       -> ses motorları: Gemini (bulut), XTTS ve Chatterbox (yerel, duygu kütüphanesinden klonlar)
-  stt       -> konuşmayı yazıya çevirme: Groq Whisper (bulut), faster-whisper (yerel)
-  speaker   -> cümle cümle sentezleyip sırayla çalan, araya girilince susan konuşmacı
-  listen    -> konuşma algılama (VAD), bas-konuş ve "Hey Alice"
-  assistant -> dinle -> anla -> ALICE -> konuş döngüsü
-  audition  -> ses seçimi için dinleme testi
+  audio     -> PCM helpers, WAV read/write, playback (cancellable) and microphone
+  tone      -> emotion selection based on what is being said (calm, cheerful, serious, urgent, playful)
+  tts       -> voice engines: Gemini (cloud), XTTS and Chatterbox (local, clones from emotion library)
+  stt       -> speech-to-text: Groq Whisper (cloud), faster-whisper (local)
+  speaker   -> speaker that synthesizes sentence by sentence, plays sequentially, and shuts up when interrupted
+  listen    -> speech detection (VAD), push-to-talk and "Hey Alice"
+  assistant -> listen -> understand -> ALICE -> speak loop
+  audition  -> listening test for voice selection
 """

@@ -1,4 +1,4 @@
-"""Hafıza v2 (anlam araması, özet, takipler), projeler, sesli düşünme ve "iş bitmeden durma" kontrolü."""
+"""Memory v2 (semantic search, summaries, follow-ups), projects, voice thinking, and the "iş bitmeden durma" check."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from tests.conftest import tool_call
 from tests.test_agent import make_agent
 
 
-# ----------------------------------------------------------------------------------------- vektörler
+# ----------------------------------------------------------------------------------------- vectors
 class FakeEmbedder:
-    """Kelimeye göre sabit yön: 'proje/unity/oyun' aynı yönde, 'kahve/çay' başka yönde."""
+    """Fixed direction per word: 'proje/unity/oyun' point the same way, 'kahve/çay' point elsewhere."""
 
     available = True
 
@@ -51,7 +51,7 @@ def test_pack_and_top():
     a, b = normalize([1, 0]), normalize([0.6, 0.8])
     assert unpack(pack(a)) == [1.0, 0.0]
     hits = top(a, [("a", pack(a)), ("b", pack(b)), ("x", pack([1.0, 0.0, 0.0]))], k=5, min_score=0.5)
-    assert [h[0] for h in hits] == ["a", "b"]  # boyutu uymayan vektör atlanır
+    assert [h[0] for h in hits] == ["a", "b"]  # a vector with a mismatched size is skipped
 
 
 def test_embedder_posts_and_backs_off():
@@ -79,7 +79,7 @@ def test_embedder_posts_and_backs_off():
         e.embed(["c"])
     except RuntimeError:
         pass
-    assert not e.available  # hata sonrası bir süre denenmez: konuşma turları beklemesin
+    assert not e.available  # after an error nothing is tried for a while, so conversation turns don't wait
 
 
 def test_semantic_search_finds_without_common_words():
@@ -93,7 +93,7 @@ def test_semantic_search_finds_without_common_words():
     assert hits and "FPS" in hits[0].item.text
     plain = LongMemory(":memory:", {})
     plain.add_summary(now - 600, now - 500, "Kullanıcı Unity'de bir FPS yapıyor.")
-    assert plain.search("geliştirdiğim şey neydi") == []  # kelime aramasıyla bulunamıyordu
+    assert plain.search("geliştirdiğim şey neydi") == []  # keyword search could not find it before
 
 
 def test_vectors_follow_deletes():
@@ -106,7 +106,7 @@ def test_vectors_follow_deletes():
     assert m.db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == 0
 
 
-# ----------------------------------------------------------------------------------------- özet ve takipler
+# ----------------------------------------------------------------------------------------- summary and follow-ups
 def _old(m: LongMemory, hours: float) -> None:
     m.db.execute("UPDATE episodes SET ts = ts - ?", (hours * 3600,))
     m.db.commit()
@@ -132,23 +132,23 @@ def test_digest_summarizes_and_creates_followups():
     assert m.digest() == 1
     assert "matematik" in seen[0] and "FPS" in seen[0]
     assert m.summaries()[0].text.startswith("Matematik sınavına")
-    assert m.notes.scan() == []  # özet not yazmaz: kalıcı notlar tur sonu çıkarımından ve Dream'den
+    assert m.notes.scan() == []  # a summary writes no note: permanent notes come from end-of-turn extraction and Dream
     prof = m.profile()
     assert "Earlier conversations" in prof and "Silah sistemine" in prof
-    assert "Matematik sınavının" not in prof  # günü gelmedi
+    assert "Matematik sınavının" not in prof  # its day has not come yet
     later = time.time() + 2 * 86400
     assert any("Matematik" in f.text for f in m.due_followups(later))
-    assert m.digest() == 0  # aynı konuşma iki kez özetlenmez
+    assert m.digest() == 0  # the same conversation is not summarized twice
 
 
 def test_digest_waits_for_conversation_to_end_and_skips_trivial():
     calls = []
     m = LongMemory(":memory:", {}, lambda p: calls.append(p) or "{}")
     m.record("saat kaç", "Üç.")
-    assert m.pending_sessions() == []  # konuşma sürüyor
+    assert m.pending_sessions() == []  # conversation still ongoing
     _old(m, 1)
     assert len(m.pending_sessions()) == 1
-    assert m.digest() == 0 and calls == []  # tek kısa tur: modele gitmez, ama işaretlenir
+    assert m.digest() == 0 and calls == []  # single short turn: not sent to the model, but marked
     assert m.pending_sessions() == []
 
 
@@ -161,8 +161,8 @@ def test_digest_failure_backs_off_and_retries_later():
     _old(m, 1)
     assert m.digest() == 0
     assert float(m._meta("digest_fail_until")) > time.time()
-    assert len(m.pending_sessions()) == 1  # kaybolmadı, sonra tekrar denenecek
-    for _ in range(5):  # ağ/kota hatası konuşmayı hiçbir zaman atlatmaz
+    assert len(m.pending_sessions()) == 1  # not lost, it will be retried later
+    for _ in range(5):  # network/quota errors never cause the conversation to be skipped
         m.digest()
     assert len(m.pending_sessions()) == 1
 
@@ -173,7 +173,7 @@ def test_digest_skips_a_conversation_the_model_never_answers_usably():
     def extractor(prompt):
         calls.append(prompt)
         if "Unity" in prompt:
-            return "{}"  # bu konuşma için model hep boş/bozuk cevap veriyor
+            return "{}"  # the model always gives an empty/broken answer for this conversation
         return json.dumps({"summary": "Matematik sınavı planlandı.", "followups": [], "done": []})
 
     m = LongMemory(":memory:", {}, extractor)
@@ -184,8 +184,8 @@ def test_digest_skips_a_conversation_the_model_never_answers_usably():
     for _ in range(3):
         m._meta("digest_fail_until", "0")
         m.digest()
-    # Kullanılamaz cevap veren konuşma birkaç denemeden sonra atlanır; sonraki konuşma özetlenir (eskiden sonsuza
-    # dek takılıyordu).
+    # A conversation that keeps giving unusable answers is skipped after a few attempts; the next conversation
+    # gets summarized (it used to hang forever).
     assert [s.text for s in m.summaries()] == ["Matematik sınavı planlandı."]
     assert m.pending_sessions() == []
 
@@ -194,11 +194,11 @@ def test_followup_lifecycle_and_expiry():
     m = LongMemory(":memory:", {})
     yesterday = time.time() - 86400
     a = m.add_followup("Maçın nasıl geçtiğini sor.", yesterday, "ask")
-    assert m.add_followup("Maçın nasıl geçtiğini sor.", yesterday, "ask") == a  # aynısı iki kez eklenmez
+    assert m.add_followup("Maçın nasıl geçtiğini sor.", yesterday, "ask") == a  # the same item is not added twice
     old = m.add_followup("Eski sınavı sor.", time.time() - 10 * 86400, "ask")
     due = m.due_followups()
     assert [f.id for f in due] == [a]
-    assert old not in [f.id for f in m.followups()]  # çok eskisi kendiliğinden düştü
+    assert old not in [f.id for f in m.followups()]  # one that is too old dropped off by itself
     assert "Follow-ups due" in m.profile()
     assert m.done_followup(a).text.startswith("Maçın")
     assert m.due_followups() == []
@@ -217,17 +217,17 @@ def test_memory_tool_followups(workdir):
     assert "Mülakat" in tool.run(agent.ctx, "followups").text
     assert "kapatıldı" in tool.run(agent.ctx, "done", id=fid).text
     with pytest.raises(ToolError):
-        tool.run(agent.ctx, "followup", note="Sınavı sor.", followup_kind="ask")  # günsüz "ask" olmaz
+        tool.run(agent.ctx, "followup", note="Sınavı sor.", followup_kind="ask")  # an "ask" without a date is not allowed
 
 
-# ----------------------------------------------------------------------------------------- projeler
+# ----------------------------------------------------------------------------------------- projects
 def _make_projects(home: Path) -> None:
     game = home / "GitHub" / "SkyFighter"
     (game / "Assets" / "Scripts").mkdir(parents=True)
     (game / "Assets" / "Scripts" / "Gun.cs").write_text("class Gun {}", encoding="utf-8")
     (game / "ProjectSettings").mkdir()
     (game / "ProjectSettings" / "ProjectVersion.txt").write_text("m_EditorVersion: 6000.0.23f1\n", encoding="utf-8")
-    old = time.time() - 30 * 86400  # oyun bir ay önce, bot az önce çalışıldı
+    old = time.time() - 30 * 86400  # the game was a month ago, the bot was worked on just now
     for f in game.rglob("*"):
         os.utime(f, (old, old))
     bot = home / "Projects" / "discord-bot"
@@ -240,7 +240,7 @@ def _make_projects(home: Path) -> None:
         f"1111 2222 Hayat <h@x> {now - 60} +0300\tcommit: müzik komutu eklendi\n", encoding="utf-8")
     (bot / "main.py").write_text("print('bot')\n", encoding="utf-8")
     (bot / "README.md").write_text("# Bot\n\nArkadaşlarla kullandığımız Discord müzik ve moderasyon botu.\n", encoding="utf-8")
-    (home / "Documents" / "notlar").mkdir(parents=True)  # proje değil
+    (home / "Documents" / "notlar").mkdir(parents=True)  # not a project
 
 
 def test_scan_detects_projects_and_cleans_secrets(tmp_path, monkeypatch):
@@ -251,7 +251,7 @@ def test_scan_detects_projects_and_cleans_secrets(tmp_path, monkeypatch):
     by = {p.name: p for p in found}
     assert set(by) == {"SkyFighter", "discord-bot"}
     bot, game = by["discord-bot"], by["SkyFighter"]
-    assert found[0].name == "discord-bot"  # en son çalışılan önce
+    assert found[0].name == "discord-bot"  # most recently worked on first
     assert bot.remote == "hayat/discord-bot" and "SECRET" not in json.dumps(bot.__dict__)
     assert bot.last_commit == "müzik komutu eklendi" and bot.branch == "main"
     assert bot.languages == ["Python"] and bot.readme.startswith("Arkadaşlarla")
@@ -267,7 +267,7 @@ def test_projects_cache_brief_and_tool(tmp_path, monkeypatch, workdir):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(projects, "enabled", lambda cfg=None: True)
     assert projects.get(None, background=False)[0].name == "discord-bot"
-    assert projects.load()[0] > 0  # önbelleğe yazıldı
+    assert projects.load()[0] > 0  # written to the cache
     assert "discord-bot" in projects.brief(None) and "SkyFighter" in projects.names(None)
     agent, _, _ = make_agent([], workdir)
     tool = Projects()
@@ -275,7 +275,7 @@ def test_projects_cache_brief_and_tool(tmp_path, monkeypatch, workdir):
     assert "eşleşen proje yok" in tool.run(agent.ctx, "find", query="zzzz").text
 
 
-# ----------------------------------------------------------------------------------------- ajan
+# ----------------------------------------------------------------------------------------- agent
 def test_agent_continues_when_todo_left_unfinished(workdir):
     todos = [{"content": "Dosyayı yaz", "status": "done"}, {"content": "Testleri çalıştır", "status": "pending"}]
     script = [tool_call("todo_write", {"todos": todos}), "Dosyayı yazdım.",
@@ -293,13 +293,13 @@ def test_agent_nudges_promise_but_not_questions_or_chat(workdir):
     assert agent.run_turn("testleri çalıştır") == "Çalıştırdım, hepsi geçti."
     agent2, _, _ = make_agent([tool_call("list_dir", {"path": "."}), "Hangisini silmemi istersin?"], workdir)
     assert agent2.run_turn("dosyalara bak").endswith("?")
-    agent3, _, _ = make_agent(["Yarın bakacağım."], workdir)  # araç kullanmadan sohbet: dokunma
+    agent3, _, _ = make_agent(["Yarın bakacağım."], workdir)  # chat without using tools: leave it alone
     assert agent3.run_turn("sence?") == "Yarın bakacağım."
     agent4, _, _ = make_agent([tool_call("list_dir", {"path": "."}), "Şimdi bakacağım."], workdir, finish_nudges=0)
     assert agent4.run_turn("bak") == "Şimdi bakacağım."
 
 
-# ----------------------------------------------------------------------------------------- ses
+# ----------------------------------------------------------------------------------------- voice
 def test_needs_thinking_routes_questions_not_commands():
     assert needs_thinking("Unity'de raycast neden çalışmıyor")
     assert needs_thinking("F-16 ile F-15 arasındaki farkı anlat")
@@ -340,7 +340,7 @@ def test_live_setup_declares_think_and_history():
     assert "Az önceki konuşma" not in setup["systemInstruction"]["parts"][0]["text"]
 
 
-# ----------------------------------------------------------------------------------------- sağlayıcı
+# ----------------------------------------------------------------------------------------- provider
 def test_cloudflare_needs_account_id(monkeypatch):
     from alice.config import load_config
 
@@ -349,11 +349,11 @@ def test_cloudflare_needs_account_id(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acc123")
     pc = load_config().providers()["cloudflare"]
     assert pc.enabled and "/accounts/acc123/ai/v1" in pc.base_url
-    assert "@cf/zai-org/glm-4.7-flash" in pc.models and not any("kimi" in m for m in pc.models)  # Kimi paralı
+    assert "@cf/zai-org/glm-4.7-flash" in pc.models and not any("kimi" in m for m in pc.models)  # Kimi is paid
 
 
 def test_old_cloudflare_list_with_paid_kimi_is_replaced(monkeypatch):
-    # Eski `alice init` config.toml'a Kimi'li listeyi yazmıştı; kullanıcı dokunmadıysa yeni liste geçerli.
+    # An old `alice init` had written the Kimi list into config.toml; if the user did not touch it, the new list applies.
     from alice.config import LEGACY_DEFAULTS, alice_home, init_home, load_config
 
     old = next(v for (sec, key), v in LEGACY_DEFAULTS if sec == "providers.cloudflare")
@@ -365,7 +365,7 @@ def test_old_cloudflare_list_with_paid_kimi_is_replaced(monkeypatch):
     assert old[0] in p.read_text(encoding="utf-8")
     assert not any("kimi" in m for m in load_config().data["providers"]["cloudflare"]["models"])
     p.write_text(p.read_text(encoding="utf-8").replace(old[0], "@cf/benim/modelim", 1), encoding="utf-8")
-    assert load_config().data["providers"]["cloudflare"]["models"][0] == "@cf/benim/modelim"  # elle değiştirdiyse kalır
+    assert load_config().data["providers"]["cloudflare"]["models"][0] == "@cf/benim/modelim"  # stays if the user changed it by hand
 
 
 def test_model_not_on_free_plan_does_not_kill_whole_provider():

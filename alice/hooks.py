@@ -1,31 +1,37 @@
-"""Hook'lar: belli anlarda kendi komutunu çalıştır (Claude Code'daki hooks gibi).
+"""Hooks: run your own command at certain moments (like hooks in Claude Code).
 
-config.toml (ya da ~/.alice/hooks.toml):
+config.toml (or ~/.alice/hooks.toml):
 
   [[hooks.PostToolUse]]
-  matcher = "edit_file|write_file|multi_edit"     # araç adı (regex); boş = hepsi
+  matcher = "edit_file|write_file|multi_edit"     # tool name (regex); empty = all
   command = "ruff format \"$ALICE_TOOL_PATH\""
   timeout = 30
 
-Olaylar:
-  SessionStart      ilk mesajdan önce; çıktısı (stdout) ilk mesaja bağlam olarak eklenir
-  UserPromptSubmit  her kullanıcı mesajında; stdout mesaja eklenir; çıkış kodu 2 = mesajı engelle (stderr sebep)
-  PreToolUse        araç çalışmadan önce; çıkış kodu 2 = aracı engelle, stderr modele gider
-  PostToolUse       araç bittikten sonra; çıkış kodu 2 = stderr modele geri bildirim olarak gider (ör. lint hatası)
-  Stop              ajan cevabını bitirince; çıkış kodu 2 = stderr modele gider ve ajan devam eder (ör. testler kırık)
+Events:
+  SessionStart      before the first message; its output (stdout) is added to the first message as context
+  UserPromptSubmit  every user message; stdout is added to it; exit code 2 = block the message
+                    (stderr = reason)
+  PreToolUse        before a tool runs; exit code 2 = block the tool, stderr goes to the model
+  PostToolUse       after a tool finishes; exit code 2 = stderr goes back to the model as feedback
+                    (e.g. lint error)
+  Stop              agent finished its reply; exit code 2 = stderr to the model, agent continues
+                    (e.g. broken tests)
 
-PreToolUse hook'u çıkış 0 ile stdout'a JSON yazarsa (Claude Code'daki gibi) daha fazlasını yapabilir:
-  {"updatedInput": {...}}                              aracın argümanlarını değiştir (ör. komuta bayrak ekle)
-  {"permissionDecision": "allow" | "deny" | "ask", "reason": "..."}   izin kararı (allow sormadan çalıştırır)
-  {"additionalContext": "..."}                         araç sonucuna bağlam ekle (PostToolUse'ta da geçerli)
-PostToolUse hook'u {"updatedToolOutput": "..."} yazarsa aracın modele giden çıktısı onunla değişir (ör. sır gizleme).
+If a PreToolUse hook exits 0 and writes JSON to stdout (as in Claude Code), it can do more:
+  {"updatedInput": {...}}                              change the tool's arguments (e.g. add a flag to a command)
+  {"permissionDecision": "allow" | "deny" | "ask", "reason": "..."}   permission decision (allow runs without asking)
+  {"additionalContext": "..."}                         add context to the tool result (also valid in PostToolUse)
+A PostToolUse hook that writes {"updatedToolOutput": "..."} replaces the tool's output
+sent to the model with it (e.g. hiding secrets).
 
-Hook'un kendisi bozulursa (zaman aşımı, çalıştırılamadı, 0 ya da 2 dışında çıkış kodu) varsayılan olarak yok sayılır.
-Denetim yapan bir hook için `on_failure = "block"` yaz: bozulduğunda engelleme sayılır, araç denetimsiz geçmez.
+If the hook itself breaks (timeout, could not be run, exit code other than 0 or 2), it is ignored by default.
+For a checking hook, set `on_failure = "block"`: when it breaks, it counts as a block,
+so the tool does not pass unchecked.
 
-Komut kabukta çalışır, olay bilgisi stdin'e JSON olarak gelir ({"event", "tool", "args", "result", "prompt",
-"cwd"}); ortamda ALICE_EVENT, ALICE_TOOL, ALICE_TOOL_PATH (aracın yol/komut/url argümanı) ve ALICE_CWD var.
-Güvenlik: hook'lar sadece senin config'inden okunur; klonladığın bir depodaki dosya komut çalıştıramaz.
+The command runs in the shell; event info comes on stdin as JSON ({"event", "tool", "args", "result", "prompt",
+"cwd"}); the environment has ALICE_EVENT, ALICE_TOOL, ALICE_TOOL_PATH (the tool's path/command/url
+argument) and ALICE_CWD.
+Security: hooks are read only from your own config; a file in a cloned repo cannot run commands.
 """
 
 from __future__ import annotations
@@ -40,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
-BLOCK = 2  # Claude Code ile aynı: 2 = engelle / geri bildirim ver
+BLOCK = 2  # Same as Claude Code: 2 = block / give feedback
 
 
 @dataclass
@@ -49,8 +55,8 @@ class Hook:
     command: str
     matcher: str = ""
     timeout: float = 30.0
-    # Hook'un kendisi çökerse/zaman aşarsa (çıkış kodu 0 ya da 2 değilse): "ignore" yok sayar (eski davranış),
-    # "block" engelleme sayar. Güvenlik denetimi yapan bir PreToolUse hook'u bozulunca araç denetimsiz geçmesin.
+    # If the hook itself crashes or times out (exit code other than 0 or 2), "ignore" skips it (old behavior),
+    # "block" counts it as a block. If a security-checking PreToolUse hook breaks, the tool must not pass unchecked.
     on_failure: str = "ignore"
 
     def matches(self, tool: str) -> bool:
@@ -71,7 +77,7 @@ class HookResult:
 
     @property
     def failed(self) -> bool:
-        """Hook'un kendisi bozuldu (zaman aşımı, çalıştırılamadı, beklenmeyen çıkış kodu)."""
+        """The hook itself broke (timeout, could not be run, unexpected exit code)."""
         return self.code not in (0, BLOCK)
 
     @property
@@ -91,7 +97,7 @@ def _read_hooks_file() -> dict[str, Any]:
         except ImportError:  # pragma: no cover
             import tomli as tomllib
         data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:  # noqa: BLE001 - bozuk dosya ALICE'i durdurmasın
+    except Exception:  # noqa: BLE001 - a broken file must not stop ALICE
         return {}
     return data.get("hooks", data) if isinstance(data, dict) else {}
 
@@ -116,7 +122,7 @@ def _parse(data: dict[str, Any]) -> list[Hook]:
         for h in data.get(event, []) or []:
             if isinstance(h, dict) and str(h.get("command", "")).strip():
                 on_failure = "block" if str(h.get("on_failure", "")).lower() == "block" else "ignore"
-                try:  # timeout = "30s" gibi bir yazım bütün hook'ları (ve her araç çağrısını) çökertmesin
+                try:  # A value like timeout = "30s" must not crash all hooks (and every tool call)
                     timeout = float(h.get("timeout", 30))
                 except (TypeError, ValueError):
                     timeout = 30.0
@@ -125,12 +131,12 @@ def _parse(data: dict[str, Any]) -> list[Hook]:
 
 
 def file_hooks() -> list[Hook]:
-    """Yalnız ~/.alice/hooks.toml'daki hook'lar (arayüzden/sohbetten eklenip silinebilenler)."""
+    """Only the hooks in ~/.alice/hooks.toml (the ones that can be added or removed from the UI or chat)."""
     return _parse(_read_hooks_file())
 
 
 def _q(s: str) -> str:
-    return json.dumps(s, ensure_ascii=False)  # TOML temel dizgisi JSON kaçışlarıyla uyumlu
+    return json.dumps(s, ensure_ascii=False)  # A TOML basic string is compatible with JSON escapes
 
 
 def _save(hooks: list[Hook]) -> None:
@@ -178,7 +184,7 @@ class Hooks:
     def __init__(self, hooks: list[Hook], cwd: Path | None = None):
         self.hooks = hooks
         self.cwd = cwd
-        self._cfg_hooks: list[Hook] | None = None  # from_config ile kurulduysa: hooks.toml değişince yenilenir
+        self._cfg_hooks: list[Hook] | None = None  # Set up via from_config: refreshed when hooks.toml changes
         self._stamp = (0.0, 0)
 
     @classmethod
@@ -198,7 +204,7 @@ class Hooks:
         self.hooks = self._cfg_hooks + file_hooks()
 
     def has(self, event: str) -> bool:
-        self._reload()  # arayüzden ya da sohbetten eklenen hook açık sohbette de hemen geçerli olsun
+        self._reload()  # A hook added from the UI or chat takes effect right away in the open chat too
         return any(h.event == event for h in self.hooks)
 
     def run(self, event: str, payload: dict[str, Any], tool: str = "") -> list[HookResult]:
@@ -209,7 +215,7 @@ class Hooks:
                 continue
             out.append(self._run_one(h, payload, tool))
             if out[-1].blocked and event in ("PreToolUse", "UserPromptSubmit"):
-                break  # engellendi: sonraki hook'lara gerek yok
+                break  # Blocked: no need to run the next hooks
         return out
 
     def _run_one(self, h: Hook, payload: dict[str, Any], tool: str) -> HookResult:
@@ -219,7 +225,7 @@ class Hooks:
         env = {**os.environ, "ALICE_EVENT": h.event, "ALICE_TOOL": tool,
                "ALICE_TOOL_PATH": primary_arg(args) if isinstance(args, dict) else "",
                "ALICE_CWD": str(self.cwd or Path.cwd()),
-               # Çıktı UTF-8 okunuyor; Windows'ta Python betikleri boruya cp1254 yazıyordu ("kullan�c�").
+               # Output is read as UTF-8; on Windows, Python scripts used to write cp1254 to the pipe ("kullan�c�").
                "PYTHONIOENCODING": os.environ.get("PYTHONIOENCODING", "utf-8")}
         data = json.dumps({"event": h.event, "tool": tool, "cwd": str(self.cwd or ""), **payload},
                           ensure_ascii=False, default=str)
@@ -234,8 +240,8 @@ class Hooks:
             out, err = p.communicate(data, timeout=h.timeout)
             return HookResult(h, p.returncode, (out or "").strip()[:4000], (err or "").strip()[:4000])
         except subprocess.TimeoutExpired:
-            # subprocess.run zaman aşımında yalnız kabuğu öldürüp boruların kapanmasını süresiz bekliyordu: kabuğun
-            # başlattığı program (cmd /c python ...) boruları tutunca hook ajanı sonsuza kadar kilitliyordu.
+            # On timeout, subprocess.run killed only the shell and waited forever for the pipes to close:
+            # if the program the shell started (cmd /c python ...) held the pipes, the hook agent locked up forever.
             _kill(p)
             return HookResult(h, 1, "", f"hook {h.timeout:.0f} sn içinde bitmedi: {h.command}")
         except OSError as e:
@@ -244,12 +250,12 @@ class Hooks:
 
 
 def _kill(p: subprocess.Popen) -> None:
-    """Hook sürecini alt süreçleriyle birlikte öldür ve kısa süre bekle (borular kapansın, zombi kalmasın)."""
+    """Kill the hook process and its child processes, then wait briefly (let the pipes close, leave no zombies)."""
     try:
         from alice.tools.shell import kill_tree
 
         kill_tree(p.pid)
-    except Exception:  # noqa: BLE001 - psutil yoksa en azından kabuğu öldür
+    except Exception:  # noqa: BLE001 - if psutil is missing, at least kill the shell
         try:
             p.kill()
         except OSError:
@@ -261,13 +267,13 @@ def _kill(p: subprocess.Popen) -> None:
 
 
 def decision(results: list[HookResult]) -> dict[str, Any]:
-    """Başarılı (çıkış 0) hook'ların stdout'undaki JSON kararı birleştir (sonraki hook öncekini ezer):
-      updatedInput        PreToolUse: aracın argümanlarını bununla değiştir (nesne)
-      permissionDecision  PreToolUse: "allow" (sormadan çalıştır; yasak kuralları yine geçerli), "deny", "ask"
-      reason              karar gerekçesi (deny'da modele gider)
-      additionalContext   araç sonucuna eklenecek bağlam metni
-      updatedToolOutput   PostToolUse: aracın modele giden çıktısını bununla değiştir (metin)
-    JSON olmayan stdout yok sayılır (eski hook'lar aynen çalışır)."""
+    """Merge the JSON decisions in the stdout of successful (exit 0) hooks (a later hook overrides an earlier one):
+      updatedInput        PreToolUse: replace the tool's arguments with this (object)
+      permissionDecision  PreToolUse: "allow" (run without asking; forbidden rules still apply), "deny", "ask"
+      reason              reason for the decision (on deny it goes to the model)
+      additionalContext   context text to add to the tool result
+      updatedToolOutput   PostToolUse: replace the tool's output sent to the model with this (text)
+    Non-JSON stdout is ignored (old hooks keep working as they are)."""
     out: dict[str, Any] = {}
     notes: list[str] = []
     for r in results:
@@ -295,11 +301,11 @@ def decision(results: list[HookResult]) -> dict[str, Any]:
 
 
 def feedback(results: list[HookResult]) -> str:
-    """Engelleyen hook'ların stderr'i (modele gidecek metin): çıkış kodu 2 ya da on_failure="block" iken bozulan."""
+    """stderr of blocking hooks (text sent to the model): exit code 2, or a broken hook with on_failure="block"."""
     return "\n".join((f"hook başarısız oldu, güvenlik için engellendi (on_failure=block): " if r.failed else "")
                      + (r.stderr or r.stdout or f"hook engelledi: {r.hook.command}") for r in results if r.blocked)
 
 
 def context(results: list[HookResult]) -> str:
-    """Başarılı hook'ların stdout'u (mesaja eklenecek bağlam)."""
+    """stdout of successful hooks (context to add to the message)."""
     return "\n".join(r.stdout for r in results if r.code == 0 and r.stdout)

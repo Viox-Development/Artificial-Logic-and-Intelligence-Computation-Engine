@@ -20,7 +20,7 @@ def free_port() -> int:
     return port
 
 
-# ---------------------------------------------------------------- protokol
+# ---------------------------------------------------------------- protocol
 def test_parse_accepts_known_kinds_and_drops_garbage():
     assert parse(b'{"kind": "arrow", "clock": 4, "ttl": 3}') == {"kind": "arrow", "clock": 4, "ttl": 3}
     assert parse(b'{"kind": "clear"}') == {"kind": "clear"}
@@ -44,8 +44,8 @@ def test_invalid_items_are_ignored():
 def test_ttl_expiry_and_clamp():
     m = HudModel()
     m.apply({"kind": "arrow", "clock": 4, "ttl": 2}, 10.0)
-    m.apply({"kind": "label", "text": "uzun", "ttl": 9999}, 10.0)   # en fazla 60 sn
-    m.apply({"kind": "card", "title": "varsayılan"}, 10.0)          # ttl yok: 3 sn
+    m.apply({"kind": "label", "text": "uzun", "ttl": 9999}, 10.0)   # at most 60 s
+    m.apply({"kind": "card", "title": "varsayılan"}, 10.0)          # no ttl: 3 s
     assert not m.expire(11.9)
     assert m.expire(12.1) and [i.kind for i in m.items] == ["label", "card"]
     assert m.expire(13.1) and [i.kind for i in m.items] == ["label"]
@@ -62,7 +62,7 @@ def test_same_id_replaces_and_max_items_drops_oldest_calm_first():
     m.apply({"kind": "label", "text": "a"}, 3.0)
     m.apply({"kind": "label", "text": "b"}, 4.0)
     kinds = [(i.kind, i.data.get("text")) for i in m.items]
-    assert kinds == [("edge", None), ("label", "a"), ("label", "b")]  # en eski sakin öğe (ok) atıldı
+    assert kinds == [("edge", None), ("label", "a"), ("label", "b")]  # the oldest calm item (arrow) was dropped
     assert m.items[0].data["severity"] == "critical" and m.items[1].data["severity"] == "info"
 
 
@@ -83,13 +83,13 @@ def test_client_reaches_receiver_over_socket():
     port = free_port()
     sock = window.bind(port)
     assert sock is not None
-    assert window.bind(port) is None  # ikinci HUD aynı portu alamaz
+    assert window.bind(port) is None  # a second HUD cannot take the same port
     inbox: queue.Queue = queue.Queue()
     rx = window.Receiver(sock, inbox).start()
     try:
         client.configure(port)
         assert client.show("arrow", clock=4, text="SAM · 12 km", severity="warn", id="sam")
-        client.send({"kind": "bilinmeyen"})  # alıcı bunu yok sayar
+        client.send({"kind": "bilinmeyen"})  # the receiver ignores this
         assert client.clear("sam")
         got = [inbox.get(timeout=2), inbox.get(timeout=2)]
         assert got[0] == {"kind": "arrow", "ttl": 3.0, "clock": 4, "text": "SAM · 12 km", "severity": "warn",
@@ -102,13 +102,13 @@ def test_client_reaches_receiver_over_socket():
 
 
 def test_client_never_blocks_when_hud_is_closed():
-    client.configure(free_port())  # kimse dinlemiyor
+    client.configure(free_port())  # nobody is listening
     try:
         t0 = time.monotonic()
         for i in range(200):
             client.show("arrow", clock=i % 12 + 1, ttl=1)
         assert time.monotonic() - t0 < 1.0
-        assert client.send({"kind": "arrow", "clock": 1, "bad": object()}) is False  # JSON'a çevrilemez: sessiz
+        assert client.send({"kind": "arrow", "clock": 1, "bad": object()}) is False  # not JSON-serializable: silent
     finally:
         client.configure(window.PORT, on=False)
 
@@ -122,7 +122,7 @@ def test_client_swallows_socket_errors(monkeypatch):
     assert client.show("label", text="x") is False
 
 
-# ------------------------------------------------------------------ çizim
+# ------------------------------------------------------------------ drawing
 class FakeCanvas:
     def __init__(self):
         self.ops: list[tuple[str, tuple, dict]] = []
@@ -142,23 +142,23 @@ ALL_KINDS = ({"kind": "arrow", "clock": 3, "text": "SAM", "severity": "warn"},
 
 
 def test_everything_goes_into_one_island_by_priority():
-    """Apple'ın tek yüzey kuralı: tehdit, yakıt, gösterge, kart hep Adada; en önemlisi önde, diğerleri küçük
-    dairede. Ada dışında yalnızca kenar ışığı ve odak halkası çizilir."""
+    """Apple's single-surface rule: threats, fuel, gauges and cards all go in the Island; the most important
+    one leads, the rest sit in a small circle. Outside the Island only the edge light and focus ring are drawn."""
     from alice.hud import style
 
     m = HudModel(max_items=10)
     for msg in ALL_KINDS:
         m.apply(msg, 0.0)
     ents = style.entries(m.visible())
-    assert ents[0].kind == "card"  # yeni gelen kart Adayı genişletir (canlı denemede yanda küçük daire kalıyordu)
-    assert [e.severity for e in ents[1:3]] == ["warn", "info"]  # sonra önem sırası
+    assert ents[0].kind == "card"  # a new card expands the Island (in a live trial a small circle stayed beside it)
+    assert [e.severity for e in ents[1:3]] == ["warn", "info"]  # then by severity
     crit = style.entries(m.visible() + [_item({"kind": "arrow", "clock": 6, "severity": "critical"}, 99)])
-    assert crit[0].severity == "critical"  # kritik tehdit karttan da önce
+    assert crit[0].severity == "critical"  # a critical threat comes before the card too
     assert [s.item.kind for s in style.layout(m.visible(), 1920, 1080)] == ["edge", "box"]
     sam = next(e for e in ents if e.glyph == "arrow")
-    assert sam.title == "SAM" and sam.angle == 90  # saat 3
+    assert sam.title == "SAM" and sam.angle == 90  # 3 o'clock
     six = style.entries([_item({"kind": "arrow", "clock": 7, "text": "ARKANDA · 900 m", "severity": "critical"})])
-    assert (six[0].title, six[0].value, six[0].angle) == ("Arkanda", "900 m", 210)  # büyük harfle bağırmaz
+    assert (six[0].title, six[0].value, six[0].angle) == ("Arkanda", "900 m", 210)  # does not shout in capitals
     fuel = style.entries([_item({"kind": "label", "text": "YAKIT ~4 dk", "severity": "warn"})])[0]
     assert (fuel.glyph, fuel.title, fuel.value) == ("drop", "Yakıt", "~4 dk")
     assert style.tr_sentence("İLERİ GİDİYOR") == "İleri gidiyor" and style.tr_sentence("SAM") == "SAM"
@@ -185,11 +185,11 @@ def test_arrow_glyph_points_its_clock_and_edge_glows_in_corner():
 
     for clock in (1, 3, 4, 7, 10, 12):
         diff = (tip_angle(clock % 12 * 30) - clock * 30 + 180) % 360 - 180
-        assert abs(diff) < 10, clock  # ok gerçekten saatine bakıyor
+        assert abs(diff) < 10, clock  # the arrow really points at its clock
     m = HudModel()
     m.apply({"kind": "edge", "clock": 4, "severity": "warn"}, 0.0)
     sp = style.layout(m.visible(), 1920, 1080)[0]
-    assert sp.w == sp.h and sp.x + sp.w == 1920 and sp.y + sp.h == 1080  # saat 4: sağ alt köşede ışık
+    assert sp.w == sp.h and sp.x + sp.w == 1920 and sp.y + sp.h == 1080  # 4 o'clock: light in the bottom-right corner
 
 
 def test_island_springs_to_content_and_fades():
@@ -202,31 +202,31 @@ def test_island_springs_to_content_and_fades():
     assert moving and img.size == (isl.cw, isl.ch)
     for i in range(1, 90):
         img, moving = isl.frame(i / 60)
-    assert not moving and isl.h.x == pytest.approx(38) and isl.shown == 1.0  # kompakt kapsül oturdu
+    assert not moving and isl.h.x == pytest.approx(38) and isl.shown == 1.0  # compact capsule settled
     assert img.getchannel("A").getbbox() is not None
     card = style.entries([_item({"kind": "card", "title": "Hatırlatma", "text": "20:00'de maç var.", "id": "c"}, 2)])
     isl.update(card, 2.0)
     for i in range(1, 90):
         isl.frame(2 + i / 60)
-    assert isl.h.x > 60 and isl.w.x > 200  # kart için genişledi
+    assert isl.h.x > 60 and isl.w.x > 200  # expanded for the card
     isl.update([], 4.0)
     for i in range(1, 60):
         isl.frame(4 + i / 60)
-    assert not isl.update([], 5.0)  # söndü
+    assert not isl.update([], 5.0)  # faded out
 
 
 def test_critical_edge_fades_out_and_arrow_turns():
-    """Canlı denemede bulunanlar: kritik kenar ışığı nabız yüzünden hiç sönmüyordu; ok yön değişince zıplıyordu."""
+    """Live trial finding: critical edge light never faded (pulse); the arrow jumped on direction change."""
     from alice.hud import style
 
     m = HudModel()
     m.apply({"kind": "edge", "clock": 7, "severity": "critical", "id": "e"}, 0.0)
     sp = style.layout(m.visible(), 1920, 1080)[0]
     an = style.Anim(0.0)
-    assert an.frame(1.0, sp)[3]  # görünürken nabız atar
+    assert an.frame(1.0, sp)[3]  # pulses while visible
     an.gone_at = 2.0
     alpha, _, _, moving = an.frame(2.5, sp)
-    assert alpha == 0 and not moving  # temizlenince söner ve biter
+    assert alpha == 0 and not moving  # fades out and ends once cleared
 
     isl = style.Island(1920, 1080)
     arrow = {"kind": "arrow", "text": "Arkanda · 900 m", "severity": "critical", "id": "six"}
@@ -235,7 +235,7 @@ def test_critical_edge_fades_out_and_arrow_turns():
         isl.frame(i / 60)
     isl.update(style.entries([_item({**arrow, "clock": 5, "text": "Arkanda · 700 m"})]), 1.0)
     isl.frame(1.05)
-    assert 150 < isl.angle < 210  # saat 7'den 5'e yolda (zıplamadı)
+    assert 150 < isl.angle < 210  # on its way from 7 to 5 o'clock (no jump)
     for i in range(30):
         isl.frame(1.1 + i / 60)
     assert isl.angle == pytest.approx(150)
@@ -252,13 +252,13 @@ def test_focus_ring_and_island_render_fast():
     sp = style.layout(m.visible(), 1920, 1080)[0]
     assert style.render(sp, 1080).getbbox() is not None
     an = style.Anim(0.0)
-    assert an.frame(0.0, sp)[1] > 1 and an.frame(1.0, sp)[1] == 1  # odak halkası dışarıdan oturur
+    assert an.frame(0.0, sp)[1] > 1 and an.frame(1.0, sp)[1] == 1  # the focus ring settles in from outside
     isl = style.Island(1920, 1080)
     isl.update(style.entries(m.visible()), 0.0)
     t0 = _t.perf_counter()
     for i in range(60):
         isl.frame(i / 60)
-    assert (_t.perf_counter() - t0) / 60 < 0.03  # kare başına 30 ms'den az (oyunun yanında)
+    assert (_t.perf_counter() - t0) / 60 < 0.03  # under 30 ms per frame (alongside the game)
 
 
 def test_edge_point_and_direction():
@@ -297,8 +297,8 @@ class FakeTop:
 
 
 def test_window_tick_shows_only_while_items_exist():
-    """Boşken hiç pencere yok (oyunun FPS'i için), öğe gelince Adanın penceresi odak almadan görünür, ttl dolunca
-    Ada söner ve penceresi kapanır."""
+    """Empty means no window (for the game's FPS). An arriving item shows the Island's window without taking focus;
+    when its ttl runs out the Island fades and its window closes."""
     hwnds = iter(range(100, 200))
     w = window.HudWindow(HudModel(), queue.Queue(), win32=FakeWin32(), root=object(), rect=(0, 0, 1920, 1080),
                          make_slot=lambda root: (FakeTop(), next(hwnds)))
@@ -307,17 +307,17 @@ def test_window_tick_shows_only_while_items_exist():
     assert w.win32.calls == [] and not w.shown
     w.inbox.put({"kind": "arrow", "clock": 4, "ttl": 0.2, "id": "sam"})
     w.tick()
-    assert ("style", 100) in w.win32.calls and ("capture", 100) in w.win32.calls  # tıklama geçer, görüntüde yok
+    assert ("style", 100) in w.win32.calls and ("capture", 100) in w.win32.calls  # click-through, not in the picture
     assert ("show", True) in w.win32.calls and any(c[0] == "ulw" for c in w.win32.calls) and w.shown
     assert window.ISLAND_KEY in w.slots
     time.sleep(0.25)
-    for _ in range(40):  # süresi doldu: Ada söner
+    for _ in range(40):  # time's up: the Island fades out
         w.tick()
         time.sleep(0.01)
     assert w.win32.calls[-1] == ("show", False) and not w.shown and not w.slots
 
 
-# --------------------------------------------------------------- denetleyici
+# --------------------------------------------------------------- supervisor
 class FakeProc:
     def __init__(self):
         self.code = None
@@ -345,13 +345,13 @@ def test_supervisor_restarts_crashed_hud_and_backs_off():
     sv = HudSupervisor(41240, spawn=spawn)
     sv.check(0.0)
     sv.check(1.0)
-    assert len(spawned) == 1  # çalışıyor: dokunma
+    assert len(spawned) == 1  # running: leave it alone
     for i in range(1, BURST):
-        spawned[-1].code = 1  # çöktü
+        spawned[-1].code = 1  # crashed
         sv.check(float(i))
     assert len(spawned) == BURST and sv.restarts == BURST - 1
     spawned[-1].code = 1
-    sv.check(10.0)  # dakikada 5 çökme: bekle
+    sv.check(10.0)  # 5 crashes in a minute: wait
     sv.check(20.0)
     assert len(spawned) == BURST
     sv.check(41.0)
@@ -360,7 +360,7 @@ def test_supervisor_restarts_crashed_hud_and_backs_off():
     assert spawned[-1].terminated
 
 
-# ---------------------------------------------------------- uçuş -> HUD
+# ---------------------------------------------------------- flight -> HUD
 def test_flight_threats_also_show_on_hud():
     from tests.test_sims import Recorder, st
 
@@ -377,7 +377,7 @@ def test_flight_threats_also_show_on_hud():
     sam = {"id": "", "clock": 10, "dist_m": 12000.0, "kind": "sam", "name": "SAM", "range_m": 18000.0}
     tr.feed(st(4, extra={"contacts": [sam]}))
     bandit = {"id": "", "clock": 6, "dist_m": 1200.0, "kind": "aircraft", "name": "Fighter"}
-    tr.feed(st(20, extra={"contacts": [bandit]}))  # SAM'dan 12 sn sonra: ses sırası gelmiş
+    tr.feed(st(20, extra={"contacts": [bandit]}))  # 12 s after the SAM: the voice's turn came
     hot = {"id": "", "clock": 1, "dist_m": 8000.0, "kind": "aircraft", "name": "Fighter", "aspect": 5.0}
     for t in (40, 41, 43):
         tr.feed(st(t, extra={"contacts": [hot]}))
@@ -392,7 +392,7 @@ def test_flight_threats_also_show_on_hud():
         ("arrow", 1, "BURNU SANA · 8,0 km", "warn", "nose"),
     ]
     assert all(kw["ttl"] > 0 for _, kw in shown)
-    assert any(x.startswith("Arkanda düşman") for x in r.texts())  # ses aynen devam ediyor
+    assert any(x.startswith("Arkanda düşman") for x in r.texts())  # the voice carries on as before
 
 
 def test_flight_fuel_and_kill_show_on_hud():
@@ -459,7 +459,8 @@ def test_hub_passes_show_to_companions():
 
 
 def test_hud_arrow_follows_threat_while_voice_stays_quiet():
-    """Dönerken saat 6'daki düşman saat 4'e geçer: ses seyrek, ok yeni yönü gösterir (ses susturulsa da)."""
+    """While turning, an enemy moves from 6 to 4 o'clock: the voice stays sparse and the arrow shows the new side
+    (even if the voice is muted)."""
     from tests.test_sims import Recorder, st
 
     from alice.sims.flight import FlightCompanion, TouchdownTracker
@@ -471,22 +472,22 @@ def test_hud_arrow_follows_threat_while_voice_stays_quiet():
     tr.feed(st(1, ias=80, agl=30))
     bandit = {"id": "", "clock": 6, "dist_m": 1200.0, "kind": "aircraft", "name": "Fighter"}
     tr.feed(st(2, extra={"contacts": [bandit]}))
-    tr.feed(st(2.2, extra={"contacts": [{**bandit, "clock": 5}]}))   # çok sık: gönderilmez
+    tr.feed(st(2.2, extra={"contacts": [{**bandit, "clock": 5}]}))   # too frequent: not sent
     tr.feed(st(3, extra={"contacts": [{**bandit, "clock": 4, "dist_m": 900.0}]}))
-    for t in range(5, 24, 2):  # sürekli arkada: 20 sn'den sonra ok susar
+    for t in range(5, 24, 2):  # constantly behind: after 20 s the arrow goes quiet
         tr.feed(st(t, extra={"contacts": [{**bandit, "clock": 5}]}))
-    tr.feed(st(30, extra={"contacts": [{**bandit, "clock": 8}]}))    # kaybolup döndü: ses yok, ok var
-    tr.feed(st(48, extra={"contacts": [{**bandit, "clock": 7}]}))    # 45 sn geçti: yeniden söylenir
+    tr.feed(st(30, extra={"contacts": [{**bandit, "clock": 8}]}))    # vanished, came back: no voice, arrow shows
+    tr.feed(st(48, extra={"contacts": [{**bandit, "clock": 7}]}))    # 45 s passed: said again
     arrows = [(kw["clock"], kw["ttl"]) for k, kw in shown if k == "arrow"]
     assert arrows[:3] == [(6, 4.0), (4, 2.5), (5, 2.5)]
-    assert arrows[3:-2] == [(5, 2.5)] * 8  # 5..21: görülmenin ilk 20 sn'si
+    assert arrows[3:-2] == [(5, 2.5)] * 8  # 5..21: the first 20 s of being seen
     assert arrows[-2:] == [(8, 2.5), (7, 4.0)]
     assert [x for x in r.texts() if x.startswith("Arkanda")] == ["Arkanda düşman, saat 6, 1,2 kilometre!",
                                                                  "Arkanda düşman, saat 7, 1,2 kilometre!"]
 
 
 def test_hud_shows_threats_the_voice_skipped():
-    """Gemi grubunda yalnız en yakını söylenir; diğeri sesle değil, HUD'da okla görünür."""
+    """In a ship group only the nearest is spoken; the others appear as arrows on the HUD, not by voice."""
     from tests.test_sims import Recorder, st
 
     from alice.sims.flight import FlightCompanion, TouchdownTracker
@@ -513,7 +514,7 @@ def test_exclusive_fullscreen_said_once_only_with_hud(monkeypatch):
     quiet = SimHub({}, store=None, notifier=None)
     monkeypatch.setattr(quiet, "_say", lambda *a: said.append(a))
     quiet._fullscreen_check("War Thunder")
-    assert said == []  # HUD kapalı: söylenecek bir şey yok
+    assert said == []  # HUD off: nothing to say
     hb = SimHub({}, store=None, notifier=None, show=lambda kind, **kw: None)
     monkeypatch.setattr(hb, "_say", lambda *a: said.append(a))
     hb._fullscreen_check("War Thunder")
@@ -545,7 +546,7 @@ def test_exclusive_fullscreen_reads_notification_state(monkeypatch):
         assert screen.exclusive_fullscreen() is want
 
 
-# ------------------------------------------------------- bildirim, konuşma, tıklama
+# ------------------------------------------------------- notification, speech, click
 @pytest.fixture
 def hud_on(monkeypatch):
     sent = []
@@ -565,7 +566,7 @@ def test_views_do_nothing_when_hud_is_off(monkeypatch):
     assert not views.click_target(10, 10)
     assert not views.speech("1. bir\n2. iki")
     assert not views.notification(SimpleNamespace(kind="alert", topic="pc", severity="warn", title="t", body="b"))
-    assert time.monotonic() - t0 < 0.1  # tıklama önizlemesi beklemez
+    assert time.monotonic() - t0 < 0.1  # the click preview does not wait
 
 
 def test_notification_card_skips_flight(hud_on):
@@ -594,7 +595,7 @@ def test_click_target_previews_before_click(hud_on, monkeypatch):
     waited = []
     monkeypatch.setattr(views.time, "sleep", waited.append)
     assert views.click_target(500, 300, "double_click")
-    assert hud_on[0]["kind"] == "cursor" and (hud_on[0]["x"], hud_on[0]["y"]) == (500, 300)  # ALICE'in imleci
+    assert hud_on[0]["kind"] == "cursor" and (hud_on[0]["x"], hud_on[0]["y"]) == (500, 300)  # ALICE's pointer
     assert hud_on[0]["action"] == "double_click"
     assert hud_on[0]["text"] == "çift tıklıyorum" and waited == [views.CLICK_PREVIEW]
 
@@ -638,24 +639,24 @@ def test_start_hud_replaces_windows_toast_with_card(monkeypatch):
         toasts, sent = [], []
         monkeypatch.setattr(notify, "desktop_notify", lambda n: toasts.append(n.body) or True)
         monkeypatch.setattr(client, "send", lambda msg: sent.append(msg) or True)
-        sv.proc = SimpleNamespace(poll=lambda: 1)  # HUD çöktü: kart değil, Windows balonu gelsin
+        sv.proc = SimpleNamespace(poll=lambda: 1)  # HUD crashed: a Windows balloon instead of a card
         nt.channels[0](Notification("ALICE", "GPU 95°C", "critical", "pc"), None)
         assert sent == [] and toasts == ["GPU 95°C"]
-        sv.proc = SimpleNamespace(poll=lambda: None)  # HUD çalışıyor: kart
+        sv.proc = SimpleNamespace(poll=lambda: None)  # HUD running: card
         nt.channels[0](Notification("ALICE", "RAM %96", "critical", "pc"), None)
         assert sent[0]["kind"] == "card" and toasts == ["GPU 95°C"]
     finally:
         client.configure(window.PORT, on=False)
 
 
-# ------------------------------------------------------- sistem göstergesi
+# ------------------------------------------------------- system gauge
 def test_system_gauge_below_and_above_limit(hud_on):
     from alice.hud import views
 
-    assert not views.system_gauge("GPU", 80, 93, "°C")  # %90'ın altı: sessiz
+    assert not views.system_gauge("GPU", 80, 93, "°C")  # below 90%: silent
     assert views.system_gauge("GPU", 87, 93, "°C", ttl=20)
     assert views.system_gauge("RAM", 96, 95, "%")
-    assert not views.system_gauge("GPU", 87, 93, "°C", warn=88)  # özel başlangıç değeri
+    assert not views.system_gauge("GPU", 87, 93, "°C", warn=88)  # custom starting value
     assert hud_on == [
         {"kind": "progress", "ttl": 20, "value": 0.935, "text": "GPU 87°C", "severity": "warn", "id": "sys:GPU"},
         {"kind": "progress", "ttl": 25.0, "value": 1.0, "text": "RAM %96", "severity": "critical", "id": "sys:RAM"},
@@ -690,16 +691,16 @@ def test_system_gauges_hook_refreshes_same_id_and_fades(hud_on):
 
     store = GaugeStore({"pc.gpu.temp": 89.0, "pc.mem.percent": 85.0, "pc.cpu.temp": 70.0})
     hook = SystemGauges(store, interval=15, clock=lambda: 1005.0)
-    assert hook(None) == ["GPU"] and hook(None) == ["GPU"]  # her turda yeni paket, aynı kimlik
+    assert hook(None) == ["GPU"] and hook(None) == ["GPU"]  # a new packet every turn, same id
     assert [m["id"] for m in hud_on] == ["sys:GPU", "sys:GPU"]
     assert hud_on[0]["ttl"] == 27.5 and hud_on[0]["severity"] == "warn"
     store.values["pc.mem.percent"] = 96.0
     assert hook(None) == ["GPU", "RAM"] and hud_on[-1]["severity"] == "critical"
     store.values.update({"pc.gpu.temp": 75.0, "pc.mem.percent": 60.0})
     n = len(hud_on)
-    assert hook(None) == [] and len(hud_on) == n  # normale döndü: gönderim durur, çubuk ttl ile söner
+    assert hook(None) == [] and len(hud_on) == n  # back to normal: stop sending, bar fades by ttl
     store.values["pc.gpu.temp"] = 99.0
-    store.ts = 800.0  # bayat ölçüm çubuk açmaz
+    store.ts = 800.0  # a stale reading does not open the bar
     assert hook(None) == []
 
 
@@ -721,24 +722,24 @@ def test_start_hud_adds_system_gauge_hook(monkeypatch):
         client.configure(window.PORT, on=False)
 
 
-# ------------------------------------------------- imleç, ses hali, yoğunluk, geçmiş, yönsüz tehdit
+# ------------------------------------------------- pointer, voice state, density, history, directionless threat
 def test_pointer_glides_instead_of_teleporting_and_ripples_on_click():
     from alice.hud import style
 
     p = style.Pointer(1080)
-    p.go(100, 100, "click", 0.0)  # ilk kez: hedefte belirir
+    p.go(100, 100, "click", 0.0)  # first time: appears at the target
     assert p.at(0.0) == (100, 100)
-    p.go(900, 500, "click", 1.0)  # ikinci hedef: bulunduğu yerden kayar
+    p.go(900, 500, "click", 1.0)  # second target: glides from where it is
     mid = p.at(1.0 + p.dur / 2)
-    assert 100 < mid[0] < 900 and 100 < mid[1] < 500  # yolda (ışınlanmadı)
-    assert style.GLIDE_MIN <= p.dur <= style.GLIDE_MAX < 0.4  # tıklama önizlemesi bitmeden oturur
+    assert 100 < mid[0] < 900 and 100 < mid[1] < 500  # on the way (not teleported)
+    assert style.GLIDE_MIN <= p.dur <= style.GLIDE_MAX < 0.4  # settles before the click preview ends
     assert p.at(1.0 + p.dur) == pytest.approx((900, 500))
-    img, x, y, moving = p.frame(1.0 + p.dur + 0.1)  # oturdu, halka yayılıyor
+    img, x, y, moving = p.frame(1.0 + p.dur + 0.1)  # settled, the ring is spreading
     assert img is not None and moving and (x + p.size / 2, y + p.size / 2) == pytest.approx((900, 500))
     _, _, _, moving = p.frame(1.0 + p.dur + style.RIPPLE + 0.3)
-    assert not moving  # dalga bitti: yeniden çizim yok
+    assert not moving  # the wave is over: no redraw
     p.leave(5.0)
-    assert p.frame(5.0 + style.FADE_OUT + 0.01)[0] is None and not p.active  # söndü
+    assert p.frame(5.0 + style.FADE_OUT + 0.01)[0] is None and not p.active  # faded out
 
 
 def test_pointer_starts_from_real_cursor_when_first_shown():
@@ -761,10 +762,10 @@ def test_window_draws_pointer_and_drops_it_when_done():
     for _ in range(30):
         w.tick()
         time.sleep(0.01)
-    assert window.POINTER_KEY in w.slots and window.ISLAND_KEY in w.slots  # imleç + Adada "tıklıyorum"
+    assert window.POINTER_KEY in w.slots and window.ISLAND_KEY in w.slots  # pointer + "tıklıyorum" on the Island
     ph = w.slots[window.POINTER_KEY].hwnd
     xs = [x for h, x, _ in pos if h == ph]
-    assert len(set(xs)) > 3  # pencere adım adım kaydı
+    assert len(set(xs)) > 3  # the window glided step by step
     time.sleep(1.0)
     for _ in range(60):
         w.tick()
@@ -777,10 +778,10 @@ def test_directionless_threat_shows_radar_not_a_wrong_arrow():
 
     m = HudModel()
     assert m.apply({"kind": "arrow", "text": "FÜZE", "severity": "critical", "id": "missile"}, 0.0)
-    assert not m.apply({"kind": "arrow"}, 0.0)  # ne yönü ne yazısı var
+    assert not m.apply({"kind": "arrow"}, 0.0)  # it has neither a direction nor text
     e = style.entries(m.visible())[0]
     assert e.glyph == "radar" and e.severity == "critical"
-    style.preview([{"kind": "arrow", "text": "FÜZE", "severity": "critical"}])  # çizilebiliyor
+    style.preview([{"kind": "arrow", "text": "FÜZE", "severity": "critical"}])  # it can be drawn
 
 
 def test_flash_rate_stays_under_three_per_second():
@@ -796,12 +797,12 @@ def test_modes_filter_by_density():
     m.apply({"kind": "label", "text": "Yakıt ~4 dk", "severity": "warn", "id": "fuel"}, 0.0)
     m.apply({"kind": "card", "title": "Düşürdün", "text": "Bf 109", "id": "kill"}, 0.0)
     m.apply({"kind": "label", "text": "Dinliyorum", "icon": "wave", "id": "voice"}, 0.0)
-    assert len(m.visible()) == 5  # masaüstü: hepsi
-    m.apply({"kind": "context", "game": True}, 0.0)  # oyunda: bilgi kartı gizlenir
+    assert len(m.visible()) == 5  # desktop: everything
+    m.apply({"kind": "context", "game": True}, 0.0)  # in a game: info cards are hidden
     assert {i.id for i in m.visible()} == {"six", "fuel", "kill", "voice"}
     m.apply({"kind": "mode", "value": "quiet"}, 0.0)
     assert [i.id for i in m.visible()] == ["six"] or {i.id for i in m.visible()} == {"six", "__mode__"}
-    m.apply({"kind": "mode"}, 0.0)  # kısayol: sıradaki moda geçer ve kısaca söyler
+    m.apply({"kind": "mode"}, 0.0)  # shortcut: switches to the next mode and says so briefly
     assert m.mode == "auto" and any(i.id == "__mode__" and "otomatik" in i.data["text"] for i in m.visible())
 
 
@@ -824,7 +825,7 @@ def test_voice_state_dedupes_and_clears(hud_on, monkeypatch):
     monkeypatch.setitem(views._voice, "state", None)
     monkeypatch.setitem(views._voice, "detail", "")
     assert views.voice_state("listen")
-    assert not views.voice_state("listen")  # aynı hal: tekrar gönderilmez
+    assert not views.voice_state("listen")  # same state: not sent again
     assert views.voice_state("work", "ekranda")
     assert views.voice_state(None)
     assert [m.get("text") for m in hud_on] == ["Dinliyorum", "Çalışıyorum · ekranda", None]
@@ -838,4 +839,4 @@ def test_listening_island_animates_wave():
     isl.update(style.entries([_item({"kind": "label", "text": "Dinliyorum", "icon": "wave", "id": "voice"})]), 0.0)
     for i in range(80):
         _, moving = isl.frame(i / 60)
-    assert moving and isl.calm  # dalga oynuyor ama seyrek çizilebilir
+    assert moving and isl.calm  # the wave is moving but can be drawn sparsely

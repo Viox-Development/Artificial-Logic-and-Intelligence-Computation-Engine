@@ -1,5 +1,5 @@
-"""Alt ajanlar (paralel, arka plan, devam, durdurma), özel ajan tanımları, projenin PR'a bağlanması ve zamanlanmış
-proje."""
+"""Subagents (parallel, background, continue, stop), custom agent definitions, linking a project to a PR, and scheduled
+projects."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _user(messages) -> str:
 
 
 def test_parallel_task_calls_run_at_the_same_time(workdir):
-    both = threading.Barrier(2, timeout=5)  # sırayla çalışsalar ilk alt ajan burada sonsuza dek beklerdi
+    both = threading.Barrier(2, timeout=5)  # if they ran one after another, the first subagent would wait here forever
 
     def script(model, messages, tools, **kw):
         q = _user(messages)
@@ -69,7 +69,7 @@ def test_background_subagent_reports_back_and_can_be_continued(workdir):
 
     subagents.resume(agent.ctx, "a1", "devam et").thread.join(5)
     assert sub.result == "ikinci bulgu: Y" and sub.turns == 2
-    assert any("ilk bulgu: X" in str(m.get("content")) for m in seen[0])  # önceki konuşmasını hatırlıyor
+    assert any("ilk bulgu: X" in str(m.get("content")) for m in seen[0])  # it remembers its previous conversation
     with pytest.raises(ToolError, match="böyle bir alt ajan yok"):
         subagents.resume(agent.ctx, "a9", "x")
 
@@ -90,7 +90,7 @@ def test_stopping_a_background_subagent(workdir):
     assert subagents.stop(sub)
     gate.set()
     sub.thread.join(5)
-    assert sub.status == "stopped" and got == []  # durdurulan iş sohbete "bitti" diye dönmez
+    assert sub.status == "stopped" and got == []  # a stopped job does not report back to the chat as "bitti"
     assert not subagents.stop(sub)
 
 
@@ -102,7 +102,7 @@ def test_subagent_has_its_own_context(workdir):
     child_ctx = sub.child.ctx
     assert child_ctx is not agent.ctx and child_ctx.state["agent"] is sub.child
     assert "fg_procs" not in child_ctx.state and agent.ctx.state["agent"] is agent
-    agent.cancel.set()  # ana sohbette Durdur: alt ajanın araçları bunu görmez
+    agent.cancel.set()  # "Durdur" (Stop) in the main chat: the subagent's tools don't see it
     assert not child_ctx.cancelled()
 
 
@@ -128,7 +128,7 @@ def test_agent_definitions_save_list_delete(workdir):
 
 
 def test_agent_definition_model_does_not_touch_shared_router(workdir):
-    """Proje ajan dosyasındaki "model: sağlayıcı:model" yalnız o alt ajana uygulanır, ortak router değişmez."""
+    """A project agent's "model: sağlayıcı:model" applies only to that subagent; the shared router stays put."""
     from alice import skills
 
     agent, _, _ = make_agent(["x"], workdir)
@@ -139,7 +139,7 @@ def test_agent_definition_model_does_not_touch_shared_router(workdir):
     assert child.router is not agent.router and child.router.cooldown_until is agent.router.cooldown_until
 
 
-# --------------------------------------------------------------------------------------------- proje → PR
+# --------------------------------------------------------------------------------------------- project → PR
 def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
@@ -161,7 +161,7 @@ def test_project_runs_on_its_own_branch_and_ends_in_a_watched_pr(tmp_path, monke
     git(work, "commit", "-m", "ilk")
     git(work, "remote", "add", "origin", str(remote))
     git(work, "push", "-u", "origin", "main")
-    (work / "a.txt").write_text("kullanıcının yarım işi\n", encoding="utf-8")  # projeye girmemeli
+    (work / "a.txt").write_text("kullanıcının yarım işi\n", encoding="utf-8")  # should not go into the project
     monkeypatch.setattr(gh, "origin_repo", lambda cwd: "o/r")
     posted, watched = [], []
 
@@ -187,13 +187,13 @@ def test_project_runs_on_its_own_branch_and_ends_in_a_watched_pr(tmp_path, monke
     out = team_pr.open_pr(team)
     tree = subprocess.run(["git", "ls-tree", "-r", "--name-only", "alice/proje-p1"], cwd=remote, capture_output=True,
                           text=True).stdout
-    assert "b.txt" in tree and ".alice-team" not in tree  # ajanların kopyaları PR'a girmez
+    assert "b.txt" in tree and ".alice-team" not in tree  # agents' copies do not go into the PR
     assert out.startswith("PR #5 açıldı") and watched == [("o/r", 5, "s1")]
     assert posted[0][1]["head"] == "alice/proje-p1" and posted[0][1]["base"] == "main"
     log = subprocess.run(["git", "log", "--oneline", "alice/proje-p1"], cwd=remote, capture_output=True,
                          text=True).stdout
     assert "ALICE projesi" in log
-    assert (work / "a.txt").read_text(encoding="utf-8") == "kullanıcının yarım işi\n"  # kullanıcının kopyası yerinde
+    assert (work / "a.txt").read_text(encoding="utf-8") == "kullanıcının yarım işi\n"  # the user's copy stays in place
     assert not (work / "b.txt").exists()
 
 
@@ -224,10 +224,10 @@ def test_project_pr_refuses_to_push_a_secret(tmp_path, monkeypatch):
     assert out.startswith("PR açılmadı: projede anahtar") and "conf.py" in out
     branches = subprocess.run(["git", "branch", "--list", "alice/proje-p2"], cwd=remote, capture_output=True,
                               text=True).stdout
-    assert branches.strip() == ""  # hiçbir şey push'lanmadı
+    assert branches.strip() == ""  # nothing was pushed
 
 
-# ----------------------------------------------------------------------------------------- zamanlanmış proje
+# ----------------------------------------------------------------------------------------- scheduled project
 def test_scheduled_project_starts_from_template(monkeypatch):
     import json
 
@@ -254,7 +254,7 @@ def test_schedule_tool_validates_project_template(workdir):
 
 
 def test_agents_endpoint_lists_subagents_and_definitions(workdir):
-    from alice.app.server import AppState  # noqa: F401 - uç nokta modülü yüklenebilsin
+    from alice.app.server import AppState  # noqa: F401 - so the endpoint module can be imported
 
     agent, _, _ = make_agent(["sonuç"], workdir)
     sub = subagents.start(agent, agent.ctx, "bak", label="bakıcı")
@@ -264,7 +264,7 @@ def test_agents_endpoint_lists_subagents_and_definitions(workdir):
     assert Path(workdir).is_dir()
 
 
-# ------------------------------------------------------------------------- yeniden açılışta kaybolmayanlar
+# ------------------------------------------------------------------------- things that survive a reopen
 def test_session_info_survives_restart_and_does_not_leak_into_new_chat(workdir):
     import time
 
@@ -285,18 +285,18 @@ def test_session_info_survives_restart_and_does_not_leak_into_new_chat(workdir):
     subagents.registry(chat.ctx)["a1"] = sub
     chat.save()
 
-    assert state.new_session() is None  # yeni sohbet: öncekinin bilgileri taşınmaz
+    assert state.new_session() is None  # new chat: the previous one's info is not carried over
     assert state.agent.stats["turns"] == 0 and not state.agent.checkpoints and not subagents.registry(state.ctx)
     assert time.time() - state.chat.started < 60
 
-    assert state.resume(old_sid)  # "kapanıp açılmış" sohbete dönüş: diskten geri kurulur
+    assert state.resume(old_sid)  # returning to a "kapanıp açılmış" chat: rebuilt from disk
     a = state.agent
     assert a.stats["turns"] == 3 and a.stats["input"] == 1200 and a.usage_models["a:m"]["calls"] == 2
     assert a.checkpoints[1][str(workdir / "x.py")] == b"eski" and a.checkpoints[1][str(workdir / "yeni.py")] is None
     assert time.time() - state.chat.started > 3000 and state.status()["started"] == state.chat.started
     restored = subagents.registry(state.ctx)["a1"]
     assert restored.status == "done" and restored.result == "buldum" and restored.child is None
-    assert subagents._next_id(state.ctx) == "a2"  # numaralar çakışmaz
+    assert subagents._next_id(state.ctx) == "a2"  # ids don't collide
 
 
 def test_restored_subagent_can_be_continued_with_its_old_conversation(workdir):
@@ -311,12 +311,12 @@ def test_restored_subagent_can_be_continued_with_its_old_conversation(workdir):
                                    "messages": [{"role": "user", "content": "tara"},
                                                 {"role": "assistant", "content": "ilk bulgu: Z"}]}])
     sub = subagents.registry(agent.ctx)["a3"]
-    assert sub.status == "stopped"  # çalışırken kapanan iş durmuş sayılır
+    assert sub.status == "stopped"  # a job that was running when it closed counts as stopped
     subagents.resume(agent.ctx, "a3", "devam et").thread.join(5)
     assert sub.result == "devam sonucu" and any("ilk bulgu: Z" in str(m.get("content")) for m in seen[-1])
 
 
-# ---------------------------------------------------------------------- PR #192 incelemesinin bulguları
+# ---------------------------------------------------------------------- findings from the PR #192 review
 def test_subagent_result_goes_to_the_chat_that_started_it(workdir):
     gate = threading.Event()
 
@@ -330,7 +330,7 @@ def test_subagent_result_goes_to_the_chat_that_started_it(workdir):
     agent.ctx.state["session_id"] = "eski"
     agent.ctx.state["deliver_to"] = lambda sid, text: got.append((sid, text))
     sub = subagents.start(agent, agent.ctx, "uzun", background=True)
-    agent.ctx.state["session_id"] = "yeni"  # kullanıcı bu arada yeni sohbete geçti
+    agent.ctx.state["session_id"] = "yeni"  # the user switched to a new chat in the meantime
     gate.set()
     sub.thread.join(5)
     assert got and got[0][0] == "eski"
@@ -371,7 +371,8 @@ def test_subagent_permission_follows_its_own_stop_and_uses_parents_lock(workdir)
     sub.child.ui.parent_ui = UI()
     assert sub.child.ui.ask_permission("run_command", "ls", "exec") == "y"
     assert asked["summary"].startswith("[alt ajan a1") and asked["cancelled"] == sub.child.cancel.is_set
-    # Kilit ana sohbetin adına: ana sohbet tutarken alt ajan beklemez, kendisi alınca da ana sohbet adına bırakılır.
+    # The lock is in the main chat's name: while the main chat holds it, the subagent does not wait;
+    # when the subagent takes it, it is released in the main chat's name.
     assert sub.child.ctx.state["lock_owner"] is agent.ctx
     assert lock.acquire(agent.ctx, lambda: False) and lock.held_by(sub.child.ctx.state["lock_owner"])
 
@@ -397,13 +398,13 @@ def test_pr_project_members_added_before_start_work_in_the_project_branch(tmp_pa
     shared = team.add({"name": "ortak", "task": "iş"})
     wt = team.add({"name": "ayri", "task": "iş", "isolation": "worktree"})
     assert team.pr_branch == "alice/proje-" + team.id and team.pr_session == "baslatan"
-    assert Path(team.cwd) != work and Path(shared.cwd) == Path(team.cwd)  # kullanıcının klasörü değil
+    assert Path(team.cwd) != work and Path(shared.cwd) == Path(team.cwd)  # not the user's folder
     assert str(wt.cwd).startswith(str(team.cwd)) and ".alice-team" in str(wt.cwd)
     excl = subprocess.run(["git", "rev-parse", "--git-path", "info/exclude"], cwd=team.cwd, capture_output=True,
                           text=True).stdout.strip()
     excl_path = Path(excl) if Path(excl).is_absolute() else Path(team.cwd) / excl
     assert ".alice-team/" in excl_path.read_text(encoding="utf-8")
     branches = subprocess.run(["git", "branch", "--list"], cwd=work, capture_output=True, text=True).stdout
-    assert "alice-team/" in branches  # ajan dalı aynı depoda ama worktree'si proje kopyasının içinde
+    assert "alice-team/" in branches  # the agent branch is in the same repo, but its worktree is inside the project copy
     assert subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True,
                           text=True).stdout.strip() == ""

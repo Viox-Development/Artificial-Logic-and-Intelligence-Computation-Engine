@@ -1,11 +1,11 @@
-"""Çekirdek servis: arka planda belirli aralıklarla dönen döngü.
+"""Core service: a loop that runs in the background at fixed intervals.
 
-Her turda: gözlemcilerden veri topla -> depoya yaz -> modu güncelle -> kuralları
-değerlendir -> vadesi gelen görevleri çalıştır. Ajan gerektiren işler (görevler,
-action=agent kurallar) ayrı thread'de çalışır, döngüyü bekletmez.
+Each tick: collect data from the observers -> write it to the store -> update the mode -> evaluate the
+rules -> run the due tasks. Jobs that need an agent (tasks, action=agent rules) run in a separate thread
+so they do not hold up the loop.
 
-Anlık durum ~/.alice/core-state.json'a yazılır; böylece uygulama, REPL ya da ileride ses
-modülü "şu an hangi moddayız, GPU kullanabilir miyim?" sorusunu servise bağlanmadan okur.
+The live state is written to ~/.alice/core-state.json, so the app, the REPL or the voice module can later
+read "which mode are we in right now, can I use the GPU?" without connecting to the service.
 """
 
 from __future__ import annotations
@@ -35,14 +35,15 @@ from alice.core.store import MODE_KEY, Store
 MODE_NAMES = {"normal": "normal", "dev": "geliştirme", "flight": "uçuş", "quiet": "sessiz"}
 
 
-# Takvimde bunlar geçen etkinlik bitince "nasıl geçti" diye sorulur (her toplantı için değil).
+# When an event containing these words ends, ALICE asks "how did it go?" (not for every meeting).
 CALENDAR_ASK = re.compile(r"sınav|sinav|vize|final|quiz|maç|mac\b|mülakat|mulakat|görüşme|randevu|doktor|dişçi|"
                           r"hastane|sunum|yarışma|turnuva|uçuş|seyahat|tatil|konser|exam|interview|match|trip|flight",
                           re.I)
 
 
 def calendar_followups(mem, cfg, now: datetime | None = None, client: Any = None) -> int:
-    """Google Takvim bağlıysa önümüzdeki iki günün önemli etkinliklerini takibe çevir: ertesi gün ALICE sorar."""
+    """If Google Calendar is connected, turn the important events of the next two days into follow-ups:
+    ALICE asks about them the next day."""
     from datetime import timedelta
 
     from alice.connect import runner
@@ -79,7 +80,7 @@ def force_path() -> Path:
 
 
 def force_mode(mode: str | None) -> None:
-    """Modu elle sabitle (None = otomatik). Çalışan çekirdek bir sonraki turda okur."""
+    """Pin the mode by hand (None = automatic). The running core reads it on the next tick."""
     p = force_path()
     if mode:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,7 @@ def stop_path() -> Path:
 
 
 def request_stop() -> None:
-    """Çalışan çekirdekten kapanmasını iste (uygulamadaki Durdur / Yeniden başlat). Bir saniye içinde fark eder."""
+    """Ask the running core to shut down (the Stop / Restart buttons in the app). It notices within a second."""
     p = stop_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(str(time.time()), encoding="utf-8")
@@ -108,7 +109,7 @@ def _take_stop_request() -> bool:
 
 
 def read_state() -> dict[str, Any]:
-    """Servisin son yazdığı durum. Servis çalışmıyorsa {"running": False}."""
+    """The last state the service wrote. If the service is not running, {"running": False}."""
     try:
         data = json.loads(state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -119,7 +120,7 @@ def read_state() -> dict[str, Any]:
 
 
 def make_agent_runner(cfg: Config, cwd: Path | None = None) -> Callable[[str], str]:
-    """Gözetimsiz ajan: her çağrıda temiz context. Onay gerektiren adımlar reddedilir."""
+    """Unattended agent: a clean context on every call. Steps that need approval are rejected."""
 
     def run(prompt: str) -> str:
         from alice.agent import Agent, NullUI
@@ -140,7 +141,7 @@ def make_agent_runner(cfg: Config, cwd: Path | None = None) -> Callable[[str], s
         finally:
             cleanup(ctx)
             decider.close()
-            router.close()  # her görevde yeni yönlendirici: HTTP bağlantıları saatlerce birikmesin
+            router.close()  # a new router for every task, so HTTP connections don't pile up for hours
         return text or "(sonuç yok)"
 
     return run
@@ -154,7 +155,7 @@ class Core:
         self.cfg = cfg
         c = cfg.data.get("core", {})
         self.interval = float(c.get("interval", 15))
-        self.voice = "off"  # core-state.json'a yazılır: "listening" (mikrofon dinleniyor), "no-mic", "off"
+        self.voice = "off"  # written to core-state.json: "listening" (microphone is being listened to), "no-mic", "off"
         self.retention_days = float(c.get("retention_days", 30))
         self.store = store or Store()
         self.pc = PCMonitor()
@@ -168,8 +169,9 @@ class Core:
                 from alice.health.watch import WatchMonitor
 
                 monitors.append(WatchMonitor(self.store, export))
-            # Akışlar: bağlı servislerde önemli bir şey olunca haber ver (~/.alice/feeds.toml). Akış yokken de
-            # takılı: sohbetten eklenen akış çekirdek yeniden başlamadan devreye girsin (boşken maliyeti sıfır).
+            # Feeds: report important things from connected services (~/.alice/feeds.toml). The monitor is attached
+            # even with no feeds: a feed added from the chat takes effect without a core restart (costs nothing
+            # when empty).
             from alice.core.feeds import FeedMonitor
 
             monitors.append(FeedMonitor(self.notifier.send, run_agent, cfg, decider=decider,
@@ -193,11 +195,11 @@ class Core:
                                  mode=lambda: self.modes.current)
         self.stop_event = threading.Event()
         self.running_tasks: set[str] = set()
-        # Her turda mod politikasıyla çağrılır (ör. ses: DCS açılınca modelleri ekran kartından çıkar).
+        # Called on every tick with the mode policy (e.g. voice: when DCS starts, the models are unloaded from the GPU).
         self.hooks: list[Callable[[Policy], None]] = []
         from alice.now import Anticipator
 
-        self.anticipator = Anticipator(self.store)  # beklenen oyundan önce hazırlık (ses modülü kanca ekler)
+        self.anticipator = Anticipator(self.store)  # preparation before an expected game (the voice module adds a hook)
         from alice.anticipate import Morning, QuietGame
 
         ant = cfg.data.get("anticipate", {}) or {}
@@ -206,43 +208,45 @@ class Core:
         if ant.get("game_update", True):
             self.anticipator.hooks.append(self._prep_game_update)
         self._last_prune = 0.0
-        self._last_files: float | None = None  # None: dosyalar henüz hiç kontrol edilmedi
+        self._last_files: float | None = None  # None: the files have not been checked yet at all
         self._lock = threading.Lock()
-        # Kendi kendini güncelleme: kontrol arka plan thread'inde (ağ turu turu bekletmesin), yeniden başlama
-        # çalışan görev yokken.
-        self._last_update_check = time.time()  # açılışta hemen bakma: uygulama zaten bakıyor
+        # Self-update: the check runs in a background thread (so the network does not slow down the ticks); restart
+        # only when no task is running.
+        self._last_update_check = time.time()  # don't check right at startup: the app already does
         self._update_thread: threading.Thread | None = None
         self.restart_pending = False
         self.restart = restart or self._restart_process
-        self.busy_hook: Callable[[], bool] | None = None  # çekirdekteki uygulamada sohbet çalışıyor mu
-        # Hafıza işi: bitmiş konuşmaları özetle, günü gelen hatırlatmaları bildir (10 dk'da bir, arka planda).
+        self.busy_hook: Callable[[], bool] | None = None  # is a chat running in the app attached to the core?
+        # Memory job: summarize finished conversations and report reminders due today
+        # (every 10 min, in the background).
         self.memory_every = float(c.get("memory_every_minutes", 10)) * 60
         self._last_memory = time.monotonic()
         self._memory_thread: threading.Thread | None = None
         self._router: Any = None
-        # PR takibi (alice/prwatch.py): izlenen PR'lara birkaç dakikada bir arka planda bakılır.
+        # PR tracking (alice/prwatch.py): the watched PRs are checked in the background every few minutes.
         self._prwatch_last = 0.0
         self._prwatch_thread: threading.Thread | None = None
-        # Çekirdekteki uygulama bağlanınca: (sohbet kimliği, mesaj) -> "" ya da neden verilemediği (alice/core/cli.py).
+        # When the app connects to the core: (chat id, message) -> "" or the reason it could not be delivered
+        # (alice/core/cli.py).
         self.chat_delivery: Callable[[str, str], str] | None = None
-        self.project_starter: Callable[[dict[str, Any]], str] | None = None  # zamanlanmış proje (uygulama verir)
-        # Uzun yokluktan dönünce karşılama (alice/presence.py); ses başlarsa greeter.voice bağlanır.
+        self.project_starter: Callable[[dict[str, Any]], str] | None = None  # scheduled project (provided by the app)
+        # Welcome back after a long absence (alice/presence.py); greeter.voice is attached when voice starts.
         from alice.presence import Greeter
 
         self.greeter = Greeter(cfg, self.notifier.send, memory=self._memory, router=self.router)
-        # Arka plan nöbeti (alice/kairos.py): kendi seçtiği aralıklarla uyanıp durumu kollar.
+        # Background watch (alice/kairos.py): wakes up at intervals it chooses itself and keeps an eye on the state.
         from alice.kairos import Kairos
 
         self.kairos = Kairos(cfg, self.store, memory=self._memory, policy=lambda: self.modes.policy)
 
-    # ------------------------------------------------------------------ tur
+    # ------------------------------------------------------------------ tick
     def tick(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
         rows = []
         for m in self.monitors:
             try:
                 rows += m.collect()
-            except Exception as e:  # bir gözlemci çökse de diğerleri çalışsın
+            except Exception as e:  # if one observer crashes, the others still run
                 try:
                     self.store.add_event("error", f"{getattr(m, 'name', m)} gözlemcisi hata verdi", str(e)[:300])
                 except Exception:  # noqa: BLE001
@@ -252,16 +256,16 @@ class Core:
         self._update_mode(now)
         try:
             self.game_health.check(self.modes.current, now)
-        except Exception as e:  # noqa: BLE001 - nöbetçi turu durdurmasın
+        except Exception as e:  # noqa: BLE001 - the watchdog must not stop the tick
             self.store.add_event("error", "oyun sağlığı kontrolü hata verdi", repr(e)[:300], topic="core")
         for hook in self.hooks:
             try:
                 hook(self.modes.policy)
-            except Exception as e:  # noqa: BLE001 - bir kanca çökse de tur sürsün
+            except Exception as e:  # noqa: BLE001 - even if one hook crashes, the tick goes on
                 self.store.add_event("error", "çekirdek kancası hata verdi", repr(e)[:300], topic="core")
-        # Adımlar birbirinden bağımsız: biri (bozuk bir kural, kilitli dosya) her turda hata verince geri kalanı
-        # (görevler, güncelleme, durum dosyası) hiç çalışmıyordu; durum dosyası eskiyince uygulama çekirdeği kapalı
-        # sanıyordu. Aynı hata günde bir kez yazılır.
+        # The steps are independent: when one (a broken rule, a locked file) failed on every tick, the rest
+        # (tasks, update, state file) never ran; once the state file got stale, the app thought the core was off.
+        # The same error is written once a day.
         steps: tuple[tuple[str, Callable[[], Any]], ...] = (
             ("kural/görev dosyası yükleme", self._reload_if_changed),
             ("kural değerlendirme", lambda: self.engine.evaluate(now)),
@@ -273,36 +277,37 @@ class Core:
         for name, step in steps:
             try:
                 step()
-            except Exception as e:  # noqa: BLE001 - bir adım turu durdurmasın
+            except Exception as e:  # noqa: BLE001 - a step must not stop the tick
                 self._step_error(name, e)
         try:
             self.greeter.tick()
-        except Exception as e:  # noqa: BLE001 - karşılama çekirdeği durdurmasın
+        except Exception as e:  # noqa: BLE001 - the greeter must not stop the core
             self.store.add_event("error", "karşılama hata verdi", repr(e)[:300], topic="core")
         try:
             self.kairos.tick()
-        except Exception as e:  # noqa: BLE001 - nöbet çekirdeği durdurmasın
+        except Exception as e:  # noqa: BLE001 - the watch must not stop the core
             self.store.add_event("error", "KAIROS hata verdi", repr(e)[:300], topic="core")
         if now - self._last_prune > 3600:
             self._last_prune = now
             try:
                 self.store.prune(self.retention_days, now)
-            except Exception as e:  # noqa: BLE001 - veritabanı kilitliyse sonraki saatte yine denenir
+            except Exception as e:  # noqa: BLE001 - if the database is locked, it is tried again the next hour
                 self._step_error("eski veriyi temizleme", e)
         self.write_state(now)
 
     def prime(self) -> None:
-        """Açılışta, ses ve diğer modüller başlamadan modu belirle ve yaz. Yoksa ilk tur gelene kadar durum dosyası
-        olmuyor, ses modülü "GPU serbest" sanıp DCS açıkken bile modelleri ekran kartına yüklüyordu."""
+        """At startup, before the voice and other modules start, set and write the mode. Otherwise there is no
+        state file until the first tick, and the voice module, thinking "GPU is free", loaded the models onto the
+        GPU even while DCS was open."""
         now = time.time()
         try:
-            self.pc._procs()  # sadece süreç adları; sıcaklık/GPU sorguları ilk tura kalsın
+            self.pc._procs()  # process names only; temperature/GPU queries wait for the first tick
         except Exception:  # noqa: BLE001
             pass
         self._update_mode(now)
         try:
             self.write_state(now)
-        except OSError as e:  # açılış çökmesin; ilk tur yeniden yazar
+        except OSError as e:  # don't crash at startup; the first tick writes it again
             print(f"çekirdek durumu yazılamadı: {e!r}", file=sys.stderr)
 
     def _update_mode(self, now: float) -> None:
@@ -315,10 +320,10 @@ class Core:
         for m in self.monitors:
             procs |= set(getattr(m, "processes", set()))
         mode, changed = self.modes.update(procs, datetime.fromtimestamp(now))
-        # Mod her turda yazılır: aralık hesapları servis kapalıyken bile doğru kalsın diye
-        # kapanışta "off" yazılır, ama arada kayıp olursa son mod sonsuza uzamasın.
+        # The mode is written on every tick so the interval calculations stay correct even while the service is off;
+        # "off" is written at shutdown, but if that write is lost, the last mode must not last forever.
         self.store.add(MODE_KEY, text=mode, ts=now)
-        try:  # her turda: HUD yeniden başlasa da oyunda olduğunu bilsin (oyunda yalnız tehdit ve uyarılar)
+        try:  # every tick, so the HUD knows we are in a game even after a restart (games show only threats/warnings)
             from alice.hud import views
 
             views.game_context(mode == "flight")
@@ -326,7 +331,7 @@ class Core:
             pass
         if changed:
             self.store.add_event("mode", f"Mod: {MODE_NAMES.get(mode, mode)}", severity="info", topic="mode")
-            try:  # maçta Windows bildirim balonları susar, bitince eski haline
+            try:  # Windows notification balloons are muted during a match and restored when it ends
                 did = self.quiet_game.mode(mode)
                 if did:
                     self.store.add_event("info", did, topic="now")
@@ -334,15 +339,15 @@ class Core:
                 pass
 
     def _reload_if_changed(self) -> None:
-        """Kural/görev dosyaları başka süreçten (CLI, ajan aracı) değiştiyse yeniden yükle."""
+        """Reload the rule/task files if another process (the CLI, an agent tool) changed them."""
         mt = max((p.stat().st_mtime for p in (self.rules.path, self.tasks.path) if p.exists()), default=0.0)
         if self._last_files is None or mt > self._last_files:
-            if self._last_files is not None:  # ilk görüşte değil; sonradan oluşan dosya da yüklenir
+            if self._last_files is not None:  # not on the first look; a file created later is loaded too
                 self.rules.load()
                 self.tasks.load()
             self._last_files = mt
 
-    # ---------------------------------------------------------- hafıza
+    # ---------------------------------------------------------- memory
     def _maybe_memory(self) -> None:
         if self.memory_every <= 0 or time.monotonic() - self._last_memory < self.memory_every:
             return
@@ -368,18 +373,18 @@ class Core:
             return None
 
     def memory_job(self) -> None:
-        """Konuşma bitince özetlenmesi uygulama kapalıyken de olsun; "remind" takipleri günü gelince bildirim olur
-        (her biri bir kez; ALICE sohbette de hatırlatır, profilde durur).
+        """Conversations are summarized even while the app is closed; "remind" follow-ups become notifications when
+        their day comes (each one once; ALICE also reminds in the chat, and it stays in the profile).
 
-        Adımlar birbirinden bağımsız: takvim 404 verdiği için iki hafta hatırlatma ve e-posta bildirimi hiç
-        gitmemişti. Aynı hata her saat kayda yazılmaz, günde bir yazılır."""
+        The steps are independent: because the calendar returned a 404, no reminder or e-mail notification had gone
+        out for two weeks. The same error is not written to the log every hour; it is written once a day."""
         mem = self._memory()
         if mem is None:
             return
         steps: list[tuple[str, Callable[[], Any]]] = [
-            ("hatırlatmalar", lambda: self._send_reminders(mem)),  # en önemlisi önce
+            ("hatırlatmalar", lambda: self._send_reminders(mem)),  # the most important first
             ("konuşma özeti", mem.digest),
-            ("hafıza Dream", mem.maybe_dream),  # günde bir, yeterince konuşma birikince: notlar toparlanır
+            ("hafıza Dream", mem.maybe_dream),  # daily, once enough conversation has built up: notes get consolidated
             ("takvim takibi", lambda: calendar_followups(mem, self.cfg)),
             ("sesli mod gecikme raporu", self._latency_report),
             ("önemli e-postalar", self._important_mail),
@@ -393,12 +398,12 @@ class Core:
         for name, fn in steps:
             try:
                 fn()
-            except Exception as e:  # noqa: BLE001 - bir adım diğerlerini durdurmasın
+            except Exception as e:  # noqa: BLE001 - one step must not stop the others
                 self._step_error(name, e)
 
     def _maybe_prwatch(self, now: float) -> None:
-        """İzlenen PR varsa ve vakti geldiyse arka planda bak. Düzeltme dakikalar sürebilir: tur beklemez, aynı anda
-        tek bakma çalışır."""
+        """If there is a watched PR and it is time, check in the background. A fix can take minutes: the tick does not
+        wait, and only one check runs at a time."""
         from alice import prwatch
 
         if self._prwatch_thread is not None and self._prwatch_thread.is_alive():
@@ -416,7 +421,7 @@ class Core:
             try:
                 for line in prwatch.check_all(self.cfg, notify, deliver=self.chat_delivery):
                     self.store.add_event("info", "PR takibi", line, topic="github")
-            except Exception as e:  # noqa: BLE001 - anahtar yok, ağ yok: çekirdek sürsün
+            except Exception as e:  # noqa: BLE001 - no key, no network: the core keeps running
                 self._step_error("PR takibi", e)
 
         self._prwatch_thread = threading.Thread(target=work, daemon=True, name="alice-prwatch")
@@ -436,7 +441,7 @@ class Core:
         from alice.voice import latency
 
         week = latency.weekly_report()
-        if week:  # sesli modun haftalık gecikmesi: yavaşlık tahminle değil ölçümle görülsün
+        if week:  # the weekly latency of voice mode: slowness should be seen from measurements, not guesses
             self.store.add_event("info", "Sesli mod: bu haftanın gecikmesi", week, topic="voice")
 
     def _important_mail(self) -> None:
@@ -456,8 +461,9 @@ class Core:
     def _prep_game_update(self) -> None:
         from alice import anticipate
 
-        # Bildirim ve Steam'i açmak yavaş olabilir: kilidi tutmadan bir kopya üzerinde çalış, sonra yalnız değişen
-        # anahtarları kilit altında taze duruma yaz (bu arada QuietGame'in yazdığı dnd_prev silinmesin).
+        # Sending the notification and opening Steam can be slow: work on a copy without holding the lock, then write
+        # only the changed keys into the fresh state under the lock (so the dnd_prev that QuietGame wrote
+        # in the meantime survives).
         before = anticipate.load_state()
         st = dict(before)
         msg = anticipate.prep_game_update(self._processes(), lambda t, b: self.notifier.send(
@@ -470,11 +476,11 @@ class Core:
             self.store.add_event("info", "Önsezi: oyun güncellemesi", msg, "info", "now")
 
     def _morning(self) -> None:
-        if getattr(self, "morning", None) is None:  # eski kurulum ya da __init__ atlanmış (testler)
+        if getattr(self, "morning", None) is None:  # an old install, or __init__ was skipped (tests)
             return
         answers = self.morning.check()
         if answers:
-            # Yalnız konu adları değil hazırlanan cevaplar da (kısaltılmış) görünsün.
+            # Show not only the topic names but also the prepared answers (shortened).
             def short(v: Any) -> str:
                 t = " ".join(str(v or "").split())
                 return t if len(t) <= 160 else t[:157].rstrip() + "…"
@@ -497,7 +503,7 @@ class Core:
             Notification(t, b, "info", "memory", kind="info", emotion="cheerful")))
 
     def _night(self, mem) -> None:
-        """Gece kendi kayıtlarını okuyup sorunları ve bağlantıları bul, sabah sor (alice/night.py)."""
+        """At night, read its own records, find problems and connections, and ask in the morning (alice/night.py)."""
         if not (self.cfg.data.get("night", {}) or {}).get("enabled", True):
             return
         from alice import night
@@ -517,7 +523,8 @@ class Core:
     def _step_error(self, name: str, e: Exception) -> None:
         key = "|".join((name, type(e).__name__, str(e)[:80]))
         now = time.time()
-        # Diskte: bellekte tutulunca her yeniden başlatmada aynı hata yeniden yazılıyordu (takvim izni, 2 günde 13 kez).
+        # On disk: kept in memory, the same error was written again on every restart (calendar permission:
+        # 13 times in 2 days).
         path = alice_home() / "step-errors.json"
         try:
             seen = json.loads(path.read_text(encoding="utf-8"))
@@ -537,7 +544,7 @@ class Core:
         except Exception:  # noqa: BLE001
             pass
 
-    # ---------------------------------------------------------- güncelleme
+    # ---------------------------------------------------------- update
     def _maybe_update(self, now: float) -> None:
         from alice import updater
 
@@ -545,7 +552,7 @@ class Core:
         if s.get("mode") == "off":
             return
         if self.restart_pending:
-            # yarım görev ya da yarım sohbet bırakma: boşta kalınca
+            # don't cut off a running task or chat: restart once idle
             if not self.running_tasks and not (self.busy_hook is not None and self.busy_hook()):
                 self.restart()
             return
@@ -559,7 +566,8 @@ class Core:
         self._update_thread.start()
 
     def update_job(self) -> None:
-        """Yeni sürüm var mı; uygulama kapalıysa çek. Diskteki kod bu süreçten yeniyse yeniden başlamayı işaretle."""
+        """Check whether a new version exists; pull it if the app is closed.
+        If the code on disk is newer than this process, mark a restart."""
         from alice import updater
 
         try:
@@ -572,11 +580,11 @@ class Core:
             if not info.available or updater.settings(self.cfg).get("mode") != "auto":
                 return
             if updater.app_running():
-                return  # uygulama açık: arayüzü olan o, güncellemeyi o yapsın
+                return  # the app is open: the one with the UI should do the update
             updater.prepare(info, self.cfg)
             if not info.can_auto:
                 if info.ci == "pending":
-                    # CI birkaç dakikada biter: bir saat değil, birkaç dakika sonra tekrar bak.
+                    # CI finishes in a few minutes: check again after a few minutes, not an hour.
                     every = max(5.0, float(updater.settings(self.cfg).get("check_every_minutes") or 60)) * 60
                     self._last_update_check = time.time() - every + updater.CI_RECHECK
                     return
@@ -587,17 +595,18 @@ class Core:
                                  "info" if ok else "warn", "core")
             if ok:
                 self.restart_pending = True
-        except Exception as e:  # noqa: BLE001 - güncelleme kontrolü çekirdeği düşürmesin
+        except Exception as e:  # noqa: BLE001 - the update check must not bring down the core
             self.store.add_event("error", "güncelleme kontrolü hata verdi", repr(e)[:300], topic="core")
 
     def _restart_process(self) -> None:
-        """Aynı komutla yeniden başla. Tek kopya kilidi önce bırakılır, yoksa yeni süreç 'zaten çalışıyor' der."""
+        """Restart with the same command. The single-instance lock is released first, otherwise the new
+        process says 'already running'."""
         from alice import updater
 
         from alice.app.host import mark_restarting
 
         self.store.add_event("core", "Çekirdek yeni sürümle yeniden başlıyor", topic="core")
-        mark_restarting()  # açık pencere kapanmasın, yeni çekirdeğin adresine geçsin
+        mark_restarting()  # keep the open window from closing; it moves to the new core's address
         release_lock()
         try:
             state_path().unlink()
@@ -612,11 +621,11 @@ class Core:
             if task.id in self.running_tasks:
                 continue
             self.running_tasks.add(task.id)
-            # Çift çalışmayı önlemek için hemen işaretle; sonuç gelince güncellenir.
+            # Mark it right away to prevent a double run; it is updated when the result arrives.
             try:
                 self.tasks.mark_run(task, "(çalışıyor)", now)
             except Exception:
-                self.running_tasks.discard(task.id)  # yoksa bu görev bir daha hiç çalışmaz
+                self.running_tasks.discard(task.id)  # otherwise this task would never run again
                 raise
             threading.Thread(target=self._run_task, args=(task, late), daemon=True).start()
 
@@ -636,8 +645,8 @@ class Core:
                 fresh = self.tasks.get(task.id) or task
                 self.tasks.mark_run(fresh, result, fresh.last_run)
                 if fresh.once:
-                    # Tek seferlik görev listede kalınca cron'u her yıl aynı gün yeniden tetikliyordu ("beni 1
-                    # dakika sonra ara" ertesi yıl da arardı) ve silmek kullanıcıya kalıyordu.
+                    # A one-time task left in the list fired again on the same day every year
+                    # ("call me in 1 minute" would call again the next year too), and removing it was left to the user.
                     self.tasks.remove(fresh.id)
             title = f"Görev{' (telafi)' if late else ''}: {task.description or task.prompt[:40]}"
             if task.notify:
@@ -659,22 +668,22 @@ class Core:
             try:
                 os.replace(tmp, p)
                 return
-            except PermissionError:  # Windows: okuyan süreç (ses modülü, uygulama) dosyayı o an açık tutuyor
+            except PermissionError:  # Windows: a reader (the voice module, the app) has the file open right now
                 if attempt == 4:
                     raise
                 time.sleep(0.05 * (attempt + 1))
 
-    # ---------------------------------------------------------------- döngü
+    # ---------------------------------------------------------------- loop
     def run_forever(self) -> None:
         self.store.add_event("core", "Çekirdek başladı", severity="info", topic="core")
-        _take_stop_request()  # önceki çekirdeğe gönderilmiş, kullanılmamış istek yenisini kapatmasın
+        _take_stop_request()  # an unused stop request sent to the previous core must not shut down the new one
         clip = None
         if (self.cfg.data.get("core") or {}).get("clipboard_history", True):
-            try:  # pano geçmişi: "az önce kopyaladığım" (alice/core/clipwatch.py)
+            try:  # clipboard history, for "az önce kopyaladığım" ("what I just copied") (alice/core/clipwatch.py)
                 from alice.core.clipwatch import ClipWatch
 
                 clip = ClipWatch().start()
-            except Exception:  # noqa: BLE001 - pyperclip yoksa geçmiş tutulmaz
+            except Exception:  # noqa: BLE001 - without pyperclip, no history is kept
                 clip = None
         try:
             while not self.stop_event.is_set():
@@ -682,12 +691,13 @@ class Core:
                 try:
                     self.tick()
                 except Exception as e:
-                    try:  # olay yazılamasa da (veritabanı kilitli) döngü ölmesin
+                    try:  # even if the event cannot be written (database locked), the loop must not die
                         self.store.add_event("error", "çekirdek turu hata verdi", repr(e)[:500], "warn", "core")
                     except Exception:  # noqa: BLE001
                         traceback.print_exc()
-                # Tur arasını saniyelik adımlarla bekle: uygulamadan gelen durdurma isteği bir saniyede fark edilsin.
-                # Adım sayısı sınırlı; saat atlasa ya da wait erken dönse de döngü dönüp durmaz.
+                # Wait between ticks in one-second steps, so a stop request from the app is noticed within a second.
+                # The number of steps is limited; even if the clock jumps or wait returns early,
+                # the loop does not spin out of control.
                 end = t0 + max(1.0, self.interval)
                 for _ in range(int(max(1.0, self.interval)) + 1):
                     left = end - time.monotonic()
@@ -711,9 +721,9 @@ class Core:
         self.stop_event.set()
 
 
-# ----------------------------------------------------------- tek kopya kilidi
+# ----------------------------------------------------------- single-instance lock
 def acquire_lock() -> bool:
-    """Aynı anda tek çekirdek çalışsın. Başka bir canlı çekirdek varsa False."""
+    """Only one core runs at a time. Returns False if another live core is running."""
     lock = alice_home() / "core.pid"
     lock.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -741,7 +751,7 @@ def release_lock() -> None:
 
 
 def release_lock_of(pid: Any) -> None:
-    """Dışarıdan kapatılan çekirdeğin kilidini kaldır (kilit o süreçteyse)."""
+    """Remove the lock of a core that was shut down from outside (if the lock belongs to that process)."""
     lock = alice_home() / "core.pid"
     try:
         if pid and lock.read_text().strip() == str(pid):
@@ -750,9 +760,9 @@ def release_lock_of(pid: Any) -> None:
         pass
 
 
-# ------------------------------------------------------------ sistem tepsisi
+# ------------------------------------------------------------ system tray
 def run_tray(core: Core) -> bool:
-    """pystray varsa tepsi simgesiyle çalış (ana thread'i bloklar). Yoksa False."""
+    """If pystray is available, run with a tray icon (it blocks the main thread). Otherwise False."""
     try:
         import pystray
         from PIL import Image
@@ -778,7 +788,7 @@ def run_tray(core: Core) -> bool:
         subprocess.Popen([str(pyw if pyw.exists() else exe), "-m", "alice", "app"])
 
     def quit_(icon, item):
-        try:  # sonradan "neden kapandı" sorusu cevapsız kalmasın
+        try:  # so the later question "why did it close?" does not go unanswered
             core.store.add_event("core", "Çekirdek tepsiden kapatıldı", topic="core")
         except Exception:  # noqa: BLE001
             pass
@@ -800,24 +810,25 @@ def run_tray(core: Core) -> bool:
         try:
             core.run_forever()
         finally:
-            icon.stop()  # uygulamadan durdurulunca tepsi simgesi de kalksın
+            icon.stop()  # so the tray icon also goes away when stopped from the app
 
     threading.Thread(target=loop, daemon=True).start()
     icon.run()
     return True
 
 
-# ------------------------------------------------------ otomatik başlatma
+# ------------------------------------------------------ autostart
 def start_detached() -> bool:
-    """Çekirdeği konsolsuz arka planda başlat (zaten çalışıyorsa bir şey yapmaz). Başlattıysa True."""
+    """Start the core in the background without a console (does nothing if it is already running).
+    True if it was started."""
     import subprocess
 
     if read_state().get("running"):
         return False
     from alice import runtime
 
-    exe = runtime.python()  # hep aynı ortam (bkz. alice.runtime)
-    # Hata çıktısı core.log'a: eskiden DEVNULL'a gidiyordu, çekirdek çöktüğünde hiçbir iz kalmıyordu.
+    exe = runtime.python()  # always the same environment (see alice.runtime)
+    # Error output goes to core.log: it used to go to DEVNULL, so no trace was left when the core crashed.
     err = _open_core_log()
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                               "stderr": err if err is not None else subprocess.DEVNULL, "cwd": str(Path.home())}
@@ -834,7 +845,8 @@ def start_detached() -> bool:
 
 
 def _open_core_log():
-    """~/.alice/core.log (2 MB'ı geçince core.log.1'e devredilir), ekleme kipinde; açılamazsa None."""
+    """~/.alice/core.log (once it passes 2 MB it is moved to core.log.1), opened in append mode;
+    None if it cannot be opened."""
     try:
         log = alice_home() / "core.log"
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -849,8 +861,8 @@ _crash_file = None
 
 
 def enable_crash_log() -> None:
-    """Yerel çökmeler (ses sürücüsü, CUDA, COM) Python izi bırakmadan süreci öldürüyordu: faulthandler tüm iş
-    parçacıklarının yığınını ~/.alice/core-crash.log'a yazsın. Her açılış bir satırla işaretlenir."""
+    """Native crashes (audio driver, CUDA, COM) were killing the process without leaving a Python trace:
+    have faulthandler write the stacks of all threads to ~/.alice/core-crash.log. Each start is marked with a line."""
     global _crash_file
     import faulthandler
 
@@ -859,13 +871,13 @@ def enable_crash_log() -> None:
         f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} çekirdek başladı (pid {os.getpid()})\n")
         f.flush()
         faulthandler.enable(f, all_threads=True)
-        _crash_file = f  # açık kalmalı: faulthandler dosya tanıtıcısını tutar
+        _crash_file = f  # must stay open: faulthandler holds the file handle
     except (OSError, ValueError, RuntimeError):
         pass
     try:
         print(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} çekirdek başladı (pid {os.getpid()})", file=sys.stderr,
               flush=True)
-    except Exception:  # noqa: BLE001 - stderr yoksa önemli değil
+    except Exception:  # noqa: BLE001 - no stderr, so it doesn't matter
         pass
 
 
@@ -878,14 +890,14 @@ def autostart_path() -> Path:
 
 
 def install_autostart() -> Path:
-    """Oturum açılınca çekirdeği konsolsuz başlat."""
+    """Start the core without a console when the session starts."""
     import subprocess
 
     from alice import runtime
 
     path = autostart_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    exe = runtime.python()  # açılış da elle başlatmayla aynı Python'u kullansın (bkz. alice.runtime)
+    exe = runtime.python()  # autostart should use the same Python as a manual start (see alice.runtime)
     if sys.platform == "win32":
         target = exe
         icon = Path(__file__).resolve().parent.parent / "app" / "static" / "alice.ico"

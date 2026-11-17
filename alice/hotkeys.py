@@ -1,15 +1,15 @@
-"""Global kısayollar, klavyeyi yavaşlatmadan.
+"""Global shortcuts, without slowing down the keyboard.
 
-pynput Windows'ta bütün sisteme düşük seviyeli klavye kancası (WH_KEYBOARD_LL) kurar: basılan HER tuş, hangi
-programda yazılırsa yazılsın, önce ALICE'in Python sürecine uğrar. Süreç meşgulken (ses, model çağrıları, ajanlar)
-Python kancaya geç cevap verir, Windows da her tuşu bekletir; kullanıcı her yerde yazının saniyeler sonra geldiğini
-görür. Bu yüzden Windows'ta kanca kullanmıyoruz:
+pynput on Windows installs a system-wide low-level keyboard hook (WH_KEYBOARD_LL): EVERY key pressed, in whichever
+program it is typed in, first passes through ALICE's Python process. When it is busy (audio, model calls, agents)
+Python answers the hook late and Windows makes every key wait, so typing shows up seconds late everywhere.
+That is why we do not use a hook on Windows:
 
-- Kısayollar (hızlı bar): RegisterHotKey. Windows sadece o tuş birleşimine basılınca haber verir, diğer tuşlara
-  dokunmaz.
-- Bas-konuş: tuşun durumuna kısa aralıklarla bakılır (GetAsyncKeyState); kanca yok.
+- Shortcuts (quick bar): RegisterHotKey. Windows only tells us when that key combination is pressed; it
+  leaves the other keys alone.
+- Push-to-talk: the key's state is checked at short intervals (GetAsyncKeyState); no hook.
 
-Diğer sistemlerde pynput kullanılmaya devam eder.
+On other systems, pynput is still used.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ PUNCT = {";": 0xBA, "=": 0xBB, ",": 0xBC, "-": 0xBD, ".": 0xBE, "/": 0xBF, "`": 
 
 
 def key_vk(name: str) -> int | None:
-    """Tek bir tuşun Windows sanal tuş kodu (pynput adıyla: 'a', '<f13>', '<scroll_lock>')."""
+    """Windows virtual key code of a single key (by pynput name: 'a', '<f13>', '<scroll_lock>')."""
     name = name.strip().strip("<>").lower()
     if name in VK_NAMES:
         return VK_NAMES[name]
@@ -50,7 +50,7 @@ def key_vk(name: str) -> int | None:
 
 
 def parse_combo(combo: str) -> tuple[int, int] | None:
-    """'<ctrl>+<alt>+a' -> (değiştiriciler, sanal tuş). Anlaşılamazsa None."""
+    """'<ctrl>+<alt>+a' -> (modifiers, virtual key). None if not understood."""
     mods, vk = 0, None
     for part in [p for p in combo.lower().split("+") if p.strip()]:
         bare = part.strip().strip("<>")
@@ -61,16 +61,16 @@ def parse_combo(combo: str) -> tuple[int, int] | None:
             if vk is None:
                 return None
         else:
-            return None  # iki ana tuş
+            return None  # two main keys
     return (mods, vk) if vk is not None else None
 
 
 class WinHotkeys:
-    """RegisterHotKey ile global kısayollar: kendi mesaj döngüsü olan bir iş parçacığında çalışır."""
+    """Global shortcuts via RegisterHotKey: runs on a thread with its own message loop."""
 
     def __init__(self, mapping: dict[str, Callable[[], None]]):
         self.mapping = {k: v for k, v in mapping.items() if k}
-        self.failed: list[str] = []  # başka bir programın tuttuğu ya da anlaşılmayan kısayollar
+        self.failed: list[str] = []  # shortcuts held by another program or not understood
         self._tid = 0
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="alice-hotkeys")
@@ -100,7 +100,7 @@ class WinHotkeys:
                 if msg.message == WM_HOTKEY and msg.wParam in actions:
                     try:
                         actions[msg.wParam]()
-                    except Exception:  # noqa: BLE001 - bir kısayolun hatası dinlemeyi durdurmasın
+                    except Exception:  # noqa: BLE001 - an error in one shortcut must not stop listening
                         pass
         finally:
             for i in actions:
@@ -114,7 +114,7 @@ class WinHotkeys:
 
 
 class KeyPoller:
-    """Bas-konuş tuşunu kancasız izler: tuşun durumuna 25 ms'de bir bakar (Windows)."""
+    """Watches the push-to-talk key without a hook: checks the key state every 25 ms (Windows)."""
 
     def __init__(self, key: str, on_press: Callable[[], None], on_release: Callable[[], None], every: float = 0.025):
         vk = key_vk(key)

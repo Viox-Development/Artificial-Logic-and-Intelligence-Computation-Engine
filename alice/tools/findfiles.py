@@ -1,11 +1,13 @@
-"""Kişisel dosya bulma: "geçen hafta indirdiğim staj PDF'i", "dün açtığım Excel", indirilenleri toparlama.
+"""Personal file finder: "geçen hafta indirdiğim staj PDF'i" (last week's internship PDF), "dün açtığım Excel"
+(yesterday's Excel).
 
-Proje kodunda arama glob/grep'in işi; bu araç kullanıcının kendi dosyaları için:
-  * recent: Windows'un "son kullanılanlar" listesi (gerçekten açılan dosyalar, ne zaman açıldığıyla)
-  * downloads: İndirilenler klasörü, indirme zamanına göre
-  * search: Masaüstü, Belgeler, İndirilenler, Resimler, OneDrive'da adında geçen (derinlik sınırlı, hızlı)
-  * open: dosyayı varsayılan programla aç
-  * tidy: İndirilenler'i türüne göre alt klasörlere ayır; önce plan gösterir, apply=true ile taşır
+Searching project code is glob/grep's job; this tool is for the user's own files:
+  * recent: Windows' "son kullanılanlar" (recently used) list (files actually opened, with when they were opened)
+  * downloads: Downloads folder (İndirilenler), by download time
+  * search: files with the query in their name, in Desktop, Documents, Downloads, Pictures, OneDrive
+    (depth-limited, fast)
+  * open: open the file with its default program
+  * tidy: sort Downloads into subfolders by type; shows the plan first, moves with apply=true
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ KINDS = {
     "arşiv": {".zip", ".rar", ".7z", ".tar", ".gz"}, "kurulum": {".exe", ".msi"},
     "metin": {".txt", ".md"}, "kod": {".py", ".js", ".ts", ".cs", ".cpp", ".json", ".lua"},
 }
-# tidy'de klasör adları
+# Folder names used by tidy
 TIDY_DIRS = {"pdf": "Belgeler", "word": "Belgeler", "excel": "Belgeler", "sunum": "Belgeler", "metin": "Belgeler",
              "resim": "Resimler", "video": "Videolar", "ses": "Sesler", "arşiv": "Arşivler", "kurulum": "Kurulumlar"}
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", "AppData", ".venv", "venv", "site-packages"}
@@ -38,8 +40,8 @@ def home() -> Path:
 
 
 def downloads_dir() -> Path:
-    """Kullanıcının gerçek İndirilenler klasörü: başka diske/klasöre taşınmışsa (Özellikler > Konum) ~/Downloads
-    değil orası; eskiden taşınmış klasörde "bulunamadı" deniyordu."""
+    """The user's real Downloads folder (İndirilenler): if it was moved to another disk/folder (Properties > Location),
+    that folder is used instead of ~/Downloads; a moved folder used to be reported as "bulunamadı" (not found)."""
     from alice.tools.fetch_file import downloads_dir as known
 
     p = home() / "Downloads"
@@ -82,8 +84,9 @@ def _fmt(p: Path, ts: float) -> str:
 
 def recent(query: str = "", kind: str = "", days: float | None = None, limit: int = 15,
            folder: Path | None = None) -> list[tuple[Path, float]]:
-    """Son açılan dosyalar: %APPDATA%\\Microsoft\\Windows\\Recent'teki kısayolların hedefleri (kısayolun zamanı =
-    son açılış). Kısayol hedefi okunamazsa adından tahmin edilir ve aramaya yine katılır."""
+    """Recently opened files: the targets of the shortcuts in %APPDATA%\\Microsoft\\Windows\\Recent
+    (a shortcut's time = its last open). If a shortcut's target can't be read, it is guessed from the name
+    and still included in the search."""
     folder = folder or Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Recent"
     if not folder.is_dir():
         return []
@@ -98,7 +101,7 @@ def recent(query: str = "", kind: str = "", days: float | None = None, limit: in
             continue
         target = _lnk_target(lnk) or Path(lnk.stem)
         if "?" in target.name and (target.parent / lnk.stem).exists():
-            target = target.parent / lnk.stem  # kısayolun adı Unicode: Kiril/emoji içeren adlar kaybolmasın
+            target = target.parent / lnk.stem  # shortcut name is Unicode: keep names with Cyrillic/emoji intact
         if target.suffix == "" or not _match(target, query, kind):
             continue
         out.append((target, ts))
@@ -106,21 +109,21 @@ def recent(query: str = "", kind: str = "", days: float | None = None, limit: in
 
 
 def _lnk_target(lnk: Path) -> Path | None:
-    """.lnk'nin hedef yolu (Windows kabuğu ile; yoksa dosyadaki yerel yol dizesinden)."""
+    """The .lnk's target path (via the Windows shell; otherwise from the local path string in the file)."""
     if sys.platform == "win32":
-        try:  # kabuk Unicode yolu verir; dosyadaki ANSI dizede Türkçe/emoji karakterler "?" oluyordu
+        try:  # the shell returns the Unicode path; in the file's ANSI string, Turkish/emoji characters became "?"
             import win32com.client
 
             target = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(lnk)).TargetPath
             if target:
                 return Path(target)
-        except Exception:  # noqa: BLE001 - pywin32 yoksa ya da kısayol bozuksa dizeden oku
+        except Exception:  # noqa: BLE001 - if pywin32 is missing or the shortcut is broken, read the file
             pass
     try:
         data = lnk.read_bytes()
     except OSError:
         return None
-    # Kısayol dosyasındaki yerel yol: "C:\..." ile başlayan, NUL ile biten ANSI dize
+    # Local path in the shortcut file: an ANSI string starting with "C:\..." and ending in NUL
     import re
 
     m = re.search(rb"([A-Za-z]:\\[^\x00]{2,259})\x00", data)
@@ -175,11 +178,11 @@ def search(query: str = "", kind: str = "", days: float | None = None, limit: in
 
 
 def tidy_plan(folder: Path | None = None, older_than_days: float = 1.0) -> list[tuple[Path, Path]]:
-    """İndirilenler'in üst düzeyindeki dosyalar -> tür klasörü. Son 1 günde inenlere (belki hâlâ iniyor) dokunmaz."""
+    """Top-level files in Downloads -> type folder. Skips anything from the last day (it may still be downloading)."""
     folder = folder or downloads_dir()
     cutoff = time.time() - older_than_days * 86400
     plan = []
-    taken: set[Path] = set()  # bu planda zaten hedef olan yollar: iki dosya aynı hedefe gidip biri ezilmesin
+    taken: set[Path] = set()  # paths already targeted by this plan: stops two files overwriting each other
     for p in sorted(folder.iterdir()) if folder.is_dir() else []:
         try:
             if not p.is_file() or p.stat().st_mtime > cutoff or p.suffix.lower() in (".crdownload", ".part", ".tmp"):
@@ -209,7 +212,7 @@ class FindFiles(Tool):
                    "description": "recent: son açılanlar | downloads: İndirilenler | search: kişisel klasörlerde ad "
                    "araması | open: path'i aç | tidy: İndirilenler'i tür klasörlerine ayır."},
         "query": {"type": "string", "description": "Dosya adında geçen kelimeler (hepsi geçmeli), ör. 'staj'. Boş: hepsi."},
-        # Boş seçenek ("") yok: Gemini Live boş enum değeri gören bütün araç listesini reddedip açılmıyordu
+        # No empty option (""): Gemini Live rejected the whole tool list on an empty enum value
         "kind": {"type": "string", "enum": list(KINDS), "description": "Dosya türü (boş bırakılabilir)."},
         "days": {"type": "number", "description": "Son kaç gün ('dün' 2, 'geçen hafta' 8)."},
         "path": {"type": "string", "description": "open için dosya yolu."},
@@ -227,7 +230,7 @@ class FindFiles(Tool):
         if action == "open":
             if not path:
                 raise ToolError("open için path gerekli")
-            # Göreli yol sohbetin çalışma klasörüne göre çözülür (eskiden sürecin cwd'sine göreydi).
+            # A relative path is resolved against the chat's working folder (it used to be relative to the process cwd).
             p = ctx.resolve(path)
             if not p.exists():
                 raise ToolError(f"dosya yok: {p}")
@@ -251,7 +254,7 @@ class FindFiles(Tool):
             moved = 0
             for src, dest in plan:
                 try:
-                    if dest.exists():  # plan ile taşıma arasında oluştu: üzerine yazma (POSIX'te sessizce ezerdi)
+                    if dest.exists():  # created between planning and moving: don't overwrite (POSIX would replace it)
                         continue
                     dest.parent.mkdir(exist_ok=True)
                     shutil.move(str(src), str(dest))
@@ -263,7 +266,7 @@ class FindFiles(Tool):
         if fn is None:
             raise ToolError(f"bilinmeyen action: {action}")
         hits = fn(query, kind, days)
-        if not hits and action == "recent":  # son açılanlarda yoksa diskte ara
+        if not hits and action == "recent":  # not among recent files: search the disk
             hits = search(query, kind, days)
         return ToolResult("\n".join(_fmt(p, ts) for p, ts in hits) or "bulunamadı")
 

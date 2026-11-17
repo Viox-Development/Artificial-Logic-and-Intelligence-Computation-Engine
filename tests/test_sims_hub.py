@@ -75,7 +75,7 @@ def airborne(hb, src="dcs", **kw):
     return c
 
 
-# ------------------------------------------------------------ basit yardımcılar
+# ------------------------------------------------------------ simple helpers
 def test_say_sends_flight_notification(h):
     h._say("Bingo", "warn", "urgent")
     n = h.notifier.sent[0]
@@ -184,11 +184,11 @@ def test_start_both_sources_and_stop(fake_sims):
     assert hb.store.events[0][1] == "DCS veri betiği kuruldu"
     assert set(hb.companions) == {"dcs", "warthunder"}
 
-    # add_many geri çağrısı depoya yazar
+    # the add_many callback writes to the store
     dcs_part.args[3]([("dcs.alt", 1.0, None)])
     assert hb.store.rows == [("dcs.alt", 1.0, None)]
 
-    # War Thunder "çalışıyor mu" kontrolü aces.exe'ye bakar (büyük/küçük harf duyarsız)
+    # The War Thunder "çalışıyor mu" (is it running?) check looks for aces.exe (case-insensitive)
     running = wt_part.kw["running"]
     assert running() is False
     procs.add("ACES.EXE")
@@ -298,7 +298,7 @@ def test_status_in_air_full(h):
     lines = out.splitlines()
     assert lines[0] == "dcs: F-16C, 10,000 ft, 300 kt, 2.0 G"
     assert "  yakıt 2000 kg, tüketim 3600 kg/sa, 33 dk kaldı, üs 10 nm, bingo 490 kg (+1510 kg pay)" in lines
-    # üs doğuda (z+), burun kuzeyde: 90° sağa dön
+    # home is to the east (z+), nose points north: turn 90° right
     assert "  üs (kalkış noktası): 090° yönünde (gerçek kuzey), 10 nm, şu an burnun 000°: 90° sağa dön" in lines
     assert "  silahlar: AIM-120 x2" in lines
     assert not any("BİLİNMİYOR" in ln for ln in lines)
@@ -358,7 +358,7 @@ def test_briefing_from_current_mission_log(tmp_path, monkeypatch, h):
     monkeypatch.setattr(dcs, "read_mission", lambda p: m)
     monkeypatch.setattr(dcs, "saved_games_dirs", lambda: [])
     assert h.brief_mission(miz) == text and h.notifier.sent[-1].body == text
-    assert h.brief_mission(miz) == ""  # aynı görev bir kez
+    assert h.brief_mission(miz) == ""  # same mission, only once
 
 
 def test_cockpit_commands_safety_and_ack(monkeypatch, h):

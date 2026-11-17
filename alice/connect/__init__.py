@@ -1,13 +1,13 @@
-"""Bağlantılar: bir siteyi/servisi TOML tanımıyla ALICE aracına çevirme katmanı.
+"""Connections: layer for converting a site/service into an ALICE tool via a TOML definition.
 
-* `manifest.py` — tanım dosyasını okur ve doğrular (yerleşikler: `builtin/*.toml`, kullanıcınınkiler
+* `manifest.py` — reads and validates definition files (built-ins: `builtin/*.toml`, user's:
   `~/.alice/connect/*.toml`).
-* `runner.py`   — eylemi çalıştırır: isteği kurar, kimliği ekler, cevabı modele okunur hale getirir.
-* `oauth.py`    — OAuth2 (Authorization Code + PKCE), tarayıcı ve yerel geri dönüş adresiyle.
-* `store.py`    — token'lar `~/.alice/connect.json` içinde (chmod 600).
-* `tool.py`     — her bağlantı tek bir araç; eylemler `action` parametresiyle seçilir.
+* `runner.py`   — executes the action: builds the request, attaches credentials, formats the response for the model.
+* `oauth.py`    — OAuth2 (Authorization Code + PKCE), via browser and local callback redirect URL.
+* `store.py`    — tokens stored in `~/.alice/connect.json` (chmod 600).
+* `tool.py`     — each connection is a single tool; actions are selected via the `action` parameter.
 
-Yeni servis eklemek için kod yazmak gerekmiyor: `alice connect <ad> --new` bir şablon açar.
+No code needed to add a new service: `alice connect <name> --new` creates a template.
 """
 
 from __future__ import annotations

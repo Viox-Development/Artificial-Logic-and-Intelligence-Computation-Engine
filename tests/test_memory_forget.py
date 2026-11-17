@@ -1,4 +1,4 @@
-"""Silinen sohbet hafızadan da gider; yeni sohbet eski sohbetin devamı sanılmaz."""
+"""Deleting a chat also removes it from memory; a new chat is not mistaken for a continuation of the old one."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import time
 
 from alice import session as sess
 from alice.memory import LongMemory
-from tests.conftest import tool_call  # noqa: F401 - app fikstürü için
-from tests.test_app import app, collect  # noqa: F401 - fikstür
+from tests.conftest import tool_call  # noqa: F401 - for the app fixture
+from tests.test_app import app, collect  # noqa: F401 - fixture
 
 
 def _age(m: LongMemory, seconds: float) -> None:
@@ -20,7 +20,7 @@ def test_forget_session_by_id_and_by_legacy_text():
     m = LongMemory(":memory:", {})
     a = m.record("rastgele bir şey yazıyorum burada", "tamam", "yazı", sid="s1")
     b = m.record("başka sohbetteki önemli konu", "peki", "yazı", sid="s2")
-    old = m.record("kimliksiz eski tur metni burada", "evet", "yazı")  # sid sütunundan önceki kayıt
+    old = m.record("kimliksiz eski tur metni burada", "evet", "yazı")  # record from before the sid column
     other_old = m.record("kimliksiz ama başka sohbetin turu", "hı", "yazı")
     now = time.time()
     with m._lock:
@@ -30,9 +30,9 @@ def test_forget_session_by_id_and_by_legacy_text():
     got = m.forget_session("s1", ["kimliksiz eski tur metni burada [şu an: 15 Kas 03:00]"], now - 60, now + 60)
     left = {e.id for e in m.recent(10)}
     assert a not in left and old not in left
-    assert b in left and other_old in left  # metni tutmayan ve başka kimlikli turlar kalır
+    assert b in left and other_old in left  # turns whose text does not match, and turns with another id, remain
     assert got["episodes"] == 2
-    # Özetin aralığında hâlâ başka sohbetin turları var: özet silinmez.
+    # There are still turns from another chat in the summary's range: the summary is not deleted.
     assert got["summaries"] == 0 and m.summaries(5)
 
 
@@ -53,7 +53,7 @@ def test_profile_keeps_old_turns_out_and_marks_chat_as_new():
     m.record("dünkü konuşmada küfürlü bir cümle kurdum", "anladım", "yazı")
     _age(m, 86400)
     prof = m.profile()
-    assert "küfürlü" not in prof  # dünkü son tur yeni sohbete "kaldığımız yer" diye girmez
+    assert "küfürlü" not in prof  # yesterday's last turn is not carried into the new chat as "kaldığımız yer"
     assert "NEW, separate conversation" in prof
     m.record("az önce sesle sorduğum soru buydu", "cevap", "ses")
     assert "az önce sesle" in m.profile() and "not this conversation" in m.profile()
@@ -73,7 +73,7 @@ def test_deleting_open_chat_removes_memory_and_is_not_saved_again(app):  # noqa:
     r = client.post("/api/session/delete", json={"id": sid}).json()
     assert r["ok"] and r["forgot"]["episodes"] == 1
     assert not any(e.user.startswith("silinecek sohbette") for e in state.agent.memory.recent(5))
-    state.chat.save()  # bellekte hâlâ açık: kapanırken ya da sonraki kayıtta dosyayı geri yazmamalı
+    state.chat.save()  # still open in memory: must not write the file back on close or on the next save
     assert not (sess.sessions_dir() / f"{sid}.json").exists()
     assert sid not in sess.load_meta()
 
@@ -100,11 +100,11 @@ def test_recall_skips_model_for_small_talk_and_notes_already_in_prompt():
 
     m = LongMemory(":memory:", {}, chooser)
     m.save_note("user-oyun", "Kullanıcı War Thunder oynar", "user", "War Thunder'da uçak ağacını açıyor, jetleri sever.")
-    assert m.recall("selam naber") == "" and asked == []  # notlarla ortak kelime yok: model çağrılmaz
+    assert m.recall("selam naber") == "" and asked == []  # no common words with the notes: the model is not called
     assert "War Thunder" in m.recall("war thunder'da hangi uçağı açayım") and len(asked) == 1
-    m.profile()  # user notunun tamamı artık sistem isteminde
+    m.profile()  # the whole user note is now in the system prompt
     asked.clear()
-    assert m.recall("war thunder'da jet seçimi") == ""  # istemde olan not mesaja ikinci kez eklenmez
+    assert m.recall("war thunder'da jet seçimi") == ""  # a note already in the prompt is not added to the message again
 
 
 def test_deleted_note_is_not_recreated_by_extraction_or_dream_until_user_saves_it_again():
@@ -118,8 +118,8 @@ def test_deleted_note_is_not_recreated_by_extraction_or_dream_until_user_saves_i
     assert m.notes.scan() == [] and "kullanıcı silmişti" in done[0]
     other = {"save": [{"name": "user-kahve", "type": "user", "description": "Kullanıcı kahveyi şekersiz içer",
                        "content": "Kullanıcı kahveyi şekersiz içer."}]}
-    assert m.apply_notes(other, source="otomatik") and len(m.notes.scan()) == 1  # alakasız not engellenmez
-    # Kullanıcı aynı şeyi açıkça yeniden kaydettirirse iz kalkar.
+    assert m.apply_notes(other, source="otomatik") and len(m.notes.scan()) == 1  # unrelated note is not blocked
+    # If the user explicitly has the same thing saved again, the trace is cleared.
     m.remember("Kullanıcı YouTube ve sosyal medya sitelerinde çok vakit geçirir.", "fact", source="kullanıcı")
     assert m.forgotten() == []
 
@@ -130,7 +130,7 @@ def test_unnamed_model_save_is_checked_against_its_own_name_not_a_note_called_no
     m.save_note("user-sosyal-medya", "Kullanıcı YouTube ve sosyal medyada çok vakit geçirir", "user",
                 "Kullanıcı YouTube ve diğer sosyal medya sitelerinde çok vakit geçirir.", source="otomatik")
     m.delete_note("genel:user-sosyal-medya")
-    # Model ad vermeden kaydediyor: silinmiş not kontrolü yine yapılmalı ("not" adlı not bulunup atlanmamalı).
+    # Model saves without a name: still check against deleted notes; a note called "not" must not be skipped.
     again = {"save": [{"type": "user", "title": "YouTube alışkanlığı",
                        "description": "Kullanıcı YouTube'da çok vakit geçirir",
                        "content": "Kullanıcı YouTube ve sosyal medya sitelerinde çok vakit geçirir."}]}
@@ -140,4 +140,4 @@ def test_unnamed_model_save_is_checked_against_its_own_name_not_a_note_called_no
     fresh = {"save": [{"type": "user", "title": "Kahve", "description": "Kullanıcı kahveyi şekersiz içer",
                        "content": "Kullanıcı kahveyi şekersiz içer."}]}
     m.apply_notes(fresh, source="otomatik")
-    assert m.notes.get("kahve").source == "otomatik"  # kaynağı "not" adlı nottan ("kullanıcı") alınmadı
+    assert m.notes.get("kahve").source == "otomatik"  # source not taken from the note named "not" ("kullanıcı")

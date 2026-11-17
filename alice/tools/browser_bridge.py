@@ -1,18 +1,18 @@
-"""Tarayıcı köprüsü: kullanıcının tarayıcısına tek, kalıcı CDP bağlantısı tutan küçük arka plan süreci.
+"""Browser bridge: a small background process that holds one persistent CDP connection to the user's browser.
 
-Opera/Chrome "Allow remote debugging for this browser instance" açıkken her YENİ CDP bağlantısında kullanıcıya
-izin penceresi çıkarır. ALICE çekirdeği her yeniden başladığında yeniden bağlanıp tekrar sorduruyordu. Köprü
-çekirdekten bağımsız yaşar: tarayıcıya bir kez bağlanır (bir kez izin), çekirdek ise köprüye yerel soketten bağlanır.
-Çekirdek yeniden başlasa da tarayıcı bağlantısı kopmaz, izin tekrar sorulmaz.
+With "Allow remote debugging for this browser instance" on, Opera/Chrome prompts the user on every NEW CDP connection.
+Every time the ALICE core restarted, it reconnected and asked again. The bridge
+outlives the core: it connects to the browser once (one prompt), and the core connects to the bridge over a local
+socket. A core restart does not drop the browser link, so permission is not asked again.
 
-Aynı anda tek istemci (Playwright) hizmet alır. İstemcinin mesaj kimlikleri köprüde yeniden numaralanır (eski
-istemcinin geç gelen cevabı yenisine karışmasın); istemci gidince açtığı oturumlar tarayıcıda kapatılır, böylece
-sonraki istemci temiz bir bağlantı görür. Tarayıcı kapanınca köprü de kapanır.
+Only one client (Playwright) is served at a time. The bridge renumbers message IDs (so an old client's late reply
+can't leak into the new one's); when a client leaves, the sessions it opened are closed in the browser, so the next
+client sees a clean connection. When the browser closes, the bridge closes too.
 
-Tarayıcı bağlantısı kapanmadan da ölebilir (Opera uyku/hazırda bekletmeden döndü, sekme süreci çöktü, bağlantı yarı
-açık kaldı): soket açık görünür ama hiçbir komuta cevap gelmez, ALICE'in her tarayıcı çağrısı orada asılı kalırdı.
-Köprü bu yüzden düzenli aralıklarla tarayıcıya küçük bir komut (Browser.getVersion) gönderir; cevap gelmezse
-bağlantıyı ölü sayar ve kapanır. İstemci (Playwright) kopmayı görür, ALICE sonraki çağrıda yeniden bağlanır.
+The browser link can die without closing (Opera woke from sleep/hibernation, a tab process crashed, the link half-
+open): the socket looks open but no command gets a reply, so every ALICE browser call hung there.
+So the bridge periodically sends a small command (Browser.getVersion) to the browser; if no reply comes,
+it treats the link as dead and closes. The client (Playwright) sees the drop; ALICE reconnects on the next call.
 """
 
 from __future__ import annotations
@@ -29,24 +29,24 @@ from typing import Any
 
 DEFAULT_PORT = 9339
 PATH = "/devtools/browser/alice-bridge"
-CLEANUP_BASE = 2_000_000_000  # köprünün kendi komutlarının kimlikleri
-HEARTBEAT_ID = CLEANUP_BASE - 1  # kalp atışı komutunun kimliği (istemci kimlikleri 1'den sayar, çakışmaz)
-HEARTBEAT_EVERY = 15.0  # saniye
-HEARTBEAT_TIMEOUT = 20.0  # bu kadar cevap yoksa bir kaçırma sayılır
-HEARTBEAT_MISSES = 2  # üst üste bu kadar kaçırma: ölü. Tek gecikmede koparmak Opera'ya her seferinde yeniden izin
-                      # sordurtuyordu (meşgul tarayıcı bir kez geç cevap verebilir; 2026-11-02'de görüldü)
+CLEANUP_BASE = 2_000_000_000  # IDs of the bridge's own commands
+HEARTBEAT_ID = CLEANUP_BASE - 1  # ID of the heartbeat command (client IDs count up from 1, so they don't collide)
+HEARTBEAT_EVERY = 15.0  # seconds
+HEARTBEAT_TIMEOUT = 20.0  # no reply within this long counts as a miss
+HEARTBEAT_MISSES = 2  # consecutive misses = dead. Dropping on one delay made Opera re-prompt for permission each time
+                      # (a busy browser can reply late once; observed 2026-11-02)
 
 
-# Playwright bağlanınca kullanıcının tarayıcısını kendi test tarayıcısı gibi ayarlıyor. Kullanıcının kendi tarayıcısında
-# bunlar zarar: indirmeler Playwright'ın geçici klasörüne GUID adıyla iniyor (sonra siliniyor), sayfalar açık temaya
-# zorlanıyor. Köprü bu komutları tarayıcıya iletmez, istemciye "oldu" der.
+# When Playwright connects, it configures the user's browser like its own test browser. In the user's own browser,
+# these cause harm: downloads go to Playwright's temp folder with GUID names (then deleted); pages get forced light
+# theme. The bridge does not forward these commands; it tells the client "done".
 BLOCKED = {"Browser.setDownloadBehavior"}
 MEDIA_FEATURES = {"prefers-color-scheme", "prefers-reduced-motion", "forced-colors", "prefers-contrast"}
 
 
 def neutralize(msg: dict[str, Any]) -> dict[str, Any] | None:
-    """İstemciden gelen komut tarayıcıya gitmeli mi? Gitmemeliyse None (köprü sahte başarı döner); gerekirse
-    zararsız haline çevrilmiş komut."""
+    """Should a command from the client go to the browser? If not, return None (the bridge fakes success); otherwise
+    the command is rewritten into a harmless form."""
     method = msg.get("method", "")
     if method in BLOCKED:
         return None
@@ -64,10 +64,10 @@ def endpoint(port: int = DEFAULT_PORT) -> str:
     return f"ws://127.0.0.1:{port}{PATH}"
 
 
-# Köprü anahtarı: köprü her başlayışta yenisini üretir, ~/.alice/browser-bridge-token'a yazar (sandbox'tan gizli).
-# Origin kontrolü web sayfalarını keser ama sandbox'taki bir program da Origin göndermez: anahtarsız o da kullanıcının
-# tarayıcısını (çerezler, her sekmede JS) sürebiliyordu. ALICE'in Playwright istemcisi anahtarı başlıkta gönderir.
-# Eklenti bu köprüyü kullanmaz (kendi portu 9340, browser_ext).
+# Bridge token: regenerated on every start, written to ~/.alice/browser-bridge-token (hidden from the sandbox).
+# The Origin check stops web pages, but sandbox programs send no Origin either: without a key, they could also
+# drive the user's browser (cookies, JS on every tab). ALICE's Playwright client sends the key in the header.
+# The extension does not use this bridge (its own port 9340, browser_ext).
 TOKEN_HEADER = "X-Alice-Bridge-Token"
 
 
@@ -85,8 +85,8 @@ def read_token() -> str:
 
 
 def write_token() -> str:
-    """Yeni anahtar üret ve yaz. Dosya önce geçici adla yazılıp sandbox'tan gizlenir, sonra yerine taşınır: anahtar
-    hiçbir an okunabilir durmaz."""
+    """Generate and write a new key. The file is first written under a temp name, hidden from the sandbox, then moved
+    into place, so the key is never readable."""
     token = secrets.token_urlsafe(32)
     path = token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +100,7 @@ def write_token() -> str:
         from alice.sandbox import hide_from_sandbox
 
         hide_from_sandbox(tmp)
-    except Exception:  # noqa: BLE001 - etiket konamazsa anahtar yine çalışır
+    except Exception:  # noqa: BLE001 - if the label can't be set, the key still works
         pass
     os.replace(tmp, path)
     return token
@@ -116,16 +116,16 @@ class Bridge:
         self.find_upstream = find_upstream
         self.log = log
         self._connect = connect
-        self.up = None  # tarayıcı bağlantısı
-        self._pump: asyncio.Task | None = None  # olay döngüsü görevleri zayıf tutar: referans burada kalsın
+        self.up = None  # browser connection
+        self._pump: asyncio.Task | None = None  # the event loop holds tasks only weakly: keep a reference here
         self._beat: asyncio.Task | None = None
         self.heartbeat, self.heartbeat_timeout = heartbeat, heartbeat_timeout
         self._pong = asyncio.Event()
         self.client = None
         self.gen = 0
         self.next_id = 1
-        self.pending: dict[int, tuple[int, Any]] = {}  # köprü kimliği -> (istemci kuşağı, istemci kimliği)
-        self.sessions: set[str] = set()  # şu anki istemcinin açtığı CDP oturumları
+        self.pending: dict[int, tuple[int, Any]] = {}  # bridge id -> (client generation, client id)
+        self.sessions: set[str] = set()  # CDP sessions opened by the current client
         self.lock = asyncio.Lock()
         self.closed = asyncio.Event()
 
@@ -138,7 +138,7 @@ class Bridge:
         connect = self._connect
         if connect is None:
             from websockets.asyncio.client import connect
-        # Tarayıcı burada kullanıcıya bir kez izin sorar: cevaplaması için zaman tanı.
+        # The browser asks the user for permission here, once: give them time to answer.
         self.up = await connect(url, open_timeout=120, max_size=None, ping_interval=None)
         self.log(f"tarayıcıya bağlanıldı: {url}")
         loop = asyncio.get_running_loop()
@@ -148,8 +148,8 @@ class Bridge:
         return self.up
 
     async def _heartbeat(self, up) -> None:
-        """Tarayıcı hâlâ cevap veriyor mu? Üst üste cevap vermezse bağlantıyı kapat (yoksa istemci sonsuza dek
-        bekler)."""
+        """Is the browser still replying? If it misses replies several times in a row, close the link (otherwise
+        the client waits forever)."""
         misses = 0
         while self.up is up:
             await asyncio.sleep(self.heartbeat)
@@ -161,7 +161,7 @@ class Bridge:
                                        self.heartbeat_timeout)
                 await asyncio.wait_for(self._pong.wait(), self.heartbeat_timeout)
                 misses = 0
-            except Exception:  # noqa: BLE001 - zaman aşımı ya da kopuk soket
+            except Exception:  # noqa: BLE001 - timeout or broken socket
                 misses += 1
                 if misses < HEARTBEAT_MISSES:
                     self.log(f"tarayıcı {self.heartbeat_timeout:.0f} sn cevap vermedi; bir kez daha bekleniyor")
@@ -171,8 +171,8 @@ class Bridge:
                 return
 
     async def _shutdown(self, up) -> None:
-        """Ölü tarayıcı bağlantısını bırak, istemciyi kopar, köprüyü kapat. Kapanış el sıkışması da asılı kalabilir:
-        her adım süreyle sınırlı."""
+        """Drop the dead browser link, disconnect the client, and close the bridge. The closing handshake can also
+        hang, so each step is time-limited."""
         if self.up is up:
             self.up = None
         for ws in (up, self.client):
@@ -204,7 +204,7 @@ class Bridge:
                 return
             ref = self.pending.pop(msg["id"], None)
             if ref is None or ref[0] != self.gen:
-                return  # köprünün kendi komutu ya da eski istemcinin cevabı
+                return  # the bridge's own command, or a reply from an old client
             msg["id"] = ref[1]
             sid = (msg.get("result") or {}).get("sessionId")
             if sid:
@@ -218,7 +218,7 @@ class Bridge:
             elif method == "Target.detachedFromTarget":
                 self.sessions.discard(params.get("sessionId"))
             if msg.get("sessionId") and msg["sessionId"] not in self.sessions:
-                return  # eski istemcinin oturumundan kalan olay
+                return  # event left over from an old client's session
             if self.client is None:
                 return
         client = self.client
@@ -229,7 +229,7 @@ class Bridge:
                 pass
 
     async def _cleanup(self) -> None:
-        """Giden istemcinin izlerini sil: oturumlarını kapat, otomatik bağlanmayı bırak."""
+        """Clean up after the departing client: close its sessions and stop auto-attach."""
         up = self.up
         if up is None:
             return
@@ -238,7 +238,8 @@ class Bridge:
         cmds += [{"method": "Target.setAutoAttach", "params": {"autoAttach": False, "waitForDebuggerOnStart": False,
                                                                 "flatten": True}},
                  {"method": "Target.setDiscoverTargets", "params": {"discover": False}},
-                 # eski sürüm köprü/istemci indirmeleri geçici klasöre yönlendirdiyse tarayıcının kendi ayarına dön
+                 # if an older bridge/client version routed downloads to a temp folder, restore the browser's
+                 # own setting
                  {"method": "Browser.setDownloadBehavior", "params": {"behavior": "default"}}]
         self.sessions = set()
         for i, c in enumerate(cmds):
@@ -254,8 +255,8 @@ class Bridge:
             if old is not None:
                 await old.close()
             if self.closed.is_set():
-                # Tarayıcı bağlantısı öldü, köprü kapanıyor: yeniden bağlanıp bir daha izin sordurmasın; istemci
-                # yeni bir köprü başlatır.
+                # The browser link died and the bridge is closing: don't reconnect and prompt again; the client
+                # starts a new bridge.
                 await ws.close(1011, "köprü kapanıyor")
                 return
             try:
@@ -273,7 +274,7 @@ class Bridge:
         try:
             async for raw in ws:
                 msg = neutralize(json.loads(raw))
-                if msg is None:  # tarayıcıya gitmez: istemci beklemesin
+                if msg is None:  # not forwarded to the browser: don't make the client wait
                     orig = json.loads(raw)
                     if "id" in orig:
                         reply = {"id": orig["id"], "result": {}}
@@ -287,7 +288,7 @@ class Bridge:
                     self.pending[bid] = (gen, msg["id"])
                     msg["id"] = bid
                 await up.send(json.dumps(msg))
-        except Exception:  # noqa: BLE001 - istemci koptu
+        except Exception:  # noqa: BLE001 - client disconnected
             pass
         finally:
             async with self.lock:
@@ -302,10 +303,11 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 
 
 def _health(connection, request, bridge: Bridge | None = None, token: str | None = None):
-    # Köprü kullanıcının tarayıcısına tam CDP erişimi verir (çerezler, her sekmede JS). Tarayıcılar her WebSocket
-    # el sıkışmasında Origin gönderir, Playwright/websockets istemcileri göndermez: Origin'li istek açılmış bir web
-    # sayfasından gelir, reddedilir. Host kontrolü DNS rebinding'i keser. token verilmişse bağlantı için anahtar şart
-    # (sağlık kontrolü /alice-bridge anahtarsız: tarayıcıya erişim vermez).
+    # The bridge gives full CDP access to the user's browser (cookies, JS on every tab). Browsers send Origin in
+    # every WebSocket handshake; Playwright/websockets clients don't. An Origin-bearing request comes from a web
+    # page: rejected.
+    # The Host check blocks DNS rebinding. If a token is set, the connection requires the key.
+    # (the /alice-bridge health check needs no key: it gives no browser access).
     headers = getattr(request, "headers", None) or {}
     if headers.get("Origin") is not None:
         return connection.respond(403, "forbidden\n")
@@ -314,7 +316,7 @@ def _health(connection, request, bridge: Bridge | None = None, token: str | None
         return connection.respond(403, "forbidden\n")
     if request.path == "/alice-bridge":
         if bridge is not None and bridge.closed.is_set():
-            return connection.respond(503, "closing\n")  # kapanan köprüye bağlanılmasın, yenisi başlatılsın
+            return connection.respond(503, "closing\n")  # don't connect to a closing bridge; let a new one be started
         return connection.respond(200, "alice-bridge\n")
     if token and not hmac.compare_digest(str(headers.get(TOKEN_HEADER) or "").encode(), token.encode()):
         return connection.respond(403, "forbidden\n")
@@ -328,8 +330,8 @@ async def serve(port: int, log=print, bridge: Bridge | None = None, auth: bool =
     key: dict[str, str | None] = {"token": None}
     async with ws_serve(bridge.handle, "127.0.0.1", port, max_size=None, ping_interval=None,
                         process_request=lambda c, r: _health(c, r, bridge, key["token"] if auth else None)):
-        # Anahtar port alındıktan SONRA yazılır (aynı adımda, araya istek girmeden): port doluysa (başka köprü çalışıyor)
-        # onun anahtarı ezilmesin.
+        # The key is written AFTER the port is acquired (same step, no request in between): if the port is taken
+        # (another bridge is running), its key must not be overwritten.
         if auth:
             key["token"] = write_token()
         log(f"köprü dinliyor: {endpoint(port)}")
@@ -353,7 +355,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         asyncio.run(serve(a.port, log))
-    except OSError as e:  # port dolu: başka köprü zaten çalışıyor
+    except OSError as e:  # port in use: another bridge is already running
         log(f"köprü başlatılamadı: {e}")
 
 

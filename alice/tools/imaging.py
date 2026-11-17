@@ -8,7 +8,7 @@ from PIL import Image
 
 
 def image_to_png_b64(img: Image.Image, max_width: int) -> tuple[str, float]:
-    """Görüntüyü max_width'e küçült, base64 PNG ve ölçek oranını (orijinal/küçük) döndür."""
+    """Resize image to max_width, return base64 PNG and scale ratio (original/resized)."""
     scale = 1.0
     if img.width > max_width:
         scale = img.width / max_width

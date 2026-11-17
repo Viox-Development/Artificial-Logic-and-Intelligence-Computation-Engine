@@ -1,4 +1,4 @@
-"""Prompt önbelleği: kullanım doğru ölçülür, sohbet ortasında araç listesi ve sistem istemi gereksiz yere değişmez."""
+"""Prompt cache: usage is measured correctly, and the tool list and system prompt do not change needlessly mid-chat."""
 from __future__ import annotations
 
 import json
@@ -36,7 +36,7 @@ def test_stream_asks_for_usage_and_merges_partial_chunks():
 
     res = provider(handler).chat_stream("m", [{"role": "user", "content": "x"}], lambda t: None)
     assert seen[0]["stream_options"] == {"include_usage": True}
-    assert res.usage["completion_tokens"] == 7 and cached_tokens(res.usage) == 90  # son boş parça silmedi
+    assert res.usage["completion_tokens"] == 7 and cached_tokens(res.usage) == 90  # last empty chunk didn't erase it
     assert cache_write_tokens(res.usage) == 10
 
 
@@ -88,10 +88,10 @@ def test_warm_chat_hints_groups_instead_of_changing_tools(workdir):
     agent.run_turn("merhaba")
     _long_chat(agent)
     agent.run_turn("blender'da bir ev yap")
-    assert seen[-1] == seen[0]  # araç listesi aynı kaldı (önbellek bozulmadı)
+    assert seen[-1] == seen[0]  # tool list unchanged (cache not broken)
     last_user = [m for m in agent.messages if m["role"] == "user"][-1]
     assert "load_tools" in last_user["content"] and "blender" in last_user["content"]
-    assert last_user["_display"] == "blender'da bir ev yap"  # ekranda not görünmez
+    assert last_user["_display"] == "blender'da bir ev yap"  # the note is not shown on screen
 
 
 def test_first_turn_or_setting_off_loads_groups_directly(workdir):
@@ -102,9 +102,9 @@ def test_first_turn_or_setting_off_loads_groups_directly(workdir):
         return "tamam"
 
     agent, _, _ = make_agent(script, workdir)
-    agent.run_turn("blender'da bir ev yap")  # sohbetin ilk isteği: önbellek zaten yok, doğrudan yüklenir
+    agent.run_turn("blender'da bir ev yap")  # first request of the chat: no cache yet, so groups load directly
     assert "blender" in seen[-1]
-    agent2, _, _ = make_agent(script, workdir, cache_stable_tools=False)  # ayar kapalı: eski davranış
+    agent2, _, _ = make_agent(script, workdir, cache_stable_tools=False)  # setting off: old behavior
     _long_chat(agent2)
     agent2.run_turn("blender'da bir ev yap")
     assert "blender" in seen[-1]
@@ -131,13 +131,13 @@ def test_system_prompt_stable_mid_chat_until_user_edits(workdir):
     system1 = agent.messages[0]["content"]
     agent.memory.save_note("oto", "Kullanıcı çay sever", "user", "Kullanıcı çay sever", source="otomatik")
     agent.run_turn("nasılsın")
-    assert agent.messages[0]["content"] == system1  # otomatik çıkarım sohbetin önbelleğini bozmadı
+    assert agent.messages[0]["content"] == system1  # automatic extraction did not break the chat's cache
 
     agent.memory.delete_note("oto")
     agent.run_turn("peki")
-    assert agent.messages[0]["content"] != system1  # kullanıcı silince açık sohbette de güncellenir
+    assert agent.messages[0]["content"] != system1  # when the user deletes it, an open chat updates too
     agent.reset()
-    agent.refresh_memory()  # yeni sohbet: notlar yine değişince yenilenir
+    agent.refresh_memory()  # new chat: refreshes again when notes change
     fresh = agent.messages[0]["content"]
     agent.memory.save_note("oto2", "Kullanıcı kahve sever", "user", "Kullanıcı kahve sever", source="otomatik")
     agent.refresh_memory()
@@ -150,7 +150,7 @@ def test_cache_ttl_follows_provider_and_tracks_written_tokens(workdir):
     agent, _, _ = make_agent(["tamam"], workdir)
     assert agent._cache_ttl("cliproxy:claude-opus-5-5") > 3000 and agent._cache_ttl("gemini:flash") == 300
     agent.router.last_ref[agent.role] = "cliproxy:claude-opus-5-5"
-    agent._last_call_at = time.monotonic() - 600  # 10 dk: 5 dk'lık önbellek soğurdu, cliproxy'ninki hâlâ sıcak
+    agent._last_call_at = time.monotonic() - 600  # 10 min: the 5-min cache went cold, cliproxy's is still warm
     assert not agent._cache_cold()
     agent.router.last_ref[agent.role] = "gemini:flash"
     assert agent._cache_cold()

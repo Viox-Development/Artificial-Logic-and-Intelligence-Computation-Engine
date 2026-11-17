@@ -1,4 +1,4 @@
-"""monitor (olay olunca sohbete dön) ve session (ayrı oturum başlat / devret)."""
+"""monitor (return to the chat when an event happens) and session (start a separate session / hand over)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def ctx_with_inbox(workdir):
 def test_file_monitor_reports_matching_new_lines_once(workdir):
     ctx, got, ev = ctx_with_inbox(workdir)
     log = workdir / "app.log"
-    log.write_text("eski ERROR satırı\n", encoding="utf-8")  # önceden yazılanlar sayılmaz
+    log.write_text("eski ERROR satırı\n", encoding="utf-8")  # lines written earlier are not counted
     out = Monitor().run(ctx, "start", kind="file", target=str(log), pattern="error", note="hatayı düzelt")
     assert "İzleme #" in out.text
     with open(log, "a", encoding="utf-8") as f:

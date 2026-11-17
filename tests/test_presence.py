@@ -29,7 +29,7 @@ def test_part_of_day():
 
 def test_greets_after_long_absence_with_followups():
     mem = LongMemory(":memory:", {})
-    now = datetime(2026, 10, 22, 17, 30)  # takip saati de sabit saatten: test günün tarihine bağlı kalmasın
+    now = datetime(2026, 10, 22, 17, 30)  # follow-up time is also fixed, so the test does not depend on today's date
     fid = mem.add_followup("Matematik sınavının nasıl geçtiğini sor.", now.timestamp() - 3600, "ask")
     sent = []
     idle = iter([6000.0, 6100.0, 3.0, 2.0])
@@ -38,30 +38,30 @@ def test_greets_after_long_absence_with_followups():
                 clock=lambda: now)
     g.voice = voice
     assert not g.tick() and not g.tick()  # uzakta
-    assert g.tick()  # döndü
+    assert g.tick()  # came back
     assert wait_for(lambda: sent)
     text = sent[0].body
     assert text.startswith("İyi günler") and "Matematik" in text and sent[0].topic == "presence"
-    assert wait_for(lambda: voice.armed_until > time.monotonic())  # "Hey Alice" demeden cevap
+    assert wait_for(lambda: voice.armed_until > time.monotonic())  # answers without needing "Hey Alice"
     assert mem.due_followups() == [] and [f.id for f in mem.followups(include_done=True)] == [fid]
-    assert mem.recent(1)[0].channel == "karşılama"  # Live az önceki konuşmada görür
-    assert not g.tick()  # tekrar karşılamaz
+    assert mem.recent(1)[0].channel == "karşılama"  # Live sees it in the most recent conversation
+    assert not g.tick()  # does not greet again
 
 
 def test_silent_without_news_after_first_greeting_and_respects_gap_and_quiet():
     sent = []
     g = Greeter(cfg(), lambda n: sent.append(n) or True, idle=lambda: 0.0, clock=lambda: datetime(2026, 10, 22, 10),
                 morning=lambda c, n: {})
-    assert g.greet(7200) .startswith("Günaydın")  # günün ilk dönüşü: kısa selam
-    assert g.greet(7200) == ""  # aynı gün, söyleyecek bir şey yok: sus
+    assert g.greet(7200) .startswith("Günaydın")  # first return of the day: short greeting
+    assert g.greet(7200) == ""  # same day, nothing to say: stay quiet
     assert len(sent) == 1
     g2 = Greeter(cfg(quiet_hours="00:00-23:59"), lambda n: True, idle=lambda: 0.0,
-                 clock=lambda: datetime(2026, 10, 22, 12))  # 23:59-00:00 arası koşunca sessiz saat dışında kalıyordu
+                 clock=lambda: datetime(2026, 10, 22, 12))  # a run between 23:59-00:00 used to fall outside quiet hours
     g2.away_since = time.time() - 9000
-    assert not g2.tick()  # sessiz saatler
+    assert not g2.tick()  # quiet hours
     g3 = Greeter(cfg(), lambda n: True, idle=lambda: 0.0)
     g3.away_since, g3.last_greet = time.time() - 9000, time.time() - 60
-    assert not g3.tick()  # az önce karşıladı
+    assert not g3.tick()  # greeted just now
 
 
 def test_muted_mode_does_not_count():
@@ -92,12 +92,12 @@ def test_morning_summary_on_startup_once_per_day(tmp_path):
     mk = lambda hour: Greeter(cfg(), lambda n: sent.append(n) or True, idle=lambda: 5.0,  # noqa: E731
                               clock=lambda: datetime(2026, 10, 22, hour), morning=lambda c, n: info, state_path=st)
     g = mk(8)
-    assert g.tick()  # bilgisayar sabah açıldı: yokluk ölçülmeden günün ilk özeti
+    assert g.tick()  # computer opened in the morning: the day's first summary, without measuring absence
     assert wait_for(lambda: sent)
     assert sent[0].body.startswith("Günaydın") and "yağmurlu" in sent[0].body
-    assert not mk(9).tick()  # ALICE yeniden başladı: aynı gün tekrar söylemez (dosyada)
+    assert not mk(9).tick()  # ALICE restarted: does not say it again the same day (stored in the file)
     assert not Greeter(cfg(), lambda n: True, idle=lambda: 5.0, clock=lambda: datetime(2026, 10, 23, 15),
-                       morning=lambda c, n: info, state_path=st).tick()  # öğleden sonra açılış: sabah özeti yok
+                       morning=lambda c, n: info, state_path=st).tick()  # afternoon start: no morning summary
     b = compose({"greeting": "Günaydın", "away": "", "followups": [], "events": [], "mail": [], "morning": info})
     assert "yağmurlu" in b
 
@@ -112,4 +112,4 @@ def test_background_greeting_swallows_errors():
         def greet(self, away):
             raise RuntimeError("hafıza kapalı")
 
-    Boom()._greet_bg(10.0)  # iş parçacığında yakalanmamış hata kalmasın
+    Boom()._greet_bg(10.0)  # no uncaught error should be left in the thread

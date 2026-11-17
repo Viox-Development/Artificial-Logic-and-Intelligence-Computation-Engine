@@ -1,13 +1,13 @@
-"""Uygulama ve site tarifleri: "WhatsApp'tan Ahmet'e yaz" denince hangi yoldan gidileceği.
+"""App and site recipes: which route to take for "write to Ahmet on WhatsApp".
 
-ALICE bir işi üç yoldan yapabiliyor: resmî API (hızlı, güvenilir), uygulamanın kendi derin bağlantısı
-(`steam://rungameid/...` gibi) ve tarayıcı/arayüz otomasyonu (her yerde çalışır ama yavaş). Doğru yolu
-her seferinde modelin tahmin etmesi hem yavaş hem hatalı; bu kayıt onu yazıya döküyor.
+ALICE can do a task in three ways: the official API (fast, reliable), the app's own deep link
+(such as `steam://rungameid/...`), and browser/UI automation (works everywhere but is slow). Having the model guess
+the right route every time is both slow and error-prone; this registry writes it down.
 
-Kayıt iki yerden okunuyor: yerleşik `alice/apps.toml` ve kullanıcının `~/.alice/apps.toml` dosyası
-(aynı ad varsa kullanıcınınki geçerli; alanları tek tek birleşir, yani sadece `url`'i değiştirebilirsin).
+The registry is read from two places: the built-in `alice/apps.toml` and the user's `~/.alice/apps.toml` file
+(if the same name exists, the user's wins; fields are merged one by one, so you can change just the `url`).
 
-Bir giriş şöyle:
+An entry looks like this:
 
     [whatsapp]
     title = "WhatsApp"
@@ -15,13 +15,13 @@ Bir giriş şöyle:
     url = "https://web.whatsapp.com"
     keywords = "whatsapp|wp"
     note = "İlk açılışta telefondan QR okutman gerekir."
-    desktop = "whatsapp_desktop"      # masaüstü uygulaması kuruluysa o kullanılır
+    desktop = "whatsapp_desktop"      # used when the desktop app is installed
     [whatsapp.flows]
     send = "Sol listeden {kime} sohbetini aç, mesaj kutusuna {mesaj} yaz ve Enter'a bas"
 
-`flows` altındaki her satır reflex için bir hedef şablonu: `{...}` yer tutucuları çağrıda doldurulur.
-Seçici (CSS/XPath) yazmıyoruz; reflex sayfayı öğe listesine çevirip karar verdiği için arayüz
-değiştiğinde tarif bozulmuyor.
+Each line under `flows` is a goal template for reflex: `{...}` placeholders are filled in at call time.
+We don't write selectors (CSS/XPath); reflex turns the page into a list of elements and decides from that,
+so the recipe doesn't break when the UI changes.
 """
 
 from __future__ import annotations
@@ -49,16 +49,16 @@ class App:
     name: str
     title: str = ""
     kind: str = "web"
-    url: str = ""           # web: adres | protocol: şablon, ör. "steam://rungameid/{appid}"
-    exe: str = ""           # app: açılacak program adı (windows open ile aranır)
+    url: str = ""           # web: address | protocol: template, e.g. "steam://rungameid/{appid}"
+    exe: str = ""           # app: name of the program to open (searched with windows open)
     keywords: str = ""
-    note: str = ""          # kullanıcıya/modele not: "ilk seferde QR okut" gibi
-    api: str = ""           # bu iş için resmî bağlantı varsa onun adı (bkz. alice/connect)
+    note: str = ""          # note for the user/model, e.g. "scan the QR on first use"
+    api: str = ""           # name of the official connection for this task, if any (see alice/connect)
     flows: dict[str, str] = field(default_factory=dict)
-    sends: list[str] = field(default_factory=list)  # başkasına giden akışlar: auto modda da onay sorulur
-    target: str = ""        # akışlar nerede yürür: browser | desktop (boş: web -> browser, app -> desktop)
-    window: str = ""        # desktop için pencere başlığından parça (boş: title ya da exe)
-    desktop: str = ""       # web kaydı: masaüstü uygulaması kuruluysa onun yerine kullanılacak kaydın adı
+    sends: list[str] = field(default_factory=list)  # flows that go to someone else: asked even in auto mode
+    target: str = ""        # where flows run: browser | desktop (empty: web -> browser, app -> desktop)
+    window: str = ""        # part of the window title for desktop (empty: title or exe)
+    desktop: str = ""       # web entry: name of the entry to use instead when the desktop app is installed
 
     @property
     def flow_target(self) -> str:
@@ -76,7 +76,7 @@ class App:
         return sorted(set(FIELD_RX.findall(self.flows.get(flow, ""))))
 
     def goal(self, flow: str, args: dict[str, Any]) -> str:
-        """Tarifteki yer tutucuları doldur. Eksik alan varsa ValueError."""
+        """Fill in the placeholders of the recipe. Raises ValueError if a field is missing."""
         tpl = self.flows.get(flow)
         if tpl is None:
             raise ValueError(f"{self.name}: '{flow}' diye bir akış yok. Olanlar: {', '.join(sorted(self.flows)) or '—'}")
@@ -112,7 +112,7 @@ def user_file() -> Path:
 
 
 def registry(cfg: Any = None) -> dict[str, App]:
-    """Yerleşik + kullanıcı kayıtları (kullanıcınınki alan alan üstüne yazar)."""
+    """Built-in + user entries (the user's entry overrides field by field)."""
     raw = _load(BUILTIN)
     for name, entry in _load(user_file()).items():
         base = dict(raw.get(name) or {})
@@ -131,7 +131,7 @@ def registry(cfg: Any = None) -> dict[str, App]:
 
 
 def find(name: str, cfg: Any = None, apps: dict[str, App] | None = None) -> App | None:
-    """Ada, başlığa ya da anahtar kelimeye göre bul ("whatsapp", "WhatsApp", "wp" hepsi aynı yere gider)."""
+    """Find by name, title or keyword ("whatsapp", "WhatsApp", "wp" all go to the same place)."""
     apps = apps if apps is not None else registry(cfg)
     q = (name or "").strip().lower()
     if not q:
@@ -144,7 +144,7 @@ def find(name: str, cfg: Any = None, apps: dict[str, App] | None = None) -> App 
     for app in apps.values():
         if app.keywords and re.search(app.keywords, q, re.I):
             return app
-    for app in apps.values():  # son çare: adın içinde geçiyor mu
+    for app in apps.values():  # last resort: is it contained in the name
         if q in app.name or q in app.title.lower():
             return app
     return None

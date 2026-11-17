@@ -1,5 +1,5 @@
-"""apply_patch: Codex'in çok dosyalı yama biçimi. Birden fazla dosyada ekleme/silme/düzenleme/taşımayı tek çağrıda,
-hepsi-ya-hiçbiri yapar. OpenAI modelleri bu biçimle eğitildiği için onlarla edit_file'dan daha az hata çıkıyor."""
+"""apply_patch: Codex's multi-file patch format. Add/delete/edit/move across several files in one call,
+all-or-nothing. OpenAI models were trained on this format, so they err less with it than with edit_file."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class FileOp:
 
 def parse_patch(text: str) -> list[FileOp]:
     lines = text.replace("\r\n", "\n").strip("\n").split("\n")
-    # Modeller bazen yamayı ``` ya da heredoc içine koyuyor; çevreyi at.
+    # Models sometimes wrap the patch in ``` or a heredoc; strip that wrapper.
     while lines and not lines[0].strip().startswith(BEGIN):
         lines.pop(0)
     while lines and not lines[-1].strip().startswith(END):
@@ -102,8 +102,8 @@ def parse_patch(text: str) -> list[FileOp]:
 
 
 def _find(lines: list[str], seq: list[str], start: int, at_eof: bool) -> int:
-    """seq'i lines içinde start'tan itibaren bul; önce birebir, sonra sondaki boşluklar, sonra baştaki/sondaki
-    boşluklar yok sayılarak (Codex'in seek_sequence'ı gibi). Bulunamazsa -1."""
+    """Find seq in lines starting from start: first exact, then ignoring trailing whitespace, then ignoring
+    leading/trailing whitespace (like Codex's seek_sequence). Returns -1 if not found."""
     if not seq:
         return len(lines) if at_eof else start
     n = len(seq)
@@ -130,7 +130,7 @@ def apply_chunks(text: str, chunks: list[Chunk], path: str) -> str:
                 raise ToolError(f"{path}: parça {n}: '@@ {ch.anchor}' satırı bulunamadı")
             cursor = k + 1
         k = _find(lines, ch.old, cursor, ch.at_eof)
-        if k < 0 and ch.old and not ch.old[-1].strip():  # sondaki boş bağlam satırı sık sık fazladan gelir
+        if k < 0 and ch.old and not ch.old[-1].strip():  # a trailing blank context line often comes in as an extra
             k = _find(lines, ch.old[:-1], cursor, ch.at_eof)
             if k >= 0:
                 ch = Chunk(ch.anchor, ch.old[:-1], ch.new[:-1] if ch.new and not ch.new[-1].strip() else ch.new)
@@ -167,13 +167,13 @@ class ApplyPatch(Tool):
 
     def run(self, ctx: ToolContext, patch: str) -> ToolResult:
         ops = parse_patch(patch)
-        # Önce her şeyi bellekte hazırla; hata olursa diske hiçbir şey yazılmadan dön. Aynı dosyaya birden fazla
-        # işlem (iki ayrı Update bloğu, düzenle + taşı) bir öncekinin sonucunun üzerine uygulanır: eskiden her blok
-        # diskteki hâli okuyup sonuncusu öncekileri sessizce siliyordu.
-        pending: dict[Path, str | None] = {}  # yol -> yeni içerik ya da None=sil
-        encodings: dict[Path, str] = {}  # dosyanın özgün kodlaması (UTF-16/BOM/cp1254 korunur)
-        # Delete File çöpe gider (file_ops delete gibi, geri alınabilir); Move to'nun kaynağı ise içeriği hedefe
-        # yazıldığı için doğrudan kaldırılır.
+        # Prepare everything in memory first; on error, return without writing anything to disk. Several operations
+        # on the same file (two separate Update blocks, or edit + move) apply on top of the previous result. Before,
+        # each block read the on-disk version and the last one silently wiped out the earlier ones.
+        pending: dict[Path, str | None] = {}  # path -> new content, or None=delete
+        encodings: dict[Path, str] = {}  # the file's original encoding (UTF-16/BOM/cp1254 are preserved)
+        # Delete File goes to the trash (like file_ops delete, recoverable); the source of Move to is
+        # removed directly, since its content was written to the target.
         to_trash: set[Path] = set()
         diffs: list[str] = []
         report: list[str] = []
@@ -211,7 +211,7 @@ class ApplyPatch(Tool):
                 if before is None:
                     raise ToolError(f"düzenlenecek dosya yok: {op.path}")
                 if p not in pending:
-                    require_read(ctx, p)  # edit_file ile aynı kural: okunmamış/okunduktan sonra değişmiş dosya düzenlenmez
+                    require_read(ctx, p)  # same rule as edit_file: unread or since-changed files are not edited
                 after = apply_chunks(before, op.chunks, op.path) if op.chunks else before
                 if op.move_to:
                     dest = ctx.resolve(op.move_to)
@@ -237,11 +237,11 @@ class ApplyPatch(Tool):
                 if p in to_trash and p.is_file():
                     trashed.append(f"{p.name} -> {FileOps._trash(ctx, p)}")  # noqa: SLF001
                 else:
-                    p.unlink(missing_ok=True)  # aynı yamada eklenip silinen dosya diskte hiç olmadı
+                    p.unlink(missing_ok=True)  # added and deleted in the same patch: never existed on disk
             else:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 write_encoded(p, body, encodings.get(p, "utf-8"))
-                mark_read(ctx, p)  # kendi yazdığı hâli biliyor: ardından edit_file "diskte değişti" demesin
+                mark_read(ctx, p)  # it knows what it wrote, so edit_file won't then say "changed on disk"
         text = "yama uygulandı:\n" + "\n".join(report)
         if trashed:
             text += "\nsilinenler ALICE çöpünde:\n" + "\n".join(trashed)

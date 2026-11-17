@@ -10,10 +10,10 @@ if TYPE_CHECKING:
     from alice.decider import Decider
     from alice.providers.router import Router
 
-# Risk sınıfları izin sistemi tarafından kullanılır.
+# Risk classes are used by the permission system.
 READ, WRITE, EXEC, COMPUTER, NETWORK, DANGER = "read", "write", "exec", "computer", "network", "danger"
-# Dışa dönük eylem: başka birine giden mesaj, gönderi, e-posta. Dosya düzenlemenin tersine geri alınamaz;
-# bu yüzden auto modda da sorulur ([agent] confirm_outward = false ile kapatılabilir).
+# Outward action: a message, post or e-mail going to someone else. Unlike file edits it cannot be undone;
+# so it is asked about even in auto mode (can be turned off with [agent] confirm_outward = false).
 SEND = "send"
 
 
@@ -22,13 +22,13 @@ class ToolResult:
     text: str
     images: list[str] = field(default_factory=list)  # base64 PNG
     is_error: bool = False
-    diff: str = ""  # arayüzde gösterilecek unified diff (modele gitmez)
-    files: list[dict[str, Any]] = field(default_factory=list)  # kullanıcıya kart olarak gösterilecek dosyalar (send_file)
-    card: dict[str, Any] = field(default_factory=dict)  # arayüze özel kart (ör. next_step: özet, soru, düğmeler)
+    diff: str = ""  # unified diff shown in the UI (not sent to the model)
+    files: list[dict[str, Any]] = field(default_factory=list)  # files shown to the user as cards (send_file)
+    card: dict[str, Any] = field(default_factory=dict)  # UI-specific card (e.g. next_step: summary, question, buttons)
 
 
 class ToolError(Exception):
-    """Araç içinde kullanıcıya/modele anlamlı bir hata mesajı döndürmek için."""
+    """For returning a meaningful error message to the user/model from within a tool."""
 
 
 @dataclass
@@ -37,11 +37,11 @@ class ToolContext:
     config: "Config"
     router: "Router | None" = None
     decider: "Decider | None" = None
-    state: dict[str, Any] = field(default_factory=dict)  # araçlar arası paylaşılan durum (tarayıcı, süreçler, todo)
+    state: dict[str, Any] = field(default_factory=dict)  # state shared between tools (browser, processes, todo)
     emit: Callable[[str], None] = lambda s: None
 
     def cancelled(self) -> bool:
-        """Kullanıcı Durdur'a bastı mı? Uzun döngüsü olan araçlar bunu ara ara kontrol etmeli."""
+        """Did the user press Stop? Tools with long loops should check this from time to time."""
         agent = self.state.get("agent")
         cancel = getattr(agent, "cancel", None)
         return bool(cancel is not None and cancel.is_set())
@@ -54,12 +54,12 @@ class ToolContext:
 
 
 class DesktopLock:
-    """Ekran, fare/klavye ve kullanıcının tarayıcısı tek: aynı anda tek sohbet kullanır. Alan sohbet turu bitene kadar
-    tutar, yarım kalan bir ekran işinin arasına başka sohbet girmesin. Sahip ToolContext'tir (alt ajanlar aynı bağlamı
-    paylaşır, kendi sohbetlerini bekletmezler).
+    """The screen, mouse/keyboard and the user's browser are a single resource: only one chat uses them at a time. The
+    lock is held until the chat's turn ends, so no other chat can step into an unfinished screen action.
+    The owner is the ToolContext (sub-agents share the same context and do not make their chats wait).
 
-    Sahip değişince önceki sahibin tarayıcı bağlantısı bırakılır: tarayıcı köprüsü tek istemciye hizmet verir, eski
-    bağlantı sessizce ölü kalır ve sonraki çağrısı takılırdı."""
+    When the owner changes, the previous owner's browser connection is dropped: the browser bridge serves a single
+    client, so the old connection would stay silently dead and its next call would hang."""
 
     def __init__(self) -> None:
         import threading
@@ -72,7 +72,7 @@ class DesktopLock:
         return self.owner is ctx
 
     def acquire(self, ctx: ToolContext, cancelled: Callable[[], bool], on_wait: Callable[[], None] | None = None) -> bool:
-        """Sıra gelene kadar bekle; durdurulursa False."""
+        """Wait for our turn; return False if cancelled."""
         with self._cond:
             told = False
             while self.owner is not None and self.owner is not ctx:
@@ -101,25 +101,25 @@ class Tool:
     description: str = ""
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     risk: str = READ
-    # True: yan etkisi olmayan, thread'e bağlı nesne kullanmayan araç; art arda gelirse paralel çalışır.
+    # True: a tool with no side effects that uses no thread-bound objects; back-to-back calls run in parallel.
     parallel_safe: bool = False
-    # True: sonucu dışarıdan gelen içerik (web sayfası, mesaj, e-posta, MCP). Modele "güvenilmeyen veri" diye
-    # işaretlenmiş gider; o turda komut çalıştırma ve dışarı mesaj göndermek auto modda da onaya bağlanır.
+    # True: the result is outside content (web page, message, e-mail, MCP). It reaches the model marked
+    # "güvenilmeyen veri" (untrusted data); in that turn, commands and outward messages still need approval in auto mode.
     untrusted: bool = False
 
     def risk_for(self, args: dict[str, Any]) -> str:
         return self.risk
 
     def parallel_for(self, ctx: "ToolContext", args: dict[str, Any]) -> bool:
-        """Bu çağrı aynı cevaptaki komşu çağrılarla aynı anda çalışabilir mi? Varsayılan: parallel_safe."""
+        """Can this call run at the same time as neighbouring calls in the same reply? Default: parallel_safe."""
         return self.parallel_safe
 
     def exclusive_key(self, args: dict[str, Any]) -> str:
-        """Boş değilse: aynı anahtarı taşıyan iki çağrı aynı anda çalışmaz (ör. aynı depoda iki git komutu)."""
+        """If not empty: two calls carrying the same key never run at once (e.g. two git commands in the same repo)."""
         return ""
 
     def summary(self, args: dict[str, Any]) -> str:
-        """Ekranda gösterilecek kısa özet."""
+        """Short summary shown on screen."""
         s = json.dumps(args, ensure_ascii=False)
         return s if len(s) < 160 else s[:157] + "..."
 
@@ -132,12 +132,12 @@ class Tool:
 
 
 def check_args(tool: Tool, args: dict[str, Any]) -> str:
-    """Argümanları aracın şemasına göre kabaca denetle (zorunlu alanlar, enum). Sorun varsa modelin kendini
-    düzeltebileceği bir hata metni, yoksa "" döner. Claude Code ve Codex de hatalı çağrıyı aracı çalıştırmadan,
-    neyin eksik/yanlış olduğunu ve geçerli değerleri söyleyerek geri çevirir."""
+    """Roughly check the arguments against the tool's schema (required fields, enum). If there is a problem, return
+    an error text the model can use to fix itself; otherwise return "". Claude Code and Codex also bounce a faulty call
+    without running the tool, telling what is missing or wrong and listing the valid values."""
     schema = tool.parameters if isinstance(tool.parameters, dict) else {}
     props = schema.get("properties") or {}
-    missing = [k for k in schema.get("required") or [] if args.get(k) is None]  # "" geçerli: new_string="" siler
+    missing = [k for k in schema.get("required") or [] if args.get(k) is None]  # "" is valid: new_string="" deletes
     if missing:
         return f"{tool.name}: eksik zorunlu parametre: {', '.join(missing)}. {_param_hint(props, missing)}"
     for k, v in args.items():
@@ -148,7 +148,7 @@ def check_args(tool: Tool, args: dict[str, Any]) -> str:
 
 
 def unknown_params(tool: Tool, args: dict[str, Any]) -> str:
-    """Şemada olmayan parametreler için hata metni (TypeError'ı anlaşılır kılmak için)."""
+    """Error text for parameters that are not in the schema (to make the TypeError understandable)."""
     props = (tool.parameters or {}).get("properties") or {}
     extra = [k for k in args if k not in props]
     if not extra or not props:
@@ -179,7 +179,7 @@ def make_diff(path: str, before: str, after: str, context: int = 3, max_lines: i
 def truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    if limit <= 0:  # text[-0:] bütün metni döndürüyordu
+    if limit <= 0:  # text[-0:] used to return the whole text
         return f"... [{len(text)} karakter kesildi] ..."
     head = int(limit * 0.6)
     tail = limit - head

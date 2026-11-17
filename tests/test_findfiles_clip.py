@@ -14,7 +14,7 @@ def test_search_downloads_and_tidy(tmp_path):
     for name in ("staj_belgesi.pdf", "fatura.xlsx", "foto.jpg", "setup.exe", "notlar.bin"):
         (dl / name).write_bytes(b"x")
         os.utime(dl / name, (old, old))
-    (dl / "yeni.pdf").write_bytes(b"x")  # bugün indi: tidy dokunmaz
+    (dl / "yeni.pdf").write_bytes(b"x")  # downloaded today: tidy leaves it alone
     hits = ff.downloads("staj", "", 7, folder=dl)
     assert [p.name for p, _ in hits] == ["staj_belgesi.pdf"]
     assert [p.name for p, _ in ff.downloads("", "pdf", None, folder=dl)] == ["yeni.pdf", "staj_belgesi.pdf"]
@@ -40,17 +40,17 @@ def test_recent_reads_shortcut_targets(tmp_path):
 def test_clipboard_history_skips_secrets(tmp_path):
     path = tmp_path / "h.json"
     assert clipwatch.add("https://example.com/staj?id=1", path, now=100)
-    assert not clipwatch.add("Xk9#mPq2vL!", path, now=101)  # şifreye benziyor
+    assert not clipwatch.add("Xk9#mPq2vL!", path, now=101)  # looks like a password
     assert not clipwatch.add("ghp_abcdefghijklmnopqrstuvwx", path, now=102)
     assert clipwatch.add("Merhaba hocam, ödevi yarın teslim edeceğim.", path, now=103)
     assert [i["text"][:5] for i in clipwatch.load(path, now=200)] == ["https", "Merha"]
-    assert clipwatch.load(path, now=100 + 13 * 3600) == []  # 12 saat sonra silinir
+    assert clipwatch.load(path, now=100 + 13 * 3600) == []  # deleted after 12 hours
     w = clipwatch.ClipWatch(read=iter(["eski", "eski", "yeni metin"]).__next__)
-    assert not w.step() and not w.step()  # açılıştaki pano kaydedilmez
+    assert not w.step() and not w.step()  # the clipboard at startup is not recorded
 
 
 def test_no_tool_schema_has_empty_enum_value():
-    # Gemini Live boş enum değeri ("") gören bütün araç listesini reddediyordu: Live hiç açılmadı, cevaplar 10 sn sürdü
+    # Gemini Live rejected the whole tool list when it saw an empty enum value (""): Live never opened and replies took 10 s
     from alice.tools import builtin_tools
 
     def walk(node, path):
@@ -67,7 +67,7 @@ def test_no_tool_schema_has_empty_enum_value():
 
 
 def test_open_resolves_relative_path_against_chat_cwd(tmp_path, monkeypatch):
-    # Göreli yol sohbetin çalışma klasörüne göre çözülmeli, sürecin cwd'sine göre değil.
+    # A relative path must resolve against the chat's working folder, not the process cwd.
     from unittest.mock import MagicMock
 
     from alice.tools.base import ToolContext

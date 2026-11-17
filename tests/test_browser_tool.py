@@ -1,6 +1,6 @@
-"""alice/tools/browser.py: oturum yaşam döngüsü (kapanan sekme, kopan bağlantı, kapatılan ALICE penceresi),
-gevşek JSON argümanları, zaman aşımları ve ekran görüntüsü boyutu. Playwright sahte modülle değiştirilir;
-gerçek tarayıcı açılmaz."""
+"""alice/tools/browser.py: session lifecycle (closed tab, dropped connection, closed ALICE window),
+lenient JSON arguments, timeouts and screenshot size. Playwright is replaced with a fake module;
+no real browser is opened."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def session(ctx):
     return s
 
 
-# ------------------------------------------------------------------ argümanlar
+# ------------------------------------------------------------------ arguments
 
 
 def test_risk_levels():
@@ -157,7 +157,7 @@ def test_risk_levels():
 def test_submit_string_false_does_not_press_enter(ctx, session):
     page = session.page
     browser.Browser().run(ctx, "type", element_id=3, text="kedi", submit="false")
-    assert not any(c[0] == "press" for c in page.calls)  # bool("false") True idi: form gönderiliyordu
+    assert not any(c[0] == "press" for c in page.calls)  # bool("false") was True: the form was being submitted
     browser.Browser().run(ctx, "type", element_id="3", text="kedi", submit="true")
     assert any(c[0] == "press" and c[2] == ("Enter",) for c in page.calls)
     with pytest.raises(ToolError, match="submit"):
@@ -199,7 +199,7 @@ def test_scroll_amount_string(ctx, session):
 def test_switch_tab_index_string(ctx, session):
     second = FakePage("https://github.com/", "GitHub")
     session.ctx.pages.append(second)
-    r = browser.Browser().run(ctx, "switch_tab", index="1")  # eskiden "<=" TypeError
+    r = browser.Browser().run(ctx, "switch_tab", index="1")  # previously "<=" raised TypeError
     assert session.page is second and r.text.startswith("sekme 1")
     with pytest.raises(ToolError, match="geçersiz sekme index: 5"):
         browser.Browser().run(ctx, "switch_tab", index=5)
@@ -215,7 +215,7 @@ def test_press_eval_text_tabs_back(ctx, session):
     page.eval_result = lambda *a, **k: {"ok": 1}
     assert browser.Browser().run(ctx, "eval", js="return 1;").text == "{'ok': 1}"
     page.eval_result = lambda *a, **k: "x" * 10000
-    assert "kesildi" in browser.Browser().run(ctx, "text").text  # tool_output_chars sınırı
+    assert "kesildi" in browser.Browser().run(ctx, "text").text  # tool_output_chars limit
     assert "<- aktif" in browser.Browser().run(ctx, "tabs").text
     page.eval_result = lambda *a, **k: []
     browser.Browser().run(ctx, "back")
@@ -230,16 +230,16 @@ def test_screenshot_has_timeout_and_is_downscaled(ctx, session):
     import base64
 
     img = Image.open(io.BytesIO(base64.b64decode(r.images[0])))
-    assert img.width == 800 and img.height == 400  # screenshot_max_width'e küçültüldü
+    assert img.width == 800 and img.height == 400  # downscaled to screenshot_max_width
 
 
-# --------------------------------------------------------------- yaşam döngüsü
+# --------------------------------------------------------------- lifecycle
 
 
 def test_closed_page_switches_to_open_tab(ctx, session):
     other = FakePage("https://github.com/", "GitHub")
     session.ctx.pages.append(other)
-    session.page.closed = True  # kullanıcı sekmeyi kapattı
+    session.page.closed = True  # the user closed the tab
     browser.Browser().run(ctx, "scroll", amount=100)
     assert session.page is other and ("wheel", 0, 100) in other.calls
 
@@ -264,7 +264,7 @@ def test_own_window_closed_reconnects(ctx, monkeypatch):
     old.ctx.on("close", old._mark_closed)
     ctx.state["browser"] = old
     assert old.alive()
-    old.ctx.emit("close")  # kullanıcı ALICE penceresini kapattı
+    old.ctx.emit("close")  # the user closed the ALICE window
     assert not old.alive()
     fresh = make_session()
     made: list[dict] = []
@@ -287,7 +287,8 @@ class TargetClosedError(Exception):
 
 
 def test_connection_lost_mid_call_reconnects_and_retries_read(ctx, monkeypatch):
-    # Opera bağlantısı çağrı sırasında öldü: is_connected hâlâ True der, ama işlem "closed" hatası verir.
+    # The Opera connection died during the call: is_connected still says True,
+    # but the operation fails with a "closed" error.
     old = make_session(attached=True)
     ctx.state["browser"] = old
 
@@ -300,7 +301,7 @@ def test_connection_lost_mid_call_reconnects_and_retries_read(ctx, monkeypatch):
                                          "placeholder": "", "value": "", "href": "/", "inView": True}]
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: fresh)
     r = browser.Browser().run(ctx, "snapshot")
-    assert "Ana sayfa" in r.text and ctx.state["browser"] is fresh  # orada kalmadı: yeniden bağlandı
+    assert "Ana sayfa" in r.text and ctx.state["browser"] is fresh  # it did not stay there: reconnected
 
 
 def test_connection_lost_on_click_resets_without_repeating(ctx, monkeypatch):
@@ -316,7 +317,7 @@ def test_connection_lost_on_click_resets_without_repeating(ctx, monkeypatch):
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("tıklama tekrar edilmemeli"))
     with pytest.raises(ToolError, match="bağlantısı koptu"):
         browser.Browser().run(ctx, "click", element_id=3)
-    assert clicks == [3] and "browser" not in ctx.state  # sonraki çağrı yeni bağlantı kurar
+    assert clicks == [3] and "browser" not in ctx.state  # the next call sets up a new connection
 
 
 def test_reconnect_failure_is_explained(ctx, monkeypatch):
@@ -403,16 +404,16 @@ def test_goto_attached_reuses_open_site_tab(ctx, monkeypatch):
 
 
 def test_goto_root_again_goes_home_in_open_tab(ctx, monkeypatch):
-    """Canlı kayıt: YouTube sekmesi videodaydı, "ana sayfaya geç" dendi, goto yalnızca sekmeye geçip videoda kaldı."""
+    """Live: YouTube tab on a video, "ana sayfaya geç" (go home) asked; goto only switched tabs, stayed on the video."""
     video = FakePage("https://www.youtube.com/watch?v=K5", "Video")
     s = make_session([video], attached=True)
     ctx.state["browser"] = s
     monkeypatch.setattr(browser.BrowserSession, "_visible_page", lambda self: None)
     r = browser.Browser().run(ctx, "goto", url="youtube.com")
     assert "zaten açık sekmeye geçildi" in r.text and "bir kez daha" in r.text
-    assert not any(c[0] == "goto" for c in video.calls)  # ilk istekte çalan videoya dokunmaz
+    assert not any(c[0] == "goto" for c in video.calls)  # does not touch the playing video on the first request
     browser.Browser().run(ctx, "goto", url="youtube.com")
-    assert any(c[0] == "goto" for c in video.calls)  # aynı istek tekrar gelince ana sayfaya gider
+    assert any(c[0] == "goto" for c in video.calls)  # the same request again goes to the home page
 
 
 def test_tab_for_prefers_same_host_then_blank_then_new():
@@ -469,7 +470,7 @@ def test_js_function_detection_kept():
     assert browser.js_function("(() => 1)()") == "() => ((() => 1)())"
 
 
-# --------------------------------------------------------------- CDP / başlık
+# --------------------------------------------------------------- CDP / title
 
 
 def test_targets_and_title_of():
@@ -492,7 +493,7 @@ def test_visible_page_matches_foreground_title(monkeypatch):
     assert s._visible_page() is None
 
 
-# ----------------------------------------------------------- oturum açma
+# ----------------------------------------------------------- session setup
 
 
 class FakeChromium:
@@ -531,13 +532,13 @@ def test_session_attaches_over_cdp(fake_pw, monkeypatch):
     s = browser.BrowserSession(allow_launch=False)
     assert s.attached and s.page.url == "https://a.com/" and chromium.calls[0][2] == 60000
     assert "page" in s.ctx.handlers
-    s.close()  # kullanıcının tarayıcısı kapatılmaz
+    s.close()  # the user's browser is not closed
     assert not s.ctx.closed
 
 
 def test_session_sends_bridge_token_only_to_bridge(fake_pw, monkeypatch):
-    """Köprü anahtarsız bağlantıyı reddeder (sandbox'taki program da Origin göndermez); ALICE anahtarı başlıkta yollar,
-    kullanıcının doğrudan CDP portuna göndermez."""
+    """The bridge rejects connections without the key (sandbox programs send no Origin either); ALICE
+    sends the key in the header, never to the user's direct CDP port."""
     from alice.tools import browser_bridge as bb
 
     chromium, _ = fake_pw
@@ -581,7 +582,7 @@ def test_session_without_playwright(monkeypatch):
         browser.BrowserSession()
 
 
-# ------------------------------------------------------------- uç noktalar
+# ------------------------------------------------------------- endpoints
 
 
 def test_user_browser_endpoint_prefers_live_cdp_then_bridge(monkeypatch):
@@ -632,7 +633,7 @@ def test_format_snapshot():
 
 
 def test_kill_playwright_drivers_only_kills_drivers():
-    # Gerçek alt süreçler: Playwright sürücüsüne benzeyen öldürülür, köprü gibi diğerleri yaşar.
+    # Real child processes: whatever looks like a Playwright driver is killed, others such as the bridge survive.
     import subprocess
     import time as _t
 
@@ -663,9 +664,9 @@ def test_restart_kills_drivers_before_exit(monkeypatch):
     assert calls == ["popen", "kill"]
 
 
-# ------------------------------------------------------------------ takılan çağrı: bekçi ve Durdur
+# ------------------------------------------------------------------ hung call: watchdog and Stop (Durdur)
 def _hangs_until_aborted(sess):
-    """Gerçekte sürücü öldürülünce bekleyen Playwright çağrısı "Connection closed" ile döner; onu taklit et."""
+    """In reality, a pending Playwright call returns "Connection closed" when the driver is killed; imitate that."""
     import time
 
     def hang(*a, **k):
@@ -717,12 +718,13 @@ def test_stop_cuts_hung_call_without_retry(ctx, monkeypatch):
 
 
 def test_abort_leaves_idle_connection_alone(ctx, session):
-    browser.abort_browser(ctx, "stop")  # çalışan çağrı yok: Opera tekrar izin sormasın diye bağlantıya dokunma
+    browser.abort_browser(ctx, "stop")  # no call running: leave the link alone so Opera doesn't re-ask permission
     assert not getattr(session, "aborted", "") and session.alive()
 
 
 def test_dead_bridge_means_dead_session(ctx, monkeypatch):
-    # Köprü tarayıcıyı ölü sayıp kapandı ama Playwright hâlâ bağlı sanıyor: eskiden sonraki çağrı sonsuza dek bekliyordu.
+    # The bridge judged the browser dead and closed, but Playwright still thought it was connected;
+    # the next call hung forever (old bug).
     s = make_session(attached=True)
     s._bridge_port = 9339
     monkeypatch.setattr(browser, "bridge_alive", lambda port, timeout=0.4: False)

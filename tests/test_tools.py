@@ -111,7 +111,7 @@ def test_config_init_and_load(isolated_home, monkeypatch, tmp_path):
     (isolated_home / "config.toml").write_text('[agent]\npermission_mode = "yolo"\n[roles]\nbrain = ["groq:x"]\n', encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
     assert cfg.agent["permission_mode"] == "yolo" and cfg.agent["max_steps"] == 80
-    assert cfg.roles["brain"] == ["groq:x"] and cfg.roles["fast"]  # diğer roller varsayılandan
+    assert cfg.roles["brain"] == ["groq:x"] and cfg.roles["fast"]  # other roles come from the defaults
     assert cfg.providers()["groq"].api_key == "abc"
     monkeypatch.delenv("GROQ_API_KEY")
 
@@ -123,7 +123,7 @@ def test_custom_provider_without_base_url_is_skipped(capsys):
     assert set(cfg.provider_errors()) == {"benim", "bozuk"}
     assert "providers.benim" in capsys.readouterr().err
     cfg.providers()
-    assert "providers.benim" not in capsys.readouterr().err  # süreç başına bir kez uyarır
+    assert "providers.benim" not in capsys.readouterr().err  # warns once per process
 
 
 def test_provider_vision_glob():
@@ -139,7 +139,7 @@ def test_write_roles_updates_config(isolated_home):
     cfg = load_config()
     assert cfg.roles["brain"] == ["groq:new-model", "gemini:x"]
     assert cfg.roles["vision"] == ["gemini:v"]
-    assert cfg.roles["fast"][0] == "auto"  # boş öneri dokunulmadı
+    assert cfg.roles["fast"][0] == "auto"  # empty suggestion left untouched
 
 
 def test_cli_status_line_and_prompt_session(workdir):
@@ -153,7 +153,7 @@ def test_cli_status_line_and_prompt_session(workdir):
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    # CI'da (özellikle Windows) gerçek konsol yok; sahte giriş/çıkışla kur.
+    # No real console in CI (especially Windows); set up with fake input/output.
     with create_pipe_input() as inp, create_app_session(input=inp, output=DummyOutput()):
         assert make_prompt_session(agent, router, ctx).multiline
 
@@ -189,7 +189,7 @@ def test_find_installed_apps_scans_program_folders(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
     monkeypatch.setattr(desktop, "_steam_libraries", lambda: [])
     monkeypatch.setattr(desktop, "_shortcut_roots", lambda: [])
-    monkeypatch.setattr(desktop, "start_apps", lambda refresh=False: [])  # PowerShell yalnız Windows'ta var
+    monkeypatch.setattr(desktop, "start_apps", lambda refresh=False: [])  # PowerShell only exists on Windows
     for k in ("ProgramFiles(x86)", "ProgramW6432", "LOCALAPPDATA"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("ProgramFiles", str(pf))
@@ -207,7 +207,7 @@ def test_blender_tool_parses_error_and_scene(tmp_path, monkeypatch):
     from alice.tools import blender as bl
     from alice.tools.base import ToolContext
 
-    # Gerçek Blender yerine çıktıyı taklit eden küçük bir betik.
+    # A small script that imitates Blender's output instead of running the real Blender.
     fake = tmp_path / "fake_blender.py"
     fake.write_text(
         "print('Blender 5.2.1 LTS')\n"
@@ -327,7 +327,7 @@ def test_browser_does_not_open_separate_window_without_consent(monkeypatch):
     from alice.tools.base import ToolError
 
     monkeypatch.setattr(browser, "cdp_alive", lambda e, timeout=0.4: False)
-    # Makinede hata ayıklama portu açık bir tarayıcı (Opera GX, köprü) varsa test ona bağlanmasın.
+    # If a browser with an open debug port (Opera GX, the bridge) is on this machine, don't let the test attach to it.
     monkeypatch.setattr(browser, "user_browser_endpoint", lambda cdp=None, bridge_port=None: None)
     with pytest.raises(ToolError, match="ayrı pencere"):
         browser.BrowserSession(cdp="http://127.0.0.1:9222", allow_launch=False)
@@ -411,9 +411,9 @@ def test_start_apps_match_store_apps(monkeypatch):
     ("x => x + 1", "x => x + 1"),
     ("async () => 1", "async () => 1"),
     ("function () { return 1 }", "function () { return 1 }"),
-    # eskiden "async" ile başlayıp "=>" içermeyen fonksiyon sarılıyor, hiç çağrılmıyordu
+    # used to wrap an "async" function without "=>", and it was never called
     ("async function () { return 1 }", "async function () { return 1 }"),
-    # eskiden "(" ile başlayıp içinde "=>" geçen ifade fonksiyon sanılıyor, sonucu çağrılınca "not a function" oluyordu
+    # used to treat a "("-started expression containing "=>" as a function; calling it gave "not a function"
     ("(() => document.title)()", "() => ((() => document.title)())"),
     ("([1, 2].map(x => x * 2))", "() => (([1, 2].map(x => x * 2)))"),
     ("document.title;", "() => (document.title)"),
@@ -444,7 +444,7 @@ def test_list_dir_known_folders_and_newest(tmp_path, monkeypatch):
     out = files.ListDir().run(ctx, path="İndirilenler", sort="newest", limit=2).text
     lines = out.splitlines()
     assert lines[0] == str(dl) and lines[1].startswith("yeni.exe") and lines[2].startswith("orta.pdf")
-    assert "1 öğe daha" in out and "." in lines[1].split("(")[1]  # tarih var
-    assert files.ListDir().run(ctx, path="downloads").text.splitlines()[1].startswith("eski.zip")  # ada göre
+    assert "1 öğe daha" in out and "." in lines[1].split("(")[1]  # has a date
+    assert files.ListDir().run(ctx, path="downloads").text.splitlines()[1].startswith("eski.zip")  # by name
     (tmp_path / "OneDrive" / "Desktop").mkdir(parents=True)
     assert files.known_folder("Masaüstü") == tmp_path / "OneDrive" / "Desktop"

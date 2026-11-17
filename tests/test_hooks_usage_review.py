@@ -1,5 +1,5 @@
-"""Hook yönetimi (dosyaya ekle/sil, açık sohbette canlı yenileme), kullanım dökümü ve PR satır yorumlarının farka
-oturtulması."""
+"""Hook management (add/remove in the file, live reload in an open chat), usage breakdown, and aligning PR line
+comments to the diff."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def test_add_remove_hooks_roundtrip_and_live_reload(home):
     assert not h.has("PostToolUse")
     hk.add_hook("PostToolUse", 'ruff format "$ALICE_TOOL_PATH"', "edit_file|write_file", 20)
     hk.add_hook("Stop", "pytest -q")
-    assert h.has("PostToolUse") and h.has("Stop")  # açık sohbet dosya değişince yeniden okur
+    assert h.has("PostToolUse") and h.has("Stop")  # an open chat re-reads the hook file when it changes
     rows = hk.file_hooks()
     assert rows[0].command == 'ruff format "$ALICE_TOOL_PATH"' and rows[0].matcher == "edit_file|write_file"
     assert rows[0].timeout == 20
@@ -90,13 +90,13 @@ def test_diff_lines_and_finding_anchoring():
     lines = review.diff_lines(DIFF)
     assert lines["a.py"] == {10, 11, 12, 13}
     f = review.Finding("a.py", 15, "high", "t", "d")
-    assert review._anchor(f, lines) == 13  # 3 satır içindeki en yakın fark satırı
+    assert review._anchor(f, lines) == 13  # nearest diff line within 3 lines
     assert review._anchor(review.Finding("a.py", 40, "high", "t", "d"), lines) == 0
     assert review._anchor(review.Finding("b.py", 11, "high", "t", "d"), lines) == 0
 
 
 def test_added_line_starting_with_plus_plus_is_not_a_file_header():
-    # "++ x" diye eklenen satır farkta "+++ x" görünür; parçanın içindeyse dosya başlığı sanılmamalı.
+    # A line added as "++ x" shows up in the diff as "+++ x"; inside a hunk it must not be mistaken for a file header.
     diff = ("diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1,3 +1,4 @@\n baş\n"
             "+++ yeni madde\n--- eski madde\n+son\n son satır\n"
             "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -5 +5 @@\n-x = 1\n+x = 2\n")

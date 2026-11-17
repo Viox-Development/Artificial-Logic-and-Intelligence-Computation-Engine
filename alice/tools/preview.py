@@ -1,6 +1,6 @@
-"""preview: uygulamayı çalıştır, yerleşik tarayıcıda aç ve değişikliği doğrula (Claude Code'daki "run / verify"
-akışı). Ekran görüntüsünü modele verir; sayfanın konsol hatalarını ve başarısız ağ isteklerini ayrıca listeler:
-"sayfa açıldı" ile "sayfa doğru çalışıyor" ayrı şeyler."""
+"""preview: run the app, open it in the built-in browser and verify the change (Claude Code's "run / verify"
+flow). It gives the model the screenshot and separately lists the page's console errors and failed network
+requests: "page opened" and "page works correctly" are different things."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from alice.tools.base import EXEC, READ, Tool, ToolContext, ToolError, ToolResul
 
 def _reachable(url: str) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 - kullanıcının yerel sunucusu
+        with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 - the user's local server
             return r.status < 500
     except urllib.error.HTTPError as e:
         return e.code < 500
@@ -84,7 +84,7 @@ class Preview(Tool):
             else:
                 raise ToolError(f"bilinmeyen action: {action}")
             loaded = bb.wait_load(20)
-            time.sleep(1.2)  # ilk çizim ve geç gelen istekler
+            time.sleep(1.2)  # first paint and late-arriving requests
             png = bb.screenshot_png()
             tab = bb.current()
             logs = bb.logs(since=started)

@@ -1,6 +1,6 @@
-"""Ev kontrolü, ek testler: kod sayfası, zaman aşımı, ulaşılamayan cihaz mesajları, modem/TV hata yolları.
+"""Home control, extra tests: code pages, timeouts, unreachable device messages, modem/TV error paths.
 
-Gerçek ağ ya da cihaz yok: subprocess, httpx (MockTransport) ve WebSocket taklit ediliyor.
+No real network or devices: subprocess, httpx (MockTransport) and WebSocket are mocked.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _done(cmd, out="", err="", code=0):
     return subprocess.CompletedProcess(cmd, code, out, err)
 
 
-# ---------- net.run: kod sayfası ve zaman aşımı ----------
+# ---------- net.run: code page and timeout ----------
 
 def test_run_uses_console_codepage_on_windows_but_utf8_for_adb(monkeypatch):
     seen = []
@@ -47,7 +47,7 @@ def test_run_uses_console_codepage_on_windows_but_utf8_for_adb(monkeypatch):
 
 
 def test_adb_output_with_turkish_letters_survives_decoding():
-    # adb, cihazdaki metni UTF-8 verir; Windows'ta bile konsol kod sayfasıyla çözülmemeli.
+    # adb returns device text as UTF-8; it must not be decoded with the console code page, even on Windows.
     code = "import sys; sys.stdout.buffer.write('Şükrü: ekmek al ğıİ'.encode('utf-8'))"
     assert android.run([sys.executable, "-c", code]).stdout == "Şükrü: ekmek al ğıİ"
 
@@ -57,7 +57,7 @@ def test_missing_command_raises_oserror_for_tools_to_explain(tmp_path):
         net.run([str(tmp_path / "olmayan-komut")])
 
 
-# ---------- net: ARP, cihazlar, WoL ----------
+# ---------- net: ARP, devices, WoL ----------
 
 def test_arp_parse_macos_short_octets_and_dedupe():
     text = ("? (192.168.1.1) at 0:1a:2b:3c:4d:5e on en0 ifscope [ethernet]\n"
@@ -158,7 +158,7 @@ def test_wifi_connect_writes_profile_removes_temp_file_and_hides_password(netsh,
             written["path"], written["xml"] = path, path.read_text(encoding="utf-8")
         return orig(cmd, timeout)
 
-    wifi.run = spy  # monkeypatch fikstürü (netsh) sonunda eski haline döndürür
+    wifi.run = spy  # the netsh fixture's monkeypatch restores the original at the end
     with pytest.raises(ToolError) as e:
         Wifi().run(_ctx(tmp_path), action="connect", ssid="Ev & Ağ", password="gizli<sifre>")
     assert "gizli" not in str(e.value) and "kullanılamıyor" in str(e.value)
@@ -180,7 +180,7 @@ def test_wifi_netsh_error_without_output_has_default_message(monkeypatch):
         wifi.disconnect()
 
 
-# ---------- PC (Windows komutları taklit) ----------
+# ---------- PC (mocking Windows commands) ----------
 
 @pytest.fixture
 def windows(monkeypatch):
@@ -400,7 +400,7 @@ def test_android_tool_missing_arguments(monkeypatch, tmp_path):
 # ---------- Samsung TV ----------
 
 class ConnectionClosed(Exception):
-    """websockets.exceptions.ConnectionClosed yerine (paket kurulu olmasa da)."""
+    """Stand-in for websockets.exceptions.ConnectionClosed (even when the package is not installed)."""
 
 
 class ConnectionClosedError(ConnectionClosed):
@@ -662,7 +662,7 @@ def test_zte_odd_locking_time_does_not_crash():
     zte.ZTE._login_error({"lockingTime": "yok", "loginErrMsg": ""})
     with pytest.raises(zte.ModemError, match="60 sn kilitli"):
         zte.ZTE._login_error({"lockingTime": "60"})
-    zte.ZTE._login_error({"lockingTime": -1, "loginErrMsg": ""})  # -1 kilit yok demek: "-1 sn kilitli" denmesin
+    zte.ZTE._login_error({"lockingTime": -1, "loginErrMsg": ""})  # -1 means no lock: must not say "-1 sn kilitli"
 
 
 def test_zte_password_hash_never_contains_plain_password():

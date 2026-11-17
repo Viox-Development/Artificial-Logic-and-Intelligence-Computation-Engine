@@ -1,4 +1,4 @@
-"""Uygulama uç noktalarının kenar durumları: bozuk girdi 500 değil 400, kısmi kayıt alanları silmiyor."""
+"""Edge cases of the app endpoints: malformed input returns 400, not 500; partial record fields don't erase data."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_usage_has_session_breakdown_and_today(app):
     state, client = app
     state.router.usage.record("a:m", {"prompt_tokens": 10, "completion_tokens": 2}, True)
     u = client.get("/api/usage").json()
-    # Kullanım dökümü penceresi (models/tools/ctx) ve Ayarlar > Kullanım (today) aynı yanıttan beslenir.
+    # The usage breakdown panel (models/tools/ctx) and Settings > Usage (today) are fed from the same response.
     assert {"models", "tools", "ctx", "steps"} <= set(u)
     assert u["today"]["a:m"]["requests"] == 1
 
@@ -42,7 +42,7 @@ def test_prs_bad_number_is_400(app, path, number):
     state, client = app
     r = client.post(path, json={"repo": "o/r", "number": number})
     assert r.status_code == 400 and r.json()["ok"] is False
-    assert client.post(path, json={"repo": "o/r"}).status_code == 400  # eksik number da 400
+    assert client.post(path, json={"repo": "o/r"}).status_code == 400  # a missing number is 400 too
 
 
 def test_resume_empty_id_is_400_and_keeps_current_chat(app, monkeypatch):
@@ -56,4 +56,4 @@ def test_resume_empty_id_is_400_and_keeps_current_chat(app, monkeypatch):
         r = client.post("/api/resume", json=body)
         assert r.status_code == 400 and r.json()["ok"] is False, body
     assert state.resume("") is False
-    assert calls == [] and state.chat.sid == before  # en son sohbet açılmadı
+    assert calls == [] and state.chat.sid == before  # the most recent chat was not opened

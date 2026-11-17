@@ -1,6 +1,6 @@
-"""HUD'un çizimden bağımsız durumu: gelen komutu doğrula, öğeleri tut, süresi dolanı sil.
+"""The HUD's drawing-independent state: validate incoming commands, keep items, remove expired ones.
 
-Pencere (window.py) bunu yalnızca okur; böylece protokol ve ömür kuralları tkinter olmadan test edilir.
+The window (window.py) only reads this, so the protocol and lifetime rules can be tested without tkinter.
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from typing import Any
 
 KINDS = ("arrow", "edge", "label", "card", "box", "progress", "cursor")
 CONTROL = ("clear", "toggle", "mode", "context", "history")
-# Yoğunluk: auto oyunda "game", masaüstünde "all" olur. game: yalnız tehdit, uyarı ve oyunla ilgili; quiet: yalnız
-# kritik. Oyun HUD'larındaki gibi kullanıcı ayarı (kaldırmak değil, azaltmak).
+# Density: auto is "game" in a game and "all" on the desktop. game: only threats, warnings and game-related;
+# quiet: only critical. A user setting like in game HUDs (reduce, not remove).
 MODES = ("auto", "all", "game", "quiet")
 MODE_NAMES = {"auto": "otomatik", "all": "hepsi", "game": "oyun", "quiet": "sessiz"}
-GAME_KEEP = ("kill", "voice", "__mode__")  # oyun modunda bilgi düzeyinde olsa da görünenler (kimlik öneki)
+GAME_KEEP = ("kill", "voice", "__mode__")  # still shown in game mode even at info level (id prefixes)
 HISTORY_MAX, HISTORY_SHOW = 8, 3
-MAX_ITEMS = 6          # aynı anda en fazla bu kadar öğe: HUD bilgi verir, ekranı kapatmaz
+MAX_ITEMS = 6          # at most this many items at once: the HUD informs, it does not cover the screen
 MAX_BYTES = 4096
 TTL_DEFAULT, TTL_MIN, TTL_MAX = 3.0, 0.2, 60.0
 SEVERITIES = ("info", "warn", "critical")
@@ -36,7 +36,7 @@ class Item:
 
 
 def parse(raw: bytes) -> dict[str, Any] | None:
-    """Ağdan gelen tek datagram -> komut. Bozuk, çok büyük ya da bilinmeyen tür None (sessizce yok sayılır)."""
+    """One datagram from the network -> command. Broken, oversized, or unknown kind gives None (silently ignored)."""
     if not raw or len(raw) > MAX_BYTES:
         return None
     try:
@@ -49,7 +49,7 @@ def parse(raw: bytes) -> dict[str, Any] | None:
 
 
 def clock_of(value: Any) -> int | None:
-    """Saat yönü 1-12 (0 ve 12 aynı yer). Anlaşılmazsa None."""
+    """Clock direction 1-12 (0 and 12 are the same spot). None if not understood."""
     try:
         c = round(float(value))
     except (TypeError, ValueError):
@@ -71,9 +71,9 @@ def _valid(msg: dict[str, Any]) -> bool:
     kind = msg["kind"]
     if kind == "edge":
         return clock_of(msg.get("clock")) is not None
-    if kind == "arrow":  # yönü bilinmeyen tehdit (yönsüz kilit/füze uyarısı) de gösterilir: oksuz, nabızla
+    if kind == "arrow":  # unknown-direction threat (directionless lock/missile warning) shown too: arrowless, pulsing
         if msg.get("clock") in (None, ""):
-            return bool(str(msg.get("text") or ""))  # yönsüz: en azından ne olduğu yazmalı
+            return bool(str(msg.get("text") or ""))  # directionless: at least its text must say what it is
         return clock_of(msg.get("clock")) is not None
     if kind == "cursor":
         return all(_num(msg.get(k)) is not None for k in ("x", "y"))
@@ -81,7 +81,7 @@ def _valid(msg: dict[str, Any]) -> bool:
         return all(_num(msg.get(k)) is not None for k in ("x", "y", "w", "h"))
     if kind == "progress":
         return _num(msg.get("value")) is not None
-    return bool(str(msg.get("text") or msg.get("title") or ""))  # label, card: boş yazı çizilmez
+    return bool(str(msg.get("text") or msg.get("title") or ""))  # label, card: empty text is not drawn
 
 
 class HudModel:
@@ -90,13 +90,13 @@ class HudModel:
         self.items: list[Item] = []
         self.hidden = False
         self.mode = mode if mode in MODES else "auto"
-        self.in_game = False  # çekirdek bildirir (uçuş/oyun modu)
-        self.history: deque[tuple[str, str, str]] = deque(maxlen=HISTORY_MAX)  # (saat, başlık, yazı)
-        self.version = 0  # her değişiklikte artar: pencere sadece değişince yeniden çizer
+        self.in_game = False  # the core reports this (flight/game mode)
+        self.history: deque[tuple[str, str, str]] = deque(maxlen=HISTORY_MAX)  # (time, title, text)
+        self.version = 0  # increases on every change: the window only redraws when it changes
         self._seq = 0
 
     def apply(self, msg: dict[str, Any], now: float) -> bool:
-        """Komutu uygula. Bir şey değiştiyse True."""
+        """Apply the command. True if something changed."""
         kind = msg.get("kind")
         if kind == "toggle":
             self.hidden = not self.hidden
@@ -139,17 +139,17 @@ class HudModel:
 
     def _put(self, kind: str, data: dict[str, Any], now: float, ttl: float, key: str) -> None:
         data.setdefault("severity", "info")
-        if key:  # aynı kimlik yenisiyle değişir: tekrarlanan tehdit ekranda birikmez
+        if key:  # the same id is replaced by the new one: a repeated threat does not pile up on screen
             self.items = [i for i in self.items if i.id != key]
         self._seq += 1
         self.items.append(Item(kind, data, now, now + ttl, key, self._seq))
-        while len(self.items) > self.max_items:  # önce en eski kritik olmayanı at
+        while len(self.items) > self.max_items:  # drop the oldest non-critical item first
             calm = [i for i in self.items if i.data["severity"] != "critical"]
             self.items.remove(min(calm or self.items, key=lambda i: i.seq))
         self.version += 1
 
     def _show_history(self, now: float) -> bool:
-        """Kaçırılan son bildirimler tek kartta (Ada tıklanmaz: kısayolla açılır)."""
+        """Recently missed notifications on one card (Ada is not clicked: it is opened with a shortcut)."""
         last = list(self.history)[-HISTORY_SHOW:][::-1]
         body = " · ".join(f"{t} {title}: {text[:60]}" if text else f"{t} {title}" for t, title, text in last)
         self._put("card", {"title": "Son bildirimler", "text": body or "Henüz bildirim yok.", "icon": "clock"},

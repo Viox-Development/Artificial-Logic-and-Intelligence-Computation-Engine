@@ -1,17 +1,17 @@
-"""Uygulama içi arama: telefondaki ALICE uygulamasıyla sesli görüşme.
+"""In-app call: voice conversation with the ALICE mobile app.
 
-Kullanıcı ALICE'i arar ya da ALICE kullanıcıyı arar (phone_call aracı: "yarım saat sonra beni ara", bir hatırlatma,
-önemli bir uyarı). Görüşme kendi sohbetinde sürer, ALICE'in bütün araçları açıktır.
+The user calls ALICE or ALICE calls the user (phone_call tool: "call me in half an hour", a reminder,
+an important alert). The conversation takes place in its own chat, and all of ALICE's tools are available.
 
-Canlı yol (varsayılan, bilgisayardaki sesli asistanla aynı): telefon mikrofonu 16 kHz PCM parçalarıyla
-POST /api/call/mic ile gelir, ChatGPT Realtime oturumuna akar; ALICE'in sesi parça parça call_pcm olayıyla telefona
-gider ve orada WebAudio ile çalınır. Gecikme ~1-2 sn (eski yol ~10 sn). Realtime yoksa eski yol:
+Live path (default, same as the voice assistant on the computer): the phone's microphone arrives in 16 kHz PCM chunks
+via POST /api/call/mic and flows into a ChatGPT Realtime session; ALICE's voice goes to the phone chunk-by-chunk via the
+call_pcm event and is played there using WebAudio. Latency ~1-2 s (legacy path ~10 s). If Realtime is unavailable, fallback:
 
-Eski yol (yarı çift yönlü):
-  telefon: konuşma tanıma (cihazda, canlı yazı)  ->  POST /api/call/say {text}
-  bilgisayar: ajan turu; cevap akarken cümle cümle sese çevrilir (TTS)  ->  olay call_audio {n, text}
-  telefon: GET /api/call/audio?n= ile çalar, bitince yeniden dinler. ALICE konuşurken dokunulursa susar, dinler.
-Ses üretilemezse (anahtar/kota yok) olay sadece metinle gider, telefon kendi sesiyle okur.
+Legacy path (half-duplex):
+  phone: speech recognition (on-device, live transcription)  ->  POST /api/call/say {text}
+  computer: agent turn; while the reply streams, it is converted to audio sentence-by-sentence (TTS)  ->  event call_audio {n, text}
+  phone: plays via GET /api/call/audio?n=, and listens again when done. If touched while ALICE is speaking, silences and listens.
+If audio cannot be generated (no key/quota), the event is sent with text only, and the phone reads it with its own voice.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ LIVE_CALL_PROMPT = """# Telefon görüşmesi
 - Kısa ve doğal konuş: genelde 1-2 cümle. Liste, kod, bağlantı okuma.
 - Bir iş istenirse ilgili aracı hemen çağır; sürecekse önce tek kısa cümleyle ne yaptığını söyle.
 - Kullanıcı görüşmeyi bitirmek isterse kısaca vedalaş; görüşmeyi uygulama kapatır."""
-PCM_FRAME = 960  # 16 kHz PCM16, 30 ms: sesli asistanın mikrofon karesiyle aynı
+PCM_FRAME = 960  # 16 kHz PCM16, 30 ms: same as the voice assistant's microphone frame
 _BYE = re.compile(r"^\s*(kapat(ıyorum|abilirsin)?|görüşürüz|hoşça ?kal|bay ?bay|güle ?güle|tamam,? (bu kadar|kapat))\W*$",
                   re.I)
 
@@ -50,7 +50,7 @@ _current: "CallManager | None" = None
 
 
 def current() -> "CallManager | None":
-    """Bu süreçte telefon köprüsünü sunan arama yöneticisi (phone_call aracı bunu kullanır)."""
+    """Call manager that provides the phone bridge in this process (used by the phone_call tool)."""
     return _current
 
 
@@ -62,7 +62,7 @@ def register(mgr: "CallManager | None") -> None:
 @dataclass
 class Call:
     id: str
-    outbound: bool  # ALICE aradı
+    outbound: bool  # ALICE initiated the call
     reason: str = ""
     opening: str = ""
     state: str = "ringing"  # ringing | active | ended
@@ -76,10 +76,10 @@ class Call:
     chat: Any = None
     hang_after_turn: bool = False
     live: bool = False
-    rt: Any = None  # RealtimeSession (canlı yol)
+    rt: Any = None  # RealtimeSession (live path)
     mic: "queue.Queue[bytes]" = field(default_factory=lambda: queue.Queue(maxsize=400))
     stop: threading.Event = field(default_factory=threading.Event)
-    mic_bytes: int = 0  # telefondan gelen mikrofon sesi (tanı için)
+    mic_bytes: int = 0  # microphone audio coming from the phone (for diagnostics)
     mic_peak: int = 0
 
     def view(self) -> dict[str, Any]:
@@ -103,7 +103,7 @@ class CallManager:
         self._speech: "queue.Queue[tuple[Call, int, int, str] | None]" = queue.Queue()
         threading.Thread(target=self._speaker, daemon=True, name="alice-call-tts").start()
 
-    # ------------------------------------------------------------------------------------ yardımcılar
+    # ------------------------------------------------------------------------------------ helpers
     def _get(self, cid: str) -> Call:
         c = self.call
         if c is None or c.id != cid:
@@ -140,7 +140,7 @@ class CallManager:
             orig_reset()
             sp = splitter_box.get("s")
             if sp is not None:
-                sp.buf = ""  # model değişti, yarım cümle atılır (söylenen söylendi)
+                sp.buf = ""  # model changed, incomplete sentence is discarded (what was spoken was spoken)
 
         chat.ui.stream_delta = delta
         chat.ui.stream_reset = reset
@@ -159,7 +159,7 @@ class CallManager:
         return self._tts
 
     def _say(self, c: Call, text: str, turn: int | None = None) -> None:
-        """Cümleyi sese çevirme sırasına koy (sıra korunur, ilk cümle hazır olur olmaz çalınır)."""
+        """Enqueue sentence for TTS (order is preserved, played as soon as the first sentence is ready)."""
         text = text.replace(END_MARK, "").strip()
         if not text or c.state == "ended":
             return
@@ -173,11 +173,11 @@ class CallManager:
                 return
             c, n, turn, text = item
             if c.state == "ended" or turn < c.turn:
-                continue  # kullanıcı araya girdi ya da kapattı: eski cümleler okunmaz
+                continue  # user barged in or hung up: older sentences are not spoken
             wav = None
             try:
                 wav = self._speech_engine().synth(text, "calm").to_wav()
-            except Exception:  # noqa: BLE001 - ses yoksa telefon metni kendi sesiyle okur
+            except Exception:  # noqa: BLE001 - if no audio, phone speaks the text with its own voice
                 wav = None
             if wav:
                 c.audio[n] = wav
@@ -185,9 +185,9 @@ class CallManager:
                     c.audio.pop(old, None)
             self.publish({"type": "call_audio", "id": c.id, "n": n, "turn": turn, "text": text, "audio": bool(wav)})
 
-    # ------------------------------------------------------------------------------------- akış
+    # ------------------------------------------------------------------------------------- flow
     def ring(self, reason: str, message: str) -> dict[str, Any]:
-        """ALICE kullanıcıyı arar: telefonda gelen arama ekranı açılır. Açılmazsa cevapsız arama olarak kalır."""
+        """ALICE calls the user: incoming call screen opens on the phone. If not answered, remains as a missed call."""
         with self._lock:
             if self.active():
                 return {"ok": False, "error": "zaten bir görüşme var"}
@@ -207,12 +207,12 @@ class CallManager:
         return {"ok": True, "id": c.id}
 
     def start(self) -> dict[str, Any]:
-        """Kullanıcı ALICE'i arar: hemen açılır, ALICE kısa bir selamla karşılar."""
+        """User calls ALICE: answered immediately, ALICE greets with a short greeting."""
         with self._lock:
             if self.active():
                 old = self.call
                 assert old is not None
-                if old.outbound and old.state == "ringing":  # aynı anda ikisi de aradı: gelen aramayı aç
+                if old.outbound and old.state == "ringing":  # both called simultaneously: answer incoming call
                     return self.answer(old.id)
                 return {"ok": False, "error": "zaten bir görüşme var"}
             c = Call(id=secrets.token_hex(6), outbound=False, state="active", answered=time.time())
@@ -259,8 +259,8 @@ class CallManager:
         return {"ok": True}
 
     def say(self, cid: str, text: str) -> dict[str, Any]:
-        """Kullanıcının söylediği: ALICE cevabını cümle cümle seslendirir. ALICE çalışırken gelirse (araya girme)
-        önceki iş durdurulur, eski cümleler okunmaz."""
+        """User's utterance: ALICE voices her reply sentence-by-sentence. If received while ALICE is working (barge-in),
+        previous work is stopped, and older sentences are not spoken."""
         from alice.voice.assistant import with_clock
         from alice.voice.tone import SentenceSplitter
 
@@ -270,7 +270,7 @@ class CallManager:
             return {"ok": False, "error": "görüşme açık değil"}
         if not text:
             return {"ok": False, "error": "boş"}
-        if c.live:  # aramada "Yaz" ya da telefonun kendi konuşma tanıması (mikrofon açılamadıysa)
+        if c.live:  # in call "Type" or phone's own speech recognition (if microphone couldn't be opened)
             if c.rt is None or not c.rt.inject(text):
                 return {"ok": False, "error": "ALICE henüz hazır değil, bir saniye sonra tekrar dene"}
             c.lines.append({"who": "user", "text": text})
@@ -282,7 +282,7 @@ class CallManager:
         c.turn += 1
         turn = c.turn
         c.lines.append({"who": "user", "text": text})
-        if _BYE.match(text):  # açık veda: modele gitmeden kapat
+        if _BYE.match(text):  # explicit farewell: hang up without going to the model
             bye = random.choice(("Tamam, görüşürüz.", "Görüşürüz.", "Tamamdır, kapatıyorum."))
             chat.agent.messages += [{"role": "user", "content": text}, {"role": "assistant", "content": bye}]
             c.lines.append({"who": "alice", "text": bye})
@@ -298,7 +298,7 @@ class CallManager:
             reply = ""
             try:
                 reply = chat.agent.run_turn(with_clock(text)) or ""
-            except Exception as e:  # noqa: BLE001 - görüşme düşmesin
+            except Exception as e:  # noqa: BLE001 - keep call from dropping
                 reply = ""
                 self._say(c, "Bir sorun çıktı, tekrar söyler misin?", turn)
                 self.publish({"type": "info", "text": f"arama: {e}"})
@@ -345,7 +345,7 @@ class CallManager:
                       "text": c.reason or c.opening})
         self._state(c)
 
-    # ------------------------------------------------------------------------------------- canlı yol
+    # ------------------------------------------------------------------------------------- live path
     def _live_ok(self) -> bool:
         if self._live_factory is not None:
             return True
@@ -362,7 +362,7 @@ class CallManager:
         mgr = self
 
         class PhoneOut:
-            """Realtime sesini telefona akıtır. Çalma süresi buradan tahmin edilir (24 kHz PCM16 = 48 000 B/sn)."""
+            """Streams Realtime audio to the phone. Playback duration is estimated here (24 kHz PCM16 = 48,000 B/s)."""
 
             def __init__(self) -> None:
                 self.until = 0.0
@@ -398,10 +398,10 @@ class CallManager:
 
             rt = RealtimeSession(self.app.cfg, c.chat.agent, log=lambda line: voice_log(f"arama: {line}"),
                                  out_factory=PhoneOut)
-        rt.idle = 3600.0  # görüşmeyi sessizlik değil kullanıcı kapatır
+        rt.idle = 3600.0  # call is hung up by user, not silence
         rt.hud_on = False
         rt.prewarm = False
-        # Telefonun yankı engelleyicisi ALICE'in sesini mikrofondan siler: konuşurken araya girilebilir.
+        # Phone's echo cancellation removes ALICE's voice from the microphone: barge-in is possible while speaking.
         rt.echo_guard = bool(self.app.cfg.data.get("voice", {}).get("call_echo_guard", False))
 
         def heard(text: str) -> None:
@@ -413,7 +413,7 @@ class CallManager:
         def said(text: str) -> None:
             c.lines.append({"who": "alice", "text": text})
             self.publish({"type": "call_text", "id": c.id, "who": "alice", "text": text})
-            if c.hang_after_turn:  # veda edildi: ALICE'in cevabı çalınınca kapat
+            if c.hang_after_turn:  # farewell exchanged: hang up once ALICE's reply finishes playing
                 out = rt._out
 
                 def later() -> None:
@@ -437,7 +437,7 @@ class CallManager:
                 try:
                     c.rt.converse(first, c.mic, c.stop)
                     first, fails = "", 0
-                except Exception as e:  # noqa: BLE001 - bağlantı koptu: yeniden bağlan, olmazsa eski yola dön
+                except Exception as e:  # noqa: BLE001 - connection lost: reconnect, if fails fall back to legacy path
                     fails += 1
                     self.publish({"type": "info", "text": f"arama: {e}"})
                     low = str(e).lower()
@@ -454,7 +454,7 @@ class CallManager:
         threading.Thread(target=self._mic_check, args=(c,), daemon=True, name="alice-call-mic").start()
 
     def _mic_check(self, c: Call, wait: float = 6.0) -> None:
-        """Telefonun mikrofon sesi geliyor mu? Gelmiyorsa ALICE kullanıcıyı hiç duymaz: kayda yaz, telefona söyle."""
+        """Is microphone audio coming from the phone? If not, ALICE won't hear user: log and notify phone."""
         if c.stop.wait(wait) or c.state != "active" or not c.live:
             return
         if self._live_factory is None:
@@ -465,7 +465,7 @@ class CallManager:
             self.publish({"type": "call_mic_missing", "id": c.id})
 
     def _fallback(self, c: Call) -> None:
-        """Canlı ses çalışmıyor: görüşme düşmesin, telefon konuşma tanıma + ses dosyası yoluna geçer."""
+        """Live audio not working: prevent call drop, switch phone to speech recognition + audio file path."""
         if c.state != "active":
             return
         c.live, c.rt = False, None
@@ -476,7 +476,7 @@ class CallManager:
         self.publish({"type": "call_turn_done", "id": c.id, "turn": c.turn, "end": False})
 
     def mic(self, cid: str, pcm: bytes) -> dict[str, Any]:
-        """Telefondan gelen mikrofon parçası (16 kHz PCM16)."""
+        """Microphone chunk from phone (16 kHz PCM16)."""
         c = self._get(cid)
         if c.state != "active" or not c.live:
             return {"ok": False, "live": c.live}
@@ -487,7 +487,7 @@ class CallManager:
         for i in range(0, even, PCM_FRAME):
             try:
                 c.mic.put_nowait(pcm[i:i + PCM_FRAME])
-            except queue.Full:  # oturum yeniden bağlanıyor: eski ses birikmesin
+            except queue.Full:  # session reconnecting: avoid accumulating stale audio
                 try:
                     c.mic.get_nowait()
                 except queue.Empty:

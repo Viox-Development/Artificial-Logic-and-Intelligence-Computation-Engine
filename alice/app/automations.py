@@ -1,8 +1,9 @@
-"""Otomasyonlar → Otomasyon: kurallar, zamanlanmış görevler ve akışlar (`alice rules`, `alice tasks`, `alice feeds`).
+"""Automations → Automation: rules, scheduled tasks and feeds (`alice rules`, `alice tasks`, `alice feeds`).
 
-Kural ve görev komut satırındaki gibi düz cümleyle yazılır ("GPU 85 dereceyi 2 dakika geçerse haber ver",
-"her sabah 9'da Discord'u özetle"). Hızlı model cümleyi çevirir, uygulama ne anladığını gösterir, kullanıcı onaylayınca
-kaydedilir. Çalışan çekirdek dosyaları her turda yeniden okur; yeniden başlatmak gerekmez.
+Rules and tasks are written as plain sentences, as on the command line ("GPU 85 dereceyi 2 dakika geçerse haber ver"
+= notify me if the GPU stays above 85 degrees for 2 minutes, "her sabah 9'da Discord'u özetle" = summarize Discord
+every morning at 9). The fast model translates the sentence, the app shows what it understood, and it is saved once
+the user confirms. The running core re-reads the files on every turn; no restart is needed.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ def _when(ts: float | None) -> str:
 
 def rule_view(r: Rule) -> dict[str, Any]:
     cond = f"{r.metric} {r.op} {r.threshold:g}" + (f", {fmt_duration(r.duration)} boyunca" if r.duration else "")
-    # "Ekran kartı {value:.0f}°C" -> "Ekran kartı …°C": yer tutucular ekranda ham görünmesin
+    # "Ekran kartı {value:.0f}°C" -> "Ekran kartı …°C": so placeholders don't show up raw on screen
     message = re.sub(r"\{(value|match|key|threshold)(:[^}]*)?\}", "…", r.message)
     return {"id": r.id, "text": r.description or cond, "condition": cond, "message": message, "severity": r.severity,
             "modes": r.modes, "confirm": r.confirm, "agent": r.prompt if r.action == "agent" else "",
@@ -67,7 +68,7 @@ class Automations:
                 "feed_errors": errors, "feeds_path": str(feeds_path()), "feeds_file": feeds_path().exists(),
                 "core_running": bool(read_state().get("running")), **self._hooks_view()}
 
-    # ------------------------------------------------------------------ hook'lar
+    # ------------------------------------------------------------------ hooks
     def _hooks_view(self) -> dict[str, Any]:
         from alice import hooks as hk
 
@@ -110,9 +111,9 @@ class Automations:
         except (ValueError, TypeError, KeyError) as e:
             return {"ok": False, "error": str(e) or type(e).__name__}
 
-    # ------------------------------------------------------------------ kurallar
+    # ------------------------------------------------------------------ rules
     def _rule_parse(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Cümleyi kurala çevir ama kaydetme: kullanıcı ne anlaşıldığını görüp onaylasın."""
+        """Translate the sentence into a rule but don't save it: the user should see what was understood and confirm."""
         from alice.core.store import Store
         from alice.providers.router import AllProvidersFailed
 
@@ -137,7 +138,7 @@ class Automations:
     def _rule_enable(self, d: dict[str, Any]) -> dict[str, Any]:
         return {"ok": RuleSet(self.rules_path).set_enabled(str(d.get("id", "")), bool(d.get("on")))}
 
-    # ------------------------------------------------------------------ görevler
+    # ------------------------------------------------------------------ tasks
     def _task_parse(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.providers.router import AllProvidersFailed
 
@@ -172,15 +173,15 @@ class Automations:
         return {"ok": True}
 
     def _task_run(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Bir sonraki çekirdek turunda çalışır (çekirdek kapalıysa açılınca)."""
+        """Runs on the next core turn (when the core starts, if it is off)."""
         return self._task_set(d, pending=True)
 
     def _task_enable(self, d: dict[str, Any]) -> dict[str, Any]:
         return self._task_set(d, enabled=bool(d.get("on")))
 
-    # ------------------------------------------------------------------ akışlar
+    # ------------------------------------------------------------------ feeds
     def _feed_open(self, d: dict[str, Any]) -> dict[str, Any]:
-        """feeds.toml'u düzenleyicide aç; yoksa örnek dosyayla oluştur."""
+        """Open feeds.toml in the editor; if it doesn't exist, create it with the sample file."""
         from alice.core.cli import FEED_TEMPLATE
         from alice.core.feeds import feeds_path
 
@@ -196,7 +197,7 @@ class Automations:
         return {"ok": True, "created": created, "path": str(p)}
 
     def _feed_test(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Şimdi yokla, her öğe için koşulun ne dediğini göster (bildirim gitmez)."""
+        """Poll now and show what the condition says for each item (no notification is sent)."""
         from alice.core.feeds import FeedMonitor, load_feeds
 
         feeds, _ = load_feeds()
@@ -210,7 +211,7 @@ class Automations:
             decider = Decider.from_config(self.cfg, self.router)
         try:
             verdicts = FeedMonitor(cfg=self.cfg, decider=decider).explain(feed)
-        except Exception as e:  # noqa: BLE001 - servis hatası (yanlış anahtar, kanal yok): ekranda göster
+        except Exception as e:  # noqa: BLE001 - service error (wrong key, no channel): show it on screen
             return {"ok": False, "error": str(e)[:400]}
         return {"ok": True, "total": len(verdicts), "passed": sum(v.ok for v in verdicts),
                 "items": [{"title": v.title[:160], "body": v.body[:200], "ok": v.ok, "reason": v.reason,

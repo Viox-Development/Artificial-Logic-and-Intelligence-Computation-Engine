@@ -1,4 +1,4 @@
-"""timeline: ekranda görülmüş yazıları zaman çizgisinde ara ya da sil (alice/timeline.py)."""
+"""timeline: search or delete texts seen on screen along the timeline (alice/timeline.py)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class TimelineSearch(Tool):
         "days": {"type": "number", "description": "search: kaç gün geriye. Varsayılan 30."},
     }, ["action"])
     risk = READ
-    untrusted = True  # ekranda görülen yazı: içinde talimat olabilir, veri olarak işlenir
+    untrusted = True  # text seen on screen: it may contain instructions, so it is handled as data
 
     def risk_for(self, args: dict[str, Any]) -> str:
         return DANGER if args.get("action") == "wipe" else READ

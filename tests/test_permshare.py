@@ -1,4 +1,4 @@
-"""İzin önerisi (hep onaylanan işler) ve Gist ile paylaşma."""
+"""Permission suggestions (always-approved actions) and sharing via Gist."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ def test_suggests_rules_approved_often_and_never_denied(workdir):
         perm.record_answer(rc, {"command": "npm test -- --watch=false"}, workdir, "exec", "y")
     for _ in range(4):
         perm.record_answer(rc, {"command": "git push origin x"}, workdir, "exec", "y")
-    perm.record_answer(rc, {"command": "git push origin y"}, workdir, "exec", "n")  # bir kez reddedildi
+    perm.record_answer(rc, {"command": "git push origin y"}, workdir, "exec", "n")  # rejected once
     for _ in range(5):
-        perm.record_answer(rc, {"command": "rm -rf build"}, workdir, "danger", "y")  # tehlikeli: önerilmez
+        perm.record_answer(rc, {"command": "rm -rf build"}, workdir, "danger", "y")  # dangerous: never suggested
     rules = [s["rule"] for s in perm.suggestions(workdir)]
     assert rules == ["run_command(npm test*)"]
     out = PermissionsTool().run(ctx_for(workdir), "suggest")
@@ -66,7 +66,7 @@ def test_share_publishes_secret_gist_and_refuses_secrets(workdir):
 
 
 def test_record_answer_concurrent_writers_keep_every_row(workdir):
-    """Aynı anda cevap yazan sohbetler birbirinin satırını silmez (kilit + atomik yazma)."""
+    """Chats writing answers at the same time do not erase each other's rows (lock + atomic write)."""
     import threading
 
     rc = RunCommand()
@@ -86,7 +86,7 @@ def test_record_answer_concurrent_writers_keep_every_row(workdir):
 
 
 def test_suggestions_skip_corrupt_rows(workdir):
-    """Bozuk satır ya da "rule"suz kayıt önerilerin hepsini yok etmez."""
+    """A corrupt row or a record without "rule" does not wipe out all suggestions."""
     rc = RunCommand()
     for _ in range(3):
         perm.record_answer(rc, {"command": "npm test"}, workdir, "exec", "y")

@@ -21,8 +21,8 @@ _issued_lock = threading.Lock()
 
 
 def new_session_id() -> str:
-    """Saniyeye kadar zaman. Aynı saniyede açılan sohbetler (biri arkada çalışırken yenisi) aynı dosyaya yazmasın
-    diye gerekirse sonuna -2, -3 eklenir."""
+    """Timestamp to the second. Chats opened in the same second (one running in the background while a new one
+    starts) get -2, -3 appended when needed, so they don't write to the same file."""
     base = datetime.now().strftime("%Y%m%d-%H%M%S")
     with _issued_lock:
         sid, n = base, 1
@@ -34,20 +34,20 @@ def new_session_id() -> str:
 
 
 def save(session_id: str, messages: list[dict[str, Any]], cwd: Path, extra: dict[str, Any] | None = None) -> Path:
-    """extra: mesajlar dışında yeniden açılışta geri kurulacak sohbet bilgisi (istatistik, kullanım dökümü, alt
-    ajanlar, oturumun başlangıcı). Uygulama kapanıp açılınca bunlar sıfırlanıyordu."""
+    """extra: chat info restored on reopen, besides the messages (statistics, usage breakdown, sub-agents, session
+    start). These used to be reset when the app was closed and reopened."""
     path = sessions_dir() / f"{session_id}.json"
-    # Ajan thread'i her adımda, arayüz istekleri (durdur, sohbet değiştir, özetle) kendi thread'lerinden aynı oturumu
-    # kaydediyor. Ortak .json.tmp'ye aynı anda yazınca dosya karışıyor (bozuk oturum açılışta atlanır: sohbet
-    # kaybolur) ya da ikinci replace FileNotFoundError/PermissionError veriyordu. Kayıtlar sıraya girer; anlık
-    # görüntü kilit içinde alınır (sonra gelen eski hâli yazmasın), geçici dosya da yazana özeldir.
+    # The agent thread saves the session at every step, and UI requests (stop, switch chat, summarize) save it from
+    # their own threads. Writing to a shared .json.tmp at once mixed the file (a corrupted session is skipped on
+    # startup, so the chat disappears) or the second replace raised FileNotFoundError/PermissionError. Saves are queued;
+    # the snapshot is taken under the lock (so a stale state can't overwrite), and the temp file belongs to the writer.
     with _save_lock:
-        # Görüntüler diske yazılmaz, oturum dosyaları küçük kalsın.
+        # Images aren't written to disk, so session files stay small.
         body = {"cwd": str(cwd), "saved": datetime.now().isoformat(timespec="seconds"),
                 "messages": strip_images(messages[1:])}
         if extra:
             body["extra"] = extra
-        # Önce geçici dosyaya yaz: her adımda kaydederken yarıda kalan bir yazma oturumu bozmasın.
+        # Write to a temp file first, so a write interrupted mid-save doesn't corrupt the session.
         _atomic_write(path, json.dumps(body, ensure_ascii=False, indent=1))
     return path
 
@@ -70,18 +70,18 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-ARCHIVE_TOOL_CHARS = 4000  # arşivde araç çıktısı bu kadar tutulur (yalnız ekranda göstermek için)
+ARCHIVE_TOOL_CHARS = 4000  # the archive keeps tool output this many chars (only for showing on screen)
 
 
 def archive_path(session_id: str) -> Path:
-    # .jsonl: oturumları listeleyen "*.json" taramalarına girmez.
+    # .jsonl: not matched by the "*.json" scans that list sessions.
     return sessions_dir() / f"{session_id}.archive.jsonl"
 
 
 def archive(session_id: str, messages: list[dict[str, Any]]) -> None:
-    """Özetleme sırasında bağlamdan çıkan mesajları oturumun arşivine ekle. Model artık bunları görmez (özetini
-    görür) ama sohbet ekranında durmaya devam ederler: önceden özetlenince bütün eski mesajlar ekrandan ve
-    oturum dosyasından siliniyordu."""
+    """Add the messages that drop out of context during summarization to the session archive. The model no longer
+    sees them (it sees their summary), but they stay on the chat screen: before, once summarized, all old messages
+    were deleted from the screen and the session file."""
     if not messages:
         return
     lines = []
@@ -92,9 +92,10 @@ def archive(session_id: str, messages: list[dict[str, Any]]) -> None:
         lines.append(json.dumps(m, ensure_ascii=False))
     path = archive_path(session_id)
     block = ("\n".join(lines) + "\n").encode("utf-8")
-    # Aynı mesajlar ikinci kez geliyorsa (özetlemeden sonra oturum kaydedilemeden yeniden yüklendi) yazma:
-    # arşivin sonu zaten bunlar. 11 Kasım'da 164 mesaj iki kez yazıldı, sohbet ekranda kendini tekrar ediyordu.
-    # Yalnız dosyanın sonu okunur: arşiv MB'larca olabilir, her özetlemede tamamını okumak gereksiz.
+    # If the same messages come a second time (session reloaded after summarizing, before it was saved), don't write
+    # them again: the archive already ends with them. On 11 November 164 messages were written twice and the chat
+    # repeated on screen. Only the file's end is read: the archive can be megabytes, reading all of it on every
+    # summarization is wasteful.
     if _ends_with(path, block):
         return
     with open(path, "ab") as f:
@@ -115,7 +116,7 @@ def _ends_with(path: Path, block: bytes) -> bool:
         return False
     if start == 0:
         return tail == block
-    return tail[0:1] == b"\n" and tail[1:] == block  # satır sınırından başlamalı
+    return tail[0:1] == b"\n" and tail[1:] == block  # must start at a line boundary
 
 
 def load_archive(session_id: str) -> list[dict[str, Any]]:
@@ -127,7 +128,7 @@ def load_archive(session_id: str) -> list[dict[str, Any]]:
     for line in text.splitlines():
         try:
             m = json.loads(line)
-        except json.JSONDecodeError:  # yarım yazılmış son satır
+        except json.JSONDecodeError:  # half-written last line
             continue
         if isinstance(m, dict):
             out.append(m)
@@ -138,7 +139,7 @@ _NOT_A_PROMPT = ("[Önceki konuşmanın özeti]", "[devam kontrolü]", "[eski ek
 
 
 def first_prompt(messages: list[dict[str, Any]]) -> str:
-    """Kullanıcının gerçekten yazdığı ilk mesaj (özet, hatırlatma ve ekran görüntüsü notları atlanır)."""
+    """The first message the user actually wrote (summaries, reminders and screenshot notes are skipped)."""
     for m in messages:
         if m.get("role") != "user" or m.get("_nudge") or m.get("_image"):
             continue
@@ -151,7 +152,7 @@ def first_prompt(messages: list[dict[str, Any]]) -> str:
 
 
 def _first_archived(session_id: str) -> str:
-    """Arşivin ilk kullanıcı mesajı: bütün dosyayı okumadan (arşiv MB'larca olabilir) baştaki satırlara bakılır."""
+    """The archive's first user message. Looks at the first lines only, not the whole file (it can be megabytes)."""
     try:
         with open(archive_path(session_id), encoding="utf-8") as f:
             head = []
@@ -169,13 +170,13 @@ def _first_archived(session_id: str) -> str:
 
 
 def session_prompt(session_id: str, messages: list[dict[str, Any]]) -> str:
-    """Sohbetin ilk isteği. Özetlenmiş sohbette oturum dosyasının ilk mesajı özettir; asıl ilk mesaj arşivdedir.
-    Önceden başlık özetin ilk 70 karakteri oluyordu ("[Önceki konuşmanın özeti] <tool calls>…")."""
+    """The chat's first request. In a summarized chat the session file's first message is the summary; the real first
+    message is in the archive. Titles used to be cut from the summary ("[Önceki konuşmanın özeti] <tool calls>…")."""
     return _first_archived(session_id) or first_prompt(messages)
 
 
-# list_sessions önbelleği: yol -> ((dosya ve arşivin mtime/boyutu), (cwd, ilk istek)). Kenar çubuğu her açılışta 60
-# sohbet dosyasını baştan okuyup JSON çözüyordu (soğuk açılışta ~600 ms); değişmeyen dosya yeniden okunmaz.
+# list_sessions cache: path -> ((mtime/size of the file and its archive), (cwd, first request)). The sidebar re-read
+# and parsed the 60 chat files on every open (~600 ms on a cold start); an unchanged file is no longer re-read.
 _list_cache: dict[str, tuple[tuple[int, ...], tuple[str, str]]] = {}
 _list_lock = threading.Lock()
 
@@ -214,7 +215,7 @@ def load(session_id: str | None = None) -> tuple[str, list[dict[str, Any]]] | No
     files = sorted(sessions_dir().glob("*.json"), reverse=True)
     if session_id:
         files = [f for f in files if f.stem == session_id]
-    # Bozuk ya da yarım kalmış bir dosya (list_sessions'ın da atladığı) devam etmeyi çökertmesin: sıradakine geç.
+    # A corrupt or half-written file (also skipped by list_sessions) must not break resuming: go to the next one.
     for f in files:
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -222,7 +223,7 @@ def load(session_id: str | None = None) -> tuple[str, list[dict[str, Any]]] | No
             continue
         messages = data.get("messages") if isinstance(data, dict) else None
         if not isinstance(messages, list):
-            continue  # geçerli JSON ama oturum biçiminde değil (ör. liste ya da sayı): bozuk dosya gibi atla
+            continue  # valid JSON but not in session format (e.g. a list or number): skip it like a corrupt file
         return f.stem, [m for m in messages if isinstance(m, dict)]
     return None
 
@@ -238,9 +239,9 @@ def load_extra(session_id: str) -> dict[str, Any]:
     return extra if isinstance(extra, dict) else {}
 
 
-# Geri sarma ve Değişiklikler sekmesi için dosyaların ilk halleri. Oturum dosyasından ayrı tutulur: büyük olabilir ve
-# her adımda değil yalnız değişince yazılır. Sonek .json değil: oturumları listeleyen "*.json" taramasına girmesin.
-CHECKPOINT_FILE_MAX = 2_000_000  # bundan büyük dosyanın ilk hali saklanmaz (o dosya yeniden açılışta geri alınamaz)
+# Original versions of files for the Undo and Changes tabs. Kept apart from the session file: they can be large, and
+# are written only when they change. The suffix isn't .json, so the "*.json" session scan skips it.
+CHECKPOINT_FILE_MAX = 2_000_000  # larger files aren't kept in original form (can't be restored on reopen)
 CHECKPOINT_TOTAL_MAX = 40_000_000
 
 
@@ -253,7 +254,7 @@ def save_checkpoints(session_id: str, checkpoints: dict[int, dict[str, bytes | N
 
     out: dict[str, dict[str, str | None]] = {}
     total = 0
-    for idx in sorted(list(checkpoints)):  # alt ajanlar aynı anda yazabilir: kopyalar üzerinde dolaş
+    for idx in sorted(list(checkpoints)):  # sub-agents may write at the same time: iterate over copies
         row = {}
         for path, data in list(checkpoints[idx].items()):
             if data is not None and (len(data) > CHECKPOINT_FILE_MAX or total + len(data) > CHECKPOINT_TOTAL_MAX):
@@ -287,8 +288,8 @@ def load_checkpoints(session_id: str) -> dict[int, dict[str, bytes | None]]:
 
 
 def saved_cwd(session_id: str) -> Path | None:
-    """Oturumun kaydedildiği çalışma klasörü (hâlâ varsa). Arka planda diskten açılan sohbet (ör. PR takibinin
-    düzeltme işi) uygulamanın o anki klasöründe değil kendi deposunda çalışsın."""
+    """The working folder the session was saved in (if it still exists). A chat reopened from disk in the background
+    (e.g. the PR watch's fix job) should run in its own repo, not in the app's current folder."""
     try:
         data = json.loads((sessions_dir() / f"{session_id}.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -299,7 +300,7 @@ def saved_cwd(session_id: str) -> Path | None:
     return cwd if data.get("cwd") and cwd.is_dir() else None
 
 
-# Kullanıcının verdiği ad ve sabitleme. Oturum dosyası her adımda baştan yazıldığı için ayrı tutulur:
+# The user's name and pin for a chat. Kept separate because the session file is rewritten from scratch at every step:
 # {"<id>": {"title": "...", "pinned": true}}
 def _meta_path() -> Path:
     return alice_home() / "session_meta.json"
@@ -317,8 +318,8 @@ _meta_lock = threading.Lock()
 
 
 def set_meta(session_id: str, **fields: Any) -> dict[str, Any]:
-    """Alanları güncelle; boş başlık ya da False sabitleme alanı siler."""
-    with _meta_lock:  # başlık üreten arka plan işi ile arayüzden yeniden adlandırma birbirini ezmesin
+    """Update the fields; an empty title or a False pin field removes it."""
+    with _meta_lock:  # so the background title job and renaming from the UI don't overwrite each other
         return _set_meta(session_id, **fields)
 
 
@@ -328,7 +329,7 @@ TITLE_PROMPT = (
 
 
 def make_title(router: Any, prompt: str) -> str:
-    """İlk istekten kısa bir başlık (hızlı model). Olmazsa boş: liste isteğin başını gösterir."""
+    """Short title from the first request (fast model). On failure return "": the list shows the request's start."""
     import re
 
     text = " ".join(prompt.split())[:1500]
@@ -337,7 +338,7 @@ def make_title(router: Any, prompt: str) -> str:
     try:
         res = router.chat("fast", [{"role": "system", "content": TITLE_PROMPT}, {"role": "user", "content": text}],
                           max_tokens=200, temperature=0.2)
-    except Exception:  # noqa: BLE001 - model yok: başlıksız kalır
+    except Exception:  # noqa: BLE001 - no model: stays untitled
         return ""
     lines = [ln.strip() for ln in (res.text or "").splitlines() if ln.strip()]
     if not lines:
@@ -349,8 +350,8 @@ def make_title(router: Any, prompt: str) -> str:
 
 
 def ensure_title(router: Any, session_id: str, messages: list[dict[str, Any]]) -> str:
-    """Sohbetin otomatik başlığı yoksa ilk istekten üret ve sakla (session_meta: auto_title). Bir kez yapılır:
-    başlık sonradan, konuşma özetlenince ya da uzayınca değişmez. Kullanıcının verdiği ad (title) ayrı durur."""
+    """If the chat has no automatic title, generate one from the first request and store it (session_meta: auto_title).
+    Made once: later summaries or growth don't change it. The user's own name (title) is kept separately."""
     row = load_meta().get(session_id) or {}
     if row.get("auto_title") or row.get("title"):
         return str(row.get("auto_title") or row.get("title"))

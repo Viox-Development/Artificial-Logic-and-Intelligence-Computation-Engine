@@ -1,9 +1,9 @@
-"""Bildirim kanalları.
+"""Notification channels.
 
-Notifier her bildirimi önce mod politikasından geçirir: geçemeyen "susturuldu" olarak
-kaydedilir (sonradan "ben oyundayken ne oldu?" diye sorulabilir), geçen her kanala gider.
-Kanallar: masaüstü bildirimi (Windows toast / macOS / notify-send) ve eklenen her
-callable (sistem tepsisi, ileride ALICE'in sesi).
+Notifier first passes each notification through the mode policy: any that do not pass are recorded
+as "muted" (so one can ask later, "what happened while I was in-game?"), and those that pass go to each channel.
+Channels: desktop notification (Windows toast / macOS / notify-send) and each added
+callable (system tray, ALICE's voice in the future).
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ class Notification:
     title: str
     body: str = ""
     severity: str = "info"  # info | warn | critical
-    topic: str = ""         # ör. "flight", "pc", "task", "health"
+    topic: str = ""         # e.g. "flight", "pc", "task", "health"
     kind: str = "alert"     # alert | task | mode | info | flight
-    emotion: str = ""       # boşsa ses, önem ve konudan tonu kendisi seçer
+    emotion: str = ""       # if empty, voice chooses the tone itself from severity and topic
 
 
 def _ps_quote(s: str) -> str:
@@ -34,7 +34,7 @@ def _ps_quote(s: str) -> str:
 
 
 def desktop_notify(n: Notification) -> bool:
-    """İşletim sisteminin bildirim balonunu göster. Başarısızsa False."""
+    """Show the operating system's notification toast. False if failed."""
     try:
         if sys.platform == "win32":
             script = (
@@ -66,7 +66,7 @@ def desktop_notify(n: Notification) -> bool:
     return False
 
 
-# Bu süreçte çalışan çekirdeğin bildiricisi (uygulama çekirdeğin içinde çalışır): notify aracı buradan gönderir.
+# Notifier of the core running in this process (app runs inside core): notify tool sends from here.
 ACTIVE: "Notifier | None" = None
 
 
@@ -82,12 +82,12 @@ class Notifier:
         global ACTIVE
         ACTIVE = self
 
-    TOAST_REPEAT = 600.0  # sn: aynı bildirim balonu bu süre içinde tekrar gösterilmez
-    MUTED_REPEAT = 1800.0  # sn: susturulan aynı bildirim bu süre içinde tekrar kaydedilmez
+    TOAST_REPEAT = 600.0  # sec: the same notification toast is not shown again within this period
+    MUTED_REPEAT = 1800.0  # sec: the same muted notification is not recorded again within this period
 
     def _desktop(self, n: Notification, pol: Policy) -> None:
-        """Windows bildirim balonu. Uçuş anonsları sesli söyleniyor, oyun sırasında balon spam oluyordu: gösterme.
-        Aynı bildirim 10 dk içinde tekrar gelirse de gösterme."""
+        """Windows notification toast. Flight announcements are spoken, toasts spammed during games: do not show.
+        Also do not show if the same notification arrives again within 10 min."""
         if n.kind == "flight" or n.topic == "flight":
             return
         key = f"{n.title}|{n.body}"
@@ -98,24 +98,24 @@ class Notifier:
         desktop_notify(n)
 
     def send(self, n: Notification) -> bool:
-        """Bildirimi gönder. Mod politikası susturduysa False."""
+        """Send notification. False if muted by mode policy."""
         pol = self.policy()
         ok = pol.allows(n.severity, n.topic)
-        if ok:  # önce ses: kayıt veritabanı meşgulse uçuş anonsu beklemesin
+        if ok:  # voice first: flight announcements should not wait if the log database is busy
             for ch in self.channels:
                 try:
                     ch(n, pol)
-                except Exception:  # bir kanal çökse de diğerleri çalışsın
+                except Exception:  # keep other channels running even if one crashes
                     pass
         if not ok:
-            # Susturulan rapor her turda yeniden denenir (uçuşta sağlık raporu 10 dk'da bir): olay kaydı her denemede
-            # aynı satırla dolmasın (1 Kasım: 2 günde 36 "sağlık raporu", 24 "haftanın özeti").
+            # A muted report is retried on each cycle (health report every 10 min during flight): prevent event log
+            # from filling with the same line on each retry (Nov 1: 36 "health report", 24 "weekly summary" in 2 days).
             key, now = f"{n.title}|{n.body}", time.monotonic()
             if now - self._muted.get(key, -1e9) < self.MUTED_REPEAT:
                 return ok
             self._muted[key] = now
         try:
             self.store.add_event(n.kind, n.title, n.body, n.severity, n.topic, delivered=ok)
-        except Exception:  # noqa: BLE001 - kayıt yazılamasa da bildirim gitti
+        except Exception:  # noqa: BLE001 - notification was delivered even if log write failed
             pass
         return ok

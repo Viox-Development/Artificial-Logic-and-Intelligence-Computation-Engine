@@ -1,15 +1,15 @@
-"""Sayıları ve birimleri sesli okunacak Türkçe yazıya çevirir.
+"""Converts numbers and units into plain Turkish text to be read aloud.
 
-Ses modelleri (özellikle yerel olanlar) "3.5", "%40", "14:05", "9,843 ft" gibi ifadelerde
-saçmalayabiliyor; söylenecek her şey önce düz Türkçe kelimelere çevrilir:
-  "GPU 78°C, %40"      -> "GPU yetmiş sekiz derece, yüzde kırk"
-  "3.5 G", "3,5"        -> "üç virgül beş ge"
-  "1.200 kg", "9,843 ft"-> "bin iki yüz kilo", "dokuz bin sekiz yüz kırk üç feet"
-  "14:05"               -> "on dört sıfır beş"
-  "3'te", "-5"          -> "üçte", "eksi beş"
-  "15.10.2026"          -> "on beş ekim iki bin yirmi altı"
-  "15. yüzyıl"          -> "on beşinci yüzyıl"
-  "3.12.1", "1.234,56"  -> "üç nokta on iki nokta bir", "bin iki yüz otuz dört virgül elli altı"
+Speech models (especially local ones) can mess up expressions like "3.5", "%40", "14:05", "9,843 ft";
+everything to be spoken is first converted to plain Turkish words:
+  "GPU 78°C, %40"      -> "GPU seventy eight degrees, percent forty"
+  "3.5 G", "3,5"        -> "three point five g"
+  "1.200 kg", "9,843 ft"-> "one thousand two hundred kilos", "nine thousand eight hundred forty three feet"
+  "14:05"               -> "fourteen oh five"
+  "3'te", "-5"          -> "at three", "minus five"
+  "15.10.2026"          -> "fifteenth october two thousand twenty six"
+  "15. yüzyıl"          -> "fifteenth century"
+  "3.12.1", "1.234,56"  -> "three dot twelve dot one", "one thousand two hundred thirty four point fifty six"
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def say_int(n: int) -> str:
     for value, name in SCALES:
         if n >= value:
             q, n = divmod(n, value)
-            # "bin" tek başına söylenir, "bir bin" denmez
+            # "bin" is said alone, "bir bin" is not said
             words += ([name] if (q == 1 and name == "bin") else [say_int(q), name])
     if n >= 100:
         q, n = divmod(n, 100)
@@ -50,7 +50,7 @@ def say_int(n: int) -> str:
     return " ".join(w for w in words if w)
 
 
-# Sıra sayısı: son kelimenin sıra hâli ("on beş" -> "on beşinci").
+# Ordinal number: ordinal form of the last word ("on beş" -> "on beşinci").
 _ORD = {"sıfır": "sıfırıncı", "bir": "birinci", "iki": "ikinci", "üç": "üçüncü", "dört": "dördüncü",
         "beş": "beşinci", "altı": "altıncı", "yedi": "yedinci", "sekiz": "sekizinci", "dokuz": "dokuzuncu",
         "on": "onuncu", "yirmi": "yirminci", "otuz": "otuzuncu", "kırk": "kırkıncı", "elli": "ellinci",
@@ -69,24 +69,24 @@ def say_ordinal(n: int) -> str:
 
 
 def say_digits(s: str) -> str:
-    """Ondalık kısım: "05" -> "sıfır beş", "5" -> "beş", "25" -> "yirmi beş"."""
+    """Decimal part: "05" -> "sıfır beş", "5" -> "beş", "25" -> "yirmi beş"."""
     if s.startswith("0"):
         return " ".join(say_int(int(c)) for c in s)
     return say_int(int(s))
 
 
 def _number(raw: str) -> str:
-    """Tek bir sayı ifadesi (ayraçlarla) -> kelimeler."""
+    """Single number expression (with separators) -> words."""
     neg = raw.startswith("-")
     s = raw.lstrip("-+")
     if re.fullmatch(r"\d{1,3}([.,]\d{3})+", s) and not s.startswith("0"):
-        # Binlik ayracı: 1.200 / 1.200.000 / 9,843 (tam 3 haneli gruplar)
+        # Thousand separator: 1.200 / 1.200.000 / 9,843 (exactly 3-digit groups)
         out = say_int(int(re.sub(r"[.,]", "", s)))
     elif m := (re.fullmatch(r"(\d{1,3}(?:\.\d{3})+),(\d+)", s) or re.fullmatch(r"(\d{1,3}(?:,\d{3})+)\.(\d+)", s)):
-        # Binlik + ondalık: 1.234,56 (Türkçe) / 1,234.56 (İngilizce). Eskiden "yüz yirmi üç bin..." okunuyordu.
+        # Thousand + decimal: 1.234,56 (Turkish) / 1,234.56 (English). Used to be read as "one hundred twenty three thousand...".
         out = f"{say_int(int(re.sub(r'[.,]', '', m.group(1))))} virgül {say_digits(m.group(2))}"
     elif re.fullmatch(r"\d+(?:\.\d+){2,}", s):
-        # Sürüm/IP gibi çok noktalı: 3.12.1 -> "üç nokta on iki nokta bir" (eskiden tek büyük sayı)
+        # Multi-dot like version/IP: 3.12.1 -> "üç nokta on iki nokta bir" (used to be a single large number)
         out = " nokta ".join(say_int(int(x)) for x in s.split("."))
     elif re.fullmatch(r"\d+[.,]\d+", s):
         whole, frac = re.split(r"[.,]", s)
@@ -104,22 +104,22 @@ def _date(m: re.Match) -> str:
 
 
 _PATTERNS = [
-    # tarih: 15.10.2026 / 5.1.2025 (eskiden "on beş milyon yüz iki bin..." okunuyordu)
+    # date: 15.10.2026 / 5.1.2025 (used to be read as "fifteen million one hundred two thousand...")
     (re.compile(r"(?<![\w.,])(0?[1-9]|[12]\d|3[01])[./](0?[1-9]|1[0-2])[./](\d{4})(?![\w.,]\d)"), _date),
-    # saat: 14:05
+    # time: 14:05
     (re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b"),
      lambda m: f"{say_int(int(m.group(1)))} {'sıfır ' + say_int(int(m.group(2))) if m.group(2).startswith('0') and m.group(2) != '00' else ('' if m.group(2) == '00' else say_int(int(m.group(2))))}".strip()),
-    # yüzde: %40 / % 40 / 40%
+    # percentage: %40 / % 40 / 40%
     (re.compile(r"%\s?(" + _NUM + r")"), lambda m: f"yüzde {_number(m.group(1))}"),
     (re.compile(r"(" + _NUM + r")\s?%"), lambda m: f"yüzde {_number(m.group(1))}"),
-    # sayı + birim: 78°C, 3.5 G, 1200 kg
+    # number + unit: 78°C, 3.5 G, 1200 kg
     (re.compile(r"(?<![\w.,])(" + _NUM + r")\s?(" + _UNIT_RE + r")(?![\w])", re.I),
      lambda m: f"{_number(m.group(1))} {UNITS[m.group(2).lower()]}"),
-    # sayı + kesme işaretli ek: 3'te, 1990'larda
+    # number + suffixed with apostrophe: 3'te, 1990'larda
     (re.compile(r"(?<![\w.,])(" + _NUM + r")['’](\w+)"), lambda m: f"{_number(m.group(1))}{m.group(2)}"),
-    # sıra sayısı: "15. yüzyıl", "3. kez" (noktadan sonra küçük harfle devam: cümle sonu değil)
+    # ordinal number: "15. yüzyıl", "3. kez" (followed by lowercase letters: not end of sentence)
     (re.compile(r"(?<![\w.,])(\d{1,9})\.(?=[ \t]+[a-zçğıöşü])"), lambda m: say_ordinal(int(m.group(1)))),
-    # çıplak sayı
+    # bare number
     (re.compile(r"(?<![\w.,])(" + _NUM + r")(?![\w])"), lambda m: _number(m.group(1))),
 ]
 

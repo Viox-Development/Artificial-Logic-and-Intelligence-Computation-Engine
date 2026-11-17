@@ -1,17 +1,18 @@
-"""ALICE yerel ses sunucusu (Chatterbox çok dilli).
+"""ALICE local voice server (Chatterbox multilingual).
 
-Ayrı bir sanal ortamda çalışır (`alice voice install-local` kurar): Chatterbox'ın PyTorch/numpy
-sürümleri ALICE'in ortamını bozmasın, model de ekran kartına bir kez yüklenip çekirdek, sesli
-asistan ve hızlı bar tarafından paylaşılsın. Bu dosya ALICE paketini içe aktarmaz.
+Runs in a separate virtual environment (installed by `alice voice install-local`) so that Chatterbox's PyTorch/numpy
+versions don't break ALICE's environment, and the model is loaded onto the GPU once and shared by the core, the voice
+assistant and the quick bar. This file does not import the ALICE package.
 
-Sadece 127.0.0.1'e bağlanır.
+Binds only to 127.0.0.1.
   GET  /health                 -> {"ok": true, "device": "cuda", "loaded": true}
-  POST /release                -> modelleri bellekten at (uçuşta ekran kartını oyuna bırakmak için)
+  POST /release                -> unload the models from memory (to free the GPU for a game during flight)
   POST /synth  (JSON)          -> audio/wav
        {"text", "language": "tr", "ref": "C:/.../calm.wav" | "", "exaggeration", "cfg_weight", "temperature",
         "device": "cuda"|"cpu", "verify": true, "whisper_model": "small"}
-       verify: üretilen ses yerel Whisper ile dinlenir; cümlenin son kelimesinden sonrası (uydurma, cızırtı)
-       kesilir; söylenen yazılandan çok farklıysa bir kez daha üretilip iyisi seçilir.
+       verify: the generated audio is listened to with local Whisper; anything after the sentence's last word
+       is cut (made-up speech, crackle); if what is heard differs a lot from the written text, it is generated
+       once more and the better take is kept.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ from __future__ import annotations
 import os
 import sys
 
-# Bu dosya alice/voice içinden betik olarak çalışıyor: o klasördeki modüller (ör. audio.py) standart
-# kütüphaneyle ya da numpy/torch'un içe aktardıklarıyla çakışmasın diye klasörü yoldan çıkar.
+# This file runs as a script from inside alice/voice: remove that folder from the import path so the modules in it
+# (e.g. audio.py) don't clash with the standard library or with what numpy/torch import.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.getcwd()) != _HERE]
 
@@ -45,7 +46,7 @@ def load(device: str):
     if STATE["model"] is not None and STATE["device"] == device:
         return STATE["model"]
     if STATE["model"] is not None:
-        # Cihaz değişti (ör. uçuş modunda GPU'yu bırak): eskisini boşalt, yeniden yükle (ağırlıklar diskte).
+        # Device changed (e.g. GPU released in flight mode): unload the old one and reload (weights are on disk).
         STATE["model"] = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -57,9 +58,10 @@ def load(device: str):
     return STATE["model"]
 
 
-# Chatterbox her cümleye 1000 konuşma tokenı (~40 sn ses) sınırı veriyor. Model bazen cümle sonunu
-# bulamayıp döngüye giriyor ve bu sınıra kadar üretiyor ("forcing EOS"): tek cümle 40-120 sn sürüyordu.
-# Sınırı metnin uzunluğuna göre koy: Türkçe ~14 harf/sn, model ~25 token/sn; iki katı pay + kısa cümle tabanı.
+# Chatterbox caps each sentence at 1000 speech tokens (~40 s of audio). The model sometimes fails to find the end
+# of a sentence, loops, and generates up to that cap ("forcing EOS"): a single sentence took 40-120 s.
+# Set the cap based on text length: Turkish ~14 letters/s, model ~25 tokens/s;
+# 2x headroom + a floor for short sentences.
 TOKENS = {"max": 1000}
 
 
@@ -85,7 +87,8 @@ def cap_tokens(model) -> None:
 
 
 def chunks(text: str, limit: int = 160) -> list:
-    """Uzun metni cümlelere, cümle de çok uzunsa virgüllerden böl: kısa parçada model daha az döngüye girer."""
+    """Split long text into sentences, and split a sentence at commas if still too long: the model loops less
+    on short pieces."""
     import re
 
     parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text) if p.strip()]
@@ -101,7 +104,7 @@ def chunks(text: str, limit: int = 160) -> list:
             p = p[cut + 1:].strip()
         if p:
             out.append(p)
-    # Çok kısa parçaları bir öncekine ekle ("Tamam." tek başına tuhaf tonlanıyor).
+    # Merge very short pieces into the previous one ("Tamam.", Turkish for "OK", alone gets an odd intonation).
     merged = []
     for p in out:
         if merged and (len(p) < 25 or len(merged[-1]) < 25) and len(merged[-1]) + len(p) < limit:
@@ -115,8 +118,8 @@ WHISPER = {"model": None, "key": None}
 
 
 def release() -> None:
-    """Ses ve Whisper modellerini at, ekran kartı belleğini işletim sistemine geri ver. Sonraki cümle yeniden
-    yükler (istenen cihazda; uçuşta işlemci)."""
+    """Unload the voice and Whisper models and give GPU memory back to the OS. The next sentence reloads them
+    (on the requested device; CPU during flight)."""
     import gc
 
     STATE.update(model=None, device=None, ref=None)
@@ -132,7 +135,7 @@ def release() -> None:
 
 
 def load_whisper(name: str, device: str):
-    """OpenAI Whisper (yerel, ücretsiz). Kurulu değilse None: doğrulama atlanır."""
+    """OpenAI Whisper (local, free). If it is not installed, returns None: verification is skipped."""
     try:
         import whisper
     except ImportError:
@@ -159,8 +162,8 @@ def same(a: str, b: str) -> bool:
 
 
 def assess(words: list, text: str) -> tuple:
-    """(kalite 0..1, kesilecek saniye ya da None). Kalite: istenen kelimelerin ne kadarı duyuldu,
-    fazladan (uydurma) kelime ne kadar var."""
+    """(quality 0..1, seconds to cut or None). Quality: how much of the requested words were heard,
+    and how many extra (made-up) words there are."""
     want = fold(text)
     if not want:
         return 1.0, None
@@ -176,7 +179,7 @@ def assess(words: list, text: str) -> tuple:
     for x, _start, end in heard:
         if any(same(x, y) for y in want):
             seen.add(x)
-        # Son kelime, cümlenin çoğu söylendikten sonra geldiyse orası gerçek son.
+        # If the last word comes after most of the sentence has been spoken, that is the real end.
         if same(x, want[-1]) and len(seen) >= 0.6 * len(set(want)):
             end_at = end
             break
@@ -198,7 +201,7 @@ def transcribe_words(samples, rate: int, name: str, device: str):
 
 
 def synth(d: dict) -> tuple:
-    """(wav baytları, ek başlıklar). Uzun metin parçalara bölünüp ayrı ayrı üretilir ve birleştirilir."""
+    """(wav bytes, extra headers). Long text is split into pieces, each generated separately, then joined."""
     import numpy as np
 
     text = str(d["text"]).strip()
@@ -211,7 +214,7 @@ def synth(d: dict) -> tuple:
         with wave.open(io.BytesIO(wav), "rb") as w:
             rate = w.getframerate()
             out.append(np.frombuffer(w.readframes(w.getnframes()), dtype="<i2"))
-        out.append(np.zeros(int(rate * 0.12), dtype="<i2"))  # cümleler arası kısa nefes
+        out.append(np.zeros(int(rate * 0.12), dtype="<i2"))  # short breath between sentences
         headers = h
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -229,7 +232,7 @@ def synth_one(d: dict) -> tuple:
 
     text = str(d["text"]).strip()
     if text and text[-1] not in ".!?…":
-        text += "."  # noktalamasız biten cümlede model sonunu uydurmaya daha yatkın
+        text += "."  # a sentence ending without punctuation makes the model more likely to invent an ending
     device = d.get("device") or "cuda"
     verify = bool(d.get("verify", True))
     headers = {"X-Alice-Verified": "0"}
@@ -239,7 +242,8 @@ def synth_one(d: dict) -> tuple:
         rate = int(getattr(model, "sr", 24000))
         wanted = {"language_id": d.get("language") or "tr"}
         TOKENS["max"] = max_tokens_for(text)
-        # Referans ses her istekte yeniden işlenmesin: aynı kayıt ve duygu seviyesiyse modelin hazır koşulları kullanılır.
+        # Don't reprocess the reference audio on every request: if the same recording and exaggeration level are
+        # used, the model's prepared conditions are reused.
         ref_key = (d.get("ref") or "", d.get("exaggeration"))
         if d.get("ref") and (STATE.get("ref") != ref_key or getattr(model, "conds", None) is None):
             wanted["audio_prompt_path"] = d["ref"]
@@ -247,7 +251,7 @@ def synth_one(d: dict) -> tuple:
         for k in ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p"):
             if d.get(k) is not None:
                 wanted[k] = float(d[k])
-        # Chatterbox sürümleri arasında parametreler değişiyor: sadece desteklenenleri ver.
+        # Chatterbox parameters differ between versions: pass only the supported ones.
         try:
             params = inspect.signature(model.generate).parameters
             accepts_any = any(p.kind is p.VAR_KEYWORD for p in params.values())
@@ -257,7 +261,7 @@ def synth_one(d: dict) -> tuple:
         for attempt in range(2 if verify else 1):
             kw = dict(wanted)
             if attempt and "temperature" in kw:
-                kw["temperature"] = max(0.3, kw["temperature"] * 0.75)  # ikinci deneme daha temkinli
+                kw["temperature"] = max(0.3, kw["temperature"] * 0.75)  # the second attempt is more cautious
             kwargs = {k: v for k, v in kw.items() if accepts_any or k in params}
             wav = model.generate(text, **kwargs)
             samples = wav.squeeze().detach().cpu().numpy() if hasattr(wav, "detach") else np.asarray(wav).squeeze()
@@ -267,7 +271,7 @@ def synth_one(d: dict) -> tuple:
                 break
             try:
                 words = transcribe_words(samples, rate, d.get("whisper_model") or "small", device)
-            except Exception:  # noqa: BLE001 - doğrulama sesi engellemesin
+            except Exception:  # noqa: BLE001 - verification should not block the audio
                 traceback.print_exc()
                 words = None
             if words is None:
@@ -294,8 +298,8 @@ def synth_one(d: dict) -> tuple:
     return buf.getvalue(), headers
 
 
-MAX_BODY = 256 * 1024  # bayt: istek gövdesi
-MAX_TEXT = 4000  # harf: daha uzun metin dakikalarca ekran kartını kilitler
+MAX_BODY = 256 * 1024  # bytes: request body
+MAX_TEXT = 4000  # characters: longer text would lock up the GPU for minutes
 NUMERIC = ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p")
 
 
@@ -304,7 +308,7 @@ class BadRequest(ValueError):
 
 
 def validate(data) -> dict:
-    """/synth isteğini denetle; bozuk istek 500 (yığın dökümü) yerine anlaşılır 400 alsın."""
+    """Validate the /synth request so a malformed one gets a clear 400 instead of a 500 (stack dump)."""
     if not isinstance(data, dict):
         raise BadRequest("JSON nesnesi bekleniyor")
     text = data.get("text")
@@ -369,14 +373,14 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
-        # Negatif uzunlukla read(-1) bağlantı kapanana kadar bekliyordu; çok büyük gövde belleği doldurur.
+        # A negative length made read(-1) wait until the connection closed; a huge body fills memory.
         if n < 0 or n > MAX_BODY:
             self.close_connection = True
             return self._send(413 if n > MAX_BODY else 400, b'{"error": "gecersiz Content-Length"}',
                               "application/json")
         try:
             data = validate(json.loads(self.rfile.read(n) or b"{}"))
-        except (ValueError, UnicodeDecodeError) as e:  # bozuk JSON da ValueError
+        except (ValueError, UnicodeDecodeError) as e:  # broken JSON also raises ValueError
             msg = str(e) if isinstance(e, BadRequest) else "gecersiz JSON"
             return self._send(400, json.dumps({"error": msg}).encode(), "application/json")
         try:

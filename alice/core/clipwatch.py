@@ -1,8 +1,8 @@
-"""Pano geçmişi: "az önce kopyaladığım linki aç", "10 dakika önce kopyaladığım metni çevir".
+"""Clipboard history: "open the link I just copied", "translate the text I copied 10 minutes ago".
 
-Çekirdek panoyu saniyede bir okur; değişen metinleri son 25 kayıt, 12 saat tutar (~/.alice/clipboard-history.json).
-Şifreye benzeyenler (boşluksuz, harf+rakam+sembol karışık, 8-64 karakter), API anahtarı/token kalıpları ve şifre
-yöneticilerinden gelenler kaydedilmez. clipboard aracı action=history ile okur.
+The core reads clipboard every second; keeps changed text for the last 25 entries, 12h (~/.alice/clipboard-history.json).
+Items resembling passwords (no space, mixed letters+digits+symbols, 8-64 chars), API key/token patterns, and password
+manager entries are not saved. The clipboard tool reads via action=history.
 """
 
 from __future__ import annotations
@@ -78,9 +78,9 @@ class ClipWatch:
     def step(self) -> bool:
         try:
             text = self.read()
-        except Exception:  # noqa: BLE001 - pano başka programda kilitli olabilir
+        except Exception:  # noqa: BLE001 - clipboard might be locked in another program
             return False
-        if self.last is None:  # açılışta panoda olan geçmişe yazılmaz (eski olabilir)
+        if self.last is None:  # what was on clipboard at startup is not saved to history (may be old)
             self.last = text
             return False
         if text == self.last:

@@ -1,8 +1,8 @@
-"""Sistem → Çekirdek: arka plandaki ALICE ve sesli asistan, komut satırına gerek kalmadan.
+"""System → Core: background ALICE and voice assistant without requiring the command line.
 
-`alice core status|install|uninstall|mode`, `alice voice on|off|test|status` burada düğme olur. Çekirdek ayrı bir
-süreç: başlatma start_detached ile, durdurma ~/.alice/core-stop isteğiyle (çekirdek bir saniye içinde kapanır;
-eski sürüm bu isteği tanımıyorsa süreç sonlandırılır).
+`alice core status|install|uninstall|mode`, `alice voice on|off|test|status` become buttons here. Core is a separate
+process: start with start_detached, stop with ~/.alice/core-stop request (core shuts down within one second;
+if an older version does not recognize this request, the process is terminated).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from alice.config import alice_home
 from alice.core import service
 
 MODES = ("auto", "normal", "dev", "flight", "quiet")
-STOP_WAIT = 15.0  # çekirdek bu sürede kapanmazsa süreç sonlandırılır
+STOP_WAIT = 15.0  # terminate process if core does not shut down within this period
 OPTIONAL = (("sounddevice", "mikrofon ve ses çalma"), ("pynput", "bas-konuş ve kısayollar"),
             ("webrtcvad", "daha iyi konuşma algılama"), ("faster_whisper", "yerel Whisper (Groq yoksa)"),
             ("openwakeword", "yerel 'Hey Alice'"), ("sherpa_onnx", "sadece senin sesine cevap"),
@@ -30,15 +30,15 @@ def _events(limit: int = 12) -> list[dict[str, Any]]:
     try:
         with Store() as st:
             evs = st.events(limit=limit)
-    except Exception:  # noqa: BLE001 - veritabanı kilitli/bozuk: panel yine açılsın
+    except Exception:  # noqa: BLE001 - database locked/corrupt: still open the panel
         return []
     return [{"ts": e.ts, "kind": e.kind, "title": e.title, "body": e.body[:300], "severity": e.severity} for e in evs]
 
 
 def _wait_lock_released(pid: Any, sleep: Callable[[float], None], timeout: float = 15.0) -> None:
-    """Durum dosyası döngü bitince silinir, ama süreç (ses, HUD, uygulama sunucusu kapanırken) birkaç saniye daha
-    yaşayıp core.pid kilidini tutar. O arada başlatılan yeni çekirdek "zaten çalışıyor" deyip sessizce çıkıyordu:
-    "Yeniden başlat"tan sonra ALICE tamamen kapalı kalıyordu."""
+    """The state file is deleted when the loop ends, but the process lives for a few more seconds (while voice,
+    HUD, app server shut down) and holds the core.pid lock. Meanwhile, a newly started core would say "already running"
+    and exit silently: ALICE remained completely shut down after "Restart"."""
     import psutil
 
     lock = alice_home() / "core.pid"
@@ -54,7 +54,7 @@ def _wait_lock_released(pid: Any, sleep: Callable[[float], None], timeout: float
 
 
 def stop_core(wait: float = STOP_WAIT, sleep: Callable[[float], None] = time.sleep) -> bool:
-    """Çalışan çekirdeği kapat. Kapandıysa True."""
+    """Stop the running core. True if stopped."""
     import psutil
 
     st = service.read_state()
@@ -67,7 +67,7 @@ def stop_core(wait: float = STOP_WAIT, sleep: Callable[[float], None] = time.sle
             _wait_lock_released(st.get("pid"), sleep)
             return True
         sleep(0.3)
-    try:  # eski sürüm core-stop'u tanımıyor: süreci kapat
+    try:  # older version does not recognize core-stop: terminate process
         p = psutil.Process(int(st["pid"]))
         p.terminate()
         p.wait(5)
@@ -86,7 +86,7 @@ def stop_core(wait: float = STOP_WAIT, sleep: Callable[[float], None] = time.sle
 
 
 class MicTest:
-    """5 saniye dinle, seviyeyi canlı göster, sonra duyulanı yazıya çevir (`alice voice test`)."""
+    """Listen for 5 seconds, show level live, then transcribe what is heard (`alice voice test`)."""
 
     def __init__(self, cfg: Any, mic: Callable[[], Any] | None = None, stt: Callable[[Any], Any] | None = None,
                  seconds: float = 5.0):
@@ -158,17 +158,17 @@ class MicTest:
 
 class SystemPanel:
     def __init__(self, cfg: Any, restart_core: Callable[[], bool] | None = None):
-        """restart_core: uygulama çekirdeğin içindeyse çekirdeği kendi yolundan yeniden başlatır (başladıysa True)."""
+        """restart_core: restarts the core using its own path if the app is inside the core (True if started)."""
         self.cfg = cfg
         self.mic_test = MicTest(cfg)
         self.restart_core = restart_core
-        self._busy = ""  # sürmekte olan çekirdek işlemi (başlatılıyor / durduruluyor)
+        self._busy = ""  # ongoing core operation (starting / stopping)
         self._lock = threading.Lock()
 
     def _restart_in_core(self) -> bool:
-        """Uygulama çalışan çekirdeğin kendi sürecindeyse durdur+başlat olmaz: stop_core bu süreci kapatır ve
-        start_detached'e hiç sıra gelmez (Yeniden başlat, sesli asistan ya da telefon düğmesi ALICE'i tamamen
-        kapatıyordu). O zaman çekirdek kendi yeniden başlatma yolunu kullanır."""
+        """If the app is running in the core's own process, stop+start cannot be used: stop_core kills this process
+        and start_detached never gets reached (Restart, voice assistant, or phone button was shutting ALICE down
+        completely). In that case, core uses its own restart path."""
         st = service.read_state()
         if not st.get("running") or str(st.get("pid")) != str(os.getpid()) or self.restart_core is None:
             return False
@@ -243,7 +243,7 @@ class SystemPanel:
             on = bool(d.get("on"))
             self.cfg.data.setdefault("voice", {})["enabled"] = on
             set_config_value("voice", "enabled", on)
-            # Sesli asistan çekirdeğin içinde: geçerli olması için çekirdek yeniden başlar (kapalıysa açarken başlar).
+            # Voice assistant is inside core: core restarts to take effect (starts when enabling if stopped).
             running = service.read_state().get("running")
             if not running and not on:
                 return {"ok": True}

@@ -1,14 +1,15 @@
-"""Opera/Chrome eklentisiyle tarayıcı: uzaktan hata ayıklama (CDP) yok, izin penceresi yok.
+"""Browser through the Opera/Chrome extension: no remote debugging (CDP), no permission window.
 
-Eklenti (alice/extension) çekirdeğin dinlediği yerel WebSocket'e bağlanır ve gelen komutları kullanıcının
-sekmelerinde yapar. Burada Playwright'ın kullandığımız küçük bir parçası taklit edilir (sayfa, öğe, klavye, fare):
-tarayıcı aracı ve reflex aynı kodla eklentiyle de çalışır.
+The extension (alice/extension) connects to the local WebSocket the core listens on and performs the incoming
+commands in the user's tabs. We imitate the small part of Playwright we use (page, element, keyboard, mouse):
+the browser tool and reflex work with the extension through the same code.
 
-CDP ile bağlanınca Opera her açılışta "uzaktan hata ayıklamaya izin ver" diye soruyordu; Playwright da indirmeleri
-kendi geçici klasörüne GUID adıyla yönlendiriyor, siteleri açık temaya zorluyordu. Eklenti bunların hiçbirini yapmaz.
+When connected via CDP, Opera asked "allow remote debugging?" on every launch; Playwright also redirects downloads
+to its own temporary folder under a GUID name and forces sites into the light theme. The extension does none of this.
 
-Tıklama ve tuşlar pencere öndeyse gerçek fare/klavyeyle (siteler "insan" girdisi görür, HUD imleci kayar), pencere
-arkadaysa sayfanın içinde olaylarla yapılır. Yazma her zaman sayfanın içinde (Playwright'ın fill'i gibi).
+Clicks and keys use the real mouse/keyboard when the window is in front (sites see "human" input, the HUD cursor
+moves); when the window is in the background they are done with events inside the page. Typing is always inside the
+page (like Playwright's fill).
 """
 
 from __future__ import annotations
@@ -27,15 +28,15 @@ from alice.tools.base import ToolError
 EXT_PORT = 9340
 PATH = "/alice-ext"
 CALL_TIMEOUT = 15.0
-DOWNLOAD_WAIT = 240.0  # sn: indirme bitene kadar en fazla bu kadar beklenir (sonra durum "in_progress" döner)
-EXT_ORIGINS = ("chrome-extension://",)  # web sayfaları yerel sunucuya bağlanamasın: yalnız eklentiler
-# Playwright tuş adı -> pyautogui/press_keys adı
+DOWNLOAD_WAIT = 240.0  # s: the download waits at most this long (then the status "in_progress" is returned)
+EXT_ORIGINS = ("chrome-extension://",)  # web pages must not connect to the local server: extensions only
+# Playwright key name -> pyautogui/press_keys name
 _OS_KEYS = {"control": "ctrl", "meta": "win", "arrowup": "up", "arrowdown": "down", "arrowleft": "left",
             "arrowright": "right", "escape": "esc", " ": "space"}
 
 
 class ExtHub:
-    """Eklentinin bağlandığı yerel sunucu (çekirdekte, ayrı iş parçacığında). Aynı anda tek eklenti."""
+    """Local server the extension connects to (in the core, on its own thread). One extension at a time."""
 
     def __init__(self, port: int = EXT_PORT, log=lambda s: None, allowed_ids: list[str] | tuple[str, ...] = ()):
         self.port = port
@@ -53,7 +54,7 @@ class ExtHub:
     def connected(self) -> bool:
         return self.ws is not None
 
-    # ------------------------------------------------------------ sunucu
+    # ------------------------------------------------------------ server
     def start(self) -> "ExtHub":
         threading.Thread(target=self._thread, daemon=True, name="alice-browser-ext").start()
         self._ready.wait(5)
@@ -62,7 +63,7 @@ class ExtHub:
     def _thread(self) -> None:
         try:
             asyncio.run(self._serve())
-        except Exception as e:  # noqa: BLE001 - port dolu vb.: eklentisiz (CDP) yol çalışmaya devam eder
+        except Exception as e:  # noqa: BLE001 - port busy etc.: the non-extension (CDP) path keeps working
             self.error = str(e)
             self.log(f"eklenti sunucusu başlatılamadı: {e}")
             self._ready.set()
@@ -87,10 +88,11 @@ class ExtHub:
         return None
 
     def _ext_allowed(self, ext_id: str) -> bool:
-        """Yalnız ALICE eklentisi bağlanabilsin. Origin'i herhangi bir yerel program (sandbox'taki bir komut da)
-        `chrome-extension://...` diye gönderebilir; gerçek eklentiyi kovup ALICE'e sahte sayfa içeriği verebilirdi.
-        Kabul edilenler: [agent] browser_ext_ids, ilk bağlanan eklentinin kimliği (~/.alice/browser-ext-id, sandbox'tan
-        gizli). Kimlik değiştiyse (eklenti başka klasörden yüklendi) o dosya silinince yeniden eşlenir."""
+        """Only the ALICE extension may connect. Any local program (even a command in the sandbox) can send an
+        Origin `chrome-extension://...`; it could kick out the real extension and feed ALICE fake page content.
+        Accepted: [agent] browser_ext_ids, plus the ID of the first extension that connected (~/.alice/browser-ext-id,
+        hidden from the sandbox). If the ID changes (extension loaded from another folder), it is re-pinned once that
+        file is deleted."""
         if not ext_id or not ext_id.isalnum():
             return False
         allowed = set(self.allowed_ids)
@@ -127,7 +129,7 @@ class ExtHub:
                     fut.set_exception(ToolError(f"tarayıcı eklentisi: {msg['error']}"))
                 else:
                     fut.set_result(msg.get("result"))
-        except Exception:  # noqa: BLE001 - eklenti koptu
+        except Exception:  # noqa: BLE001 - extension disconnected
             pass
         finally:
             if self.ws is ws:
@@ -141,7 +143,7 @@ class ExtHub:
                 fut.set_exception(ConnectionError(reason))
         self.pending.clear()
 
-    # ------------------------------------------------------------ çağrı
+    # ------------------------------------------------------------ call
     def call(self, method: str, _timeout: float = CALL_TIMEOUT, **params: Any) -> Any:
         timeout = _timeout
         ws, loop = self.ws, self.loop
@@ -179,8 +181,8 @@ def pin_id(ext_id: str) -> None:
         path.write_text(ext_id, encoding="utf-8")
         from alice.sandbox import hide_from_sandbox
 
-        hide_from_sandbox(path)  # sandbox'taki komut eşlenen kimliği değiştiremesin
-    except Exception:  # noqa: BLE001 - yazılamazsa bu oturum için yine eşleşir sayılmaz; sonraki bağlantı tekrar dener
+        hide_from_sandbox(path)  # so a command in the sandbox cannot change the pinned ID
+    except Exception:  # noqa: BLE001 - if it cannot be written, this session is not paired; the next connection retries
         pass
 
 
@@ -198,7 +200,7 @@ def hub() -> ExtHub | None:
     return _HUB if _HUB is not None and _HUB.connected else None
 
 
-# ------------------------------------------------------------------ Playwright taklidi
+# ------------------------------------------------------------------ Playwright imitation
 def _os_ok() -> bool:
     import sys
 
@@ -211,7 +213,7 @@ def _os_keys(keys: str) -> str:
 
 
 def _center(info: Any) -> tuple[int, int] | None:
-    """Öğenin ekrandaki (fiziksel piksel) ortası; pencere arkadaysa ya da ölçülemiyorsa None."""
+    """Center of the element on screen (physical px); None if the window is in the background or unmeasurable."""
     from alice.tools.browser import screen_box
 
     box = screen_box(info)
@@ -222,7 +224,7 @@ def _center(info: Any) -> tuple[int, int] | None:
 
 
 def _viewport_point(info: Any, x: float, y: float) -> tuple[int, int] | None:
-    """Sayfa içi (CSS px) nokta -> ekran (fiziksel px)."""
+    """Point inside the page (CSS px) -> screen (physical px)."""
     if not isinstance(info, dict) or not info.get("visible"):
         return None
     try:
@@ -349,7 +351,7 @@ class ExtLocator:
 
             _dpi_aware()
             _pyautogui().click(*pt, clicks=click_count, button=button, interval=0.08)
-        else:  # pencere arkada/küçük: sayfa olaylarıyla
+        else:  # window in the background or too small: use page events
             self.page.run("click", self.id, button, click_count)
 
     def dblclick(self, timeout: float = 8000) -> None:
@@ -378,7 +380,7 @@ class ExtLocator:
 
 
 class ExtPage:
-    """Bir sekme. Playwright Page'inin kullandığımız kısmı."""
+    """One tab: the part of Playwright's Page that we use."""
 
     def __init__(self, session: "ExtBrowserSession", tab: dict[str, Any]):
         self.s, self.tab_id = session, int(tab["id"])
@@ -395,7 +397,7 @@ class ExtPage:
             return self.call("run", _timeout, fn=fn, args=list(args))
         except ToolError as e:
             if "Cannot access" in str(e) or "cannot be scripted" in str(e):
-                # opera://, chrome://, eklenti mağazası: tarayıcı eklentilerin bu sayfalara girmesine izin vermez
+                # opera://, chrome://, extension store: the browser does not let extensions into these pages
                 raise ToolError("bu tarayıcının kendi sayfası (ayarlar, eklentiler, mağaza gibi); içi okunamaz ve "
                                 "tıklanamaz. Başka sekmeye geç ya da windows/ui_act ile çalış.") from e
             raise
@@ -425,7 +427,7 @@ class ExtPage:
         self._tab = self.call("focus") or self._tab
 
     def os_focus(self) -> bool:
-        """Gerçek fare/klavye için sekmeyi ve pencereyi öne al. Olmazsa False (sayfa içi olaylara düşülür)."""
+        """Bring the tab and window to the front for real mouse/keyboard. False if that fails (in-page events used)."""
         if not _os_ok():
             return False
         try:
@@ -499,7 +501,7 @@ class _Pages:
 
 
 class ExtBrowserSession:
-    """BrowserSession'ın eklentiyle çalışan karşılığı (her zaman kullanıcının kendi tarayıcısı)."""
+    """The extension-backed counterpart of BrowserSession (always the user's own browser)."""
 
     attached = True
     headless = False
@@ -529,7 +531,7 @@ class ExtBrowserSession:
         self.hub.fail_all(f"tarayıcı işlemi kesildi: {reason} (connection closed)")
 
     def _visible_page(self) -> ExtPage | None:
-        """Öndeki penceredeki etkin sekme."""
+        """Active tab in the foreground window."""
         data = self.hub.call("tabs") or {}
         tabs, win = data.get("tabs") or [], data.get("focusedWindow")
         for t in tabs:
@@ -557,7 +559,7 @@ class ExtBrowserSession:
         tabs = self.tabs()
         cur = self.page.tab_id if self.page is not None else None
         same = [t for t in tabs if want and host_of(t.get("url") or "") == want]
-        if same:  # şu anki sekme o sitedeyse o, değilse ilk bulunan
+        if same:  # if the current tab is on that site, use it; otherwise the first match
             return self.page_for(next((t for t in same if t["id"] == cur), same[0]))
         if self.page is not None and (not self.page.url or self.page.url.startswith(BLANK_URLS)):
             return self.page
@@ -578,8 +580,8 @@ class ExtBrowserSession:
         return list(self.hub.call("downloads", limit=limit) or [])
 
     def download(self, url: str, wait: float = DOWNLOAD_WAIT) -> dict[str, Any]:
-        """Kaydetme penceresi açmadan İndirilenler'e indir; bitene ya da `wait` sn dolana kadar bekle."""
+        """Download to Downloads without opening a save dialog; wait until it finishes or `wait` seconds pass."""
         return dict(self.hub.call("download", wait + 10, url=url, timeout=int(wait * 1000)) or {})
 
     def close(self) -> None:
-        pass  # kullanıcının tarayıcısı: hiçbir şey kapatılmaz
+        pass  # the user's own browser: nothing is closed

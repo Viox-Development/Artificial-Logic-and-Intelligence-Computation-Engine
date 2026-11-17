@@ -1,4 +1,4 @@
-"""phone_call: ALICE kullanıcıyı telefondaki ALICE uygulamasından sesli arar (alice/app/call.py)."""
+"""phone_call: ALICE calls the user by voice from the ALICE app on their phone (alice/app/call.py)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class PhoneCall(Tool):
         "message": {"type": "string", "description": "Açınca ilk söyleyeceğin cümle"},
         "reason": {"type": "string", "description": "Bildirimde görünen kısa neden (ör. 'Hatırlatma: ilaç')"},
     }, ["message"])
-    risk = READ  # kullanıcının kendisini aramak dışarıya bir şey göndermiyor
+    risk = READ  # calling the user themselves sends nothing outside
 
     def run(self, ctx: ToolContext, message: str, reason: str = "") -> ToolResult:
         from alice.app import call

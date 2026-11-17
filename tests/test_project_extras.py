@@ -20,7 +20,7 @@ def is_lead(messages) -> bool:
 
 
 def py(args: str) -> str:
-    """run_command için python çağrısı (Windows'ta PowerShell tırnaklı yolu & ile çalıştırır)."""
+    """Python call for run_command (on Windows, runs the quoted path via & in PowerShell)."""
     exe = f'"{sys.executable}"'
     return f"& {exe} {args}" if sys.platform == "win32" else f"{exe} {args}"
 
@@ -44,7 +44,7 @@ def test_council_retries_once_when_json_missing(workdir):
             asked["n"] += 1
             if "sadece o JSON bloğunu" in str(messages[-1]["content"]):
                 return js(vote="approve", reason="tamam")
-            return "Bence iş iyi, sorun görmedim."  # JSON'u unuttu
+            return "Bence iş iyi, sorun görmedim."  # forgot the JSON
         return js(vote="approve")
 
     agent, _, ctx = make(script, workdir)
@@ -56,7 +56,7 @@ def test_council_retries_once_when_json_missing(workdir):
 def test_lead_that_never_plans_gets_a_fallback_worker(workdir):
     def script(model, messages, tools, **kw):
         if is_lead(messages):
-            return "Hmm, düşünüyorum."  # hiç araç çağırmıyor
+            return "Hmm, düşünüyorum."  # never calls any tool
         return "rapor: yaptım"
 
     agent, _, ctx = make(script, workdir)
@@ -94,7 +94,7 @@ def test_stalled_member_is_reported(workdir):
             return "tamam"
         if steps(messages) == 0:
             return tool_call("list_dir", {})
-        gate.wait(10)  # ikinci model çağrısında takılıyor
+        gate.wait(10)  # stuck on the second model call
         return "rapor"
 
     agent, _, ctx = make(script, workdir, team_stall_minutes=0.01)
@@ -128,7 +128,7 @@ def test_worktree_conflict_is_handed_back_to_the_agent(workdir):
             return tool_call("run_command", {"command": f"git merge -X theirs --no-edit {state['base']}"}, "m1")
         if state["resolved"]:
             return "çakışmayı çözdüm"
-        return [tool_call("read_file", {"path": "a.txt"}, "r0"),  # okumadan üzerine yazma reddedilir
+        return [tool_call("read_file", {"path": "a.txt"}, "r0"),  # overwrite without a read is rejected
                 tool_call("write_file", {"path": "a.txt", "content": "ajan\n"}), "rapor"][min(steps(messages), 2)]
 
     agent, _, ctx = make(script, workdir)
@@ -137,13 +137,13 @@ def test_worktree_conflict_is_handed_back_to_the_agent(workdir):
     team.start()
     m = team.members["backend"]
     assert team.wait_until(lambda: m.status == "review", 10)
-    (workdir / "a.txt").write_text("ana dal\n", encoding="utf-8")  # bu arada ana dal da aynı satırı değiştirdi
+    (workdir / "a.txt").write_text("ana dal\n", encoding="utf-8")  # meanwhile main changed the same line too
     git(workdir, "commit", "-qam", "ana dalda değişiklik")
     note = team.review_member("backend", True)
     assert "çakışmayı çözüyor" in note and m.merge_attempts == 1
     assert team.wait_until(lambda: m.status == "review" and state["resolved"], 15)
     assert "birleştirildi" in team.review_member("backend", True)
-    assert (workdir / "a.txt").read_text(encoding="utf-8") == "ana dal\n"  # -X theirs: ajan ana dalı kabul etti
+    assert (workdir / "a.txt").read_text(encoding="utf-8") == "ana dal\n"  # -X theirs: agent took main's side
     assert any(x["kind"] == "conflict" for x in team.timeline)
 
 
@@ -152,7 +152,7 @@ def test_run_command_changes_are_tracked_and_revertable(workdir):
     (workdir / "a.py").write_text("eski\n", encoding="utf-8")
     git(workdir, "add", "-A")
     git(workdir, "commit", "-qm", "ilk")
-    (workdir / "kirli.txt").write_text("başta zaten vardı\n", encoding="utf-8")  # proje başında değişmiş: dokunulmaz
+    (workdir / "kirli.txt").write_text("başta zaten vardı\n", encoding="utf-8")  # dirty before start: leave it alone
     (workdir / "w.py").write_text("open('a.py', 'w').write('yeni\\n')\nopen('b.py', 'w').write('x\\n')\n", encoding="utf-8")
     git(workdir, "add", "w.py")
     git(workdir, "commit", "-qm", "betik")
@@ -204,7 +204,7 @@ def test_check_command_lessons_and_rules_reach_the_council(workdir):
     assert "Her public fonksiyonun testi olmalı" in sys_prompt and "KONTROL-TAMAM" in material
     assert any("kontrol komutu" in x["text"] for x in team.timeline)
     assert team.wait_until(lambda: team.lessons == ["test eksik → kontrol ekle"], 10)
-    # düzeltme isteğinde ders de ajana gider; ikinci kurulun istemi dersi içerir
+    # on a fix request the lesson goes to the agent too; the second council's prompt includes it
     assert team.wait_until(lambda: len(m.councils) >= 2 and m.councils[1].get("state") == "done", 20)
     assert any("test eksik" in s for s, _ in seen["critic"][1:])
     team.stop()
@@ -252,7 +252,7 @@ def test_member_output_streams_live(workdir):
             res = self.chat(model, messages, **kw)
             if on_reasoning:
                 on_reasoning("önce dosyaya bakayım")
-            for i in range(0, len(res.text), 4):  # gerçek model gibi yavaş yavaş
+            for i in range(0, len(res.text), 4):  # slowly, like a real model
                 on_delta(res.text[i:i + 4])
                 time.sleep(0.05)
             return res
@@ -272,9 +272,9 @@ def test_member_output_streams_live(workdir):
     team.start()
     assert team.wait_until(lambda: team.members["backend"].status == "done", 10)
     live = [e for e in events if e["type"] == "team_live" and e["name"] == "backend"]
-    assert any(e["text"].startswith("Rapor") for e in live)  # metin yazılırken parça parça geldi
+    assert any(e["text"].startswith("Rapor") for e in live)  # text arrived in pieces while being written
     assert any(e["think"] == "önce dosyaya bakayım" for e in live)
-    assert live[-1]["text"] == "" and live[-1]["think"] == ""  # bitince canlı kutu kapandı
+    assert live[-1]["text"] == "" and live[-1]["think"] == ""  # the live box closed when it finished
     team.stop()
 
 
@@ -308,7 +308,7 @@ def test_stuck_member_is_restarted_on_next_model_and_usage_is_counted(workdir):
         if steps(messages) == 0:
             return tool_call("list_dir", {})
         if model == "m":
-            gate.wait(20)  # ilk model ikinci adımda takılıyor
+            gate.wait(20)  # first model gets stuck on the second step
             return "geç kaldım"
         return "rapor: bitti"
 
@@ -368,7 +368,7 @@ def test_duplicate_conditions_and_lessons_are_dropped():
              "şart: initCounters içinde data-aura-counter koruması (guard) eklenmeli",
              "Bülten formu seçicisi spesifik hale getirin (örn. .newsletter-form)",
              "Newsletter form seçicisi .newsletter-form ile daraltılmalı", "sıfır kontrolü"]
-    assert dedupe(items) == [items[0], items[2], items[3], items[4]]  # temkinli: emin olmadığını tutar
+    assert dedupe(items) == [items[0], items[2], items[3], items[4]]  # cautious: keeps items it is unsure about
     assert dedupe(["Mobile menu must close on link click", "Mobile menu must have aria-expanded"]) == \
         ["Mobile menu must close on link click", "Mobile menu must have aria-expanded"]
     assert len(dedupe(["Add tests for login", "Add tests for logout"])) == 2

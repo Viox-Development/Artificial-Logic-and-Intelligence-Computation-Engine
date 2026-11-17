@@ -1,8 +1,8 @@
-"""Bağlantı kimlikleri: ~/.alice/connect.json.
+"""Connection credentials: ~/.alice/connect.json.
 
-API anahtarları `.env`'de durur (orası zaten anahtar yeri). Burada duran şey OAuth akışından dönen
-token'lar: erişim token'ı, yenileme token'ı ve bitiş zamanı. Dosya yalnız kullanıcıya okunur
-(chmod 600); Windows'ta zaten kullanıcı profilinin altında.
+API keys reside in `.env` (which is already the place for keys). What resides here are tokens
+returned from OAuth flows: access token, refresh token, and expiration time. File is readable only by the user
+(chmod 600); on Windows it is already under the user profile.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _read() -> dict[str, Any]:
 def _write(data: dict[str, Any]) -> None:
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Yazarken yarıda kalırsa eski dosya bozulmasın: önce geçici dosya, sonra yerine koy.
+    # Prevent corrupting the old file if writing is interrupted: write to a temporary file first, then replace.
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".connect-", suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -81,6 +81,6 @@ def names() -> list[str]:
 
 
 def expired(row: dict[str, Any], skew: float = 60.0) -> bool:
-    """Erişim token'ı bitti mi (bitişten bir dakika önce bitmiş say, istek yolda eskimesin)."""
+    """Has the access token expired (consider expired one minute before expiration so request does not expire in transit)."""
     exp = float(row.get("expires_at") or 0)
     return bool(exp and time.time() + skew >= exp)

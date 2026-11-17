@@ -1,16 +1,16 @@
-"""Eklentiler: ALICE'e çekirdek koda dokunmadan yeni yetenek (araç) eklemenin yolu.
+"""Plugins: the way to add new capabilities (tools) to ALICE without touching the core code.
 
-Bir eklenti, araçlarını ve bu araçların ne zaman modele gösterileceğini anlatan bir `Plugin` nesnesidir.
-Üç yerden yüklenir:
+A plugin is a `Plugin` object that describes its tools and when those tools are shown to the model.
+It is loaded from three places:
 
-1. `~/.alice/plugins/` altındaki `*.py` dosyaları ve `__init__.py` içeren klasörler,
-2. config'teki `[plugins] paths` listesindeki dosya/klasörler,
-3. kurulu Python paketlerinin `alice.plugins` entry point'leri.
+1. `*.py` files under `~/.alice/plugins/` and folders that contain an `__init__.py`,
+2. the files/folders in the `[plugins] paths` list in config,
+3. the `alice.plugins` entry points of installed Python packages.
 
-Modül `PLUGIN` (tek eklenti), `PLUGINS` (liste) ya da bunlardan birini döndüren `register()` tanımlar.
-Bozuk bir eklenti ALICE'i durdurmaz; hatası `errors()` ile görülür ve emit'e yazılır.
-`[plugins] disabled = ["ad"]` ile kapatılır, `enabled = false` hepsini kapatır.
-Örnek: docs/PLUGINS.md.
+The module defines `PLUGIN` (a single plugin), `PLUGINS` (a list), or a `register()` that returns one of these.
+A broken plugin does not stop ALICE; its error is visible through `errors()` and written to emit.
+It is turned off with `[plugins] disabled = ["ad"]`; `enabled = false` turns off all of them.
+Example: docs/PLUGINS.md.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from alice.config import Config
     from alice.tools.base import Tool, ToolContext
 
-# Yutulan hatalar için iz: varsayılan olarak sessiz, `logging.basicConfig(level=logging.DEBUG)` ile görünür.
+# Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
 log = logging.getLogger(__name__)
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
@@ -37,18 +37,18 @@ _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 class Plugin:
     name: str
     tools: list["Tool"] = field(default_factory=list)
-    # Grup açıklaması (load_tools listesinde görünür). Araçlar bu grupta durur, gerekince açılır.
+    # Group description (shown in the load_tools list). Tools stay in this group and are opened when needed.
     description: str = ""
-    # Kullanıcının mesajı bu regex'e uyarsa grup kendiliğinden açılır (büyük/küçük harf duyarsız).
+    # If the user's message matches this regex, the group opens automatically (case-insensitive).
     keywords: str = ""
-    # True: araçlar her istekte modele gider (grup yok). Az ve sık kullanılan araçlar için.
+    # True: the tools are sent to the model on every request (no group). For a few frequently used tools.
     always: bool = False
-    # True: Gemini Live sesli konuşmasında grup baştan açık olur.
+    # True: the group is open from the start in Gemini Live voice conversation.
     live: bool = False
-    # Oturum kapanırken çağrılır (açık bağlantı, süreç vb. kapatmak için).
+    # Called when the session closes (to close open connections, processes, etc.).
     cleanup: Callable[["ToolContext"], None] | None = None
     version: str = ""
-    source: str = ""  # nereden yüklendiği (bilgi amaçlı)
+    source: str = ""  # where it was loaded from (informational)
 
     @property
     def group(self) -> str:
@@ -132,7 +132,7 @@ def _entry_points() -> list[Any]:
 
 def load_plugins(cfg: "Config | None" = None, emit: Callable[[str], None] = lambda s: None,
                  reserved: set[str] | frozenset[str] = frozenset()) -> list[Plugin]:
-    """Eklentileri bul, doğrula ve etkin listeyi güncelle. `reserved`: yerleşik araç/grup adları."""
+    """Find plugins, validate them and update the active list. `reserved`: built-in tool/group names."""
     global _ACTIVE, _ERRORS
     settings = _settings(cfg)
     errors: list[str] = []
@@ -180,7 +180,7 @@ def load_plugins(cfg: "Config | None" = None, emit: Callable[[str], None] = lamb
         active.append(p)
     from alice import selftools
 
-    active = selftools.instrument(active)  # ALICE'in kendi yazdıkları: kullanım/hata sayımı, 3 hatada kapanır
+    active = selftools.instrument(active)  # ALICE's own plugins: usage/error counting; closed after 3 errors
     _ACTIVE, _ERRORS = active, errors
     for e in errors:
         emit(f"eklenti hatası: {e}")
@@ -202,7 +202,7 @@ def plugin_tools() -> list["Tool"]:
 
 
 def groups() -> dict[str, tuple[set[str], str, str]]:
-    """Gruplu eklentiler, tools/groups.py'deki GROUPS biçiminde: ad -> (araçlar, açıklama, regex)."""
+    """Grouped plugins, in the GROUPS format of tools/groups.py: name -> (tools, description, regex)."""
     return {p.group: (p.tool_names(), p.description or p.name, p.keywords) for p in _ACTIVE if not p.always}
 
 
@@ -250,7 +250,7 @@ PLUGIN = Plugin(
 
 
 def plugins_cmd(argv: list[str]) -> int:
-    """`alice plugins` (listele) | `alice plugins new <ad>` (şablon oluştur)."""
+    """`alice plugins` (list) | `alice plugins new <ad>` (create a template)."""
     from alice.config import load_config
 
     if argv[:1] == ["new"]:

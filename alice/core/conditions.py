@@ -1,6 +1,6 @@
-"""Akış koşulları: bir öğe bildirime değer mi?
+"""Feed conditions: is an item worth a notification?
 
-Ucuzdan pahalıya sırayla bakılır, ilk tutmayan koşul öğeyi eler:
+Checks run from cheapest to most expensive; the first condition that fails drops the item:
 
     [feed.when]
     any    = ["alice", "@everyone"]   # metinde en az biri geçmeli
@@ -10,14 +10,14 @@ Ucuzdan pahalıya sırayla bakılır, ilk tutmayan koşul öğeyi eler:
     fields = { "author.username" = ["ahmet", "ayse"], gameextrainfo = "*" }   # "*" = boş değil
     min    = { "statistics.viewCount" = 1000 }   # sayısal alt sınır
     max    = { "playtime_2weeks" = 60 }
-    ask    = "Bu mesaj bana bir şey soruyor ya da acil bir şey mi?"   # anlamına göre: System One / hızlı model
+    ask    = "Bu mesaj bana bir şey soruyor ya da acil bir şey mi?"   # by meaning: System One / fast model
 
-Metin araması, şablonla üretilen başlık/gövde ile öğenin bütün metin alanları üzerinde yapılır ve
-Türkçe büyük/küçük harfe dikkat eder ("İSTANBUL" ile "istanbul" eşleşir, "I" -> "ı").
+Text search runs over the title/body rendered from the template plus all text fields of the item, and it
+is Turkish-aware about case ("İSTANBUL" matches "istanbul", "I" -> "ı").
 
-`ask` en sona bırakıldı: bir model çağrısı olduğu için sadece diğer koşulları geçen öğe için sorulur.
-Karar motoru yoksa ya da hata verirse öğe geçer (kurallardaki gibi: kaçırılan uyarı, fazladan
-uyarıdan daha kötü).
+`ask` is checked last: since it is a model call, it is only asked for items that pass the other conditions.
+If there is no decider or it errors, the item passes (as with rules: a missed alert is worse than an
+extra one).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from typing import Any
 
 
 def tr_lower(s: str) -> str:
-    """Türkçe küçük harf: 'I' -> 'ı', 'İ' -> 'i' (str.lower ikisini de yanlış yapıyor)."""
+    """Turkish lowercase: 'I' -> 'ı', 'İ' -> 'i' (str.lower gets both of them wrong)."""
     return s.replace("I", "ı").replace("İ", "i").lower()
 
 
@@ -77,7 +77,7 @@ class Condition:
 
 
 def parse_condition(raw: Any, where: str = "when") -> Condition:
-    """TOML tablosundan koşul. Bozuk alan ValueError (akış yüklenirken anlaşılır hataya çevrilir)."""
+    """Condition from a TOML table. A malformed field raises ValueError (reported clearly while feeds load)."""
     if raw in (None, {}):
         return Condition()
     if not isinstance(raw, dict):
@@ -124,7 +124,7 @@ def _leaves(data: Any, out: list[str], depth: int = 0) -> None:
 
 
 def haystack(item: Any, *rendered: str) -> str:
-    """Aranacak metin: şablondan çıkan başlık/gövde + öğenin bütün metin alanları, Türkçe küçük harf."""
+    """Text to search: template-rendered title/body + all text fields of the item, lowercased in Turkish."""
     parts = [r for r in rendered if r]
     _leaves(item, parts)
     return tr_lower("\n".join(parts))
@@ -138,7 +138,7 @@ def _num(v: Any) -> float | None:
 
 
 def check(cond: Condition, item: Any, text: str, ask: Any = None) -> tuple[bool, str]:
-    """(geçti mi, sebep). `text`: haystack() çıktısı. `ask(soru, metin) -> bool`: anlam sorusu için."""
+    """(passed?, reason). `text`: output of haystack(). `ask(question, text) -> bool`: for the meaning question."""
     from alice.connect.runner import pick
 
     if cond.any:
@@ -173,7 +173,7 @@ def check(cond: Condition, item: Any, text: str, ask: Any = None) -> tuple[bool,
             return True, "soru soruldu sayılmadı (karar motoru yok)"
         try:
             ok = bool(ask(cond.ask, text))
-        except Exception:  # noqa: BLE001 - karar motoru bozuksa öğeyi kaçırma
+        except Exception:  # noqa: BLE001 - if the decider is broken, don't miss the item
             return True, "karar motoru cevap vermedi, geçirildi"
         if not ok:
             return False, f"soru 'hayır' dedi: {cond.ask}"

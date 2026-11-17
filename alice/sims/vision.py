@@ -1,16 +1,17 @@
-"""Ekrandan füze görme: War Thunder füze ve RWR bilgisini API'de vermiyor ama ekranda gösteriyor.
+"""Screen-based missile vision: War Thunder does not expose missile or RWR data in its API, but shows it on screen.
 
-Sadece uçuşta, ekranın yalnızca RWR göstergesinin olduğu küçük bölgesi işlemcide saniyede 10 kez yakalanır (mss).
-Tanıma kurallarla yapılır: kırmızı/turuncu işaretlerin renk eşiği, dairenin merkezine göre açıdan saat yönü.
-Yanıp sönen uyarı birkaç karede doğrulanır, tek karelik yanlış alarm olmaz. Sonuç temas listesine `missile: True`
-olarak eklenir; bugünkü "Füze! Saat 4" anonsu ve HUD oku değişiklik gerekmeden çalışır.
+Only in flight, the small screen region containing just the RWR indicator is captured 10 times per second in the process
+(mss). Recognition is rule-based: a color threshold for red/orange markers, and clock direction from the angle
+around the circle's center. A blinking warning is verified over a few frames, so a single-frame false alarm does
+not count. The result is added to the contact list as `missile: True`, so the existing "Füze! Saat 4" announcement
+and the HUD arrow work without any changes.
 
-Oyuna dokunmaz, belleğini okumaz: OBS'in yaptığı gibi ekran görüntüsü alır. Ekran kartı kullanılmaz.
+It does not touch the game or read its memory: it takes screenshots the way OBS does. The GPU is not used.
 
-  alice vision region X Y G Y    RWR bölgesini ayarla (fiziksel piksel), işaretli görüntüyü kaydet
-  alice vision show              ayarlı bölgeyi tam ekran görüntüsünde çerçeveleyip kaydet (onay için)
-  alice vision record            kısayolla örnek topla: Ctrl+Alt+M füze var, Ctrl+Alt+N yok
-  alice vision test DOSYA...     kayıtlı görüntülerde tanımayı dene
+  alice vision region X Y G Y    set the RWR region (physical pixels), save the marked image
+  alice vision show              frame the configured region on a full-screen screenshot and save it (for confirmation)
+  alice vision record            collect samples with a hotkey: Ctrl+Alt+M missile present, Ctrl+Alt+N none
+  alice vision test DOSYA...     try recognition on saved images
 """
 
 from __future__ import annotations
@@ -26,17 +27,17 @@ from typing import Any, Callable
 from alice.config import alice_home
 
 DEFAULTS: dict[str, Any] = {
-    "method": "text",     # text: War Thunder'ın turkuaz RWR yazıları (LAUNCH/TRACK/MSL); red: eski kırmızı işaret
-    "fps": 6.0,           # LAUNCH saniyede ~2 kez yanıp sönüyor: 2 kare/sn hep sönük ana denk gelebiliyordu
-    "red_min": 170,       # kırmızı kanal en az
-    "red_margin": 70,     # kırmızı, yeşil ve maviden en az bu kadar fazla (turuncu dahil, beyaz/gri hariç)
-    "min_pixels": 12,     # bundan az işaretli piksel gürültü sayılır
-    "center_ignore": 0.18,  # dairenin ortası (kendi uçağın simgesi) yarıçapın bu oranı kadar yok sayılır
-    "confirm": 2,         # son 'window' karenin en az bu kadarında görülmeli (yanıp sönen uyarı: yarısı yeter)
+    "method": "text",     # text: War Thunder's turquoise RWR text (LAUNCH/TRACK/MSL); red: the old red marker
+    "fps": 6.0,           # LAUNCH blinks ~2 times per second: at 2 frames/sec every frame could land on the off phase
+    "red_min": 170,       # minimum red channel value
+    "red_margin": 70,     # red must exceed green and blue by at least this much (includes orange, excludes white/gray)
+    "min_pixels": 12,     # fewer marked pixels than this count as noise
+    "center_ignore": 0.18,  # the circle's center (own aircraft icon) is ignored out to this fraction of the radius
+    "confirm": 2,         # must show in this many of the last 'window' frames (blinking warning: half is enough)
     "window": 5,
-    "hold": 1.5,          # doğrulanmış uyarı bu kadar görünmezse biter (sn)
+    "hold": 1.5,          # a confirmed warning ends if not seen for this long (sec)
 }
-IDLE_AFTER = 3.0  # uçuş verisi bu kadar gelmezse yakalama durur (hangar, ölüm)
+IDLE_AFTER = 3.0  # capture stops if no flight data arrives for this long (hangar, death)
 
 
 def samples_dir() -> Path:
@@ -50,7 +51,7 @@ class Detection:
 
 
 def detect(rgb, cfg: dict[str, Any] | None = None) -> Detection | None:
-    """Tek kare (yükseklik x genişlik x 3, RGB) -> füze/RWR işareti ve saat yönü. Yoksa None."""
+    """One frame (height x width x 3, RGB) -> missile/RWR marker and clock direction. None if there is none."""
     import numpy as np
 
     c = {**DEFAULTS, **(cfg or {})}
@@ -71,31 +72,32 @@ def detect(rgb, cfg: dict[str, Any] | None = None) -> Detection | None:
     dx, dy = dx[keep], dy[keep]
     if len(dx) < int(c["min_pixels"]):
         return None
-    ang = math.degrees(math.atan2(float(dx.mean()), float(-dy.mean()))) % 360  # 0 yukarı, saat yönünde
+    ang = math.degrees(math.atan2(float(dx.mean()), float(-dy.mean()))) % 360  # 0 = up, clockwise
     clock = round(ang / 30) % 12 or 12
     return Detection(clock, int(len(dx)))
 
 
-# War Thunder'ın RWR'ı (Medal kliplerinden, 2026-11-03): kırmızı değil turkuaz; dairenin üstünde önce "TRACK"
-# (kilitlendin), füze atılınca "LAUNCH" kutusu çıkar, dairenin içinde füzenin yönünde "MSL" yazısı belirir. 1080 piksel
-# yükseklikte ekranın sol kenarında: daire merkezi (187, 539), yarıçap ~113; bölge etiket şeridini de içerir.
-# HUD yüksekliğe göre ölçeklendiği için başka çözünürlükte hepsi yükseklik/1080 ile çarpılır.
-WT_REGION_1080 = (60, 380, 255, 285)       # x, y, genişlik, yükseklik
-WT_CENTER = (0.498, 0.615)                 # dairenin merkezi (kendi uçağın simgesi), bölgenin kesri
-OCR_UPSCALE = 2                            # küçük HUD yazısı büyütülünce daha iyi okunur
+# War Thunder's RWR (from Medal clips, 2026-11-03): turquoise, not red. First "TRACK" appears above the circle (you are
+# locked on); when a missile is fired a "LAUNCH" box appears, and an "MSL" text appears inside the circle
+# in the missile's direction. At 1080 px height, on the left edge of the screen: circle center (187, 539),
+# radius ~113; the region includes
+# the label strip. The HUD scales with height, so at other resolutions everything is multiplied by height/1080.
+WT_REGION_1080 = (60, 380, 255, 285)       # x, y, width, height
+WT_CENTER = (0.498, 0.615)                 # circle center (own aircraft icon), as a fraction of the region
+OCR_UPSCALE = 2                            # small HUD text reads better when upscaled
 
 
 _TR = str.maketrans("ŞşĞğÇçÜüİıÖö$5", "SsGgCcUuIiOoSS")
-MSL_RX = __import__("re").compile(r"MS[LIU1]|M[A-Z]L\b|[A-Z]SL")  # okuma motoru MSL'yi "MSÜ", "MğL" yazabiliyor
+MSL_RX = __import__("re").compile(r"MS[LIU1]|M[A-Z]L\b|[A-Z]SL")  # the reading engine can output "MSÜ" or "MğL" for MSL
 
 
 def _plain(text: str) -> str:
-    """Türkçe okuma motorunun harflerini sadeleştir: "MSÜ" -> "MSU", "LAUNŞH" -> "LAUNSH"."""
+    """Simplify the letters the Turkish reading engine produces: "MSÜ" -> "MSU", "LAUNŞH" -> "LAUNSH"."""
     return str(text).translate(_TR).upper()
 
 
 def _like(text: str, word: str) -> bool:
-    """Yazı bu kelimeye yeterince benziyor mu (okuma motoru bir harfi karıştırabiliyor)."""
+    """Does this text resemble the word closely enough? (The reading engine may confuse one letter.)"""
     import difflib
 
     return word in text or any(difflib.SequenceMatcher(None, text[i:i + len(word)], word).ratio() >= 0.75
@@ -103,8 +105,8 @@ def _like(text: str, word: str) -> bool:
 
 
 def hud_mask(img):
-    """Sadece War Thunder'ın turkuaz HUD rengini bırak (beyaz zeminde siyah yazı): ağaç ve gökyüzü üstündeki
-    yazıyı okuma motoru böyle çok daha iyi okuyor ("LAUNCH" ham görüntüde hiç okunmadı, maskeyle okundu)."""
+    """Keep only War Thunder's turquoise HUD color (black text on white): the reading engine reads text over trees
+    and sky much better this way ("LAUNCH" was not read at all in the raw image, but was read with the mask)."""
     import numpy as np
     from PIL import Image
 
@@ -121,14 +123,14 @@ def default_region(screen_h: int) -> tuple[int, int, int, int]:
 
 @dataclass
 class TextDetection:
-    clock: int | None   # MSL görülmediyse None: yönsüz uyarı (HUD radar simgesi gösterir)
-    launch: bool        # füze atıldı ("LAUNCH" ya da "MSL")
-    track: bool         # kilitlenme ("TRACK")
+    clock: int | None   # None if MSL was not seen: a directionless warning (HUD shows the radar icon)
+    launch: bool        # missile launched ("LAUNCH" or "MSL")
+    track: bool         # lock-on ("TRACK")
     pixels: int = 0
 
 
 def read_rwr(rgb, cfg: dict[str, Any] | None = None, words=None) -> TextDetection | None:
-    """RWR bölgesindeki yazılardan füze/kilit ve yön. words: testte OCR yerine (kelime, (x, y, en, boy))."""
+    """Missile/lock and direction from the RWR region text. In tests, words (word, (x, y, w, h)) replace OCR."""
     from PIL import Image
 
     import numpy as np
@@ -145,8 +147,8 @@ def read_rwr(rgb, cfg: dict[str, Any] | None = None, words=None) -> TextDetectio
     launch = any(_like(t, "LAUNCH") for t, _ in up)
     track = any(_like(t, "TRACK") for t, _ in up)
     seen_msl = any(MSL_RX.search(t) for t, _ in up)
-    # Yön yalnız tek başına okunan kısa "MSL"den: motor bazen yanındaki işaretle birleştiriyor ("M29MSL"),
-    # birleşik kelimenin ortası füzenin yerini göstermiyor (kliplerde saat 12 -> 6 -> 1 atlıyordu).
+    # Direction comes only from a short "MSL" read on its own: the engine sometimes merges it with a nearby marker
+    # ("M29MSL"); the middle of a merged word does not show the missile's position (clips jumped 12 -> 6 -> 1).
     msl = [box for t, box in up if MSL_RX.search(t) and len(t.strip(".,:;()'\"")) <= 4]
     if not (launch or track or seen_msl):
         return None
@@ -156,14 +158,14 @@ def read_rwr(rgb, cfg: dict[str, Any] | None = None, words=None) -> TextDetectio
         x, y, w, h = msl[0]
         dx = (x + w / 2) - cx * img.width
         dy = (y + h / 2) - cy * img.height
-        if (dx * dx + dy * dy) ** 0.5 >= 4:  # tam ortada: yön belirsiz
-            ang = math.degrees(math.atan2(dx, -dy)) % 360  # 0 yukarı (burun), saat yönünde
+        if (dx * dx + dy * dy) ** 0.5 >= 4:  # dead center: direction is unclear
+            ang = math.degrees(math.atan2(dx, -dy)) % 360  # 0 = up (nose), clockwise
             clock = round(ang / 30) % 12 or 12
     return TextDetection(clock, launch or seen_msl, track)
 
 
 class Confirmer:
-    """Yanıp sönen uyarıyı doğrular: son 'window' karenin en az 'confirm' tanesinde işaret olmalı."""
+    """Confirms a blinking warning: the marker must appear in at least 'confirm' of the last 'window' frames."""
 
     def __init__(self, confirm: int = 3, window: int = 5, hold: float = 1.5):
         self.confirm, self.hold = confirm, hold
@@ -185,8 +187,8 @@ _local = threading.local()
 
 
 def grab_region(region: tuple[int, int, int, int]):
-    """Ekranın yalnızca bu küçük bölgesi (x, y, genişlik, yükseklik) -> RGB dizi. mss nesnesi iş parçacığı başına bir
-    kez açılır: her karede yeniden açmak bir çekirdeğin %12'sini yiyordu."""
+    """Only this small region of the screen (x, y, width, height) -> RGB array. The mss object is opened once per
+    thread: reopening it on every frame was eating 12% of a core."""
     import mss
     import numpy as np
 
@@ -202,7 +204,7 @@ def grab_region(region: tuple[int, int, int, int]):
 
 
 class MissileWatcher:
-    """Uçuş sürdükçe RWR bölgesini izler; contacts() doğrulanmış füze uyarısını temas olarak verir."""
+    """Watches the RWR region while flying; contacts() reports a confirmed missile warning as a contact."""
 
     def __init__(self, region: tuple[int, int, int, int], cfg: dict[str, Any] | None = None,
                  grab: Callable[[tuple[int, int, int, int]], Any] = grab_region):
@@ -221,7 +223,7 @@ class MissileWatcher:
         self.errors = 0
 
     def poke(self) -> None:
-        """Uçuş verisi geldi: yakalama sürsün (ya da başlasın)."""
+        """Flight data arrived: capture keeps running (or starts)."""
         self._poked = time.monotonic()
         self._wake.set()
         if self._thread is None:
@@ -239,7 +241,7 @@ class MissileWatcher:
                 lock = t if t is not None and t.track else None
             else:
                 d = detect(frame, self.cfg)
-        except Exception:  # noqa: BLE001 - yakalama/okuma hatası (ekran kilitli, özel tam ekran) uçuşu bozmasın
+        except Exception:  # noqa: BLE001 - a capture error (locked screen, fullscreen game) must not break flight
             self.errors += 1
             d = None
         cur = self.confirmer.feed(d, now)
@@ -251,7 +253,7 @@ class MissileWatcher:
     def _run(self) -> None:
         every = 1.0 / max(1.0, float(self.cfg["fps"]))
         while not self._stop.is_set():
-            if time.monotonic() - self._poked > IDLE_AFTER:  # hangar, ölüm: ekran yakalanmaz
+            if time.monotonic() - self._poked > IDLE_AFTER:  # hangar, death: the screen is not captured
                 with self._lock:
                     self._current = None
                 self._wake.clear()
@@ -264,10 +266,10 @@ class MissileWatcher:
     def contacts(self) -> list[dict[str, Any]]:
         with self._lock:
             d, lk = self._current, self._lock_cur
-        if d is not None:  # füze (yönü bilinmiyorsa clock None: anons yönsüz, HUD radar simgesi)
+        if d is not None:  # missile (clock None if direction is unknown: announced without it, HUD shows radar icon)
             return [{"id": "vision", "name": "", "kind": "radar", "clock": d.clock, "lock": True, "missile": True,
                      "dist_m": None, "vision": True}]
-        if lk is not None:  # kilitlendin ama füze yok
+        if lk is not None:  # locked on, but no missile
             return [{"id": "vision", "name": "", "kind": "radar", "clock": lk.clock, "lock": True, "missile": False,
                      "dist_m": None, "vision": True}]
         return []
@@ -289,7 +291,7 @@ def region_of(cfg: dict[str, Any]) -> tuple[int, int, int, int] | None:
     return None
 
 
-# ---------------------------------------------------------------------- komut
+# ---------------------------------------------------------------------- command
 def _full_screenshot():
     import mss
     import numpy as np
@@ -304,7 +306,7 @@ def _full_screenshot():
 
 
 def save_marked(region: tuple[int, int, int, int], out: Path) -> Path:
-    """Tam ekran görüntüsünde bölgeyi yeşil çerçeveyle işaretle (bölge doğru mu, gözle onay)."""
+    """Mark the region with a green frame on a full-screen screenshot (visual check that the region is right)."""
     from PIL import Image, ImageDraw
 
     rgb, (left, top) = _full_screenshot()
@@ -317,7 +319,7 @@ def save_marked(region: tuple[int, int, int, int], out: Path) -> Path:
 
 
 def test_files(paths: list[Path], region: tuple[int, int, int, int] | None, cfg: dict[str, Any]) -> list[str]:
-    """Kayıtlı görüntülerde tanıma: tam ekran görüntüsüyse ayarlı bölge kesilir."""
+    """Recognition on saved images: if it is a full-screen screenshot, the configured region is cropped."""
     import numpy as np
     from PIL import Image
 
@@ -333,7 +335,7 @@ def test_files(paths: list[Path], region: tuple[int, int, int, int] | None, cfg:
 
 
 def record(cfg: dict[str, Any], seconds: float = 3600.0) -> int:
-    """Kısayolla örnek topla. Etiket dosya adında: missile-*.png / clear-*.png."""
+    """Collect samples with hotkeys. The label goes in the file name: missile-*.png / clear-*.png."""
     from PIL import Image
 
     from alice.hotkeys import WinHotkeys

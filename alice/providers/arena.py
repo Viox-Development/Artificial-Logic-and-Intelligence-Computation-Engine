@@ -1,12 +1,13 @@
-"""Gerçek benchmark: LMArena (lmarena.ai) sıralamasından modellerin zekâ puanı.
+"""Real benchmark: model intelligence scores from the LMArena (lmarena.ai) leaderboard.
 
-LMArena milyonlarca gerçek kullanıcının iki cevabı kör karşılaştırıp oyladığı, her gün güncellenen açık sıralama
-(Hugging Face'te lmarena-ai/leaderboard-dataset, CC-BY-4.0). Elle yazılmış tablonun (ranking.QUALITY) yerine bu
-kullanılır; sıralamada bulunamayan model için tablo yedek kalır.
+LMArena is an open leaderboard, refreshed daily, built from millions of real users' blind pairwise votes on two
+answers (Hugging Face: lmarena-ai/leaderboard-dataset, CC-BY-4.0). It is used in place of the hand-written table
+(ranking.QUALITY); the table stays as a fallback for models not found on the leaderboard.
 
-Ajan işine yakın kategoriler alınır: genel, kod, talimata uyma, İngilizce dışı diller (Türkçe ayrı yok), çok turlu
-konuşma. Her kategoride puan liderle farka göre 0-100'e çevrilir (lider 100, her 3 Elo puanı 1 puan), sonra
-ağırlıklı ortalaması alınır. Veri ~/.alice/arena.json'da tutulur, üç günde bir arka planda yenilenir.
+Categories close to agent work are taken: overall, coding, instruction following, non-English languages (no separate
+Turkish category), and multi-turn conversation. In each category the score is converted to 0-100 by its gap to the
+leader (leader 100, every 3 Elo points = 1 point), then a weighted average is taken. The data is kept in
+~/.alice/arena.json and refreshed in the background every three days.
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ ROWS_URL = "https://datasets-server.huggingface.co/rows"
 DATASET = "lmarena-ai/leaderboard-dataset"
 CATEGORIES = {"overall": 0.25, "coding": 0.25, "instruction_following": 0.2, "non_english": 0.15, "multi_turn": 0.15}
 PAGE = 100
-# Liderin bu kadar Elo altı = 1 puan eksik (lider 100, 100 Elo geride 50). 3 iken ölçek çok sıkışıktı: Opus 5.5 91,
-# flash-lite 62 çıkıyor, küçük modeller ana iş için "yeterli" görünüyordu. 2 ile Opus ~87, flash ~75, flash-lite ~45.
+# Each this many Elo below the leader = 1 point (100 Elo behind = 50). At 3 the scale was too tight: Opus 5.5 91,
+# flash-lite 62, small models looked "adequate" for the main job. With 2: Opus ~87, flash ~75, flash-lite ~45.
 ELO_PER_POINT = 2.0
 MAX_AGE = 3 * 24 * 3600
 TIMEOUT = 90.0
@@ -42,9 +43,9 @@ _VERSION_SUFFIX = re.compile(r"-v?\d+(\.\d+)*$")
 
 def norm(name: str, keep_date: bool = False) -> str:
     """'Gemini 3.8 Flash (High)', 'gemini:gemini-3.8-flash', 'nvidia:z-ai/glm-5.3' -> 'gemini-3.8-flash', 'glm-5.3'.
-    keep_date: tarihli kimlik ('mistral-medium-2508', 'command-a-03-2025') tarihiyle kalsın."""
+    keep_date: a dated ID ('mistral-medium-2508', 'command-a-03-2025') keeps its date."""
     s = name.lower().strip()
-    if re.match(r"^[a-z0-9_-]+:", s) and not re.match(r"^[a-z0-9.-]+:\d", s):  # "gemini:..." sağlayıcı öneki
+    if re.match(r"^[a-z0-9_-]+:", s) and not re.match(r"^[a-z0-9.-]+:\d", s):  # "gemini:..." provider prefix
         s = s.split(":", 1)[1]
     s = re.sub(r":(free|beta|extended|thinking)$", "", s)
     s = re.sub(r"\(.*?\)", " ", s)
@@ -85,8 +86,8 @@ def load(path: Path | None = None) -> dict[str, Any]:
 
 
 def _rescaled(data: dict[str, Any]) -> dict[str, Any]:
-    """Diskteki veri eski Elo ölçeğiyle (3) puanlanmışsa güncel ölçeğe çevir: puan liderle farkın doğrusal
-    fonksiyonu, yeniden indirmeye gerek yok. Böylece ölçek değişince eşikler eski puanlarla karşılaştırılmaz."""
+    """If the data on disk was scored on the old Elo scale (3), convert it to the current scale: the score is a linear
+    function of the gap to the leader, no re-download needed. Thresholds are then never compared with old scores."""
     old = data.get("elo_per_point") or 3.0
     scores = data.get("scores")
     if not isinstance(scores, dict) or old == ELO_PER_POINT:
@@ -111,8 +112,8 @@ def age(data: dict[str, Any] | None = None) -> float:
 
 
 def build(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Ham satırlardan model -> puan. Aynı modelin çeşitlerinden ((High), (Max)...) parantezsizi, yoksa en iyisi."""
-    best: dict[str, dict[str, tuple[bool, float, str]]] = {}  # kategori -> norm ad -> (parantezsiz mi, elo, ad)
+    """Raw rows -> model -> score. Among a model's variants ((High), (Max)...) take the unparenthesized one, else the best."""
+    best: dict[str, dict[str, tuple[bool, float, str]]] = {}  # category -> norm name -> (no parens?, elo, name)
     for r in rows:
         cat, name = r.get("category"), str(r.get("model_name") or "")
         if cat not in CATEGORIES or not name or not isinstance(r.get("rating"), (int, float)):
@@ -122,7 +123,7 @@ def build(rows: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         cand = ("(" not in name, float(r["rating"]), name)
         keys = [key]
-        if m := _PAREN_DATE.search(name):  # "Mistral Medium 3.1 (2508)" -> "mistral-medium-2508" de bulunsun
+        if m := _PAREN_DATE.search(name):  # so "mistral-medium-2508" is also findable for "Mistral Medium 3.1 (2508)"
             keys += [f"{key}-{m.group(2)}", f"{_VERSION_SUFFIX.sub('', key)}-{m.group(2)}"]
         for k in dict.fromkeys(keys):
             cur = best.setdefault(cat, {}).get(k)
@@ -145,8 +146,8 @@ def build(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def fetch(get: Callable[..., Any] | None = None, workers: int = 8) -> list[dict[str, Any]]:
-    """LMArena'nın son sıralaması (~11 bin satır, 100'lük sayfalar paralel, birkaç saniye). Süzme sunucuda
-    (filter) sayfa başına 10-90 sn sürüyordu; düz satırlar hızlı, kategoriler burada ayıklanır."""
+    """LMArena's latest leaderboard (~11k rows, 100-row pages in parallel, a few seconds). Filtering on the server
+    (filter) took 10-90 s per page; plain rows are fast, so categories are extracted here."""
     import httpx
 
     client = None
@@ -155,14 +156,14 @@ def fetch(get: Callable[..., Any] | None = None, workers: int = 8) -> list[dict[
         get = client.get
 
     def page(offset: int) -> dict[str, Any]:
-        # Sunucu ara sıra tek bir sayfada 502/503 veriyor; bir sayfa yüzünden bütün yenileme boşa gidiyordu.
-        for attempt in range(4 if client is not None else 1):  # verilen get (test, özel istemci) tek deneme
+        # The server sometimes returns 502/503 for a single page; one page failing used to waste the whole refresh.
+        for attempt in range(4 if client is not None else 1):  # a supplied get (test, custom client) gets a single attempt
             try:
                 r = get(ROWS_URL, params={"dataset": DATASET, "config": "text", "split": "latest", "offset": offset,
                                           "length": PAGE})
                 r.raise_for_status()
                 return r.json()
-            except Exception:  # noqa: BLE001 - son denemede yukarı fırlatılır
+            except Exception:  # noqa: BLE001 - re-raised on the last attempt
                 if client is None or attempt == 3:
                     raise
                 time.sleep(1.5 * (attempt + 1))
@@ -183,10 +184,10 @@ def fetch(get: Callable[..., Any] | None = None, workers: int = 8) -> list[dict[
 
 def refresh(emit: Callable[[str], None] = lambda s: None, get: Callable[..., Any] | None = None,
             path: Path | None = None) -> dict[str, Any]:
-    """İndir, puanla, kaydet. Olmazsa eski veri kalır."""
+    """Download, score, save. If that fails, the old data stays."""
     try:
         rows = fetch(get)
-    except Exception as e:  # noqa: BLE001 - ağ yok, site değişti: eski veriyle devam
+    except Exception as e:  # noqa: BLE001 - no network or site changed: continue with old data
         emit(f"LMArena sıralaması alınamadı, eski veriyle devam: {e}")
         return load()
     scores = build(rows)
@@ -206,7 +207,7 @@ def refresh(emit: Callable[[str], None] = lambda s: None, get: Callable[..., Any
     return data
 
 
-_ALIASES = (  # Google'ın "en yeni" takma adları: sıralamadaki en yeni sürümün puanını alsın
+_ALIASES = (  # Google's "newest" aliases: they take the score of the newest version on the leaderboard
     (re.compile(r"^gemini-flash-latest$"), re.compile(r"^gemini-(\d+(?:\.\d+)?)-flash$")),
     (re.compile(r"^gemini-flash-lite-latest$"), re.compile(r"^gemini-(\d+(?:\.\d+)?)-flash-lite$")),
     (re.compile(r"^gemini-pro-latest$"), re.compile(r"^gemini-(\d+(?:\.\d+)?)-pro$")),
@@ -219,8 +220,8 @@ def _newest(scores: dict[str, Any], family: re.Pattern[str]) -> dict[str, Any] |
 
 
 def lookup(ref: str, data: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Model referansının sıralamadaki karşılığı ({q, name, elo}); bulunamazsa None. Sadece tam eşleşme
-    (tahminle "command-a-plus"a "command-a"nın puanını vermektense tablodaki tahmine düşmek daha doğru)."""
+    """A model reference's leaderboard entry ({q, name, elo}), or None if not found. Exact match only
+    (guessing that "command-a-plus" has "command-a"'s score is worse than falling back to the table's estimate)."""
     scores = (data if data is not None else load()).get("scores") or {}
     if not scores:
         return None
@@ -228,19 +229,19 @@ def lookup(ref: str, data: dict[str, Any] | None = None) -> dict[str, Any] | Non
     for alias, family in _ALIASES:
         if alias.match(dated):
             return _newest(scores, family)
-    if dated.endswith("-latest"):  # "mistral-large-latest" -> sıralamadaki en yeni "mistral-large-N"
+    if dated.endswith("-latest"):  # "mistral-large-latest" -> the newest "mistral-large-N" on the leaderboard
         base = dated[: -len("-latest")]
         hit = _newest(scores, re.compile(rf"^{re.escape(base)}-(\d{{1,2}}(?:\.\d+)?)$"))
         if hit is not None:
             return hit
     key = norm(ref)
     hit = scores.get(dated) or scores.get(key) or scores.get(re.sub(r"-latest$", "", key))
-    if hit is None:  # "qwen-3.8-27b" (Cerebras) = "qwen3.8-27b": harf ile sürüm arasındaki tire önemsiz
+    if hit is None:  # "qwen-3.8-27b" (Cerebras) = "qwen3.8-27b": the hyphen between letters and version is insignificant
         squashed = {squash(k): v for k, v in scores.items()}
         hit = squashed.get(squash(dated)) or squashed.get(squash(key))
     if hit is None:
-        # Abonelik proxy'sinin adları: "claude-opus-5-5" (sürüm tireli), "gemini-3.8-flash-high" (çaba ekli).
-        # Önceden bunların hiçbiri bulunamıyor, Opus dahil hepsi "zekâ bilinmiyor" görünüyordu.
+        # Subscription proxy's names: "claude-opus-5-5" (dashed version), "gemini-3.8-flash-high" (effort suffix).
+        # Previously none of these were found, and everything including Opus looked "intelligence unknown".
         alt = dotted(_EFFORT_SUFFIX.sub("", key))
         hit = scores.get(alt) or _older_sibling(scores, alt)
     return hit
@@ -251,7 +252,7 @@ _VERSIONED = re.compile(r"^(.*?)(\d+(?:\.\d+)?)(.*)$")
 
 
 def dotted(key: str) -> str:
-    """'claude-opus-5-5' -> 'claude-opus-5.5' (iki tek haneli sürüm parçası noktayla birleşir)."""
+    """'claude-opus-5-5' -> 'claude-opus-5.5' (two single-digit version parts are joined with a dot)."""
     return _DASHED.sub(lambda m: f"{m.group(1)}.{m.group(2)}", key)
 
 
@@ -259,8 +260,8 @@ _DASHED = re.compile(r"(?<=-)(\d)-(\d)(?=$|-)")
 
 
 def _older_sibling(scores: dict[str, Any], key: str) -> dict[str, Any] | None:
-    """Sıralamaya henüz girmemiş yeni sürüm ('claude-fable-5.2', 'gpt-6.1-terra'): aynı ailenin sıralamadaki en yakın
-    eski sürümünün puanı. Yeni sürüm eskisinden kötü olmaz varsayımı; tahmin, ama 'bilinmiyor'dan doğru."""
+    """A newer version not on the leaderboard yet ('claude-fable-5.2', 'gpt-6.1-terra'): the score of the closest
+    older version in the family. Assumes a new version is not worse than the old one: a guess, better than "unknown"."""
     m = _VERSIONED.match(key)
     if not m:
         return None
@@ -268,8 +269,8 @@ def _older_sibling(scores: dict[str, Any], key: str) -> dict[str, Any] | None:
     want = tuple(int(x) for x in ver.split("."))
     rx = re.compile(rf"^{re.escape(head)}(\d+(?:\.\d+)?){re.escape(tail)}$")
     def near(v: tuple[int, ...]) -> bool:
-        # Yalnız aynı ana sürümün bir önceki ara sürümü (fable 5.2 -> 5.1). Daha uzağı tahmin değil uydurma olur:
-        # gemini-3.8-flash-lite'a 3.5'in puanını vermek yanlış.
+        # Only the previous minor of the same major (fable 5.2 -> 5.1). Farther is invention, not a guess:
+        # giving gemini-3.8-flash-lite the score of 3.5 would be wrong.
         return v < want and v[0] == want[0] and len(v) == len(want) == 2 and want[1] - v[1] <= 1
 
     older = []

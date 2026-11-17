@@ -36,7 +36,7 @@ def test_run_plan_plans_executes_confirms_and_verifies(workdir):
               "risk": "eski b.txt gider"}),
         tool_call("write_file", {"path": "a.txt", "content": "selam"}, cid="s1"),
         "SONUÇ: TAMAM - a.txt yazıldı",
-        tool_call("read_file", {"path": "b.txt"}, cid="r2"),  # var olan dosya: okumadan üzerine yazılmaz
+        tool_call("read_file", {"path": "b.txt"}, cid="r2"),  # existing file: never overwritten without reading it first
         tool_call("write_file", {"path": "b.txt", "content": "yeni"}, cid="s2"),
         "SONUÇ: TAMAM - b.txt yenilendi",
         tool_call("read_file", {"path": "b.txt"}, cid="v1"),
@@ -47,7 +47,7 @@ def test_run_plan_plans_executes_confirms_and_verifies(workdir):
     (workdir / "b.txt").write_text("eski", encoding="utf-8")
     assert agent.run_turn("şunları yap") == "İkisi de tamam."
     assert (workdir / "a.txt").read_text(encoding="utf-8") == "selam" and (workdir / "b.txt").read_text(encoding="utf-8") == "yeni"
-    assert ui.events.count(("ask", "run_plan")) == 1  # sadece geri alınamaz adım için
+    assert ui.events.count(("ask", "run_plan")) == 1  # only for the irreversible step
     report = [m for m in agent.messages if m["role"] == "tool" and m["name"] == "run_plan"][0]["content"]
     assert report.startswith("done: 2/2")
     assert agent.ctx.state.get("active_task") is None
@@ -72,7 +72,7 @@ def test_failed_verification_retries_step_once(workdir):
     script = [
         tool_call("run_plan", {"goal": "x"}),
         plan({"goal": "c.txt yaz", "check": "c.txt var"}),
-        "SONUÇ: TAMAM - yazdım",  # aslında yazmadı
+        "SONUÇ: TAMAM - yazdım",  # actually did not write it
         tool_call("list_dir", {"path": "."}, cid="v1"),
         "DOĞRULAMA: HAYIR - c.txt yok",
         tool_call("write_file", {"path": "c.txt", "content": "ok"}, cid="s2"),
@@ -115,7 +115,7 @@ def test_voice_confirmation_goes_through_task_control(workdir):
     assert TaskControl().run(agent.ctx, action="approve").text.startswith("onaylandı")
     t.join(2)
     assert box["ok"] is True
-    assert TaskControl().run(agent.ctx, action="approve").is_error  # artık beklemiyor
+    assert TaskControl().run(agent.ctx, action="approve").is_error  # no longer waiting
 
 
 def test_stop_cancels_pending_confirmation(workdir):

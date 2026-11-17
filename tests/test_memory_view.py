@@ -1,4 +1,4 @@
-"""Ayarlar > Hafıza: notları görme, düzenleme, silme, Dream ve eski rolden ("sevgili/mommy") kalan izleri temizleme."""
+"""Settings > Memory: viewing, editing, deleting notes, Dream, and purging traces of the old role ("sevgili/mommy")."""
 
 from __future__ import annotations
 
@@ -58,8 +58,8 @@ def test_memory_tab_lists_edits_deletes_dreams_and_purges(app):
                                                   "description": "DCS'de uçtuğu uçaklar"}).json()
     assert r["ok"]
     edited = state.agent.memory.notes.get(keep["name"])
-    assert edited.body == "F-16 ve F-18 uçurur." and edited.source == "kullanıcı"  # elle düzeltilen korunur
-    # Gövdesiz kayıt (yalnız açıklama) gövdeyi silmez; yalnız gönderilen alan değişir.
+    assert edited.body == "F-16 ve F-18 uçurur." and edited.source == "kullanıcı"  # manually corrected notes are preserved
+    # A save without a body (description only) does not delete the body; only the field sent changes.
     assert client.post("/api/memory/action", json={"action": "save", "key": keep["key"],
                                                     "description": "Uçtuğu uçaklar"}).json()["ok"]
     edited = state.agent.memory.notes.get(keep["name"])

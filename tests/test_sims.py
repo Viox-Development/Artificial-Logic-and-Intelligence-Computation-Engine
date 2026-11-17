@@ -43,12 +43,12 @@ def st(t, **kw):
 def test_full_flight():
     c, tr, r = make()
     t = 0.0
-    tr.feed(st(t, ias=0, agl=0.5, alt=50))                     # yerde
+    tr.feed(st(t, ias=0, agl=0.5, alt=50))                     # on the ground
     t += 1
-    tr.feed(st(t, ias=80, agl=30))                              # kalkış
+    tr.feed(st(t, ias=80, agl=30))                              # takeoff
     assert c.phase == "air" and c.home == (0.0, 0.0)
     fuel = 3000.0
-    # 100 km uzağa uçarken yakıt yanıyor: bir yerde "eve dön" uyarısı gelmeli
+    # fuel burns while flying 100 km out: an "eve dön" warning should come at some point
     x = 0.0
     while fuel > 700:
         t += 1
@@ -64,9 +64,9 @@ def test_full_flight():
     for _ in range(5):
         t += 1
         tr.feed(st(t, fuel_kg=fuel, burn_kgs=1.0, x=x))
-    assert len(r.said) == n                                     # tekrar etmez
+    assert len(r.said) == n                                     # does not repeat
 
-    # uzun süre 8 G
+    # sustained 8 G
     for _ in range(10):
         t += 1
         tr.feed(st(t, g=8.2, fuel_kg=fuel, x=x))
@@ -77,7 +77,7 @@ def test_full_flight():
     tr.feed(st(t + 0.2, flare=0, fuel_kg=fuel, x=x))
     assert "Flare azaldı, 8 kaldı." in r.texts() and "Flare bitti." in r.texts()
 
-    # yaklaşma: önce hızlı, sonra on speed, sonra teker koyma
+    # approach: first 'fast' call, then 'on speed', then gear down
     r.said.clear()
     for agl, aoa in [(500, 7), (450, 7), (400, 13), (350, 13), (250, 13), (150, 13), (80, 13),
                      (40, 12.5), (10, 13), (2, 13), (0.3, 13)]:
@@ -85,7 +85,7 @@ def test_full_flight():
         tr.feed(st(t, gear=1.0, ias=88 if aoa < 10 else 75, agl=agl, aoa=aoa, vv=-3.5 if agl > 2 else -1.2,
                    fuel_kg=fuel, x=0, flare=0))
     assert r.texts()[:2] == ["Hızlısın.", "On speed, iyi."]
-    # durma
+    # coming to a stop
     for _ in range(7):
         t += 1
         tr.feed(st(t, gear=1.0, ias=10, agl=0.2, vv=0, fuel_kg=fuel, x=0, flare=0))
@@ -302,7 +302,7 @@ def test_warthunder_poller():
 
 
 def test_export_lua_runs_in_luajit():
-    """Betiği DCS'in kullandığı LuaJIT'te sahte DCS fonksiyonlarıyla çalıştır (lupa kuruluysa)."""
+    """Run the script in LuaJIT, the runtime DCS uses, with fake DCS functions (if lupa is installed)."""
     lupa = pytest.importorskip("lupa.luajit21")
     from alice.sims.dcs import SCRIPT
 
@@ -336,7 +336,7 @@ def test_export_lua_runs_in_luajit():
     g.LuaExportStop()
     msgs = [json.loads(s) for s in sent]
     assert msgs[0] == {"event": "start"} and msgs[-1] == {"event": "stop"}
-    assert g.CALLS == 11  # önceki export betiği de çalışmaya devam ediyor
+    assert g.CALLS == 11  # the previous export script keeps running too
     data = [m for m in msgs if "aircraft" in m]
     assert len(data) == 5 and data[0]["burn"] == 0.8 and data[0]["chaff"] == 60
     assert msgs[-2] == {"t": 5, "restricted": True}
@@ -349,9 +349,9 @@ def test_dcs_ensure_installed_only_when_missing_or_changed(tmp_path):
     d.mkdir()
     assert dcs.ensure_installed([d]) == [d]
     assert "alice_export.lua" in (d / "Scripts" / "Export.lua").read_text(encoding="utf-8")
-    assert dcs.ensure_installed([d]) == []  # zaten kurulu
+    assert dcs.ensure_installed([d]) == []  # already installed
     (d / "Scripts" / "alice_export.lua").write_text("eski", encoding="utf-8")
-    assert dcs.ensure_installed([d]) == [d]  # betik değişmiş: yenile
+    assert dcs.ensure_installed([d]) == [d]  # script changed: reinstall
     assert (d / "Scripts" / "Export.lua").read_text(encoding="utf-8").count("alice_export.lua") == 1
 
 
@@ -369,11 +369,11 @@ def test_home_nav_bearing_turn_and_alert():
     c = FlightCompanion(lambda text, sev="info", emo=None: said.append(text), lambda a, b: None, lambda: None,
                         lambda d: None)
     c.home = (0.0, 0.0)
-    # üssün 20 nm güneybatısındayız (x kuzey, z doğu), burun 212°: üs kuzeydoğuda (~045°)
+    # we are 20 nm southwest of home (x north, z east), nose at 212°: home is northeast (~045°)
     s = FlightState(t=1, x=-20 * NM * 0.7071, z=-20 * NM * 0.7071, heading=212)
     nav = c.home_nav(s)
     assert round(nav["bearing"]) == 45 and round(nav["nm"]) == 20
-    assert round(nav["turn"]) == -167  # 167° sola (en kısa dönüş)
+    assert round(nav["turn"]) == -167  # 167° to the left (shortest turn)
     c.home_alert_nm = 10
     c._home_alert(s)
     assert said == []
@@ -395,7 +395,7 @@ def test_dcs_extra_fields_described():
     text = "\n".join(describe_extra(s))
     assert "Mach 0.62" in text and "manyetik yön 006°" in text and "yatış -20°" in text
     assert "radar irtifa 3,000 ft" in text and "devir %92" in text
-    assert "rüzgar 000° yönünden 19 kt" in text  # kuzeyden esen rüzgar güneye iter
+    assert "rüzgar 000° yönünden 19 kt" in text  # wind from the north pushes south
     assert "sıradaki waypoint 3: 000° (gerçek), 10.0 nm" in text
     assert "AIM-120C x2" in text and "top mermisi 510" in text and "UYARI / ARIZA: LeftEngineFailure" in text
 
@@ -425,7 +425,7 @@ def test_proactive_callouts():
         return FlightState(**base)
 
     c._warnings(st(1, extra={"warnings": "LeftEngineFailure"}))
-    c._warnings(st(2, extra={"warnings": "LeftEngineFailure"}))  # aynı ışık tekrar söylenmez
+    c._warnings(st(2, extra={"warnings": "LeftEngineFailure"}))  # same light is not called out again
     assert said == ["Uyarı: sol motor arızası."]
     c._engine_heat(st(3, extra={"oil_temp": 108}))
     assert "Yağ sıcaklığı 108" in said[-1]
@@ -447,22 +447,22 @@ def test_approach_calls_are_calm_and_not_contradictory():
     c.phase = "air"
     c.profile = c.profile.__class__("F-16C", aoa_on_speed=(11.0, 15.0), approach_ias_max=95)
     t = 0.0
-    # band kenarında salınım (10-16 derece): hiçbir şey söylenmez
+    # oscillating at the edge of the band (10-16 degrees): nothing is said
     for aoa in [10, 16, 10.5, 15.8, 10.2, 16.5] * 3:
         t += 0.5
         c._approach(st(t, gear=1.0, ias=75, agl=400, aoa=aoa, vv=-3))
     assert r.texts() == []
-    # stall'a yaklaşma (18 derece) kalıcı: bir kez "yavaşsın", 10 sn dolmadan tekrar yok
+    # sustained approach to stall (18 degrees): "yavaşsın" once, no repeat before 10 s
     for _ in range(12):
         t += 0.5
         c._approach(st(t, gear=1.0, ias=60, agl=400, aoa=18, vv=-3))
     assert r.texts() == ["Yavaşsın, stall'a yaklaşıyorsun, güç ver."]
-    # düzeltti: bir kez on speed
+    # corrected: "on speed" once
     for _ in range(8):
         t += 0.5
         c._approach(st(t, gear=1.0, ias=70, agl=400, aoa=13, vv=-3))
     assert r.texts()[-1] == "On speed, iyi." and r.texts().count("On speed, iyi.") == 1
-    # düşük AoA ama hız yaklaşma sınırından uzak: "hızlısın" yok
+    # low AoA but speed far from the approach limit: no "hızlısın"
     for _ in range(8):
         t += 0.5
         c._approach(st(t, gear=1.0, ias=70, agl=400, aoa=7, vv=-3))
@@ -479,7 +479,7 @@ def test_pilot_alerts_altitude_and_fuel():
     c._pilot_alerts(st(3, alt=10010 * 0.3048))
     c._pilot_alerts(st(4, alt=9000 * 0.3048))
     c._pilot_alerts(st(5, alt=11000 * 0.3048))
-    assert r.texts() == ["10.000 feet."]  # bir kez
+    assert r.texts() == ["10.000 feet."]  # once
     c.fuel_alert_kg = 1500
     c._pilot_alerts(st(6, fuel_kg=1600))
     c._pilot_alerts(st(7, fuel_kg=1499))
@@ -506,33 +506,33 @@ def test_ground_proximity_only_without_own_gpws():
     from alice.sims.flight import profile_for
 
     c.phase, c.profile = "air", profile_for("F-16C_50")
-    c._ground(st(1, agl=200, vv=-50))  # F-16: kendi uyarısı var
+    c._ground(st(1, agl=200, vv=-50))  # F-16: has its own warning
     assert r.texts() == []
     c.profile = c.profile.__class__("uçak")
     c._ground(st(2, aircraft="P-51D", agl=200, vv=-50))
-    c._ground(st(3, aircraft="P-51D", agl=150, vv=-50))  # tekrar için çok erken
+    c._ground(st(3, aircraft="P-51D", agl=150, vv=-50))  # too early to repeat
     assert r.texts() == ["Yere yaklaşıyorsun, burnu kaldır!"]
-    c._ground(st(20, aircraft="P-51D", agl=500, vv=-20))  # 25 sn var: sessiz
-    c._ground(st(30, aircraft="P-51D", agl=100, vv=-10, gear=1.0, ias=70))  # inişe geliyor: sessiz
+    c._ground(st(20, aircraft="P-51D", agl=500, vv=-20))  # 25 s left: silent
+    c._ground(st(30, aircraft="P-51D", agl=100, vv=-10, gear=1.0, ias=70))  # approaching landing: silent
     assert len(r.texts()) == 1
 
 
 def test_ground_warning_rearms_only_after_recovery():
-    """Alçakta dalaşırken art arda söylenmez; güvenli duruma dönüp yeniden dalınca tekrar söyler."""
+    """Not repeated back to back while dogfighting low; repeats after returning to safety and diving again."""
     c, tr, r = make()
     c.phase, c.profile = "air", profile_for("P-51D")
-    c.profile = c.profile.__class__("uçak")  # kendi GPWS'i yok
+    c.profile = c.profile.__class__("uçak")  # no GPWS of its own
     warn = "Yere yaklaşıyorsun, burnu kaldır!"
     c._ground(st(0, agl=200, vv=-50))
-    for t in range(1, 60):  # bir dakika hep alçakta, alçalıp yükselerek dalaşıyor: kısa toparlanmalar
+    for t in range(1, 60):  # a minute low the whole time, diving and climbing while fighting: brief recoveries
         dive = t % 4 != 0
         c._ground(st(t, agl=150 if dive else 250, vv=-40 if dive else 5))
     assert r.texts() == [warn]
-    for t in range(60, 64):  # 3 sn'den uzun güvenli: yükseldi
+    for t in range(60, 64):  # safe for more than 3 s: climbed
         c._ground(st(t, agl=500, vv=10))
     c._ground(st(64, agl=200, vv=-50))
     assert r.texts() == [warn, warn]
-    # Güvenli dönüş olsa bile GROUND_REPEAT dolmadan tekrar yok
+    # even with a safe return, no repeat before GROUND_REPEAT has passed
     for t in (65, 66, 67, 68):
         c._ground(st(t, agl=200, vv=0))
     c._ground(st(69, agl=200, vv=-50))
@@ -552,7 +552,7 @@ def test_flaps_forgotten_and_external_tanks():
         c._ext_tanks(st(40, extra={"fuel_ext_kg": kg}))
     c._ext_tanks(st(41, extra={"fuel_ext_kg": 0}))
     assert r.texts()[1:] == ["Dış tanklar boşaldı."]
-    # F-16: otomatik flap, hatırlatma yok
+    # F-16: automatic flaps, no reminder
     c2, _, r2 = make()
     c2.phase, c2.profile = "air", c2.profile.__class__("F-16C", auto_flaps=True)
     for t in range(0, 30, 2):
@@ -582,7 +582,7 @@ def test_flight_tool_alert_actions(monkeypatch):
 
 
 def test_afterburner_does_not_trigger_fuel_calls():
-    """Bol yakıtla art yakıcı: oyunun anlık tüketimi 12 kg/s olsa da joker/bingo/"X dakika" yok."""
+    """Full fuel with afterburner: no joker/bingo/"X dakika" calls, even though the game's instant burn is 12 kg/s."""
     c, tr, r = make()
     tr.feed(st(0, ias=80, agl=30))
     fuel = 2500.0
@@ -595,13 +595,13 @@ def test_afterburner_does_not_trigger_fuel_calls():
 def test_tank_transfer_jumps_do_not_repeat_joker():
     c, tr, r = make()
     tr.feed(st(0, ias=80, agl=30))
-    fuel, t = 1300.0, 0  # 80 mil: bingo 770, joker 1257 kg
+    fuel, t = 1300.0, 0  # 80 nm: bingo 770, joker 1257 kg
     for _ in range(70):
         t += 1
         fuel -= 1
         tr.feed(st(t, fuel_kg=fuel, x=80 * NM))
     assert [x for x in r.texts() if x.startswith("Joker")] and len(r.said) == 1
-    for jump in (200, 0, 180, 0):  # dış tanktan aktarma göstergeyi oynatıyor
+    for jump in (200, 0, 180, 0):  # transfer from external tanks makes the gauge jump
         for _ in range(15):
             t += 1
             fuel -= 1
@@ -610,10 +610,10 @@ def test_tank_transfer_jumps_do_not_repeat_joker():
 
 
 def test_low_fuel_load_warthunder_style():
-    """Kalkış noktası bilinmiyor (War Thunder) ve 12 dakikalık yakıtla çıkılmış: 10 dk uyarısı yok, 5 dk bir kez."""
+    """Takeoff point unknown (War Thunder) and took off with 12 minutes of fuel: no 10 min warning, 5 min once."""
     c, tr, r = make()
     tr.feed(st(0, ias=80, agl=30, x=None, z=None))
-    fuel = 720.0  # 1 kg/s ile 12 dakika
+    fuel = 720.0  # 12 minutes at 1 kg/s
     for i in range(1, 700):
         fuel -= 1.0
         tr.feed(st(i, fuel_kg=fuel, burn_kgs=None, x=None, z=None))
@@ -623,7 +623,7 @@ def test_low_fuel_load_warthunder_style():
 
 
 def test_endurance_warning_holds_before_speaking():
-    """Uzun uçuşta 10 ve 5 dakika uyarıları birer kez, eşik 20 sn sürünce."""
+    """On a long flight the 10 and 5 minute warnings each come once, after the threshold has held for 20 s."""
     c, tr, r = make()
     tr.feed(st(0, ias=80, agl=30, x=None, z=None))
     fuel = 2400.0
@@ -644,18 +644,18 @@ def test_noisy_lights_and_info_gap():
     for t, lights in ((1, "AutopilotOn"), (2, "StallSignalization"), (3, ""), (4, "HydraulicsFailure,MasterWarning"),
                       (5, ""), (6, "HydraulicsFailure"), (200, ""), (201, "HydraulicsFailure")):
         c._warnings(FlightState(t=t, extra={"warnings": lights}))
-    # otopilot uyarı değil; ana uyarı arızayla birlikte söylenmez;
-    # yanıp sönen ışık 2 dk dolmadan tekrar yok
+    # autopilot is not a warning; the master warning is not called out together with a failure;
+    # a flashing light is not repeated before 2 min have passed
     assert said == ["Uyarı: stall.", "Uyarı: hidrolik arızası.", "Uyarı: hidrolik arızası."]
     said.clear()
     c.profile = profile_for("F-16C_50")
-    c.warn_seen = set()  # F-16'nın kendi stall uyarısı var
+    c.warn_seen = set()  # F-16 has its own stall warning
     c._warnings(FlightState(t=300, extra={"warnings": "StallSignalization"}))
     assert said == []
     c._ext_tanks(FlightState(t=400, extra={"fuel_ext_kg": 30}))
     c._waypoint(FlightState(t=401, x=0, z=0, extra={"wp_x": NM, "wp_z": 0, "wp_num": 2}))
     c._ext_tanks(FlightState(t=402, extra={"fuel_ext_kg": 0}))
-    assert said == ["2 numaralı waypoint'e 1 mil."]  # tank anonsu üst üste binmedi
+    assert said == ["2 numaralı waypoint'e 1 mil."]  # the tank call did not overlap
 
 
 def test_dcs_fraction_fuel_unknown_aircraft_is_guess():
@@ -674,19 +674,19 @@ def test_cruise_fuel_is_learned_from_flights(tmp_path, monkeypatch):
                 "fuel_kg": [4000 - burn * i for i in range(n)]}
 
     s = series(200, 1.0)
-    # 400 kt IAS 20000 ft'te ~560 kt TAS: saniyede 1 kg -> ~6.4 kg/nm
+    # 400 kt IAS at 20000 ft is ~560 kt TAS: 1 kg per second -> ~6.4 kg/nm
     assert [round(x, 1) for x in flight.cruise_parts(s)] == [6.4]
-    dog = series(200, 1.0, g=4.0)  # çatışma parçası sayılmaz
+    dog = series(200, 1.0, g=4.0)  # dogfight segment is not counted
     assert flight.cruise_parts(dog) == []
     jump = series(200, 1.0)
-    jump["fuel_kg"][100] -= 900  # tank atma parçayı böler, değeri bozmaz
+    jump["fuel_kg"][100] -= 900  # dropping a tank splits the segment, does not skew the value
     assert all(6 < x < 7 for x in flight.cruise_parts(jump))
     for i in range(3):
         (tmp_path / f"2026{i}.json").write_text(json.dumps({"aircraft": "F-16C", "series": s}), encoding="utf-8")
     monkeypatch.setattr(flight, "flights_dir", lambda: tmp_path)
     assert flight.learn_cruise()["F-16C"]["parts"] == 3
-    assert round(flight.profile_for("F-16C_50").cruise_kg_nm, 1) == 6.4  # elle verilen 4.0 yerine
-    assert flight.profile_for("FA-18C_hornet").cruise_kg_nm == 6.0  # öğrenilmeyen uçak aynı kalır
+    assert round(flight.profile_for("F-16C_50").cruise_kg_nm, 1) == 6.4  # instead of the manually given 4.0
+    assert flight.profile_for("FA-18C_hornet").cruise_kg_nm == 6.0  # an unlearned aircraft stays the same
 
 
 def test_coach_compares_with_previous_flights(tmp_path):
@@ -707,10 +707,10 @@ def test_coach_compares_with_previous_flights(tmp_path):
     assert "alçalmayı" in coach(deb(touchdown_vv_ms=-3.4), hist)
     assert "yüzde 60 yerine 30" in coach(deb(approach_on_speed_pct=30.0), hist)
     assert "en uzun uçuşundu" in coach(deb(duration_s=3000.0), hist)
-    assert coach(deb(), hist[:2]) == ""  # az geçmiş: sus
+    assert coach(deb(), hist[:2]) == ""  # little history: stay silent
     (tmp_path / "20261001-1000.json").write_text(json.dumps({"start_wall": 1000.0, "series": {"t": [1]}}), "utf-8")
     (tmp_path / "20261002-1000.json").write_text(json.dumps({"start_wall": 5.0, "series": {"t": [1]}}), "utf-8")
-    assert load_history(tmp_path, exclude=1000.0) == [{"start_wall": 5.0}]  # az önce kaydedilen uçuş hariç
+    assert load_history(tmp_path, exclude=1000.0) == [{"start_wall": 5.0}]  # excluding the flight recorded just before
 
 
 def test_rwr_and_minimap_contacts_parse():
@@ -723,16 +723,16 @@ def test_rwr_and_minimap_contacts_parse():
         (3, "SA-6 Straight Flush", True, False), (6, "MiG-29", False, False)]
     info = {"map_min": [0, 0], "map_max": [10000, 10000], "valid": True}
     objs = [{"type": "aircraft", "icon": "Player", "color": "#faC81E", "x": 0.5, "y": 0.5, "dx": 0.0, "dy": -1.0},
-            {"type": "aircraft", "icon": "Fighter", "color": "#f40C00", "x": 0.5, "y": 0.6},   # 1 km güneyde: saat 6
-            {"type": "aircraft", "icon": "Fighter", "color": "#174DFF", "x": 0.6, "y": 0.5},   # dost
-            {"type": "aircraft", "icon": "Bomber", "color": "#f40C00", "x": 0.8, "y": 0.5},    # 3 km doğu: saat 3
+            {"type": "aircraft", "icon": "Fighter", "color": "#f40C00", "x": 0.5, "y": 0.6},   # 1 km south: clock 6
+            {"type": "aircraft", "icon": "Fighter", "color": "#174DFF", "x": 0.6, "y": 0.5},   # friendly
+            {"type": "aircraft", "icon": "Bomber", "color": "#f40C00", "x": 0.8, "y": 0.5},    # 3 km east: clock 3
             {"type": "ground_model", "icon": "Tank", "color": "#f40C00", "x": 0.5, "y": 0.4}]
     got = [(c["clock"], round(c["dist_m"]), c["name"]) for c in contacts(objs, info)]
     assert got == [(6, 1000, "Fighter"), (3, 3000, "Bomber")]
 
 
 def test_radar_without_type_or_direction_says_nothing_empty():
-    # Ekrandan görülen radar: "Yeni radar: radar, saat None." diyordu (iki günde 6 kez).
+    # Radar seen on screen: it said "Yeni radar: radar, saat None." (6 times in two days).
     c, tr, r = make()
     tr.feed(st(0, ias=0, agl=0.5, alt=50))
     tr.feed(st(1, ias=80, agl=30))
@@ -761,7 +761,7 @@ def test_threat_callouts_once_and_six_warning():
     for t in (30, 31, 45, 52, 76):
         tr.feed(st(t, extra={"contacts": [bandit]}))
     six = [x for x in r.texts() if x.startswith("Arkanda")]
-    assert six == ["Arkanda düşman, saat 6, 1,2 kilometre!"] * 2  # 45 sn'de bir
+    assert six == ["Arkanda düşman, saat 6, 1,2 kilometre!"] * 2  # once every 45 s
     far = {**bandit, "clock": 1, "dist_m": 4000.0}
     tr.feed(st(100, extra={"contacts": [{**far, "dist_m": 9000.0}]}))
     tr.feed(st(101, extra={"contacts": [far]}))
@@ -775,11 +775,11 @@ def test_warthunder_quiet_g_and_no_debrief_speech_on_death():
     tr.feed(st(0, ias=0, agl=0.5, alt=50, **wt))
     tr.feed(st(1, ias=80, agl=30, **wt))
     for t in range(2, 200):
-        tr.feed(st(t, g=9.5 if t < 150 else (48.0 if t == 160 else 1.0), **wt))  # uzun çekiş + ölümde sıçrama
+        tr.feed(st(t, g=9.5 if t < 150 else (48.0 if t == 160 else 1.0), **wt))  # long pull + spike on death
     assert not any("G üstündesin" in x for x in r.texts())
-    c.session_end()  # öldü: veri kesildi
-    assert r.debriefs and r.debriefs[0].max_g == 9.5  # tek ölçümlük 48 G sayılmadı
-    assert not any(x.startswith("Uçuş ") for x in r.texts())  # 3 dakikalık inişsiz uçuş: sesli değerlendirme yok
+    c.session_end()  # dead: data cut off
+    assert r.debriefs and r.debriefs[0].max_g == 9.5  # the single-sample 48 G spike is not counted
+    assert not any(x.startswith("Uçuş ") for x in r.texts())  # 3-minute flight with no landing: no spoken assessment
 
 
 def test_endurance_warning_waits_until_tank_is_low():
@@ -789,11 +789,11 @@ def test_endurance_warning_waits_until_tank_is_low():
     tr.feed(st(1, ias=80, agl=30, fuel_kg=9000, extra={"fuel_pct": 100}, **wt))
     fuel = 9000.0
     for t in range(2, 600):
-        fuel -= 12  # art yakıcı: dakikada 720 kg
+        fuel -= 12  # afterburner: 720 kg per minute
         tr.feed(st(t, fuel_kg=fuel, extra={"fuel_pct": 100 * fuel / 9400}, **wt))
         if fuel > 0.35 * 9400:
-            assert not any("dakika yeter" in x for x in r.texts())  # yüzde 35'in üstündeyken söylemez
-    assert any("dakika yeter" in x for x in r.texts())  # depo azalınca söyler
+            assert not any("dakika yeter" in x for x in r.texts())  # does not speak while above 35 percent
+    assert any("dakika yeter" in x for x in r.texts())  # speaks once the tank runs low
 
 
 def test_warthunder_ground_threats_and_nose_aspect():
@@ -801,13 +801,13 @@ def test_warthunder_ground_threats_and_nose_aspect():
 
     info = {"map_min": [0, 0], "map_max": [100000, 100000], "valid": True}
     objs = [{"type": "aircraft", "icon": "Player", "color": "#faC81E", "x": 0.5, "y": 0.5, "dx": 0.0, "dy": -1.0},
-            # 8 km kuzeyde, burnu güneye (bize) dönük
+            # 8 km north, nose pointing south (toward us)
             {"type": "aircraft", "icon": "Fighter", "color": "#f00C00", "x": 0.5, "y": 0.42, "dx": 0.0, "dy": 1.0},
-            # 5 km doğuda, kuzeye uçuyor (bize yandan)
+            # 5 km east, flying north (from our side)
             {"type": "aircraft", "icon": "Fighter", "color": "#f00C00", "x": 0.55, "y": 0.5, "dx": 0.0, "dy": -1.0},
-            {"type": "ground_model", "icon": "SAM", "color": "#fa0C00", "x": 0.5, "y": 0.6},       # 10 km güney
+            {"type": "ground_model", "icon": "SAM", "color": "#fa0C00", "x": 0.5, "y": 0.6},       # 10 km south
             {"type": "ground_model", "icon": "MediumTank", "color": "#fa0C00", "x": 0.5, "y": 0.51},
-            {"type": "ground_model", "icon": "SPAA", "color": "#fa0C00", "x": 0.9, "y": 0.5}]      # 40 km: uzak
+            {"type": "ground_model", "icon": "SPAA", "color": "#fa0C00", "x": 0.9, "y": 0.5}]      # 40 km: far
     cs = contacts(objs, info)
     assert [(c["kind"], c["clock"], round(c["dist_m"]), c["name"]) for c in cs] == [
         ("aircraft", 3, 5000, "Fighter"), ("aircraft", 12, 8000, "Fighter"), ("sam", 6, 10000, "SAM")]
@@ -854,18 +854,18 @@ def test_warthunder_crash_is_not_a_landing_and_takeoff_is_not_approach():
     c, tr, r = make()
     wt = dict(source="warthunder", aircraft="su_30mkk", x=None, z=None, agl=None)
     tr.feed(st(0, ias=0, alt=50, gear=1.0, **wt))
-    for t in range(1, 20):  # piste kalkış: teker açık, hızlanıyor, tırmanıyor
+    for t in range(1, 20):  # takeoff roll: gear down, accelerating, climbing
         tr.feed(st(t, ias=60 + 3 * t, alt=50 + 10 * t, vv=8.0, aoa=1.0, gear=1.0, **wt))
     assert "Hızlısın." not in r.texts()
     for t in range(20, 200):
         tr.feed(st(t, ias=250, alt=2000, **wt))
-    for t in range(200, 210):  # öldü: enkaz yerde, teker kapalı
+    for t in range(200, 210):  # dead: wreckage on the ground, gear up
         tr.feed(st(t, ias=0, alt=40, vv=0.0, **wt))
     assert r.debriefs and not any(x.startswith("Uçuş ") for x in r.texts())
 
 
 def test_threat_voices_share_a_gap_and_survive_respawn():
-    """Dalaşta ALICE susmuyordu: tehdit sesleri arasında ortak boşluk, gemi grubu tek anons, doğunca baştan sayılmaz."""
+    """In a dogfight ALICE kept talking: threat voices share a gap, a ship group is one call, respawns don't recount."""
     c, tr, r = make()
     wt = dict(source="warthunder", aircraft="su_30mkk", x=None, z=None)
     tr.feed(st(0, ias=0, agl=0.5, alt=50, **wt))
@@ -876,10 +876,10 @@ def test_threat_voices_share_a_gap_and_survive_respawn():
     tr.feed(st(2, extra={"contacts": ships + [bandit]}, **wt))
     tr.feed(st(5, extra={"contacts": ships + [{**bandit, "clock": 5, "dist_m": 900.0}]}, **wt))
     said = r.texts()
-    assert said == ["Füzeli muhrip menzilindesin: saat 11, 7,2 kilometre."]  # fırkateyn, düşman ve arkadaki: sus
+    assert said == ["Füzeli muhrip menzilindesin: saat 11, 7,2 kilometre."]  # frigate, enemy and the one behind: silent
     tr.feed(st(15, extra={"contacts": [{**bandit, "clock": 6, "dist_m": 900.0}]}, **wt))
-    assert r.texts()[-1] == "Arkanda düşman, saat 6, 900 metre!"  # 12 sn boşluktan sonra
-    c.session_end()  # öldü, yeniden doğdu: aynı gemiler yeniden sayılmaz
+    assert r.texts()[-1] == "Arkanda düşman, saat 6, 900 metre!"  # after the 12 s gap
+    c.session_end()  # dead, respawned: the same ships are not counted again
     tr.feed(st(60, ias=0, agl=0.5, alt=50, **wt))
     tr.feed(st(61, ias=80, agl=30, **wt))
     n = len(r.texts())
@@ -888,15 +888,15 @@ def test_threat_voices_share_a_gap_and_survive_respawn():
 
 
 def test_clock_suffix_follows_turkish_vowel_harmony():
-    """Canlı kayıt: anonslar "Saat 3'deki", "Saat 9'deki" diyordu."""
+    """Live recording: the callouts said "Saat 3'deki", "Saat 9'deki"."""
     from alice.sims.flight import clock_loc
 
     assert [clock_loc(c) for c in (3, 6, 9, 10, 12)] == ["3'teki", "6'daki", "9'daki", "10'daki", "12'deki"]
 
 
 def test_flapping_lock_and_missile_are_not_repeated_aloud():
-    """War Thunder'da ekrandan okunan tehdit kesilip geri geliyor: her dönüşte bağırmasın (30 dk'da 16 füze,
-    13 kilit uyarısı, 7 Kasım). Sesi sınırlı, HUD oku sürer."""
+    """In War Thunder a threat read off the screen drops out and returns: don't shout on every return (16 missiles
+    in 30 min, 13 lock warnings, 7 November). Voice is limited; the HUD readout continues."""
     from alice.sims.flight import FlightCompanion, FlightState
 
     said = []
@@ -907,16 +907,16 @@ def test_flapping_lock_and_missile_are_not_repeated_aloud():
         c._contacts(FlightState(t=t, ias=200, agl=3000, gear=0, x=0, z=0,
                                 extra={"contacts": [{"kind": "radar", "id": 1, "name": "radar", **kw}]}))
 
-    for t in (0, 11, 22):  # kilit her 11 sn'de "yeni" (LOST_AFTER 10 sn aşıldı)
+    for t in (0, 11, 22):  # a lock counts as "yeni" every 11 s (LOST_AFTER 10 s exceeded)
         contact(t, lock=True)
     assert said.count("Kilitlendin!") == 1
     contact(40, lock=True)
-    assert said.count("Kilitlendin!") == 2  # 30 sn sonra yine söylenir
+    assert said.count("Kilitlendin!") == 2  # said again 30 s later
     for t in (100, 111, 122):
         contact(t, missile=True, vision=True)
-    assert said.count("Füze atıldı! Chaff at, dön!") == 3  # 11 sn arayla: 8 sn sınırının dışında, hepsi söylenir
+    assert said.count("Füze atıldı! Chaff at, dön!") == 3  # 11 s apart: outside the 8 s limit, all are said
     said.clear()
     for t in (200, 211):
         contact(t, missile=True, vision=True)
-    contact(215, missile=True, vision=True, id=2)  # başka bir füze 4 sn sonra: söylenmez
+    contact(215, missile=True, vision=True, id=2)  # another missile 4 s later: not said
     assert said.count("Füze atıldı! Chaff at, dön!") == 2

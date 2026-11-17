@@ -1,4 +1,4 @@
-"""Klasör seçici (elle yol yazmadan) ve sohbet adlandırma/sabitleme API'leri."""
+"""Folder picker (without typing paths by hand) and chat renaming/pinning APIs."""
 
 from __future__ import annotations
 

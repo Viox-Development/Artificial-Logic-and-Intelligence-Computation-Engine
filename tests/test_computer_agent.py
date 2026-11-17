@@ -31,11 +31,11 @@ def test_agent_loops_until_done_and_sends_screenshot():
     assert s.acts == [{"action": "click", "id": 1, "thought": "kaydet"}]
     parts = seen[0][1]["content"]
     assert "[1] Button 'Kaydet'" in parts[0]["text"] and parts[1]["image_url"]["url"].endswith("IMG")
-    assert "1. [{\"action\": \"click\"" in seen[1][1]["content"][0]["text"]  # geçmiş adımlar sonraki adıma gider
+    assert "1. [{\"action\": \"click\"" in seen[1][1]["content"][0]["text"]  # past steps carry over
 
 
 def test_agent_stops_on_repeated_action():
-    """Üç kez aynı adım: önce bir kez başka yol denemesi istenir, yine aynısıysa vazgeçilir."""
+    """Same step three times: ask for a different approach once; if it is still the same, give up."""
     s = FakeScreen()
     seen = []
 
@@ -45,8 +45,8 @@ def test_agent_stops_on_repeated_action():
 
     res = ComputerAgent(s, ask, settle=0).run("x")
     assert res.status == "fail" and len(s.acts) == 4
-    assert any("repeated the same action 3 times" in t for t in seen)  # toparlanma uyarısı modele gitti
-    assert any("did not change the screen" in t for t in seen)  # ekran hiç değişmedi: model bunu da bildi
+    assert any("repeated the same action 3 times" in t for t in seen)  # recovery warning reached the model
+    assert any("did not change the screen" in t for t in seen)  # model knew the screen never changed
 
 
 class ChangingScreen(FakeScreen):
@@ -57,7 +57,7 @@ class ChangingScreen(FakeScreen):
     def observe(self):
         self.n += 1
         shot = super().observe()
-        shot.png_b64 = f"IMG{self.n}"  # her adımda ekran değişiyor: iş ilerliyor
+        shot.png_b64 = f"IMG{self.n}"  # the screen changes each step: work is moving forward
         return shot
 
 
@@ -69,7 +69,7 @@ def test_agent_extends_step_limit_once_when_screen_keeps_changing(tmp_path):
     assert res.status == "max_steps" and len(s.acts) == 5 + ComputerAgent.EXTEND_STEPS
     from alice.computer_agent import load_recipes
 
-    assert load_recipes() and load_recipes()[-1]["status"] == "fail"  # yarım kalan iş de ders olarak kaydedildi
+    assert load_recipes() and load_recipes()[-1]["status"] == "fail"  # unfinished work is saved as a lesson too
 
 
 def test_point_mapping_uses_ids_and_normalized_coords():
@@ -173,7 +173,7 @@ def test_agent_remembers_what_worked_for_similar_goals():
     assert load_recipes()[0]["status"] == "done"
     ComputerAgent(FakeScreen(), ask, settle=0).run("not defterinde dosyayı kaydet")
     assert "PAST SUCCESS" in seen[2]
-    assert '"click"' in seen[2]  # geçen seferki adım ipucu olarak geldi
+    assert '"click"' in seen[2]  # last time's step came back as a hint
 
 
 def test_failed_attempt_is_a_warning_next_time():

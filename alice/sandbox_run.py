@@ -1,7 +1,8 @@
-"""Windows sandbox yardımcısı: `python -m alice.sandbox_run -- <komut...>`.
+"""Windows sandbox helper: `python -m alice.sandbox_run -- <command...>`.
 
-Kendi bütünlük seviyesini Low'a düşürür, sonra komutu çalıştırır (çocuk süreç Low seviyeyi devralır) ve onun çıkış
-kodunu döndürür. Seviye düşürülemezse komutu ÇALIŞTIRMAZ (126): sandbox istenmişse sandbox'sız çalışmak yanlış olur.
+Lowers its own integrity level to Low, then runs the command (the child process inherits the Low level) and returns
+its exit code. If the level cannot be lowered it does NOT run the command (126): when a sandbox was requested,
+running without one would be wrong.
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ def main(argv: list[str]) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"sandbox kurulamadı, komut çalıştırılmadı: {e}", file=sys.stderr)
         return 126
-    # Çıktı açıkça aktarılır: subprocess.call ile konsolsuz (CREATE_NO_WINDOW) çocuk bizim boru uçlarımızı
-    # devralmıyordu; kum havuzundaki her komutun (ALICE'in yazdığı araçların testleri dahil) çıktısı kayboluyor,
-    # model yalnızca "çıkış kodu 1 (çıktı yok)" görüp hatanın sebebini bilemiyordu.
+    # Output is passed through explicitly: a child started with subprocess.call and no console (CREATE_NO_WINDOW)
+    # did not inherit our pipe ends; the output of every command in the test sandbox (including the tests of tools
+    # ALICE wrote) was lost, and the model only saw "çıkış kodu 1 (çıktı yok)" and could not know the cause of the error.
     p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          creationflags=0x08000000 if sys.platform == "win32" else 0)
 

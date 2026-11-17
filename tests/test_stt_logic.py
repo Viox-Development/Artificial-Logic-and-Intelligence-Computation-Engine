@@ -1,4 +1,4 @@
-"""alice/voice/stt.py saf mantığı: sahte faster-whisper/ctranslate2, httpx MockTransport, sahte saat."""
+"""Pure logic of alice/voice/stt.py: fake faster-whisper/ctranslate2, httpx MockTransport, fake clock."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class Seg:
 
 
 class FakeWhisperModel:
-    """faster_whisper.WhisperModel yerine: yaratılışları ve çağrıları kaydeder."""
+    """Stands in for faster_whisper.WhisperModel: records its instantiations and calls."""
 
     created: list[tuple[str, str, str]] = []
     fail_devices: set[str] = set()
@@ -71,7 +71,7 @@ def fake_fw(monkeypatch):
     return FakeWhisperModel
 
 
-# ------------------------------------------------------------- halüsinasyon
+# ------------------------------------------------------------- hallucination
 @pytest.mark.parametrize("text", ["", "  ...  ", "Altyazı M.K.", "Teşekkürler.", "Abone olmayı unutmayın!",
                                   "Thanks for watching!", "www.example.com", "İzlediğiniz için teşekkürler",
                                   "Bir sonraki videoda görüşmek üzere", "\"Sesli betimleme\""])
@@ -88,7 +88,7 @@ def test_real_speech_not_hallucination(text):
 def test_prompt_fragment_echo_is_hallucination():
     assert is_hallucination("War Thunder, bingo, waypoint, kneeboard.")
     assert is_hallucination("DCS, F-16")
-    assert not is_hallucination("DCS")  # 3 harf ve altı: ipucu kontrolüne girmez
+    assert not is_hallucination("DCS")  # 3 letters or fewer: skips the hint check
 
 
 def test_long_text_with_marker_word_is_kept():
@@ -164,7 +164,7 @@ def test_groq_errors_become_stterror(method):
     args = (Audio.silence(0.1, 16000),) if method != "transcribe_file" else (b"d", "a.webm")
     with pytest.raises(STTError, match="groq 429: rate limit") as ei:
         getattr(groq(bad_status), method)(*args)
-    assert len(str(ei.value)) < 230  # gövde 200 karakterle kırpılır
+    assert len(str(ei.value)) < 230  # body is truncated to 200 characters
     with pytest.raises(STTError, match="bağlantı"):
         getattr(groq(boom), method)(*args)
 
@@ -179,7 +179,7 @@ def test_groq_missing_text_is_empty_string():
     assert groq(lambda r: httpx.Response(200, json={})).transcribe(Audio.silence(0.1, 16000)) == ""
 
 
-# ------------------------------------------------------------------ yerel
+# ------------------------------------------------------------------ local
 def test_local_whisper_cpu_when_gpu_not_allowed(fake_fw):
     lw = LocalWhisper(allow_gpu=lambda: False, cpu_model="tiny", language="en")
     assert lw.transcribe(Audio.silence(0.2, 24000)) == "merhaba dünya"
@@ -189,7 +189,7 @@ def test_local_whisper_cpu_when_gpu_not_allowed(fake_fw):
     assert call["language"] == "en" and call["vad_filter"] and call["initial_prompt"] is None
     assert wav_seconds(call["bytes"]) == pytest.approx(0.2, abs=0.01)
     lw.transcribe_file(b"x", "a.webm")
-    assert len(fake_fw.created) == 1  # model önbellekte
+    assert len(fake_fw.created) == 1  # model is cached
 
 
 def test_local_whisper_prefers_cuda(fake_fw):
@@ -262,7 +262,7 @@ def test_add_cuda_dlls_on_windows_adds_torch_and_nvidia_dirs(monkeypatch, tmp_pa
     def add_dll(d):
         added.append(d)
         if "cudnn" in d:
-            raise OSError("izin yok")  # yoksayılmalı
+            raise OSError("izin yok")  # should be ignored
 
     env = {"PATH": "orig"}
     monkeypatch.setattr(stt, "os", SimpleNamespace(name="nt", add_dll_directory=add_dll, environ=env, pathsep=";"))
@@ -270,7 +270,7 @@ def test_add_cuda_dlls_on_windows_adds_torch_and_nvidia_dirs(monkeypatch, tmp_pa
     stt.add_cuda_dlls()
     assert len(added) == 3 and any(d.endswith("lib") for d in added)
     assert env["PATH"].endswith("orig") and env["PATH"].count(";") == 3
-    stt.add_cuda_dlls()  # ikinci çağrı bir şey yapmaz
+    stt.add_cuda_dlls()  # a second call does nothing
     assert len(added) == 3
 
 
@@ -281,7 +281,7 @@ def test_wakegate_unavailable_without_package(monkeypatch):
     assert g.available() is False and g.heard(Audio.silence(1, 16000)) is None
     assert g.transcribe(Audio.silence(1, 16000)) is None
     monkeypatch.delitem(sys.modules, "faster_whisper")
-    assert g.available() is False  # bir kez başarısız olunca kalıcı
+    assert g.available() is False  # permanent once it has failed once
 
 
 def test_wakegate_heard_uses_only_head(fake_fw):
@@ -290,7 +290,7 @@ def test_wakegate_heard_uses_only_head(fake_fw):
     assert text == "merhaba dünya" and g.device == "cpu"
     call = g._model.calls[0]
     assert wav_seconds(call["bytes"]) == pytest.approx(WakeGate.HEAD_SECONDS, abs=0.01)
-    # İpucu yok: "Hey Alice." ipucu gürültüde aynen geri dönüp asistanı kendi kendine uyandırıyordu.
+    # No hint: the "Hey Alice." hint used to come back verbatim on noise and wake the assistant by itself.
     assert call["initial_prompt"] is None and call["condition_on_previous_text"] is False
     assert g.last_seconds >= 0
     g.heard(Audio.silence(1.0, 16000))
@@ -314,7 +314,7 @@ def test_wakegate_gpu_failure_falls_back_to_cpu(fake_fw):
 def test_wakegate_heard_failure_disables_gate_after_three(fake_fw):
     fake_fw.raise_on_transcribe = RuntimeError("bozuk")
     g = WakeGate()
-    for _ in range(2):  # tek tük hata (CUDA OOM) kapıyı kapatmaz, model yeniden yüklenir
+    for _ in range(2):  # an occasional error (CUDA OOM) does not close the gate; the model is reloaded
         assert g.heard(Audio.silence(0.5, 16000)) is None
         assert g.available() is True and g._model is None
     assert g.heard(Audio.silence(0.5, 16000)) is None
@@ -381,7 +381,7 @@ def test_router_cooldown_skips_then_retries(monkeypatch):
     assert r.transcribe(Audio.silence(0.1)) == "ok" and r.last == "good"
     assert r.down["bad"] == 160
     r.transcribe(Audio.silence(0.1))
-    assert bad.calls == 1  # soğuma süresinde atlanır
+    assert bad.calls == 1  # skipped during cooldown
     now[0] = 161
     bad.error = None
     bad.result = "geri döndü"
@@ -393,7 +393,7 @@ def test_router_all_down_message_and_empty():
     with pytest.raises(STTError, match="a: x; b: y"):
         r.transcribe(Audio.silence(0.1))
     with pytest.raises(STTError, match="konuşma tanıma motoru yok"):
-        r.transcribe(Audio.silence(0.1))  # hepsi soğumada
+        r.transcribe(Audio.silence(0.1))  # all are in cooldown
     with pytest.raises(STTError, match="motoru yok"):
         STTRouter([]).transcribe(Audio.silence(0.1))
 

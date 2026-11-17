@@ -1,15 +1,16 @@
-"""Düşünme (reasoning) ayarı: her sağlayıcının kendi parametresine çevrilir.
+"""Thinking (reasoning) setting: translated to each provider's own parameter.
 
-Düşünen modeller (GLM, Qwen3, gpt-oss, Gemini 3, Nemotron...) basit işlerde bile dakikalarca düşünebiliyor.
-Rol başına seviye: off | low | medium | high | xhigh | max ("default" = modele bırak). xhigh ve max sadece ChatGPT
-girişinde var (Extra High, Max); diğer sağlayıcılarda high gider. config.toml:
+Thinking models (GLM, Qwen3, gpt-oss, Gemini 3, Nemotron...) can think for minutes even on simple tasks.
+Level per role: off | low | medium | high | xhigh | max ("default" = leave to model). xhigh and max only exist in
+ChatGPT input (Extra High, Max); other providers go to high. config.toml:
 
     [thinking]
     default = "low"
     brain = "low"
     fast = "off"
 
-Sağlayıcı parametreyi tanımazsa router isteği bir kez ayarsız tekrarlar ve o modele bir daha göndermez.
+If the provider does not recognize the parameter, the router retries the request once without settings and never
+sends it to that model again.
 """
 
 from __future__ import annotations
@@ -26,19 +27,19 @@ def level_for(config_data: dict[str, Any], role: str) -> str:
     return lvl if lvl in LEVELS else "default"
 
 
-BINARY = "binary"  # yalnız açık/kapalı: arayüz "kapalı / açık" diye gösterir (off ve high)
+BINARY = "binary"  # binary only: interface shows "off / on" (off and high)
 
 
 def levels_for(provider: str, model: str) -> tuple[list[str], str]:
-    """Bu modelin gerçekten desteklediği düşünme seviyeleri ve türü ("graded" | "binary" | "none"). Arayüz
-    yalnız bunları gösterir: önceden her modelde yedi seviyenin hepsi görünüyor, çoğu sessizce başka bir şeye
-    çevriliyordu (ör. Gemini'de xhigh = high). "default" (modele bırak) her zaman var."""
+    """Thinking levels and type ("graded" | "binary" | "none") actually supported by this model. The interface
+    shows only these: previously all seven levels appeared on every model, and most were silently converted to
+    something else (e.g., xhigh = high in Gemini). "default" (leave to model) is always present."""
     m = model.lower()
     if provider == "chatgpt" or (provider == "cliproxy" and m.startswith(("gpt-", "codex", "o3", "o4"))):
         lv = ["off", "low", "medium", "high", "xhigh"] + (["max"] if "gpt-6" in m else [])
         return lv + ["default"], "graded"
     if provider == "anthropic" or (provider == "cliproxy" and m.startswith("claude-")):
-        lv = ["low", "medium", "high", "max"]  # Claude düşünmeyi tamamen kapatmaz: en az "low"
+        lv = ["low", "medium", "high", "max"]  # Claude does not disable thinking entirely: at least "low"
         if "haiku" not in m:
             lv.insert(3, "xhigh")
         return (["off"] if provider == "cliproxy" else []) + lv + ["default"], "graded"
@@ -46,7 +47,7 @@ def levels_for(provider: str, model: str) -> tuple[list[str], str]:
         return ["low", "medium", "high", "default"], "graded"
     if provider == "gemini" or (provider == "cliproxy" and m.startswith("gemini-")):
         if "flash-lite" in m:
-            return ["default"], "none"  # isteği 400 ile reddediyor (11 Kasım günlüğü)
+            return ["default"], "none"  # rejects request with 400 (Nov 11 log)
         return ["off", "low", "medium", "high", "default"], "graded"
     if provider in ("openrouter", "ollama"):
         return ["off", "low", "medium", "high", "default"], "graded"
@@ -61,7 +62,7 @@ def levels_for(provider: str, model: str) -> tuple[list[str], str]:
 
 
 def fit(level: str, levels: list[str]) -> str:
-    """Seçili seviye bu modelde yoksa en yakın desteklenen seviye (model değişince ayar sessizce boşa gitmesin)."""
+    """Nearest supported level if the selected level is not in this model (so settings don't silently break on model change)."""
     if level in levels:
         return level
     order = ["off", "low", "medium", "high", "xhigh", "max"]
@@ -69,36 +70,36 @@ def fit(level: str, levels: list[str]) -> str:
         return "default"
     i = order.index(level)
     for d in range(1, len(order)):
-        for j in (i - d, i + d):  # önce bir altı (daha hızlı), sonra bir üstü
+        for j in (i - d, i + d):  # first one below (faster), then one above
             if 0 <= j < len(order) and order[j] in levels:
                 return order[j]
     return "default"
 
 
 def _on(level: str) -> bool:
-    # Sadece açık/kapalı destekleyen modellerde "low" da kapalı: amaç kısa cevap.
+    # On models supporting only binary on/off, "low" is also off: goal is short response.
     return level in ("medium", "high")
 
 
 def params(provider: str, model: str, level: str) -> dict[str, Any]:
-    """Seviye -> istek gövdesine eklenecek alanlar. Bilinmeyen sağlayıcı/model için boş."""
+    """Level -> fields to add to request body. Empty for unknown provider/model."""
     if level == "default" or not level:
         return {}
     if provider == "chatgpt":
-        # ChatGPT girişi (Responses API, reasoning.effort). gpt-6-luna: none/low/medium/high/xhigh/max; "minimal"i
-        # 400 ile reddediyor ve hata "not_found" sayılıp model oturum boyunca ölü işaretleniyor, o yüzden off -> none.
+        # ChatGPT input (Responses API, reasoning.effort). gpt-6-luna: none/low/medium/high/xhigh/max; rejects
+        # "minimal" with 400 and error is counted as "not_found", marking the model dead for the session, so off -> none.
         return {"reasoning_effort": "none" if level == "off" else level}
-    if provider == "anthropic":  # Claude API: output_config.effort (low..max); kapatılamaz, "off" en az düşünme
+    if provider == "anthropic":  # Claude API: output_config.effort (low..max); cannot be disabled, "off" is lowest thinking
         return {"reasoning_effort": "low" if level == "off" else level}
     if provider == "cliproxy":
-        # Yerel CLIProxyAPI (OpenAI uyumlu uç): reasoning_effort'u Claude'un uyarlamalı düşünmesine ve Codex'in
-        # reasoning.effort'una kendisi çevirir. "none" ikisinde de kapanış/az düşünme; xhigh/max olduğu gibi gider.
+        # Local CLIProxyAPI (OpenAI compatible endpoint): translates reasoning_effort itself to Claude's adaptive
+        # thinking and Codex's reasoning.effort. "none" closes/thinks less in both; xhigh/max go as-is.
         return {"reasoning_effort": "none" if level == "off" else level}
     if level in ("xhigh", "max"):
-        level = "high"  # diğer sağlayıcılarda en yüksek seviye
+        level = "high"  # highest level in other providers
     m = model.lower()
     effort = "low" if level == "off" else level
-    if "gpt-oss" in m:  # OpenAI açık ağırlıklı modeller: kapatılamaz, en az "low"
+    if "gpt-oss" in m:  # OpenAI open-weights models: cannot be disabled, at least "low"
         return {"reasoning_effort": effort}
     if provider == "gemini":
         return {"reasoning_effort": "none" if level == "off" else level}

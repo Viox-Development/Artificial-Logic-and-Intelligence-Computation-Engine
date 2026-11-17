@@ -1,15 +1,15 @@
-"""Akıllı model seçimi: işin alanına göre, kullanıcının erişebildiği modellerden en uygun sıra.
+"""Smart model selection: the best order, by task domain, among the models the user can access.
 
-Her model ailesi her işte aynı iyi değil: kimi arayüz ve tasarımda, kimi kodda, kimi inceleme ve akıl
-yürütmede, kimi Türkçe metinde öne çıkıyor. Burada:
+Not every model family is equally good at every task: some stand out in UI and design, some in code, some in review
+and reasoning, some in Turkish text. Here:
 
-1. İşin alanı görev metninden çıkarılır (tasarım, kod, inceleme, metin, basit iş, görsel).
-2. Aday havuzu: kullanıcının yapılandırdığı ve ölçümde çalışan modeller (anahtarı olmayan, kalkmış ya da
-   soğumadaki modeller atlanır).
-3. Puan = genel kalite (ranking.QUALITY) + o ailenin o alandaki gücü; ajan işi için bağlamı dar modeller geri
-   itilir. Basit işte hız önce gelir.
+1. The task domain is extracted from the task text (design, code, review, writing, simple work, vision).
+2. Candidate pool: the models the user has configured and that work in our measurements (models without a key,
+   retired, or cooling down are skipped).
+3. Score = general quality (ranking.QUALITY) + that family's strength in that domain; for agent work, models with a
+   narrow context are pushed back. For simple work, speed comes first.
 
-"auto" model seçen proje ajanı, yönetici ve kurul üyeleri bu sırayı kullanır; elle seçilen modele dokunulmaz.
+A project agent, manager, or council member that picks "auto" uses this order; a manually chosen model is left alone.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ DOMAINS = ("design", "code", "review", "writing", "light", "vision")
 DOMAIN_TR = {"design": "tasarım", "code": "kod", "review": "inceleme", "writing": "metin", "light": "basit iş",
              "vision": "görsel"}
 
-# İşin alanını görev metninden çıkaran kalıplar (ilk eşleşen değil, en çok eşleşen kazanır).
+# Patterns that extract the task domain from the task text (not the first match: the one with the most matches wins).
 KEYWORDS: dict[str, str] = {
     "design": r"tasarım|arayüz|\bui\b|\bux\b|frontend|ön ?yüz|css|html|sayfa|site|landing|görsel kimlik|tipografi|"
               r"animasyon|responsive|mobil görünüm|tema|renk|layout|düzen|bileşen|component|figma|stil",
@@ -38,8 +38,9 @@ KEYWORDS: dict[str, str] = {
              r"basit|mekanik|toplu değişiklik",
 }
 
-# Aile -> alan bonusu. İlk eşleşen kalıp kazanır; özel kalıplar önce. Puanlar göreli (genel kaliteye eklenir).
-# Kaynak: genel kullanım deneyimi ve herkese açık değerlendirmeler (2026); yeni aileler çıktıkça güncellenir.
+# Family -> domain bonus. The first matching pattern wins; specific patterns come first.
+# Scores are relative (added to general quality).
+# Source: general usage experience and public evaluations (2026); updated as new families appear.
 STRENGTHS: list[tuple[str, dict[str, int]]] = [
     ("claude", {"design": 14, "code": 12, "writing": 12, "review": 9, "vision": 4}),
     ("gpt-5", {"review": 11, "code": 10, "writing": 7, "design": 8, "vision": 6}),
@@ -61,7 +62,7 @@ STRENGTHS: list[tuple[str, dict[str, int]]] = [
     ("llama|gemma|mistral-small|laguna", {"light": 4, "design": -4, "review": -3}),
 ]
 
-# Ölçüm tablosunda (ücretsiz modeller) olmayan, kullanıcının kendi anahtarıyla eklediği ücretli aileler.
+# Paid families not in the measurement table (free models) that the user added with their own key.
 PAID_QUALITY: list[tuple[str, int]] = [
     ("claude-opus", 99), ("claude-sonnet", 96), ("claude-haiku", 84), ("claude", 92),
     ("gpt-5-nano", 78), ("gpt-5-mini", 88), ("gpt-5", 97), (r"\bo[34]-mini", 88), (r"\bo[34]\b|o3-|o4-", 95),
@@ -69,11 +70,11 @@ PAID_QUALITY: list[tuple[str, int]] = [
     ("gpt-6", 90), ("kimi-k3", 92), ("kimi", 82),
 ]
 
-MIN_AGENT_CONTEXT = 32_000  # bundan dar bağlamlı model ajan işinde çabuk tıkanır
+MIN_AGENT_CONTEXT = 32_000  # models with a narrower context get stuck quickly in agent work
 
 
 def classify(text: str) -> str:
-    """Görev metninden işin alanı. Eşleşme yoksa kod (ajan işlerinin çoğu kod)."""
+    """The task domain from the task text. If nothing matches, code (most agent work is code)."""
     low = (text or "").lower()
     hits = {d: len(re.findall(rx, low)) for d, rx in KEYWORDS.items()}
     best = max(hits, key=lambda d: hits[d])
@@ -93,8 +94,8 @@ def base_quality(ref: str) -> int:
 
 
 def quality(ref: str) -> int:
-    """Zekâ puanı, tek ölçekte: LMArena / ölçüm tablosu, orada yoksa ücretli aile tahmini (aynı ölçeğe çekilmiş).
-    0 = bilinmiyor."""
+    """Quality score on one scale: LMArena / measurement table; if absent, a paid-family estimate
+    (scaled to the same range). 0 = unknown."""
     q = ranking.quality(ref)
     if q:
         return q
@@ -111,7 +112,7 @@ def bonus(ref: str, domain: str) -> int:
 
 
 def pool(router) -> list[str]:
-    """Kullanıcının erişebildiği, şu an kullanılabilir modeller (araç destekli)."""
+    """Models the user can access that are usable right now (tool-capable)."""
     refs: list[str] = []
     for role in ("brain", "fast", "vision"):
         try:
@@ -127,15 +128,16 @@ def pool(router) -> list[str]:
             continue
         try:
             ok, why = router.available(r)
-        except Exception:  # noqa: BLE001 - tanımsız sağlayıcı vb.
+        except Exception:  # noqa: BLE001 - undefined provider, etc.
             continue
-        if ok or why.startswith("soğumada"):  # kısa süre meşgul model havuzdan düşmesin (router zaten sırayla dener)
+        if ok or why.startswith("soğumada"):  # a briefly busy model should not drop out of the pool
+            # (the router tries models in order anyway)
             out.append(r)
     return out
 
 
 def score(router, ref: str, domain: str) -> float:
-    q = quality(ref) or 60  # bilinmeyen ama kullanıcının seçtiği model: orta
+    q = quality(ref) or 60  # unknown but user-selected model: medium
     s = q + bonus(ref, domain)
     try:
         ctx = router.context_limit(ref)
@@ -143,14 +145,15 @@ def score(router, ref: str, domain: str) -> float:
         ctx = MIN_AGENT_CONTEXT
     if domain != "light" and ctx < MIN_AGENT_CONTEXT:
         s -= 25
-    if domain == "light":  # basit işte hız önemli: ölçülen gecikme puanı düşürür
+    if domain == "light":  # for simple work speed matters: measured latency lowers the score
         res = ((getattr(router, "auto_cache", None) or {}).get("results") or {}).get(ref) or {}
         s -= min(20.0, float(res.get("latency") or 0) * 3)
     return s
 
 
 def chain_for(router, domain: str, fallback: str = "brain") -> list[str]:
-    """Alan için model sırası: en uygun önce; sonunda (havuzda olmayanlar dahil) yedek rolün zinciri."""
+    """Model order for a domain: best first; at the end, the fallback role's chain
+    (including models not in the pool)."""
     if domain == "vision":
         vis = [r for r in pool(router) if _vision(router, r)]
         ranked = sorted(vis, key=lambda r: -score(router, r, domain))
@@ -158,7 +161,7 @@ def chain_for(router, domain: str, fallback: str = "brain") -> list[str]:
         ranked = sorted(pool(router), key=lambda r: -score(router, r, domain))
         strong = getattr(router, "strong_enough", None)
         if domain != "light" and callable(strong):
-            # Ajan/kurul işi de ana iş: sıranın sonunda yedek diye duran küçük modellere düşmesin.
+            # Agent/council work is main work too: don't drop to small models kept at the tail as backups.
             ranked = strong(ranked)
     try:
         rest = router.chain(fallback)
@@ -177,16 +180,16 @@ def _vision(router, ref: str) -> bool:
 
 
 def pick(router, text: str, fallback: str = "brain") -> tuple[str, list[str]]:
-    """Görev metnine göre (alan, model sırası)."""
+    """(domain, model order) for the task text."""
     domain = classify(text)
     return domain, chain_for(router, domain, fallback="fast" if domain == "light" else fallback)
 
 
 def explain(ref: str, domain: str) -> str:
-    """Arayüz için kısa açıklama: 'tasarım · glm-5.3'."""
+    """Short label for the UI: 'tasarım · glm-5.3'."""
     return f"{DOMAIN_TR.get(domain, domain)} · {ref.split(':', 1)[-1].split('/')[-1]}"
 
 
 def table(router) -> list[dict[str, Any]]:
-    """Ayarlar/ekran için: her alanda ilk üç model."""
+    """For settings/screen: the top three models in each domain."""
     return [{"domain": d, "label": DOMAIN_TR[d], "models": chain_for(router, d)[:3]} for d in DOMAINS]

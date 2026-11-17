@@ -1,15 +1,15 @@
-"""ChatGPT hesabıyla giriş: OpenAI'nin Codex'i ChatGPT planına (ücretsiz dahil) bağlayan girişi ALICE'te kullanma.
+"""ChatGPT account sign-in: using the sign-in that connects OpenAI's Codex to a ChatGPT plan (including free) in ALICE.
 
-OpenCode'daki "ChatGPT Plus/Pro ile giriş" ile aynı yol: Codex CLI'ın (açık kaynak, Apache-2.0) OAuth akışı
-(PKCE, tarayıcıda giriş, http://localhost:1455/auth/callback'e dönüş) ve Codex'in arka ucu
-(chatgpt.com/backend-api/codex/responses, Responses API biçiminde). API anahtarı gerekmez; kullanım ChatGPT planının
-Codex limitinden düşer. Limit dolunca router sıradaki modele geçer.
+Same path as "Sign in with ChatGPT Plus/Pro" in OpenCode: the Codex CLI's (open source, Apache-2.0) OAuth flow
+(PKCE, browser sign-in, return to http://localhost:1455/auth/callback) and Codex's backend
+(chatgpt.com/backend-api/codex/responses, in Responses API format). No API key is needed; usage counts against the
+ChatGPT plan's Codex limit. When the limit is reached, the router moves on to the next model in the queue.
 
-Not: OpenAI bu girişin başka programlardan kullanılmasını açıkça yasaklamıyor ama resmen de onaylamıyor (gri bölge).
-Birden çok hesap kaydedilebilir ve elle seçilir; limit dolunca kendiliğinden hesap değiştirilmez (limiti aşmak için
-hesap değiştirmek OpenAI kurallarına aykırı).
+Note: OpenAI does not explicitly forbid using this sign-in from other programs, but does not officially approve it
+either (gray area). Multiple accounts can be saved and picked by hand; when a limit is reached the account is not
+switched automatically (switching accounts to get around a limit goes against OpenAI's rules).
 
-Giriş bilgileri ~/.alice/chatgpt-auth.json'da (yalnız kullanıcı okuyabilir); erişim anahtarı süresi dolunca yenilenir.
+Login data is stored in ~/.alice/chatgpt-auth.json (readable by the user only); the access key is refreshed when it expires.
 """
 
 from __future__ import annotations
@@ -37,21 +37,21 @@ from alice.providers.openai_compat import (_TOO_LARGE_HINTS, _TRANSPORT_ERRORS, 
                                            normalize_message, redact_binary)
 
 ISSUER = "https://auth.openai.com"
-CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"  # Codex CLI'ın herkese açık OAuth istemcisi
-PORT = 1455  # Codex'in kayıtlı dönüş adresi bu porta bağlı
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"  # Codex CLI's public OAuth client
+PORT = 1455  # Codex's registered redirect address is tied to this port
 REDIRECT = f"http://localhost:{PORT}/auth/callback"
 SCOPE = "openid profile email offline_access"
-# Codex arka ucu bazı modellerde talimat olarak kendi istemini istiyor; o zaman bu (açık kaynak) metin talimata,
-# ALICE'in sistem istemi konuşmanın başına geliştirici mesajı olarak konur.
-CODEX_PROMPT_URLS = (  # dosya depoda yer değiştirebiliyor: sırayla denenir
+# For some models the Codex backend wants its own prompt as instructions; in that case this (open source) text is used
+# as the instructions, and ALICE's system prompt is put at the start of the conversation as a developer message.
+CODEX_PROMPT_URLS = (  # the file can move within the repo: tried in order
     "https://raw.githubusercontent.com/openai/codex/main/codex-rs/protocol/src/prompts/base_instructions/default.md",
     "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/gpt_5_codex_prompt.md",
 )
 CLIENT_VERSION = "0.99.0"
-REFRESH_EARLY = 300  # sn: süresi bitmeden bu kadar önce yenile
+REFRESH_EARLY = 300  # sec: refresh this long before it expires
 
 
-# ------------------------------------------------------------------------------------------- giriş bilgisi
+# ------------------------------------------------------------------------------------------- login data
 def auth_path() -> Path:
     return alice_home() / "chatgpt-auth.json"
 
@@ -64,17 +64,17 @@ def _jwt_claims(token: str) -> dict[str, Any]:
         return {}
 
 
-# Hesap dosyasının oku-değiştir-yaz adımları tek tek: birkaç sohbet aynı anda limit yazıp anahtar yenileyebiliyor.
-# Kilitsizken bir akışın save_limits'i, yenilemenin kaydettiği yeni (tek kullanımlık) refresh_token'ı eski
-# kopyayla eziyordu; sonraki yenileme reddedilip hesaptan çıkılıyordu.
+# Read-modify-write steps on the account file run one at a time: several chats can write limits and refresh the key at once.
+# Without a lock, one stream's save_limits overwrote the new (single-use) refresh_token saved by a refresh with an old
+# copy; the next refresh was rejected and the account was logged out.
 _store_lock = threading.RLock()
-# Aynı hesabın süresi dolan anahtarı aynı anda tek kez yenilenir: refresh_token tek kullanımlık, ikinci yenileme
-# aynı (artık geçersiz) anahtarla gidip "oturum yenilenemedi" hatası veriyordu.
+# An expired key for the same account is refreshed only once at a time: refresh_token is single-use, and a second
+# refresh sent the same (now invalid) key and got the error "oturum yenilenemedi" (session could not be renewed).
 _refresh_lock = threading.RLock()
 
 
 def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Hesap dosyasını okuyup değiştirip yazan işlev _store_lock altında çalışır."""
+    """A function that reads, modifies and writes the account file runs under _store_lock."""
     @functools.wraps(fn)
     def wrapper(*a: Any, **kw: Any) -> Any:
         with _store_lock:
@@ -83,7 +83,7 @@ def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def _store() -> dict[str, Any]:
-    """{"active": anahtar, "accounts": {anahtar: giriş bilgisi}}. Eski tek hesaplı dosya da okunur."""
+    """{"active": key, "accounts": {key: login data}}. An old single-account file is also read."""
     try:
         with _store_lock:
             data = json.loads(auth_path().read_text(encoding="utf-8"))
@@ -91,7 +91,7 @@ def _store() -> dict[str, Any]:
         return {"active": "", "accounts": {}}
     if not isinstance(data, dict):
         return {"active": "", "accounts": {}}
-    if "accounts" not in data:  # eski biçim: tek hesap
+    if "accounts" not in data:  # old format: single account
         key = data.get("account_id") or data.get("email") or "hesap"
         return {"active": key, "accounts": {key: data}} if data.get("access_token") else {"active": "", "accounts": {}}
     return {"active": str(data.get("active") or ""), "accounts": dict(data.get("accounts") or {})}
@@ -100,8 +100,8 @@ def _store() -> dict[str, Any]:
 def _write(store: dict[str, Any]) -> None:
     p = auth_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Geçici dosyaya yaz, sonra yerine koy: yarım yazılmış dosyayı okuyan (başka süreç) boş hesap listesi görüp
-    # onu kaydederek bütün hesapları silmesin.
+    # Write to a temp file, then replace it: so another process reading a half-written file doesn't see an empty
+    # account list, save it, and wipe out all accounts.
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(store), encoding="utf-8")
     try:
@@ -110,7 +110,7 @@ def _write(store: dict[str, Any]) -> None:
         pass
     try:
         os.replace(tmp, p)
-    except OSError:  # Windows: hedef o an başka süreçte açıksa yerine konamıyor
+    except OSError:  # Windows: the target can't be replaced if another process has it open right now
         p.write_text(json.dumps(store), encoding="utf-8")
         try:
             tmp.unlink()
@@ -119,20 +119,20 @@ def _write(store: dict[str, Any]) -> None:
 
 
 def load_auth(key: str | None = None) -> dict[str, Any]:
-    """Kullanılan (seçili) hesabın giriş bilgisi; key verilirse o hesabınki."""
+    """Login data of the account in use (selected); if key is given, that account's."""
     st = _store()
     return dict(st["accounts"].get(key or st["active"]) or {})
 
 
 @_locked
 def save_auth(tokens: dict[str, Any], key: str | None = None) -> dict[str, Any]:
-    """Giriş ya da yenilemeden gelen anahtarları kaydet. key yoksa (yeni giriş) hesap anahtarlardan bulunur ve seçili
-    hesap olur; aynı hesaba tekrar girilirse üzerine yazılır."""
+    """Save keys from a login or refresh. If key is missing (new login), the account is found from the keys
+    and becomes the selected account; signing in to the same account again overwrites it."""
     claims = _jwt_claims(tokens.get("id_token") or "")
     auth_claims = claims.get("https://api.openai.com/auth") or {}
     access = tokens.get("access_token") or ""
     st = _store()
-    select = key is None  # yeni giriş seçili hesap olur; var olan hesabın yenilenmesi seçimi değiştirmez
+    select = key is None  # new login becomes the selected account; refreshing an existing one keeps the selection
     if key is None:
         key = auth_claims.get("chatgpt_account_id") or claims.get("email") or f"hesap{len(st['accounts']) + 1}"
     prev = st["accounts"].get(key) or {}
@@ -145,8 +145,8 @@ def save_auth(tokens: dict[str, Any], key: str | None = None) -> dict[str, Any]:
         "email": claims.get("email") or prev.get("email", ""),
         "expires_at": float(_jwt_claims(access).get("exp") or time.time() + 3600),
     }
-    # Yenileme hesabın diğer alanlarını (model listesi, limitler, "dolu" işareti) korur: önceden saatlik her
-    # yenilemede silinip dolu hesap boş görünüyor, model menüsü de yeniden "okunuyor"a düşüyordu.
+    # A refresh keeps the account's other fields (model list, limits, "dolu" = full mark). Previously every hourly
+    # refresh wiped them, so a full account looked empty and the model menu fell back to "okunuyor" (loading) again.
     st["accounts"][key] = data if select else {**prev, **data}
     if select or not st["active"]:
         st["active"] = key
@@ -162,7 +162,7 @@ def accounts() -> list[dict[str, Any]]:
 
 @_locked
 def use(key: str) -> bool:
-    """Kayıtlı başka bir hesaba geç (elle)."""
+    """Switch manually to another saved account."""
     st = _store()
     if key not in st["accounts"]:
         return False
@@ -173,7 +173,7 @@ def use(key: str) -> bool:
 
 @_locked
 def remove(key: str | None = None) -> bool:
-    """Hesabı kaldır (varsayılan: seçili olan); seçili kaldırılırsa kalan ilk hesap seçilir."""
+    """Remove an account (default: the selected one); if the selected one is removed, the first remaining one is selected."""
     st = _store()
     key = key or st["active"]
     if key not in st["accounts"]:
@@ -193,7 +193,7 @@ def remove(key: str | None = None) -> bool:
 
 @_locked
 def _update(key: str | None, **fields: Any) -> None:
-    """key'li hesabın (None: seçili hesap) alanlarını güncelle."""
+    """Update the fields of the account with this key (None: the selected account)."""
     st = _store()
     acc = st["accounts"].get(key or st["active"])
     if acc is None:
@@ -206,18 +206,18 @@ def _update_active(**fields: Any) -> None:
     _update(None, **fields)
 
 
-# Hesap seçimi ve değişimi tek tek yapılır: uygulamada birkaç sohbet aynı sağlayıcıyı aynı anda kullanabiliyor.
+# Account selection and switching are done one at a time: several chats can use one provider at the same time.
 _switch_lock = threading.Lock()
 
 
 _fetching = threading.Lock()
-MODELS_RETRY = 300.0  # sn: liste alınamadıysa en erken bu kadar sonra tekrar denenir
-LOADING_MAX = 45.0  # sn: bu kadar sürede liste gelmediyse "okunuyor" değil hata gösterilir
+MODELS_RETRY = 300.0  # sec: if the list could not be fetched, retry no sooner than this
+LOADING_MAX = 45.0  # sec: if the list has not arrived in this time, show an error instead of "okunuyor" (loading)
 
 
 def ensure_models(pc: ProviderConfig) -> None:
-    """Giriş yapılmış ama model listesi yoksa (eski sürümde girildiyse ya da ilk deneme olmadıysa) arka planda oku.
-    Hata kaydedilir: model menüsü ve Kurulum kartı nedenini gösterir."""
+    """If signed in but there is no model list (signed in on an older version, or the first try never ran),
+    read it in the background. The error is saved: the model menu and the Setup card show the reason."""
     a = load_auth()
     if not a or a.get("models") or time.time() - float(a.get("models_tried") or 0) < MODELS_RETRY:
         return
@@ -228,7 +228,7 @@ def ensure_models(pc: ProviderConfig) -> None:
     def run() -> None:
         try:
             ChatGPTProvider(pc, timeout=30.0).list_models()
-        except Exception as e:  # noqa: BLE001 - ekranda göster
+        except Exception as e:  # noqa: BLE001 - show on screen
             _update_active(models_error=str(e)[:300])
         finally:
             _fetching.release()
@@ -247,7 +247,7 @@ def parse_models(data: Any) -> list[dict[str, Any]]:
 
 
 def add_model(name: str) -> list[str]:
-    """Liste okunamasa da kullanılabilsin: model adını elle ekle (ör. gpt-5.5)."""
+    """Usable even when the list cannot be read: add the model name by hand (e.g. gpt-5.5)."""
     name = name.strip()
     models = cached_models()
     if name and name not in models:
@@ -262,7 +262,7 @@ def retry_models(pc: ProviderConfig) -> None:
 
 
 def models_state() -> str:
-    """'ok' | 'loading' | 'error' | '' (giriş yok)."""
+    """'ok' | 'loading' | 'error' | '' (not signed in)."""
     a = load_auth()
     if not a:
         return ""
@@ -283,7 +283,7 @@ def models_error() -> str:
 
 
 def cached_models() -> list[str]:
-    """Seçili hesabın son okunan model listesi (model menüsünde ölçülmeden de görünsün)."""
+    """Last model list read for the selected account (shown in the model menu even before a probe)."""
     return [str(m) for m in load_auth().get("models") or []]
 
 
@@ -301,7 +301,7 @@ def _window(raw: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def limits_from_headers(headers: Any) -> dict[str, Any] | None:
-    """Codex her cevapta limit durumunu başlıklarda yolluyor (x-codex-primary-used-percent...)."""
+    """Codex sends the limit status in the headers of every reply (x-codex-primary-used-percent...)."""
     out: dict[str, Any] = {}
     for name in ("primary", "secondary"):
         used = headers.get(f"x-codex-{name}-used-percent")
@@ -317,7 +317,7 @@ def limits_from_headers(headers: Any) -> dict[str, Any] | None:
 
 
 def limit_note() -> str:
-    """Model menüsü için kısa limit özeti: '5 sa: %40 · haftalık: %12'."""
+    """Short limit summary for the model menu: '5 sa: %40 · haftalık: %12' (sa = hours, haftalık = weekly)."""
     lim = load_auth().get("limits") or {}
     parts = []
     for key in ("primary", "secondary"):
@@ -335,7 +335,7 @@ def save_limits(limits: dict[str, Any], key: str | None = None) -> None:
 
 
 def _used(acc: dict[str, Any], now: float) -> float:
-    """Hesabın en dolu limit penceresi (%); sıfırlanma zamanı geçmiş pencere boş sayılır."""
+    """The account's fullest limit window (%); a window whose reset time has passed counts as empty."""
     worst = 0.0
     for w in ((acc.get("limits") or {}).get(k) for k in ("primary", "secondary")):
         if isinstance(w, dict) and float(w.get("reset_at") or 0) > now:
@@ -345,8 +345,8 @@ def _used(acc: dict[str, Any], now: float) -> float:
 
 @_locked
 def _mark_exhausted(reset_in: float | None = None, key: str | None = None) -> None:
-    """Kullanım limiti dolan hesabı (key; None: seçili) dolu işaretle: sıradaki seçimde atlanır. reset_in: sunucunun
-    söylediği sıfırlanma süresi (sn); bilinmiyorsa kayıtlı pencereninki, o da yoksa 1 saat."""
+    """Mark an account whose usage limit is reached (key; None: selected) as full: it is skipped on the next pick.
+    reset_in: the reset time (sec) the server reported; if unknown, the saved window's, and if that is missing too, 1 hour."""
     a = load_auth(key)
     lim = dict(a.get("limits") or {})
     w = dict(lim.get("primary") or {})
@@ -360,7 +360,7 @@ def _mark_exhausted(reset_in: float | None = None, key: str | None = None) -> No
 
 
 def _next_account(tried: set[str]) -> str | None:
-    """Denenmemiş, limiti dolmamış ve girişi olan hesaplardan en boş olanı."""
+    """The least-used account among those not tried yet, not at their limit, and logged in."""
     now = time.time()
     cands = [(_used(a, now), k) for k, a in _store()["accounts"].items()
              if k not in tried and (a.get("refresh_token") or a.get("access_token"))]
@@ -369,7 +369,7 @@ def _next_account(tried: set[str]) -> str | None:
 
 
 def _earliest_reset() -> float | None:
-    """Limiti dolu hesapların en erken sıfırlanmasına kalan süre (sn); bilinmiyorsa None."""
+    """Time (sec) until the earliest reset of accounts whose limit is full; None if unknown."""
     now = time.time()
     waits = [float(w["reset_at"]) - now for a in _store()["accounts"].values()
              for w in ((a.get("limits") or {}).get(k) for k in ("primary", "secondary"))
@@ -378,8 +378,8 @@ def _earliest_reset() -> float | None:
 
 
 def _limit_error(status: int, body: str, headers: dict[str, str]) -> ProviderError:
-    """Codex arka ucunun 429'u: {"error": {"type": "usage_limit_reached", "resets_in_seconds": ...}}. Genel
-    sınıflandırma bunu 20 sn'lik hız sınırı sanıyor, 15 gün sonra açılacak hesaba yarım dakikada bir gidiliyordu."""
+    """Codex backend's 429: {"error": {"type": "usage_limit_reached", "resets_in_seconds": ...}}. The generic
+    classification reads it as a 20-second rate limit: an account reopening in 15 days was retried every 30 s."""
     err = classify_error(status, body, headers)
     if status != 429:
         return err
@@ -415,11 +415,11 @@ def status() -> dict[str, Any]:
             "limits": a.get("limits") or {}}
 
 
-USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"  # Codex'in /status ekranının okuduğu limit durumu
+USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"  # Limit status read by Codex's /status screen
 
 
 def fetch_usage(client: httpx.Client | None = None) -> dict[str, Any]:
-    """Limit durumunu şimdi sor (model çağırmadan). Olmazsa son cevaptan okunanla yetinilir."""
+    """Query the limit status now, without calling a model. Otherwise use what the last response said."""
     c = client or httpx.Client(timeout=20.0)
     try:
         a = access(c)
@@ -472,13 +472,13 @@ def access(client: httpx.Client | None = None, key: str | None = None) -> dict[s
     if float(a.get("expires_at") or 0) - REFRESH_EARLY < time.time():
         key = key or _store()["active"]
         with _refresh_lock:
-            a = load_auth(key)  # beklerken başka bir istek yenilemiş olabilir: aynı refresh_token'ı tekrar harcama
+            a = load_auth(key)  # another request may have refreshed while we waited: don't spend the same refresh_token again
             if float(a.get("expires_at") or 0) - REFRESH_EARLY < time.time():
                 a = refresh(client, key)
     return a
 
 
-# ------------------------------------------------------------------------------------------- tarayıcıyla giriş
+# ------------------------------------------------------------------------------------------- browser sign-in
 def _pkce() -> tuple[str, str]:
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(48)).rstrip(b"=").decode()
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -512,7 +512,7 @@ DONE_PAGE = ("<!doctype html><meta charset=utf-8><title>ALICE</title><body style
 
 def login(open_url: Callable[[str], Any] | None = None, timeout: float = 300.0,
           emit: Callable[[str], None] = lambda s: None) -> dict[str, Any]:
-    """Tarayıcıda ChatGPT girişini aç, dönüşü localhost:1455'te bekle, anahtarları kaydet."""
+    """Open the ChatGPT sign-in in the browser, wait for the return on localhost:1455, and save the keys (tokens)."""
     import webbrowser
 
     verifier, challenge = _pkce()
@@ -521,7 +521,7 @@ def login(open_url: Callable[[str], Any] | None = None, timeout: float = 300.0,
     done = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - http.server adı
+        def do_GET(self) -> None:  # noqa: N802 - name from http.server
             q = parse_qs(urlparse(self.path).query)
             if urlparse(self.path).path != "/auth/callback":
                 self.send_response(404)
@@ -564,7 +564,7 @@ def login(open_url: Callable[[str], Any] | None = None, timeout: float = 300.0,
     return exchange(got["code"], verifier)
 
 
-# ------------------------------------------------------------------------------------------- istek biçimi
+# ------------------------------------------------------------------------------------------- request format
 def _system_text(c: Any) -> str:
     if isinstance(c, str):
         return c
@@ -575,13 +575,13 @@ def _system_text(c: Any) -> str:
 
 
 def to_responses(messages:list[dict[str, Any]], codex_prompt: str | None = None) -> tuple[str, list[dict[str, Any]]]:
-    """Chat Completions mesajları -> (instructions, Responses API input)."""
-    # Parça listesi olarak gelen sistem mesajları da talimata girer (önceden yalnız düz metin alınıyor, liste düşüyordu).
+    """Chat Completions messages -> (instructions, Responses API input)."""
+    # Part-list system messages also go into instructions (before: only plain text was read, lists dropped).
     system = "\n\n".join(t for t in (_system_text(m.get("content")) for m in messages if m.get("role") == "system") if t)
     items: list[dict[str, Any]] = []
     if codex_prompt is not None and system:
         items.append({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": system}]})
-    images: list[dict[str, Any]] = []  # araç sonuçlarındaki görüntüler: araç çıktıları bitince kullanıcı mesajıyla
+    images: list[dict[str, Any]] = []  # images from tool results, sent as a user message after the tool outputs
 
     def flush_images() -> None:
         if images:
@@ -621,8 +621,8 @@ def to_responses(messages:list[dict[str, Any]], codex_prompt: str | None = None)
 
 
 def _tool_output(c: Any) -> tuple[str, list[dict[str, Any]]]:
-    """Araç sonucu -> (function_call_output metni, ayrıca gönderilecek input_image parçaları). Parça listesi önceden
-    JSON metnine dökülüyordu: ekran görüntüsünün base64'ü modele metin olarak gidiyordu."""
+    """Tool result -> (function_call_output text, input_image parts to send separately). The part list used to be
+    dumped into JSON text: the screenshot's base64 was going to the model as plain text."""
     if isinstance(c, str):
         return c, []
     if not isinstance(c, list):
@@ -638,7 +638,7 @@ def _tool_output(c: Any) -> tuple[str, list[dict[str, Any]]]:
             url = p["image_url"].get("url") if isinstance(p.get("image_url"), dict) else p.get("image_url")
             if url:
                 imgs.append({"type": "input_image", "image_url": url})
-        elif p.get("type") == "image" and isinstance(p.get("data"), str):  # MCP biçimi
+        elif p.get("type") == "image" and isinstance(p.get("data"), str):  # MCP format
             mime = p.get("mimeType") or "image/png"
             imgs.append({"type": "input_image", "image_url": f"data:{mime};base64,{p['data']}"})
     if not texts and not imgs:
@@ -679,7 +679,7 @@ _codex_prompt: str | None = None
 
 
 def codex_prompt(client: httpx.Client) -> str:
-    """Codex'in kendi istemi (bir kez indirilir, ~/.alice'te saklanır)."""
+    """Codex's own prompt (downloaded once and kept in ~/.alice)."""
     global _codex_prompt
     if _codex_prompt:
         return _codex_prompt
@@ -707,20 +707,20 @@ def codex_prompt(client: httpx.Client) -> str:
 
 
 class ChatGPTProvider(OpenAICompatProvider):
-    """Codex arka ucu üzerinden ChatGPT modelleri. Router için OpenAICompatProvider ile aynı arayüz."""
+    """ChatGPT models through the Codex backend. Same interface as OpenAICompatProvider, for the router."""
 
-    # İlk veri normalde 1-4 sn'de geliyor (düşünme özeti de veri sayılır). 90 sn beklenince takılan tek bir istek
-    # yönlendiricinin tekrarlarıyla bir görevi ~280 sn bekletmişti.
+    # The first data normally arrives in 1-4 s (a reasoning summary counts as data). A single request that hung
+    # for 90 s had held a task for ~280 s through the router's retries.
     FIRST_DATA = 30.0
-    # İlk veriden sonra iki parça arası en çok bu kadar sessizlik: uzun düşünmede model dakikalarca özet
-    # göndermeyebiliyor; 30 sn'lik ilk veri sınırı her aralığa uygulanınca sağlıklı cevap yarıda kesiliyordu.
+    # Max silence between chunks after the first data: during long reasoning the model can go minutes without
+    # sending a summary; applying the 30 s first-data limit to every gap cut healthy answers short.
     STREAM_READ = 300.0
-    WATCH_TICK = 0.5  # bekçi: ilk veri süresi ve iptal bu sıklıkla denetlenir
+    WATCH_TICK = 0.5  # watchdog: first-data time and cancellation are checked at this interval
 
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
         super().__init__(cfg, timeout, client)
         self.session = str(uuid.uuid4())
-        self.use_codex_prompt = False  # arka uç kendi talimatımızı reddederse True olur
+        self.use_codex_prompt = False  # set to True if the backend rejects our own instructions
 
     def _auth_headers(self, key: str | None = None) -> dict[str, str]:
         a = access(self._client, key)
@@ -735,7 +735,7 @@ class ChatGPTProvider(OpenAICompatProvider):
         if self.cfg.models:
             return [{"id": m} for m in self.cfg.models]
         seen = ""
-        # Sunucu listeyi istemci sürümüne göre süzüyor olabilir: önce bizim sürüm, sonra yenisi, sonra sürümsüz.
+        # The server may filter the list by client version: ours first, then a newer one, then no version.
         for params in ({"client_version": CLIENT_VERSION}, {"client_version": "9.99.0"}, {}):
             try:
                 r = self._client.get(f"{self.cfg.base_url}/models", params=params, headers=self._auth_headers())
@@ -755,22 +755,22 @@ class ChatGPTProvider(OpenAICompatProvider):
         raise ProviderError("server", f"model listesi boş geldi (sunucu cevabı: {seen or 'boş'})", 200)
 
     def chat(self, model, messages, tools=None, temperature=None, max_tokens=None, response_format=None, extra=None):
-        # max_tokens/temperature bilerek gönderilmiyor: Codex arka ucu max_output_tokens ve temperature'ı
-        # "Unsupported parameter" ile reddediyor (Codex CLI de göndermiyor). response_format text.format'a çevrilir.
+        # max_tokens/temperature are deliberately not sent: the Codex backend rejects max_output_tokens and
+        # temperature with "Unsupported parameter" (Codex CLI doesn't send them either). response_format becomes text.format.
         return self.chat_stream(model, messages, lambda _t: None, tools=tools, max_tokens=max_tokens,
                                 response_format=response_format, extra=extra)
 
     def chat_stream(self, model, messages, on_delta, tools=None, temperature=None, max_tokens=None,
                     response_format=None, extra=None, cancel=None, on_reasoning=None, on_first=None, on_tool=None,
                     on_call=None):
-        """Seçili hesap limite takılırsa ya da oturumu düşmüşse kayıtlı diğer hesaplara sırayla geçer."""
+        """If the selected account hits its limit or its session drops, switch to the other saved accounts in turn."""
         tried: set[str] = set()
-        full = 0  # kullanım limiti dolduğu için elenen hesap sayısı (geçici hız sınırı sayılmaz)
+        full = 0  # number of accounts dropped for an exhausted usage limit (temporary rate limits don't count)
         with _switch_lock:
             st = _store()
-            key = st["active"]  # bu isteğin hesabı: başka bir sohbet seçili hesabı değiştirse de istek bununla gider
+            key = st["active"]  # this request's account, kept even if another chat switches the selected one
             if _used(st["accounts"].get(key) or {}, time.time()) >= 100.0:
-                # Seçili hesabın dolu olduğu zaten biliniyor: boşuna istek atmadan boş hesaba geç.
+                # The selected account is already known to be full: switch to a free one without a wasted request.
                 free = _next_account({key})
                 if free is not None:
                     tried.add(key)
@@ -779,15 +779,15 @@ class ChatGPTProvider(OpenAICompatProvider):
                     key = free
         while True:
             tried.add(key)
-            started = [False]  # veri gelmeye başladıysa hesap değiştirilmez: ekrana yarım cevap basılmış olur
+            started = [False]  # no account switch once data arrives: a partial answer is already on screen
             try:
                 return self._chat_one(model, messages, on_delta, tools, extra, cancel, on_reasoning, on_first, on_tool,
                                       started, key, on_call=on_call, response_format=response_format)
             except ProviderError as e:
                 if e.kind not in ("rate_limit", "quota", "auth") or started[0]:
                     raise
-                # Kullanım limiti (kota) hesabı uzun süre kapatır; geçici hız sınırı (429) kapatmaz: yalnız bu istek
-                # başka hesabı dener, hesap dolu diye işaretlenmez.
+                # A usage limit (quota) blocks an account for a long time; a temporary rate limit (429) doesn't:
+                # only this request tries another account, and the account isn't marked as full.
                 used_up = e.kind == "quota" or getattr(e, "usage_limit", False)
                 with _switch_lock:
                     if used_up:
@@ -795,14 +795,14 @@ class ChatGPTProvider(OpenAICompatProvider):
                         _mark_exhausted(e.retry_after if e.kind == "quota" else None, key)
                     nxt = _next_account(tried)
                     if nxt is not None and _store()["active"] == key:
-                        use(nxt)  # seçili hesap hâlâ başarısız olansa değiştir; başkası değiştirdiyse dokunma
+                        use(nxt)  # switch if the selected account still failed; skip if another chat changed it
                 if nxt is not None:
                     key = nxt
                     continue
                 if full < 2 or full < len(tried):
-                    raise  # tek hesap, giriş hatası ya da geçici hız sınırı: hata olduğu gibi router'a
-                # Bütün hesapların kullanım limiti dolu: router bu modeli en erken sıfırlanmaya kadar (en çok yarım
-                # saat; arada hesap eklenebilir) rahat bıraksın.
+                    raise  # single account, sign-in error or temporary rate limit: pass the error to the router as is
+                # Every account is at its usage limit: let the router rest this model until the earliest reset
+                # (at most half an hour; accounts may be added in the meantime).
                 wait = min(_earliest_reset() or 1800.0, 1800.0)
                 raise ProviderError("quota", f"ChatGPT: kayıtlı {len(tried)} hesabın hepsinin limiti dolu", 429,
                                     max(wait, 60.0)) from e
@@ -827,7 +827,7 @@ class ChatGPTProvider(OpenAICompatProvider):
             except ProviderError as e:
                 if self.use_codex_prompt or e.kind != "bad_request" or "instruction" not in str(e).lower():
                     raise
-                self.use_codex_prompt = True  # arka uç kendi istemini istiyor: onunla tekrar dene
+                self.use_codex_prompt = True  # the backend wants its own prompt: retry with it
                 return self._stream(model, messages, delta, tools, extra, cancel, on_reasoning, first, on_tool, key,
                                     on_call=on_call, response_format=response_format)
         except ProviderError as e:
@@ -847,23 +847,23 @@ class ChatGPTProvider(OpenAICompatProvider):
             body["text"] = {"format": fmt}
             if fmt["type"] == "json_object" and "json" not in json.dumps(body["input"], ensure_ascii=False).lower() \
                     and "json" not in str(instructions).lower():
-                # Responses API json_object'te girdide "JSON" geçmesini şart koşuyor; yoksa istek 400 ile döner.
+                # Responses API json_object requires "JSON" in the input, otherwise the request returns 400.
                 body["input"] = [*items, {"type": "message", "role": "developer",
                                           "content": [{"type": "input_text", "text": "Cevabı JSON olarak ver."}]}]
         t0 = time.monotonic()
         text: list[str] = []
         calls: dict[str, dict[str, Any]] = {}
-        closed: set[str] = set()  # argümanları tamamlanan (output_item.done gelen) çağrılar
+        closed: set[str] = set()  # calls whose arguments are complete (output_item.done received)
         usage: dict[str, Any] = {}
         served = model
         finish = ""
         got_data = False
         completed = False
-        aborted = [""]  # bekçi akışı kestiyse nedeni: "first" (ilk veri gelmedi) ya da "cancel"
+        aborted = [""]  # why the watchdog stopped the stream, if it did: "first" (no first data) or "cancel"
         stop = threading.Event()
 
         def watch(r: httpx.Response) -> None:
-            """Akış sessizken de ilk veri sınırını ve iptali uygular: soketi kapatıp bekleyen okumayı uyandırır."""
+            """Applies the first-data limit and cancel even while silent: closes the socket to wake the read."""
             while not stop.wait(self.WATCH_TICK):
                 if cancel is not None and cancel():
                     aborted[0] = "cancel"
@@ -878,8 +878,8 @@ class ChatGPTProvider(OpenAICompatProvider):
             return ProviderError("network", f"zaman aşımı: model {int(self.FIRST_DATA)} sn'dir ilk cevabı vermedi")
 
         try:
-            # Başlıklar için okuma sınırı ilk veri süresi; gövdede (parça arası) STREAM_READ. İlk verinin 30 sn
-            # içinde gelmesini bekçi denetler.
+            # Read timeout for the headers is the first-data limit; in the body (between chunks) it is STREAM_READ.
+            # The watchdog checks that the first data arrives within 30 s.
             with self._client.stream("POST", f"{self.cfg.base_url}/responses", headers=self._auth_headers(key),
                                      json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=15.0)) as r:
                 lim = limits_from_headers(r.headers)
@@ -890,7 +890,7 @@ class ChatGPTProvider(OpenAICompatProvider):
                     raise _limit_error(r.status_code, r.text, dict(r.headers))
                 tm = r.request.extensions.get("timeout")
                 if isinstance(tm, dict):
-                    tm["read"] = self.STREAM_READ  # httpcore gövde okumasının süresini gövdeye başlarken buradan alır
+                    tm["read"] = self.STREAM_READ  # httpcore takes its body read timeout from here
                 threading.Thread(target=watch, args=(r,), daemon=True, name="alice-chatgpt-watch").start()
                 for line in r.iter_lines():
                     if cancel and cancel():
@@ -923,13 +923,13 @@ class ChatGPTProvider(OpenAICompatProvider):
                             calls[cid] = {"id": cid, "type": "function", "function": {
                                 "name": item.get("name") or "", "arguments": item.get("arguments") or ""}}
                             if item.get("id") and item["id"] != cid:
-                                calls.pop(item["id"], None)  # added call_id'siz geldiyse çift çağrı kalmasın
+                                calls.pop(item["id"], None)  # avoids a duplicate call if 'added' came without call_id
                             if kind == "response.output_item.done":
                                 closed.add(cid)
                             if on_tool is not None:
                                 on_tool(item.get("name") or "", len(item.get("arguments") or ""))
                             if on_call is not None and kind == "response.output_item.done":
-                                try:  # çağrı tamamlandı: ajan güvenli aracı cevap bitmeden başlatabilir
+                                try:  # call complete: the agent can start the tool safely before the reply finishes
                                     on_call(dict(calls[cid]))
                                 except Exception:  # noqa: BLE001
                                     pass
@@ -948,11 +948,11 @@ class ChatGPTProvider(OpenAICompatProvider):
                         code = str(err.get("code") or "") if isinstance(err, dict) else ""
                         if "usage_limit" in code or "rate_limit" in code:
                             limit_err = ProviderError("rate_limit", f"ChatGPT limiti doldu: {msg}", 429)
-                            limit_err.usage_limit = "usage_limit" in code  # kullanım limiti: hesap dolu sayılır
+                            limit_err.usage_limit = "usage_limit" in code  # usage limit: the account counts as full
                             raise limit_err
                         if any(h in f"{code} {msg}".lower() for h in _TOO_LARGE_HINTS):
-                            # Bağlam taşması akış içinde response.failed (context_length_exceeded) olarak geliyor:
-                            # "server" sayılınca router konuşmayı küçültmek yerine modeli bozuk sayıp soğumaya alıyordu.
+                            # Context overflow arrives inside the stream as response.failed (context_length_exceeded).
+                            # As "server", the router would cool the model off as broken, not shrink the chat.
                             raise ProviderError("too_large", f"ChatGPT: {msg}")
                         raise ProviderError("server", f"ChatGPT: {msg}")
         except _TRANSPORT_ERRORS as e:
@@ -968,8 +968,8 @@ class ChatGPTProvider(OpenAICompatProvider):
         if aborted[0] == "first" and not completed:
             raise first_timeout()
         if not completed and any(cid not in closed for cid in calls):
-            # Akış bitiş olayı gelmeden kesildi ve bir araç çağrısının argümanları yarım (output_item.added'deki
-            # boş metin): önceden çağrı boş argümanla başarılı cevap sayılıp araç öyle çalıştırılıyordu.
+            # The stream was cut before its end event and a tool call's arguments are partial (empty text from
+            # output_item.added). Before, the call counted as a success with empty arguments and the tool ran that way.
             raise ProviderError("network", "ChatGPT akışı yarıda kesildi (araç çağrısı tamamlanmadı)")
         msg: dict[str, Any] = {"content": "".join(text)}
         if calls:
@@ -980,8 +980,8 @@ class ChatGPTProvider(OpenAICompatProvider):
 
 
 def _abort_stream(r: httpx.Response) -> None:
-    """Başka iş parçacığında bloklanmış okumayı uyandırır: Linux'ta yalnız shutdown, Windows'ta yalnız close bekleyen
-    recv'i hemen bitiriyor; ikisi de yapılır. Soket yoksa (sahte taşıma) yanıt kapatılır."""
+    """Wakes a read blocked in another thread: on Linux only shutdown, on Windows only close ends the pending
+    recv at once, so both are done. Without a socket (fake transport) the response is closed."""
     stream = (r.extensions or {}).get("network_stream")
     sock = None
     try:
@@ -990,7 +990,7 @@ def _abort_stream(r: httpx.Response) -> None:
         sock = None
     if sock is not None:
         try:
-            socket.socket.shutdown(sock, socket.SHUT_RDWR)  # SSLSocket.shutdown _sslobj'u sıfırlıyor: ham soketle
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)  # SSLSocket.shutdown resets _sslobj, so use the raw socket
         except (OSError, TypeError, ValueError):
             pass
         try:
@@ -1005,8 +1005,8 @@ def _abort_stream(r: httpx.Response) -> None:
 
 
 def make_client(pc: ProviderConfig, timeout: float = 180.0) -> OpenAICompatProvider:
-    """Sağlayıcının istemcisi: ChatGPT girişiyse Codex arka ucu, değilse OpenAI uyumlu API."""
-    from alice.providers import openai_compat  # modül üzerinden: testler sahte istemci koyabilsin
+    """The provider's client: the Codex backend for ChatGPT sign-in, otherwise the OpenAI-compatible API."""
+    from alice.providers import openai_compat  # via the module, so tests can inject a fake client
 
     if pc.auth == "chatgpt":
         return ChatGPTProvider(pc, timeout)

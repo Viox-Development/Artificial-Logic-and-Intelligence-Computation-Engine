@@ -1,24 +1,24 @@
-"""System One karar motoru (Jev ve yedeği).
+"""System One decision engine (Jev and its fallback).
 
-Jev metin üretmez; bir durumu (state) ve 1-8 adet tipli soruyu alır, her soru için
-etiket + olasılık döndürür. Bilgisayar kullanımında işe yarayan kısım şu: ekrandaki
-tıklanabilir şeyleri ID'li aday listesine çevirirsin, Jev ~100 ms'de hangisinin
-seçileceğini söyler, sen de o adayı uygularsın. Uzun metin üretimi ve planlama
-yine büyük modelde (System 2) kalır.
+Jev does not generate text; it takes a state and 1-8 typed questions and returns a label + probability for
+each question. What is useful for computer use: you turn the clickable things on screen into a candidate list
+with IDs, Jev says which one to pick in ~100 ms, and you apply that candidate. Long text generation and planning
+stay with the big model (System 2).
 
-Soru tipleri (Jev ile aynı isimler):
-  Choice(instructions, criteria={etiket: açıklama})  -> tek etiket
-  Noul(instructions)                                   -> 0..1 arası "evet" olasılığı
-  Score(instructions, levels={1: "...", 5: "..."})     -> seviye (beklenen değer)
-  Box(instructions)                                    -> görüntüde yer: {left, top, right, bottom} (0-1)
+Question types (same names as Jev):
+  Choice(instructions, criteria={label: description})  -> a single label
+  Noul(instructions)                                   -> "yes" probability between 0 and 1
+  Score(instructions, levels={1: "...", 5: "..."})     -> level (expected value)
+  Box(instructions)                                    -> place in the image: {left, top, right, bottom} (0-1)
 
-Görseller (Jev 1.13+, Box Jev 1.14+; TypeSafe'in "Danger Zone" deneysel özelliği): decide(..., images={ref: bytes})
-ile gönderilir; ref, state'te ya da soru metninde görselin geçtiği yerdir. Box her zaman bir kutu döndürür ("yok"
-cevabı yoktur): yanına aynı istekte "var mı?" diye bir Noul sorulur. Görsel/Box desteklemeyen motorlar (LLM yedeği)
-böyle bir istekte atlanır. Ayrıntı: https://docs.typesafe.ai/go/images.md
+Images (Jev 1.13+, Box Jev 1.14+; TypeSafe's experimental "Danger Zone" feature) are sent with
+decide(..., images={ref: bytes}); ref is where the image is referenced in the state or question text.
+Box always returns a box (there is no "none" answer): a Noul asking "is it there?" is sent in the same
+request. Engines that cannot handle images or Box (the LLM fallback) are skipped for such a request.
+Details: https://docs.typesafe.ai/go/images.md
 
-Zincir: config [decider].chain, örn. ["jev", "jev-openrouter", "llm:fast"]. Jev anahtarı yoksa ya da
-hata verirse aynı soru ücretsiz hızlı bir LLM'e JSON formatında sorulur.
+Chain: config [decider].chain, e.g. ["jev", "jev-openrouter", "llm:fast"]. If the Jev key is missing or Jev
+fails, the same question is asked of a free fast LLM in JSON format.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class Choice:
 @dataclass
 class Noul:
     instructions: str
-    # İsteğe bağlı: "true" ve "false"un somut tarifleri (TypeSafe: false'u "değil X" yerine bir durum olarak yaz).
+    # Optional: concrete descriptions of "true" and "false" (TypeSafe: write false as a state, not as "not X").
     criteria: dict[str, str] | None = None
 
 
@@ -57,18 +57,19 @@ class Score:
 
 @dataclass
 class Box:
-    """Görüntüde bir şeyin yeri. Cevap: {"left","top","right","bottom"}, görüntünün eni/boyunun 0-1 kesri."""
+    """Where something is in the image. Answer: {"left","top","right","bottom"}, fractions 0-1 of the
+    image width/height."""
     instructions: str
 
 
 Question = Choice | Noul | Score | Box
 IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
-IMAGE_MIN, IMAGE_MAX = 280, 1568  # piksel: Jev'in kabul ettiği kenar aralığı (dışındaki görüntü reddedilir)
+IMAGE_MIN, IMAGE_MAX = 280, 1568  # pixels: the edge range Jev accepts (images outside it are rejected)
 
 
 def prepare_image(img: Any, quality: int = 85) -> bytes:
-    """PIL görüntüsünü Jev'in istediği hale getir: uzun kenar en fazla 1568, kısa kenar en az 280 (beyazla
-    doldurulur, oran bozulmaz), RGB, düz (baseline) JPEG. Bu sınırların dışındaki görüntüyü API reddeder."""
+    """Convert a PIL image to what Jev expects: long side at most 1568, short side at least 280 (padded with white,
+    aspect ratio preserved), RGB, plain (baseline) JPEG. The API rejects images outside these limits."""
     import io
 
     from PIL import Image as PILImage
@@ -88,7 +89,8 @@ def prepare_image(img: Any, quality: int = 85) -> bytes:
 
 
 def padded_fraction(img_size: tuple[int, int]) -> tuple[float, float]:
-    """prepare_image küçük görüntüyü sağdan/alttan doldurduysa: Box kesirlerini asıl görüntüye çevirmek için çarpan."""
+    """If prepare_image padded a small image on the right/bottom: the multiplier that converts Box fractions
+    back to the original image."""
     w, h = img_size
     scale = min(1.0, IMAGE_MAX / max(w, h))
     sw, sh = w * scale, h * scale
@@ -135,7 +137,8 @@ def _image_format(data: bytes) -> str:
 
 
 def _validate(questions: dict[str, Question]) -> None:
-    # Jev'de soru sayısı sınırı yok (istek bağlam sınırına sığmalı); LLM yedeği için makul bir üst sınır.
+    # Jev has no limit on the number of questions (the request must fit the context limit); a reasonable
+    # upper bound for the LLM fallback.
     if not 1 <= len(questions) <= 16:
         raise ValueError("System One'a 1 ile 16 arasında soru sorulur")
     for k, q in questions.items():
@@ -154,12 +157,11 @@ def _expected(probs: dict[str, float]) -> float:
 
 # --------------------------------------------------------------------------- Jev
 class JevEngine:
-    """TypeSafe Jev REST istemcisi: POST {jev_url} {model, state, questions}.
+    """TypeSafe Jev REST client: POST {jev_url} {model, state, questions}.
 
-    Score soruları güvenli olsun diye Jev'e Choice olarak gönderilir (seviyeler
-    etiket olur) ve beklenen değer olasılıklardan hesaplanır; Choice ve Noul
-    formatı resmi quickstart ile aynıdır. Cevap ayrıştırıcı toleranslıdır çünkü
-    API hâlâ erken erişimde ve alan adları değişebilir.
+    To be safe, Score questions are sent to Jev as Choice (the levels become labels) and the expected value is
+    computed from the probabilities; the Choice and Noul format is the same as the official quickstart. The answer
+    parser is tolerant because the API is still in early access and field names may change.
     """
 
     def __init__(self, url: str, model: str, api_key: str, client: httpx.Client | None = None, name: str = "jev",
@@ -168,7 +170,7 @@ class JevEngine:
         self.url = url
         self.model = model
         self.api_key = api_key
-        self.images = images  # görsel + Box (TypeSafe'in deneysel "Danger Zone" özelliği): config [decider] jev_images
+        self.images = images  # image + Box (TypeSafe's experimental "Danger Zone" feature): config [decider] jev_images
         self._client = client or httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
 
     def close(self) -> None:
@@ -206,7 +208,7 @@ class JevEngine:
         except httpx.HTTPError as e:
             raise DeciderError(f"jev ağ hatası: {e}") from e
         if r.status_code != 200:
-            # 402 = kredi yok (OpenRouter), 401/403 = anahtar/erişim yok: bunlar bir dakikada düzelmez.
+            # 402 = no credit (OpenRouter), 401/403 = no key/access: these do not get fixed within a minute.
             cooldown = 3600.0 if r.status_code in (401, 402, 403) else 60.0
             raise DeciderError(f"{self.name} HTTP {r.status_code}: {r.text[:300]}", cooldown)
         data = r.json()
@@ -251,7 +253,7 @@ class JevEngine:
         return Answer("choice", label, conf, probs)
 
 
-# ------------------------------------------------------------------ LLM emülasyonu
+# ------------------------------------------------------------------ LLM emulation
 _SYSTEM = (
     "You are a System One decision engine. You never explain, you only decide. "
     "Read the STATE, answer every QUESTION and reply with ONE JSON object only, no prose, no code fences."
@@ -259,7 +261,7 @@ _SYSTEM = (
 
 
 class LLMEngine:
-    """Jev'in ücretsiz yedeği: hızlı bir LLM'e aynı soruları JSON olarak sorar."""
+    """Free fallback for Jev: asks a fast LLM the same questions as JSON."""
 
     def __init__(self, router: Router, role: str = "fast"):
         self.router = router
@@ -298,7 +300,7 @@ class LLMEngine:
             res = self.router.chat(self.role, msgs, temperature=0, max_tokens=600,
                                    response_format={"type": "json_object"})
         except AllProvidersFailed:
-            # Bazı modeller response_format'ı reddediyor, bir de onsuz dene.
+            # Some models reject response_format, so try once more without it.
             res = self.router.chat(self.role, msgs, temperature=0, max_tokens=600)
         data = extract_json(res.text)
         if not isinstance(data, dict):
@@ -326,7 +328,7 @@ class LLMEngine:
             return Answer("score", v, conf, {})
         label = str(raw).strip() if raw is not None else ""
         if label not in q.criteria:
-            # Model açıklamayı ya da tırnaklı hali döndürmüş olabilir.
+            # The model may have returned an explanation or a quoted form instead.
             norm = {k.lower(): k for k in q.criteria}
             label = norm.get(label.lower().strip('"\''), "")
             if not label:
@@ -358,7 +360,7 @@ def extract_json(text: str) -> Any:
     return None
 
 
-# ------------------------------------------------------------------------ zincir
+# ------------------------------------------------------------------------ chain
 class Decider:
     def __init__(self, engines: list[Engine], on_event=None):
         if not engines:
@@ -378,7 +380,7 @@ class Decider:
                     engines.append(JevEngine(dc.get("jev_url"), dc.get("jev_model", "jev-latest"), key,
                                              images=bool(dc.get("jev_images", True))))
             elif item == "jev-openrouter":
-                # Aynı Jev, OpenRouter hesabından faturalanır. Ücretsiz (:free) sürümü yok, kredi gerekir.
+                # Same Jev, billed through the OpenRouter account. There is no free (:free) version; credit is required.
                 key = os.environ.get(dc.get("openrouter_jev_api_key_env", "OPENROUTER_API_KEY"))
                 if key:
                     engines.append(JevEngine(dc.get("openrouter_jev_url", "https://openrouter.ai/api/v1/systemone"),
@@ -395,7 +397,7 @@ class Decider:
         return [e.name for e in self.engines]
 
     def close(self) -> None:
-        """Kendi HTTP istemcisi olan motorları kapat (yönlendirici paylaşımlı; onu sahibi kapatır)."""
+        """Close the engines that have their own HTTP client (the router is shared; its owner closes it)."""
         for e in self.engines:
             close = getattr(e, "close", None)
             if callable(close):
@@ -406,14 +408,15 @@ class Decider:
 
     @property
     def supports_images(self) -> bool:
-        """Görsel/Box sorabilecek, şu an bozuk sayılmayan bir motor var mı (TypeSafe anahtarı + jev_images)."""
+        """Is there an engine that can ask image/Box questions and is not currently considered broken
+        (TypeSafe key + jev_images)."""
         now = time.monotonic()
         return any(getattr(e, "images", False) and self._broken.get(f"{e.name}:img", 0) <= now
                    and self._broken.get(e.name, 0) <= now for e in self.engines)
 
     def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
-        # Geçersiz soru çağıranın hatası: motorlara gitmeden düşsün. Önceden her motor bu yüzden "bozuk" sayılıp
-        # soğumaya alınıyordu ve sonraki geçerli sorular da bir dakika boyunca cevapsız kalıyordu.
+        # An invalid question is the caller's error: fail before reaching the engines. Previously every engine
+        # was marked "broken" because of it and cooled down, and the next valid questions went unanswered for a minute.
         _validate(questions)
         visual = _needs_images(questions, images)
         errors = []
@@ -421,29 +424,30 @@ class Decider:
             if self._broken.get(e.name, 0) > time.monotonic():
                 continue
             if visual and not getattr(e, "images", False):
-                continue  # görsel soramayan motor (LLM yedeği): bozuk sayma, atla
+                continue  # engine that cannot ask images (LLM fallback): do not mark it broken, skip it
             if visual and self._broken.get(f"{e.name}:img", 0) > time.monotonic():
                 continue
             try:
                 return e.decide(state, questions, images) if visual else e.decide(state, questions)
-            except Exception as err:  # noqa: BLE001 - beklenmeyen cevap (JSON değil, eksik anahtar) da sıradaki motora geçsin
+            except Exception as err:  # noqa: BLE001 - an unexpected reply (not JSON, missing key) also moves on
                 errors.append(f"{e.name}: {err}")
                 self.on_event(f"decider {e.name} başarısız, sıradakine geçiliyor")
-                # Görsel istek reddedildiyse (400: görsel izni yok, görüntü kabul edilmedi) sadece görsel kısmı
-                # soğusun; aynı motor metin sorularını yine cevaplasın.
+                # If the image request was rejected (400: no image permission, image not accepted), only the image part
+                # cools down; the same engine still answers the text questions.
                 key = f"{e.name}:img" if visual and "HTTP 4" in str(err) else e.name
                 self._broken[key] = time.monotonic() + getattr(err, "cooldown", 60.0)
         raise DeciderError("; ".join(errors) or ("görsel soru sorabilecek karar motoru yok (TypeSafe anahtarı gerekli)"
                                                  if visual else "kullanılabilir karar motoru yok"))
 
 
-# ------------------------------------------------------------------- görsel testi
-TEST_RECT = (0.55, 0.2, 0.85, 0.55)  # left, top, right, bottom: test görüntüsündeki kırmızı dikdörtgen
+# ------------------------------------------------------------------- image test
+TEST_RECT = (0.55, 0.2, 0.85, 0.55)  # left, top, right, bottom: the red rectangle in the test image
 
 
 def image_check(decider: "Decider") -> dict[str, Any]:
-    """Jev görselleri görüyor ve Box doğru yeri buluyor mu? Bilinen bir test görüntüsüyle tek istek (Kurulum →
-    Hepsini dene). status: ok | warn (çalışıyor ama cevap şüpheli) | fail | off (görsel motoru yok)."""
+    """Can Jev see images, and does Box find the right place? One request with a known test image (Kurulum →
+    Hepsini dene; Setup → Try all). status: ok | warn (works but the answer is doubtful) | fail | off (no image
+    engine)."""
     from PIL import Image as PILImage
     from PIL import ImageDraw
 

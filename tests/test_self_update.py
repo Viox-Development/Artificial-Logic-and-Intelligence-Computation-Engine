@@ -1,4 +1,4 @@
-"""Çekirdeğin ve uygulamanın birlikte güncellenmesi: kilit, bayat süreç, duyuru, boştayken yeniden başlama."""
+"""Updating the core and the app together: lock, stale process, announcement, restart when idle."""
 
 from __future__ import annotations
 
@@ -30,13 +30,13 @@ def cfg(**update):
     return c
 
 
-# ------------------------------------------------------------------------------ kilit
+# ------------------------------------------------------------------------------ lock
 def test_ayni_anda_tek_surec_gunceller():
     with updater.update_lock():
         with pytest.raises(updater.UpdateBusy):
             with updater.update_lock():
                 pass
-    with updater.update_lock():  # bırakılınca tekrar alınabilir
+    with updater.update_lock():  # can be acquired again once released
         pass
 
 
@@ -56,13 +56,13 @@ def test_uzun_suren_guncellemenin_kilidi_bayat_sayilmaz_olu_surecinki_sayilir(mo
     p = updater._lock_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("424242", encoding="utf-8")
-    old = p.stat().st_mtime - 1000  # fetch + pip + duman testi 900 sn'yi geçebilir
+    old = p.stat().st_mtime - 1000  # fetch + pip + smoke test may exceed 900 s
     os.utime(p, (old, old))
     monkeypatch.setattr(psutil, "pid_exists", lambda pid: True)
     with pytest.raises(updater.UpdateBusy):
         with updater.update_lock():
             pass
-    monkeypatch.setattr(psutil, "pid_exists", lambda pid: False)  # tutan süreç çökmüş: hemen alınır
+    monkeypatch.setattr(psutil, "pid_exists", lambda pid: False)  # the holding process crashed: acquire immediately
     with updater.update_lock():
         pass
 
@@ -80,20 +80,20 @@ def test_baskasi_zaten_cektiyse_tekrar_cekmez(at_clone, offline):
     clone, origin = at_clone
     sha = push(origin, "yeni")
     info = updater.check(cfg())
-    git(clone, "pull", "-q", "--ff-only")       # başka bir süreç (ya da kullanıcı) çekti
+    git(clone, "pull", "-q", "--ff-only")       # another process (or the user) pulled
     ok, msg = updater.apply_update(info, cfg())
     assert ok and "zaten güncellendi" in msg and git(clone, "rev-parse", "HEAD") == sha
 
 
-# ------------------------------------------------------------------------------ bayat süreç
+# ------------------------------------------------------------------------------ stale process
 def test_diskteki_kod_yeniyse_surec_bayat(at_clone, offline):
     clone, origin = at_clone
     updater.mark_running()
     assert not updater.check(cfg()).stale
     push(origin, "yeni")
-    git(clone, "pull", "-q", "--ff-only")       # süreç açıkken kod değişti
+    git(clone, "pull", "-q", "--ff-only")       # code changed while the process was running
     info = updater.check(cfg())
-    assert info.stale and not info.available    # çekecek bir şey yok, yeniden başlamak yeter
+    assert info.stale and not info.available    # nothing to pull, a restart is enough
     assert info.as_dict()["stale"] is True
 
 
@@ -104,7 +104,7 @@ def test_mark_running_cagrilmadiysa_bayat_sayilmaz(at_clone, offline):
     assert not updater.check(cfg()).stale
 
 
-# ------------------------------------------------------------------------------ duyuru
+# ------------------------------------------------------------------------------ announcement
 def test_guncelleme_bir_kez_duyurulur_her_yuzeyde(at_clone, offline):
     clone, origin = at_clone
     push(origin, "Spotify akışları eklendi")
@@ -112,9 +112,9 @@ def test_guncelleme_bir_kez_duyurulur_her_yuzeyde(at_clone, offline):
     ok, _ = updater.apply_update(updater.check(cfg()), cfg())
     assert ok
     a = updater.consume_announcement("app")
-    assert a["changes"] == ["Akış koşulları", "Spotify akışları eklendi"]   # yerel git'ten, API'siz
-    assert updater.consume_announcement("app") is None                      # ikinci kez yok
-    assert updater.consume_announcement("core")["changes"]                  # çekirdek kendi payını alır
+    assert a["changes"] == ["Akış koşulları", "Spotify akışları eklendi"]   # from local git, without the API
+    assert updater.consume_announcement("app") is None                      # not announced a second time
+    assert updater.consume_announcement("core")["changes"]                  # the core gets its own share
 
 
 def test_eski_guncelleme_duyurulmaz():
@@ -132,11 +132,11 @@ def test_local_log(at_clone):
     assert updater.local_log(clone, a, git(clone, "rev-parse", "HEAD")) == ["bir"]
 
 
-# ------------------------------------------------------------------------------ uygulama işareti
+# ------------------------------------------------------------------------------ app marker
 def test_uygulama_isareti(monkeypatch):
-    assert not updater.app_running()            # dosya yok
+    assert not updater.app_running()            # no file
     updater.mark_app()
-    # Bu süreç pytest: komut satırında "alice app" yok, pid başka bir programa geçmiş gibi davranılır
+    # This is pytest: no "alice app" on the command line; act as if the pid now belongs to another program
     assert not updater.app_running()
 
     class P:
@@ -160,7 +160,7 @@ def test_olu_pid_uygulama_sayilmaz():
     assert not updater.app_running()
 
 
-# ------------------------------------------------------------------------------ çekirdek
+# ------------------------------------------------------------------------------ core
 @pytest.fixture
 def core(tmp_path):
     from alice.core.service import Core
@@ -193,7 +193,7 @@ def test_cekirdek_bayatsa_cekmeden_yeniden_baslamayi_isaretler(core, at_clone, o
     clone, origin = at_clone
     updater.mark_running()
     push(origin, "yeni")
-    git(clone, "pull", "-q", "--ff-only")   # uygulama çekti
+    git(clone, "pull", "-q", "--ff-only")   # the app pulled it
     monkeypatch.setattr(updater, "apply_update", lambda *a, **k: pytest.fail("çekecek bir şey yok"))
     core.update_job()
     assert core.restart_pending
@@ -225,7 +225,7 @@ def test_yeniden_baslama_calisan_gorev_bitince(core):
     core.restart_pending = True
     core.running_tasks.add("yedekleme")
     core._maybe_update(0)
-    assert core.restarts == []                 # görev yarıda kalmasın
+    assert core.restarts == []                 # don't leave the task half-finished
     core.running_tasks.clear()
     core._maybe_update(0)
     assert core.restarts == [1]
@@ -237,12 +237,12 @@ def test_kontrol_araligi_ve_tek_thread(core, monkeypatch):
     started = []
     monkeypatch.setattr(core, "update_job", lambda: started.append(1))
     now = time.time()
-    core._maybe_update(now)                     # açılışta hemen bakmaz (uygulama zaten bakıyor)
+    core._maybe_update(now)                     # doesn't check right at startup (the app already checks)
     assert started == []
     core._maybe_update(now + 3601)
     core._update_thread.join(2)
     assert started == [1]
-    core._maybe_update(now + 3700)              # süre dolmadı
+    core._maybe_update(now + 3700)              # time has not elapsed
     core._update_thread.join(2)
     assert started == [1]
 
@@ -299,5 +299,5 @@ def test_cekirdek_ci_surerken_birkac_dakika_sonra_tekrar_bakar(core, at_clone, o
     core.update_job()
     assert git(clone, "rev-parse", "HEAD") != sha and not core.restart_pending
     every = 60 * 60
-    wait = core._last_update_check + every - _t.time()  # bir sonraki bakışa kalan süre
-    assert 0 < wait <= updater.CI_RECHECK + 1  # bir saat değil, birkaç dakika
+    wait = core._last_update_check + every - _t.time()  # time left until the next check
+    assert 0 < wait <= updater.CI_RECHECK + 1  # a few minutes, not an hour

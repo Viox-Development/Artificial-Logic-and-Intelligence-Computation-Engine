@@ -1,12 +1,12 @@
-"""Sistem → Kurulum: kalan komut satırı işleri tek yerde.
+"""System → Setup: remaining command-line tasks in one place.
 
-* Sağlayıcıları dene (`alice doctor`): her sağlayıcıya kısa bir istek, karar motoru, özelliklerin durumu.
-* Modelleri yeniden ölç (`alice models --refresh`) ve rolleri otomatiğe al (`--write`).
-* Google kurulumu (`alice setup google`): adımlar sayfalarıyla, indirilen JSON'u bulup anahtarları yazma.
-* Telefon (`alice phone`): aç/kapat, adres ve QR kod, yeni anahtar.
-* DCS (`alice dcs`): dışa aktarma betiğini kur/kaldır, kneeboard sayfalarını yaz.
-* Eklentiler (`alice plugins`): liste, hatalar, yeni eklenti şablonu.
-* Masaüstü kısayolu (`alice shortcut`).
+* Probe providers (`alice doctor`): a short request to each provider, decision engine, features status.
+* Re-benchmark models (`alice models --refresh`) and set roles to automatic (`--write`).
+* Google setup (`alice setup google`): step-by-step pages, finding downloaded JSON and writing keys.
+* Phone (`alice phone`): enable/disable, address and QR code, new key.
+* DCS (`alice dcs`): install/remove export script, write kneeboard pages.
+* Plugins (`alice plugins`): list, errors, new plugin template.
+* Desktop shortcut (`alice shortcut`).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from alice.app.automations import open_file
 
 
 class Job:
-    """Arka planda süren tek iş: durum, ilerleme satırları ve sonuç. Uygulama view()'i sık sık okur."""
+    """A single background job: state, progress lines, and result. The app reads view() frequently."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -48,7 +48,7 @@ class Job:
                 result = fn(self)
                 with self._lock:
                     self.s.update(state="done", result=result)
-            except Exception as e:  # noqa: BLE001 - ekranda göster
+            except Exception as e:  # noqa: BLE001 - show on screen
                 with self._lock:
                     self.s.update(state="error", error=str(e) or type(e).__name__)
 
@@ -58,7 +58,7 @@ class Job:
 
 
 def qr_svg(text: str) -> str:
-    """Telefonla okutulacak adres için SVG QR (qrcode paketi yoksa boş)."""
+    """SVG QR for the address to be scanned with a phone (empty if the qrcode package is missing)."""
     try:
         import qrcode
     except ImportError:
@@ -81,7 +81,7 @@ class SetupPanel:
         self.models = Job()
         self.chatgpt = Job()
 
-    # ------------------------------------------------------------------ görünüm
+    # ------------------------------------------------------------------ view
     def view(self) -> dict[str, Any]:
         from alice import plugins
         from alice.providers import ranking
@@ -117,8 +117,8 @@ class SetupPanel:
                                "qr_lib": importlib.util.find_spec("qrcode") is not None}
         if out["enabled"]:
             phone_apk.refresh_async()
-            # Telefon uygulamasının adresi: Android uygulaması bu QR'yi (…/m?t=…) tanır; uygulama yoksa sayfa
-            # tarayıcıda açılır ve uygulamayı bilgisayardan indirip kurmayı önerir.
+            # Phone app address: Android app recognizes this QR (…/m?t=…); if no app, the page
+            # opens in the browser and offers to download and install the app from the computer.
             url = pair_url(lan_ip(), int(p.get('port', 8765)), token())
             out.update(url=url, qr=qr_svg(url))
         return out
@@ -132,7 +132,7 @@ class SetupPanel:
         return {"dirs": [{"path": str(d), "installed": (d / "Scripts" / "alice_export.lua").exists()} for d in dirs],
                 "mission": m.name if m else ""}
 
-    # ------------------------------------------------------------------ işlemler
+    # ------------------------------------------------------------------ actions
     ACTIONS = {"weights_set", "doctor_run", "models_refresh", "models_auto", "google_open", "google_client", "phone_enable",
                "phone_new_token", "dcs_install", "dcs_kneeboard", "plugin_new", "plugin_folder", "shortcut", "chatgpt_login",
                "chatgpt_logout", "chatgpt_use", "chatgpt_usage", "chatgpt_model_add", "chatgpt_models_retry"}
@@ -194,15 +194,15 @@ class SetupPanel:
         from alice.providers import ranking
 
         weights = ranking.load_weights()
-        # Gösterilen sıra ölçüm anındaki (eski formülle kurulmuş) sıra kalmasın: her açılışta güncel ağırlıklarla
-        # yeniden kur (modeller tekrar ölçülmez, milisaniyeler sürer). Önceden numaralar puanla uyuşmuyordu.
+        # Do not keep the order from benchmark time (built with the old formula): rebuild on each launch with current
+        # weights (models are not remeasured, takes milliseconds). Previously numbers did not match the scores.
         cache = ranking.rebuild(self.router, weights) if (ranking.load_cache().get("results")) else ranking.load_cache()
-        # ALICE'in gerçekten kullandığı sıra (ana model zinciri çalışırken puana göre yeniden dizilir).
+        # The order ALICE actually uses (the main model chain is rearranged by score during runtime).
         chains = {}
         for role in ranking.DEFAULT_WEIGHTS:
             try:
                 chains[role] = list(self.router.auto_chain(role))
-            except Exception:  # noqa: BLE001 - sahte router (testler) ya da eski önbellek
+            except Exception:  # noqa: BLE001 - dummy router (tests) or old cache
                 chains[role] = list((cache.get("chains") or {}).get(role) or [])
         cache = {**cache, "chains": chains}
         return {"metrics": ranking.METRICS, "weights": weights, "defaults": ranking.DEFAULT_WEIGHTS,
@@ -210,12 +210,12 @@ class SetupPanel:
                 "probed_at": cache.get("probed_at", ""), "state": self.models.view()["state"]}
 
     def _weights_set(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Bir rolün ağırlıklarını kaydet (ya da varsayılana dön) ve zincirleri son ölçümden yeniden kur."""
+        """Save weights of a role (or revert to default) and rebuild chains from the latest benchmark."""
         from alice.providers import ranking
 
         weights = ranking.load_weights()
         role = str(d.get("role", ""))
-        if role and role not in ranking.DEFAULT_WEIGHTS:  # sıfırlamada da: bilinmeyen rol KeyError'du
+        if role and role not in ranking.DEFAULT_WEIGHTS:  # also on reset: unknown role was a KeyError
             return {"ok": False, "error": f"bilinmeyen rol: {role}"}
         if d.get("reset"):
             weights = {r: dict(w) for r, w in ranking.DEFAULT_WEIGHTS.items()} if not role else \
@@ -254,7 +254,7 @@ class SetupPanel:
 
     # Google
     def _chatgpt_login(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Tarayıcıda ChatGPT girişi; olunca modelleri ölçülsün diye router'daki istemci yenilenir."""
+        """ChatGPT login in the browser; once done, the client in router is refreshed to benchmark models."""
         from alice.providers import chatgpt
 
         def run(job: Job) -> dict[str, Any]:
@@ -265,7 +265,7 @@ class SetupPanel:
             models = self._chatgpt_models(job)
             try:
                 chatgpt.fetch_usage()
-            except Exception:  # noqa: BLE001 - limit ilk cevapta da öğrenilir
+            except Exception:  # noqa: BLE001 - limit is also learned in the first response
                 pass
             return {"email": info.get("email", ""), "plan": info.get("plan", ""), "models": models}
 
@@ -279,7 +279,7 @@ class SetupPanel:
         return {"ok": ok}
 
     def _chatgpt_use(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Kayıtlı başka hesaba geç; önceki hesabın limit beklemesi yeni hesaba taşınmasın."""
+        """Switch to another registered account; do not carry the previous account's rate limit cooldown over."""
         from alice.providers import chatgpt
 
         if not chatgpt.use(str(d.get("key") or "")):
@@ -288,7 +288,7 @@ class SetupPanel:
         return {"ok": True}
 
     def _chatgpt_models(self, job: Job | None = None) -> list[str]:
-        """Hesabın açabildiği modelleri oku: model menüsünde hemen görünsünler."""
+        """Read models accessible by the account: show them in the model menu right away."""
         from alice.providers.chatgpt import ChatGPTProvider
 
         pc = (getattr(self.router, "providers_cfg", None) or {}).get("chatgpt")
@@ -296,7 +296,7 @@ class SetupPanel:
             return []
         try:
             models = [m["id"] for m in ChatGPTProvider(pc).list_models()]
-        except Exception as e:  # noqa: BLE001 - ekranda göster
+        except Exception as e:  # noqa: BLE001 - show on screen
             if job:
                 job.say(f"model listesi alınamadı: {e}")
             return []
@@ -333,7 +333,7 @@ class SetupPanel:
 
         try:
             limits = chatgpt.fetch_usage()
-        except Exception as e:  # noqa: BLE001 - son bilinen kalır
+        except Exception as e:  # noqa: BLE001 - last known remains
             return {"ok": False, "error": f"limit okunamadı: {e}"}
         if not chatgpt.cached_models():
             self._chatgpt_models()
@@ -362,7 +362,7 @@ class SetupPanel:
         return {"ok": True}
 
     def _google_client(self, d: dict[str, Any]) -> dict[str, Any]:
-        """İstemciyi kaydet: indirilenlerdeki JSON, yapıştırılan JSON ya da Client ID + secret."""
+        """Save client: JSON in downloads, pasted JSON, or Client ID + secret."""
         from alice.config import set_env_value
         from alice.setup_google import find_downloaded_json, read_client_json
 
@@ -384,14 +384,14 @@ class SetupPanel:
         set_env_value("GOOGLE_CLIENT_SECRET", secret)
         return {"ok": True}
 
-    # Telefon
+    # Phone
     def _phone_enable(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.config import set_config_value
 
         on = bool(d.get("on"))
         self.cfg.data.setdefault("phone", {})["enabled"] = on
         set_config_value("phone", "enabled", on)
-        if self.system is not None:  # telefon köprüsü çekirdeğin içinde: yeniden başlayınca açılır/kapanır
+        if self.system is not None:  # phone bridge is inside core: starts/stops when restarted
             from alice.core.service import read_state
 
             if read_state().get("running") or on:
@@ -431,7 +431,7 @@ class SetupPanel:
         written = kb.write(kb.render(info, kb.load_notes()), kb.kneeboard_dirs(dirs))
         return {"ok": True, "pages": len(written), "mission": info.name if info else ""}
 
-    # Eklentiler
+    # Plugins
     def _plugin_new(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice import plugins
 
@@ -458,7 +458,7 @@ class SetupPanel:
         open_file(folder)
         return {"ok": True}
 
-    # Kısayol
+    # Shortcut
     def _shortcut(self, d: dict[str, Any]) -> dict[str, Any]:
         from alice.app.window import create_shortcut
 

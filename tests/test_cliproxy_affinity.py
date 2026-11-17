@@ -1,4 +1,4 @@
-"""Proxy: aynı konuşma aynı hesapta kalsın (her hesabın prompt önbelleği ayrı)."""
+"""Proxy: keep the same conversation on the same account (each account has its own prompt cache)."""
 
 from alice.app.cliproxy import ensure_affinity
 
@@ -9,7 +9,7 @@ def test_adds_affinity_under_routing(tmp_path):
     assert ensure_affinity(p)
     text = p.read_text(encoding="utf-8")
     assert 'routing:\n  session-affinity: true\n  strategy: "round-robin"\n' in text
-    assert not ensure_affinity(p)  # ikinci kez dokunmaz
+    assert not ensure_affinity(p)  # does not touch it the second time
 
 
 def test_respects_explicit_setting_and_missing_routing(tmp_path):

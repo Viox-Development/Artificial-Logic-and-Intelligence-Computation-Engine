@@ -1,4 +1,4 @@
-"""alice/core/cli.py ve alice/extras/cli.py: çekirdek, kural, görev, not, özet ve rapor komutları."""
+"""alice/core/cli.py and alice/extras/cli.py: core, rule, task, note, brief and report commands."""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ class _FakeCore:
         self.store = Store(":memory:")
         self.interval = 15.0
         self.calls: list[str] = []
-        self.greeter = SimpleNamespace(voice=None)  # gerçek Core'daki karşılayıcı
+        self.greeter = SimpleNamespace(voice=None)  # the greeter in the real Core
         _FakeCore.instances.append(self)
 
     def prime(self):
@@ -192,7 +192,7 @@ def test_core_run_forever_stops_helpers_on_ctrl_c(monkeypatch, out, fake_core):
     assert sorted(stopped) == ["app", "hud", "phone", "quick", "sims", "voice"] and fake_core == [True]
     from alice.hud import client
 
-    assert sims_show == [client.show]  # HUD açıkken uçuş tehditleri HUD'a da gider
+    assert sims_show == [client.show]  # flight threats also go to the HUD while it is open
     assert "her 15 sn" in out()
 
 
@@ -247,7 +247,7 @@ def test_rules_list_defaults_and_toggle(out):
     assert RuleSet().get("gpu-hot") is None
     assert core_cli.rules_cmd(["rm", "gpu-hot"]) == 1
     assert "kural yok: gpu-hot" in out()
-    assert core_cli.rules_cmd(["add"]) == 2  # cümlesiz add: kullanım
+    assert core_cli.rules_cmd(["add"]) == 2  # add without a sentence: usage
 
 
 def test_rules_list_empty(out):
@@ -350,8 +350,8 @@ def test_notes_add_list_search_undo(xout):
     text = xout()
     assert "not alındı" in text and "Süt al" in text and "eski not" in text
 
-    assert extras_cli.notes_cmd(["search", "sut"]) == 0  # Türkçe harf katlama
-    assert extras_cli.notes_cmd(["search", "not", "1d"]) == 0  # 10 gün önceki not süreye girmez
+    assert extras_cli.notes_cmd(["search", "sut"]) == 0  # Turkish letter folding
+    assert extras_cli.notes_cmd(["search", "not", "1d"]) == 0  # a note from 10 days ago falls outside the period
     tail = xout().split("eski not")[-1]
     assert "not yok" in tail
 
@@ -369,7 +369,7 @@ def test_brief_install_and_render(monkeypatch, xout):
     assert extras_cli.brief_cmd(["--install", "07:30", "--weekdays"]) == 0
     t = TaskStore().get("brief")
     assert t.cron == "30 7 * * 1-5" and "kuruldu" in xout()
-    assert extras_cli.brief_cmd(["--install", "--weekdays"]) == 0  # saat verilmezse 08:00
+    assert extras_cli.brief_cmd(["--install", "--weekdays"]) == 0  # no time given: 08:00
     assert TaskStore().get("brief").cron == "0 8 * * 1-5"
 
     real = brief.gather

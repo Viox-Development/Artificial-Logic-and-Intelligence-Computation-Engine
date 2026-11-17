@@ -1,10 +1,10 @@
-"""ALICE çekirdeği: arka planda sürekli açık duran servis.
+"""ALICE core: background service running continuously.
 
-  store     -> akan verilerin (metrik/olay) SQLite'ta saklanması ve sorgulanması
-  monitors  -> veriyi toplayan gözlemciler (bilgisayar: CPU, GPU, RAM, disk, süreçler)
-  modes     -> ortama göre mod (uçuş, geliştirme, sessiz, normal) ve mod politikası
-  rules     -> "şu uzun süre şöyle olursa haber ver" kuralları; belirsizse Jev, gerekirse ALICE
-  schedule  -> cron tabanlı zamanlanmış görevler, kaçırılanları telafi
-  notify    -> bildirim kanalları (masaüstü bildirimi, kayıt, ileride ses)
-  service   -> hepsini belirli aralıklarla çalıştıran döngü, sistem tepsisi, otomatik başlatma
+  store     -> storage and querying of streaming data (metrics/events) in SQLite
+  monitors  -> observers collecting data (computer: CPU, GPU, RAM, disk, processes)
+  modes     -> environment-based mode (flight, development, silent, normal) and mode policy
+  rules     -> "notify if condition persists this long" rules; Jev if ambiguous, ALICE if needed
+  schedule  -> cron-based scheduled tasks, compensating for missed runs
+  notify    -> notification channels (desktop notification, log, voice in future)
+  service   -> loop running all components at intervals, system tray, auto-start
 """

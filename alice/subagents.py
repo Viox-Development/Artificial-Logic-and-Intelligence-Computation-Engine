@@ -1,15 +1,17 @@
-"""Alt ajanlar: `task` aracının başlattığı, kendi temiz bağlamıyla çalışan ajanlar (Claude Code'daki Agent aracı gibi).
+"""Subagents: agents started by the `task` tool that work with their own clean context (like the Agent tool in
+Claude Code).
 
-Eskiden alt ajan sohbeti kilitleyerek tek tek çalışıyor, ana sohbetin ekranına yazıyor ve bitince unutuluyordu:
-- Paralel: aynı cevaptaki birden çok `task` çağrısı aynı anda çalışır.
-- Arka plan: background=true ile başlar, sohbet sürer; bitince sonucu "[Alt ajan ...]" mesajıyla sohbete düşer.
-- Devam: biten alt ajana id ile yeni mesaj yazılabilir; konuşması (okudukları, bulduklarını) korunur.
-- Görünürlük: her alt ajanın durumu, adımı ve son aracı yan paneldeki "Ajanlar" sekmesinde canlı görünür; oradan
-  durdurulabilir, devam mesajı yazılabilir.
+Before, a subagent locked the chat and ran one at a time, wrote to the main chat's screen, and was forgotten when done:
+- Parallel: multiple `task` calls in the same response run at the same time.
+- Background: starts with background=true and the chat goes on; when it finishes, its result arrives in the chat as an
+  "[Alt ajan ...]" message.
+- Resume: send a new message to a finished subagent by its id; its conversation (what it read and found) is kept.
+- Visibility: each subagent's status, step and last tool show live in the side panel's "Agents" tab; from there
+  it can be stopped or sent a follow-up message.
 
-Her alt ajanın kendi araç bağlamı vardır (durum sözlüğü ana sohbetinkinin sığ kopyası): ana sohbette Durdur'a
-basmak arka plandaki alt ajanın araçlarını durdurmasın, alt ajanın Durdur'u da ana sohbeti etkilemesin. İzin
-soruları alt ajanın adıyla ana sohbetin arayüzüne gider (birer birer).
+Each subagent has its own tool context (a shallow copy of the main chat's state dictionary): pressing Stop in the main
+chat must not stop a background subagent's tools, and a subagent's Stop must not affect the main chat. Permission
+questions go to the main chat's interface with the subagent's name (one at a time).
 """
 
 from __future__ import annotations
@@ -22,10 +24,10 @@ from typing import Any, Callable
 
 from alice.tools.base import ToolContext
 
-KEEP = 30  # sohbet başına hatırlanan alt ajan
-LIVE_EVERY = 0.4  # sn: canlı durum en sık bu aralıkla yayınlanır
-_perm_lock = threading.Lock()  # paralel alt ajanların izin soruları üst üste binmesin
-_state_lock = threading.Lock()  # kayıt ve durum değişiklikleri (paralel task çağrıları, aynı ajana iki devam)
+KEEP = 30  # subagents remembered per chat
+LIVE_EVERY = 0.4  # seconds: live status is published at this interval at most
+_perm_lock = threading.Lock()  # keeps parallel subagents' permission questions from overlapping
+_state_lock = threading.Lock()  # registry and status changes (parallel task calls, two follow-ups to the same agent)
 
 
 @dataclass
@@ -33,7 +35,7 @@ class Sub:
     id: str
     label: str
     prompt: str
-    kind: str = ""  # özel ajan tanımının adı; boş: genel
+    kind: str = ""  # name of the custom agent definition; empty: general
     background: bool = False
     max_steps: int = 40
     status: str = "running"  # running | done | failed | stopped
@@ -45,8 +47,8 @@ class Sub:
     ended: float = 0.0
     child: Any = None
     thread: threading.Thread | None = None
-    history: list[dict[str, str]] = field(default_factory=list)  # [{"q": istek, "a": sonuç}]
-    history_messages: list[dict[str, Any]] = field(default_factory=list)  # diskten: konuşma (sistem hariç)
+    history: list[dict[str, str]] = field(default_factory=list)  # [{"q": request, "a": result}]
+    history_messages: list[dict[str, Any]] = field(default_factory=list)  # from disk: conversation (excluding system)
 
     def snapshot(self) -> dict[str, Any]:
         now = self.ended or time.time()
@@ -57,8 +59,8 @@ class Sub:
 
 
 class SubUI:
-    """Alt ajanın arayüzü: model ve araç olaylarını ana ekrana yazmaz, yalnız durumu günceller. İzin soruları ana
-    sohbetin arayüzüne alt ajanın adıyla gider."""
+    """The subagent's interface: model and tool events are not written to the main screen, only the status is updated.
+    Permission questions go to the main chat's interface under the subagent's name."""
 
     def __init__(self, sub: Sub, parent_ui: Any, publish: Callable[[dict[str, Any]], Any] | None):
         self.sub, self.parent_ui, self.publish = sub, parent_ui, publish
@@ -74,7 +76,7 @@ class SubUI:
         self._last = now
         try:
             self.publish({"type": "subagent", **self.sub.snapshot()})
-        except Exception:  # noqa: BLE001 - arayüz yoksa iş sürsün
+        except Exception:  # noqa: BLE001 - let the work continue even without an interface
             pass
 
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
@@ -94,11 +96,11 @@ class SubUI:
         text = f"[alt ajan {self.sub.id} · {self.sub.label}] {summary}"
         child = self.sub.child
         with _perm_lock:
-            try:  # ana sohbetin Durdur'u değil alt ajanınki soruyu kapatsın (ana tur durmuşken soru reddediliyordu)
+            try:  # the subagent's own Stop closes its question, not the main chat's (refused in a stopped turn)
                 ans = ask(name, text, risk, cancelled=child.cancel.is_set if child is not None else None)
-            except TypeError:  # cancelled almayan arayüz (terminal, testler)
+            except TypeError:  # interface without cancelled (terminal, tests)
                 ans = ask(name, text, risk)
-        return "y" if ans == "a" else ans  # "her zaman" ana oturuma ait kalsın
+        return "y" if ans == "a" else ans  # "always" stays with the main session
 
 
 def registry(ctx: ToolContext) -> dict[str, Sub]:
@@ -111,13 +113,13 @@ def _next_id(ctx: ToolContext) -> str:
 
 
 def child_context(parent_ctx: ToolContext) -> ToolContext:
-    """Alt ajanın araç bağlamı: aynı klasör ve yapılandırma, durumun sığ kopyası (tarayıcı, süreçler, yayın kancaları
-    paylaşılır), ama `agent` alt ajanın kendisi olur ki Durdur ikisini birbirine karıştırmasın."""
+    """The subagent's tool context: same folder and config, a shallow copy of the state (browser, processes and publish
+    hooks are shared), but `agent` becomes the subagent itself so that Stop does not mix the two up."""
     state = dict(parent_ctx.state)
-    # Ekran/tarayıcı kilidi ana sohbetin adına: ayrı bağlam ayrı sahip sayılırsa alt ajan ana sohbeti bekleyip
-    # kilitleniyor ya da aldığı kilidi hiç bırakmıyordu (alt ajan kilidi bırakmaz).
+    # The screen/browser lock belongs to the main chat. If a separate context counted as a separate owner, the subagent
+    # would wait on the main chat and deadlock, or never release a lock it took (a subagent never releases it).
     state["lock_owner"] = parent_ctx.state.get("lock_owner") or parent_ctx
-    # Kendi kayıtları: ön plandaki komutları (Durdur'da öldürülenler) ve tarayıcı meşguliyeti ayrı tutulur.
+    # Own records: foreground commands (killed on Stop, 'Durdur') and browser busy state are kept separate.
     for k in ("subagents", "subagent_ids", "fg_procs", "browser_busy"):
         state.pop(k, None)
     return ToolContext(cwd=parent_ctx.cwd, config=parent_ctx.config, router=parent_ctx.router,
@@ -125,7 +127,7 @@ def child_context(parent_ctx: ToolContext) -> ToolContext:
 
 
 def build_child(parent: Any, kind: str, ui: Any, ctx: ToolContext) -> tuple[Any, int]:
-    """(alt ajan, varsayılan adım sınırı). kind: özel ajan tanımının adı; boş: ana ajanın kopyası."""
+    """(subagent, default step limit). kind: name of the custom agent definition; empty: a copy of the main agent."""
     from alice.agent import Agent
 
     if kind:
@@ -148,7 +150,7 @@ def build_child(parent: Any, kind: str, ui: Any, ctx: ToolContext) -> tuple[Any,
 
 
 def _make_ui(sub: Sub, parent: Any, ctx: ToolContext) -> SubUI:
-    """Canlı olaylar alt ajanı başlatan sohbete gider: ana sohbet sonra başka bir sohbete geçse de."""
+    """Live events go to the chat that started the subagent, even if the main chat later switches to another chat."""
     parent_ui = getattr(parent, "ui", None)
     bus, sid = getattr(parent_ui, "bus", None), str(ctx.state.get("session_id") or "")
     if bus is not None and sid:
@@ -179,7 +181,7 @@ def start(parent: Any, ctx: ToolContext, prompt: str, kind: str = "", label: str
 def resume(ctx: ToolContext, sub_id: str, text: str, background: bool = False) -> Sub:
     from alice.tools.base import ToolError
 
-    with _state_lock:  # kontrol ve "çalışıyor" işareti birlikte: iki devam mesajı aynı ajanı iki kez çalıştırmasın
+    with _state_lock:  # check and "running" mark together: two follow-ups must not run one agent twice
         sub = registry(ctx).get(sub_id.strip())
         if sub is None:
             raise ToolError(f"böyle bir alt ajan yok: {sub_id}. Bu sohbettekiler: "
@@ -187,7 +189,7 @@ def resume(ctx: ToolContext, sub_id: str, text: str, background: bool = False) -
         if sub.status == "running":
             raise ToolError(f"{sub.id} hâlâ çalışıyor; bitmesini bekle ya da durdur")
         prev_status, sub.status = sub.status, "running"
-    if sub.child is None:  # uygulama yeniden açıldı: alt ajan kayıttaki konuşmasıyla yeniden kurulur
+    if sub.child is None:  # app was reopened: the subagent is re-created with its conversation from the record
         parent = ctx.state.get("agent")
         try:
             if parent is None:
@@ -209,7 +211,7 @@ def _go(ctx: ToolContext, sub: Sub, text: str) -> None:
     ui: SubUI = sub.child.ui
     ui.changed(force=True)
     sid = str(ctx.state.get("session_id") or "")
-    to_sid = ctx.state.get("deliver_to")  # (sohbet, metin): başlatan sohbete, sonra başka sohbete geçilse de
+    to_sid = ctx.state.get("deliver_to")  # (chat, text): to the chat that started it, even if the main chat moved on
     deliver = (lambda t: to_sid(sid, t)) if callable(to_sid) and sid else ctx.state.get("deliver")
     parent = ctx.state.get("agent")
 
@@ -218,13 +220,13 @@ def _go(ctx: ToolContext, sub: Sub, text: str) -> None:
             out = sub.child.run_turn(text, max_steps=sub.max_steps)
             sub.result = out or "(alt ajan boş cevap döndürdü)"
             sub.status = "stopped" if sub.child.cancel.is_set() else "done"
-        except Exception as e:  # noqa: BLE001 - alt ajanın hatası sohbeti düşürmesin
+        except Exception as e:  # noqa: BLE001 - the subagent's error must not bring down the chat
             sub.result, sub.status = f"alt ajan hata verdi: {e}", "failed"
         sub.ended = time.time()
         sub.history.append({"q": text, "a": sub.result})
         ui.changed(force=True)
-        # Ekran kilidini ana sohbet adına almış olabilir: ana sohbet o an çalışmıyorsa bırakılır (çalışıyorsa turu
-        # bitince kendisi bırakır).
+        # It may have taken the screen lock in the main chat's name: release it if the main chat is not running now
+        # (if it is running, it releases the lock itself when its turn ends).
         state = getattr(getattr(sub.child, "ctx", None), "state", None) or {}
         lock, owner = state.get("desktop_lock"), state.get("lock_owner")
         if lock is not None and owner is not None and not getattr(parent, "busy", False):
@@ -238,7 +240,7 @@ def _go(ctx: ToolContext, sub: Sub, text: str) -> None:
 
 
 def wait(sub: Sub, cancelled: Callable[[], bool]) -> None:
-    """Ön planda çalışan alt ajanı bekle; ana sohbette Durdur'a basılırsa alt ajanı da durdur."""
+    """Wait for a subagent running in the foreground; if Stop is pressed in the main chat, stop the subagent too."""
     while sub.thread is not None and sub.thread.is_alive():
         if cancelled():
             stop(sub)
@@ -256,7 +258,7 @@ MAX_SAVED_MESSAGES = 200
 
 
 def export(ctx: ToolContext) -> list[dict[str, Any]]:
-    """Oturum dosyasına yazılacak alt ajanlar: durum, sonuç ve konuşma (yeniden açılışta devam edilebilsin)."""
+    """Subagents to write to the session file: status, result and conversation (so they can resume after reopening)."""
     from alice.providers.router import strip_images
 
     out = []
@@ -269,8 +271,8 @@ def export(ctx: ToolContext) -> list[dict[str, Any]]:
 
 
 def restore(ctx: ToolContext, rows: list[dict[str, Any]]) -> None:
-    """Kayıtlı alt ajanları geri kur. Çalışırken kapanmış olanlar "durduruldu" sayılır; hepsine devam edilebilir
-    (konuşması, devam mesajında yeniden kurulan alt ajana yüklenir)."""
+    """Re-create the saved subagents. Those that were closed while running count as "stopped" (durduruldu); all of them
+    can be resumed (their conversation is loaded into the subagent re-created by the follow-up message)."""
     subs = registry(ctx)
     top = 0
     for d in rows:

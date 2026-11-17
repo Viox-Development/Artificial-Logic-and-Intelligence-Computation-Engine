@@ -1,4 +1,4 @@
-"""Manifestteki bir eylemi çalıştır: isteği kur, kimliği ekle, cevabı modele okunur hale getir."""
+"""Execute an action from the manifest: build request, add credentials, make response readable for the model."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from typing import Any
 from alice.connect import store
 from alice.connect.manifest import Action, Auth, Manifest
 
-PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")  # Google'ın {calendarId} gibi camelCase adları da
+PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")  # Also Google's camelCase names like {calendarId}
 TIMEOUT = 30.0
 RETRY_STATUSES = {429, 502, 503, 504}
-MAX_RETRY_WAIT = 5.0     # saniye: Retry-After bundan uzunsa beklemeden hatayı söyle
+MAX_RETRY_WAIT = 5.0     # seconds: if Retry-After is longer than this, report the error without waiting
 CACHE_MAX = 64
 _cache: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
 _cache_lock = threading.Lock()
-_sleep = time.sleep      # testler beklemeden geçsin diye değiştirilebilir
+_sleep = time.sleep      # can be changed so tests pass without waiting
 
 
 def cache_clear() -> None:
@@ -33,16 +33,16 @@ def _cache_key(m: Manifest, act: Action, args: dict[str, Any]) -> str:
 
 
 class ConnectError(RuntimeError):
-    """Kullanıcıya/modele gösterilecek bağlantı hatası (eksik anahtar, HTTP hatası, bozuk cevap)."""
+    """Connection error to show to user/model (missing key, HTTP error, malformed response)."""
 
 
-# ------------------------------------------------------------------------------------- kimlik
+# ------------------------------------------------------------------------------------- credentials
 def api_key(auth: Auth) -> str:
     return os.environ.get(auth.env, "").strip() if auth.env else ""
 
 
 def token_for(m: Manifest) -> str:
-    """OAuth2 bağlantısı için geçerli erişim token'ı; gerekiyorsa yeniler."""
+    """Valid access token for OAuth2 connection; refreshes if needed."""
     from alice.connect import oauth
 
     row = store.get(m.name)
@@ -62,7 +62,7 @@ def token_for(m: Manifest) -> str:
 
 
 def ready(m: Manifest) -> tuple[bool, str]:
-    """(hazır mı, sebep). Araç listesinde ve `alice connect`te durum göstermek için."""
+    """(is_ready, reason). To display status in tool list and `alice connect`."""
     a = m.auth
     if a.kind == "none":
         return True, "hazır"
@@ -101,9 +101,9 @@ def _apply_auth(m: Manifest, headers: dict[str, str], query: dict[str, Any]) -> 
         headers[a.name] = f"{a.prefix}{key}" if a.prefix else key
 
 
-# ------------------------------------------------------------------------------------- istek
+# ------------------------------------------------------------------------------------- request
 def build(m: Manifest, act: Action, args: dict[str, Any]) -> dict[str, Any]:
-    """İsteğin parçalarını hazırla (test edilebilsin diye istekten ayrı)."""
+    """Prepare request parts (separated from the request itself so it can be tested)."""
     query: dict[str, Any] = dict(act.query)
     headers: dict[str, str] = {"Accept": "application/json", **act.headers}
     body: dict[str, Any] = dict(act.body)
@@ -118,7 +118,7 @@ def build(m: Manifest, act: Action, args: dict[str, Any]) -> dict[str, Any]:
             continue
         where = p.into or ("path" if "{" + p.name + "}" in act.path else
                            ("body" if act.method in ("POST", "PUT", "PATCH") else "query"))
-        if where == "template":  # gövde şablonundaki "{ad}" yer tutucusu (iç içe gövdeler için)
+        if where == "template":  # "{name}" placeholder in body template (for nested bodies)
             template_args[p.name] = v
         elif where == "path":
             path_args[p.name] = str(v)
@@ -135,13 +135,13 @@ def build(m: Manifest, act: Action, args: dict[str, Any]) -> dict[str, Any]:
         path = PLACEHOLDER.sub(lambda mt: _quote(path_args[mt.group(1)]), act.path)
     except KeyError as e:
         raise ConnectError(f"{m.name}.{act.name}: yol parametresi eksik: {e.args[0]}") from e
-    # Tam adresli yol: tek bağlantıda birden çok sunucu (ör. Google Drive, Docs ve Sheets aynı girişle).
+    # Absolute URL path: multiple hosts in a single connection (e.g. Google Drive, Docs, and Sheets with the same login).
     url = path if path.startswith(("https://", "http://")) else m.base_url + ("" if path.startswith("/") else "/") + path
     return {"method": act.method, "url": url, "params": query, "headers": headers, "json": body or None}
 
 
 def _fill(node: Any, args: dict[str, Any]) -> Any:
-    """Gövde şablonunda tam olarak "{ad}" olan değerleri parametreyle değiştir (türü korunur); eksik kalanları at."""
+    """Replace values exactly matching "{name}" in body template with parameter (preserves type); drop missing ones."""
     if isinstance(node, dict):
         out = {}
         for k, v in node.items():
@@ -169,11 +169,11 @@ def _quote(v: str) -> str:
 
 def call(m: Manifest, act: Action, args: dict[str, Any], client: Any = None, timeout: float = TIMEOUT,
          cache: bool = True) -> Any:
-    """Eylemi çağır. Okuyan eylem `cache_seconds` kadar hatırlanır (akışlar cache=False ile hep taze ister).
+    """Call the action. Read actions are cached for `cache_seconds` (feeds always want fresh with cache=False).
 
-    Tekrar deneme bir kez ve kısa: 429'da (sunucu isteği işlemeden reddetti) her eylem için, ağ hatası ve
-    502/503/504'te sadece okuyan eylemler için. Gönderen bir isteği ağ hatasında tekrarlamak mesajı iki kez
-    gönderebilir; kullanıcı aynı mesajı iki kez almasın diye yapılmaz."""
+    Retry is once and short: on 429 (server rejected request without processing) for any action; on network error
+    and 502/503/504 only for read actions. Retrying a sending request on network error might send the message twice;
+    not done to prevent user from receiving the same message twice."""
     safe = not (act.writes or act.sends)
     key = _cache_key(m, act, args) if (cache and safe and act.cache_seconds > 0) else ""
     if key:
@@ -192,7 +192,7 @@ def call(m: Manifest, act: Action, args: dict[str, Any], client: Any = None, tim
 
 
 def _retry_wait(r: Any) -> float | None:
-    """Retry-After'a uyan bekleme; çok uzunsa None (beklemek yerine hatayı söyle)."""
+    """Wait duration according to Retry-After; None if too long (report error instead of waiting)."""
     raw = str((getattr(r, "headers", None) or {}).get("Retry-After", "") or "").strip()
     try:
         wait = float(raw) if raw else 1.0
@@ -210,7 +210,7 @@ def _request(m: Manifest, act: Action, args: dict[str, Any], client: Any, timeou
         try:
             r = c.request(req["method"], req["url"], params=req["params"], headers=req["headers"],
                           json=req["json"], timeout=timeout)
-        except Exception as e:  # noqa: BLE001 - ağ hatası modele anlaşılır dönsün
+        except Exception as e:  # noqa: BLE001 - return network error comprehensibly to the model
             if attempt == 0 and safe:
                 _sleep(1.0)
                 continue
@@ -235,7 +235,7 @@ def _request(m: Manifest, act: Action, args: dict[str, Any], client: Any, timeou
         return r.text
 
 
-# ------------------------------------------------------------------------------------- cevap
+# ------------------------------------------------------------------------------------- response
 def pick(data: Any, path: str) -> Any:
     for part in [p for p in path.split(".") if p]:
         if isinstance(data, dict):
@@ -248,7 +248,7 @@ def pick(data: Any, path: str) -> Any:
 
 
 def render(data: Any, act: Action, limit_chars: int = 12000) -> str:
-    """Modelin okuyacağı metin: liste ise satır satır seçilen alanlar, değilse derli toplu JSON."""
+    """Text to be read by the model: selected fields line-by-line if list, tidy JSON otherwise."""
     if act.pick:
         data = pick(data, act.pick)
     if data is None:

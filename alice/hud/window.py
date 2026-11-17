@@ -1,12 +1,13 @@
-"""HUD penceresi: her öğe kendi küçük, çerçevesiz, her zaman üstte penceresinde; tıklama geçer, odak almaz.
+"""HUD window: each item gets its own small, frameless, always-on-top window; clicks pass through, focus is never taken.
 
-Görünüm alice/hud/style.py'de (kenarı yumuşatılmış, yarı saydam resimler). Resim pencereye UpdateLayeredWindow
-ile piksel başı saydamlıkla basılır: tkinter'ın "saydam renk" yöntemi yarı saydamlık, yumuşak gölge ve kenar
-yumuşatma vermiyordu, her şey keskin ve siyah çerçeveli görünüyordu. Ekranı kaplayan tek pencere yerine öğe başına
-küçük pencere: animasyonda sadece o küçük resim yenilenir, oyunun FPS'ine dokunmaz. Öğe yoksa hiç pencere yok.
+The look lives in alice/hud/style.py (smooth-edged, semi-transparent images). Images are pushed to the window with
+UpdateLayeredWindow using per-pixel alpha: tkinter's "transparent color" method gave no semi-transparency, soft shadow
+or edge smoothing; everything looked sharp and black-framed. Instead of one window covering the screen, there is a
+small window per item: during animation only that small image is redrawn, so the game's FPS is untouched. If there
+are no items, there is no window at all.
 
-Gösterme her zaman SW_SHOWNOACTIVATE ile: oyundayken öne gelip odak çalan pencere kullanıcıyı öldürmüştü, bu sınır
-kesindir. tkinter sadece olay döngüsü ve pencere tutucu olarak kullanılır.
+Always shown with SW_SHOWNOACTIVATE: a window that came to the front and grabbed focus in a game had gotten the user
+killed, so this limit is absolute. tkinter is only used as the event loop and a window handle holder.
 """
 
 from __future__ import annotations
@@ -38,19 +39,19 @@ HWND_TOPMOST = -1
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x1, 0x2, 0x10, 0x40
 ULW_ALPHA = 0x2
 
-HOTKEYS = {"mode_hotkey": "<ctrl>+<alt>+k", "history_hotkey": "<ctrl>+<alt>+j"}  # yoğunluk modu, son bildirimler
-TICK_MS = 16            # animasyon karesi ve komut kuyruğu; sadece hareket eden öğe yeniden basılır
-TOPMOST_EVERY = 2.0     # kenarlıksız oyun öne geçerse en üstte olmayı yeniden iste (odak almadan)
-EXIT_BUSY = 3           # port başka bir HUD'da: çıkış kodu (denetleyici bunu çökme saymaz)
-ISLAND_KEY = "__ada__"  # Adanın penceresi
-POINTER_KEY = "__imlec__"  # ALICE'in imlecinin penceresi
-BACKDROP_EVERY = 0.12   # sn: buzlu camın arkası bu sıklıkla yenilenir (oyunda arka plan akarken cam da akar)
-CALM_EVERY = 1 / 15     # sn: yalnız nabız atarken Ada en sık bu kadar çizilir
+HOTKEYS = {"mode_hotkey": "<ctrl>+<alt>+k", "history_hotkey": "<ctrl>+<alt>+j"}  # density mode, recent notifications
+TICK_MS = 16            # animation frame and command queue; only the moving item is repainted
+TOPMOST_EVERY = 2.0     # if a borderless game comes to the front, ask again to be on top (without taking focus)
+EXIT_BUSY = 3           # port is used by another HUD: exit code (the supervisor does not count this as a crash)
+ISLAND_KEY = "__ada__"  # the Island's window
+POINTER_KEY = "__imlec__"  # ALICE's cursor window
+BACKDROP_EVERY = 0.12   # sec: the frosted glass backdrop is refreshed this often (in a game, the glass moves when the background does)
+CALM_EVERY = 1 / 15     # sec: while only the pulse is beating, the Island is drawn at most this often
 
 
-# ------------------------------------------------------------------------- ağ
+# ------------------------------------------------------------------------- network
 def bind(port: int = PORT) -> socket.socket | None:
-    """127.0.0.1'de UDP dinle. Port doluysa (başka HUD açık) None."""
+    """Listen for UDP on 127.0.0.1. If the port is taken (another HUD is open), None."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     if IS_WIN and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
         s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -63,7 +64,7 @@ def bind(port: int = PORT) -> socket.socket | None:
 
 
 class Receiver:
-    """Soketten gelen datagramları ayrıştırıp kuyruğa koyar; çizim tkinter iş parçacığında kalır."""
+    """Parses incoming datagrams from the socket and puts them on the queue; drawing stays on the tkinter thread."""
 
     def __init__(self, sock: socket.socket, out: "queue.Queue[dict[str, Any]]"):
         self.sock, self.out = sock, out
@@ -84,7 +85,7 @@ class Receiver:
             except OSError:
                 if self._stop.is_set():
                     return
-                self._stop.wait(0.2)  # geçici hata dinlemeyi bitirmesin, kalıcı hata da çekirdeği yemesin
+                self._stop.wait(0.2)  # transient errors: keep listening; permanent ones must not kill the core
                 continue
             msg = parse(raw)
             if msg is not None:
@@ -106,7 +107,7 @@ def _dpi_aware() -> None:
 
 
 def monitor_rect(index: int = 0) -> tuple[int, int, int, int] | None:
-    """index. monitörün (x, y, genişlik, yükseklik) fiziksel piksel cinsinden; 0 ana monitör."""
+    """(x, y, width, height) of monitor #index in physical pixels; 0 is the primary monitor."""
     if not IS_WIN:
         return None
     import ctypes
@@ -130,14 +131,14 @@ def monitor_rect(index: int = 0) -> tuple[int, int, int, int] | None:
         return True
 
     user32.EnumDisplayMonitors(None, None, proc(cb), 0)
-    rects.sort(key=lambda p: (not p[0], p[1][0], p[1][1]))  # önce ana monitör, sonra soldan sağa
+    rects.sort(key=lambda p: (not p[0], p[1][0], p[1][1]))  # primary monitor first, then left to right
     if not rects:
         return None
     return rects[index][1] if 0 <= index < len(rects) else rects[0][1]
 
 
 class Win32:
-    """Pencereye uygulanan Win32 çağrıları; testte sahtesiyle değiştirilir."""
+    """Win32 calls applied to the window; replaced with a fake in tests."""
 
     def __init__(self):
         import ctypes
@@ -185,7 +186,7 @@ class Win32:
         self._put(hwnd, GWL_EXSTYLE, self._get(hwnd, GWL_EXSTYLE) | HUD_EXSTYLE)
 
     def exclude_from_capture(self, hwnd: int) -> bool:
-        # Windows 10 2004 öncesinde yok: o zaman ALICE kendi okunu ekran görüntüsünde görebilir, çizim yine çalışır.
+        # Not available before Windows 10 2004: then ALICE can see its own overlay in screenshots; drawing still works.
         return bool(self.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
 
     def show(self, hwnd: int, visible: bool) -> None:
@@ -197,17 +198,17 @@ class Win32:
         self.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
     def cursor_pos(self) -> tuple[int, int] | None:
-        """Gerçek imlecin yeri (fiziksel piksel): ALICE'in imleci ilk kez buradan kalkar."""
+        """Real cursor position (physical pixels): ALICE's cursor first starts moving from here."""
         pt = self.wt.POINT()
         if not self.user32.GetCursorPos(self.ctypes.byref(pt)):
             return None
         return pt.x, pt.y
 
     def update_layered(self, hwnd: int, img, x: int, y: int) -> bool:
-        """RGBA resmi pencereye piksel başı saydamlıkla bas ve pencereyi (x, y)'ye taşı."""
+        """Paint the RGBA image onto the window with per-pixel alpha and move the window to (x, y)."""
         ct, wt, g, u = self.ctypes, self.wt, self.gdi32, self.user32
         w, h = img.size
-        data = img.convert("RGBa").tobytes("raw", "BGRa")  # önceden çarpılmış alfa: ULW bunu ister
+        data = img.convert("RGBa").tobytes("raw", "BGRa")  # premultiplied alpha: ULW requires it
         bmi = self._bmi(ct.sizeof(self._bmi), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
         screen = u.GetDC(None)
         mem = g.CreateCompatibleDC(screen)
@@ -227,15 +228,15 @@ class Win32:
         return ok
 
 
-# ------------------------------------------------------------------------ yön
+# ------------------------------------------------------------------------ direction
 def direction(clock: int) -> tuple[float, float]:
-    """Saat yönünün ekrandaki birim vektörü (12 yukarı, 3 sağ)."""
+    """On-screen unit vector of a clock direction (12 up, 3 right)."""
     a = math.radians(clock * 30)
     return math.sin(a), -math.cos(a)
 
 
 def edge_point(clock: int, w: int, h: int) -> tuple[float, float, bool]:
-    """Merkezden saat yönüne giden ışının ekran kenarına değdiği nokta; True ise sol/sağ kenar."""
+    """Point where the ray from the center in a clock direction meets the screen edge; True means left/right edge."""
     dx, dy = direction(clock)
     tx = (w / 2) / abs(dx) if abs(dx) > 1e-6 else math.inf
     ty = (h / 2) / abs(dy) if abs(dy) > 1e-6 else math.inf
@@ -243,20 +244,20 @@ def edge_point(clock: int, w: int, h: int) -> tuple[float, float, bool]:
     return w / 2 + dx * t, h / 2 + dy * t, tx <= ty
 
 
-# ---------------------------------------------------------------------- pencere
+# ---------------------------------------------------------------------- window
 class Slot:
-    """Ekrandaki bir öğenin penceresi ve animasyonu."""
+    """A screen item's window and animation."""
 
     def __init__(self, top: Any, hwnd: int, anim: style.Anim):
         self.top, self.hwnd, self.anim = top, hwnd, anim
         self.sprite: style.Sprite | None = None
-        self.base: tuple[Any, Any] | None = None  # (anahtar, resim): değişmeyen öğe yeniden çizilmez
+        self.base: tuple[Any, Any] | None = None  # (key, image): an unchanged item is not redrawn
         self.visible = False
         self.last: tuple | None = None
 
 
 def _tk_slot(root: Any) -> tuple[Any, int]:
-    """Gizli bir tkinter penceresi aç: tutucusu (hwnd) katmanlı pencere olarak kullanılır."""
+    """Open a hidden tkinter window: its handle (hwnd) is used as the layered window."""
     import tkinter as tk
 
     top = tk.Toplevel(root)
@@ -278,7 +279,7 @@ class HudWindow:
             import tkinter as tk
 
             root = tk.Tk()
-            root.withdraw()  # olay döngüsü için; kendisi hiç görünmez
+            root.withdraw()  # for the event loop; it is never visible itself
         self.root = root
         if rect is None:
             rect = monitor_rect(monitor) or (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
@@ -287,7 +288,7 @@ class HudWindow:
         self.make_slot = make_slot
         self.island = style.Island(self.w, self.h)
         self.pointer = style.Pointer(self.h)
-        if isinstance(self.win32, Win32):  # gerçek ekranda: camın arkası gerçekten bulanıklaşsın
+        if isinstance(self.win32, Win32):  # on a real screen: the glass backdrop really gets blurred
             self.island.backdrop = self._backdrop_source()
         self._island_painted = 0.0
         self.slots: dict[str, Slot] = {}
@@ -312,10 +313,10 @@ class HudWindow:
             pass
 
     def _paint(self, slot: Slot, now: float) -> bool:
-        """Bu karede pencereyi güncelle; öğe hâlâ hareket ediyorsa True."""
+        """Update the window in this frame; True if the item is still moving."""
         sp = slot.sprite
         alpha, grow, pulse, moving = slot.anim.frame(now, sp)
-        pulse = round(pulse * 8) / 8  # nefes 9 basamak: önbellek tutsun
+        pulse = round(pulse * 8) / 8  # breathing has 9 steps: so the cache holds
         key = (sp.item.seq, sp.w, sp.h, round(sp.angle), pulse)
         if slot.base is None or slot.base[0] != key:
             slot.base = (key, style.render(sp, self.h, pulse=pulse))
@@ -333,8 +334,8 @@ class HudWindow:
         return moving
 
     def _backdrop_source(self) -> Callable[[], Any]:
-        """Adanın altındaki ekran parçası, bulanık. HUD pencereleri ekran görüntüsünden hariç olduğu için cam
-        kendini görmez. Özel tam ekranda yakalama başarısız olursa None: cam düz açık gri olur."""
+        """The blurred part of the screen under the Island. HUD windows are excluded from screenshots, so the glass
+        does not see itself. If capture fails in exclusive fullscreen, None: the glass becomes flat light gray."""
         state: dict[str, Any] = {"at": -1e9, "img": None, "sct": None, "fail": 0}
 
         def grab() -> Any:
@@ -363,7 +364,7 @@ class HudWindow:
         return grab
 
     def _paint_island(self, now: float) -> None:
-        """Ada: tek pencere, içerik ve boyut style.Island'da. Hareket yokken yeniden basılmaz."""
+        """Island: one window; its content and size live in style.Island. Not repainted while nothing moves."""
         visible = self.island.update(style.entries(self.model.visible()), now)
         slot = self.slots.get(ISLAND_KEY)
         if not visible:
@@ -375,7 +376,7 @@ class HudWindow:
         sig = (self.island.current and style._sig(self.island.current),
                tuple(style._sig(e) for e in self.island.minimals))
         if self.island.calm and now - self._island_painted < CALM_EVERY:
-            return  # yalnız nabız atıyor: saniyede ~15 kare yeter (her karede çizmek %36 işlemci yiyordu)
+            return  # only the pulse is beating: ~15 frames per second is enough (drawing every frame used 36% CPU)
         img, moving = self.island.frame(now)
         glass_due = self.island.backdrop is not None and now - self._island_painted >= BACKDROP_EVERY
         if not moving and slot.last == sig and not glass_due:
@@ -391,7 +392,7 @@ class HudWindow:
         slot.visible = True
 
     def _paint_pointer(self, items: list, now: float) -> None:
-        """ALICE'in imleci: en yeni imleç komutuna kayar; komut kalmayınca söner."""
+        """ALICE's cursor: slides to the newest cursor command; fades out when no command is left."""
         cur = max((i for i in items if i.kind == "cursor"), key=lambda i: i.seq, default=None)
         p = self.pointer
         if cur is not None and cur.seq != p.seq:
@@ -442,7 +443,7 @@ class HudWindow:
         sprites = {sp.key: sp for sp in style.layout(self.model.visible(), self.w, self.h)}
         for key, sp in sprites.items():
             slot = self.slots.get(key)
-            if slot is not None and slot.anim.gone_at is not None:  # kaybolurken geri geldi: baştan
+            if slot is not None and slot.anim.gone_at is not None:  # came back while fading out: start over
                 self._drop(key)
                 slot = None
             if slot is None:
@@ -450,7 +451,7 @@ class HudWindow:
             slot.sprite = sp
         for key, slot in self.slots.items():
             if key not in (ISLAND_KEY, POINTER_KEY) and key not in sprites and slot.anim.gone_at is None:
-                slot.anim.gone_at = now  # kaybolurken solsun
+                slot.anim.gone_at = now  # fade out as it disappears
         for key, slot in list(self.slots.items()):
             if key in (ISLAND_KEY, POINTER_KEY):
                 continue
@@ -472,7 +473,7 @@ class HudWindow:
             return
         try:
             self.tick()
-        except Exception:  # noqa: BLE001 - tek bozuk öğe HUD'u düşürmesin
+        except Exception:  # noqa: BLE001 - one broken item must not bring down the HUD
             pass
         self.root.after(TICK_MS, self._loop)
 
@@ -484,7 +485,7 @@ class HudWindow:
         self._quit = True
 
 
-# ---------------------------------------------------------------------- komut
+# ---------------------------------------------------------------------- command
 DEMO = [
     {"kind": "arrow", "clock": 2, "text": "SAM · 12 km", "severity": "warn", "id": "demo-sam"},
     {"kind": "edge", "clock": 7, "severity": "critical", "id": "demo-six.edge"},
@@ -497,7 +498,7 @@ DEMO = [
 
 
 def _parent_alive(pid: int) -> Callable[[], bool]:
-    """Çekirdek kapanınca (os._exit ile bile) HUD sahipsiz kalmasın."""
+    """When the core exits (even via os._exit), the HUD must not be left orphaned."""
     if not pid:
         return lambda: True
     import psutil
@@ -521,7 +522,7 @@ def hud_cmd(argv: list[str]) -> int:
     ap.add_argument("--demo", action="store_true", help="ok, kenar ışığı, kart ve gösterge çiz (30 sn)")
     ap.add_argument("--preview", metavar="DOSYA", help="denemeyi pencere açmadan PNG olarak kaydet")
     ap.add_argument("--port", type=int, default=None, help=f"komut portu (varsayılan [hud] port ya da {PORT})")
-    ap.add_argument("--parent", type=int, default=0, help=argparse.SUPPRESS)  # çekirdeğin pid'i
+    ap.add_argument("--parent", type=int, default=0, help=argparse.SUPPRESS)  # the core's pid
     a = ap.parse_args(argv)
     hud = load_config().data.get("hud", {}) or {}
     port = int(a.port or hud.get("port") or PORT)
@@ -536,7 +537,7 @@ def hud_cmd(argv: list[str]) -> int:
 
 def run(port: int, hud: dict[str, Any], alive: Callable[[], bool] = lambda: True,
         seed: list[dict[str, Any]] | None = None, seconds: float = 0.0) -> int:
-    _dpi_aware()  # koordinatlar fiziksel piksel: %125/%150 ölçekte de kutular doğru yere düşsün
+    _dpi_aware()  # coordinates are physical pixels: boxes must land correctly at 125%/150% scaling too
     sock = bind(port)
     if sock is None:
         return EXIT_BUSY
@@ -572,7 +573,7 @@ def run(port: int, hud: dict[str, Any], alive: Callable[[], bool] = lambda: True
 def _demo(port: int, hud: dict[str, Any]) -> int:
     seed = [{**m, "ttl": 30} for m in DEMO]
     code = run(port, hud, seed=seed, seconds=31)
-    if code == EXIT_BUSY:  # HUD zaten açık (çekirdek başlatmış): denemeyi ona gönder
+    if code == EXIT_BUSY:  # HUD is already open (the core started it): send the demo to it
         from alice.hud import client
 
         client.configure(port)

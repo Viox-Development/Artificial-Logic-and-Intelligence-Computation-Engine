@@ -1,4 +1,4 @@
-"""Uygulama tarifleri ve `app` aracı: kayıt birleştirme, takma adlar, akış şablonları, açma yolları."""
+"""App recipes and the `app` tool: registry merging, aliases, flow templates, open paths."""
 
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ def ctx(workdir):
 
 @pytest.fixture(autouse=True)
 def masaustu_yok(monkeypatch):
-    """Testler makinedeki kurulu uygulamalara bağlı olmasın: varsayılan, masaüstü sürümü kurulu değil."""
+    """Tests must not depend on apps installed on this machine: by default the desktop version is not installed."""
     monkeypatch.setattr("alice.tools.apps.desktop_available", lambda app: False)
 
 
-# ------------------------------------------------------------------------------- kayıt
+# ------------------------------------------------------------------------------- registry
 def test_yerlesik_kayit_tutarli():
     reg = apps.registry()
     assert {"whatsapp", "instagram", "tiktok", "youtube", "steam_game"} <= set(reg)
@@ -48,9 +48,9 @@ def test_kullanici_kaydi_alan_alan_ezer(monkeypatch, tmp_path):
     reg = apps.registry()
     wa = reg["whatsapp"]
     assert wa.url == "https://ozel.example"
-    assert wa.title == "WhatsApp"            # dokunulmayan alan yerleşikten gelir
+    assert wa.title == "WhatsApp"            # untouched fields come from the built-in registry
     assert wa.flows["send"] == "özel tarif {kime}"
-    assert "read" in wa.flows                # diğer akışlar korunur
+    assert "read" in wa.flows                # other flows are kept
     assert reg["benimsite"].url == "https://benim.example"
 
 
@@ -69,7 +69,7 @@ def test_bozuk_toml_sessizce_atlanir(monkeypatch, tmp_path):
     assert "whatsapp" in apps.registry()
 
 
-# ------------------------------------------------------------------------------- akış şablonu
+# ------------------------------------------------------------------------------- flow template
 def test_akis_hedefi_doldurulur():
     wa = apps.find("whatsapp")
     assert wa.fields("send") == ["kime", "mesaj"]
@@ -85,11 +85,11 @@ def test_eksik_alan_ve_olmayan_akis():
         wa.goal("ucus", {})
 
 
-# ------------------------------------------------------------------------------- araç
+# ------------------------------------------------------------------------------- tool
 def test_list_akislari_ve_apileri_yazar(ctx):
     out = AppTool().run(ctx, action="list").text
     assert "whatsapp" in out and "send(kime, mesaj)" in out
-    assert "API: youtube_api" in out  # resmî API varsa model onu tercih etsin diye yazılır
+    assert "API: youtube_api" in out  # written so the model prefers the official API when one exists
 
 
 def test_bilinmeyen_uygulama_secenekleri_sayar(ctx):
@@ -110,7 +110,7 @@ def test_web_uygulamasi_kullanicinin_tarayicisinda_acilir(ctx, monkeypatch):
     monkeypatch.setattr("alice.tools.browser.Browser", FakeBrowser)
     out = AppTool().run(ctx, action="open", name="wp").text
     assert seen == {"action": "goto", "url": "https://web.whatsapp.com"}
-    assert "QR" in out  # not da gösterilir: ilk açılışta ne yapması gerektiğini bilsin
+    assert "QR" in out  # the note is shown too, so it knows what to do on first launch
 
 
 def test_tarayiciya_baglanilamazsa_varsayilan_tarayici(ctx, monkeypatch):
@@ -139,7 +139,7 @@ def test_kurulu_uygulama_adiyla_acilir(ctx, monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: opened.append(t) or "açıldı")
     out = AppTool().run(ctx, action="open", name="discord").text
     assert opened == ["Discord"]
-    assert "discord" in out  # API notu: veri işleri için bağlantıyı kullan
+    assert "discord" in out  # API note: use the connection for data tasks
 
 
 def test_flow_reflex_e_dolu_hedef_gonderir(ctx, monkeypatch):
@@ -193,7 +193,7 @@ def test_risk_list_okuma_digerleri_bilgisayar():
     assert t.risk_for({"action": "flow"}) == "computer"
 
 
-# ------------------------------------------------------------------------------- masaüstü akışları
+# ------------------------------------------------------------------------------- desktop flows
 def test_uygulama_tarifleri_masaustunde_yurur():
     sp = apps.find("spotify")
     assert sp.flow_target == "desktop" and sp.window_title == "Spotify"
@@ -208,14 +208,14 @@ def test_pencere_yoksa_acilir_gelince_one_alinir(monkeypatch):
 
     def fake_open(target):
         opened.append(target)
-        windows.append("Spotify Premium")  # uygulama açılınca penceresi gelir
+        windows.append("Spotify Premium")  # the window appears once the app opens
         return "açıldı"
 
     monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: list(windows))
     monkeypatch.setattr("alice.tools.desktop.open_app", fake_open)
     monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: focused.append(t) or t)
     title = appsmod._ensure_window(apps.find("spotify"), wait=2, sleep=lambda s: None)
-    # bulunan pencerenin tam başlığı öne alınır (alt dize bir tarayıcı sekmesini de tutabilirdi)
+    # the full title of the found window is brought to front (a substring could also have matched a browser tab)
     assert opened == ["Spotify"] and title == "Spotify Premium" and focused == ["Spotify Premium"]
 
 
@@ -278,9 +278,9 @@ def test_discord_uygulamasinda_dm_send_sayilir():
     assert t.risk_for({"action": "flow", "name": "discord", "flow": "mute"}) == "computer"
 
 
-# ------------------------------------------------------------------------------- masaüstü tercihi
+# ------------------------------------------------------------------------------- desktop preference
 def test_masaustu_kuruluysa_web_yerine_o_kullanilir(ctx, monkeypatch):
-    # WhatsApp Web'in oturumu kapalıydı (QR istiyordu), masaüstü uygulaması açıktı: akış masaüstünde yürümeli.
+    # WhatsApp Web's session was logged out (asked for a QR code) but the desktop app was open: run the flow there.
     seen = {}
 
     class FakeLoop:
@@ -304,8 +304,8 @@ def test_masaustu_kuruluysa_web_yerine_o_kullanilir(ctx, monkeypatch):
     ctx.decider, ctx.router = object(), object()
     out = AppTool().run(ctx, action="flow", name="wp", flow="send", args={"kime": "Que Mal", "mesaj": "selam"}).text
     assert seen["observer"] == {"window": "WhatsApp"} and "Que Mal" in seen["goal"]
-    assert "QR" not in out  # web'in notu masaüstünde geçersiz
-    assert AppTool().risk_for({"action": "flow", "name": "wp", "flow": "send"}) == "send"  # onay yine sorulur
+    assert "QR" not in out  # the web note is not valid on the desktop
+    assert AppTool().risk_for({"action": "flow", "name": "wp", "flow": "send"}) == "send"  # confirmation is still asked
 
     opened = []
     monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: opened.append(t) or "açıldı")

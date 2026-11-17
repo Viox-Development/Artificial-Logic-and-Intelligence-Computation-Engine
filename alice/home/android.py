@@ -1,11 +1,12 @@
-"""ADB ile Android cihazlar: Android TV ve telefon.
+"""ADB for Android devices: Android TV and phone.
 
-İlk kurulum (bir kere):
-* TV: Ayarlar > Cihaz tercihleri > Hakkında > Yapı numarasına 7 kez bas; Geliştirici seçenekleri > Ağ üzerinden
-  hata ayıklama (ya da USB hata ayıklama) açık. İlk bağlanışta TV'de çıkan pencerede "Her zaman izin ver".
-* Telefon (Android 11+): Geliştirici seçenekleri > Kablosuz hata ayıklama > "Eşleme koduyla cihaz eşle";
-  ekrandaki IP:port ve 6 haneli kodla `pair`, sonra ana ekrandaki IP:port ile `connect`.
-* Bilgisayarda adb: `winget install Google.PlatformTools` (ya da config'te [android] adb = "tam/yol/adb.exe").
+First-time setup (once):
+* TV: Settings > Device preferences > About > tap Build number 7 times; Developer options > Network debugging
+  (or USB debugging) on. On the first connection, tick "Her zaman izin ver" (Always allow) in the TV's prompt.
+* Phone (Android 11+): Developer options > Wireless debugging > "Eşleme koduyla cihaz eşle" (Pair device with code);
+  use `pair` with the IP:port and 6-digit code shown on screen, then `connect` with the IP:port on the main screen.
+* adb on the computer: `winget install Google.PlatformTools` (or set adb = "full/path/adb.exe" under
+  [android] in config).
 """
 
 from __future__ import annotations
@@ -46,8 +47,8 @@ class AdbError(RuntimeError):
 
 
 def run(cmd: list[str], timeout: float = 15) -> subprocess.CompletedProcess:
-    """adb çıktısı (cihazdaki bildirimler, uygulama adları) her sistemde UTF-8'dir; Windows'un konsol kod sayfasıyla
-    (cp857/cp1254) çözülürse Türkçe harfler bozuluyordu."""
+    """adb output (device notifications, app names) is UTF-8 on every system; decoding it with the Windows console
+    code page (cp857/cp1254) garbled Turkish characters."""
     return net.run(cmd, timeout=timeout, encoding="utf-8")
 
 
@@ -84,7 +85,7 @@ def parse_battery(dumpsys: str) -> dict:
 
 
 def parse_notifications(dumpsys: str, limit: int = 15) -> list[dict]:
-    """`dumpsys notification --noredact` → [{app, title, text}] (yeni olan önce, sistem kayıtları atlanır)."""
+    """`dumpsys notification --noredact` → [{app, title, text}] (newest first, system records skipped)."""
     out: list[dict] = []
     for block in re.split(r"\n\s*NotificationRecord\(", dumpsys)[1:]:
         pkg = re.search(r"pkg=([\w.]+)", block)
@@ -103,7 +104,7 @@ def parse_notifications(dumpsys: str, limit: int = 15) -> list[dict]:
 
 
 def input_text_arg(text: str) -> str:
-    """`input text` boşluğu %s ile ister; geri kalanı uzaktaki kabuk için tırnakla."""
+    """`input text` needs spaces as %s; quote the rest for the remote shell."""
     return shlex.quote(text.replace(" ", "%s"))
 
 
@@ -144,7 +145,7 @@ class Device:
             return f"{self.kind} ({self.serial}) bağlı değil: cihaz açık ve aynı ağda mı? Önce connect"
         return out.strip() or "adb hata verdi"
 
-    # ----- bağlantı -----
+    # ----- connection -----
     def connect(self) -> str:
         check_reachable(self.serial)
         try:
@@ -160,12 +161,13 @@ class Device:
         r = run([self.adb, "devices"], timeout=10)
         for line in r.stdout.splitlines():
             parts = line.split()
-            # Tam eşleşme: 192.168.1.5:5555 aranırken 192.168.1.5:55551 satırı "bağlı" sayılmasın.
+            # Exact match: looking for 192.168.1.5:5555, a 192.168.1.5:55551 line must not count as "bağlı"
+            # (connected).
             if len(parts) >= 2 and parts[0] == self.serial and parts[-1] == "device":
                 return
         self.connect()
 
-    # ----- ortak işler -----
+    # ----- shared operations -----
     def keys(self, name: str, times: int = 1) -> str:
         if name not in KEYS:
             raise AdbError(f"bilinmeyen tuş: {name}. Geçerli: {', '.join(KEYS)}")
@@ -206,7 +208,7 @@ class Device:
 
     def open_app(self, name: str) -> str:
         pkg = self.resolve_app(name)
-        if not PACKAGE.match(pkg):  # kamera gibi intent eylemleri
+        if not PACKAGE.match(pkg):  # intent actions, such as the camera
             self.shell(f"am start -a {shlex.quote(pkg)}")
             return f"{self.kind}: {name} açıldı"
         cat = "android.intent.category.LEANBACK_LAUNCHER" if self.kind == "tv" else "android.intent.category.LAUNCHER"
@@ -233,7 +235,7 @@ class Device:
         return f"{self.kind}: yazıldı"
 
     def screenshot(self, width: int = 1280) -> str:
-        """Ekran görüntüsü, base64 PNG (görebilen model için küçültülmüş)."""
+        """Screenshot as base64 PNG (downscaled for a model that can see images)."""
         r = self._run("exec-out", "screencap", "-p", timeout=20, binary=True)
         if r.returncode != 0 or not r.stdout.startswith(b"\x89PNG"):
             raise AdbError(self._explain((r.stderr or b"").decode("utf-8", "replace")) or "ekran görüntüsü alınamadı")
@@ -246,7 +248,7 @@ class Device:
         img.save(buf, "PNG")
         return base64.b64encode(buf.getvalue()).decode()
 
-    # ----- telefona özgü -----
+    # ----- phone-only -----
     def battery(self) -> str:
         b = parse_battery(self.shell("dumpsys battery"))
         return (f"pil %{b['percent']}" + (", şarj oluyor" if b["charging"] else "")
@@ -268,7 +270,7 @@ def check_reachable(host: str) -> None:
 
 
 def pair(host_port: str, code: str, adb: str = "") -> str:
-    """Android 11+ kablosuz hata ayıklama eşlemesi (bir kere)."""
+    """Android 11+ wireless debugging pairing (once)."""
     check_reachable(host_port)
     try:
         r = run([adb_path(adb), "pair", host_port, code.strip()], timeout=20)
@@ -284,13 +286,13 @@ def pair(host_port: str, code: str, adb: str = "") -> str:
     return "eşlendi"
 
 
-# Telefonun bağlanma portu eşleme portundan farklıdır ve her açılışta değişir (Linux'un rastgele port aralığı).
+# The phone's connect port differs from its pairing port and changes on every startup (Linux's random port range).
 CONNECT_PORTS = range(30000, 61000)
 
 
 def find_connect_address(ip: str, adb: str = "", skip: int | None = None, tries: int = 3, wait: float = 1.5,
                          sleep=None) -> str | None:
-    """Eşli telefonun güncel bağlanma adresi: önce mDNS, olmazsa IP'deki açık portlar tek tek denenir."""
+    """Current connect address of a paired phone: mDNS first; if that fails, try each open port on the IP."""
     import time
 
     sleep = sleep or time.sleep
@@ -311,7 +313,7 @@ def find_connect_address(ip: str, adb: str = "", skip: int | None = None, tries:
 
 
 def pair_and_connect(host_port: str, code: str, adb: str = "") -> tuple[str, str | None]:
-    """Eşle, sonra bağlanma portunu kendin bul ve bağlan. (mesaj, bağlanılan adres ya da None)"""
+    """Pair, then find the connect port yourself and connect. (message, connected address or None)"""
     pair(host_port, code, adb)
     ip, _, port = host_port.partition(":")
     addr = find_connect_address(ip, adb, skip=int(port) if port.isdigit() else None)
@@ -323,12 +325,12 @@ def pair_and_connect(host_port: str, code: str, adb: str = "") -> tuple[str, str
 
 
 def parse_mdns(text: str) -> list[tuple[str, str]]:
-    """`adb mdns services` → [(servis türü, ip:port)]."""
+    """`adb mdns services` → [(service type, ip:port)]."""
     return re.findall(r"(_adb[\w-]*\._tcp)\.?\s+(\d{1,3}(?:\.\d{1,3}){3}:\d+)", text)
 
 
 def mdns_connect_address(ip: str, adb: str = "") -> str | None:
-    """Telefonun kablosuz hata ayıklama portu her açılışta değişir; mDNS'ten aynı IP'nin güncel portunu bul."""
+    """The phone's wireless debugging port changes on every startup; find the current port for the same IP via mDNS."""
     try:
         out = run([adb_path(adb), "mdns", "services"], timeout=10).stdout
     except (OSError, AdbError):

@@ -1,4 +1,4 @@
-"""Proje deposu: kayıtlı projelerin ve proje şablonlarının diskteki yerleri, listeleri ve yardımcıları."""
+"""Project store: on-disk locations, lists and helpers for saved projects and project templates."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ def projects_dir() -> Path:
 
 
 def _read_saved(f: Path, tries: int = 10) -> str:
-    """Kayıt dosyasını oku. Windows'ta başka bir iş parçacığı dosyayı tam o an yenisiyle değiştirirken (replace)
-    açmaya çalışmak PermissionError verir; kısa bekleyip tekrar denenir."""
+    """Read the saved file. On Windows, trying to open it while another thread is replacing it with a new version
+    (replace) raises PermissionError; wait briefly and retry."""
     for i in range(tries):
         try:
             return f.read_text(encoding="utf-8")
@@ -33,7 +33,7 @@ def _read_saved(f: Path, tries: int = 10) -> str:
 
 
 def _slim(messages: list[dict[str, Any]], limit: int = 6000) -> list[dict[str, Any]]:
-    """Diske yazılacak konuşma: görseller atılır, çok uzun araç çıktıları kısaltılır."""
+    """Conversation to be written to disk: images are dropped and very long tool outputs are truncated."""
     from alice.providers.router import strip_images
 
     out = []
@@ -45,8 +45,8 @@ def _slim(messages: list[dict[str, Any]], limit: int = 6000) -> list[dict[str, A
     return out
 
 
-# list_projects önbelleği: yol -> ((mtime, boyut), satır). Proje dosyaları günlükleriyle MB'larca olabiliyor; Projeler
-# sayfası her açılışta hepsini baştan okuyup çözüyordu. Değişmeyen dosyanın satırı yeniden kullanılır.
+# list_projects cache: path -> ((mtime, size), row). Project files with logs can run to several MB; the Projects
+# page used to read and parse all of them from scratch on every open. An unchanged file's row is reused.
 _list_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
 
 
@@ -63,8 +63,8 @@ def list_projects() -> list[dict[str, Any]]:
             out.append(dict(hit[1]))
             continue
         try:
-            # Proje o an kaydediliyorsa (Windows'ta replace sırasında) düz okuma PermissionError verip proje
-            # listeden düşüyordu: biten proje "yok" görünüyordu.
+            # If the project was being saved at that moment (Windows replace), a plain read raised PermissionError,
+            # and the project dropped out of the list: a finished project looked "yok" (missing).
             data = json.loads(_read_saved(f))
         except (OSError, json.JSONDecodeError):
             continue
@@ -81,7 +81,7 @@ def list_projects() -> list[dict[str, Any]]:
 
 
 def guess_check(cwd: Path) -> str:
-    """Projenin test komutunu tahmin et (yeni proje penceresinde öneri olarak)."""
+    """Guess the project's test command (offered as a suggestion in the new project window)."""
     try:
         if (cwd / "package.json").is_file():
             data = json.loads((cwd / "package.json").read_text(encoding="utf-8"))

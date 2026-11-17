@@ -1,10 +1,12 @@
-"""Duygusal zekâ: nabız, konuşma ve oyun olayları birlikte okunur; sinirlendiğini (tilt) fark eder.
+"""Emotional intelligence: reads pulse, conversation and game events together; notices when you are angry (tilt).
 
-Belirtiler (son 15 dakika): üst üste çabuk biten uçuşlar (düşüş), sesli konuşmada küfür ya da öfke sözleri
-(voice.log, sadece senin sesin olarak tanınanlar), yüksek nabız (saat bağlıysa). Seviye: sakin | gergin | tilt.
+Signs (last 15 minutes): flights that end quickly one after another (drops), swearing or angry words in voice
+speech (voice.log, only lines recognized as your voice), high pulse (if a watch is connected).
+Level: sakin (calm) | gergin (tense) | tilt.
 
-Tilt'te ALICE daha az konuşur (tehdit sesleri arası boşluk iki katı, önemsiz anonslar susar) ve maç arasında bir
-kez "üst üste düştün, bir maç ara ver" der. Nasihat etmez, tekrar etmez.
+At tilt ALICE talks less (the gap between threat sounds is doubled, unimportant announcements are silenced) and
+once between matches says "üst üste düştün, bir maç ara ver" ("you keep crashing, take a match break"). No advice,
+no repeats.
 """
 
 from __future__ import annotations
@@ -17,16 +19,17 @@ from pathlib import Path
 from typing import Any
 
 WINDOW = 15 * 60.0
-QUICK_DEATH = 120.0      # bu kadar sürmeden biten uçuş "çabuk düştü"
+QUICK_DEATH = 120.0      # a flight ending sooner than this is "çabuk düştü" (quick drop)
 HR_HIGH = 120.0
-# "lan", "saçma", "ne biçim" gündelik sohbette de geçiyor: tek başına öfke sayılmaz.
+# "lan", "saçma", "ne biçim" (dude, nonsense, what kind of) also come up in casual chat: alone they
+# don't count as anger.
 SWEAR = re.compile(r"\b(amk|aq|siktir\w*|sik\w*|of+ be|kahretsin|lanet|yeter ya|bıktım|salak|aptal oyun|"
                    r"hile|hileci)\b", re.I)
 
 
 @dataclass
 class Mood:
-    level: str = "sakin"            # sakin | gergin | tilt
+    level: str = "sakin"            # sakin (calm) | gergin (tense) | tilt
     quick_deaths: int = 0
     swears: int = 0
     hr: float | None = None
@@ -34,7 +37,7 @@ class Mood:
 
 
 def heard_lines(path: Path, since: float) -> list[str]:
-    """voice.log'dan son WINDOW içinde duyulan (senin sesin olarak tanınan) cümleler."""
+    """Sentences heard within the last WINDOW from voice.log (recognized as your voice)."""
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-3000:]
     except OSError:

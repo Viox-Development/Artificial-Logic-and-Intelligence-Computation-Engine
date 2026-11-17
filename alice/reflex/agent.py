@@ -1,20 +1,22 @@
-"""Ekran ajanı: Jev her adımda ne yapılacağını öğe listesinden seçer, kod uygular ve sonucu doğrular.
+"""Screen agent: at each step Jev chooses what to do from the item list, the code applies it and verifies the result.
 
-TypeSafe'in kendi rehberi ve Jev'le bilgisayar/oyun oynayan projelerden (typesafe-computer-use, CUA-JEV,
-jev-factorio-agent, tsai-civ2) çıkan düzen:
+The layout comes from TypeSafe's own guide and from projects where Jev plays computers and games
+(typesafe-computer-use, CUA-JEV, jev-factorio-agent, tsai-civ2):
 
-- ekran deterministik okunur (perceive.py): numaralı, konumlu, tekrarsız öğeler;
-- Jev'e tek istekte ayrı ayrı sorulur (spekülatif): eylemin türü, hangi öğe, hangi tuş, nereye bırakılacak,
-  hedef bitti mi, hedefin üzerinde çalışılacak şey listede yok mu. Tür ve öğe ayrı sorulur: anlamı örtüşen
-  seçenekler (aynı öğe için "tıkla" ve "çift tıkla") oyu bölüp güveni düşürüyordu;
-- hedef İngilizceye çevrilir (Jev en iyi İngilizcede), beyin modelinin notları (oyunun kuralları, strateji)
-  durumun içinde gider;
-- geçmiş, koordinat değil okunur cümledir: "clicked button 'Kaydet' (top-right) -> screen changed";
-- her eylemden sonra ekranın değişip değişmediğine bakılır; işe yaramayan eylem tekrar tekrar denenmez;
-- listede olmayan bir hedef (ikon, oyun tahtası) için Jev'in görsel sorusu (var mı? + Box) yedek olarak kalır;
-- her adım ~/.alice/reflex-trace.jsonl'a yazılır: neden başarısız olduğu görülebilsin.
+- the screen is read deterministically (perceive.py): numbered, positioned, non-duplicate items;
+- Jev is asked separately, one question per request (speculatively): the kind of action, which item, which key,
+  where to drop, whether the goal is done, and whether what to work on is missing from the list. Kind and item are
+  asked separately: options with overlapping meanings ("click" and "double-click" for the same item) split the vote
+  and lowered confidence;
+- the goal is translated to English (Jev works best in English); the brain model's notes (game rules, strategy)
+  go along in the state;
+- history is a readable sentence, not coordinates: "clicked button 'Kaydet' (top-right) -> screen changed";
+- after every action it checks whether the screen changed; an action that did nothing is not retried again and again;
+- for a target that is not in the list (an icon, a game board), Jev's visual question (is it there? + Box) stays
+  as a fallback;
+- every step is written to ~/.alice/reflex-trace.jsonl so the reason for a failure can be seen.
 
-Metin üretmek Jev'in işi değil: yazılacak metin `inputs`tan ya da hızlı modelden (text_writer) gelir.
+Generating text is not Jev's job: the text to write comes from `inputs` or from the fast model (text_writer).
 """
 
 from __future__ import annotations
@@ -32,9 +34,9 @@ from alice.reflex.perceive import (Item, Screen, changed_crops, changed_places, 
 
 SCREEN_REF = "alice-screen-9d2f4b71"
 ZOOM_REF = "alice-zoom-5e8a03c6"
-START_REF = "alice-start-3c71e0a9"  # oyun turunun başındaki ekran
-START_CROP_REF = "alice-startcrop-6b2d94e0"  # değişen bölge, turun başında
-NOW_CROP_REF = "alice-nowcrop-a81f5c37"  # aynı bölge, şimdi
+START_REF = "alice-start-3c71e0a9"  # screen at the start of the game turn
+START_CROP_REF = "alice-startcrop-6b2d94e0"  # the changed region, at the start of the turn
+NOW_CROP_REF = "alice-nowcrop-a81f5c37"  # the same region, now
 
 ACTION_CRITERIA = {
     "click": "Click one item (a button, link, tab, menu entry, cell or piece of text).",
@@ -58,8 +60,8 @@ VISUAL_DRAG = "drag_unlisted"
 
 
 def grab_box(verb: str) -> str:
-    """Kutunun nereyi göstermesi gerektiği: şeyin görünen ve üstü kapalı olmayan kısmı. Üst üste binmiş kartlarda Q♠'nin
-    kutusunun ortası üstündeki J♥'ye düşüyor, J♥ tek başına taşınamadığı için hiçbir şey olmuyordu."""
+    """Where the box should point: the visible, uncovered part of the thing. In overlapping cards, the center of
+    Q♠'s box landed on the J♥ lying on top of it; since J♥ cannot be moved alone, nothing happened."""
     return (f"the visible, uncovered part of the thing in `screen` that should be {verb} next to work toward `goal`, "
             f"where it can be {verb} without touching anything lying on top of it")
 VISUAL_DRAG_CRITERION = ("Drag something visible in `screen` that is not in `items`, such as a card, a game piece or a "
@@ -67,73 +69,76 @@ VISUAL_DRAG_CRITERION = ("Drag something visible in `screen` that is not in `ite
 VISUAL_CRITERION = ("Click something visible in `screen` that is not in `items`, such as an icon, a picture, "
                     "a map tile or a game piece.")
 DONE_MIN = 0.85
-CHANGED_MIN = 0.75  # görsel kıyas (changed_as_asked) gözlenebilir tek yargı: TypeSafe'in 0.7 'evet' eşiğine yakın
-LIKELY_DONE_MIN = 0.6  # sıradaki eylemden emin değilken, son eylem ekranı değiştirdiyse
-SCREEN_RETRY = 0.5  # sn: ekran okunamazsa bu kadar bekleyip bir kez daha
-LOOP_MAX = 2  # aynı ekranda aynı eylem bundan fazla yapılmaz (A-B-A-B gidip gelme)
-ITEM_SURE = 0.6  # öğe seçiminde en iyi aday bunun altındaysa ikinci bakış
-SECOND_LOOK_MIN = 0.15  # ikinci aday en az bu kadar olası olmalı (yoksa ikinci bakışa gerek yok)
-SECOND_LOOK_TOP = 4  # ikinci bakışta kıyaslanan aday sayısı
-MAX_CONSULTS = 2  # bir refleks çağrısında en fazla bu kadar iç danışma
-DRAW_MIN_AREA = 0.04  # draw_across: öğe pencerenin bu kadarından küçükse alan değil (düğme), Jev'in gördüğü alan kullanılır
-CONSULT_STEPS = 6  # danışmadan gelen adım için en fazla adım
-# Geri alınamaz olabilecek düğmeler (Türkçe ekler için sadece baştan sınır): gönder, öde, sil, satın al, onayla...
+CHANGED_MIN = 0.75  # visual comparison (changed_as_asked), the one observable verdict: near TypeSafe's 0.7 'yes'
+LIKELY_DONE_MIN = 0.6  # when unsure of the next action, if the last action changed the screen
+SCREEN_RETRY = 0.5  # seconds: if the screen cannot be read, wait this long and try once more
+LOOP_MAX = 2  # the same action is not done more than this on the same screen (no A-B-A-B back and forth)
+ITEM_SURE = 0.6  # if the best candidate in item selection is below this, take a second look
+SECOND_LOOK_MIN = 0.15  # the second candidate must be at least this likely (otherwise no second look is needed)
+SECOND_LOOK_TOP = 4  # number of candidates compared in the second look
+MAX_CONSULTS = 2  # at most this many internal consultations in one reflex call
+DRAW_MIN_AREA = 0.04  # draw_across: if the item is smaller than this share of the window it is not an area (a
+# button), so the area Jev saw is used
+CONSULT_STEPS = 6  # max steps for a step that comes from a consultation
+# Buttons that may be irreversible (only the start of the word is matched, for Turkish suffixes): gönder (send),
+# öde (pay), sil (delete), satın al (buy), onayla (confirm)...
 RISKY_RX = re.compile(r"(?<![\w])(gönder|send|sil|delete|remove|kaldır|satın|buy|purchase|öde|pay|sipariş|order|"
                       r"checkout|yayınla|publish|post|paylaş|share|kabul|accept|agree|onayla|confirm|abone|"
                       r"subscribe|uninstall|format|boşalt|empty trash)", re.I)
 MISSING_MIN = 0.7
 VISIBLE_MIN = 0.7
 ZOOM_MIN = 0.4
-KIND_MIN = 0.4  # eylem türünde bundan az eminse beyne bırak
-ITEM_CLEAR = 0.9  # ...ama öğe bu kadar açıksa ve en olası tür tıklamaysa tıkla
-KIND_FLOOR = 0.3  # (tıklama en az bu kadar olası olmalı)
-TRACE_MAX = 2_000_000  # bayt: iz dosyası bundan büyükse yarısı silinir
+KIND_MIN = 0.4  # if less sure than this about the action kind, leave it to the brain
+ITEM_CLEAR = 0.9  # ...but if the item is this clear and the most likely kind is a click, click
+KIND_FLOOR = 0.3  # (a click must be at least this likely)
+TRACE_MAX = 2_000_000  # bytes: if the trace file is larger than this, half of it is deleted
 _KEY_RX = re.compile(r"\b((?:ctrl|alt|shift|win)\+[\w+]+|f\d{1,2})\b", re.I)
 
 
 def _pick(answers: dict[str, Any], question: str, pool: list[Item]) -> Item | None:
-    """Jev'in seçtiği öğe; tek seçenek olduğu için soru sorulmadıysa o tek öğe."""
+    """The item Jev chose; if there was only one option, so no question was asked, that single item."""
     if question in answers:
         return next((i for i in pool if i.key == answers[question].value), None)
     return pool[0] if len(pool) == 1 else None
 
 
 def wrong_field(focused: str, text: str) -> bool:
-    """Çok satırlı metin tek satırlık bir alana (Edit, ComboBox) mı yazılacak? Satır sonları boşluğa dönüşür."""
+    """Is multi-line text going into a single-line field (Edit, ComboBox)? Line breaks turn into spaces."""
     return "\n" in text and focused.startswith(("Edit ", "ComboBox "))
 
 
 def already_has(value: str, text: str) -> bool:
-    """Alan yazılacak metni zaten içeriyor mu? Değer okunurken 80 karakterde kesiliyor."""
+    """Does the field already contain the text to be typed? The value is cut off at 80 characters when read."""
     v, t = (value or "").strip(), (text or "").strip()
     return bool(v and t) and (v == t or (len(v) >= 78 and t.startswith(v)))
 
 
-# Hedef ekrana dokunmayı açıkça yasaklıyor ("hiçbir düğmeye basma", "do not click anything"). Yalnız "değiştirme"
-# demek yetmez: sayfayı açmak için tıklamak gerekebilir.
+# The goal explicitly forbids touching the screen ("hiçbir düğmeye basma" = press no button, "do not click anything").
+# Saying only "değiştirme" (don't change) is not enough: a click may be needed to open the page.
 NO_TOUCH_RX = re.compile(
     r"(hi[çc]bir|herhangi bir)\s+(şeye|seye|düğmeye|dugmeye|kontrole|yere|tuşa|tusa)\s*(de\s+)?(bas|tıkla|tikla|dokun)|"
     r"\b(tıklamadan|tiklamadan|dokunmadan)\b|"
     r"\b(do not|don't|dont|without|never)\s+(click|touch|press)(ing)?\b|\bread[- ]only\b", re.I)
 TOUCHING = ("click", "double_click", "right_click", "type_text", "type_keys", "drag", "draw_across", "hold_key",
-            "press_key", VISUAL_ACTION, VISUAL_DRAG)  # kaydırma ve bekleme serbest: bir şeyi değiştirmezler
-# Yazı alanı olmayan, basılınca iş yapan denetimler: "buraya yaz" denince tıklanırlarsa form gönderilir.
+            "press_key", VISUAL_ACTION, VISUAL_DRAG)  # scrolling and waiting are free: they change nothing
+# Controls with no text field that do something when pressed: if clicked when told "write here", they submit the form.
 BUTTON_ROLES = ("button", "hyperlink", "menuitem", "tabitem", "checkbox", "radiobutton", "splitbutton", "a")
 BUTTON_WORDS = {"next", "ileri", "sonraki", "devam", "continue", "ok", "tamam", "kaydet", "save", "submit", "gönder",
                 "send", "cancel", "iptal", "back", "geri", "yes", "no", "evet", "hayır", "apply", "uygula", "done",
                 "bitti", "finish", "close", "kapat", "sign in", "log in", "giriş yap", "oturum aç", "install",
-                "yükle", "kur"}  # "ara/search" yok: arama kutusunun içindeki yazı da öyle görünür
+                "yükle", "kur"}  # no "ara/search": text inside a search box looks the same
 
 
-PLAN_MAX_PARTS = 8  # bir hedef en çok bu kadar adıma bölünür
-PLAN_PART_STEPS = 8  # planın tek bir adımı için en fazla eylem
-# Hedefte birden çok iş olduğunu gösteren bağlaçlar. "ve" tek başına yetmez ("Ara ve Bul" düğmesine tıkla).
+PLAN_MAX_PARTS = 8  # a goal is split into at most this many steps
+PLAN_PART_STEPS = 8  # max actions for a single plan step
+# Conjunctions showing that the goal has several tasks. "ve" (and) alone is not enough ("Ara ve Bul" düğmesine tıkla).
 _MULTI_RX = re.compile(r"\b(sonra|ardından|ardindan|daha sonra|bunun ardından|son olarak|then|after that|afterwards|"
                        r"and then|finally)\b|;|\b\w{3,}(ıp|ip|up|üp)\b[^.]{3,}(\bve\b|,)", re.I)
 
 
 def multi_part_goal(goal: str) -> bool:
-    """Hedef birkaç ayrı iş mi istiyor? (planlama yalnız bunlarda: kısa hedefe fazladan model çağrısı harcanmaz)"""
+    """Does the goal ask for several separate tasks? (planning happens only for these: a short goal does not
+    waste an extra model call)"""
     words = goal.split()
     if len(words) < 7:
         return False
@@ -141,25 +146,26 @@ def multi_part_goal(goal: str) -> bool:
 
 
 def no_touch_goal(*goals: str) -> bool:
-    """Hedef ekrandaki hiçbir şeye basılmamasını istiyor mu? (okuma/gözlem hedefi)"""
+    """Does the goal ask that nothing on the screen be pressed? (a read/observe goal)"""
     return any(NO_TOUCH_RX.search(g or "") for g in goals)
 
 
 def not_a_field(item: Item) -> bool:
-    """Yazı yazılamayacak, düğme gibi bir öğe mi? Sayfa alanlarını listelemediğinde (Chrome'da Google'ın kod kutusu)
-    'yazılacak yer' diye 'Next' yazısı seçilmiş, tıklanıp boş form gönderilmişti."""
+    """Is it an item nothing can be typed into, such as a button? When the page's fields are not listed
+    (Google's code box in Chrome), the 'Next' text was picked as the place to type, clicked, and an empty form
+    was sent."""
     if item.editable:
         return False
     return item.role.lower() in BUTTON_ROLES or item.label.strip().casefold() in BUTTON_WORDS
 
 
 def login_item(item: Item, *goals: str) -> bool:
-    """Öğe bir giriş/kayıt kontrolü mü ve hedef giriş yapmayı istemiyor mu? (bkz. loop.LOGIN_RX)"""
+    """Is the item a login/sign-up control, and does the goal not want to log in? (see loop.LOGIN_RX)"""
     return login_text(f"{item.label} {item.value}", *goals)
 
 
 def goal_keys(goal: str) -> list[str]:
-    """Hedefte yazan kısayollar (ör. 'ctrl+shift+n') da seçeneklere girsin."""
+    """Shortcuts written in the goal (e.g. 'ctrl+shift+n') also go into the options."""
     return [k.lower() for k in _KEY_RX.findall(goal)]
 
 
@@ -175,29 +181,30 @@ class ScreenAgent:
         self.settle = settle
         self.trace_path = trace_path
         self.visual = True
-        self.last: Screen | None = None  # son okunan ekran (oyun turunun özetinde yeni çıkan yazılar için)
-        # Oyun oturumu açar: Jev'e turun başından beri değişenler gider, her eylemin kanıtı (ne çıktı, ne kayboldu)
-        # yansıtma için self.evidence'ta tutulur.
+        self.last: Screen | None = None  # last screen read (for the new texts that appeared, in the game turn summary)
+        # Opens a game session: what changed since the start of the turn goes to Jev, and each action's evidence
+        # (what appeared, what disappeared) is kept in self.evidence for reflection.
         self.track_changes = False
-        # Oyunda hamle: ekranı değiştiren ilk eylemden sonra dur. Solitaire'de ilk tıklama 4♣'yi taşımıştı ama Jev
-        # bunu tanımayıp tıklamaya devam etti; doğrulamayı tahtayı okuyan model yapar (Voyager, Cradle).
+        # A game move: stop after the first action that changes the screen. In Solitaire the first click had moved 4♣,
+        # but Jev did not recognize it and kept clicking; verification is done by the model that reads the board
+        # (Voyager, Cradle).
         self.stop_after_change = False
-        # Kullanıcı açıkça istediyse (mesajı gönder, dosyayı sil) geri alınamaz düğmelere basılabilir.
+        # If the user explicitly asked (send the message, delete the file), irreversible buttons may be pressed.
         self.allow_irreversible = False
-        # Takılınca sıradaki somut adımı soran fonksiyon (durum sözlüğü -> {"next": "...", "give_up": bool}).
+        # Function that asks for the next concrete step when stuck (state dict -> {"next": "...", "give_up": bool}).
         self.consult: Callable[[dict[str, Any]], dict[str, Any]] | None = None
-        # Çok parçalı hedefi sıralı kısa adımlara bölen fonksiyon (hedef -> adım listesi). Bkz. _run_plan.
+        # Function that splits a multi-part goal into short sequential steps (goal -> step list). See _run_plan.
         self.plan: Callable[[str], list[str]] | None = None
         self.evidence: list[dict[str, Any]] = []
 
-    # ------------------------------------------------------------------ yardımcılar
+    # ------------------------------------------------------------------ helpers
     def _english(self, goal: str) -> str:
         if self.translate is None:
             return goal
         try:
             out = (self.translate(goal) or "").strip()
             return out or goal
-        except Exception:  # noqa: BLE001 - çeviri olmazsa asıl hedefle
+        except Exception:  # noqa: BLE001 - if translation fails, fall back to the original goal
             return goal
 
     def _can_see(self, scr: Screen) -> bool:
@@ -231,9 +238,10 @@ class ScreenAgent:
 
     def _steady_item(self, state: dict[str, Any], scr: Screen, ans: Any, images: dict[str, Any] | None,
                      dead: set[str]) -> Item | None:
-        """Öğe seçimini sağlamlaştır (jev-mcp'nin eşikleri gibi; karar kodda):
-        - bu ekranda daha önce bir şey değiştirmemiş öğe seçildiyse sıradaki aday;
-        - en iyi aday kararsızsa (< ITEM_SURE) en iyi birkaç aday için ikinci bakış, iki bakışın ortalaması."""
+        """Make item selection more robust (like jev-mcp's thresholds; the decision lives in code):
+        - if an item that changed nothing earlier on this screen was picked, the next candidate;
+        - if the best candidate is undecided (< ITEM_SURE), take a second look at the best few candidates
+          and average the two looks."""
         probs = {k: v for k, v in (ans.probabilities or {}).items()
                  if not any(i.key == k and i.describe(False) in dead for i in scr.items)}
         if not probs:
@@ -254,7 +262,8 @@ class ScreenAgent:
         return next((i for i in scr.items if i.key == top[0]), None)
 
     def _keyboard(self, goal: str, inputs: dict[str, str]) -> str:
-        """Pencereye klavyeyle yazılacak metin: araçtan gelen text, tek bir input, yoksa hızlı model hedeften üretir."""
+        """Text to type into the window with the keyboard: the text from the tool, a single input, or else
+        the fast model generates it from the goal."""
         if getattr(self, "_keyboard_text", ""):
             return self._keyboard_text
         if len(inputs) == 1:
@@ -268,7 +277,7 @@ class ScreenAgent:
         items = {i.key: i.describe() for i in scr.items}
         kinds = dict(ACTION_CRITERIA)
         if not any(i.editable for i in scr.items) and not any(i.source == "ocr" for i in scr.items):
-            kinds.pop("type_text")  # yazılacak alan yok
+            kinds.pop("type_text")  # no input field to type into
         if len(scr.items) < 2:
             kinds.pop("drag")
         if not callable(getattr(self.obs, "drag_at", None)):
@@ -292,7 +301,7 @@ class ScreenAgent:
             "key": Choice("Which key or shortcut should be pressed next for `goal`?",
                           {k: f"Press {k}" for k in keys}),
         }
-        # Choice en az iki seçenek ister; tek seçenek varsa sorulmaz, kod onu kullanır (_pick).
+        # Choice needs at least two options; with only one, it is not asked and the code uses it (_pick).
         if len(items) > 1:
             q["item"] = Choice("Which item in `items` should the next action be done on, to make progress toward "
                                "`goal`?", items)
@@ -304,7 +313,8 @@ class ScreenAgent:
             q["target_visible"] = Noul("Is the thing `goal` needs to click next visible in `screen`?")
             q["target"] = Box(grab_box("clicked"))
             if VISUAL_DRAG in kinds:
-                # Kart, taş, birim yazı değil: listede yoklar, sürüklemek için de ekrandan bulunmaları gerekiyor.
+                # Cards, pieces and units are not text: they are not in the list, so they must be found on
+                # screen to be dragged.
                 q["drag_visible"] = Noul("Is the thing `goal` needs to drag next visible in `screen`?")
                 q["drag_source"] = Box(grab_box("grabbed and dragged"))
                 q["drop_place"] = Box("the place in `screen` where the dragged thing should be dropped for `goal`")
@@ -312,9 +322,10 @@ class ScreenAgent:
                 q["draw_area"] = Box("the empty area in `screen`, such as a canvas, picture or map, where `goal` "
                                      "wants to draw or select")
         if see and compare:
-            # "Tamamen başarıldı mı?" soyut kaldı (Solitaire'de kart çekildiği halde 0.1). Gözlenebilir tek yargı:
-            # istenen değişiklik önceki karede yok, şimdikinde var mı? Değişen bölge varsa onun büyük kırpıntıları
-            # kıyaslanır (EFR): küçültülmüş tam ekranda kartın rakamı birkaç piksel kalıyordu.
+            # "Fully achieved?" stayed abstract (0.1 even though a card was drawn in Solitaire). The one observable
+            # verdict: is the requested change absent from the previous frame and present in the current one? If there
+            # is a changed region, large crops of it are compared (EFR): in the shrunk full screen, the card's number
+            # was left at a few pixels.
             before, after = compare
             q["changed_as_asked"] = Noul(f"Does `{after}` show the change `goal` asks for, which `{before}` "
                                          "does not show?", {
@@ -324,14 +335,15 @@ class ScreenAgent:
                          "difference is something else."})
         return q
 
-    # ------------------------------------------------------------------ döngü
+    # ------------------------------------------------------------------ loop
     def run(self, goal: str, max_steps: int = 25, inputs: dict[str, str] | None = None,
             notes: str | Callable[[Screen], str] = "", text: str = "", keys: list[str] | None = None,
             press_first: list[str] | None = None) -> ReflexResult:
-        """notes: sabit metin ya da her adımda ekrana göre seçen bir fonksiyon (oyunda: ekrandakine uyan dersler).
-        text: klavyeyle pencereye yazılacak metin (type_keys). keys: seçeneklere eklenecek tuşlar/kombinasyonlar."""
+        """notes: fixed text, or a function that picks notes for each step based on the screen
+        (in games: the lessons that match what is on screen).
+        text: text typed into the window with the keyboard (type_keys). keys: keys/combinations added to the options."""
         self._keyboard_text, self._extra_keys, self._first = text, list(keys or []), None
-        self._press_first = list(press_first or [])  # yazmadan önce: ör. escape (önceki girdi kalmasın)
+        self._press_first = list(press_first or [])  # before typing: e.g. escape (so previous input does not stay)
         parts = self._plan_parts(goal) if not (text or press_first) else []
         if len(parts) >= 2:
             res = self._run_plan(goal, parts, max_steps, inputs or {}, notes)
@@ -339,10 +351,10 @@ class ScreenAgent:
             res = self._run(goal, max_steps, inputs or {}, notes)
             res = self._consult_loop(goal, max_steps, inputs or {}, notes, res)
         if self._first is not None and self.last is not None:
-            # Ekranın başa göre değişen kısmı rapora: ana model sonucu (hesap makinesindeki sayı) okumak için ayrı
-            # refleks ve ekran görüntüsü turu harcıyordu.
+            # The part of the screen that changed since the start goes into the report: the main model used to spend
+            # a separate reflex and screenshot turn just to read the result (e.g. the number on a calculator).
             res.changes = screen_changes(self._first.items, self.last.items)
-        # Sonuç satırı: "clicked"/"done" doğru anda mı geldi, izden görülsün.
+        # Result line: so the trace shows whether "clicked"/"done" came at the right moment.
         self._trace({"ts": time.time(), "goal": goal, "result": res.status, "steps": res.steps, "reason": res.reason,
                      "window": res.title})
         return res
@@ -686,7 +698,7 @@ class ScreenAgent:
                 if choice == "type_keys":
                     text = self._keyboard(en, inputs)
                     if wrong_field(scr.focused, text):
-                        # Çok satırlı metin tek satırlık alana gidecekti (açık kalmış Kaydet penceresinin dosya adı).
+                        # Multi-line text would have gone into a one-line field (file name in a Save dialog left open).
                         history.append(f"did not type: keyboard focus is in {scr.focused}, a one-line field")
                         log.append(f"{step}. yazılmadı: odak tek satırlık alanda ({scr.focused})")
                         continue
@@ -729,7 +741,7 @@ class ScreenAgent:
 
     def _visual_click(self, step: int, scr: Screen, goal: str, a: dict[str, Any], log: list[str],
                       history: list[str]) -> ReflexResult | None:
-        """Listede olmayan hedef: Jev'in görsel cevabı (var mı? + Box), emin değilse yakından tekrar."""
+        """Target not in the list: Jev's visual answer (is it there? + Box); if unsure, look again up close."""
         seen = a["target_visible"].value if "target_visible" in a else 0.0
         if "target" not in a:
             return ReflexResult("needs_help", step - 1, "hedef listede yok ve ekrana bakılamıyor", log, scr.title,
@@ -757,9 +769,9 @@ class ScreenAgent:
 
     def _draw_across(self, step: int, scr: Screen, item: Item | None, see: bool, a: dict[str, Any], log: list[str],
                      history: list[str]) -> ReflexResult | None:
-        """Bir alanın içinde boydan boya sürükle (çizmek, alan seçmek). Paint'te Jev'in sürükleme kutuları tuvalin
-        ortasında neredeyse aynı noktayı gösterdi: 2 piksellik sürükleme şekil çizmedi. Alan, büyük bir öğeyse onun
-        kutusu, değilse Jev'in gördüğü boş alan; sol-üst çeyrekten sağ-alt çeyreğe."""
+        """Drag across an area from edge to edge (to draw, to select an area). In Paint, Jev's drag boxes pointed at
+        nearly the same spot in the middle of the canvas: a 2-pixel drag drew no shape. The area is a large item's box
+        if there is one, otherwise the empty area Jev saw; from the top-left quarter to the bottom-right quarter."""
         area, what = None, ""
         if item is not None and item.rect and (item.rect[2] - item.rect[0]) * (item.rect[3] - item.rect[1]) >= DRAW_MIN_AREA:
             area, what = item.rect, item.describe(False)
@@ -785,7 +797,7 @@ class ScreenAgent:
 
     def _visual_drag(self, step: int, scr: Screen, goal: str, a: dict[str, Any], log: list[str],
                      history: list[str]) -> ReflexResult | None:
-        """Listede olmayan bir şeyi (kart, taş, birim) ekranda görülen yerden alıp görülen yere bırak."""
+        """Pick up something not in the list (card, piece, unit) from where it is seen and drop it where it is seen."""
         seen = a["drag_visible"].value if "drag_visible" in a else 0.0
         if seen < VISIBLE_MIN or "drop_place" not in a:
             return ReflexResult("needs_help", step - 1, f"sürüklenecek şey ekranda bulunamadı (var mı? {seen:.2f})",
@@ -798,7 +810,7 @@ class ScreenAgent:
         (fx, fy), (tx, ty) = center(a["drag_source"].value), center(a["drop_place"].value)
         b = a["drag_source"].value
         box = (min(1.0, b["left"] * sx), min(1.0, b["top"] * sy), min(1.0, b["right"] * sx), min(1.0, b["bottom"] * sy))
-        close = self._zoom(goal, scr.image, box, "grabbed and dragged")  # tutulacak yere yakından bak
+        close = self._zoom(goal, scr.image, box, "grabbed and dragged")  # take a close look at the spot to grab
         if close is not None and close[0] >= VISIBLE_MIN:
             fx, fy = close[1], close[2]
         try:
@@ -835,8 +847,8 @@ class ScreenAgent:
 
 
 def make_consultant(router) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """Takılan refleks için tek kısa çağrı: sohbet geçmişi yok, sadece hedef ve o anki ekran. Ana modelin bütün araç
-    tanımlarıyla tam bir turundan çok daha hızlı."""
+    """One short call for a stuck reflex: no chat history, only the goal and the current screen. Much faster than a
+    full turn of the main model with all of its tool definitions."""
     import json as _json
 
     def consult(situation: dict[str, Any]) -> dict[str, Any]:
@@ -856,7 +868,7 @@ def make_consultant(router) -> Callable[[dict[str, Any]], dict[str, Any]]:
 
 
 def make_planner(router) -> Callable[[str], list[str]]:
-    """Çok parçalı hedefi sıralı kısa adımlara böl (tek kısa çağrı, ekran verilmez: adımlar hedefin kendi sözlerinden)."""
+    """Split a multi-part goal into short ordered steps (one short call, no screen; steps come from its words)."""
     import json as _json
 
     def plan(goal: str) -> list[str]:
@@ -878,7 +890,7 @@ def make_planner(router) -> Callable[[str], list[str]]:
 
 
 def make_translator(router) -> Callable[[str], str]:
-    """Hedefi İngilizceye çevir (Jev en iyi İngilizcede). Ekranda görünen adlar ve tırnak içi metin aynen kalır."""
+    """Translate the goal into English (Jev is best in English). Names on screen and quoted text stay unchanged."""
 
     def translate(goal: str) -> str:
         if goal.isascii():

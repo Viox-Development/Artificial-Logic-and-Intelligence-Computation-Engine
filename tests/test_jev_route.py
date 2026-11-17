@@ -1,4 +1,4 @@
-"""Jev ile model yönlendirme: doğruluk tablosu, hata durumu, katman zincirleri ve ajana bağlanma."""
+"""Jev model routing: truth table, failure handling, tier chains, and hookup to the agent."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from alice.providers.jev_route import decide_tier
 
 
 @pytest.mark.parametrize("code,thinking,steps,chat,tier", [
-    (0.95, 2.0, 1.5, 0.05, "strong"),   # "bu fonksiyondaki hatayı düzelt"
-    (0.05, 3.6, 1.2, 0.02, "strong"),   # "mikroservis mi monolit mi, gerekçeyle"
-    (0.10, 2.5, 3.7, 0.01, "strong"),   # "projeyi kur, testleri çalıştır, raporla"
-    (0.02, 1.1, 1.0, 0.96, "light"),    # "naber"
-    (0.03, 1.6, 1.9, 0.20, "light"),    # "YouTube'da bir şarkı aç"
-    (0.04, 2.6, 2.0, 0.10, "normal"),   # "React ile Vue farkı ne"
-    (0.50, 2.0, 1.5, 0.10, "normal"),   # kod mu belli değil: tablo "normal"e düşer
+    (0.95, 2.0, 1.5, 0.05, "strong"),   # "bu fonksiyondaki hatayı düzelt" (fix the bug in this function)
+    (0.05, 3.6, 1.2, 0.02, "strong"),   # "mikroservis mi monolit mi, gerekçeyle" (microservices or monolith, with reasons)
+    (0.10, 2.5, 3.7, 0.01, "strong"),   # "projeyi kur, testleri çalıştır, raporla" (set up the project, run the tests, report)
+    (0.02, 1.1, 1.0, 0.96, "light"),    # "naber" (hey, what's up)
+    (0.03, 1.6, 1.9, 0.20, "light"),    # "YouTube'da bir şarkı aç" (open a song on YouTube)
+    (0.04, 2.6, 2.0, 0.10, "normal"),   # "React ile Vue farkı ne" (what's the difference between React and Vue)
+    (0.50, 2.0, 1.5, 0.10, "normal"),   # unclear whether it's code: the table falls back to "normal"
 ])
 def test_truth_table(code, thinking, steps, chat, tier):
     assert decide_tier(code, thinking, steps, chat).tier == tier
@@ -134,15 +134,15 @@ def warm_stub(prev_role="brain", tokens=20000, ago=30.0, **routing):
 def test_warm_cache_keeps_easy_message_on_heavy_model(monkeypatch):
     calls = []
     monkeypatch.setattr(jev_route, "route", lambda *a, **k: calls.append(1) or jev_route.Route("light", "sohbet"))
-    assert warm_stub()._route_role("teşekkürler") is None  # noqa: SLF001 - beyinde kaldı
-    assert calls  # güçlü katman farklı modelle başlıyor: Jev'e yine soruldu
-    assert agent_stub()._route_role("teşekkürler") == "route-light"  # noqa: SLF001 - ilk tur: hafif modele
+    assert warm_stub()._route_role("teşekkürler") is None  # noqa: SLF001 - stayed on brain
+    assert calls  # strong tier starts on a different model: Jev was still asked
+    assert agent_stub()._route_role("teşekkürler") == "route-light"  # noqa: SLF001 - first turn: to the light model
 
 
 def test_cold_short_or_disabled_cache_routes_light(monkeypatch):
     monkeypatch.setattr(jev_route, "route", lambda *a, **k: jev_route.Route("light", "sohbet"))
-    assert warm_stub(tokens=1000)._route_role("selam") == "route-light"  # noqa: SLF001 - kısa bağlam
-    assert warm_stub(ago=600)._route_role("selam") == "route-light"  # noqa: SLF001 - önbellek soğudu (5 dk)
+    assert warm_stub(tokens=1000)._route_role("selam") == "route-light"  # noqa: SLF001 - short context
+    assert warm_stub(ago=600)._route_role("selam") == "route-light"  # noqa: SLF001 - cache went cold (5 min)
     assert warm_stub(cache_sticky=False)._route_role("selam") == "route-light"  # noqa: SLF001
     assert warm_stub(prev_role="route-light")._route_role("selam") == "route-light"  # noqa: SLF001
 
@@ -150,7 +150,7 @@ def test_cold_short_or_disabled_cache_routes_light(monkeypatch):
 def test_warm_cache_still_upgrades_and_skips_jev_when_pointless(monkeypatch):
     monkeypatch.setattr(jev_route, "route", lambda *a, **k: jev_route.Route("strong", "kod işi"))
     a = warm_stub()
-    assert a._route_role("bu kodu düzelt") == "route-strong"  # noqa: SLF001 - yukarı çıkış serbest
+    assert a._route_role("bu kodu düzelt") == "route-strong"  # noqa: SLF001 - upgrading is allowed
     a._last_turn_role = "route-strong"  # noqa: SLF001
     monkeypatch.setattr(jev_route, "route", lambda *a, **k: (_ for _ in ()).throw(AssertionError("jev çağrıldı")))
-    assert a._route_role("tamam devam") == "route-strong"  # noqa: SLF001 - aynı model: Jev'e sorulmadı
+    assert a._route_role("tamam devam") == "route-strong"  # noqa: SLF001 - same model: Jev was not asked

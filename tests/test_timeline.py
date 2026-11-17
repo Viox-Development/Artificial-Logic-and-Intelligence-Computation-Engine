@@ -42,7 +42,7 @@ def test_search_all_words_newest_first_and_days(tl):
     rows = tl.search("discord link", now=3100.0)
     assert [r["title"] for r in rows] == ["Discord - #oyun", "Discord - #genel"]
     assert "https://example.com/yeni" in rows[0]["snippet"]
-    assert tl.search("hava", days=0.01, now=3100.0) == []  # 15 dk geriye: yok
+    assert tl.search("hava", days=0.01, now=3100.0) == []  # 15 min back: none
     assert tl.search("yok böyle bir şey", now=3100.0) == []
 
 
@@ -73,11 +73,11 @@ def test_close_waits_for_writer_and_later_writes_are_dropped(tmp_path):
     th.start()
     t.add("a.exe", "t", "ilk")
     t.close()
-    t.close()  # ikinci kapatma zararsız
+    t.close()  # a second close is harmless
     stop.set()
     th.join(5)
     assert errors == []
-    t.add("a.exe", "t", "sonra")  # kapandıktan sonra sessizce düşer
+    t.add("a.exe", "t", "sonra")  # after closing, it is silently dropped
     assert t.prune(30) == 0
 
 
@@ -102,10 +102,10 @@ def recorder(tl, frames, texts, mode="normal", fg=("code.exe", "alice - VS Code"
 
 def test_recorder_saves_only_changed_screens(tl):
     r = recorder(tl, [img("white"), img("white"), img("black"), img("gray")],
-                 ["def main():", "hata: KeyError", "hata: KeyError"])  # aynı ekranda OCR çalışmaz: metin harcanmaz
+                 ["def main():", "hata: KeyError", "hata: KeyError"])  # same screen: no OCR, no text spent
     assert r.step(1000.0) and not r.step(1030.0)
     assert r.step(1060.0)
-    assert not r.step(1090.0)  # ekran değişti ama yazı aynı
+    assert not r.step(1090.0)  # the screen changed but the text is the same
     assert tl.count() == 2 and r.saved == 2
 
 
@@ -144,5 +144,5 @@ def test_recorder_stop_joins_thread_and_closes_timeline(tl):
     r.start()
     r.stop(timeout=2)
     assert not r._thread.is_alive()
-    tl.add("a", "b", "c", 1.0)  # kapandıktan sonra yazma sessizce düşer
-    r.stop()  # ikinci kez sorun değil
+    tl.add("a", "b", "c", 1.0)  # after closing, writes are silently dropped
+    r.stop()  # calling it a second time is fine

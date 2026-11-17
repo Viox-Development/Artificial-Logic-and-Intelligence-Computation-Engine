@@ -1,4 +1,4 @@
-"""Ev kontrolü: netsh/powercfg/adb çıktılarının ayrıştırılması ve araçların komut kurulumu (gerçek cihaz yok)."""
+"""Home control: parsing netsh/powercfg/adb output and setting up tool commands (no real devices)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from alice.tools.home import PC, Android, Wifi
 
 @pytest.fixture(autouse=True)
 def _home_network(monkeypatch):
-    # Testler ev ağındaymış gibi çalışsın (CI makinesinin kendi IP'si 10.x olabiliyor).
+    # Run the tests as if on the home network (the CI machine's own IP may be 10.x).
     monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
 
 
@@ -183,7 +183,7 @@ def test_android_notifications_parse():
 
 
 class FakeAdb:
-    """subprocess.run yerine: komutları kaydeder, adb'nin vereceği çıktıları döner."""
+    """Stands in for subprocess.run: records the commands and returns the output adb would give."""
 
     def __init__(self, replies=None):
         self.calls: list[list[str]] = []
@@ -440,7 +440,7 @@ WIFI_XML = """<ajax_response_xml_root><IF_ERRORSTR>SUCC</IF_ERRORSTR><OBJ_ACCESS
 
 
 class FakeZTE:
-    """Modemin web arayüzünü taklit eder: giriş, menü anahtarı, oturum zaman aşımı, yeniden başlatma."""
+    """Imitates the modem's web interface: login, menu token, session timeout, restart."""
 
     def __init__(self, password="sifre123"):
         self.password = password
@@ -500,7 +500,7 @@ def test_zte_login_devices_and_session_timeout_relogin():
     r = _router(fake)
     r.login()
     assert r.token == "S1"
-    fake.expire_once = True  # ilk veri isteğinde oturum düşsün: tekrar giriş yapıp devam etmeli
+    fake.expire_once = True  # the session drops on the first data request: it must log in again and continue
     rows = r.devices()
     assert {x["name"] for x in rows} == {"HAYAT-PC", "Galaxy-A54"}
     assert r.token == "TK1"
@@ -564,7 +564,7 @@ def test_run_timeout_becomes_short_timeout_error():
 
 
 class PairSim:
-    """adb komutlarını taklit eder: pair, mdns services, connect."""
+    """Imitates adb commands: pair, mdns services, connect."""
 
     def __init__(self, mdns: str = "", connect_ok: set[str] | None = None, pair_out: str = "Successfully paired"):
         self.mdns, self.ok, self.pair_out, self.calls = mdns, connect_ok or set(), pair_out, []

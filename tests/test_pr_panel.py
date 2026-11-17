@@ -1,4 +1,4 @@
-"""PR paneli: izlenen PR'ların canlı durumu, davranış düğmeleri ve önbellek. GitHub sahte."""
+"""PR panel: live status of watched PRs, behavior buttons and cache. GitHub is faked."""
 
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ def test_set_flag_toggles_only_known_flags(home):
     assert prwatch.set_flag("o/r", 7, "auto_merge", True)
     w = prwatch.load()[0]
     assert w.auto_merge and "auto_merge açıldı" in w.status
-    assert not prwatch.set_flag("o/r", 7, "path", True)  # bilinmeyen alan değiştirilemez
-    assert not prwatch.set_flag("o/r", 8, "auto_fix", False)  # izlenmeyen PR
+    assert not prwatch.set_flag("o/r", 7, "path", True)  # an unknown field cannot be changed
+    assert not prwatch.set_flag("o/r", 8, "auto_fix", False)  # PR not being watched
 
 
 def test_live_status_row_and_cache(home, monkeypatch):
@@ -47,7 +47,7 @@ def test_live_status_row_and_cache(home, monkeypatch):
     assert row["ci"] == "failure" and row["failed"] == ["test (3.12)"] and row["open_threads"] == 1
     assert row["mergeable"] is False and row["head"] == "dal" and row["sha"] == "abcdef1"
     prwatch.live_status(api, "o/r", 7)
-    assert api.calls == 1  # 30 sn önbellek
+    assert api.calls == 1  # 30 sec cache
     prwatch.live_status(api, "o/r", 7, cache=False)
     assert api.calls == 2
 

@@ -1,4 +1,4 @@
-"""Modele göre düşünme seviyeleri ve durum çubuğundaki oturum istatistiği."""
+"""Thinking levels per model and the session statistics in the status bar."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def test_levels_follow_the_model():
     assert kind == "graded" and "max" in gpt6 and "xhigh" in gpt6
     assert "max" not in thinking.levels_for("cliproxy", "gpt-5.6-terra")[0]
     claude = thinking.levels_for("anthropic", "claude-opus-5-5")[0]
-    assert "off" not in claude and "max" in claude  # Claude düşünmeyi kapatmaz
+    assert "off" not in claude and "max" in claude  # Claude cannot turn thinking off
     assert thinking.levels_for("groq", "qwen/qwen3.8-27b")[1] == "binary"
     assert thinking.levels_for("gemini", "gemini-flash-lite-latest") == (["default"], "none")
     assert thinking.levels_for("evren", "glm-5.3") == (["default"], "none")

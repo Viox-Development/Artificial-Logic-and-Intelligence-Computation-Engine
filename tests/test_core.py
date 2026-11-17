@@ -101,7 +101,7 @@ def engine(store, tmp_path, rules, mode="normal", **kw):
 def test_sustained_rule_fires_once_then_cools_down(store, tmp_path):
     rule = Rule("pc.gpu.temp", ">", 85, "GPU {value:.0f}", duration=60, cooldown=600)
     eng, sent = engine(store, tmp_path, [rule])
-    now = feed(store, "pc.gpu.temp", [90, 91, 92])  # sadece 30 sn: yeterince uzun değil
+    now = feed(store, "pc.gpu.temp", [90, 91, 92])  # only 30 sec: not long enough
     assert eng.evaluate(now) == []
     now = feed(store, "pc.gpu.temp", [93, 94, 95], start=now + 15)
     assert [f.text for f in eng.evaluate(now)] == ["GPU 95"]
@@ -113,7 +113,7 @@ def test_sustained_rule_fires_once_then_cools_down(store, tmp_path):
 def test_rule_needs_whole_window(store, tmp_path):
     eng, _ = engine(store, tmp_path, [Rule("pc.gpu.temp", ">", 85, "x", duration=60)])
     now = feed(store, "pc.gpu.temp", [90, 70, 90, 90, 90])
-    assert eng.evaluate(now) == []  # pencere içinde 70 var
+    assert eng.evaluate(now) == []  # 70 is inside the window
 
 
 def test_glob_rule_and_match(store, tmp_path):
@@ -121,7 +121,7 @@ def test_glob_rule_and_match(store, tmp_path):
     store.add("pc.disk.c.percent", 97, ts=1000)
     store.add("pc.disk.d.percent", 50, ts=1000)
     assert [f.text for f in eng.evaluate(1010)] == ["c dolu"]
-    assert eng.evaluate(1000 + 10_000) == []  # veri bayat
+    assert eng.evaluate(1000 + 10_000) == []  # the data is stale
 
 
 def test_rule_mode_filter(store, tmp_path):
@@ -160,7 +160,7 @@ def test_rule_agent_action(store, tmp_path):
 
 def test_ruleset_persistence(tmp_path):
     rs = RuleSet(tmp_path / "rules.json")
-    assert any(r.id == "gpu-hot" for r in rs.rules)  # varsayılanlar
+    assert any(r.id == "gpu-hot" for r in rs.rules)  # defaults
     rs.add(Rule("watch.hr", ">", 120, "nabız", id="hr"))
     rs.set_enabled("gpu-hot", False)
     rs2 = RuleSet(tmp_path / "rules.json")
@@ -189,10 +189,10 @@ def test_parse_rule_from_language():
 
 # ----------------------------------------------------------------- schedule
 @pytest.mark.parametrize("expr,after,expected", [
-    ("0 23 * * 0", "2026-10-09T12:00", "2026-10-11T23:00"),   # pazar gece
+    ("0 23 * * 0", "2026-10-09T12:00", "2026-10-11T23:00"),   # Sunday night
     ("*/15 * * * *", "2026-10-09T12:07", "2026-10-09T12:15"),
     ("30 8 1 * *", "2026-10-09T12:00", "2026-11-01T08:30"),
-    ("0 9 * * 1-5", "2026-10-09T09:00", "2026-10-12T09:00"),  # cuma 9'dan sonra -> pazartesi
+    ("0 9 * * 1-5", "2026-10-09T09:00", "2026-10-12T09:00"),  # Friday after 9 -> Monday
     ("0 0 29 2 *", "2026-03-01T00:00", "2028-02-29T00:00"),
 ])
 def test_cron_next(expr, after, expected):
@@ -213,9 +213,9 @@ def test_due_and_catch_up(tmp_path):
     a = store.add(ScheduledTask("0 23 * * *", "yedekle", created=created, catch_up=True))
     b = store.add(ScheduledTask("0 23 * * *", "özet", created=created, catch_up=False))
     assert store.due(ts("2026-10-05T22:59")) == []
-    # tam vaktinde ikisi de çalışır
+    # both run exactly on time
     assert {t.id for t, late in store.due(ts("2026-10-05T23:02"))} == {a.id, b.id}
-    # bilgisayar günlerce kapalıydı: sadece catch_up olan, telafi olarak
+    # the computer was off for days: only the catch_up one runs, as a make-up
     due = store.due(ts("2026-10-08T10:00"))
     assert [(t.id, late) for t, late in due] == [(a.id, True)]
     assert TaskStore(tmp_path / "tasks.json").get(b.id).last_run == ts("2026-10-08T10:00")
@@ -262,7 +262,7 @@ def test_core_tick_records_mode_and_state(tmp_path):
     assert core.modes.current == "flight"
     assert store_mode(core.store) == "flight"
     s = read_state()
-    assert s["running"] is False or s["mode"] == "flight"  # zaman damgası eski olduğu için running False
+    assert s["running"] is False or s["mode"] == "flight"  # running is False because the timestamp is old
     assert json.loads((alice_home() / "core-state.json").read_text(encoding="utf-8"))["policy"]["local_gpu"] is False
     force_mode("dev")
     core.tick(1015)
@@ -289,7 +289,7 @@ def test_core_runs_due_task(tmp_path):
     core, sent = make_core(tmp_path, run_agent=agent)
     core.modes.forced = None
     core.monitors[0].processes = set()
-    now = 1_760_000_000  # 1970'e yakın değerler Windows'ta datetime.timestamp() hatası verir
+    now = 1_760_000_000  # values close to 1970 make datetime.timestamp() fail on Windows
     t = core.tasks.add(ScheduledTask("* * * * *", "rapor yaz", created=now - 100))
     core.tick(now)
     assert done.wait(5)
@@ -302,8 +302,8 @@ def test_core_runs_due_task(tmp_path):
 
 
 def test_one_time_task_removes_itself_after_running(tmp_path):
-    """Canlı kayıt (7 Kasım): "beni 1 dakika sonra ara" görevi '56 3 7 11 *' cron'uyla listede kaldı; her yıl yeniden
-    arayacaktı ve silmesi kullanıcıya kaldı."""
+    """Live log (7 Nov): task "beni 1 dakika sonra ara" ("call me in 1 minute") stayed in the list with cron
+    '56 3 7 11 *'; it would call again every year, and deleting it was left to the user."""
     import time
 
     core, sent = make_core(tmp_path, run_agent=lambda prompt: "aradım")
@@ -319,8 +319,8 @@ def test_one_time_task_removes_itself_after_running(tmp_path):
             break
         time.sleep(0.05)
     assert core.tasks.get(once.id) is None and core.tasks.get(keep.id) is not None
-    assert TaskStore(tmp_path / "tasks.json").get(once.id) is None  # diskten de silindi
-    assert sum(x.kind == "task" for x in sent) == 2  # sonucu yine bildirildi
+    assert TaskStore(tmp_path / "tasks.json").get(once.id) is None  # also deleted from disk
+    assert sum(x.kind == "task" for x in sent) == 2  # the result was still reported
 
 
 # -------------------------------------------------------------------- tools
@@ -349,7 +349,7 @@ def test_tools(tmp_path, isolated_home):
     tid = TaskStore().tasks[0].id
     s.run(ctx, action="run_now", id=tid)
     assert TaskStore().due()[0][0].id == tid
-    # Bilinmeyen id ile remove hata olmalı (eskiden başarılı sonuç dönüyordu).
+    # remove with an unknown id must fail (it used to return a success result).
     with pytest.raises(ToolError, match="görev yok"):
         s.run(ctx, action="remove", id="olmayan-gorev")
     assert s.run(ctx, action="remove", id=tid).text == "silindi"
@@ -378,7 +378,7 @@ def test_rule_agent_action_does_not_block_tick(store, tmp_path):
     rule = Rule("pc.cpu.percent", ">", 90, "CPU", action="agent", prompt="bak")
     eng, sent = engine(store, tmp_path, [rule], run_agent=lambda p: gate.wait(5) and "bitti")
     store.add("pc.cpu.percent", 99, ts=1000)
-    assert eng.evaluate(1001)  # ajan bitmeden döner
+    assert eng.evaluate(1001)  # returns before the agent finishes
     gate.set()
 
 
@@ -390,7 +390,7 @@ def test_impossible_cron_rejected_and_skipped(tmp_path):
     with pytest.raises(ValueError):
         ScheduledTask("0 9 30 2 *", "x")
     path = tmp_path / "tasks.json"
-    good = ScheduledTask("* * * * *", "iyi", created=1_760_000_000)  # 1970 civarı Windows'ta OSError verir
+    good = ScheduledTask("* * * * *", "iyi", created=1_760_000_000)  # values around 1970 raise OSError on Windows
     from dataclasses import asdict
 
     bad = asdict(good) | {"cron": "0 9 30 2 *", "id": "bad"}
@@ -413,25 +413,25 @@ def test_corrupt_task_file_keeps_memory(tmp_path):
 
 def test_core_prime_writes_mode_before_first_tick_and_hooks_get_policy(tmp_path):
     core, _ = make_core(tmp_path)
-    core.prime()  # DCS açık: ses modülü daha başlamadan "GPU yok" görsün
+    core.prime()  # DCS is open: the voice module must see "GPU yok" (no GPU) before it starts
     assert json.loads((alice_home() / "core-state.json").read_text(encoding="utf-8"))["policy"]["local_gpu"] is False
     seen = []
     core.hooks.append(lambda pol: seen.append(pol.local_gpu))
-    core.hooks.append(lambda pol: 1 / 0)  # çöken kanca turu bozmasın
+    core.hooks.append(lambda pol: 1 / 0)  # a crashing hook must not break the tick
     core.tick(1000)
     assert seen == [False]
 
 
 def test_muted_notification_recorded_once(store):
     n, sent, _mm = make_notifier(store, mode="flight")
-    for _ in range(3):  # uçuşta susturulan rapor her turda yeniden denenir
+    for _ in range(3):  # a report muted during flight is retried on every tick
         assert not n.send(Notification("ALICE sağlık raporu: 2 sorun", "x", "warn", "core"))
     assert sent == [] and len(store.events(limit=10)) == 1
 
 
 def test_missed_one_time_task_without_catch_up_is_removed(tmp_path):
-    """Bilgisayar kapalıyken kaçan ve telafi edilmeyecek tek seferlik görev listede kalırsa cron aynı günü ertesi yıl
-    yeniden üretir."""
+    """If a one-time task missed while the computer was off and will not be caught up stays in the list, cron
+    regenerates it on the same day the next year."""
     store = TaskStore(tmp_path / "tasks.json")
     created = ts("2026-10-05T12:00")
     once = store.add(ScheduledTask("0 23 5 10 *", "ara", created=created, catch_up=False, once=True))
@@ -447,7 +447,7 @@ def test_disk_low_rule_by_free_gb(store, tmp_path):
     rule = next(r for r in DEFAULT_RULES if r.id == "disk-low")
     eng, _ = engine(store, tmp_path, [rule])
     store.add("pc.disk.c.free_gb", 0.02, ts=1000)
-    store.add("pc.disk.f.free_gb", 76.0, ts=1000)  # büyük veri diski yüzdece dolu ama yeri var: susmalı
+    store.add("pc.disk.f.free_gb", 76.0, ts=1000)  # big data disk is full by % but has room: must stay silent
     assert [f.key for f in eng.evaluate(1010)] == ["pc.disk.c.free_gb"]
 
 
@@ -461,6 +461,6 @@ def test_later_default_rule_added_to_old_rules_file(tmp_path):
                               "id": "disk-full", "enabled": False}]), encoding="utf-8")
     rs = RuleSet(p)
     assert {r.id for r in rs.rules} == {"disk-full", "disk-low"}
-    assert not rs.get("disk-full").enabled  # kullanıcının kapattığı kural kapalı kalır
+    assert not rs.get("disk-full").enabled  # a rule the user turned off stays off
     assert rs.remove("disk-low")
-    assert RuleSet(p).get("disk-low") is None  # silinen varsayılan geri gelmez
+    assert RuleSet(p).get("disk-low") is None  # a deleted default does not come back

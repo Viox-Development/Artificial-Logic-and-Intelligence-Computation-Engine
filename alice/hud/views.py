@@ -1,8 +1,8 @@
-"""HUD'da ne, nasıl görünür: bildirim kartı, konuşmanın yazılı özeti, tıklamadan önce hedef çerçevesi,
-tarayıcıda üzerinde çalışılan ya da kullanıcıya gösterilen öğenin çerçevesi.
+"""What and how things appear in the HUD: notification cards, written summaries of conversation, target frames before clicking,
+frames of items worked on in the browser or shown to the user.
 
-Çağıranlar (bildirimler, ses, bilgisayar kullanımı, tarayıcı) yalnızca bunları çağırır. HUD açık değilse hiçbiri bir şey
-yapmaz ve beklemez.
+Callers (notifications, voice, computer use, browser) only call these. If the HUD is not active, none of them do
+anything or wait.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ import time
 from alice.hud import client
 
 CARD_TTL = {"critical": 12.0, "warn": 9.0, "info": 7.0}
-CLICK_PREVIEW = 0.4  # sn: ALICE'in imleci hedefe kayıp oturur, sonra gerçek tıklama (ne yapacağını önceden gör)
+CLICK_PREVIEW = 0.4  # sec: ALICE's cursor slides and settles on the target, then actual click (preview action)
 _LIST = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.+)$")
 
 
 def notification(n) -> bool:
-    """Windows balonu yerine ALICE'in kartı. Uçuş anonsları zaten ses ve okla geliyor: kart açılmaz."""
+    """ALICE's card instead of Windows balloon. Flight announcements already come via voice and arrow: no card opened."""
     if not client.active or n.kind == "flight" or n.topic == "flight":
         return False
     sev = n.severity if n.severity in CARD_TTL else "info"
@@ -28,8 +28,8 @@ def notification(n) -> bool:
 
 
 def summarize(text: str, limit: int = 260) -> str | None:
-    """Sesli cevabın köşede gösterilecek kısa yazılı hali; tek cümlelik kısa cevaba kart gerekmez (None).
-    Liste maddeleri ve sayılar korunur: sesli cevap uzun listeyi okumaz, gösterir."""
+    """Short written version of the voice response shown in the corner; short one-sentence answers don't need a card (None).
+    List items and numbers are preserved: voice response does not read long lists, it shows them."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     items = [m.group(1) for ln in lines if (m := _LIST.match(ln))]
     if len(items) >= 2:
@@ -55,7 +55,7 @@ def speech(text: str) -> bool:
 
 
 def click_target(x: float, y: float, action: str = "click", wait: bool = True) -> bool:
-    """Bilgisayar kullanımında ALICE'in imleci tıklanacak yere kayar, tıklamada halka yayılır (fiziksel piksel)."""
+    """During computer use, ALICE's cursor slides to the click target, ring spreads on click (physical pixel)."""
     if not client.active:
         return False
     label = {"double_click": "çift tıklıyorum", "right_click": "sağ tıklıyorum", "drag": "sürüklüyorum",
@@ -67,11 +67,11 @@ def click_target(x: float, y: float, action: str = "click", wait: bool = True) -
     return ok
 
 
-TASK_TTL = 45.0  # sn: ekran görevi her adımda yeniler; görev takılıp ölürse durum kendiliğinden kaybolur
+TASK_TTL = 45.0  # sec: screen task refreshes on each step; if task hangs and dies, status clears automatically
 
 
 def task_step(step: int) -> bool:
-    """Ekran görevi sürerken Adada durum: model adımlar arasında 5-15 sn düşünüyor, HUD boş kalmasın."""
+    """Status in Island while screen task is running: model thinks 5-15s between steps, don't leave HUD empty."""
     if not client.active:
         return False
     text = f"Ekran görevi · {step}. adım" if step else "Ekran görevi · başlıyor"
@@ -84,13 +84,13 @@ def task_end() -> bool:
 
 VOICE = {"listen": ("Dinliyorum", "wave"), "think": ("Düşünüyorum", "sparkle"), "speak": ("Konuşuyorum", "wave"),
          "work": ("Çalışıyorum", "sparkle")}
-VOICE_TTL, VOICE_REFRESH = 30.0, 20.0  # takılıp kalırsa kendiliğinden söner; uzun dinlemede tazelenir
+VOICE_TTL, VOICE_REFRESH = 30.0, 20.0  # fades out automatically if stuck; refreshed on long listening
 _voice: dict = {"state": None, "detail": "", "at": 0.0}
 
 
 def voice_state(state: str | None, detail: str = "") -> bool:
-    """ALICE'in sesli oturumunun hali Adada: dinliyor (dalga + mavi parıltı), düşünüyor, konuşuyor, bir iş yapıyor.
-    Aynı hal tekrar gelirse göndermez (her döngüde çağrılabilir)."""
+    """State of ALICE's voice session in Island: listening (wave + blue glow), thinking, speaking, doing work.
+    Does not resend if the same state comes again (can be called every loop)."""
     if not client.active:
         return False
     now = time.monotonic()
@@ -108,7 +108,7 @@ MUSIC_TTL = 5.0
 
 
 def now_playing(n: dict) -> bool:
-    """Parça değişince Adada kısa süre şarkı · sanatçı (oyun modunda bilgi olduğu için görünmez)."""
+    """When track changes, short song · artist in Island for a short time (invisible when in-game due to game info)."""
     if not client.active or not n.get("title"):
         return False
     text = f"{n['title'][:40]} · {n['artist'][:30]}" if n.get("artist") else n["title"][:60]
@@ -116,15 +116,15 @@ def now_playing(n: dict) -> bool:
 
 
 def game_context(in_game: bool) -> bool:
-    """Oyundayken HUD yalnız tehdit ve uyarıları gösterir (ayar: [hud] mode)."""
+    """When in-game, HUD shows only threats and warnings (setting: [hud] mode)."""
     return client.send({"kind": "context", "game": bool(in_game)}) if client.active else False
 
 
 def system_gauge(name: str, value: float, limit: float, unit: str, warn: float | None = None,
                  ttl: float = 25.0) -> bool:
-    """Kritik sınıra yaklaşan bilgisayar değeri köşede küçük bir çubuk: "GPU 89°C". Sınırın altında (varsayılan
-    %90'ı) hiçbir şey göndermez; değer normale dönünce gönderim durur ve çubuk kısa ttl ile kendiliğinden kaybolur.
-    Aynı ad hep aynı kimlikle gider: HUD her turda yeni çubuk açmaz, mevcut olanı yeniler."""
+    """Computer value approaching critical limit shown as small corner bar: "GPU 89°C". Sends nothing below limit (default
+    90%); stops sending when value normalizes and bar disappears automatically with short ttl.
+    Same name always goes with same ID: HUD doesn't open new bar every turn, updates existing one."""
     if not client.active or limit <= 0:
         return False
     warn = 0.9 * limit if warn is None else warn
@@ -136,13 +136,13 @@ def system_gauge(name: str, value: float, limit: float, unit: str, warn: float |
                        id=f"sys:{name}")
 
 
-PAGE_TTL = 1.5  # sn: tarayıcıda tıklanan/yazılan öğenin çerçevesi
-SHOW_TTL = 6.0  # sn: kullanıcıya gösterilen öğe (browser action=highlight) daha uzun kalır
+PAGE_TTL = 1.5  # sec: frame of clicked/typed element in browser
+SHOW_TTL = 6.0  # sec: element shown to user (browser action=highlight) stays longer
 
 
 def page_target(x: float, y: float, w: float, h: float, label: str = "", ttl: float = PAGE_TTL,
                 wait: bool = False) -> bool:
-    """Tarayıcıdaki bir öğeyi ekranda çerçevele (fiziksel ekran pikseli, x/y sol üst köşe)."""
+    """Frame an element on the page on screen (physical screen pixel, x/y top-left corner)."""
     if not client.active or w < 2 or h < 2:
         return False
     ok = client.show("box", x=x, y=y, w=w, h=h, text=label[:40], severity="info", ttl=ttl, id="browser")

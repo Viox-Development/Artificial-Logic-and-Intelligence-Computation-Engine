@@ -1,16 +1,18 @@
-"""Önsezi motorunun eylemleri: alışkanlıktan ne yapacağını tahmin edip önceden hazırlar.
+"""Actions of the anticipation engine: predicts from habits what to do and prepares it ahead of time.
 
-  * Oyundan önce (now.Anticipator, beklenen War Thunder oturumundan ~20 dk önce): anons sesleri hazırlanır (ses
-    modülünün kancası) ve oyunun Steam güncellemesi kontrol edilir. Güncelleme bekliyorsa Steam arka planda
-    (`-silent`, pencere açmadan) başlatılır. Oyun Steam'de "sadece oyunu açınca güncelle" ayarındaysa Steam bunu
-    önceden indirmez: bunu bir kez söyler, ayarı senin yerine değiştirmez.
-  * Maçta: uçuş moduna geçilince Windows "Rahatsız etmeyin" açılır (Discord dahil bütün uygulamaların bildirim
-    balonları susar, sesli sohbet etkilenmez). Uçuş bitince eski haline döner; zaten açıksa dokunmaz. Windows'un bunun
-    için resmi bir API'si yok: odak yardımı durumu (WNF) üzerinden yapılır, çalışmazsa sessizce vazgeçer.
-  * Sabah: son haftalarda sabah ilk sorduğun şeyler (hava, program, e-posta...) kayıtlardan çıkarılır. Genelde uyandığın
-    saatten önce cevapları hazırlanır, sesli asistan beklemeden söyler.
+  * Before a game (now.Anticipator, ~20 min before the expected War Thunder session): announcement voices are prepared
+    (a hook of the voice module) and the game's Steam update is checked. If an update is pending, Steam is started in
+    the background (`-silent`, without opening a window). If the game is set to "only update when launched" in Steam,
+    Steam won't download it in advance: it says so once and does not change the setting for you.
+  * In a match: when switching to flight mode, Windows "Rahatsız etmeyin" (Do Not Disturb) is turned on (notification
+    popups of all apps, including Discord, are silenced; voice chat is not affected). When the flight ends it goes
+    back to how it was; if it was already on, it is left alone. Windows has no official API for this: it is done via
+    the focus assist state (WNF), and if that doesn't work it silently gives up.
+  * Morning: the first things you asked in the morning over recent weeks (weather, schedule, e-mail...) are extracted
+    from the logs. The answers are usually prepared before the time you wake up, and the voice assistant says them
+    without waiting.
 
-Durum ~/.alice/anticipate.json'da. [anticipate] ayarlarıyla parçalar ayrı ayrı kapatılır.
+State is in ~/.alice/anticipate.json. The parts can be switched off individually with the [anticipate] settings.
 """
 
 from __future__ import annotations
@@ -32,14 +34,14 @@ from typing import Any, Callable, Iterator
 from alice.config import alice_home
 
 WT_APPID = "236390"
-DND_STATE = 0x0D83063EA3BF1C75   # WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: 0 kapalı, 1 öncelikli, 2 yalnız alarmlar
+DND_STATE = 0x0D83063EA3BF1C75   # WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: 0 off, 1 priority only, 2 alarms only
 DND_ALARMS_ONLY = 2
-MORNING = (5, 12)                # sabah sayılan saatler
-MIN_DAYS = 3                     # bir alışkanlık için en az bu kadar gün
-MORNING_BEFORE = 20 * 60         # genelde uyandığın saatten bu kadar önce hazırla
-READY_UNTIL = 13                 # hazır cevap öğleden sonra eskimiş sayılır
+MORNING = (5, 12)                # hours that count as morning
+MIN_DAYS = 3                     # minimum number of days for a habit
+MORNING_BEFORE = 20 * 60         # prepare this long before the time you usually wake up
+READY_UNTIL = 13                 # a prepared answer counts as stale in the afternoon
 
-TOPICS = {  # sabah ilk sorulan şey -> konu
+TOPICS = {  # first thing asked in the morning -> topic
     "hava": r"\bhava\b|yağmur|sıcaklık|kaç derece|şemsiye",
     "program": r"program|takvim|bugün ne var|dersim|toplantı|staj",
     "posta": r"\bmail|e-?posta|gmail|mesaj(ım|lar)",
@@ -59,9 +61,10 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-# Durum dosyasını iki thread yazar (mod değişince QuietGame, oyun öncesi hazırlık, sabah). Kilitsiz oku-değiştir-yaz
-# birinin yazdığını (ör. "Rahatsız etmeyin önceden kapalıydı" notu) ötekinin silmesine yol açıyordu: uçuştan sonra
-# DND açık kalıyordu. Değişiklikler state_edit() ile kilit altında yapılır, dosya atomik değiştirilir.
+# Two threads write the state file (QuietGame on mode change, pre-game preparation, morning). A lockless
+# read-modify-write let one erase what the other had written (e.g. the note "Rahatsız etmeyin was off before"):
+# DND stayed on after the flight. Changes are made under the lock with state_edit(), and the file is replaced
+# atomically.
 _STATE_LOCK = threading.RLock()
 
 
@@ -75,7 +78,7 @@ def save_state(st: dict[str, Any], path: Path | None = None) -> None:
             try:
                 os.replace(tmp, p)
                 return
-            except PermissionError:  # Windows: okuyan/virüs tarayıcı dosyayı bir an tutuyor
+            except PermissionError:  # Windows: a reader/antivirus scanner is holding the file for a moment
                 if attempt == 4:
                     raise
                 time.sleep(0.05 * (attempt + 1))
@@ -88,7 +91,7 @@ def save_state(st: dict[str, Any], path: Path | None = None) -> None:
 
 @contextmanager
 def state_edit(path: Path | None = None) -> Iterator[dict[str, Any]]:
-    """Durumu kilit altında oku; blok bitince (hata yoksa) aynı kilit altında atomik yaz."""
+    """Read the state under the lock; when the block ends (if no error), write it atomically under the same lock."""
     with _STATE_LOCK:
         st = load_state(path)
         yield st
@@ -113,7 +116,7 @@ def _vdf_values(text: str, key: str) -> list[str]:
 
 
 def steam_manifest(appid: str = WT_APPID, root: Path | None = None) -> dict[str, str] | None:
-    """Oyunun Steam kayıt dosyası (appmanifest_<id>.acf) alanları; bulunamazsa None."""
+    """Fields of the game's Steam manifest file (appmanifest_<id>.acf); None if not found."""
     root = root or _steam_root()
     if root is None:
         return None
@@ -134,7 +137,7 @@ def steam_manifest(appid: str = WT_APPID, root: Path | None = None) -> dict[str,
 
 
 def update_state(manifest: dict[str, str] | None) -> dict[str, Any] | None:
-    """{pending: güncelleme bekliyor mu, on_launch_only: Steam yalnızca oyun açılınca mı indirir}."""
+    """{pending: is an update waiting, on_launch_only: does Steam download only when the game is launched}."""
     if not manifest:
         return None
     try:
@@ -165,7 +168,7 @@ def start_steam_silent(root: Path | None = None) -> bool:
 
 def prep_game_update(processes: set[str], notify: Callable[[str, str], None], st: dict[str, Any],
                      manifest: dict[str, str] | None = None, start: Callable[[], bool] | None = None) -> str:
-    """Oyundan önce: güncelleme bekliyorsa Steam'i arka planda aç ya da ayar gerekiyorsa bir kez söyle."""
+    """Before the game: if an update is pending, open Steam in the background, or say once if a setting is needed."""
     u = update_state(manifest if manifest is not None else steam_manifest())
     if not u or not (u["pending"] or u["downloading"]):
         return ""
@@ -184,7 +187,7 @@ def prep_game_update(processes: set[str], notify: Callable[[str, str], None], st
     return f"{u['name']} güncellemesi Steam'de bekliyor."
 
 
-# ------------------------------------------------------------ rahatsız etmeyin
+# ------------------------------------------------------------ do not disturb
 def _wnf() -> tuple[Callable[[], int | None], Callable[[int], bool]] | None:
     if sys.platform != "win32":
         return None
@@ -209,8 +212,8 @@ def _wnf() -> tuple[Callable[[], int | None], Callable[[int], bool]] | None:
 
 
 class QuietGame:
-    """Uçuş modunda Windows "Rahatsız etmeyin"; uçuş bitince eski haline. Kendi açtığını hatırlar (çekirdek
-    çökse bile bir sonraki açılışta geri alır)."""
+    """Windows "Rahatsız etmeyin" (Do Not Disturb) in flight mode; restored when the flight ends. It remembers
+    what it turned on itself (even if the core crashes, it reverts it on the next startup)."""
 
     def __init__(self, enabled: bool = True, wnf: tuple[Callable[[], int | None], Callable[[int], bool]] | None = None,
                  path: Path | None = None):
@@ -219,16 +222,16 @@ class QuietGame:
         self.wnf = wnf if wnf is not None else (_wnf() if enabled else None)
 
     def mode(self, mode: str) -> str:
-        """Mod değişince çağrılır; ne yaptığını döndürür ("" = hiçbir şey)."""
+        """Called when the mode changes; returns what it did ("" = nothing)."""
         if not self.enabled or self.wnf is None:
             return ""
         read, write = self.wnf
-        with _STATE_LOCK:  # oku-değiştir-yaz arasında başka thread dnd_prev'i silmesin
+        with _STATE_LOCK:  # so another thread can't erase dnd_prev between read and write
             st = load_state(self.path)
             if mode == "flight":
                 cur = read()
                 if cur is None or cur != 0 or "dnd_prev" in st:
-                    return ""  # okunamadı, zaten açık ya da zaten biz açtık
+                    return ""  # unreadable, already on, or we already turned it on
                 if write(DND_ALARMS_ONLY):
                     st["dnd_prev"] = cur
                     save_state(st, self.path)
@@ -240,18 +243,18 @@ class QuietGame:
                 except (TypeError, ValueError):
                     prev = 0
                 save_state(st, self.path)
-                if read() == DND_ALARMS_ONLY:  # sen bu arada değiştirdiysen dokunma
+                if read() == DND_ALARMS_ONLY:  # if you changed it in the meantime, leave it alone
                     write(prev)
                     return "Rahatsız etmeyin eski haline döndü"
         return ""
 
 
-# --------------------------------------------------------------------- sabah
+# --------------------------------------------------------------------- morning
 _LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):\d{2} .*?duyulan(?: \[[^\]]*\])?: (.*?)(?: \| cevap:|$)")
 
 
 def morning_habits(lines: list[str]) -> tuple[Counter, list[int]]:
-    """voice.log satırları -> (sabah ilk sorulan konuların sayısı, her günün ilk sesli etkinliği dakika olarak)."""
+    """voice.log lines -> (counts of the topics asked first in the morning, each day's first voice event in minutes)."""
     first: dict[str, tuple[int, str]] = {}
     for ln in lines:
         m = _LINE.match(ln)
@@ -282,7 +285,7 @@ def _read_log_tail(path: Path, max_bytes: int = 4_000_000) -> list[str]:
 
 
 def session_lines(folder: Path | None = None, limit: int = 300) -> list[str]:
-    """Yazılı sohbetlerin ilk sorusu, voice.log satırı biçiminde (dosya adı başlangıç zamanı: 20261102-074512)."""
+    """First question of the typed chats, in voice.log line format (file name is the start time: 20261102-074512)."""
     folder = folder or alice_home() / "sessions"
     out = []
     for f in sorted(folder.glob("*.json"), reverse=True)[:limit]:
@@ -302,7 +305,7 @@ def session_lines(folder: Path | None = None, limit: int = 300) -> list[str]:
 
 
 def morning_plan(lines: list[str]) -> tuple[list[str], int | None]:
-    """(hazırlanacak konular, hazırlık saati dakika olarak). Yeterli geçmiş yoksa ([], None)."""
+    """(topics to prepare, preparation time in minutes). ([], None) if there isn't enough history."""
     topics, starts = morning_habits(lines)
     if len(starts) < MIN_DAYS:
         return [], None
@@ -314,7 +317,7 @@ def morning_plan(lines: list[str]) -> tuple[list[str], int | None]:
 
 def prepare_morning(cfg: Any, topics: list[str], now: datetime,
                     fetch: dict[str, Callable[[], str]] | None = None) -> dict[str, str]:
-    """Konuların cevaplarını şimdi hazırla. Hata veren konu atlanır."""
+    """Prepare the answers for the topics now. A topic that raises an error is skipped."""
     fetch = fetch if fetch is not None else _fetchers(cfg, now)
     out: dict[str, str] = {}
     for t in topics:
@@ -323,7 +326,7 @@ def prepare_morning(cfg: Any, topics: list[str], now: datetime,
             continue
         try:
             text = " ".join(str(fn() or "").split())
-        except Exception:  # noqa: BLE001 - bir kaynak düşse de diğerleri hazırlansın
+        except Exception:  # noqa: BLE001 - even if one source fails, the others still get prepared
             continue
         if text:
             out[t] = text[:300]
@@ -355,7 +358,7 @@ def _fetchers(cfg: Any, now: datetime) -> dict[str, Callable[[], str]]:
 
 
 def ready_line(now: datetime | None = None, path: Path | None = None) -> str:
-    """Bugün için hazırlanmış sabah cevapları (sesli asistanın bağlamına eklenir); yoksa ya da eskidiyse boş."""
+    """Morning answers prepared for today (added to the voice assistant's context); empty if none or stale."""
     now = now or datetime.now()
     st = load_state(path)
     ready = st.get("morning") or {}
@@ -366,7 +369,7 @@ def ready_line(now: datetime | None = None, path: Path | None = None) -> str:
 
 
 class Morning:
-    """Çekirdek turunda: sabah hazırlık saati geldiyse günde bir kez hazırla."""
+    """In the core loop: if the morning preparation time has come, prepare once a day."""
 
     def __init__(self, cfg: Any, log: Path | None = None, path: Path | None = None,
                  fetch: dict[str, Callable[[], str]] | None = None):
@@ -381,7 +384,7 @@ class Morning:
         if (st.get("morning") or {}).get("day") == day:
             return None
         if self._plan_day != day:
-            lines = sorted(_read_log_tail(self.log) + session_lines(self.log.parent / "sessions"))  # sesli + yazılı
+            lines = sorted(_read_log_tail(self.log) + session_lines(self.log.parent / "sessions"))  # voice + typed
             self._plan, self._plan_day = morning_plan(lines), day
         topics, at = self._plan or ([], None)
         if not topics or at is None or not at <= now.hour * 60 + now.minute < MORNING[1] * 60:

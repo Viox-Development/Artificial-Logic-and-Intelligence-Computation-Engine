@@ -16,7 +16,7 @@ def ctx(tmp_path):
 
 
 def _script(tmp_path, code: str) -> str:
-    """Kodu geçici .py dosyasına yaz: 'py -3' Ubuntu'da yok, satır içi -c ise PowerShell'de bozuluyor."""
+    """Write the code to a temporary .py file: 'py -3' does not exist on Ubuntu, and inline -c gets mangled in PowerShell."""
     p = tmp_path / "script.py"
     p.write_text(code, encoding="utf-8")
     return f'& "{sys.executable}" "{p}"' if sys.platform == "win32" else f'"{sys.executable}" "{p}"'
@@ -29,7 +29,7 @@ def test_app_state_runs(ctx):
 
 
 def test_app_state_uses_real_config_roles(tmp_path):
-    """Gerçek Config'te 'brain' alanı yok, model zinciri roles'ten gelir: AttributeError regresyon testi."""
+    """The real Config has no 'brain' field; the model chain comes from roles, so this is an AttributeError regression test."""
     config = SimpleNamespace(agent={}, roles={"brain": ["model-a", "model-b"]}, data={})
     ctx = ToolContext(cwd=tmp_path, config=config)
     res = AppState().run(ctx, section="config")
@@ -44,7 +44,7 @@ def test_service_diagnose_runs(ctx):
 
 
 def test_service_diagnose_opens_and_closes_own_store(ctx):
-    """ctx.state'te store yoksa kendi Store'unu açıp kapatmalı; TypeError ile düşmemeli."""
+    """If ctx.state has no store, it should open and close its own Store without crashing with a TypeError."""
     res = ServiceDiagnose().run(ctx, service="core")
     assert "Store okunurken hata" not in res.text
 

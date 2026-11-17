@@ -1,8 +1,8 @@
-"""CLIProxyAPI'yi ilk kullanımda otomatik indirip kurar (`~/.alice/cliproxy`).
+"""Automatically downloads and installs CLIProxyAPI on first use (`~/.alice/cliproxy`).
 
-Binary'yi repoya koymak yerine (77 MB, platforma özel) GitHub sürümünden indirilir ve `checksums.txt` ile
-SHA-256 doğrulanır. `config.yaml`, `keys.txt` ve `CLIPROXY_API_KEY` yoksa üretilir; böylece kullanıcı zip
-indirip elle çıkarmak zorunda kalmaz.
+Instead of putting the binary in the repository (77 MB, platform-specific), it is downloaded from GitHub releases
+and SHA-256 verified against `checksums.txt`. `config.yaml`, `keys.txt`, and `CLIPROXY_API_KEY` are generated
+if missing; this way the user does not have to download a zip and extract it manually.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ import httpx
 from alice.app import cliproxy
 
 REPO = "router-for-me/CLIProxyAPI"
-PINNED_VERSION = "v8.0.57"  # denenmiş sürüm; config'te [cliproxy] version ile değiştirilebilir
+PINNED_VERSION = "v8.0.57"  # tested version; can be changed via [cliproxy] version in config
 _TIMEOUT = 60.0
 _log: Callable[[str], None] = lambda s: None
 
 
 def asset_name(version: str, system: str | None = None, machine: str | None = None) -> str:
-    """Sürüm + platform için indirilecek dosya adı (ör. CLIProxyAPI_8.0.57_windows_amd64.zip)."""
+    """File name to download for version + platform (e.g. CLIProxyAPI_8.0.57_windows_amd64.zip)."""
     system = (system or platform.system()).lower()
     machine = (machine or platform.machine()).lower()
     arch = "aarch64" if machine in ("arm64", "aarch64") else "amd64"
@@ -70,7 +70,7 @@ def _asset_url(release: dict[str, Any], name: str) -> str:
 
 
 def checksum_for(checksums_text: str, name: str) -> str:
-    """`checksums.txt` içinden dosyanın SHA-256'sı (küçük harf)."""
+    """SHA-256 of the file from `checksums.txt` (lowercase)."""
     for line in checksums_text.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[-1].lstrip("*") == name:
@@ -94,9 +94,9 @@ def _extract(archive: Path, dest: Path) -> None:
         return
     with tarfile.open(archive) as t:
         if hasattr(tarfile, "data_filter"):
-            # "data" süzgeci: mutlak yol, "..", klasör dışına bağlantı, aygıt dosyası ve setuid reddedilir.
+            # "data" filter: rejects absolute paths, "..", links outside folder, device files, and setuid.
             t.extractall(dest, filter="data")
-        else:  # pragma: no cover - süzgeçsiz eski Python: aynı kontrolleri elle yap
+        else:  # pragma: no cover - older Python without filter: perform the same checks manually
             root = dest.resolve()
             for m in t.getmembers():
                 target = (dest / m.name).resolve()
@@ -104,7 +104,7 @@ def _extract(archive: Path, dest: Path) -> None:
                         or (target != root and root not in target.parents)):
                     raise ValueError(f"arşivde güvensiz girdi: {m.name}")
             t.extractall(dest)
-    # tar arşivi tek bir klasör içeriyorsa içeriği yukarı taşı
+    # If tar archive contains a single directory, move contents up
     entries = list(dest.iterdir())
     if len(entries) == 1 and entries[0].is_dir():
         for child in entries[0].iterdir():
@@ -142,19 +142,19 @@ access:
 
 
 def _write_private(path: Path, text: str) -> None:
-    """Anahtar içeren dosyayı yalnız kullanıcının okuyabileceği şekilde yaz (POSIX'te 0600; Windows'ta dosya zaten
-    kullanıcı profilinde, ACL'si oradan gelir)."""
+    """Write key-containing file so only the user can read it (0600 on POSIX; on Windows file is already in
+    the user profile, ACL comes from there)."""
     if os.name == "nt":
         path.write_text(text, encoding="utf-8")
         return
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
-    os.chmod(path, 0o600)  # dosya önceden varsa os.open'ın modu uygulanmaz
+    os.chmod(path, 0o600)  # if file already exists os.open mode is not applied
 
 
 def ensure_config() -> dict[str, str]:
-    """config.yaml + keys.txt yoksa üret; CLIPROXY_API_KEY'i ~/.alice/.env'e yaz. Var olanlara dokunma."""
+    """Generate config.yaml + keys.txt if missing; write CLIPROXY_API_KEY to ~/.alice/.env. Do not touch existing."""
     home = cliproxy.home()
     home.mkdir(parents=True, exist_ok=True)
     (home / "auths").mkdir(exist_ok=True)
@@ -175,7 +175,7 @@ def ensure_config() -> dict[str, str]:
 
         if not read_env().get("CLIPROXY_API_KEY"):
             set_env_value("CLIPROXY_API_KEY", keys["api_key"])
-    except Exception:  # noqa: BLE001 - .env yazılamazsa proxy yine çalışır, anahtar elle girilebilir
+    except Exception:  # noqa: BLE001 - if .env cannot be written proxy still works, key can be entered manually
         pass
     return keys
 
@@ -191,11 +191,11 @@ def _find_checksums(release: dict[str, Any]) -> str:
 
 
 def install(version: str = "", force: bool = False, log: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """CLIProxyAPI'yi indir, doğrula ve `~/.alice/cliproxy` içine kur. Var olan config/hesaplar korunur."""
+    """Download, verify, and install CLIProxyAPI into `~/.alice/cliproxy`. Existing config/accounts are preserved."""
     emit = log or _log
     home = cliproxy.home()
     binary = home / cliproxy.binary_name()
-    # Sonuçta api_key yok: arayüz kullanmıyor (anahtar keys.txt ve .env'de), sonucu loglayan/gösteren yere sızmasın.
+    # No api_key in result: UI does not use it (key is in keys.txt and .env), prevent leaking to logging/display.
     if binary.exists() and not force:
         ensure_config()
         return {"ok": True, "already": True, "path": str(home)}
@@ -226,13 +226,13 @@ def install(version: str = "", force: bool = False, log: Callable[[str], None] |
 
 
 def install_async(version: str = "") -> dict[str, Any]:
-    """Arayüz isteğini bekletmeden kurulumu başlat."""
+    """Start installation without blocking the UI request."""
     threading.Thread(target=lambda: install(version, log=_log), daemon=True, name="alice-cliproxy-install").start()
     return {"ok": True, "started": True}
 
 
 def ensure_installed(version: str = "") -> dict[str, Any]:
-    """Kurulu değilse kur; kuruluysa config'i tamamla."""
+    """Install if not installed; complete config if installed."""
     home = cliproxy.home()
     if (home / cliproxy.binary_name()).exists():
         ensure_config()

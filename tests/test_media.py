@@ -10,7 +10,7 @@ from alice.extras import media
 
 @pytest.fixture
 def env(monkeypatch):
-    """Platformu, komut çalıştırmayı ve tuş basmayı sahtele."""
+    """Fake the platform, command execution and key presses."""
     st = SimpleNamespace(runs=[], presses=[], ok=True, which="/usr/bin/playerctl")
 
     def fake_run(cmd):
@@ -83,12 +83,12 @@ def test_key_linux_missing_tools(env):
     env.platform("linux")
     env.which = None
     assert media.key("next") == "playerctl yok"
-    assert env.runs == []  # playerctl yoksa çalıştırılmaz
+    assert env.runs == []  # not run when playerctl is missing
     env.ok = False
     assert media.key("mute") == "pactl yok"
     assert media.key("volume_up") == "pactl yok"
     env.which = "/usr/bin/playerctl"
-    assert media.key("play_pause") == "playerctl yok"  # komut başarısız
+    assert media.key("play_pause") == "playerctl yok"  # command failed
 
 
 def test_key_macos(env):
@@ -102,7 +102,7 @@ def test_key_macos(env):
     assert media.key("play_pause") == "tamam"
     assert env.runs[-1] == ["osascript", "-e", 'tell application "Music" to playpause']
     n = len(env.runs)
-    assert media.key("next") == "yapılamadı"  # macOS'ta desteklenmiyor, komut çalışmaz
+    assert media.key("next") == "yapılamadı"  # not supported on macOS, no command is run
     assert len(env.runs) == n
     env.ok = False
     assert media.key("mute") == "yapılamadı"
@@ -210,7 +210,7 @@ def test_pause_in_schedules_and_replaces(env, monkeypatch):
     second = FakeTimer.made[1]
     assert first.cancelled and not second.cancelled
     assert media._timers["pause"] is second
-    # Zamanlayıcı dolunca play_pause basılır
+    # When the timer fires, play_pause is pressed
     env.platform("win32")
     second.fn()
     assert env.presses == [(media.VK["play_pause"], 1)]

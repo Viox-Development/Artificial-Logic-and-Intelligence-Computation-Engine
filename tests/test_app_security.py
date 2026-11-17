@@ -1,4 +1,4 @@
-"""Uygulama sunucusunun savunma kontrolleri: anahtar, Origin, bozuk gövde, beklenmeyen hata, zaman aşımı."""
+"""Defensive checks of the app server: key, Origin, malformed body, unexpected error, timeout."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def raw_post(srv, path: str, body: bytes, headers: dict[str, str]) -> tuple[int,
 def test_non_ascii_token_is_denied_not_crash(app):
     state, srv, client = app
     anon = httpx.Client(base_url=str(client.base_url), timeout=10)
-    # compare_digest ASCII dışı str'de TypeError atıyordu: bağlantı yanıtsız kopuyordu.
+    # compare_digest raised TypeError on non-ASCII str: the connection was dropped without a response.
     assert anon.get("/api/state", params={"t": "ğğğ"}).status_code == 403
     assert anon.get("/", params={"t": "ü" * 32}).status_code == 403
     assert anon.get("/preview/%C4%9F%C4%9F/x/index.html").status_code == 403
@@ -58,7 +58,7 @@ def test_foreign_origin_is_denied_even_with_token(app):
     port = srv.httpd.server_address[1]
     assert client.post("/api/stop", json={}, headers={"Origin": f"http://127.0.0.1:{port}"}).json()["ok"]
     assert client.get("/api/state", headers={"Origin": f"http://localhost:{port}"}).status_code == 200
-    assert client.post("/api/stop", json={}).json()["ok"]  # Origin'siz istemci (saat otomasyonu) etkilenmez
+    assert client.post("/api/stop", json={}).json()["ok"]  # no-Origin client (scheduled automation) is unaffected
     assert client.get("/static/app.js", headers={"Origin": "null"}).status_code == 200
 
 
@@ -73,7 +73,7 @@ def test_bad_bodies_get_clean_4xx(app):
     assert code == 400
     code, body = raw_post(srv, "/api/send", b"", {**tok, "Content-Length": str(srv_mod.MAX_BODY + 1)})
     assert code == 413 and body["ok"] is False
-    # Yanlış tipler 500'e değil anlamlı bir yanıta dönmeli ve sunucu ayakta kalmalı.
+    # Wrong types should get a meaningful response, not a 500, and the server must stay up.
     assert client.post("/api/send", json={"text": "", "images": []}).status_code == 400
     assert client.post("/api/mode", json={"mode": ["auto"]}).status_code in (400, 500)
     assert client.get("/api/state").status_code == 200
@@ -88,7 +88,7 @@ def test_large_body_with_images_is_not_dropped(app, monkeypatch):
         return True, None
 
     monkeypatch.setattr(state, "send", fake_send)
-    img = "A" * 3_000_000  # eski 2 MB sınırı gövdeyi sessizce boşaltıp "boş mesaj" döndürüyordu
+    img = "A" * 3_000_000  # the old 2 MB limit silently emptied the body and returned "boş mesaj" (empty message)
     r = client.post("/api/send", json={"text": "bak", "images": [img]})
     assert r.json()["ok"] and seen["text"] == "bak" and len(seen["images"][0]) == 3_000_000
 
@@ -104,7 +104,7 @@ def test_get_exception_returns_json_500_without_traceback(app, monkeypatch):
     assert r.status_code == 500 and r.json()["ok"] is False
     assert "gizli" not in r.text and "Traceback" not in r.text
     assert "gizli-ayrinti" in (alice_home() / "app.log").read_text(encoding="utf-8")
-    assert client.get("/api/history").status_code == 200  # sunucu ayakta
+    assert client.get("/api/history").status_code == 200  # server is still up
 
 
 def test_responses_carry_no_referrer_and_idle_connections_time_out(app):
@@ -116,12 +116,12 @@ def test_responses_carry_no_referrer_and_idle_connections_time_out(app):
 def test_idle_connection_is_closed(app, monkeypatch):
     state, _, _ = app
     monkeypatch.setattr(srv_mod, "REQUEST_TIMEOUT", 0.5)
-    srv = AppServer(state)  # zaman aşımı handler sınıfı kurulurken okunur
+    srv = AppServer(state)  # the timeout is read when the handler class is built
     srv._thread.start()
     s = socket.create_connection(("127.0.0.1", srv.httpd.server_address[1]), timeout=5)
     try:
-        s.sendall(b"GET /api/state HTTP/1.1\r\n")  # isteği hiç bitirmeyen istemci
-        assert s.recv(1024) == b""  # sunucu zaman aşımında bağlantıyı kapatır, thread serbest kalır
+        s.sendall(b"GET /api/state HTTP/1.1\r\n")  # a client that never finishes its request
+        assert s.recv(1024) == b""  # the server closes the connection on timeout and the thread is freed
     finally:
         s.close()
         srv.httpd.shutdown()

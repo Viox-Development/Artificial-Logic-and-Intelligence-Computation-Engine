@@ -68,7 +68,7 @@ def test_user_images_sent_as_parts(workdir):
     agent, prov, _ = make_agent(["gördüm"], workdir)
     agent.run_turn("bu ne", images=["AAAA"])
     sent = prov.calls[0]["messages"][1]["content"]
-    assert isinstance(sent, str)  # sağlayıcı 'a' görsel desteklemiyor, router metne çevirdi
+    assert isinstance(sent, str)  # provider 'a' does not support images, so the router converted them to text
     assert isinstance(agent.messages[1]["content"], list)
 
 
@@ -93,8 +93,8 @@ def test_mcp_client_roundtrip(workdir):
     events = []
     servers, tools = load_mcp(cfg, events.append)
     try:
-        assert [t.name for t in tools] == ["mcp__fake__echo", "mcp__fake__fail"]  # sayfalama birleşti
-        assert tools[0].risk == "read" and tools[1].risk == "exec"  # trust_annotations: readOnlyHint geçerli
+        assert [t.name for t in tools] == ["mcp__fake__echo", "mcp__fake__fail"]  # pages merged
+        assert tools[0].risk == "read" and tools[1].risk == "exec"  # trust_annotations: readOnlyHint is honored
         ctx = ToolContext(cwd=workdir, config=cfg)
         assert tools[0].run(ctx, text="merhaba").text == "echo: merhaba"
         assert tools[1].run(ctx).is_error
@@ -112,7 +112,7 @@ def test_multi_edit_atomic(workdir):
     f.write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
     from alice.tools.files import mark_read
 
-    mark_read(ctx, f)  # okumadan düzenleme reddedilir
+    mark_read(ctx, f)  # editing without reading is rejected
     r = MultiEdit().run(ctx, path="m.py", edits=[{"old_string": "a = 1", "new_string": "a = 10"},
                                                  {"old_string": "a = 10\nb = 2", "new_string": "a = 10\nb = 20"}])
     assert f.read_text(encoding="utf-8") == "a = 10\nb = 20\nc = 3\n" and "+b = 20" in r.diff
@@ -122,7 +122,7 @@ def test_multi_edit_atomic(workdir):
     with pytest.raises(ToolError, match="edit 2/2"):
         MultiEdit().run(ctx, path="m.py", edits=[{"old_string": "c = 3", "new_string": "c = 30"},
                                                  {"old_string": "yok", "new_string": "x"}])
-    assert f.read_text(encoding="utf-8") == "a = 10\nb = 20\nc = 3\n"  # hiçbiri yazılmadı
+    assert f.read_text(encoding="utf-8") == "a = 10\nb = 20\nc = 3\n"  # none of them was written
 
 
 def test_parallel_read_only_calls(workdir):
@@ -156,12 +156,12 @@ def test_parallel_read_only_calls(workdir):
     agent.tools["slow_read"] = SlowRead()
     t0 = time.monotonic()
     agent.run_turn("oku")
-    assert time.monotonic() - t0 < 1.0 and seen["max"] == 4  # 4 x 0.3 sn sırayla olsa 1.2 sn sürerdi
+    assert time.monotonic() - t0 < 1.0 and seen["max"] == 4  # 4 x 0.3 s in sequence would take 1.2 s
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_msgs] == ["c0", "c1", "c2", "c3", "w"]  # sıra korunur
+    assert [m["tool_call_id"] for m in tool_msgs] == ["c0", "c1", "c2", "c3", "w"]  # order is kept
     assert [m["content"] for m in tool_msgs[:4]] == [f"sonuç {n}" for n in range(4)]
     order = [e for e in ui.events if e[0] in ("tool", "result")]
-    assert order[:4] == [("tool", "slow_read")] * 4  # önce hepsi başladı
+    assert order[:4] == [("tool", "slow_read")] * 4  # all of them started first
     assert (workdir / "x.txt").exists()
 
 
@@ -182,8 +182,8 @@ def _cmd(cid, command, **extra):
 
 
 def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeypatch):
-    """Canlı kayıt (8 Kasım): "paralel yap işleri" denince model üç komutu aynı cevapta istedi ama komutlar tek tek
-    çalıştı; toplam süre üçünün toplamı oldu."""
+    """Live recording (Nov 8): asked "paralel yap işleri" (run the jobs in parallel), the model requested three
+    commands in one reply, but they ran one after another; the total time was the sum of all three."""
     import threading
     import time
 
@@ -208,12 +208,12 @@ def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeyp
     agent, _, ui = make_agent([calls, "bitti"], workdir, mode="auto")
     t0 = time.monotonic()
     agent.run_turn("üçünü paralel çalıştır")
-    assert seen["max"] == 3 and time.monotonic() - t0 < 0.8  # sırayla olsa 0.9 sn
+    assert seen["max"] == 3 and time.monotonic() - t0 < 0.8  # in sequence this would take 0.9 s
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_msgs] == ["a", "b", "c"]  # sonuçlar istenen sırayla döner
+    assert [m["tool_call_id"] for m in tool_msgs] == ["a", "b", "c"]  # results come back in the requested order
     assert [m["content"] for m in tool_msgs] == [f"çıkış kodu 0 {c}" for c in ("python a.py", "python b.py", "node c.js")]
 
-    # Aynı depoya dokunan iki git komutu ve iki kurulum yan yana çalışmaz (index.lock, yarım kurulum)
+    # Two git commands on the same repo, and two installs, never run side by side (index.lock, half-finished install)
     seen.update(active=0, max=0, order=[])
     calls = {"content": "", "tool_calls": [_cmd("g1", "git add -A"), _cmd("g2", "git commit -m x")]}
     agent, _, ui = make_agent([calls, "bitti"], workdir, mode="auto")
@@ -223,7 +223,7 @@ def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeyp
     assert run.exclusive_key({"command": "pip install x"}) == run.exclusive_key({"command": "cd a; npm install"}) != ""
     assert run.exclusive_key({"command": "python -m pip install x"}) and not run.exclusive_key({"command": "python x.py"})
 
-    # ayar kapalıyken eskisi gibi tek tek
+    # with the setting off, commands still run one at a time
     seen.update(active=0, max=0, order=[])
     calls = {"content": "", "tool_calls": [_cmd("a", "python a.py"), _cmd("b", "python b.py")]}
     agent, _, ui = make_agent([calls, "bitti"], workdir, mode="auto")
@@ -238,7 +238,7 @@ def test_background_logs_never_share_a_file(workdir, monkeypatch):
 
     from alice.tools import shell
 
-    monkeypatch.setattr(time, "time", lambda: 1_800_000_000.0)  # aynı milisaniye
+    monkeypatch.setattr(time, "time", lambda: 1_800_000_000.0)  # same millisecond
     monkeypatch.setattr(time, "sleep", lambda s: None)
     agent, _, _ = make_agent(["x"], workdir)
     run = shell.RunCommand()

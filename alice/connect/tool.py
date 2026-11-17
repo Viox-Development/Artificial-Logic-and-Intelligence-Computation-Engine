@@ -1,4 +1,4 @@
-"""Manifestten ALICE aracı üret: her bağlantı tek bir araç, eylemler `action` parametresiyle seçilir."""
+"""Generate ALICE tool from manifest: each connection is a single tool, actions are selected via `action` parameter."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean"
 
 
 class ConnectTool(Tool):
-    """Bir servisin aracı. Şema manifestten üretilir, böylece model parametreleri tahmin etmez."""
+    """Tool for a service. Schema is generated from manifest, so the model does not guess parameters."""
 
     parallel_safe = True
     risk = NETWORK
-    untrusted = True  # servisten gelen mesaj/başlık/açıklama başkasının yazdığı metin olabilir
+    untrusted = True  # message/title/description from service may be text written by someone else
 
     def __init__(self, m: Manifest):
         self.m = m
@@ -33,7 +33,7 @@ class ConnectTool(Tool):
             for p in a.params.values():
                 prev = props.get(p.name)
                 desc = f"[{a.name}] {p.description}".strip()
-                if prev:  # aynı ad birden çok eylemde: açıklamaları birleştir
+                if prev:  # same name in multiple actions: merge descriptions
                     prev["description"] = (prev.get("description", "") + " " + desc).strip()
                     continue
                 spec: dict[str, Any] = {"type": TYPES.get(p.type, "string"), "description": desc}
@@ -49,7 +49,7 @@ class ConnectTool(Tool):
         if act is None:
             return READ
         if act.sends:
-            return SEND  # başkasına gidiyor: geri alınamaz
+            return SEND  # going to someone else: irreversible
         return WRITE if act.writes else NETWORK
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -78,7 +78,7 @@ class ConnectTool(Tool):
 
 
 def connector_tools(cfg: Any = None, emit: Any = None, reserved: set[str] | None = None) -> list[ConnectTool]:
-    """Bulunan tanımlardan araç üret. Yerleşik bir araçla aynı ada sahip tanım atlanır."""
+    """Generate tools from discovered definitions. Definitions sharing a name with a builtin tool are skipped."""
     from alice.connect.manifest import discover
 
     from alice.tools import groups
@@ -91,5 +91,5 @@ def connector_tools(cfg: Any = None, emit: Any = None, reserved: set[str] | None
                 emit(f"bağlantı atlandı: '{m.name}' zaten bir araç adı")
             continue
         out.append(ConnectTool(m))
-    groups.register_connect(t.name for t in out)  # "connect" grubunda toplansınlar
+    groups.register_connect(t.name for t in out)  # collect them under the "connect" group
     return out

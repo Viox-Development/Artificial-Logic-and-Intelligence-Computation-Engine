@@ -15,12 +15,12 @@ def fm(ref, context=None, tools=None, vision=None):
 def test_score_follows_preferred_order():
     assert fm("x:qwen3-coder-480b").score == len(PREFERRED) - 1
     assert fm("x:laguna-xs").score == len(PREFERRED)
-    assert fm("x:Gemma-3-27B").score == 1  # büyük/küçük harf duyarsız
+    assert fm("x:Gemma-3-27B").score == 1  # case-insensitive
     assert fm("x:unknown-model").score == 0
 
 
 def test_score_first_match_wins():
-    # "deepseek" listede "gemini"den önce: ikisi de geçiyorsa yüksek olan alınır
+    # "deepseek" comes before "gemini" in the list: if both match, the higher one is taken
     assert fm("x:deepseek-gemini-mix").score == fm("x:deepseek").score
 
 
@@ -87,7 +87,7 @@ class FakeClient:
 
 
 def fake_router(spec):
-    """spec: {isim: (enabled, sonuç)}"""
+    """spec: {name: (enabled, result)}"""
     cfgs = {n: SimpleNamespace(enabled=en, api_key_env=f"{n.upper()}_KEY") for n, (en, _) in spec.items()}
     clients = {n: FakeClient(res) for n, (_, res) in spec.items()}
     calls = []
@@ -114,13 +114,13 @@ def test_discover_collects_sorts_and_records_errors():
     })
     found, errors = discover(router)
     refs = [f.ref for f in found]
-    # Önce tercih skoru, eşitlikte büyük bağlam
+    # First by preference score; on a tie, larger context first
     assert refs == ["openrouter:q/qwen3-coder:free", "groq:openai/gpt-oss-20b", "groq:plain-big",
                     "openrouter:z/plain:free"]
     assert errors["nvidia"] == "NVIDIA_KEY tanımlı değil"
     assert errors["broken"].startswith("[auth] 401 unauthorized") and len(errors["broken"]) == 160
     assert errors["crash"] == "boom"
-    assert "nvidia" not in router.calls  # kapalı sağlayıcı sorgulanmaz
+    assert "nvidia" not in router.calls  # disabled provider is not queried
     assert set(errors) == {"nvidia", "broken", "crash"}
 
 
@@ -139,10 +139,10 @@ def test_suggest_chains_brain_limits_per_provider_and_excludes_no_tools():
     found = [
         fm("openrouter:qwen/qwen3-coder", tools=True),
         fm("openrouter:deepseek/r1", tools=True),
-        fm("openrouter:moonshot/kimi-k2", tools=True),  # sağlayıcı başına 2 sınırı
-        fm("openrouter:glm/glm-4.5", tools=False),        # araç desteği yok
-        fm("groq:openai/gpt-oss-120b"),                   # tools None -> kabul
-        fm("groq:llama-4-scout"),                         # skor 2 < 3
+        fm("openrouter:moonshot/kimi-k2", tools=True),  # at most 2 per provider
+        fm("openrouter:glm/glm-4.5", tools=False),        # no tool support
+        fm("groq:openai/gpt-oss-120b"),                   # tools None -> accepted
+        fm("groq:llama-4-scout"),                         # score 2 < 3
     ]
     chains = suggest_chains(found)
     assert chains["brain"] == ["openrouter:qwen/qwen3-coder", "openrouter:deepseek/r1", "groq:openai/gpt-oss-120b"]

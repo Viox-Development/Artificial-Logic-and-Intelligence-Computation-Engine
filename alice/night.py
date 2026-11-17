@@ -1,15 +1,16 @@
-"""Gece döngüsü ve rüya modu: aynı gece işinin iki yüzü.
+"""Night loop and dream mode: two sides of the same night job.
 
-Gece döngüsü (kendi kendini iyileştirme): ALICE gece kendi kayıtlarını okur ve tekrarlayan hataları, gereksiz
-anonsları (aynı cümle kısa sürede defalarca), yanlış uyanmaları ve bozulan kendi yazdığı araçları bulur. Sabah
-"şunları buldum, düzeltmeyi deneyeyim mi?" diye sorar. Kendiliğinden kod değiştirmez: sen evet dersen düzeltmeyi
-her zamanki araçlarıyla (ve onaylarıyla) yapar. Senin onayın olmadan hiçbir şey birleşmez.
+Night loop (self-improvement): overnight ALICE reads its own logs and finds repeated errors, unnecessary callouts
+(the same sentence many times in a short time), false wakes, and its own tools that have broken. In the morning it
+asks "I found these, shall I try to fix them?" It does not change code on its own: if you say yes, it makes the fix
+with its usual tools (and approvals). Nothing gets merged without your approval.
 
-Rüya modu: günü baştan oynatır, yarının işlerini çıkarır ve senin göremediğin bağlantıları arar: "Gece 1'den sonra
-oynadığın günlerin ertesinde uçuşların yarısı inişsiz bitiyor." Bağlantı ancak yeterli veri varsa söylenir.
+Dream mode: replays the day from the start, works out tomorrow's tasks and looks for connections you cannot see:
+"On the days after you play past 1 a.m., half of your flights end without a landing." A connection is only
+mentioned when there is enough data.
 
-Rapor ~/.alice/night/<tarih>.md; çekirdek gece 03-07 arası bir kez çalıştırır, sabah 08'den sonra ilk uygun anda
-söyler (uçuş modunda susar, sonra söyler). Elle: alice night.
+The report goes to ~/.alice/night/<date>.md. The core runs it once between 03:00 and 07:00 and announces it at the
+first suitable moment after 08:00 (silent in flight mode, announces later). Manually: alice night.
 """
 
 from __future__ import annotations
@@ -27,14 +28,14 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-NIGHT_HOURS = (3, 7)        # bu saatler arasında, gecede bir kez
-MORNING_HOUR = 8            # bundan sonra ilk uygun anda söylenir
-ERROR_REPEAT = 3            # aynı hata bir günde bu kadar
-NOISY_WINDOW = 600.0        # aynı anons 10 dakikada...
-NOISY_COUNT = 4             # ...bu kadar ya da fazla tekrarlandıysa gereksiz
-FALSE_WAKES = 5             # günde bu kadar yanlış uyanma
-LATE_HOUR = 1               # gece bu saatten (ve sabah 6'dan önce) sonra oynamak "geç"
-MIN_DAYS = 4                # bağlantı için her iki grupta en az bu kadar gün
+NIGHT_HOURS = (3, 7)        # between these hours, once per night
+MORNING_HOUR = 8            # from this hour on, announced at the first suitable moment
+ERROR_REPEAT = 3            # the same error this many times in one day
+NOISY_WINDOW = 600.0        # the same callout within 10 minutes...
+NOISY_COUNT = 4             # ...repeated this many times or more counts as unnecessary
+FALSE_WAKES = 5             # this many false wakes in one day
+LATE_HOUR = 1               # playing after this hour (and before 6 a.m.) counts as "late"
+MIN_DAYS = 4                # for a connection, at least this many days in each group
 
 
 @dataclass
@@ -62,9 +63,9 @@ def _state() -> dict[str, Any]:
 
 
 def _save_state(**kw: Any) -> None:
-    """Atomik yazım: yarıda kesilen yazım (çökme/kapanma) durumu boşaltıp gece döngüsünü aynı gece yeniden
-    çalıştırıyor ya da sabah raporunu tekrar söyletiyordu. Geçici dosya benzersiz; Windows'ta hedef o an başka
-    biri tarafından açıksa os.replace kısa bir süre yeniden denenir."""
+    """Atomic write: a write cut short (crash or shutdown) emptied the state, so the night loop ran again the same
+    night and the morning report was spoken again. The temp file name is unique; on Windows, if the target is open
+    in another process at that moment, os.replace is retried briefly."""
     s = {**_state(), **kw}
     p = state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -86,18 +87,18 @@ def _save_state(**kw: Any) -> None:
 
 
 def _pattern(text: str) -> str:
-    """Sayılar ve saat yönleri değişse de aynı cümle: "Arkanda düşman, saat 6, 1,2 km" -> "arkanda düşman, saat #"."""
+    """Ignores numbers and clock positions: "Arkanda düşman, saat 6, 1,2 km" -> "arkanda düşman, saat #"."""
     t = re.sub(r"\d+(?:[.,]\d+)?", "#", (text or "").lower())
     t = re.sub(r"#\s*(kilometre|metre|km|m|knot|kilo|feet|derece|°c)\b", "#", t)
     return " ".join(t.split())[:120]
 
 
-# ------------------------------------------------------------------ bulgular
+# ------------------------------------------------------------------ findings
 def repeated_errors(events: list[Any]) -> list[Finding]:
     groups: Counter[str] = Counter()
     sample: dict[str, Any] = {}
     for e in events:
-        if e.kind != "error":  # kritik uçuş anonsu (yakıt) hata değil
+        if e.kind != "error":  # a critical flight callout (fuel) is not an error
             continue
         key = _pattern(e.title)
         groups[key] += 1
@@ -113,7 +114,7 @@ def repeated_errors(events: list[Any]) -> list[Finding]:
 
 
 def noisy_callouts(events: list[Any]) -> list[Finding]:
-    """Aynı anons kısa sürede defalarca: kullanıcıyı yoran konuşma (bu gece yakalanan War Thunder spam'ı gibi)."""
+    """Same callout repeated in a short time: chatter that annoys the user (e.g. tonight's War Thunder spam)."""
     times: dict[str, list[float]] = defaultdict(list)
     text: dict[str, str] = {}
     for e in events:
@@ -138,7 +139,7 @@ def noisy_callouts(events: list[Any]) -> list[Finding]:
 
 
 def false_wakes(lines: list[str], day: str) -> Finding | None:
-    """voice.log: "uyandı" denip söylenende Alice geçmeyen satırlar."""
+    """voice.log: lines where "uyandı" (woke up) was logged but the spoken text does not contain Alice."""
     n, examples = 0, []
     for ln in lines:
         if not ln.startswith(day) or " uyandı " not in ln:
@@ -168,7 +169,7 @@ def broken_tools() -> list[Finding]:
 
 
 def crashes(log_text: str) -> list[Finding]:
-    """core.log'daki Python hata yığınlarının son satırları (en sık tekrarlananlar)."""
+    """Last lines of the Python error tracebacks in core.log (the most frequently repeated ones)."""
     last = re.findall(r"(?m)^Traceback \(most recent call last\):\n(?:[ \t].*\n)+(\w[\w.]*(?:Error|Exception)[^\n]*)",
                       log_text)
     out = []
@@ -180,8 +181,8 @@ def crashes(log_text: str) -> list[Finding]:
 
 
 def thread_deaths(log_text: str) -> list[Finding]:
-    """Arka plan iş parçacığı öldü: tek sefer bile önemli. 2026-11-02'de ses iş parçacığı bir kez çöktü ve ALICE
-    yeniden başlatılana kadar hiçbir şey duymadı; "en az 2 kez" kuralına takılıp rapora girmiyordu."""
+    """Background thread died: even a single occurrence matters. On 2026-11-02 the audio thread crashed once,
+    and ALICE heard nothing until it was restarted; the "at least 2 times" rule kept it out of the report."""
     hits = re.findall(r"(?m)^Exception in thread ([\w.-]+):\n(?:(?:Traceback|[ \t]).*\n)*?(\w[\w.]*(?:Error|Exception)"
                       r"[^\n]*)", log_text)
     out = []
@@ -192,17 +193,18 @@ def thread_deaths(log_text: str) -> list[Finding]:
     return out
 
 
-# Kullanıcının bir işin kötü gittiğini söylediği cümleler (sohbet ve ses). Gündelik küfür ("aq", "amk") ve
-# "takılmaca" gibi sözler sayılmaz: kullanıcı onları her mesajda kullanabiliyor.
+# Sentences where the user says a task went badly (chat and voice). Everyday profanity ("aq", "amk") and
+# words like "takılmaca" (fooling around) are not counted: the user uses them in every message.
 FRUSTRATION = re.compile(r"sa[çc]mala|mal gibi|malca|olmad[ıi](?![a-zçğıöşü])|yapamad[ıi]n|yapmad[ıi]n|bi t[üu]rl[üu]|"
                          r"tak[ıi]ld[ıi]|yanl[ıi][şs] yapt|ignore|duymad[ıi]n|cevap vermedi|berbat|💔", re.I)
-STUCK_REPEAT = 3   # bir turda aynı araç çağrısı bu kadar
-STUCK_STEPS = 4    # bir ekran işi sonucunda aynı adım (ör. "pressed enter") bu kadar
+STUCK_REPEAT = 3   # the same tool call this many times in one turn
+STUCK_STEPS = 4    # the same step (e.g. "pressed enter") this many times in one screen-task result
 
 
 def struggles(sessions: Path | None, since: float) -> list[Finding]:
-    """Sohbet kayıtlarından takılmalar: aynı çağrıyı tekrar tekrar yapmak, ekran işinde aynı tuşa basıp durmak,
-    kullanıcının kestiği turlar ve kullanıcının "yine saçmaladı" dediği işler. Her biri neyin istendiğiyle birlikte."""
+    """Struggles from chat logs: repeating the same call again and again, pressing the same key and stalling in a
+    screen task, turns the user cut off, and tasks the user called "yine saçmaladı" ("messed up again"). Each one
+    comes with what was asked."""
     d = sessions or alice_home() / "sessions"
     out: list[Finding] = []
     try:
@@ -255,7 +257,7 @@ def struggles(sessions: Path | None, since: float) -> list[Finding]:
                 if "durduruldu (kullanıcı kesti)" in text:
                     out.append(Finding("stuck", "Kullanıcı işi yarıda kesti", f"İstek: \"{ask[:120]}\"", 1,
                                        "Kesilmeden önceki adımlara bakıp neyin yanlış gittiğini bulayım."))
-    # aynı şey birden çok kez bulunduysa birleştir
+    # merge the same finding if it was found more than once
     merged: dict[str, Finding] = {}
     for x in out:
         if x.title in merged:
@@ -265,15 +267,15 @@ def struggles(sessions: Path | None, since: float) -> list[Finding]:
     return sorted(merged.values(), key=lambda x: -x.count)[:8]
 
 
-# --------------------------------------------------------------------- rüya
+# --------------------------------------------------------------------- dream
 def _day_of(ts: float) -> str:
-    """Gece yarısından sonraki saatler önceki güne sayılır (gece 2'de oynanan maç "dün geceki")."""
+    """Hours after midnight count as the previous day (a match played at 2 a.m. counts as "last night")."""
     return (datetime.fromtimestamp(ts) - timedelta(hours=6)).strftime("%Y-%m-%d")
 
 
 def insights(flights: list[dict[str, Any]]) -> list[str]:
-    """Görünmeyen bağlantılar. War Thunder'da uçuşların neredeyse hepsi inişsiz bitiyor (ölüm ya da yeniden doğuş),
-    "inişsiz oranı" bir şey ayırt etmiyor: çabuk düşen uçuş kısa sürer, ölçü ortalama uçuş süresi."""
+    """Hidden connections. Almost all War Thunder flights end without a landing (death or respawn), so the
+    "no-landing rate" tells nothing: a flight that goes down quickly is short. The measure is average flight time."""
     fs = [f for f in flights if f.get("start_wall") and f.get("duration_s")]
     if len(fs) < 20:
         return []
@@ -295,7 +297,7 @@ def insights(flights: list[dict[str, Any]]) -> list[str]:
     for day, group in by_day.items():
         prev = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         if prev not in by_day:
-            continue  # önceki gün hiç oynanmamış: geç yattı mı bilinmez
+            continue  # the previous day was never played: unknown whether you went to bed late
         if prev in late_nights:
             after_late += group
             days_late += 1
@@ -324,18 +326,18 @@ def insights(flights: list[dict[str, Any]]) -> list[str]:
 
 
 def tomorrow(mem: Any, now: float) -> list[str]:
-    """Yarın günü gelen hatırlatmalar ve takipler (sabah ilk soracağın şey hazır olsun)."""
+    """Reminders and follow-ups due tomorrow (so what you ask first in the morning is ready)."""
     if mem is None:
         return []
     try:
-        # İleri bir ana bakılıyor: o anın "eskidi" saydığı takipler bugün hâlâ geçerli, kapatılmasın.
+        # Look ahead: follow-ups that count as "expired" at that moment are still valid today, so don't close them.
         due = mem.due_followups(now + 36 * 3600, prune=False)
     except Exception:  # noqa: BLE001
         return []
     return [f.text for f in due if (getattr(f, "due", None) or 0) > now][:5]
 
 
-# ---------------------------------------------------------------------- akış
+# ---------------------------------------------------------------------- flow
 def analyze(store: Any, now: float, voice_log: Path | None = None, core_log: Path | None = None,
             sessions: Path | None = None) -> list[Finding]:
     since = now - 86400
@@ -412,7 +414,7 @@ def morning_text(r: dict[str, Any]) -> str:
 
 
 def maybe_run(store: Any, mem: Any, now: float | None = None, **kw: Any) -> dict[str, Any] | None:
-    """Çekirdek her 10 dakikada çağırır: gece 03-07 arası, gecede bir kez."""
+    """The core calls this every 10 minutes: between 03:00 and 07:00, once per night."""
     now = time.time() if now is None else now
     t = datetime.fromtimestamp(now)
     day = t.strftime("%Y-%m-%d")
@@ -423,7 +425,7 @@ def maybe_run(store: Any, mem: Any, now: float | None = None, **kw: Any) -> dict
     try:
         report = run(store, mem, now, **kw)
     except Exception:
-        # bozuk bir kayıt yüzünden gece kaybolmasın: 3 kez denenir, sonra o gece bırakılır
+        # a broken record must not lose the night: it is tried 3 times, then that night is dropped
         _save_state(tried=day, tries=tries, **({"ran": day} if tries >= 3 else {}))
         raise
     _save_state(ran=day)
@@ -432,7 +434,7 @@ def maybe_run(store: Any, mem: Any, now: float | None = None, **kw: Any) -> dict
 
 
 def maybe_tell(send: Callable[[str, str], bool], now: float | None = None) -> bool:
-    """Sabah 08'den sonra raporu bir kez söyle. Bildirim susturulduysa (uçuş modu) sonra yeniden dener."""
+    """After 08:00, say the report once. If notifications are muted (flight mode), retry later."""
     now = time.time() if now is None else now
     t = datetime.fromtimestamp(now)
     day = t.strftime("%Y-%m-%d")
@@ -454,7 +456,7 @@ def maybe_tell(send: Callable[[str, str], bool], now: float | None = None) -> bo
 
 
 def night_cmd(argv: list[str]) -> int:
-    """`alice night`: gece işini şimdi çalıştır ve raporu yaz."""
+    """`alice night`: run the night job now and write the report."""
     from alice.core.store import Store
 
     with Store() as st:

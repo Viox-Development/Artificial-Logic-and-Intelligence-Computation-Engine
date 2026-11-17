@@ -1,9 +1,9 @@
-"""Gemini Live: sesten sese canlı konuşma (ChatGPT'nin sesli modunun Google karşılığı).
+"""Gemini Live: real-time speech-to-speech conversation (Google's counterpart to ChatGPT's voice mode).
 
-"Hey Alice" duyulunca bir Live oturumu açılır; mikrofon doğrudan modele akar, model Kore sesiyle ~0,5 sn'de
-konuşmaya başlar, araya girilince susar (sunucu tarafı VAD). ALICE'in araçları (YouTube açma, pencere, not...)
-function calling ile çalışır. Konuşma `idle` saniye sessiz kalınca oturum kapanır, tekrar "Hey Alice" beklenir.
-Bağlanamazsa (internet, kota, paket yok) çağıran eski yola (yazıya çevir -> model -> ses) döner.
+When "Hey Alice" is heard, a Live session starts: the mic feeds the model, replying in the Kore voice within ~0.5 s
+goes quiet when interrupted (server-side VAD). ALICE's tools (opening YouTube, windows, notes...)
+work via function calling. After `idle` seconds of silence the session closes and "Hey Alice" is awaited again.
+If it cannot connect (no internet, quota, or plan), it falls back to the old path (speech-to-text -> model -> speech).
 """
 
 from __future__ import annotations
@@ -25,24 +25,24 @@ from alice.voice.vocab import known_names
 
 URL = ("wss://generativelanguage.googleapis.com/ws/"
        "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={key}")
-# Duygulu konuşma (affective dialog) ve "sana söylenmeyene cevap verme" (proactive audio) şimdilik v1alpha'da.
+# Affective dialog and "sana söylenmeyene cevap verme" (proactive audio) are still on v1alpha.
 URL_ALPHA = URL.replace(".v1beta.", ".v1alpha.")
 DEFAULT_MODELS = ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest"]
-# Aynı istekte aynı argümanla ikinci kez çalışması bir şey değiştirmeyen araçlar.
+# Tools that do nothing new when run again in the same request with the same arguments.
 READ_ONLY_TOOLS = {"list_dir", "glob", "grep", "read_file", "system_info", "web_search", "web_fetch", "weather"}
 _READ_COMMAND = re.compile(r"^\s*(get-\w+|dir|ls|type|cat|where(\.exe)?|test-path|select-string)\b", re.I)
 
 
 def read_only(name: str, args: dict[str, Any]) -> bool:
-    """Aynı istekte tekrar çalıştırmanın anlamı olmayan okuma mı? Komutlarda sadece Get-*/dir/ls gibi okumalar."""
+    """A read that gains nothing from a repeat in the same request? For commands, only Get-*/dir/ls-style reads."""
     if name in READ_ONLY_TOOLS:
         return True
     return name == "run_command" and bool(_READ_COMMAND.match(str(args.get("command", ""))))
 LIVE_GROUPS = {"desktop", "browser", "personal", "system", "automation"}
-# Araç çalışırken Adada "Çalışıyorum · ..." ayrıntısı
+# Detail on the Island while a tool runs: "Çalışıyorum · ..." (Working...)
 HUD_TOOLS = {"reflex": "ekranda", "computer_task": "ekranda", "computer": "ekranda", "ui_act": "ekranda",
              "browser": "tarayıcıda", "windows": "pencerelerde", "web_search": "arıyorum", "web_fetch": "okuyorum"}
-# live_screen = "auto": kullanıcı ekrandakinden söz ediyorsa ("şuna tıkla", "ekrandaki", "bu ne") kare gider.
+# live_screen = "auto": send a frame when the user talks about the screen ("şuna tıkla", "ekrandaki", "bu ne").
 SCREEN_WORDS = re.compile(
     r"\b(ekran\w*|şu(nu|na|nda|ndaki|raya|rada|radaki)?|bu(nu|na|nda|ndaki|raya|rada|radaki)?|"
     r"(sağ|sol|üst|alt|orta)daki|açık olan|gördüğün|görüyor|görünen|tıkla\w*|seç\w*|bak(sana|ar mısın)?|"
@@ -149,7 +149,7 @@ _CANNED = re.compile(
 
 
 def canned_reply(text: str) -> bool:
-    """İçeriği olmayan kalıp cevap mı (selam, yardım teklifi, "anlayamadım")? Geçmişe konmaz, tekrar beslenmesin."""
+    """Canned reply with no content (greeting, offer of help, "anlayamadım")? Not kept in history; not fed back."""
     return bool(_CANNED.search(text or "")) and len(text) < 160
 
 
@@ -173,18 +173,18 @@ sayıları ve birimleri okunur yaz. İlk cümle doğrudan cevap olsun, sonra ger
 uydurma, bilmediğini söyle.
 {history}
 Soru: {question}{context}"""
-THINK_STALE = 90.0  # sn: bundan geç gelen think cevabı artık söylenmez
+THINK_STALE = 90.0  # sec: a think reply arriving later than this is no longer spoken
 THINK_TOOLS = ("web_search", "web_fetch", "read_file", "list_dir", "glob", "grep", "memory", "projects", "weather",
                "system_info")
 
 
-# Modelin sesli okuduğu iç notları ("TIRED: I made a syntax error..." gibi) yakalar.
+# Catches internal notes the model reads aloud (like "TIRED: I made a syntax error...").
 _INTERNAL_TAG = re.compile(r"\b[A-Z]{4,}\s*:")
 _INTERNAL_EN = re.compile(r"`|\b(function call|syntax error|tool call|I made|I need to|I will call|let me call)\b", re.I)
 
 
 def looks_internal(text: str) -> bool:
-    """Cevap metni kullanıcıya değil modelin kendisine yazılmış bir not mu?"""
+    """Is the reply text a note written to the model itself, not to the user?"""
     return bool(_INTERNAL_TAG.search(text) or _INTERNAL_EN.search(text))
 
 
@@ -194,14 +194,14 @@ _LIMIT_HINTS = ("rate limit", "billing", "quota", "resource_exhausted", "exhaust
 class LiveError(Exception):
     @property
     def limited(self) -> bool:
-        """Kota/hız sınırı mı (Gemini ücretsiz katmanı: "You have reached a rate limit. Set up billing...")?
-        Bu durumda 5 dk sonra tekrar denemek aynı hatayı verir; daha uzun beklenir ve kullanıcıya bir kez söylenir."""
+        """Is it a quota/rate limit (Gemini free tier: "You have reached a rate limit. Set up billing...")?
+        If so, retrying after 5 min gives the same error; a longer wait is used and the user is told once."""
         low = str(self).lower()
         return any(h in low for h in _LIMIT_HINTS)
 
 
 def monitor_layout() -> str:
-    """'1: ana, 3440x1440, sağda; 2: 3440x1440, solda' gibi kısa açıklama."""
+    """A short description, e.g. '1: ana, 3440x1440, sağda; 2: 3440x1440, solda' (1: main, right; 2: left)."""
     try:
         import mss
 
@@ -234,7 +234,7 @@ def _to_jpeg(b64_png: str) -> str | None:
 
 
 def screen_frame(max_width: int = 1280) -> str | None:
-    """Öndeki pencerenin bulunduğu ekranın küçültülmüş JPEG görüntüsü (base64). Alınamazsa None."""
+    """Downscaled JPEG (base64) of the screen the foreground window is on. None if it cannot be captured."""
     try:
         import io
 
@@ -257,7 +257,7 @@ def screen_frame(max_width: int = 1280) -> str | None:
                     if m["left"] <= cx < m["left"] + m["width"] and m["top"] <= cy < m["top"] + m["height"]:
                         mon = m
                         break
-            except Exception:  # noqa: BLE001 - Windows dışı: ana ekran
+            except Exception:  # noqa: BLE001 - not Windows: primary screen
                 pass
             shot = sct.grab(mon)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
@@ -271,7 +271,7 @@ def screen_frame(max_width: int = 1280) -> str | None:
 
 
 def sanitize_schema(s: Any) -> Any:
-    """JSON Schema -> Gemini'nin kabul ettiği alt küme (additionalProperties, default vb. atılır)."""
+    """JSON Schema -> the subset Gemini accepts (additionalProperties, default, etc. are dropped)."""
     if not isinstance(s, dict):
         return s
     out: dict[str, Any] = {}
@@ -290,7 +290,7 @@ def sanitize_schema(s: Any) -> Any:
         elif k == "items":
             out["items"] = sanitize_schema(v)
         elif k == "enum":
-            # Gemini Live tek bir boş enum değeri ("") görünce bütün araç listesini reddedip açılmıyordu (30 Ekim)
+            # Gemini Live rejected the whole tool list and would not open on a single empty enum value ("") (Oct 30)
             vals = [str(e) for e in (v or []) if str(e) != ""]
             if vals:
                 out["enum"] = vals
@@ -321,28 +321,28 @@ def decode(raw: Any) -> dict[str, Any]:
 
 
 class LiveUI:
-    """Live sırasında ajanın UI'ı: izin sorusunu kullanıcının son söylediğine göre cevaplar."""
+    """ALICE's UI during Live: answers the permission question based on what the user last said."""
 
     def __init__(self, inner=None):
         self.inner = inner
         self.last_user = ""
         self.tools: list[str] = []
-        self.asked_at: float | None = None  # onay gerekti dendiği an: cevap ancak bundan sonra söylenenden alınır
+        self.asked_at: float | None = None  # when approval was requested: answer is taken only from what follows
         self.since_ask = ""
 
-    def __getattr__(self, name: str):  # stream_* vb. olayları iç UI'a geçir ya da yut
+    def __getattr__(self, name: str):  # pass stream_* and similar events to the inner UI, or swallow them
         fn = getattr(self.inner, name, None) if self.inner is not None else None
         return fn if fn is not None else (lambda *a, **k: None)
 
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
-        # Sesli UI'a iletme: o "Bakıyorum" dolgusunu eski ses motoruyla söylüyor, Live de konuşurken çift ses olur.
+        # Not sent to the voice UI: the old engine would speak that "Bakıyorum" filler, doubling the audio with Live.
         self.tools.append(f"{name}({summary[:80]})")
 
     def tool_end(self, *a) -> None:
         pass
 
     def heard(self, text: str) -> None:
-        """Kullanıcının söylediği yeni parça (canlı döküm)."""
+        """New piece of what the user said (live transcript)."""
         if self.asked_at is not None:
             self.since_ask += text
 
@@ -1052,7 +1052,7 @@ class LiveSession:
             except Exception:  # noqa: BLE001
                 pass
             deadline = time.monotonic() + 15
-            while out.playing and time.monotonic() < deadline:  # son cümleyi yarıda kesme
+            while out.playing and time.monotonic() < deadline:  # don't cut off the last sentence
                 time.sleep(0.1)
             out.close()
             self.agent.ui = old_ui
@@ -1064,11 +1064,11 @@ class LiveSession:
             hud()
             self.log("live kapandı")
 
-    HOLD_BYTES = 24000 * 2 * 3 // 2  # seçici modda "Alice" dökümü beklenirken en fazla ~1,5 sn ses tutulur
+    HOLD_BYTES = 24000 * 2 * 3 // 2  # selective mode: buffer max ~1.5 s while the "Alice" transcript is awaited
 
     @staticmethod
     def _wake_verdict(text: str) -> bool | None:
-        """Gemini'nin dökümünde "Alice" (ya da bir yazımı) var mı? Döküm boşsa None (bilinmiyor)."""
+        """Does Gemini's transcript contain "Alice" (or a spelling of it)? None if the transcript is empty (unknown)."""
         import difflib
 
         from alice.voice.listen import _NOT_NAMES, _TR, _name_like, strip_wake
@@ -1080,23 +1080,23 @@ class LiveSession:
         words = re.findall(r"\w+", text)
         if any(_name_like(w, True) or w.lower().translate(_TR) == "ali" for w in words):
             return True
-        # Tek başına söylenen "Alice"i Gemini "Annie", "Alex" diye yazabiliyor. Sadece çok kısa dökümde ve kısa, sesçe
-        # yakın kelimede: "Alışacak, alışacak" ya da uzun bir cümlenin içindeki benzer kelime sayılmaz.
+        # Gemini may write a lone "Alice" as "Annie" or "Alex". This is only accepted in a very short transcript,
+        # with a short, similar-sounding word; "Alışacak, alışacak" or similar words in long sentences don't count.
         first = words[0].lower().translate(_TR) if words else ""
         return (len(words) <= 2 and 4 <= len(first) <= 6 and first not in _NOT_NAMES
                 and difflib.SequenceMatcher(None, first, "alice").ratio() >= 0.6)
 
-    # Bir işi yaptığını söyleyen sözler. "Yok/bulunamadı" gibi okuma sonuçları buraya girmez: onları araç zaten söyler.
+    # Phrases saying a task was done. Results like "Yok/bulunamadı" (not found) excluded: the tool reports them.
     _DONE_RX = re.compile(
         r"\b(yapt[ıi]m|g[öo]nderdim|ba[şs]latt[ıi]m|indirdim|kurdum|a[çc]t[ıi]m|kapatt[ıi]m|de[ğg]i[şs]tirdim|"
         r"ekledim|kaydettim|ayarlad[ıi]m|not (ettim|ald[ıi]m)|yazd[ıi]m|sildim|tamamlad[ıi]m|kayd[ıi]rd[ıi]m|"
         r"g[öo]nderildi|kuruldu|indirildi|tamamland[ıi])\b", re.I)
 
     def _check_claim(self, ws, state: dict[str, Any], send: bool = True) -> None:
-        """Cevap bir işi yaptığını söylüyor ama bu istekte işi yapan hiçbir araç başarılı sonuç dönmediyse modele
-        düzeltme notu gider, o da kullanıcıya düzeltir. "WhatsApp'a gönderdim" dendiğinde pencere bulunamamıştı;
-        "tema rengini değiştirdim" denen turda hiç araç çağrılmamıştı. Bu uydurmalar hafızaya da "onaylandı" diye
-        giriyordu: kayıtta [doğrulanmadı] diye işaretlenir. Yazılı sohbetteki kanıt kontrolünün sesli karşılığı."""
+        """The answer claims a task was done, but no tool that did the work succeeded in this request:
+        a correction note goes to the model, which corrects the user. For "WhatsApp'a gönderdim" the window
+        was not found; for "tema rengini değiştirdim" no tool had been called. These fabrications also went
+        into memory as "onaylandı" (confirmed); the log marks them [doğrulanmadı]. Voice form of the evidence check."""
         said = "".join(state["said"])
         m = self._DONE_RX.search(said)
         turn = getattr(self, "_turn", None) or {}
@@ -1113,16 +1113,16 @@ class LiveSession:
         note = (f"[sistem notu, kullanıcının sözü değil] Az önce '{m.group(0)}' dedin ama bu istekte {why}. "
                 "Kullanıcıya tek kısa cümleyle bunun yapılmadığını ya da doğrulanamadığını söyle; özür dilemeyi "
                 "uzatma, yapıldı deme. İstersen doğru araçla yeniden dene.")
-        state["pending"], state["asked"] = True, time.monotonic()  # düzeltme söylenmeden oturum kapanmasın
+        state["pending"], state["asked"] = True, time.monotonic()  # keep session open until correction is spoken
         state["claim_fixed"] = state["asked"]
         try:
             ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": note}]}],
                                                   "turnComplete": True}}))
-        except Exception:  # noqa: BLE001 - bağlantı kapanmış
+        except Exception:  # noqa: BLE001 - connection already closed
             state["pending"] = False
 
     def _is_read(self, fc: dict[str, Any]) -> bool:
-        """Sadece okuyan (bir şey değiştirmeyen) araç mı?"""
+        """Is this a read-only tool (one that changes nothing)?"""
         name, args = fc.get("name", ""), fc.get("args") or {}
         if name == "think" or read_only(name, args):
             return True
@@ -1134,8 +1134,8 @@ class LiveSession:
             return False
 
     def _wrong_target(self, fc: dict[str, Any]) -> str | None:
-        """Yazı yazan bir eylemde öndeki pencere, kullanıcının söylediği uygulama değilse modele dönülecek uyarı.
-        Gerçek olay: "WhatsApp'a merhaba yaz" isteğinde "Merhaba" Claude penceresine yazılıp Enter'a basıldı."""
+        """Warning sent back to the model when a typing action's foreground window isn't the app the user named.
+        Real case: "WhatsApp'a merhaba yaz" (type hello on WhatsApp) typed "Merhaba" in Claude's window, then Enter."""
         args = fc.get("args") or {}
         if not args.get("text") or str(args.get("action", "")) not in ("type", "set_text", "send", "write"):
             return None
@@ -1159,32 +1159,32 @@ class LiveSession:
         return (f"YAZILMADI: öndeki pencere '{title[:80]}', kullanıcı ise {', '.join(names)} dedi. Önce doğru "
                 "pencereye geç (windows action=switch_tab/focus), sonra tekrar dene; emin değilsen kullanıcıya sor.")
 
-    TOOL_TIMEOUT = 25.0  # sn: araç takılırsa modele hata dön, konuşma kilitlenmesin
-    BACKGROUND = {"computer_task", "run_plan"}  # dakikalar sürebilir: arka planda çalışır, bitince sonuç konuşmaya yazılır
-    # Dolgu çalınmayanlar: arka plan işinde model hemen "başladım" der; diğerleri sessiz kayıt işleri.
+    TOOL_TIMEOUT = 25.0  # sec: if a tool hangs, return an error to the model so the conversation doesn't freeze
+    BACKGROUND = {"computer_task", "run_plan"}  # can take minutes: runs in background, result goes to chat when done
+    # No filler for these: background jobs already say "başladım" (started); the rest are silent bookkeeping.
     NO_FILLER = BACKGROUND | {"task_control", "feedback", "memory"}
 
     def _latency(self, wait: float, state: dict[str, Any], ui) -> None:
-        """Turun gecikmesini kaydet (haftalık özet için). Dolgu çalındıysa kullanıcı o arada bir ses duydu."""
+        """Record the turn's latency (weekly summary). If a filler played, the user heard a sound meanwhile."""
         from alice.voice import latency
 
         e2e = None
         ended = state.pop("ended", None)
         if ended:
-            # Kullanıcının sustuğu andan ilk sese: uyandırma, döküm, bağlantı ve çalmadan önceki tampon dahil.
-            # Eski ölçüm bunları hariç tutuyordu (ortanca 0,9 sn kullanıcının duyduğundan kısaydı).
+            # From the user's last word to the first sound: wake-up, transcript, connection and pre-buffer included.
+            # The old measure excluded these (its median of 0.9 s was shorter than what the user actually heard).
             e2e = time.monotonic() - ended + getattr(AudioOut, "PREBUFFER", 0.0)
             self.log(f"live uçtan uca gecikme: {e2e:.1f} sn")
         try:
             latency.record("canlı", wait, model=getattr(self, "model", ""), tools=bool(getattr(ui, "tools", None)),
                            filler=bool(state.get("filled")) and state.get("filled") == state.get("asked"),
                            e2e=round(e2e, 2) if e2e is not None else None)
-        except Exception:  # noqa: BLE001 - ölçüm konuşmayı bozmasın
+        except Exception:  # noqa: BLE001 - measurement must not break the conversation
             pass
 
     def _note_cut(self, ws, state: dict[str, Any], out) -> None:
-        """Söz kesildi: cevabın çalınan kısmı duyuldu, kalanı duyulmadı. Sunucu ise cevabın gönderdiği kadarını
-        (çalınandan çok daha fazlasını) söylenmiş sayıyor; modele duyulmayan kısmı not olarak ver."""
+        """Speech was cut: the played part was heard, the rest was not. The server counts everything it sent
+        as spoken (far more than was played); give the model the unheard part as a note."""
         recv, said = state.get("recv", 0), "".join(state["said"])
         if not getattr(self, "cut_notes", True) or not recv or not said or state["mute"]:
             return
@@ -1194,16 +1194,16 @@ class LiveSession:
         note = cut_note(heard, unheard)
         if not note:
             return
-        try:  # turnComplete yok: not geçmişe eklenir, cevap kullanıcının yeni sözüne verilir
+        try:  # no turnComplete: the note is added to history and the reply goes to the user's new words
             ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": note}]}],
                                                   "turnComplete": False}}))
         except Exception:  # noqa: BLE001
             return
-        state["said"] = [(heard + " …(sözü kesildi)").strip()]  # kayda da duyulan kısım girsin
+        state["said"] = [(heard + " …(sözü kesildi)").strip()]  # the heard part also goes into the record
         self.log(f"live söz kesildi: cevabın {len(heard)}/{len(said)} karakteri duyuldu")
 
     def fillers(self):
-        """Live'ın şu anki sesiyle hazır cümleler (ses Ayarlar'dan değişirse yenisi)."""
+        """Ready-made phrases in Live's current voice (a new set if the voice changes in Ayarlar)."""
         voice = self.current_voice()
         if self._fillers is None or self._fillers.voice != voice:
             from alice.voice.fillers import gemini_fillers
@@ -1211,19 +1211,19 @@ class LiveSession:
             self._fillers = gemini_fillers(self.cfg, voice, self.key)
         return self._fillers
 
-    FILL_AFTER = 1.5  # sn: araç bu kadar sürede bitmezse dolgu çalınır (hızlı araçta boş "bir saniye" yok)
-    FILL_QUIET = 6.0  # sn: uzun araç zincirinde bu kadar sessizlikten sonra ikinci bir dolgu
+    FILL_AFTER = 1.5  # sec: play a filler if the tool isn't done by then (no empty "bir saniye" on quick tools)
+    FILL_QUIET = 6.0  # sec: after this much silence in a long tool chain, a second filler
 
     def _schedule_fill(self, state: dict[str, Any], out, fc: dict[str, Any]):
-        """Araç FILL_AFTER sn içinde bitmezse dolgu çal; dönen işlev iptal eder."""
+        """Play a filler if the tool isn't done within FILL_AFTER sec; the returned function cancels it."""
         t = threading.Timer(self.FILL_AFTER, lambda: self._fill(state, out, fc))
         t.daemon = True
         t.start()
         return t.cancel
 
     def _fill(self, state: dict[str, Any], out, fc: dict[str, Any]) -> None:
-        """Model bu turda henüz hiç konuşmadan araç çağırdıysa kısa bir "bir saniye" çal. Araç zinciri uzun sürüp
-        FILL_QUIET sn hiç ses çıkmadıysa bir kez daha (8-16 sn sessiz bekleyen istekler vardı)."""
+        """If the model called a tool this turn before speaking, play a short "bir saniye". If the tool chain runs
+        long and nothing was heard for FILL_QUIET sec, play one more (some requests once waited 8-16 sec in silence)."""
         name = fc.get("name", "")
         last = max(state.get("sound_at", 0.0), state.get("filled_at", 0.0))
         quiet = bool(last) and time.monotonic() - last > self.FILL_QUIET
@@ -1235,7 +1235,7 @@ class LiveSession:
 
         try:
             pcm = self.fillers().get("think" if name == "think" else "tool", user_tone("".join(state.get("heard") or [])[-200:]))
-        except Exception:  # noqa: BLE001 - dolgu yoksa sessiz bekle, konuşma bozulmasın
+        except Exception:  # noqa: BLE001 - no filler: stay silent, don't break the conversation
             pcm = None
         if pcm:
             state["filled"], state["filled_at"] = state.get("asked"), time.monotonic()
@@ -1246,7 +1246,7 @@ class LiveSession:
     def _run_background(self, ws, fc: dict[str, Any]) -> None:
         name = fc.get("name", "")
         args = fc.get("args") or {}
-        if getattr(self, "_tasks", 0):  # fare/klavye tek: ikinci ekran görevi ilkini bozar
+        if getattr(self, "_tasks", 0):  # mouse/keyboard are shared: a second screen task would break the first
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [{"id": fc.get("id"), "name": name,
                     "response": {"result": "zaten bir ekran görevi sürüyor; aynı işi tekrar başlatma, bitince "
@@ -1266,12 +1266,12 @@ class LiveSession:
             self._tasks = getattr(self, "_tasks", 0) + 1
         turn = getattr(self, "_turn", None)
         if isinstance(turn, dict):
-            turn["ok"] = turn.get("ok", 0) + 1  # "başlattım" doğru
+            turn["ok"] = turn.get("ok", 0) + 1  # "başlattım" (I started it) is accurate
         self.log(f"live arka plan işi başladı: {name} {json.dumps(args, ensure_ascii=False)[:160]}")
 
         def run() -> None:
             try:
-                import comtypes  # UI Automation bu thread'de de çalışsın
+                import comtypes  # UI Automation should work on this thread too
 
                 comtypes.CoInitialize()
             except Exception:  # noqa: BLE001
@@ -1292,10 +1292,10 @@ class LiveSession:
         threading.Thread(target=run, daemon=True, name=f"alice-live-bg-{name}").start()
 
     def _deliver(self, name: str, text: str, origin=None) -> None:
-        """Arka plan işinin sonucu: konuşma açıksa (başlatan ya da sonra açılan oturum) modele, o da kullanıcıya
-        söyler. Kapandıysa announce ile (Ada + ses). İş artık oturumu açık tutmuyor: Discord'da tek tur kapanması
-        boşa çıkıyor, arkadaşlara söylenenler Live'a gidiyordu; "Alice sus" denince sonuç kayboluyordu.
-        origin: işi başlatan oturumun bağlantısı (kapandıysa gönderim hata verir, announce'a düşülür)."""
+        """Result of a background job: if a conversation is open (the one that started it, or a later one), it goes
+        to the model, which tells the user. If it has closed, announce is used (Ada + voice). A job no longer keeps
+        the session open: a closed Discord turn was wasted, and what friends said went to Live; "Alice sus" lost it.
+        origin: the connection of the session that started the job (if closed, sending fails and announce is used)."""
         ws = getattr(self, "_ws", None) or origin
         if ws is not None:
             turn = getattr(self, "_turn", None)
@@ -1305,7 +1305,7 @@ class LiveSession:
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
                     f"[{name} bitti, sonucu kullanıcıya kısaca söyle] {text}")}]}], "turnComplete": True}}))
                 return
-            except Exception:  # noqa: BLE001 - tam o sırada kapandı
+            except Exception:  # noqa: BLE001 - closed at that very moment
                 pass
         announce = getattr(self, "announce", None)
         if announce is not None:
@@ -1314,8 +1314,8 @@ class LiveSession:
             announce(f"{label} olmadı: {first}" if text.startswith("HATA") else f"{label} bitti: {first}")
 
     def _run_think(self, ws, fc: dict[str, Any]) -> None:
-        """Soruyu arka planda beyin modeline düşündür; cevap gelince toolResponse olarak Live'a dön. Konuşma o sırada
-        açık kalır (kullanıcı araya girebilir, "Alice sus" çalışır)."""
+        """Have the brain model think about it in the background; when the answer arrives, return it to Live as a
+        toolResponse. The conversation stays open meanwhile (the user can cut in, "Alice sus" works)."""
         args = fc.get("args") or {}
         question = str(args.get("question") or "").strip()
         lock = threading.Lock()
@@ -1329,7 +1329,7 @@ class LiveSession:
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [
                     {"id": fc.get("id"), "name": "think", "response": {"result": text}}]}}))
-            except Exception:  # noqa: BLE001 - konuşma kapanmış
+            except Exception:  # noqa: BLE001 - conversation already closed
                 pass
 
         if not question:
@@ -1342,14 +1342,14 @@ class LiveSession:
             return
         self._thinking = getattr(self, "_thinking", 0) + 1
         with self._bg_lock:
-            self._bg += 1  # düşünürken konuşma kapanmasın; _think_thread bitince azaltır
+            self._bg += 1  # don't let the conversation close while thinking; _think_thread decrements when done
         self.log(f"live think: {question[:200]}")
 
         released = [False]
 
         def release() -> None:
-            """Düşünme artık oturumu açık tutmasın: 189 sn süren bir think boyunca Live açık kalıp Discord'daki
-            konuşmalara cevap veriyordu. Bir kez çağrılır (zaman aşımında ya da bitince)."""
+            """Thinking must no longer keep the session open: during a 189 sec think, Live stayed open and answered
+            Discord conversations. Called once (on timeout or when done)."""
             with lock:
                 if released[0]:
                     return
@@ -1389,10 +1389,10 @@ class LiveSession:
                 respond(text)
                 return
             if time.monotonic() - t0 > THINK_STALE:
-                # Dakikalar sonra gelen cevap konuşmayla ilgisiz bir anda okunuyordu: söyleme.
+                # An answer arriving minutes later was read out at an unrelated moment: don't say it.
                 self.log(f"live think cevabı çok geç geldi ({time.monotonic() - t0:.0f} sn), söylenmedi")
                 return
-            try:  # zaman aşımı cevabı gitmişti: sonuç yeni bir mesaj olarak gelsin
+            try:  # the timeout answer had already gone out: send the result as a new message
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
                     f"[think bitti, cevabı kullanıcıya söyle] {text}")}]}], "turnComplete": True}}))
             except Exception:  # noqa: BLE001
@@ -1406,14 +1406,14 @@ class LiveSession:
                 self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
 
     def think_answer(self, question: str, context: str = "") -> str:
-        """Beyin modeline sor: sadece okuyan araçlar (web, dosya okuma, hafıza, projeler), az adım."""
+        """Ask the thinking model: only read-only tools (web, file reading, memory, projects), few steps."""
         from alice.agent import Agent
 
         parent = self.agent
         tools = [t for name, t in getattr(parent, "tools", {}).items() if name in THINK_TOOLS]
         child = Agent(parent.config, parent.router, tools, parent.ctx, parent.permissions, parent.ui,
                       getattr(parent, "decider", None), system_prompt=parent.messages[0]["content"], is_child=True)
-        child.tool_specs = lambda: [t.spec() for t in tools]  # grup filtresi yok: hepsi okuyan araç
+        child.tool_specs = lambda: [t.spec() for t in tools]  # no group filter: all are read-only tools
         child.role = self._think_role(parent.router, question)
         history = self.history_text()
         prompt = THINK_PROMPT.format(history=("\nAz önceki konuşma:\n" + history + "\n") if history else "",
@@ -1424,19 +1424,19 @@ class LiveSession:
     THINK_ROLE = "live-think"
 
     def _think_role(self, router, question: str = "") -> str:
-        """think'in model sırası: önce ses için ölçülmüş hızlı modeller, sonra beyin zinciri. Beyin zincirinin
-        başındaki model takılınca (providers.log 25 Ekim: nvidia:z-ai/glm-5.3 ReadTimeout) her think 180 sn zaman
-        aşımını bekliyordu: 13 think'in medyanı 189 sn, hiçbiri 25 sn'de yetişmedi."""
+        """Model order for think: first the fast models measured for voice, then the brain chain. When the model
+        at the head of the brain chain hangs (providers.log Oct 25: nvidia:z-ai/glm-5.3 ReadTimeout), every think
+        waited out the 180 s timeout: the median of 13 thinks was 189 s, and none finished within 25 s."""
         try:
             refs = list(getattr(self, "think_models", None) or [])
             if not refs:
                 refs = router.auto_chain("voice")[:3] + router.chain("brain")
-        except Exception:  # noqa: BLE001 - router ölçüm/rol bilgisi yok: eski davranış
+        except Exception:  # noqa: BLE001 - router measurement/role info unavailable: old behavior
             return "brain"
         chain = [r for i, r in enumerate(refs) if r not in refs[:i]]
         if not chain:
             return "brain"
-        if question:  # Jev yönlendirmesi: ağır işler [routing] voice_strong'a (ör. Sonnet 5.5), gerisi hızlı sıra
+        if question:  # Jev routing: heavy jobs -> [routing] voice_strong (e.g. Sonnet 5.5), the rest -> fast chain
             try:
                 from alice.providers import jev_route
 
@@ -1444,12 +1444,12 @@ class LiveSession:
                 self.log(f"live think yönlendirme: {r.tier} ({r.reason}) -> {chain[0]}")
             except Exception as e:  # noqa: BLE001
                 self.log(f"live think yönlendirme hatası: {e}")
-        router.role_overrides[self.THINK_ROLE] = chain  # council.py'deki gibi: geçici rol, kendi zinciriyle
+        router.role_overrides[self.THINK_ROLE] = chain  # as in council.py: temp role, own chain
         return self.THINK_ROLE
 
     def _execute(self, call: dict[str, Any]) -> ToolResult | None:
-        """Aracı araç iş parçacığında çalıştır. Takılırsa (ör. bir pencerenin öğelerini okurken) o iş parçacığını
-        bırak, sonraki araçlar yeni bir iş parçacığında çalışsın: konuşma kilitlenmesin. None = takıldı."""
+        """Run the tool on the tool thread. If it hangs (e.g. while reading a window's elements), abandon that
+        thread so the next tools run on a new one: the conversation must not lock up. None = hung."""
         if getattr(self, "_tools_q", None) is None:
             q: queue.Queue = queue.Queue()
             self._tools_q = q
@@ -1461,12 +1461,12 @@ class LiveSession:
             self._tools_q = None
             state = getattr(getattr(self.agent, "ctx", None), "state", None)
             if isinstance(state, dict):
-                state.pop("browser", None)  # tarayıcı bağlantısı eski iş parçacığına bağlı: yeniden bağlanılsın
+                state.pop("browser", None)  # the browser connection is bound to the old thread: let it reconnect
             return None
         return job["res"]
 
     def _on_tool_thread(self, fn: Callable[[], ToolResult], timeout: float = 600.0) -> ToolResult:
-        """Arka plandaki görevin aracını konuşmanın araç iş parçacığında çalıştır (tarayıcı bağlantısı orada)."""
+        """Run a background task's tool on the conversation's tool thread (the browser connection lives there)."""
         q = getattr(self, "_tools_q", None)
         if q is None:
             q = queue.Queue()
@@ -1480,7 +1480,7 @@ class LiveSession:
 
     def _tool_worker(self, q: "queue.Queue[dict[str, Any]]") -> None:
         try:
-            import comtypes  # UI Automation bu iş parçacığında da çalışsın
+            import comtypes  # so UI Automation also works on this thread
 
             comtypes.CoInitialize()
         except Exception:  # noqa: BLE001
@@ -1489,7 +1489,7 @@ class LiveSession:
             job = q.get()
             call = job.get("call")
             try:
-                if "fn" in job:  # arka plandaki görevin aracı: tarayıcı/UIA nesneleri bu iş parçacığına bağlı
+                if "fn" in job:  # a background task's tool: browser/UIA objects are bound to this thread
                     job["res"] = job["fn"]()
                 else:
                     self.agent._enable_groups_for(tool_names=(call["function"]["name"],))
@@ -1499,16 +1499,16 @@ class LiveSession:
             job["done"].set()
 
     def _new_turn(self) -> None:
-        """Kullanıcı yeni bir şey söyledi: araç sayacı, tekrar kontrolü ve dış içerik kirlenmesi sıfırlanır."""
+        """The user said something new: tool counter, repeat check and external-content contamination are reset."""
         self._turn = {"n": 0, "last": None, "seen": {}, "ok": 0, "errors": [], "calls": 0, "fails": {}}
         from alice import guard
 
         guard.clear(getattr(self.agent, "ctx", None))
 
     def _guard(self, fc: dict[str, Any]) -> str | None:
-        """Aracı çalıştırmadan modele dönülecek cevap (None = çalıştır). İki durum:
-        aynı çağrı art arda gelirse (ör. checklist_next iki kez, adım atlanıyordu) önceki sonuç döner;
-        istek başına araç sayısı aşılırsa model durdurulur ve kullanıcıya dönmeye yönlendirilir."""
+        """The reply to return to the model instead of running the tool (None = run it). Two cases:
+        same call back to back (e.g. checklist_next twice, steps got skipped): the previous result is returned;
+        if the per-request tool count is exceeded, the model is stopped and told to return to the user."""
         turn = getattr(self, "_turn", None)
         if turn is None:
             turn = self._turn = {"n": 0, "last": None}
@@ -1520,8 +1520,8 @@ class LiveSession:
             self.log(f"live aynı araç çağrısı tekrarlandı, çalıştırılmadı: {name}")
             return ("Bu çağrıyı az önce aynen yaptın, tekrar çalıştırılmadı. Önceki sonuç: " + last[2][:1500]
                     + "\nAynı aracı tekrar çağırma; bu sonuca göre kullanıcıya cevap ver.")
-        # Arada başka çağrı olsa da aynı okuma aynı istekte ikinci kez çalışmasın (voice.log: Get-Volume,
-        # Downloads listesi bir dakikada 5-6 kez). Değiştiren eylemler (tıkla, yaz) bu kontrole girmez.
+        # Even with other calls in between, the same read must not run twice in one request (voice.log:
+        # Get-Volume, Downloads listing 5-6 times a minute). State-changing actions (click, type) skip this check.
         seen = turn.setdefault("seen", {})
         if key in seen and not repeatable and read_only(name, args):
             self.log(f"live aynı okuma bu istekte tekrarlandı, çalıştırılmadı: {name}")
@@ -1551,7 +1551,7 @@ class LiveSession:
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [
                     {"id": fc.get("id"), "name": fc.get("name"), "response": {"result": early}}]}}))
-            except Exception:  # noqa: BLE001 - bağlantı kapanmış olabilir
+            except Exception:  # noqa: BLE001 - connection may already be closed
                 pass
             return
         turn = getattr(self, "_turn", None)
@@ -1560,8 +1560,8 @@ class LiveSession:
         turn["calls"] = turn.get("calls", 0) + 1
         user = str(turn.get("user") or "")
         if not self._is_read(fc) and foreign(user):
-            # Bozuk duyulan cümle (oyun, video, başka dil) işe dönüşmesin: Unciv'i başlatma, şarkı açma, Install'a
-            # basma hep böyle olmuştu. Okumalar serbest.
+            # A misheard sentence (game, video, another language) must not turn into an action: starting Unciv,
+            # opening a song, pressing Install all used to happen this way. Reads are allowed.
             self.log(f"live dil kapısı: Türkçe olmayan istekle {fc.get('name')} çalıştırılmadı: {user[:120]}")
             self._reply(ws, fc, "YAPILMADI: duyulan söz Türkçe değil ya da anlaşılmadı, büyük ihtimalle sana "
                                 "söylenmedi (oyun/video/başkası). Hiçbir şey söyleme, sessiz kal.")
@@ -1579,10 +1579,10 @@ class LiveSession:
             return
         call = {"id": fc.get("id") or fc.get("name"), "type": "function",
                 "function": {"name": fc.get("name", ""), "arguments": json.dumps(fc.get("args") or {})}}
-        if fc.get("name") == "task_control":  # anında: araç iş parçacığı görevin bir adımıyla meşgul olabilir
+        if fc.get("name") == "task_control":  # immediate: the tool thread may be busy with a step of the task
             try:
                 res = self.agent._execute_calls([call])[0]
-            except Exception as e:  # noqa: BLE001 - hata converse'ten çıkarsa çağıran ilk cümleyi eski yolla TEKRAR çalıştırıyordu
+            except Exception as e:  # noqa: BLE001 - error escaped converse; the old path re-ran the first sentence
                 res = ToolResult(f"HATA {type(e).__name__}: {e}", is_error=True)
             self.log(f"live görev kontrolü {json.dumps(fc.get('args') or {}, ensure_ascii=False)}: {res.text[:120]}")
             try:
@@ -1602,7 +1602,7 @@ class LiveSession:
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [
                     {"id": fc.get("id"), "name": fc.get("name"), "response": {"result": text}}]}}))
-            except Exception:  # noqa: BLE001 - bağlantı kapanmış olabilir
+            except Exception:  # noqa: BLE001 - connection may already be closed
                 pass
 
         def too_slow() -> None:
@@ -1620,12 +1620,12 @@ class LiveSession:
         finally:
             if cancel is not None:
                 cancel()
-        if res is None:  # takıldı: zaman aşımı cevabı gitti, konuşma bir sonraki istekle devam eder
+        if res is None:  # hung: the timeout reply was sent, the conversation continues with the next request
             return
         text = res.text[:6000]
         name = fc.get("name", "")
-        # Her sonuç günlüğe: eskiden sadece 4 araç yazılıyordu (361 çağrıya 37 sonuç), uçuş/pencere/komut sonucuna
-        # dayanan cevaplar doğrulanamıyordu.
+        # Every result goes to the log: it used to record only 4 tools (37 results for 361 calls), so replies
+        # based on flight/window/command results could not be verified.
         self.log(f"live araç sonucu {name} [{fc.get('id') or '-'}] {'hata' if res.is_error else 'tamam'}: "
                  f"{text[:200].replace(chr(10), ' | ')}")
         fails = turn.setdefault("fails", {})
@@ -1636,7 +1636,7 @@ class LiveSession:
             fails[name] = fails.get(name, 0) + 1
             text = "HATA: " + text
             if fails[name] >= 2:
-                # Model aynı aracı döndürüp duruyor, sonra kullanıcıdan "tarayıcı ayarlarını kontrol et" istiyordu.
+                # The model kept repeating the same tool, then asked the user to "tarayıcı ayarlarını kontrol et".
                 text += ("\nBu araç bu istekte üst üste başarısız oldu: aynısını tekrar deneme. Başka bir araçla dene "
                          "ya da kullanıcıya olmadığını kısaca söyle. Kullanıcıdan ayar değiştirmesini isteme.")
         else:
@@ -1644,7 +1644,7 @@ class LiveSession:
             turn["ok"] = turn.get("ok", 0) + 1
         timer.cancel()
         self._remember(fc, text)
-        for img in (getattr(res, "images", None) or [])[:1]:  # araç görüntüsü (ekran/sekme): modele göster
+        for img in (getattr(res, "images", None) or [])[:1]:  # tool image (screen/tab): show it to the model
             frame = _to_jpeg(img)
             if frame:
                 try:
@@ -1658,22 +1658,23 @@ class LiveSession:
         try:
             ws.send(json.dumps({"toolResponse": {"functionResponses": [
                 {"id": fc.get("id"), "name": fc.get("name"), "response": {"result": text}}]}}))
-        except Exception:  # noqa: BLE001 - bağlantı kapanmış olabilir
+        except Exception:  # noqa: BLE001 - connection may already be closed
             pass
 
     def _record_correction(self, prev: tuple[float, str, str], heard: str) -> None:
-        """Kullanıcı bir önceki turu düzeltti ("sana demedim", "yanlış anladın"): o tur test setine ve geri bildirim
-        kaydına girer, gece döngüsü bunlardan başlar. Sesli tarafta bu işaret hiç değerlendirilmiyordu."""
+        """The user corrected the previous turn ("sana demedim" = "I didn't say that", "yanlış anladın" =
+        "you misunderstood"): that turn goes into the test set and the feedback log; the nightly loop starts from
+        these. On the voice side this signal was never evaluated."""
         ts, user, reply = prev
         if time.time() - ts > 120:
-            return  # eski bir tura ait değil
+            return  # too old: not about this turn
         self._corrected(heard)
         try:
             from alice.evals import record_feedback
 
             record_feedback(user, reply, note=f"kullanıcı hemen ardından: {heard[:200]}", source="ses-düzeltme")
             self.log(f"live düzeltme test setine eklendi: {user[:80]!r} -> {heard[:80]!r}")
-        except Exception:  # noqa: BLE001 - kayıt hatası konuşmayı bozmasın
+        except Exception:  # noqa: BLE001 - a recording error must not break the conversation
             pass
 
     def _corrected(self, text: str) -> None:
@@ -1681,7 +1682,7 @@ class LiveSession:
         if hook is not None:
             try:
                 hook(text)
-            except Exception:  # noqa: BLE001 - korpus hatası konuşmayı bozmasın
+            except Exception:  # noqa: BLE001 - a corpus error must not break the conversation
                 pass
 
     def _memory(self):
@@ -1691,14 +1692,15 @@ class LiveSession:
     def _recall(self, text: str) -> str:
         mem = self._memory()
         try:
-            return mem.recall(text, use_model=False) if mem is not None else ""  # sesli: gecikme olmasın
+            return mem.recall(text, use_model=False) if mem is not None else ""  # voice: no added latency
         except Exception:  # noqa: BLE001
             return ""
 
     def _flush_log(self, state: dict[str, Any], ui: LiveUI) -> None:
         heard, said = "".join(state["heard"]).strip(), "".join(state["said"]).strip()
         if state.pop("unverified", False) and said:
-            # Araç sonucu olmadan "yaptım": hafıza/özet bunu olgu ("kullanıcı onayladı") diye yazmasın.
+            # "yaptım" (done) without a tool result: memory/summary must not record it as a fact
+            # ("kullanıcı onayladı" = "user confirmed").
             said = "[doğrulanmadı] " + said
         if heard or said or ui.tools:
             tools = f" araçlar: {', '.join(ui.tools)}" if ui.tools else ""
@@ -1711,7 +1713,8 @@ class LiveSession:
         if heard:
             self._history = (history + [(time.time(), heard, said)])[-20:]
         elif said and history and state.get("ep_open"):
-            # Araçtan sonra ayrı turda gelen cevap: kullanıcının sorusuna ait (yoksa kayıtta cevap boş kalıyordu).
+            # A reply arriving in a separate turn after a tool belongs to the user's question
+            # (otherwise the logged reply stayed empty).
             ts, user, before = history[-1]
             self._history[-1] = (ts, user, (before + " " + said).strip())
         mem = self._memory()
@@ -1722,9 +1725,9 @@ class LiveSession:
                     mem.learn(heard, said)
                 elif state.get("ep_open"):
                     mem.add_reply(state["ep"], said)
-            except Exception:  # noqa: BLE001 - hafıza hatası konuşmayı bozmasın
+            except Exception:  # noqa: BLE001 - a memory error must not break the conversation
                 pass
         if heard:
-            state["ep_open"] = True  # sonraki kullanıcısız cevap bu tura eklenir
+            state["ep_open"] = True  # a later reply without user input is added to this turn
         state["heard"], state["said"] = [], []
         ui.tools = []

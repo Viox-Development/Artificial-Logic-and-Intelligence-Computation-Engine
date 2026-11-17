@@ -18,7 +18,7 @@ NAMES = ("backend", "tests", "docs")
 
 
 class Team(_Team):
-    """Bu dosya yöneticinin kendi inceleme akışını sınar; kurul ayrı (test_council.py)."""
+    """Tests the lead's own review flow; the council is tested separately (test_council.py)."""
 
     def __init__(self, *a, **k):
         k.setdefault("council", False)
@@ -40,7 +40,7 @@ def steps(messages) -> int:
 
 
 def since_user(messages) -> tuple[str, int]:
-    """Son kullanıcı (olay) mesajı ve ondan sonraki asistan cevabı sayısı."""
+    """The last user (event) message and the number of assistant replies after it."""
     n = 0
     for m in reversed(messages):
         if m["role"] == "user":
@@ -61,7 +61,7 @@ def make(script, workdir, **agent_cfg):
 
 
 def lead_script(state):
-    """Planlayan, cevaplayan, inceleyen, düzeltme isteyen ve bitiren sahte yönetici."""
+    """Fake lead that plans, answers, reviews, asks for revisions and finishes."""
 
     def run(messages):
         event, k = since_user(messages)
@@ -125,7 +125,7 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
 
     def watch(name, approve, feedback="", by="alice"):
         if name == "backend" and approve:
-            state["backend_done"] = True  # onay tests'i başlatır; bayrak ondan önce konmalı
+            state["backend_done"] = True  # approval starts tests; the flag must be set before that
         return orig_review(name, approve, feedback, by)
 
     team.review_member = watch
@@ -136,9 +136,9 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     assert team.summary == "add() yazıldı ve test edildi."
     assert team.status() == "done" and not team.active()
     assert {m.status for m in team.members.values()} == {"done"}
-    assert (workdir / "src/api.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"  # kapsam dışı yazma engellendi
+    assert (workdir / "src/api.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"  # blocked: out of scope
     assert (workdir / "tests/test_api.py").exists()
-    assert state.get("tests_started_after") is True  # after: tests, backend onaylandıktan sonra başladı
+    assert state.get("tests_started_after") is True  # after: tests started after backend was approved
     assert state.get("saw_diff")
     tests = team.members["tests"]
     assert tests.reviews == 1 and tests.result.startswith("rapor: testler v2")
@@ -146,15 +146,15 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     assert "kapsam dışı" in tool_texts and "negatif tutar reddedilsin" in tool_texts
     assert any(x.sender == "alice" and x.to == "tests" and "düzeltme" in x.text for x in team.log)
     assert "def add" in team.diff("backend")
-    # ajan istemi: kişilik yok, görev ve takım listesi var
+    # agent prompt: no personality, has the task and the team list
     sys = team.members["tests"].agent.messages[0]["content"]
     assert "Senin görevin: tests/test_api.py" in sys and "- backend:" in sys and "Your personality" not in sys
     assert "backend" in sys.split("Bu iş şunlar bittikten sonra başladı:")[1].splitlines()[0]
-    # sonradan katılan ajan önceki ajana duyuruldu
+    # the late-joining agent was announced to the earlier one
     backend_users = [str(m["content"]) for m in team.members["backend"].agent.messages if m["role"] == "user"]
     assert any("yeni ajan katıldı: tests" in c for c in backend_users) or \
         any(x.sender == "sistem" and "tests" in x.text for x in team.log)
-    # finish önce kaydeder, sonra yayınlar: son yayını bekle
+    # finish saves first, then publishes: wait for the last publish
     assert team.wait_until(lambda: [e for e in events if e["type"] == "team"][-1]["status"] == "done", 5)
     assert [e for e in events if e["type"] == "team"][-1]["summary"]
     assert any(e["type"] == "project_note" and e["kind"] == "done" for e in events)
@@ -191,7 +191,7 @@ def test_validation(workdir):
 def simple(model, messages, tools, **kw):
     me = who(messages)
     if me == "lead":
-        return "tamam"  # hiçbir şey yapmayan yönetici: proje dürtülerek kendiliğinden kapanmalı
+        return "tamam"  # lead that does nothing: the project must close on its own when nudged
     if me == "backend":
         return [tool_call("write_file", {"path": "src/a.py", "content": "x = 1\n"}), "rapor"][min(steps(messages), 1)]
     return "rapor"
@@ -227,7 +227,7 @@ def test_user_review_revert_restart_and_questions(workdir):
     assert team.members["backend"].status == "done"
     team.restart("backend")
     assert team.wait_until(lambda: team.members["backend"].status == "review", 10)
-    assert team.members["backend"].steps == 1  # temiz konuşmayla baştan
+    assert team.members["backend"].steps == 1  # start over from scratch with a clean conversation
 
 
 def test_project_is_saved_loaded_and_resumed(workdir):
@@ -241,7 +241,7 @@ def test_project_is_saved_loaded_and_resumed(workdir):
     assert rows[0]["id"] == team.id and rows[0]["title"] == "Kaydedilen hedef"
     assert rows[0]["members"] == [{"name": "backend", "status": "review"}]
 
-    # uygulama yeniden açıldı: proje diskten yüklenir (durmuş), konuşma ve fark korunur, mesajla devam eder
+    # app reopened: the project is loaded from disk (stopped), conversation and diff are kept, resumes with a message
     loaded = Team.load(team.id, ctx)
     m = loaded.members["backend"]
     assert loaded.stopped and m.status == "review" and m.agent is None
@@ -351,7 +351,7 @@ def test_saved_project_read_retries_while_file_is_being_replaced(tmp_path, monke
 
 
 def test_save_survives_brief_windows_file_lock(tmp_path, monkeypatch):
-    # Windows'ta virüs tarayıcı yeni dosyayı bir an kilitler: replace birkaç kez PermissionError verse de kayıt düşmesin.
+    # Windows: antivirus briefly locks the new file; the save must survive a few PermissionErrors from replace.
     from pathlib import Path
 
     from alice import team as team_mod
@@ -377,8 +377,8 @@ def test_save_survives_brief_windows_file_lock(tmp_path, monkeypatch):
 
 
 def test_list_projects_survives_file_being_replaced(monkeypatch):
-    # Windows: proje tam o an kaydediliyorsa okuma PermissionError veriyordu ve proje listeden düşüyordu
-    # (Windows CI'da test_autonomous_project_... list_projects() boş döndü).
+    # Windows: reading raised PermissionError while the project was being saved, so it dropped out of the list
+    # (On Windows CI, list_projects() returned empty in test_autonomous_project_...).
     import json
     from pathlib import Path
 
@@ -400,8 +400,8 @@ def test_list_projects_survives_file_being_replaced(monkeypatch):
 
 
 def test_git_output_is_decoded_as_utf8(tmp_path):
-    # Windows'ta yerel kod sayfası (cp1254) "Ğ"/"Ş" baytlarını (0x9E) çözemiyordu: git show/diff UnicodeDecodeError
-    # ile ajanın adımını düşürüyordu.
+    # On Windows the local code page (cp1254) couldn't decode "Ğ"/"Ş" bytes (0x9E): git show/diff UnicodeDecodeError
+    # which dropped the agent's step.
     from alice import team as team_mod
 
     def git(*args):
@@ -416,7 +416,7 @@ def test_git_output_is_decoded_as_utf8(tmp_path):
 
 
 def test_git_dirty_handles_non_ascii_and_renamed_paths(tmp_path):
-    # Düz porcelain çıktısı "dü.py"yi "d\303\274.py" diye kaçışlıyordu: komutla değişen dosya bulunamıyordu.
+    # Plain porcelain output escaped "dü.py" as "d\303\274.py", so files changed by a command were not found.
     from types import SimpleNamespace
 
     def git(*args):
@@ -435,7 +435,7 @@ def test_git_dirty_handles_non_ascii_and_renamed_paths(tmp_path):
 
 
 def test_check_command_timeout_kills_grandchildren(tmp_path):
-    # Kabuğun açtığı süreç boruyu tutarken subprocess.run zaman aşımında sonsuza dek bekliyordu (kurul takılıyordu).
+    # A process spawned by the shell kept the pipe open, so subprocess.run hung past its timeout (council stuck).
     import sys
     import time
     from types import SimpleNamespace
@@ -450,15 +450,15 @@ def test_check_command_timeout_kills_grandchildren(tmp_path):
 
 
 def test_stopped_lead_loop_exits_even_if_resumed_meanwhile(workdir):
-    # Döngü "durdu, çıkıyorum" dedikten hemen sonra Sürdür yeni bir döngü başlatırsa eski döngü lead_thread'i dolu
-    # görüp çalışmaya devam ediyordu: aynı yönetici ajanında iki döngü.
+    # If Resume started a new loop right after the loop said "stopped, exiting", the old loop saw lead_thread
+    # was set and kept running: two loops on the same lead agent.
     _, _, ctx = make(simple, workdir)
     team = Team(ctx, "hedef")
     from types import SimpleNamespace
 
-    team.lead_agent = SimpleNamespace(messages=[{"role": "system", "content": ""}])  # kurulmuş sayılsın
+    team.lead_agent = SimpleNamespace(messages=[{"role": "system", "content": ""}])  # treated as already set up
     team.stopped = True
-    other = threading.Thread(target=lambda: None)  # Sürdür'ün başlattığı döngü yerine
+    other = threading.Thread(target=lambda: None)  # instead of the loop Resume started
 
     class Hooked(threading.Condition):
         fired = False
@@ -467,7 +467,7 @@ def test_stopped_lead_loop_exits_even_if_resumed_meanwhile(workdir):
             res = super().__exit__(*a)
             if not Hooked.fired:
                 Hooked.fired = True
-                team.stopped, team.lead_thread = False, other  # tam bu arada sürdürüldü
+                team.stopped, team.lead_thread = False, other  # resumed at exactly this moment
             return res
 
     team.cond = Hooked()
@@ -475,14 +475,14 @@ def test_stopped_lead_loop_exits_even_if_resumed_meanwhile(workdir):
     t.start()
     t.join(3)
     alive = t.is_alive()
-    team.finished = True  # eski kodda döngü sürüyorsa kapansın
+    team.finished = True  # if the loop is still running in old code, let it close
     t.join(5)
     assert not alive and team.lead_thread is other
 
 
 def test_next_survives_member_added_while_launching(workdir):
-    # Ajan bitince _next() üyeleri gezerken (her _launch thread açıp kaydediyor) yönetici assign/plan ile yeni ajan
-    # eklerse "dictionary changed size during iteration" ile biten ajanın thread'i düşüyor, sıradakiler başlamıyordu.
+    # When an agent finishes, _next() walks the members (each _launch starts and records a thread). If the lead adds an
+    # agent via assign/plan meanwhile, that thread dies with "dictionary changed size during iteration"; the rest stall.
     from alice.team import Member
 
     _, _, ctx = make(simple, workdir)
@@ -493,7 +493,7 @@ def test_next_survives_member_added_while_launching(workdir):
 
     def launch(m, resume=False):
         launched.append(m.name)
-        if "c" not in team.members:  # tam bu arada yönetici yeni ajan ekledi
+        if "c" not in team.members:  # the lead added a new agent at exactly this moment
             team.members["c"] = Member(name="c", task="t", status="running")
 
     team._launch = launch
@@ -502,8 +502,8 @@ def test_next_survives_member_added_while_launching(workdir):
 
 
 def test_plan_council_counter_changes_under_lock(workdir):
-    # Plan aracı council_busy'yi kilitsiz artırıyordu; kurul thread'leri kilit altında azaltırken artış kaybolursa
-    # sayaç sıfıra dönmüyor, finish ve final kurulu sonsuza dek "kurul toplanıyor" diye bekliyordu.
+    # The plan tool incremented council_busy without the lock, so an increment could be lost while council threads
+    # decremented it under the lock: the counter never hit zero and finish waited forever on "kurul toplanıyor".
     from alice.team_tools import LeadPlan
 
     bad = []
@@ -527,7 +527,7 @@ def test_plan_council_counter_changes_under_lock(workdir):
 
 
 def test_diff_survives_member_touching_new_file(workdir, monkeypatch):
-    # Kurul farkı okurken çalışan ajan yeni bir dosyaya dokunursa originals büyüyor ve diff düşüyordu.
+    # If a running agent touched a new file while the council read the diff, originals grew and the diff was lost.
     from alice import team as team_mod
     from alice.team import Member
 
@@ -540,7 +540,7 @@ def test_diff_survives_member_touching_new_file(workdir, monkeypatch):
     real = team_mod._read_original
 
     def reading(p):
-        m.originals.setdefault(str((workdir / "z.py").resolve()), None)  # ajan tam bu arada z.py'ye dokundu
+        m.originals.setdefault(str((workdir / "z.py").resolve()), None)  # the agent touched z.py at exactly this moment
         return real(p)
 
     monkeypatch.setattr(team_mod, "_read_original", reading)
@@ -562,7 +562,7 @@ def test_stop_member_before_its_agent_exists(workdir):
     real = team._make_agent
 
     def slow_make(member):
-        gate.wait(10)  # model seçimi / worktree kurulumu sürüyor
+        gate.wait(10)  # model selection / worktree setup still in progress
         return real(member)
 
     team._make_agent = slow_make

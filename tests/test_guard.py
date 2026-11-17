@@ -30,8 +30,8 @@ def test_external_content_is_fenced_and_taints_turn(workdir, monkeypatch):
     agent.run_turn("dcs haberlerine bak")
     search = next(m for m in agent.messages if m["role"] == "tool")
     assert "<untrusted_content" in search["content"] and "UYARI" in search["content"]
-    assert asked and asked[0].startswith("[dış içerik okunduktan sonra: web_search]")  # auto modda bile soruldu
-    # Yeni kullanıcı mesajı kirlenmeyi temizler: komut sorulmadan çalışır.
+    assert asked and asked[0].startswith("[dış içerik okunduktan sonra: web_search]")  # asked even in auto mode
+    # A new user message clears the taint: the command runs without asking.
     agent2_script = [tool_call("run_command", {"command": "echo selam"}), "bitti"]
     provs["a"].script.extend(agent2_script)
     asked.clear()
@@ -47,15 +47,15 @@ def test_taint_rules_in_permissions(workdir):
     assert p.decide(rc, {"command": "echo x"}, ctx) == "allow"
     guard.mark(ctx, "web_fetch")
     assert p.decide(rc, {"command": "echo x"}, ctx) == "ask"
-    assert p.decide(wf, {"path": "notlar.txt", "content": "x"}, ctx) == "allow"  # proje içine yazmak serbest
+    assert p.decide(wf, {"path": "notlar.txt", "content": "x"}, ctx) == "allow"  # writing inside the project is free
     assert p.decide(wf, {"path": str(workdir.parent / "dışarı.txt"), "content": "x"}, ctx) == "ask"
     cfg.agent["taint_guard"] = False
     assert p.decide(rc, {"command": "echo x"}, ctx) == "allow"
 
 
 def test_taint_sibling_folder_patch_and_session_allow(workdir):
-    """Kirli turda: adı çalışma klasörüyle başlayan kardeş klasör "içeride" sayılmaz, apply_patch'in yazdığı dosyalara
-    da bakılır, oturumluk "hep izin ver" komut onayını delmez."""
+    """In a tainted turn, a sibling folder whose name starts with the workdir name is not "içeride" (inside);
+    apply_patch's written files are checked too, and the session-only "hep izin ver" (always allow) can't bypass it."""
     cfg = make_config({"brain": ["a:m"]}, sandbox="off")
     ctx = ToolContext(cwd=workdir, config=cfg)
     p = Permissions("auto")
@@ -64,7 +64,7 @@ def test_taint_sibling_folder_patch_and_session_allow(workdir):
     outside_patch = f"*** Begin Patch\n*** Add File: {workdir.parent / 'disari.txt'}\n+x\n*** End Patch"
     inside_patch = "*** Begin Patch\n*** Add File: notlar.txt\n+x\n*** End Patch"
     p.always_allow.add("run_command")
-    assert p.decide(wf, {"path": str(sibling), "content": "x"}, ctx) == "allow"  # temizken serbest
+    assert p.decide(wf, {"path": str(sibling), "content": "x"}, ctx) == "allow"  # free when clean
     assert p.decide(rc, {"command": "echo x"}, ctx) == "allow"
     guard.mark(ctx, "web_fetch")
     assert p.decide(wf, {"path": str(sibling), "content": "x"}, ctx) == "ask"
@@ -74,7 +74,7 @@ def test_taint_sibling_folder_patch_and_session_allow(workdir):
 
 
 def test_taint_bare_allow_rule_does_not_bypass(workdir):
-    """config'teki desensiz "run_command" kuralı kirli turda komutu sormadan geçirmez; desenli kural geçirir."""
+    """A bare "run_command" rule (no pattern) doesn't skip the prompt in a tainted turn; a pattern rule does."""
     cfg = make_config({"brain": ["a:m"]}, sandbox="off")
     ctx = ToolContext(cwd=workdir, config=cfg)
     rc, wf = TOOLS["run_command"], TOOLS["write_file"]
@@ -84,5 +84,5 @@ def test_taint_bare_allow_rule_does_not_bypass(workdir):
     guard.mark(ctx, "web_fetch")
     assert bare.decide(rc, {"command": "echo x"}, ctx) == "ask"
     assert bare.decide(wf, {"path": str(workdir.parent / "disari.txt"), "content": "x"}, ctx) == "ask"
-    assert bare.decide(wf, {"path": "notlar.txt", "content": "x"}, ctx) == "allow"  # proje içi serbest kalır
+    assert bare.decide(wf, {"path": "notlar.txt", "content": "x"}, ctx) == "allow"  # inside the project: free
     assert narrow.decide(rc, {"command": "git status"}, ctx) == "allow"

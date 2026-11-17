@@ -1,20 +1,20 @@
-"""Ses motorları.
+"""Voice engines.
 
-Bulut: Gemini TTS. Sesin kendisi (ör. "Aoede") sabit kalır, ton stil talimatıyla değişir.
-Yerel: XTTS v2 ve Chatterbox. İkisi de sesi bir referans kayıttan klonlar. Referans olarak
-"duygu kütüphanesi" kullanılır: seçilen bulut sesinin her duyguda söylediği birer kayıt
-(~/.alice/voice/library/<duygu>.wav). Böylece DCS açıkken buluttan, kapalıyken yerelden
-konuşsa da hep aynı ALICE duyulur.
+Cloud: Gemini TTS. The voice itself (e.g. "Aoede") stays fixed; the tone changes with a style instruction.
+Local: XTTS v2 and Chatterbox. Both clone the voice from a reference recording. The "emotion library"
+is used as the reference: one recording per emotion of the chosen cloud voice
+(~/.alice/voice/library/<emotion>.wav). This way the same ALICE is heard whether it speaks from the
+cloud while DCS is open or locally when it is closed.
 
-Son çare: Microsoft Edge'in sinir ağı sesleri (edge-tts). Anahtar ve kota yok, ~1 sn'de hazır; bulut
-ve yerel ses düşünce (ya da yerel ses takılıp zaman aşımına uğrayınca) konuşur.
+Last resort: Microsoft Edge's neural voices (edge-tts). No key or quota, ready in ~1 s; it speaks when
+the cloud and local voices fail (or when the local voice hangs and times out).
 
-Son çare: Microsoft Edge'in sinir ağı sesleri (edge-tts). Anahtar ve kota yok, ~1 sn'de hazır; bulut
-ve yerel ses düşünce (ya da yerel ses takılıp zaman aşımına uğrayınca) konuşur.
+Last resort: Microsoft Edge's neural voices (edge-tts). No key or quota, ready in ~1 s; it speaks when
+the cloud and local voices fail (or when the local voice hangs and times out).
 
-Seçim (TTSRouter): DCS açıkken (mod politikası local_gpu = false) yerel motor GPU'ya
-dokunmaz; ya bulut kullanılır ya da yerel motor işlemcide çalışır. Hata veren motor bir
-süre atlanır.
+Selection (TTSRouter): while DCS is open (mode policy local_gpu = false) the local engine does not
+touch the GPU; either the cloud is used or the local engine runs on the CPU. An engine that
+errors is skipped for a while.
 """
 
 from __future__ import annotations
@@ -33,12 +33,13 @@ from alice.config import Config, alice_home
 from alice.voice.audio import Audio
 from alice.voice.tone import CHATTERBOX, DIRECTION, EMOTIONS, NAMES_TR
 
-# Gemini'nin kadın sesleri (Google'ın tanımlarıyla). Dinleme testinde bunlardan seçilir.
+# Gemini's female voices (per Google's descriptions). Chosen from these in the listening test.
 GEMINI_VOICES = {
     "Aoede": "ferah", "Kore": "kararlı", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
     "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak",
 }
-# Gemini'nin (TTS ve Live ortak) bütün hazır sesleri ve Google'ın tarifleri; Sistem > Ses'te dinlenip seçilir.
+# All of Gemini's ready-made voices (shared by TTS and Live) and Google's descriptions;
+    # listened to and chosen under Sistem > Ses.
 ALL_GEMINI_VOICES = {
     "Kore": "kararlı", "Aoede": "ferah", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
     "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak", "Zephyr": "parlak",
@@ -55,7 +56,7 @@ class TTSError(Exception):
 
 
 class QuotaError(TTSError):
-    """Kota doldu. daily: günlük kota (yarına kadar yok); retry_after: kaç saniye sonra tekrar denenebilir."""
+    """Quota exhausted. daily: daily quota (none until tomorrow); retry_after: seconds until a retry is allowed."""
 
     def __init__(self, message: str, retry_after: float | None = None, daily: bool = False):
         super().__init__(message)
@@ -64,7 +65,7 @@ class QuotaError(TTSError):
 
 
 def gemini_quota_error(body: str) -> QuotaError:
-    """Gemini'nin 429 cevabından kota türünü ve bekleme süresini çıkar."""
+    """Extract the quota type and wait time from Gemini's 429 response."""
     import re
 
     retry, daily, limit = None, False, ""
@@ -102,7 +103,7 @@ def library_dir() -> Path:
 
 
 class EmotionLibrary:
-    """Her duygu için bir referans kayıt. Yerel motorlar sesi buradan klonlar."""
+    """One reference recording per emotion. Local engines clone the voice from here."""
 
     def __init__(self, path: Path | None = None):
         self.path = path or library_dir()
@@ -125,7 +126,7 @@ class EmotionLibrary:
         return self.clip("calm") is not None
 
 
-# Referans cümleleri: yerel motorlar 6-15 sn temiz konuşmadan iyi klonlar.
+# Reference sentences: local engines clone well from 6-15 s of clean speech.
 LIBRARY_TEXT = {
     "calm": "Merhaba, ben ALICE. Bugün her şey yolunda görünüyor; bilgisayarın serin, görevlerin de zamanında "
             "bitti. Bir şeye ihtiyacın olursa buradayım.",
@@ -139,8 +140,8 @@ LIBRARY_TEXT = {
 
 def build_library(engine: "TTS", out: Path | None = None, emit: Callable[[str], None] = lambda s: None,
                   redo: bool = False) -> tuple[Path, list[str]]:
-    """Her duygu için referans kaydı üret. Var olanlar (redo değilse) atlanır, kota dolarsa kalanlar
-    sonraki çalıştırmaya kalır. (klasör, eksik kalan duygular) döndürür."""
+    """Generate a reference recording for each emotion. Existing ones are skipped (unless redo), and if the
+    quota runs out the rest are left for the next run. Returns (folder, emotions still missing)."""
     out = out or library_dir()
     out.mkdir(parents=True, exist_ok=True)
     meta_path = out / "meta.json"
@@ -149,7 +150,7 @@ def build_library(engine: "TTS", out: Path | None = None, emit: Callable[[str], 
     except (OSError, ValueError):
         meta = {}
     if meta.get("source") and meta["source"] != engine.name:
-        redo = True  # başka bir sesle yapılmış kütüphaneyi karıştırma
+        redo = True  # don't mix in a library made with a different voice
         emit(f"önceki kütüphane {meta['source']} sesiyle yapılmış, {engine.name} ile yeniden yapılıyor")
     missing: list[str] = []
     for emo, text in LIBRARY_TEXT.items():
@@ -187,13 +188,14 @@ def formats_path() -> Path:
 
 
 class GeminiTTS:
-    """Gemini ses modelleri. Kota model başına sayıldığı için birinin kotası dolunca sıradakine geçer;
-    ses (ör. Aoede) aynı kalır.
+    """Gemini voice models. Quota counts per model, so when one runs out it moves to the next;
+    the voice (e.g. Aoede) stays the same.
 
-    Ton talimatı üç biçimde verilebilir: notes (ayrı başlıklar), tag (metnin başında [köşeli] etiket),
-    plain (talimatsız, ton yok). Bazı modeller talimatı da sesli okuyor; verify verilirse (Whisper ile
-    yazıya çevirip karşılaştıran fonksiyon) okunan biçim o model için 'kötü' işaretlenir, sıradaki biçim
-    denenir ve sonuç diske yazılır. Günlük konuşma kayıtlı iyi biçimi kullanır."""
+    The tone instruction comes in three formats: notes (separate headings), tag (a [bracketed] label at the
+    start of the text), plain (no instruction, so no tone). Some models read the instruction aloud too; if
+    verify is given (a function that transcribes with Whisper and compares), the format read aloud is marked
+    'bad' for that model, the next format is tried, and the result is saved to disk. Everyday speech uses the
+    saved good format."""
 
     URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -206,11 +208,11 @@ class GeminiTTS:
         self.voice = voice
         self.models = [models] if isinstance(models, str) else list(models or DEFAULT_GEMINI_MODELS)
         self.name = f"gemini:{voice}"
-        # Uzun cümlelerde ses üretimi yavaş olabiliyor; bağlantı kurulamazsa hızlı vazgeç.
+        # Long sentences can make speech generation slow; if the connection can't be made, give up quickly.
         self.client = client or httpx.Client(timeout=httpx.Timeout(45, connect=10))
         self.verify = verify
         self.formats_file = formats_file or formats_path()
-        self.down: dict[str, float] = {}  # model -> bu ana kadar atla
+        self.down: dict[str, float] = {}  # model -> skip until this time
         self.reason: dict[str, str] = {}  # model -> daily | minute | error
         self.last_model = ""
         self.last_format = ""
@@ -239,7 +241,7 @@ class GeminiTTS:
             return text
         if fmt == "tag":
             return f"[{TAGS.get(emotion, TAGS['calm'])}] {text}"
-        # Yönerge ile konuşulacak metin ayrı başlıklarda (Google'ın önerdiği yapı).
+        # The spoken text goes under its own heading, in the structure Google recommends.
         return (
             "Synthesize speech for the performance defined below. The audio profile and director's notes are "
             "direction only. Do NOT speak them. Speak ONLY the lines under #### TRANSCRIPT, exactly as written, "
@@ -250,7 +252,7 @@ class GeminiTTS:
             f"#### TRANSCRIPT\n{text}")
 
     def _request(self, model: str, prompt: str):
-        """("ok", Audio) | ("quota", QuotaError) | ("error", mesaj)."""
+        """("ok", Audio) | ("quota", QuotaError) | ("error", message)."""
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
@@ -259,7 +261,7 @@ class GeminiTTS:
         try:
             r = self.client.post(self.URL.format(model=model), json=body, headers={"x-goog-api-key": self.api_key})
         except httpx.TimeoutException:
-            # Model o an yavaş/takıldı: bu cümle için sıradaki modele geç.
+            # The model is slow or stuck right now: move on to the next model for this sentence.
             return "slow", f"{model}: zaman aşımı"
         except httpx.HTTPError as e:
             raise TTSError(f"gemini bağlantı hatası: {e}") from e
@@ -288,7 +290,7 @@ class GeminiTTS:
         errors: list[str] = []
         status: dict[str, str] = {}
         for model in self.models:
-            # Toplam süre sınırı: her model 45 sn bekletirse 5 modelde Edge'e düşmek dakikalar sürüyordu.
+            # Total time limit: if each model stalled for 45 s, falling back to Edge across 5 models took minutes.
             if time.monotonic() - now > self.TOTAL_SECONDS:
                 errors.append(f"{self.TOTAL_SECONDS:.0f} sn içinde ses gelmedi")
                 break
@@ -300,44 +302,47 @@ class GeminiTTS:
             for fmt in self.formats_for(model):
                 kind, res = self._request(model, self.prompt(text, emotion, fmt))
                 if kind == "quota":
-                    # Günlük kota: o model bugün yok. Dakikalık: o model kısa süre beklesin, diğerine geç.
+                    # Daily quota: that model is out for today. Per-minute: that model waits briefly,
+                    # move on to another.
                     self.down[model] = now + (6 * 3600 if res.daily else (res.retry_after or 60))
                     self.reason[model] = "daily" if res.daily else "minute"
                     quota.append(res)
                     status[model] = "günlük kota" if res.daily else "dakikalık kota"
                     break
                 if kind == "missing":
-                    # Model yok, bu hesapta açık değil ya da ses/dil desteklenmiyor: bir gün atla.
+                    # Model missing, not enabled on this account, or voice/language unsupported: skip it for a day.
                     self.down[model] = now + 86400
                     self.reason[model] = "error"
                     errors.append(res)
                     status[model] = "bulunamadı/desteklenmiyor (" + res.rsplit(" ", 1)[-1] + ")"
                     break
                 if kind == "slow":
-                    self.down[model] = now + 120  # iki dakika diğer modellerle devam et
+                    self.down[model] = now + 120  # two minutes: continue with the other models
                     self.reason[model] = "error"
                     errors.append(res)
                     status[model] = "zaman aşımı"
                     break
                 if kind == "error":
-                    self.down[model] = now + 60  # 500/503 veren model her cümlede ilk denenmesin
+                    self.down[model] = now + 60  # a model returning 500/503 should not be tried first on every sentence
                     self.reason[model] = "error"
                     errors.append(res)
                     status[model] = res.split(": ", 1)[-1][:60]
                     break
                 if fmt != "plain" and (too_long(res, text) or (self.verify is not None and not self.verify(res, text))):
-                    self._mark_bad(model, fmt)  # model talimatı da okudu: bu biçimi bu modelde bir daha kullanma
-                    if not too_long(res, text):  # talimatı sesli okuyan (fazla uzun) ses asla çalınmaz
+                    # the model read the instruction aloud too: never use this format with this model again
+                    self._mark_bad(model, fmt)
+                    if not too_long(res, text):  # audio that reads the instruction aloud (too long) is never played
                         fallback = res
                     continue
                 self.last_model, self.last_format = model, fmt
                 return res
-            if fallback is not None:  # bütün biçimler doğrulamadan geçemediyse son sesi kullan
+            if fallback is not None:  # if no format passed verification, use the last audio
                 self.last_model, self.last_format = model, "?"
                 return fallback
-        # Hiçbir model ses vermedi. Sadece kota yüzündense QuotaError (dinleme testi buna göre bekler/durur).
+        # No model produced audio. QuotaError only if the quota is the cause (the listening test
+        # waits or stops based on it).
         skipped = [m for m in self.models if self.down.get(m, 0) > now and self.reason.get(m) != "error"]
-        if quota or skipped:  # var olmayan modellerin hataları önemsiz; kota belirleyici
+        if quota or skipped:  # errors from missing models don't matter; the quota is decisive
             minute = [max(1.0, self.down[m] - now) for m in self.models
                       if self.reason.get(m) == "minute" and self.down.get(m, 0) > now]
             daily = not minute
@@ -350,7 +355,7 @@ class GeminiTTS:
 
 
 def list_gemini_tts_models(api_key: str, client: httpx.Client | None = None) -> list[str]:
-    """Bu anahtarla erişilebilen ses (TTS) modelleri. Model listesi kota harcamaz."""
+    """Speech (TTS) models accessible with this key. Listing models does not use up quota."""
     c = client or httpx.Client(timeout=15)
     out, token = [], ""
     for _ in range(10):
@@ -380,7 +385,7 @@ LEAK_WORDS = {"style", "synthesize", "speech", "transcript", "director", "notes"
 
 
 def leaked(heard: str, expected: str) -> bool:
-    """Whisper'ın duyduğu, istenen metinden fazlasını içeriyor mu (talimat okunmuş mu)?"""
+    """Does what Whisper heard contain more than the requested text (was the instruction read aloud)?"""
     want = set(_fold(expected))
     got = _fold(heard)
     if any(w in LEAK_WORDS and w not in want for w in got):
@@ -390,8 +395,8 @@ def leaked(heard: str, expected: str) -> bool:
 
 
 def too_long(audio: Audio, text: str) -> bool:
-    """Ses metne göre fazla uzun mu? Talimat okunduysa ses saniyelerce uzar (Türkçe ~12-15 harf/sn).
-    Whisper gerektirmez, her cümlede bedava çalışır."""
+    """Is the audio too long for the text? If the instruction was read aloud, the audio runs several seconds
+    longer (Turkish ~12-15 letters/s). It needs no Whisper, so it runs for free on every sentence."""
     return audio.seconds > 2.5 + len(text) / 8
 
 
@@ -400,11 +405,11 @@ def make_verifier(stt) -> Callable[[Audio, str], bool]:
         try:
             return not leaked(stt.transcribe(audio), text)
         except Exception:
-            return True  # doğrulayamıyorsak sesi kabul et
+            return True  # if we can't verify, accept the audio
     return verify
 
 
-# -------------------------------------------------------------- yerel motorlar
+# -------------------------------------------------------------- local engines
 def _device(allow_gpu: bool) -> str:
     if not allow_gpu:
         return "cpu"
@@ -417,7 +422,7 @@ def _device(allow_gpu: bool) -> str:
 
 
 class XTTS:
-    """Coqui XTTS v2 (pip install coqui-tts). Türkçe destekler, referans kayıttan klonlar."""
+    """Coqui XTTS v2 (pip install coqui-tts). Supports Turkish; clones the voice from a reference recording."""
 
     def __init__(self, library: EmotionLibrary | None = None, allow_gpu: Callable[[], bool] = lambda: True):
         self.library = library or EmotionLibrary()
@@ -430,7 +435,7 @@ class XTTS:
     def _load(self):
         dev = _device(self.allow_gpu())
         if self._model is None or dev != self._device:
-            # Lisans (CPML) sorusu konsolda y/n bekler; arka plandaki çekirdekte bu sonsuza dek takılmak demek.
+            # The license (CPML) prompt waits for y/n in the console; in a background process that hangs forever.
             os.environ.setdefault("COQUI_TOS_AGREED", "1")
             try:
                 from TTS.api import TTS as CoquiTTS
@@ -449,7 +454,7 @@ class XTTS:
         return Audio.from_floats(wav, 24000).polish()
 
     def release_gpu(self) -> None:
-        """Uçuşta ekran kartındaki modeli at (bir sonraki cümle işlemcide yükler)."""
+        """In flight, unload the model from the GPU (the next sentence loads it on the CPU)."""
         if self._device != "cuda" or not self._lock.acquire(blocking=False):
             return
         try:
@@ -468,11 +473,12 @@ class XTTS:
 
 
 class Chatterbox:
-    """Resemble Chatterbox çok dilli, ayrı sanal ortamdaki yerel ses sunucusu üzerinden (tts_server.py).
+    """Resemble Chatterbox, a multilingual local voice server in a separate virtualenv (tts_server.py).
 
-    Sunucu çalışmıyorsa ilk istekte arka planda başlatılır (ilk açılışta model ~2 GB indirir).
-    Sesi duygu kütüphanesindeki kayıttan taklit eder; kütüphane yoksa Chatterbox'ın kendi sesiyle konuşur.
-    Uçuşta (local_gpu = false) model işlemciye taşınır, ekran kartı oyuna kalır."""
+    If the server isn't running, it is started in the background on the first request (the first launch
+    downloads a model of ~2 GB). It imitates the voice from the recording in the emotion library; without the
+    library it speaks with Chatterbox's own voice. In flight (local_gpu = false) the model moves to the CPU,
+    and the GPU stays with the game."""
 
     def __init__(self, python: str = "", port: int = 8771, library: EmotionLibrary | None = None,
                  allow_gpu: Callable[[], bool] = lambda: True, client: httpx.Client | None = None,
@@ -509,7 +515,8 @@ class Chatterbox:
             return False
 
     def release_gpu(self) -> None:
-        """Uçuşta ses sunucusundaki model ekran kartındaysa (~3 GB) attır. Sunucu kapalıysa bir şey yapmaz."""
+        """In flight, if the model on the voice server is on the GPU (~3 GB), unload it.
+        Does nothing if the server is off."""
         try:
             r = self.client.get(self.base + "/health", timeout=1)
             if r.status_code == 200 and r.json().get("device") == "cuda":
@@ -530,7 +537,7 @@ class Chatterbox:
             log.parent.mkdir(parents=True, exist_ok=True)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
             device = "cuda" if self.allow_gpu() else "cpu"
-            with open(log, "a", encoding="utf-8") as out:  # çocuk kendi kopyasını alır; bizdeki sızmasın
+            with open(log, "a", encoding="utf-8") as out:  # the child gets its own copy; ours must not leak into it
                 self._proc = subprocess.Popen(
                     [self.python, str(Path(__file__).with_name("tts_server.py")), "--port", str(self.port),
                      "--device", device, "--preload"], stdout=out, stderr=subprocess.STDOUT, creationflags=flags)
@@ -551,8 +558,8 @@ class Chatterbox:
                 "cfg_weight": cfg_weight, "temperature": self.temperature,
                 "device": "cuda" if self.allow_gpu() else "cpu", "verify": self.verify,
                 "whisper_model": self.whisper_model}
-        # İlk istekte model yüklenir/indirilir: uzun sürebilir. Sonra bir cümle saniyeler sürmeli; takılırsa
-        # beklemeyip sıradaki sese (Edge) geç, kullanıcı cevapsız kalmasın.
+        # The first request loads/downloads the model and can take a long time. After that a sentence should take
+        # seconds; if it hangs, don't wait: move on to the next voice (Edge) so the user is not left without an answer.
         timeout = self.start_timeout if not self._warm else self.synth_timeout
         try:
             r = self.client.post(self.base + "/synth", json=body, timeout=timeout)
@@ -568,7 +575,7 @@ class Chatterbox:
         self._warm = True
         self.last_quality = r.headers.get("X-Alice-Quality", "")
         if r.headers.get("X-Alice-Verified") != "1":
-            # Sunucuda Whisper yoksa kuyruğu burada kes (Groq Whisper ya da uzunluğa göre).
+            # If the server has no Whisper, trim the tail here (Groq Whisper, or by length).
             try:
                 audio = self.trim(audio, text)
             except Exception:
@@ -576,13 +583,13 @@ class Chatterbox:
         return audio.polish()
 
 
-# Duyguya göre konuşma hızı/perdesi (Edge sesi stil talimatı almaz).
+# Speech rate/pitch by emotion (the Edge voice takes no style instruction).
 EDGE_PROSODY = {"excited": ("+10%", "+4Hz"), "happy": ("+5%", "+2Hz"), "serious": ("-5%", "-2Hz"),
                 "sad": ("-10%", "-4Hz"), "urgent": ("+15%", "+0Hz")}
 
 
 class EdgeTTS:
-    """Microsoft Edge sesleri (pip install edge-tts). MP3 gelir, av ile 24 kHz mono PCM'e çevrilir."""
+    """Microsoft Edge voices (pip install edge-tts). MP3 comes back and is converted to 24 kHz mono PCM with av."""
 
     def __init__(self, voice: str = "tr-TR-EmelNeural", timeout: float = 15.0):
         self.voice = voice
@@ -607,7 +614,7 @@ class EdgeTTS:
 
         try:
             return asyncio.run(asyncio.wait_for(run(), self.timeout))
-        except Exception as e:  # ağ/servis hataları tek türde dönsün
+        except Exception as e:  # network/service errors come back as one type
             raise TTSError(f"edge sesi alınamadı: {type(e).__name__}: {e}") from e
 
     def synth(self, text: str, emotion: str = "calm") -> Audio:
@@ -617,17 +624,17 @@ class EdgeTTS:
         return Audio(decode_mp3(data, 24000), 24000)
 
 
-# Ton -> ElevenLabs ses ayarı (stability düşük = daha canlı/değişken, style yüksek = daha vurgulu)
+# Tone -> ElevenLabs voice setting (low stability = livelier/more variable, high style = more emphatic)
 ELEVEN_SETTINGS = {"calm": (0.6, 0.15), "happy": (0.45, 0.35), "playful": (0.4, 0.45), "serious": (0.6, 0.2),
                    "urgent": (0.35, 0.5), "excited": (0.35, 0.5)}
-# Model "auto": hesabın listesinden ilk bulunan (en yeni hızlı, Türkçe destekleyen önce)
+# Model "auto": the first one found in the account's list (newest fast models that support Turkish first)
 ELEVEN_PREFER = ("eleven_v4_turbo", "eleven_turbo_v4", "eleven_v4", "eleven_turbo_v2_5", "eleven_flash_v2_5",
                  "eleven_multilingual_v2")
 
 
 class ElevenLabsTTS:
-    """ElevenLabs (ELEVENLABS_API_KEY): ham 24 kHz PCM ister, çözme gerekmez. Kredi biterse QuotaError: yönlendirici
-    Gemini'ye geçer, ALICE susmaz."""
+    """ElevenLabs (ELEVENLABS_API_KEY): asks for raw 24 kHz PCM, so no decoding is needed. If credits run out,
+    QuotaError: the router switches to Gemini and ALICE doesn't go silent."""
 
     URL = "https://api.elevenlabs.io/v1"
     RATE = 24000
@@ -638,7 +645,7 @@ class ElevenLabsTTS:
         self.model = model
         self.name = f"eleven:{voice}"
         self.client = client or httpx.Client(timeout=httpx.Timeout(20, connect=8))
-        self._lang_ok = True  # language_code'u kabul etmeyen modelde bir daha gönderme
+        self._lang_ok = True  # don't send language_code again to a model that doesn't accept it
 
     def _headers(self) -> dict[str, str]:
         return {"xi-api-key": self.api_key}
@@ -654,7 +661,7 @@ class ElevenLabsTTS:
             ids = []
         named = {i.lower(): i for i in ids}
         pick = next((named[k] for k in ELEVEN_PREFER if k in named), None)
-        if pick is None:  # listede tanımadığımız yeni ad: v4 ve turbo geçen ilk model
+        if pick is None:  # a new name not in our list: the first model with v4 and turbo in it
             pick = next((i for i in ids if "v4" in i and "turbo" in i), None) or "eleven_turbo_v2_5"
         self.model = pick
         return pick
@@ -671,7 +678,7 @@ class ElevenLabsTTS:
             r = self.client.post(url, params={"output_format": f"pcm_{self.RATE}"}, headers=self._headers(),
                                  json=body)
             if r.status_code in (400, 422) and "language" in r.text.lower() and self._lang_ok:
-                self._lang_ok = False  # bu model dil kodu almıyor: metinden anlar
+                self._lang_ok = False  # this model takes no language code: it infers the language from the text
                 body.pop("language_code", None)
                 r = self.client.post(url, params={"output_format": f"pcm_{self.RATE}"}, headers=self._headers(),
                                      json=body)
@@ -681,14 +688,14 @@ class ElevenLabsTTS:
             return Audio(r.content, self.RATE)
         low = r.text.lower()
         if r.status_code == 429 or "quota" in low or "credits" in low:
-            # Aylık kredi bitti ya da hız sınırı: kredi bittiyse bir saat sonra yine dene (yenilenmiş olabilir)
+            # Monthly credits used up or rate limit: if credits ran out, retry after an hour (they may have renewed)
             raise QuotaError(f"elevenlabs kredisi/kotası: {r.text[:160]}", None if r.status_code == 429 else 3600,
                              daily=r.status_code != 429)
         raise TTSError(f"elevenlabs HTTP {r.status_code}: {r.text[:200]}")
 
 
 def decode_mp3(data: bytes, rate: int) -> bytes:
-    """MP3 -> int16 mono PCM (av, faster-whisper ile birlikte gelir)."""
+    """MP3 -> int16 mono PCM (av comes with faster-whisper)."""
     import io
 
     try:
@@ -706,7 +713,7 @@ def decode_mp3(data: bytes, rate: int) -> bytes:
     return bytes(out)
 
 
-# --------------------------------------------------------------------- seçim
+# --------------------------------------------------------------------- selection
 def core_policy() -> dict[str, Any]:
     from alice.core.service import read_state
 
@@ -715,7 +722,8 @@ def core_policy() -> dict[str, Any]:
 
 
 class SpeechCache:
-    """Kısa, tekrar eden cümlelerin sesi diskte ("Hemen bakıyorum", "On speed, iyi"...): kota harcamaz, anında çalar."""
+    """Audio of short, repeated sentences kept on disk ("Hemen bakıyorum", "On speed, iyi"...):
+    spends no quota, plays instantly."""
 
     def __init__(self, path: Path | None = None, max_chars: int = 120, max_files: int = 3000):
         self.path = path or alice_home() / "voice" / "cache"
@@ -735,7 +743,8 @@ class SpeechCache:
         f = self._file(engine, emotion, text)
         try:
             return Audio.load(f) if f.exists() else None
-        except Exception:  # noqa: BLE001 - yarım yazılmış/bozuk dosya (wave.Error dahil): sil, yeniden üretilsin
+        except Exception:  # noqa: BLE001 - half-written/corrupt file (wave.Error included):
+            # delete it so it is regenerated
             try:
                 f.unlink()
             except OSError:
@@ -750,7 +759,7 @@ class SpeechCache:
             f = self._file(engine, emotion, text)
             tmp = f.with_suffix(".tmp")
             audio.save(tmp)
-            os.replace(tmp, f)  # yarıda kesilirse bozuk .wav önbellekte kalmasın
+            os.replace(tmp, f)  # if interrupted midway, a corrupt .wav must not stay in the cache
             self._writes += 1
             if self._writes % 100 == 0:
                 files = sorted(self.path.glob("*.wav"), key=lambda p: p.stat().st_mtime)
@@ -761,26 +770,27 @@ class SpeechCache:
 
 
 class TTSRouter:
-    """Sıradaki uygun motoru dener. Hata veren motor `cooldown` saniye atlanır."""
+    """Tries the next suitable engine. An engine that errors is skipped for `cooldown` seconds."""
 
     def __init__(self, cloud: TTS | None, local: TTS | None, prefer: str = "cloud",
                  policy: Callable[[], dict[str, Any]] = core_policy, cooldown: float = 300,
                  cache: SpeechCache | None = None, backup: TTS | None = None, premium: TTS | None = None):
-        self.premium = premium  # ElevenLabs: varsa her yerde önce o (uçuşta da: ekran kartı kullanmaz)
-        # Anahtar sonradan girilirse (Bağlantılar → Anahtarlar) yeniden başlatmadan devreye girsin
+        # ElevenLabs: if present, it goes first everywhere (in flight too; it doesn't use the GPU)
+        self.premium = premium
+        # If the key is entered later (Bağlantılar → Anahtarlar), it takes effect without a restart
         self.premium_factory: Callable[[], TTS | None] | None = None
         self._premium_checked = 0.0
         self.cloud = cloud
         self.local = local
-        self.backup = backup  # hızlı son çare (Edge): bulut ve yerel ses düşünce
+        self.backup = backup  # fast last resort (Edge): when the cloud and local voices fail
         self.prefer = prefer
         self.policy = policy
         self.cooldown = cooldown
         self.down: dict[str, float] = {}
         self.last = ""
         self.cache = cache
-        # Yapışkan motor: bir motora geçilince bir süre onda kal. Önceden her cümle sıradaki ilk uygun motordan
-        # (ya da başka motorun önbelleğinden) geliyordu, ALICE'in sesi cümle cümle değişiyordu.
+        # Sticky engine: once switched to an engine, stay on it for a while. Before, each sentence came from the
+        # first suitable engine in line (or from another engine's cache), so ALICE's voice changed sentence by sentence.
         self.sticky = ""
         self.sticky_until = 0.0
 
@@ -789,18 +799,19 @@ class TTSRouter:
         return self.last or (self.order()[0].name if self.order() else "yok")
 
     def release_gpu(self) -> None:
-        """Çekirdek uçuş moduna geçince: yerel ses modeli ekran kartında duruyorsa bırak. Uçuşta önce bulut
-        sesi kullanıldığı için yerel motor hiç çağrılmıyor ve modeli DCS boyunca ekran kartında kalıyordu."""
+        """When the core switches to flight mode: release the local voice model if it is on the GPU.
+        In flight the cloud voice is used first, so the local engine was never called and its model
+        stayed on the GPU for the whole of DCS."""
         fn = getattr(self.local, "release_gpu", None)
         if fn is not None:
             fn()
 
     def order(self) -> list[TTS]:
-        # Yedek (Edge) en sonda: önce ALICE'in kendi sesi (bulut ya da onu taklit eden yerel motor).
+        # Backup (Edge) goes last: ALICE's own voice first (the cloud, or the local engine that imitates it).
         engines = ([self.local, self.cloud, self.backup] if self.prefer == "local"
                    else [self.cloud, self.local, self.backup])
         if self.policy().get("local_gpu") is False and self.local is not None:
-            # Uçuşta GPU oyuna kalsın: önce bulut; yerel ancak işlemcide, son çare olarak.
+            # In flight the GPU stays with the game: cloud first; local only on the CPU, as a last resort.
             engines = [self.cloud, self.backup, self.local]
         if self.premium is None and self.premium_factory is not None and time.monotonic() - self._premium_checked > 20:
             self._premium_checked = time.monotonic()
@@ -813,7 +824,7 @@ class TTSRouter:
         return engines
 
     def warm_up(self) -> None:
-        """Yerel ses modelini arka planda ekran kartına yükle: ilk cevap 20-25 sn beklemesin."""
+        """Load the local voice model onto the GPU in the background so the first answer doesn't wait 20-25 s."""
         load = getattr(self.local, "_load", None)
         if load is None or self.policy().get("local_gpu") is False:
             return
@@ -822,13 +833,13 @@ class TTSRouter:
             try:
                 with self.local._lock:
                     load()
-            except Exception:  # noqa: BLE001 - ısınma olmazsa ilk cümlede yüklenir
+            except Exception:  # noqa: BLE001 - if warm-up fails, it loads on the first sentence
                 pass
 
         threading.Thread(target=run, daemon=True, name="alice-tts-warm").start()
 
     def cached(self, text: str, emotion: str = "calm") -> bool:
-        """Bu cümlenin sesi önbellekte var mı (herhangi bir motordan)?"""
+        """Is this sentence's audio in the cache (from any engine)?"""
         from alice.voice.spoken_numbers import normalize
 
         if self.cache is None:
@@ -845,7 +856,7 @@ class TTSRouter:
         order = self.order()
         usable = [e for e in order if self.down.get(e.name, 0) <= now]
         if self.cache is not None and usable:
-            # Sadece şu an konuşan motorun önbelleği: başka motorun kaydı farklı bir ses demek.
+            # Only the cache of the engine speaking now: another engine's recording would be a different voice.
             hit = self.cache.get(usable[0].name, emotion, text)
             if hit is not None:
                 self.last = f"{usable[0].name} (önbellek)"
@@ -862,7 +873,7 @@ class TTSRouter:
                 if self.cache is not None:
                     self.cache.put(e.name, emotion, text, audio)
                 return audio
-            except Exception as ex:  # noqa: BLE001 - CUDA OOM, bozuk ses verisi: sıradaki motora geç, bu motoru beklet
+            except Exception as ex:  # noqa: BLE001 - CUDA OOM, bad audio data: next engine, hold this one
                 if not isinstance(ex, TTSError):
                     ex = TTSError(f"{type(ex).__name__}: {ex}")
                 wait = self.cooldown
@@ -883,7 +894,7 @@ def make_cloud(cfg: Config, voice: str | None = None) -> GeminiTTS | None:
     if not key:
         return None
     models = list(v.get("gemini_tts_models") or DEFAULT_GEMINI_MODELS)
-    if v.get("gemini_tts_model"):  # eski tek model ayarı: onu öne al
+    if v.get("gemini_tts_model"):  # old single-model setting: move it to the front
         models = [v["gemini_tts_model"]] + [m for m in models if m != v["gemini_tts_model"]]
     return GeminiTTS(key, name or "Aoede", models)
 

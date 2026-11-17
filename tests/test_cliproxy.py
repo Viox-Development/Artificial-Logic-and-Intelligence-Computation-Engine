@@ -1,4 +1,4 @@
-"""Claude Code proxy (CLIProxyAPI) yönetimi: hesap listesi, giriş linki, hesap silme ve HTTP uçları."""
+"""Claude Code proxy (CLIProxyAPI) management: account list, sign-in link, account removal and HTTP endpoints."""
 
 from __future__ import annotations
 
@@ -52,9 +52,9 @@ def test_status_lists_accounts_with_quota_and_cooldown(proxy_home, monkeypatch):
     assert [a["provider"] for a in d["accounts"]] == ["claude", "codex"]
     claude, codex = d["accounts"]
     assert claude["provider_name"] == "Claude (Pro / Max)"
-    assert claude["quota"]["windows"] == [{"label": "5 saat", "percent": 0, "reset": 0, "stale": True}]  # geçmiş
+    assert claude["quota"]["windows"] == [{"label": "5 saat", "percent": 0, "reset": 0, "stale": True}]  # stale
     assert codex["quota"]["percent"] == 46
-    assert codex["cooldown"]  # beklemede
+    assert codex["cooldown"]  # in cooldown
     assert codex["failed"] == 1
     assert {"key": "claude", "name": "Claude (Pro / Max)"} in d["providers"]
 
@@ -65,7 +65,7 @@ def test_status_does_not_crash_when_proxy_closed(proxy_home, monkeypatch):
 
     monkeypatch.setattr(cliproxy, "_req", boom)
     d = cliproxy.status()
-    assert d["installed"] and not d["running"] and d["error"]  # çökmez, başlatmayı dener, olmazsa haber verir
+    assert d["installed"] and not d["running"] and d["error"]  # no crash: tries to start it, else reports
 
 
 def test_status_marks_not_installed(tmp_path, monkeypatch):
@@ -150,7 +150,7 @@ def test_start_launches_detached_process(proxy_home, monkeypatch):
 
     def fake_running():
         checks["n"] += 1
-        return checks["n"] > 2  # kapalı, kapalı -> başlat -> açık
+        return checks["n"] > 2  # closed, closed -> start -> open
 
     monkeypatch.setattr(cliproxy, "running", fake_running)
     monkeypatch.setattr(cliproxy, "_last_start", 0.0)
@@ -187,7 +187,7 @@ def test_status_starts_proxy_when_closed(proxy_home, monkeypatch):
 
 
 def test_live_models_reads_proxy_list_and_skips_non_chat(monkeypatch):
-    """Kimi/Antigravity gibi sonradan bağlanan hesapların modelleri sabit listede yoktu: proxy'den okunmalı."""
+    """Late-connected accounts like Kimi/Antigravity were missing from the fixed list; read them from the proxy."""
     monkeypatch.setitem(cliproxy._models_cache, "at", 0.0)
     data = [{"id": "claude-opus-5-5"}, {"id": "kimi-k3"}, {"id": "gpt-image-2"}, {"id": "codex-auto-review"}]
     assert cliproxy.live_models(fetch=lambda: data) == ["claude-opus-5-5", "kimi-k3"]
@@ -196,7 +196,7 @@ def test_live_models_reads_proxy_list_and_skips_non_chat(monkeypatch):
         raise OSError("proxy kapalı")
 
     monkeypatch.setitem(cliproxy._models_cache, "at", 0.0)
-    assert cliproxy.live_models(fetch=down) == ["claude-opus-5-5", "kimi-k3"]  # son bilinen liste
+    assert cliproxy.live_models(fetch=down) == ["claude-opus-5-5", "kimi-k3"]  # last known list
 
 
 def test_tidy_models_keeps_two_newest_per_family_and_drops_old_generations():
@@ -215,7 +215,7 @@ def test_model_group():
 
 
 def test_quota_shows_fullest_window_and_resets_stale_ones():
-    """Claude: 5 saatlik pencere dün dolmuş (sıfırlanma geçti) ama haftalık %91: kart %100 ya da %13 değil, %91 der."""
+    """Claude: 5h window filled yesterday (reset passed), weekly at 91%: card shows 91%, not 100% or 13%."""
     now = 1_000_000.0
     q = cliproxy._quota_summary({"signals": {
         "Anthropic-Ratelimit-Unified-5h-Utilization": "1.0", "Anthropic-Ratelimit-Unified-5h-Reset": str(now - 60),
@@ -226,7 +226,7 @@ def test_quota_shows_fullest_window_and_resets_stale_ones():
 
 
 def test_dead_refresh_token_is_not_ready_and_cooldown_has_duration():
-    """Proxy yenileme jetonu ölmüş hesabı requires_sign_in=false ile bildiriyor: kart "hazır" dememeli."""
+    """Proxy reports a dead refresh token as requires_sign_in=false: the card must not show "hazır" (ready)."""
     acc = cliproxy._account({"id": "claude-x-a@b.com.json", "provider": "claude", "email": "a@b.com", "status": "error",
                              "unavailable": True, "refresh_error": {"code": "invalid_grant", "message": "expired"}})
     assert acc["needs_sign_in"] and not acc["ready"]
@@ -244,11 +244,11 @@ def test_groups_ready_skips_services_without_usable_accounts():
 
 
 def test_expired_cooldown_does_not_keep_account_busy():
-    """Proxy süresi geçmiş bekleme kaydını temizlemeden bırakırsa hesap sonsuza dek meşgul görünmemeli."""
+    """If the proxy leaves an expired cooldown record uncleared, the account must not look busy forever."""
     now = __import__("time").time()
     acc = cliproxy._account({"id": "claude-x.json", "provider": "claude", "status": "active",
                              "cooldowns": [{"reason": "quota", "retry_at": now - 3600}]})
     assert acc["cooldown"] == "" and acc["ready"]
     unknown = cliproxy._account({"id": "claude-y.json", "provider": "claude", "status": "active",
-                                 "cooldowns": [{"reason": "quota"}]})  # süre yok: proxy bekliyor diyor
+                                 "cooldowns": [{"reason": "quota"}]})  # no duration: the proxy says it is waiting
     assert unknown["cooldown"] == "kısa süre" and not unknown["ready"]

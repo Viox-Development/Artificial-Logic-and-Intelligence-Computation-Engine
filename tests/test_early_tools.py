@@ -1,4 +1,4 @@
-"""Yanıt akarken tamamlanan güvenli araç çağrıları hemen başlar; yanıt bitince sonuç hazırdır."""
+"""Safe tool calls that finish while the reply streams start right away; results are ready when it ends."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def call(cid, name, x):
 
 
 class Streamer:
-    """İlk iki çağrıyı akışın ortasında bildirir, sonra 0.6 sn daha 'yazar'."""
+    """Announces the first two calls mid-stream, then 'writes' for 0.6 more seconds."""
 
     def __init__(self, calls, announce):
         self.calls, self.announce, self.n = calls, announce, 0
@@ -75,17 +75,17 @@ def run_agent(workdir, calls, announce):
 def test_safe_calls_start_while_reply_streams(workdir):
     calls = [call("c1", "look", "a"), call("c2", "look", "b"), call("c3", "look", "c")]
     agent, prov = run_agent(workdir, calls, calls[:2])
-    assert STARTED["a"] < prov.ended and STARTED["b"] < prov.ended  # yanıt bitmeden başladı
-    assert STARTED["c"] >= prov.ended  # bildirilmeyen normal yoldan
+    assert STARTED["a"] < prov.ended and STARTED["b"] < prov.ended  # started before the reply ended
+    assert STARTED["c"] >= prov.ended  # via the normal path, since it was not announced
     tools = [m for m in agent.messages if m["role"] == "tool"]
-    assert [m["content"] for m in tools] == ["baktım a", "baktım b", "baktım c"]  # sıra ve sonuçlar doğru, tek sefer
+    assert [m["content"] for m in tools] == ["baktım a", "baktım b", "baktım c"]  # order and results correct, run once
 
 
 def test_unsafe_or_changed_calls_are_not_reused(workdir):
     calls = [call("c1", "touch", "a"), call("c2", "look", "b2")]
-    announce = [call("c1", "touch", "a"), call("c2", "look", "b")]  # c2'nin son hâli farklı
+    announce = [call("c1", "touch", "a"), call("c2", "look", "b")]  # c2's final form differs
     agent, prov = run_agent(workdir, calls, announce)
-    assert STARTED["a"] >= prov.ended  # yazan araç erken başlamaz
+    assert STARTED["a"] >= prov.ended  # a writing tool does not start early
     tools = [m["content"] for m in agent.messages if m["role"] == "tool"]
     assert tools == ["baktım a", "baktım b2"]
 
@@ -96,7 +96,7 @@ def test_openai_stream_announces_finished_calls():
              1: {"id": "y", "function": {"name": "look", "arguments": '{"x"'}}}
     seen: set[int] = set()
     _announce_done(calls, seen, got.append)
-    _announce_done(calls, seen, got.append)  # aynı çağrı bir kez
+    _announce_done(calls, seen, got.append)  # the same call only once
     assert [c["id"] for c in got] == ["x"]
     calls[2] = {"id": "", "function": {"name": "look", "arguments": "{}"}}
     calls[1]["function"]["arguments"] = '{"x": "b"}'
@@ -124,7 +124,7 @@ class Slow(Look):
 
 
 def test_stop_does_not_wait_for_parallel_tools(workdir):
-    """Durdur'a basılınca paralel çalışan salt okuma araçlarının bitmesi beklenmez."""
+    """Pressing Durdur (Stop) does not wait for parallel read-only tools to finish."""
     import threading
 
     cfg = make_config({"brain": ["a:m"]})

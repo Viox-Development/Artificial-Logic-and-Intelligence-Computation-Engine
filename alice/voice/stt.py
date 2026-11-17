@@ -1,8 +1,8 @@
-"""Konuşmayı yazıya çevirme (Whisper).
+"""Speech-to-text transcription (Whisper).
 
-Bulut: Groq'taki whisper-large-v3-turbo (hızlı, ücretsiz katman, GPU'ya dokunmaz).
-Yerel: faster-whisper (aynı modelin hızlı ve hafif sürümü). İnternet ya da kota yoksa
-devreye girer; uçuşta GPU kullanmaz, işlemcide küçük modelle çalışır.
+Cloud: whisper-large-v3-turbo on Groq (fast, free tier, does not touch the GPU).
+Local: faster-whisper (a fast, lightweight version of the same model). It kicks in when there is no internet
+or quota; in flight it does not use the GPU and runs on the CPU with a small model.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ _DLLS_DONE = False
 
 
 def add_cuda_dlls() -> None:
-    """Windows: faster-whisper (ctranslate2) cublas64_12.dll/cudnn'i bulamıyor; PyTorch ve nvidia-* pip
-    paketlerinin içindekileri arama yoluna ekle. Diğer sistemlerde bir şey yapmaz."""
+    """Windows: faster-whisper (ctranslate2) cannot find cublas64_12.dll/cudnn; add the ones inside the PyTorch
+    and nvidia-* pip packages to the search path. On other systems it does nothing."""
     global _DLLS_DONE
     if _DLLS_DONE or os.name != "nt":
         return
@@ -59,21 +59,21 @@ def add_cuda_dlls() -> None:
             os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
 
 
-# Ekran kartında Whisper ağırlıkları int8, hesap float16: bellek yarıya iner (small ~0,5 -> ~0,25 GB),
-# doğruluk ve hız float16 ile neredeyse aynı. [voice] gpu_compute = "float16" eski davranış.
+# Whisper weights on the graphics card are int8, computation is float16: memory halves (small ~0.5 -> ~0.25 GB),
+# accuracy and speed are almost the same as with float16. [voice] gpu_compute = "float16" is the old behavior.
 GPU_COMPUTE = "int8_float16"
 
 
 def _free_cuda() -> None:
-    """Silinen modelin ekran kartı belleği Python nesnesi toplanınca bırakılır; hemen topla."""
+    """The GPU memory of a deleted model is released when its Python object is collected; collect it right away."""
     import gc
 
     gc.collect()
 
 
 def _cuda_ok(model) -> bool:
-    """Model kuruldu diye CUDA çalışıyor sanma: DLL hatası ilk yazıya çevirmede çıkıyor. Yarım saniyelik
-    sessizlikle dene (ilk CUDA çağrısı ~2,5 sn sürer, böylece ısınma da olur)."""
+    """Don't assume CUDA works just because the model loaded: a DLL error only shows up on the first
+    transcription. Test with half a second of silence (the first CUDA call takes ~2.5 s, which also warms it up)."""
     try:
         segs, _ = model.transcribe(io.BytesIO(Audio.silence(0.5, 16000).to_wav()), beam_size=1)
         list(segs)
@@ -83,9 +83,9 @@ def _cuda_ok(model) -> bool:
 
 
 class ElevenScribe:
-    """ElevenLabs Scribe (ELEVENLABS_API_KEY). Türkçede Groq Whisper'dan belirgin iyi: "Alice naber"i Whisper
-    "Aysenabek", "Alessandraş" diye yazıyordu. keyterms ile "Alice" ve uçuş terimleri doğru yazılır. Kredi biterse
-    STTError: yönlendirici Groq'a geçer."""
+    """ElevenLabs Scribe (ELEVENLABS_API_KEY). Clearly better than Groq Whisper in Turkish: Whisper wrote
+    "Alice naber" (Turkish for "what's up") as "Aysenabek" and "Alessandraş". With keyterms, "Alice" and flight
+    terms are spelled correctly. If credits run out it raises STTError: the router switches to Groq."""
 
     URL = "https://api.elevenlabs.io/v1/speech-to-text"
     KEYTERMS = ["Alice", "DCS", "War Thunder", "bingo", "joker", "waypoint", "kneeboard", "chaff", "flare"]
@@ -137,7 +137,7 @@ class GroqWhisper:
         return str(r.json().get("text", "")).strip()
 
     def words(self, audio: Audio) -> list[tuple[str, float, float]]:
-        """Kelime zamanlarıyla yazıya çevir: [(kelime, başlangıç sn, bitiş sn)]."""
+        """Transcribe with word timings: [(word, start in seconds, end in seconds)]."""
         data = {"model": self.model, "language": self.language, "response_format": "verbose_json",
                 "temperature": "0", "timestamp_granularities[]": ["word"]}
         try:
@@ -151,7 +151,7 @@ class GroqWhisper:
                 for w in r.json().get("words", []) or []]
 
     def transcribe_file(self, data: bytes, filename: str) -> str:
-        """Tarayıcıdan gelen webm/ogg gibi kayıtlar (Groq kendisi çözer)."""
+        """Recordings from the browser, such as webm/ogg (Groq decodes them itself)."""
         try:
             r = self.client.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"},
                                  data={"model": self.model, "language": self.language, "response_format": "json",
@@ -165,7 +165,7 @@ class GroqWhisper:
 
 
 class LocalWhisper:
-    """faster-whisper. GPU izinliyse large-v3-turbo, değilse işlemcide küçük model."""
+    """faster-whisper. large-v3-turbo if the GPU is allowed, otherwise a small model on the CPU."""
 
     def __init__(self, gpu_model: str = "large-v3-turbo", cpu_model: str = "small", language: str = "tr",
                  allow_gpu: Callable[[], bool] = lambda: True, prompt: str = "", compute: str = GPU_COMPUTE,
@@ -173,7 +173,7 @@ class LocalWhisper:
         self.gpu_model = gpu_model
         self.cpu_model = cpu_model
         self.compute = compute
-        self.idle_unload = idle_unload  # yedek motor: bu kadar sn kullanılmazsa bellekten çıkar
+        self.idle_unload = idle_unload  # fallback engine: unload from memory if unused for this many seconds
         self.last_used = 0.0
         self.language = language
         self.allow_gpu = allow_gpu
@@ -203,7 +203,7 @@ class LocalWhisper:
                     self._models["cuda"] = m
                 else:
                     self._models["cuda_failed"] = True
-            except Exception:  # noqa: BLE001 - CUDA yoksa işlemciye düş
+            except Exception:  # noqa: BLE001 - no CUDA: fall back to the CPU
                 self._models["cuda_failed"] = True
         if gpu and "cuda" in self._models:
             return self._models["cuda"]
@@ -215,7 +215,7 @@ class LocalWhisper:
         return self.transcribe_file(audio.resample(16000).to_wav(), "speech.wav")
 
     def transcribe_file(self, data: bytes, filename: str) -> str:
-        # faster-whisper, PyAV ile wav/webm/ogg hepsini çözer.
+        # faster-whisper decodes wav/webm/ogg, all of them, through PyAV.
         with self._lock:
             self.last_used = time.monotonic()
             segments, _ = self._model().transcribe(io.BytesIO(data), language=self.language, vad_filter=True,
@@ -223,10 +223,11 @@ class LocalWhisper:
             return " ".join(s.text.strip() for s in segments).strip()
 
     def trim(self, gpu_ok: bool) -> None:
-        """Uçuşta (GPU yasak) ekran kartındaki modeli bırak; uzun süre kullanılmayan yedek modelleri de at.
-        Bulut (Groq) çalıştıkça bu motor hiç kullanılmaz ama bir kez düşünce ~1 GB'lık model kalıcı yer kaplıyordu."""
+        """In flight (GPU not allowed) release the model on the graphics card; also drop backup models that have
+        been unused for a long time. While the cloud (Groq) works this engine is never used, but once it has been
+        loaded, a ~1 GB model kept taking up space permanently."""
         if not self._lock.acquire(blocking=False):
-            return  # şu an yazıya çeviriyor
+            return  # it is transcribing right now
         try:
             idle = self.last_used and time.monotonic() - self.last_used > self.idle_unload
             drop = [k for k in ("cuda", "cpu") if k in self._models and (idle or (k == "cuda" and not gpu_ok))]
@@ -243,9 +244,10 @@ def _norm(text: str) -> str:
 
 
 def speech_segments(segments, prompt: str = "Hey Alice.") -> list:
-    """Gerçek konuşma olmayan Whisper parçalarını at. initial_prompt "Hey Alice." olduğu için Whisper oyun/motor
-    sesi ya da müzikte ipucunu aynen geri yazabiliyor: kimse konuşmadan ALICE uyanıyordu. Ayrıca kendini tekrar
-    eden döngüler (sıkıştırma oranı yüksek) ve "konuşma yok" olasılığı yüksek + güvensiz parçalar atılır."""
+    """Drop Whisper segments that are not real speech. Because initial_prompt is "Hey Alice.", Whisper can echo
+    the hint back word for word on game/engine noise or music: ALICE woke up with nobody speaking. Also dropped:
+    looping repetitions (high compression ratio) and segments with a high "no speech" probability plus low
+    confidence."""
     hint = _norm(prompt)
     out = []
     for s in segments:
@@ -262,15 +264,16 @@ def speech_segments(segments, prompt: str = "Hey Alice.") -> list:
     return out
 
 
-# Uçuşta sık söylenen ve yanlış duyulan kelimeler ("yakıtım" -> "yakıştın", "cannon" -> "Canon").
+# Words often said in flight and misheard ("yakıtım" (my fuel) -> "yakıştın", "cannon" -> "Canon").
 FLIGHT_HINT = "Yakıtım ne kadar kaldı? Bingo, cannon, waypoint, tanker, AoA, stall, iniş takımı, flap."
 
 
 class WakeGate:
-    """Yerel küçük Whisper ile sadece cümlenin başına bakıp "Hey Alice" var mı diye kontrol eder.
+    """Uses a small local Whisper to look only at the start of the sentence and check whether "Hey Alice" is there.
 
-    Böylece odadaki her konuşma Groq'a gönderilmez (kota ve gecikme); uyandırma yoksa ses hiç
-    buluta gitmez. faster-whisper kurulu değilse available() False döner ve eski davranış sürer."""
+    This way not every conversation in the room is sent to Groq (quota and latency); if there is no wake word,
+    the audio never goes to the cloud. If faster-whisper is not installed, available() returns False and the old
+    behavior continues."""
 
     HEAD_SECONDS = 2.5
 
@@ -280,12 +283,12 @@ class WakeGate:
         self.cpu_model = model
         self.compute = compute
         self.load_seconds = 0.0
-        self.gpu_model = gpu_model  # ekran kartı varsa daha iyi duyan model (ör. small): ~0,1-0,2 sn
+        self.gpu_model = gpu_model  # model that hears better if there is a graphics card (e.g. small): ~0.1-0.2 s
         self.allow_gpu = allow_gpu
         self.device = ""
         self.last_seconds = 0.0
-        self.last_wait = 0.0  # modelin başka bir dökümle meşgul olduğu için beklenen süre
-        self.last_conf = 0.0  # son baş dökümünün güveni (ortalama log olasılık)
+        self.last_wait = 0.0  # time spent waiting because the model was busy with another transcription
+        self.last_conf = 0.0  # confidence of the last head transcription (average log probability)
         self.language = language
         self._model: Any = None
         self._failed = False
@@ -313,17 +316,17 @@ class WakeGate:
                     if _cuda_ok(m):
                         self.device, self.model_name = "cuda", self.gpu_model
                         return m
-                except Exception:  # noqa: BLE001 - CUDA yoksa işlemcide küçük model
+                except Exception:  # noqa: BLE001 - no CUDA: small model on the CPU
                     pass
-                self._cuda_failed = True  # bir daha ekran kartına taşımayı deneme
+                self._cuda_failed = True  # don't try moving to the graphics card again
             self.device, self.model_name = "cpu", self.cpu_model
-            # Uçuşta işlemci DCS'e lazım: Whisper bütün çekirdekleri değil 4 iş parçacığı kullansın.
+            # In flight the CPU is needed by DCS: Whisper should use 4 threads, not all the cores.
             return WhisperModel(self.cpu_model, device="cpu", compute_type="int8", cpu_threads=4)
         finally:
             self.load_seconds = time.monotonic() - t0
 
     def warm_up(self, log: Callable[[str], None] | None = None) -> None:
-        """Modeli arka planda yükle: ilk "Hey Alice" model yüklemesini beklemesin."""
+        """Load the model in the background so the first "Hey Alice" does not wait for the model to load."""
         def run() -> None:
             if self.available():
                 with self._lock:
@@ -339,9 +342,10 @@ class WakeGate:
         threading.Thread(target=run, daemon=True, name="alice-wake-warm").start()
 
     def sync(self, gpu_ok: bool) -> None:
-        """Mod değişince modeli doğru yere taşı: DCS açılınca ekran kartından çıkıp işlemciye geçer (oyuna
-        bellek kalır), kapanınca ekran kartına döner. Yeni model kilidin dışında yüklenir; bu sırada gelen
-        "Hey Alice" eski modelle cevaplanır, beklemez."""
+        """Move the model to the right device when the mode changes: when DCS starts, leave the graphics card and
+        switch to the CPU (leaving memory for the game); when it closes, return to the graphics card. The new model
+        loads outside the lock; a "Hey Alice" that arrives meanwhile is answered with the old model and
+        does not wait."""
         want = "cuda" if gpu_ok and self.gpu_model else "cpu"
         if (self._model is None or self.device == want or self._failed or getattr(self, "_moving", False)
                 or (want == "cuda" and getattr(self, "_cuda_failed", False))):
@@ -354,7 +358,7 @@ class WakeGate:
                 with self._lock:
                     self._model = m
                 _free_cuda()
-            except Exception:  # noqa: BLE001 - taşınamazsa eskisi kalsın
+            except Exception:  # noqa: BLE001 - if it cannot be moved, keep the old one
                 pass
             finally:
                 self._moving = False
@@ -362,7 +366,7 @@ class WakeGate:
         threading.Thread(target=run, daemon=True, name="alice-wake-move").start()
 
     def flying(self) -> bool:
-        """Uçuş modu: ekran kartı var ama kullanımı kapalı (local_gpu = false)."""
+        """Flight mode: there is a graphics card but its use is turned off (local_gpu = false)."""
         if not self.gpu_model or getattr(self, "_cuda_failed", False):
             return False
         try:
@@ -371,14 +375,15 @@ class WakeGate:
             return False
 
     def heard(self, audio: Audio) -> str | None:
-        """Cümlenin başının yerel yazıya dökümü; yerel model kullanılamıyorsa None."""
+        """Local transcription of the start of the sentence; None if the local model is unavailable."""
         if not self.available():
             return None
         head = Audio(audio.pcm[: int(self.HEAD_SECONDS * audio.rate) * 2], audio.rate).resample(16000)
         t0 = time.monotonic()
         try:
             with self._lock:
-                # Bekleme ve hesaplama ayrı: oyunda 1,3 sn medyan, boşta 0,4 sn (7 Kasım ölçümü); hangisi uzuyor?
+                # Waiting and computing are timed separately: median 1.3 s in game, 0.4 s idle
+                # (Nov 7 measurement); which one is growing?
                 self.last_wait = time.monotonic() - t0
                 if self._model is None:
                     self._model = self._load()
@@ -390,9 +395,9 @@ class WakeGate:
                 self._errors = 0
                 self.last_conf = min((s.avg_logprob for s in segs), default=-9.0)
                 return " ".join(s.text.strip() for s in segs).strip()
-        except Exception:  # noqa: BLE001 - yerel model bozuksa buluta düş
-            # Tek bir hata (oyun GPU belleğini doldurdu, CUDA OOM) kapıyı kalıcı kapatmasın: modeli bırak,
-            # sonraki cümlede yeniden yüklensin; üst üste birkaç kez olursa vazgeç.
+        except Exception:  # noqa: BLE001 - if the local model is broken, fall back to the cloud
+            # A single failure (a game filled GPU memory, CUDA OOM) must not shut the gate for good: drop the model,
+            # let it reload on the next sentence; give up only if it fails several times in a row.
             self._errors = getattr(self, "_errors", 0) + 1
             self._model = None
             if self._errors >= 3:
@@ -400,7 +405,8 @@ class WakeGate:
             return None
 
     def transcribe(self, audio: Audio, prompt: str = "Hey Alice.") -> tuple[str, float] | None:
-        """Cümlenin tamamının yerel dökümü ve güveni (ortalama log olasılık; 0'a yakın = emin). Model yoksa None."""
+        """Local transcription of the whole sentence and its confidence (average log probability; closer to 0
+        means more certain). None if there is no model."""
         if not self.available():
             return None
         wav = audio.resample(16000).to_wav()
@@ -436,7 +442,7 @@ class STTRouter:
         return self._try(lambda e: e.transcribe_file(data, filename))
 
     def trim(self, gpu_ok: bool) -> None:
-        """Çekirdeğin her turunda: ekran kartı izni değiştiyse modelleri taşı, boştaki yedekleri bırak."""
+        """On each turn of the core: if the graphics card permission changed, move the models; drop idle backups."""
         if self.wake_gate is not None:
             self.wake_gate.sync(gpu_ok)
         for e in self.engines:
@@ -453,13 +459,15 @@ class STTRouter:
                 text = fn(e)
                 self.last = e.name
                 return text
-            except Exception as ex:  # noqa: BLE001 - CUDA belleği, model indirme, bozuk yanıt: sıradaki motora geç
+            except Exception as ex:  # noqa: BLE001 - CUDA memory, model download, broken response:
+                # move on to the next engine
                 self.down[e.name] = now + self.cooldown
                 errors.append(f"{e.name}: {ex}" if isinstance(ex, STTError) else f"{e.name}: {type(ex).__name__}: {ex}")
         raise STTError("; ".join(errors) or "konuşma tanıma motoru yok")
 
 
-# Whisper sessizlikte/gürültüde YouTube altyazılarından ezberlediği cümleleri uydurur ("Altyazı M.K." gibi).
+# Whisper makes up sentences it memorized from YouTube subtitles when there is silence or noise
+# (such as "Altyazı M.K.", a Turkish subtitle credit).
 HALLUCINATIONS = ("altyazı", "alt yazı", "m.k.", "abone ol", "izlediğiniz için", "izlediğin için", "teşekkürler",
                   "teşekkür ederim", "bir sonraki videoda", "videoyu beğen", "kanalıma", "hoşça kalın",
                   "amara.org", "subtitles by", "thanks for watching", "www.", "sesli betimleme")
@@ -469,16 +477,16 @@ def is_hallucination(text: str) -> bool:
     t = text.lower().strip(" .,!?…\"'")
     if not t:
         return True
-    # İpucu metninden birden çok terimi (virgül/noktayla) aynen geri vermiş: "Hey Alice. ALICE, DCS".
-    # Tek terim ("bingo", "Hey Alice") gerçek konuşma olabilir, ona dokunma.
+    # It returned several terms from the hint text verbatim (separated by commas/periods): "Hey Alice. ALICE, DCS".
+    # A single term ("bingo", "Hey Alice") can be real speech, so leave it alone.
     if len(t) > 3 and any(c in t for c in ",.") and (t in PROMPT.lower() or t in LEGACY_PROMPT.lower()):
         return True
-    # Eski ipucunun kısa yankısı: büyük harfli "ALICE," ve ardından tek bozuk sözcük ("ALICE, DIGITI.",
-    # "ALICE, D'AMO."). Gerçek konuşmada Whisper adı "Alice" diye yazar; bu biçim ipucunun kendisi.
+    # A short echo of the old hint: uppercase "ALICE," followed by one garbled word ("ALICE, DIGITI.",
+    # "ALICE, D'AMO."). In real speech Whisper writes the name as "Alice"; this format is the hint itself.
     if re.fullmatch(r"\W*(HEY\s+)?ALICE[,.]\s*[\w'’-]{1,12}[.?!]?\W*", text.strip()):
         return True
-    # İpucunu bozarak geri vermiş: "ALICE, DIGITAL, Bingo, waypoint, kneeboard." Sözcüklerin çoğu ipucundansa
-    # gürültüdür; başında "ALICE" olduğu için ALICE kendi kendine uyanıyordu.
+    # It returned a garbled hint: "ALICE, DIGITAL, Bingo, waypoint, kneeboard." If most of the words
+    # come from the hint, it is noise; since it started with "ALICE", ALICE kept waking itself up.
     words = re.findall(r"\w+", t)
     hits = sum(1 for w in words if w in _PROMPT_WORDS)
     tail = sum(1 for w in words if w in ("bingo", "waypoint", "kneeboard"))
@@ -489,12 +497,13 @@ def is_hallucination(text: str) -> bool:
     return len(t) < 60 and any(h in t for h in HALLUCINATIONS)
 
 
-# İsimlerin doğru yazılması için Whisper'a ipucu. "Alice" bilerek YOK: Whisper gürültüde ipucunu bozarak geri
-# veriyordu ("ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK.") ve başında ALICE olduğu için asistan kendi
-# kendine uyanıyordu (voice.log, 24 Ekim gecesi onlarca kez). Adın farklı yazımlarını strip_wake zaten tanıyor.
+# Hint for Whisper so names are spelled correctly. "Alice" is deliberately NOT here: in noise Whisper returned the
+# hint garbled ("ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK." (Turkish for "hole")), and since it began with
+# ALICE the assistant kept waking itself up (voice.log, dozens of times on the night of Oct 24). strip_wake already
+# recognizes the other spellings of the name.
 PROMPT = "DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
 LEGACY_PROMPT = "Hey Alice. ALICE, DCS, F-16, Unity, War Thunder, bingo, waypoint, kneeboard."
-# Eski ipucunun ("Hey Alice. ALICE, DCS, ...") yankılarını da tanımak için "alice" listede kalır.
+# "alice" stays in the list so that echoes of the old hint ("Hey Alice. ALICE, DCS, ...") are recognized too.
 _PROMPT_WORDS = set(re.findall(r"\w+", PROMPT.lower())) | {"alice"}
 
 
@@ -506,7 +515,7 @@ def make_stt(cfg: Config) -> STTRouter:
     compute = str(v.get("gpu_compute", GPU_COMPUTE) or GPU_COMPUTE)
     engines: list[STT] = []
     eleven = os.environ.get(str(v.get("eleven_api_key_env", "ELEVENLABS_API_KEY")), "")
-    # Scribe sadece "ikinci kulak": her cümleyi ona göndermek ElevenLabs kredisini dakikalar içinde yiyordu.
+    # Scribe is only the "second ear": sending every sentence to it used up ElevenLabs credits within minutes.
     second = ElevenScribe(eleven, str(v.get("stt_eleven", "scribe_v2")), lang) if eleven and v.get("stt_eleven",
                                                                                                     "scribe_v2") else None
     for ref in v.get("stt", ["groq:whisper-large-v3-turbo", "local:large-v3-turbo"]):

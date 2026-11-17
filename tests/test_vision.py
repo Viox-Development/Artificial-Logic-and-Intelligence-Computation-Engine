@@ -4,14 +4,14 @@ import math
 
 import pytest
 
-np = pytest.importorskip("numpy")  # ekrandan füze görme numpy ister; CI'da kurulu değil
+np = pytest.importorskip("numpy")  # missile vision from the screen needs numpy; not installed in CI
 
 from alice.sims import vision  # noqa: E402
 from alice.sims.vision import Confirmer, Detection, MissileWatcher, detect, region_of  # noqa: E402
 
 
 def frame(clock: int | None = None, color=(255, 40, 30), size=120, blob=6, extra=None):
-    """Koyu RWR dairesi; istenirse saat yönünde kırmızı bir işaret."""
+    """Dark RWR circle; optionally a red marker at the given clock position."""
     a = np.full((size, size, 3), 20, dtype=np.uint8)
     if clock is not None:
         ang = math.radians(clock * 30)
@@ -31,9 +31,9 @@ def test_detect_clock_from_red_marker(clock):
 
 def test_detect_ignores_white_center_and_specks():
     assert detect(frame()) is None
-    assert detect(frame(3, color=(255, 255, 255))) is None  # beyaz/gri işaret füze değil
+    assert detect(frame(3, color=(255, 255, 255))) is None  # a white/gray marker is not a missile
     assert detect(frame(extra=lambda a: a.__setitem__((slice(55, 65), slice(55, 65)), (255, 30, 30)))) is None
-    assert detect(frame(5, blob=1)) is None  # 4 piksel: gürültü
+    assert detect(frame(5, blob=1)) is None  # 4 pixels: noise
     assert detect(np.zeros((2, 2, 3))) is None
 
 
@@ -46,11 +46,11 @@ def test_confirmer_needs_several_frames_and_holds_through_blinks():
     c = Confirmer(confirm=3, window=5, hold=1.0)
     hit = Detection(4, 50)
     assert c.feed(hit, 0.0) is None and c.feed(None, 0.1) is None and c.feed(hit, 0.2) is None
-    assert c.feed(hit, 0.3) == hit  # 4 karenin 3'ü: doğrulandı
-    assert c.feed(None, 0.4) == hit and c.feed(None, 0.5) == hit  # yanıp sönme arası sürüyor
+    assert c.feed(hit, 0.3) == hit  # 3 of 4 frames: confirmed
+    assert c.feed(None, 0.4) == hit and c.feed(None, 0.5) == hit  # still held across the blink gap
     for t in (0.6, 0.7, 0.8, 0.9, 1.0):
         c.feed(None, t)
-    assert c.feed(None, 1.5) is None  # son doğrulamadan (0,4) 1 sn uzun görünmedi: bitti
+    assert c.feed(None, 1.5) is None  # not seen for more than 1 s since the last confirmation (0.4): over
 
 
 def test_single_frame_false_alarm_is_ignored():
@@ -135,7 +135,7 @@ def test_hub_adds_vision_contacts_to_war_thunder_feed(monkeypatch):
         s = st(0, source="warthunder", extra={"contacts": mine})
         feed(s)
         assert [c["clock"] for c in s.extra["contacts"]] == [1, 7]
-        assert mine == [{"kind": "aircraft", "clock": 1}]  # poller'ın listesi değişmedi
+        assert mine == [{"kind": "aircraft", "clock": 1}]  # the poller's list was not changed
     finally:
         hb.stop()
 
@@ -150,14 +150,14 @@ def test_hub_without_region_uses_war_thunder_default(monkeypatch):
     w = hb._missile_vision()
     try:
         assert w is not None and w.region[2:] == tuple(round(v * w.region[3] / 285) for v in (255, 285))
-        assert w.region[0] == round(60 * w.region[3] / 285)  # sol kenar, ekran yüksekliğine göre ölçekli
+        assert w.region[0] == round(60 * w.region[3] / 285)  # left edge, scaled to the screen height
     finally:
         hb.stop()
     assert SimHub({}, FakeStore(), FakeNotifier())._missile_vision() is None
     assert vision.default_region(1440) == (80, 507, 340, 380)
 
 
-# ------------------------------------------------- War Thunder'ın turkuaz RWR yazıları (Medal kliplerinden)
+# ------------------------------------------------- War Thunder's cyan RWR text (from Medal clips)
 def test_read_rwr_launch_track_and_direction_from_words():
     from alice.sims.vision import WT_CENTER, read_rwr
 
@@ -165,13 +165,13 @@ def test_read_rwr_launch_track_and_direction_from_words():
     cx, cy = WT_CENTER[0] * 255, WT_CENTER[1] * 285
     track = read_rwr(img, words=[("INSTRUCTOR", (0, 0, 90, 14)), ("TRACK", (92, 14, 40, 14))])
     assert track.track and not track.launch and track.clock is None
-    # füze sağda (saat 3) ve okuma motorunun Türkçe harfleri ("MSÜ", "LAUNŞH")
+    # missile on the right (clock 3) and the OCR engine's Turkish letters ("MSÜ", "LAUNŞH")
     d = read_rwr(img, words=[("LAUNŞH", (92, 14, 50, 14)), ("MSÜ", (cx + 60, cy - 7, 24, 14))])
     assert d.launch and d.clock == 3
-    up = read_rwr(img, words=[("MSL", (cx - 12, cy - 80, 24, 14))])  # LAUNCH okunmasa da MSL füze demek
+    up = read_rwr(img, words=[("MSL", (cx - 12, cy - 80, 24, 14))])  # MSL means missile even if LAUNCH isn't read
     assert up.launch and up.clock == 12
     merged = read_rwr(img, words=[("LAUNCH", (92, 14, 50, 14)), ("M29MSL", (cx + 40, cy + 40, 50, 14))])
-    assert merged.launch and merged.clock is None  # birleşik kelimenin yeri yön sayılmaz
+    assert merged.launch and merged.clock is None  # a merged word's position doesn't count as a direction
     assert read_rwr(img, words=[("F15", (cx, cy, 20, 14)), ("ENGN1", (0, 0, 40, 14))]) is None
 
 
@@ -179,8 +179,8 @@ def test_hud_mask_keeps_only_cyan_text():
     from alice.sims.vision import hud_mask
 
     img = np.zeros((10, 20, 3), dtype=np.uint8)
-    img[:, :10] = (40, 230, 200)   # turkuaz HUD
-    img[:, 10:] = (60, 140, 50)    # ağaç
+    img[:, :10] = (40, 230, 200)   # cyan HUD
+    img[:, 10:] = (60, 140, 50)    # tree
     m = np.asarray(hud_mask(__import__("PIL.Image", fromlist=["Image"]).fromarray(img)))
     assert (m[:, :10] == 0).all() and (m[:, 10:] == 255).all()
 
@@ -194,11 +194,11 @@ def test_watcher_text_mode_reports_directionless_missile_and_lock(monkeypatch):
     w = MissileWatcher((0, 0, 50, 50), grab=lambda r: np.zeros((50, 50, 3), dtype=np.uint8))
     w.step(0.0)
     w.step(0.1)
-    assert w.contacts()[0]["missile"] is False and w.contacts()[0]["lock"] is True  # kilit
+    assert w.contacts()[0]["missile"] is False and w.contacts()[0]["lock"] is True  # lock
     for i in range(3):
         w.step(0.2 + i / 10)
     c = w.contacts()[0]
-    assert c["missile"] is True and c["clock"] is None  # yanıp sönen LAUNCH: 2/5 yeter, yönsüz
+    assert c["missile"] is True and c["clock"] is None  # a blinking LAUNCH: 2 of 5 is enough, no direction
 
 
 def test_directionless_vision_missile_callout():

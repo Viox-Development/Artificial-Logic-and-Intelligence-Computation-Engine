@@ -1,4 +1,4 @@
-"""Haftalık bilgisayar raporu: sıcaklıklar, bellek, diskler, en çok kaynak kullananlar, uyarılar."""
+"""Weekly computer report: temperatures, memory, disks, top resource users, alerts."""
 
 from __future__ import annotations
 

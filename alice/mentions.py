@@ -1,4 +1,4 @@
-"""@dosya bahsetmeleri: mesajdaki @yol/dosya.py ifadelerini dosya içeriğiyle modele ekler."""
+"""@file mentions: adds the contents of files referenced as @yol/dosya.py (path/file) in a message to the model."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ MAX_FILE = 100_000
 
 
 def expand_mentions(text: str, cwd: Path) -> str:
-    """Var olan ve okunabilen dosyaları mesajın sonuna <file> blokları olarak ekle.
-    Klasörler içerik listesiyle eklenir. Bulunamayan @ifadeler olduğu gibi kalır (e-posta, kullanıcı adı vs.)."""
+    """Append existing, readable files to the end of the message as <file> blocks.
+    Folders are added as a content list. Unmatched @ expressions stay as they are (e-mail, username, etc.)."""
     blocks = []
     seen = set()
     for m in MENTION.finditer(text):
@@ -26,19 +26,19 @@ def expand_mentions(text: str, cwd: Path) -> str:
             p = p.resolve()
             if p in seen or not p.exists():
                 continue
-        except (OSError, ValueError, RuntimeError):  # NUL karakterli yol ValueError, döngülü bağ RuntimeError verir
+        except (OSError, ValueError, RuntimeError):  # NUL in path: ValueError; circular link: RuntimeError
             continue
         seen.add(p)
         if p.is_dir():
             try:
                 names = sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir() if e.name not in SKIP_DIRS)[:200]
-            except OSError:  # izin yok: önceden bütün tur çöküyordu
+            except OSError:  # no permission: the whole turn used to crash before this fix
                 continue
             blocks.append(f'<folder path="{p}">\n' + "\n".join(names) + "\n</folder>")
             continue
         try:
             size = p.stat().st_size
-            with p.open("rb") as fh:  # dev dosyanın (ISO, video) tamamı belleğe okunmasın
+            with p.open("rb") as fh:  # so a huge file (ISO, video) is not read into memory in full
                 data = fh.read(MAX_FILE)
         except OSError:
             continue
@@ -54,7 +54,7 @@ def expand_mentions(text: str, cwd: Path) -> str:
 
 
 def complete_paths(cwd: Path, query: str, limit: int = 30) -> list[str]:
-    """@ yazınca açılan öneri listesi için: cwd altında adı query'yi içeren dosya/klasörler."""
+    """For the suggestion list shown when @ is typed: files/folders under cwd whose name contains query."""
     q = query.lower().replace("\\", "/")
     out: list[tuple[int, str]] = []
     scanned = 0
@@ -66,7 +66,7 @@ def complete_paths(cwd: Path, query: str, limit: int = 30) -> list[str]:
             rel = rel_root + name + ("/" if name in dirs else "")
             low = rel.lower()
             if not q or q in low:
-                # Dosya adının kendisi eşleşirse öne al, sonra kısa yollar.
+                # If the file name itself matches, rank it first, then shorter paths.
                 score = (0 if name.lower().startswith(q.split("/")[-1]) else 1, len(rel))
                 out.append((score, rel))
             scanned += 1

@@ -1,24 +1,25 @@
-"""PR takibi: izlenen PR'larda CI kırmızıya dönünce, güvenilir bir inceleme yorumu gelince ya da hedef dalla çakışma
-çıkınca ALICE kendisi düzeltir; istenirse her şey yeşilken birleştirir.
+"""PR watch: when CI turns red on a watched PR, when a trusted review comment arrives, or when a conflict with the
+target branch appears, ALICE fixes it itself; if requested, it merges once everything is green.
 
-Çekirdek (`alice core run`) birkaç dakikada bir izlenen PR'lara bakar (`[github] watch_every_seconds`). Bir sorun
-görünce:
+The core (`alice core run`) checks the watched PRs every few minutes (`[github] watch_every_seconds`). When it
+sees a problem:
 
-* PR bir sohbetten izlemeye alındıysa iş o sohbete mesaj olarak gider: kodu yazan ajan bağlamı ve kararları
-  bildiği için baştan araştırma yapmadan düzeltir. Sohbet o an başka işteyse bölünmez, sonraki turda yeniden denenir.
-* Sohbet yoksa (ya da iş verilemiyorsa) temiz bağlamlı arka plan ajanı, kullanıcının kopyasına dokunmadan ALICE'in
-  kendi git worktree'sinde (~/.alice/worktrees) düzeltir.
-* Ajan düzeltir, ilgili testleri koşar, commit'ler, PR dalına push eder; uyguladığı yorumlara cevap yazıp konuyu
-  çözüldü işaretler. CI'ın hata özeti ve yorumlar istemde.
-* auto_review: her yeni commit bir kez, bilerek temiz bağlamlı bağımsız bir inceleyiciye inceletilir (alice/review.py)
-  ve bulgular PR'a yazılır.
-* Yorumlar başkalarının yazdığı metindir: yalnız depo sahibi/ekip üyeleri ve Copilot inceleyicisinin yorumları
-  kendiliğinden uygulanır, gerisi kullanıcıya bildirilir. İstemde "güvenilmeyen veri" olarak işaretlenir.
-* Döngü olmasın: aynı commit için en fazla MAX_ATTEMPTS deneme; ALICE'in kendi cevapları (imzası) yeni yorum
-  sayılmaz.
-* auto_merge yalnız kullanıcı açıkça isterse: CI yeşil, açık konu yok, çakışma yok, taslak değilse birleştirir.
+* If the PR was put on watch from a chat, the work goes to that chat as a message: the agent that wrote the code
+  knows the context and decisions, so it fixes without redoing the research. If the chat is busy with something else,
+  it is not interrupted; it is retried on the next turn.
+* If there is no chat (or the work cannot be delivered to one), a clean-context background agent fixes it in ALICE's
+  own git worktree (~/.alice/worktrees), without touching the user's copy.
+* The agent fixes, runs the relevant tests, commits and pushes to the PR branch; it replies to the comments it applied
+  and marks their threads resolved. The CI error summary and the comments are in the prompt.
+* auto_review: every new commit is reviewed once by an independent reviewer deliberately given a clean context
+  (alice/review.py), and the findings are written to the PR.
+* Comments are text written by others: only the repo owner, team members and the Copilot reviewer's comments are
+  applied on their own; the rest are reported to the user. In the prompt they are marked as "untrusted data".
+* No loops: at most MAX_ATTEMPTS attempts per commit; ALICE's own replies (signature) are not counted as new comments.
+* auto_merge only if the user explicitly asks: when CI is green, no open threads, no conflicts and not a draft,
+it merges.
 
-Durum ~/.alice/prwatch.json'da; sohbetten `github action=watch` ile eklenir.
+State is in ~/.alice/prwatch.json; it is added from a chat with `github action=watch`.
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-MAX_ATTEMPTS = 2           # aynı commit'te en fazla bu kadar düzeltme denemesi
-WATCH_EVERY = 120.0        # sn: varsayılan bakma aralığı
+MAX_ATTEMPTS = 2           # at most this many fix attempts on the same commit
+WATCH_EVERY = 120.0        # sec: default check interval
 MAX_HISTORY = 30
 
 _lock = threading.Lock()
@@ -43,18 +44,18 @@ _lock = threading.Lock()
 class Watch:
     repo: str
     number: int
-    path: str = ""             # kullanıcının yerel klonu (worktree buradan açılır); boşsa ~/GitHub'a klonlanır
+    path: str = ""             # user's local clone (the worktree is opened from here); if empty, cloned into ~/GitHub
     auto_fix: bool = True
     address_comments: bool = True
     auto_merge: bool = False
-    auto_review: bool = True   # her yeni commit'te bağımsız inceleme yapıp PR'a yaz
-    session: str = ""          # PR'ı hazırlayan sohbet: düzeltme işi bağlamı bilen o ajana gider
+    auto_review: bool = True   # on each new commit, run an independent review and post it to the PR
+    session: str = ""          # chat that prepared the PR: fix work goes to the agent that knows the context
     added: float = 0.0
-    sha: str = ""              # son görülen PR ucu
-    attempts: int = 0          # bu uçta yapılan düzeltme denemesi
-    handled: list[str] = field(default_factory=list)  # "ci:<sha>", "conflict:<sha>": bir kez ele alındı
-    seen: list[int] = field(default_factory=list)     # ele alınmış yorum kimlikleri
-    reviewed: list[str] = field(default_factory=list)  # bağımsız incelemesi yapılmış commit'ler
+    sha: str = ""              # last seen PR head
+    attempts: int = 0          # fix attempts made at this head
+    handled: list[str] = field(default_factory=list)  # "ci:<sha>", "conflict:<sha>": handled once
+    seen: list[int] = field(default_factory=list)     # IDs of comments already handled
+    reviewed: list[str] = field(default_factory=list)  # commits that have already been independently reviewed
     status: str = "izleniyor"
     history: list[str] = field(default_factory=list)
 
@@ -80,9 +81,9 @@ def load() -> list[Watch]:
 
 
 def _load_for_write() -> list[Watch]:
-    """Değiştirip geri yazmak için oku. Dosya yoksa boş; okunamıyorsa (Windows'ta çekirdek ile uygulama aynı anda
-    yazarken replace kilidi, bozuk içerik) hata verir: load() gibi boş dönseydi ardından gelen kayıt bütün izleme
-    listesini silerdi."""
+    """Read in order to modify and write back. Empty if the file does not exist; if it cannot be read (on Windows,
+    a replace lock when the core and the app write at the same time, or corrupt content) it raises an error: had it
+    returned empty like load(), the next save would have wiped the whole watch list."""
     p = store_path()
     for i in range(10):
         try:
@@ -112,7 +113,7 @@ def save(watches: list[Watch]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps([asdict(w) for w in watches], ensure_ascii=False, indent=1), encoding="utf-8")
-    for i in range(6):  # Windows: okuyan başka süreç ya da virüs tarayıcı dosyayı bir an kilitleyebilir
+    for i in range(6):  # Windows: another reading process or the antivirus scanner may lock the file briefly
         try:
             tmp.replace(p)
             return
@@ -151,7 +152,7 @@ FLAGS = ("auto_fix", "address_comments", "auto_review", "auto_merge")
 
 
 def set_flag(repo: str, number: int, flag: str, value: bool) -> bool:
-    """Arayüzdeki düğmeler: izlenen PR'ın bir davranışını aç/kapat."""
+    """UI buttons: turn a behavior of a watched PR on or off."""
     if flag not in FLAGS:
         return False
     found = [False]
@@ -170,7 +171,7 @@ LIVE_TTL = 30.0
 
 
 def live_status(api: Any, repo: str, number: int, cache: bool = True) -> dict[str, Any]:
-    """PR panelindeki satır: başlık, durum, CI (başarısız/süren adları), açık inceleme konusu sayısı, çakışma."""
+    """Row in the PR panel: title, state, CI (names of failed/pending jobs), number of open review threads, conflict."""
     from alice.tools.github import review_threads
 
     key = f"{repo}#{number}"
@@ -182,7 +183,7 @@ def live_status(api: Any, repo: str, number: int, cache: bool = True) -> dict[st
                                                                                 "pending": [], "total": 0}
     try:
         open_threads = sum(1 for t in review_threads(api, repo, number)["threads"] if not t["resolved"])
-    except Exception:  # noqa: BLE001 - GraphQL yetkisi yoksa sayı bilinmez
+    except Exception:  # noqa: BLE001 - if there is no GraphQL permission, the count is unknown
         open_threads = -1
     row = {"title": pr.get("title", ""), "url": pr.get("html_url", ""), "state": "merged" if pr.get("merged")
            else pr.get("state", ""), "draft": bool(pr.get("draft")), "head": pr["head"]["ref"],
@@ -207,33 +208,33 @@ def describe() -> str:
 
 
 def _update(key: str, fn: Callable[[Watch], None]) -> None:
-    """Tek bir kaydı diskteki güncel hâli üzerinden değiştir (bu arada kullanıcı başka PR eklemiş olabilir)."""
+    """Modify a single record through its current state on disk (the user may have added another PR meanwhile)."""
     with _lock:
         try:
             rows = _load_for_write()
         except (OSError, ValueError):
-            return  # okunamadı: bir durum satırı kaybolsun, izleme listesi silinmesin
+            return  # could not be read: a status line may be lost, but the watch list must not be deleted
         for w in rows:
             if w.key == key:
                 fn(w)
         save(rows)
 
 
-# ----------------------------------------------------------------------------------------- sorun tespiti
+# ----------------------------------------------------------------------------------------- problem detection
 @dataclass
 class Problems:
-    ci: list[dict[str, Any]] = field(default_factory=list)       # başarısız işler (hata özetiyle)
+    ci: list[dict[str, Any]] = field(default_factory=list)       # failed jobs (with error summary)
     conflict: bool = False
-    comments: list[dict[str, Any]] = field(default_factory=list)  # güvenilir, ele alınmamış yorumlar
-    outside: list[dict[str, Any]] = field(default_factory=list)   # dışarıdan gelen yorumlar: yalnız bildirilir
+    comments: list[dict[str, Any]] = field(default_factory=list)  # trusted, unhandled comments
+    outside: list[dict[str, Any]] = field(default_factory=list)   # comments from outsiders: only reported
 
     def any_fixable(self) -> bool:
         return bool(self.ci or self.conflict or self.comments)
 
 
 def new_comments(w: Watch, data: dict[str, list[dict[str, Any]]]) -> tuple[list[dict], list[dict]]:
-    """Ele alınmamış yorumlar: çözülmemiş konulardaki son yorumlar, değişiklik isteyen incelemeler, genel yorumlar.
-    ALICE'in kendi cevapları ve daha önce görülenler atlanır. (güvenilir, dışarıdan) olarak ikiye ayrılır."""
+    """Unhandled comments: the latest comments on unresolved threads, reviews requesting changes, and general comments.
+    ALICE's own replies and comments seen before are skipped. Split into two groups: (trusted, from outsiders)."""
     from alice.tools.github import by_alice
 
     good: list[dict] = []
@@ -248,13 +249,13 @@ def new_comments(w: Watch, data: dict[str, list[dict[str, Any]]]) -> tuple[list[
         if t["resolved"] or not t["comments"]:
             continue
         if by_alice(t["comments"][-1]["body"], t["comments"][-1]["id"]):
-            continue  # son söz ALICE'te: yeni bir şey yazılmadı
-        # Konudaki en yeni, ALICE'in yazmadığı yorum: ALICE'in inceleme yorumunun altına kullanıcı cevap yazınca da
-        # görülsün (konunun ilk yorumu ALICE'inki olduğu için önceden atlanıyordu).
+            continue  # last word is ALICE's: nothing new was written
+        # The newest comment in the thread that ALICE did not write: it should also be seen when a user replies under
+        # ALICE's review comment (before, it was skipped because the thread's first comment was ALICE's).
         human = [c for c in t["comments"] if not by_alice(c["body"], c["id"])]
         last = human[-1]
-        # Düzeltici ajana yalnız ALICE'in ve güvenilir yazarların sözü gider. Konuya dışarıdan yazılanlar güvenilir
-        # bir yorumun yanında gelse bile talimat olarak gitmez: ayrıca yalnız bildirilir.
+        # Only the words of ALICE and trusted authors go to the fixing agent. Things written to the thread by outsiders
+        # are not sent as instructions, even if they come next to a trusted comment: they are only reported separately.
         convo = [f"{c['author']}: {c['body']}" for c in t["comments"] if c["trusted"] or by_alice(c["body"], c["id"])]
         for c in human:
             if not c["trusted"] and c is not last:
@@ -280,16 +281,17 @@ def inspect(w: Watch, api: Any, pr: dict[str, Any]) -> Problems:
                                                  for n in ch["failed"]]
     if pr.get("mergeable") is False and f"conflict:{sha}" not in w.handled:
         p.conflict = True
-    # Yorumlara her durumda bakılır: uygulama kapalıysa da kullanıcıya bildirilir.
+    # Comments are always checked: even if the app is off, the user is notified.
     p.comments, p.outside = new_comments(w, review_threads(api, w.repo, w.number))
     return p
 
 
-# ------------------------------------------------------------------------------------------ çalışma kopyası
+# ------------------------------------------------------------------------------------------ working copy
 def worktree_for(cfg: Any, w: Watch, branch: str, token: str | None) -> Path:
-    """PR dalının ALICE'e ait worktree'si: varsa güncellenir, yoksa açılır. Kullanıcının kopyasına dokunulmaz:
-    worktree ayrık HEAD ile origin/<dal> üzerinde açılır, yerel <dal> kullanılmaz (kullanıcı o daldaysa git reddederdi;
-    değilse push'lanmamış commit'leri sıfırlanırdı). Push `HEAD:<dal>` ile yapılır (git aracı ayrık HEAD'de öyle yapar)."""
+    """ALICE's worktree for the PR branch: updated if it exists, created otherwise. The user's copy is not touched:
+    the worktree is opened on origin/<branch> with a detached HEAD, and the local <branch> is not used (if the user were
+    on that branch git would refuse; otherwise unpushed commits would be reset). Push is done with `HEAD:<branch>`
+    (the git tool does the same on a detached HEAD)."""
     from alice.tools.github import ToolError, clone_or_update, run_git
 
     base = Path(w.path) if w.path and (Path(w.path) / ".git").exists() else clone_or_update(cfg, w.repo, "", token)[0]
@@ -298,7 +300,7 @@ def worktree_for(cfg: Any, w: Watch, branch: str, token: str | None) -> Path:
     if (wt / ".git").exists():
         run_git(["fetch", "origin", branch], wt, token, timeout=300)
         run_git(["checkout", "--force", "--detach", f"origin/{branch}"], wt)
-        run_git(["reset", "--hard", f"origin/{branch}"], wt)  # ALICE'in kopyası: yarım kalmış iş atılır
+        run_git(["reset", "--hard", f"origin/{branch}"], wt)  # ALICE's copy: half-finished work is discarded
         run_git(["clean", "-fd"], wt)
         return wt
     wt.parent.mkdir(parents=True, exist_ok=True)
@@ -309,10 +311,11 @@ def worktree_for(cfg: Any, w: Watch, branch: str, token: str | None) -> Path:
     return wt
 
 
-# ------------------------------------------------------------------------------------------------- istem
+# ------------------------------------------------------------------------------------------------- prompt
 def fix_prompt(w: Watch, pr: dict[str, Any], p: Problems, in_chat: bool = False, hidden: bool = False) -> str:
-    """in_chat: iş PR'ı hazırlayan sohbete gidiyor (ajan kodu ve kararları biliyor, çalışma klasörü kullanıcının
-    kopyası); değilse temiz bağlamlı ajan ALICE'in kendi worktree'sinde çalışır. hidden: gizli mod (imzasız)."""
+    """in_chat: the work goes to the chat that prepared the PR (the agent knows the code and decisions; the working
+    folder is the user's copy); otherwise a clean-context agent works in ALICE's own worktree. hidden: stealth mode
+    (unsigned)."""
     from alice import undercover
     from alice.guard import wrap
     from alice.tools.github import ALICE_MARK
@@ -362,7 +365,7 @@ def fix_prompt(w: Watch, pr: dict[str, Any], p: Problems, in_chat: bool = False,
     return "\n\n".join(parts)
 
 
-# ------------------------------------------------------------------------------------------------- tur
+# ------------------------------------------------------------------------------------------------- round
 def default_runner(cfg: Any) -> Callable[[str, Path], str]:
     def run(prompt: str, cwd: Path) -> str:
         from alice.core.service import make_agent_runner
@@ -373,8 +376,8 @@ def default_runner(cfg: Any) -> Callable[[str, Path], str]:
 
 
 def default_reviewer(cfg: Any) -> Callable[[Watch, dict[str, Any], Any, str | None], str]:
-    """Bağımsız inceleme: bilerek temiz bağlamla (yazarın varsayımlarını taşımasın). PR'ın son hâli ALICE'in
-    worktree'sinde okunur, sonuç PR'a satır yorumlarıyla yazılır."""
+    """Independent review: deliberately with a clean context (so it does not carry the author's assumptions). The
+    latest state of the PR is read in ALICE's worktree, and the result is posted to the PR as line comments."""
 
     def run(w: Watch, pr: dict[str, Any], api: Any, token: str | None) -> str:
         from alice import review
@@ -390,7 +393,8 @@ def default_reviewer(cfg: Any) -> Callable[[Watch, dict[str, Any], Any, str | No
         from alice import undercover
 
         if undercover.active(cfg, w.repo, api):
-            # Sahibin hesabından yazılan inceleme yorumları takipte "sahibin isteği" sanılırdı; yalnız bildir.
+            # Review comments written from the owner's account were mistaken for the owner's request in the
+            # follow-up; only report them.
             body = "\n".join(f"- {' '.join(f.text().split())[:300]}" for f in findings)
             return f"{len(findings)} bulgu (gizli mod: PR'a yazılmadı)" + (f"\n{body}" if body else "")
         url = review.post(api, w.repo, w.number, sha, findings, diff)
@@ -403,8 +407,9 @@ def check_all(cfg: Any, notify: Callable[[str, str], Any], api: Any = None,
               run_fix: Callable[[str, Path], str] | None = None, token: str | None = None,
               deliver: Callable[[str, str], str] | None = None,
               reviewer: Callable[[Watch, dict[str, Any], Any, str | None], str] | None = None) -> list[str]:
-    """İzlenen bütün PR'lara bir kez bak. Yapılanları (kısa satırlar) döndürür.
-    deliver: (sohbet, mesaj) -> "" | neden; çekirdekteki uygulama verir. Yoksa düzeltme temiz ajana gider."""
+    """Check all watched PRs once. Returns what was done (short lines).
+    deliver: (chat, message) -> "" | reason; provided by the app in the core. If absent, the fix goes to the clean
+    agent."""
     rows = load()
     if not rows:
         return []
@@ -419,7 +424,7 @@ def check_all(cfg: Any, notify: Callable[[str, str], Any], api: Any = None,
     for w in rows:
         try:
             done += check_one(cfg, w, api, notify, run_fix, getattr(api, "token", token), deliver, reviewer)
-        except Exception as e:  # noqa: BLE001 - bir PR'ın hatası diğerlerini durdurmasın
+        except Exception as e:  # noqa: BLE001 - one PR's error must not stop the others
             _update(w.key, lambda x, e=e: x.log(f"bakılamadı: {str(e)[:160]}"))
             done.append(f"{w.key}: hata {str(e)[:120]}")
     return done
@@ -436,7 +441,7 @@ def check_one(cfg: Any, w: Watch, api: Any, notify: Callable[[str, str], Any],
         unwatch(w.repo, w.number)
         return [f"{w.key}: {what}, izleme bitti"]
     sha = pr["head"]["sha"]
-    if sha != w.sha:  # yeni commit: denemeler sıfırlanır
+    if sha != w.sha:  # new commit: attempts are reset
         _update(w.key, lambda x: (setattr(x, "sha", sha), setattr(x, "attempts", 0)))
         w.sha, w.attempts = sha, 0
     p = inspect(w, api, pr)
@@ -466,7 +471,7 @@ def check_one(cfg: Any, w: Watch, api: Any, notify: Callable[[str, str], Any],
         what = ", ".join(x for x, on in (("CI", fixable.ci), ("çakışma", fixable.conflict),
                                          (f"{len(fixable.comments)} yorum", fixable.comments)) if on)
         if w.session and deliver is not None:
-            # Kodu yazan sohbetin ajanı: bağlamı biliyor, baştan araştırma yapmadan düzeltir.
+            # The agent of the chat that wrote the code: it knows the context and fixes without redoing the research.
             why = deliver(w.session, fix_prompt(w, pr, fixable, in_chat=True, hidden=hidden))
             if not why:
                 _update(w.key, lambda x: x.__setattr__("attempts", x.attempts + 1))
@@ -483,7 +488,7 @@ def check_one(cfg: Any, w: Watch, api: Any, notify: Callable[[str, str], Any],
         _mark(w, sha, fixable, f"düzeltme denendi ({what}): {' '.join(result.split())[:200]}")
         notify(f"{w.key}: {what} ele alındı", result[:600])
         return out + [f"{w.key}: düzeltme ({what})"]
-    # Düzeltilecek bir şey yok (ya da kullanıcı kendiliğinden düzeltmeyi kapattı).
+    # Nothing to fix (or the user turned self-fixing off).
     new = [x for x, on in (("CI kırmızı", p.ci), ("çakışma", p.conflict), ("yeni yorum", p.comments)) if on]
     if new:
         notify(f"{w.key}: {', '.join(new)}", "Kendiliğinden düzeltme bu PR için kapalı; bakman gerekiyor.")
@@ -499,15 +504,15 @@ def check_one(cfg: Any, w: Watch, api: Any, notify: Callable[[str, str], Any],
 def _review(w: Watch, pr: dict[str, Any], api: Any, token: str | None,
             reviewer: Callable[[Watch, dict[str, Any], Any, str | None], str],
             notify: Callable[[str, str], Any]) -> list[str]:
-    """Bu commit'i bir kez bağımsız incele. Düzeltme gönderildiği turda yapılmaz: commit birazdan değişecek.
-    Bulgular PR'a ALICE imzasıyla yazılır; takip bunları yeni yorum sayıp kendiliğinden uygulamaz (kullanıcı
-    bakıp karar verir)."""
+    """Independently review this commit once. Not done in the round where a fix was sent: the commit is about to
+    change. Findings are posted to the PR with ALICE's signature; the follow-up does not count them as new comments to
+    apply on its own (the user looks and decides)."""
     sha = pr["head"]["sha"]
     _update(w.key, lambda x: (setattr(x, "reviewed", (x.reviewed + [sha])[-50:]),
                               x.log(f"{sha[:7]} bağımsız olarak inceleniyor")))
     try:
         result = reviewer(w, pr, api, token)
-    except Exception as e:  # noqa: BLE001 - inceleme yapılamadı diye takip durmasın
+    except Exception as e:  # noqa: BLE001 - so the follow-up does not stop just because the review could not be done
         _update(w.key, lambda x, e=e: x.log(f"inceleme yapılamadı: {str(e)[:140]}"))
         return [f"{w.key}: inceleme hatası"]
     _update(w.key, lambda x: x.log(f"{sha[:7]} incelendi: {result[:160]}"))

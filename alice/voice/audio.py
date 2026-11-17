@@ -1,7 +1,7 @@
-"""Ses verisi: 16 bit mono PCM (bytes) + örnekleme hızı. numpy gerektirmez.
+"""Audio data: 16 bit mono PCM (bytes) + sample rate. Requires no numpy.
 
-Çalma: sounddevice varsa onunla (anında durdurulabilir); yoksa Windows'ta winsound,
-Linux'ta paplay/aplay, macOS'ta afplay ile geçici WAV dosyasından.
+Playback: uses sounddevice if available (can be stopped instantly); otherwise winsound on Windows,
+paplay/aplay on Linux, afplay on macOS, from a temporary WAV file.
 """
 
 from __future__ import annotations
@@ -74,9 +74,10 @@ class Audio:
 
     def polish(self, fade_in: float = 0.005, fade_out: float = 0.05, pad: float = 0.15,
                rel_floor: float = 0.06, max_trim: float = 2.0) -> "Audio":
-        """Sesin başını/sonunu yumuşat: sondaki gürültü/patlama kuyruğunu kes, kısa fade ve sessizlik ekle.
-        Aniden biten PCM hoparlörde "tık" ya da cızırtı yapar. Kuyruk eşiği sesin en yüksek yerine göredir
-        (konuşmanın %6'sı altı kuyruk sayılır), böylece sondaki hafif ama sessiz olmayan cızırtı da kesilir."""
+        """Smooth the start/end of the audio: cut the noise/click tail at the end, add a short fade and silence.
+        PCM that stops abruptly makes a "click" or crackle on the speaker. The tail threshold is relative to the
+        loudest part of the audio (anything below 6% of the speech peak counts as tail), so a faint but not silent
+        crackle at the end is cut too."""
         a = array.array("h", self.pcm[: len(self.pcm) // 2 * 2])
         if not a:
             return self
@@ -100,7 +101,7 @@ class Audio:
         return Audio(a.tobytes() + b"\x00\x00" * int(self.rate * pad), self.rate)
 
     def resample(self, rate: int) -> "Audio":
-        """Doğrusal ara değerleme; konuşma için yeterli."""
+        """Linear interpolation; good enough for speech."""
         if rate == self.rate or not self.pcm:
             return Audio(self.pcm, rate)
         src = array.array("h", self.pcm)
@@ -117,16 +118,16 @@ class Audio:
 
 
 def rms(pcm: bytes) -> float:
-    """0..1 arası ses yüksekliği."""
+    """Audio level, 0..1."""
     if len(pcm) < 2:
         return 0.0
     a = array.array("h", pcm[: len(pcm) // 2 * 2])
     return math.sqrt(sum(s * s for s in a) / len(a)) / 32768
 
 
-# ----------------------------------------------------------------------- çalma
+# ----------------------------------------------------------------------- playback
 class Player:
-    """Tek bir sesi çalar; stop() ile hemen susturulabilir. play() bitene kadar bloklar."""
+    """Plays a single sound; stop() silences it immediately. play() blocks until it finishes."""
 
     def __init__(self):
         self._stop = threading.Event()
@@ -165,7 +166,7 @@ class Player:
             self._proc.kill()
 
     def play(self, audio: Audio) -> bool:
-        """Sesi çal. Sonuna kadar çaldıysa True, durdurulduysa False."""
+        """Play the sound. Returns True if it played to the end, False if it was stopped."""
         self._stop.clear()
         if self.backend == "sounddevice":
             import sounddevice as sd
@@ -201,18 +202,19 @@ class Player:
                 pass
 
 
-# -------------------------------------------------------------------- mikrofon
+# -------------------------------------------------------------------- microphone
 class Microphone:
-    """Mikrofondan 16 kHz, 30 ms'lik PCM kareleri okur (sounddevice gerekir)."""
+    """Reads 30 ms PCM frames at 16 kHz from the microphone (requires sounddevice)."""
 
     RATE = 16000
     FRAME = 480  # 30 ms
 
-    TARGET_PEAK = 0.35  # otomatik kazanç: konuşmanın tepe seviyesi bu civara getirilir
+    TARGET_PEAK = 0.35  # automatic gain: the speech peak level is brought up to about this value
     MAX_GAIN = 16.0
-    # Aygıt arabelleği (sn). Varsayılan "low" 0,06 sn: dinleme döngüsü bundan uzun takılınca (oyun işlemciyi
-    # yerken) ses hata vermeden kayboluyordu; "Alice naber"in "Ali"si gidip "Ne hayır?" kalıyordu (30 Ekim,
-    # ölçüldü: 0,4 sn takılmada ~0,3 sn ses yok). 0,5 sn'de kayıp yok, okuma beklemesi aynı (30 ms): gecikme eklemez.
+    # Device buffer (sec). The default "low" is 0.06 sec: when the listening loop stalled longer than that (the game
+    # hogging the CPU), audio was silently lost without an error. The "Ali" in "Alice naber" (what's up) went missing
+    # and only "Ne hayır?" was left (Oct 30, measured: a 0.4 sec stall lost ~0.3 sec of audio). At 0.5 sec nothing
+    # is lost, and the read wait is the same (30 ms), so it adds no latency.
     LATENCY = 0.5
 
     def __init__(self, device: int | str | None = None, auto_gain: bool = True):
@@ -229,7 +231,7 @@ class Microphone:
     def _open(self):
         sd = self._sd
         if self.device is None and sys.platform == "win32":
-            # Windows'un varsayılanı MME: aynı mikrofon WASAPI'den ~20 kat güçlü geliyor (Razer'da ölçüldü).
+            # Windows' default is MME: the same mic is ~20x louder via WASAPI (measured on a Razer).
             wasapi = wasapi_twin(sd)
             if wasapi is not None:
                 try:
@@ -238,7 +240,7 @@ class Microphone:
                                            latency=self.LATENCY)
                     self.name = f"{sd.query_devices(wasapi)['name']} (WASAPI)"
                     return st
-                except Exception:  # noqa: BLE001 - açılmazsa varsayılan
+                except Exception:  # noqa: BLE001 - fall back to the default if it can't be opened
                     pass
         st = sd.RawInputStream(samplerate=self.RATE, channels=1, dtype="int16", blocksize=self.FRAME,
                                device=self.device, latency=self.LATENCY)
@@ -268,12 +270,12 @@ class Microphone:
             self._stream = None
 
     def reopen(self) -> None:
-        """Kulaklık uyuyup geri gelince eski akış sıfır vermeye devam ediyor: kapat, yeniden aç."""
+        """When headphones sleep and wake up, the old stream keeps returning zeros: close it and reopen it."""
         self.__exit__()
         self.__enter__()
 
     def read(self) -> bytes:
-        if self._stream is None:  # yeniden açma başarısız oldu: çağıran tekrar denesin
+        if self._stream is None:  # reopen failed: the caller should try again
             raise OSError("mikrofon kapalı")
         data, _ = self._stream.read(self.FRAME)
         data = bytes(data)
@@ -284,7 +286,7 @@ class Microphone:
         if not a:
             return data
         peak = max(abs(min(a)), max(a)) / 32768
-        # Tepe izleyici: hızlı yüksel, yavaş (~10 sn) düş. Kazanç sadece konuşma seviyesine göre ayarlanır.
+        # Peak tracker: rises fast, falls slowly (~10 sec). Gain is adjusted based on speech level only.
         self._peak = peak if peak > self._peak else self._peak * 0.997
         if self._peak > 0.003:
             want = min(self.MAX_GAIN, max(1.0, self.TARGET_PEAK / self._peak))
@@ -297,7 +299,7 @@ class Microphone:
 
 
 def wasapi_twin(sd) -> int | None:
-    """Varsayılan giriş aygıtının WASAPI'deki karşılığı (MME adları 31 karakterde kesilir)."""
+    """The WASAPI counterpart of the default input device (MME names are cut off at 31 characters)."""
     try:
         default = sd.default.device[0]
         if default is None or default < 0:
@@ -305,7 +307,7 @@ def wasapi_twin(sd) -> int | None:
         info = sd.query_devices(default)
         apis = sd.query_hostapis()
         if "WASAPI" in apis[info["hostapi"]]["name"]:
-            return None  # zaten WASAPI
+            return None  # already WASAPI
         name = info["name"].strip()[:31].lower()
         for i, d in enumerate(sd.query_devices()):
             if (d.get("max_input_channels", 0) > 0 and "WASAPI" in apis[d["hostapi"]]["name"]

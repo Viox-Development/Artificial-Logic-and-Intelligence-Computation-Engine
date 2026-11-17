@@ -146,7 +146,7 @@ def memory_section(profile: str) -> str:
 
 
 def with_memory(system: str, profile: str) -> str:
-    """Sistem istemindeki hafıza bölümünü güncel profille değiştir (yoksa sona ekle)."""
+    """Replace the memory section in the system prompt with the current profile (append to the end if not found)."""
     start, end = system.find(MEMORY_OPEN), system.find(MEMORY_CLOSE)
     if start < 0 or end < start:
         return system + ("\n\n" + memory_section(profile) if profile else "")
