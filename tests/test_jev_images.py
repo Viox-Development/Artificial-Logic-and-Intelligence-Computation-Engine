@@ -186,7 +186,8 @@ def test_reflex_clicks_what_it_sees_when_the_window_has_no_readable_items():
     state, questions, images = dec.calls[0]
     assert isinstance(questions["target"], Box) and isinstance(questions["target_visible"], Noul)
     assert VISUAL_KEY in questions["next"].criteria and state["screen"] in images
-    assert Image.open(__import__("io").BytesIO(images[state["screen"]])).format == "JPEG"
+    with Image.open(__import__("io").BytesIO(images[state["screen"]])) as image:
+        assert image.format == "JPEG"
     assert obs.goal == "Ayarlar'ı aç"  # the frame filter should know the goal
 
 

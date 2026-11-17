@@ -153,7 +153,8 @@ def test_remove_moves_file_aside(monkeypatch):
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: (True, "ok"))
     selftools.prepare("steam_recent", "x", "listeler", NO_NET, GOOD, GOOD_TEST, None)
     path, tools = selftools.install("steam_recent")
-    assert "kaldırıldı" in selftools.remove("steam_recent")
+    result = selftools.remove("steam_recent")
+    assert "kaldırıldı" in result
     assert not path.exists() and list((plugins.plugin_dir() / "_kaldirilan").glob("steam_recent-*.py"))
     assert selftools.load_registry()["steam_recent"]["disabled"]
     with pytest.raises(ToolError, match="kaldırıldı"):  # the copy in the running agent stops too

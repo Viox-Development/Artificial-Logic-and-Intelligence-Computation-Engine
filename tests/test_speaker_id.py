@@ -216,7 +216,9 @@ def test_app_enroll_records_each_sentence_saves_and_tries_out(tmp_path, monkeypa
     assert mic.marked  # a running ALICE must not wake while recording
     assert v["state"] == "done" and v["result"]["recognized"] and v["profile"]["samples"] == len(sid.ENROLL_SENTENCES)
     assert len(v["takes"]) == len(sid.ENROLL_SENTENCES) and not sid.enrolling()  # marker cleared
-    assert s.remove()["ok"] and sid.load_profile() is None
+    result = s.remove()
+    assert result["ok"]
+    assert sid.load_profile() is None
 
 
 def test_app_enroll_cancel_and_silent_mic(tmp_path, monkeypatch):

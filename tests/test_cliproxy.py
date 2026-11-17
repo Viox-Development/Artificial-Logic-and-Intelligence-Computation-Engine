@@ -103,9 +103,12 @@ def test_remove_validates_name_and_calls_delete(proxy_home, monkeypatch):
         return {"status": "ok"}
 
     monkeypatch.setattr(cliproxy, "_req", fake)
-    assert cliproxy.remove("../../etc/passwd")["ok"] is False
-    assert cliproxy.remove("not-json")["ok"] is False
-    assert cliproxy.remove("claude-abc-a@b.c.json")["ok"] is True
+    invalid_path = cliproxy.remove("../../etc/passwd")
+    assert invalid_path["ok"] is False
+    invalid_name = cliproxy.remove("not-json")
+    assert invalid_name["ok"] is False
+    removed = cliproxy.remove("claude-abc-a@b.c.json")
+    assert removed["ok"] is True
     assert seen["method"] == "DELETE" and "name=claude-abc-a%40b.c.json" in seen["path"]
 
 

@@ -462,5 +462,6 @@ def test_later_default_rule_added_to_old_rules_file(tmp_path):
     rs = RuleSet(p)
     assert {r.id for r in rs.rules} == {"disk-full", "disk-low"}
     assert not rs.get("disk-full").enabled  # a rule the user turned off stays off
-    assert rs.remove("disk-low")
+    removed = rs.remove("disk-low")
+    assert removed
     assert RuleSet(p).get("disk-low") is None  # a deleted default does not come back

@@ -67,4 +67,5 @@ def test_png_b64_downscales():
     data = base64.b64decode(png_b64(Image.new("RGB", (3200, 400)), max_width=1600))
     from io import BytesIO
 
-    assert Image.open(BytesIO(data)).size == (1600, 200)
+    with Image.open(BytesIO(data)) as image:
+        assert image.size == (1600, 200)

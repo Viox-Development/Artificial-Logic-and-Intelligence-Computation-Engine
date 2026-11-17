@@ -315,7 +315,8 @@ def test_screenshot_failure_and_success(monkeypatch):
     monkeypatch.setattr(android.subprocess, "run",
                         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, buf.getvalue(), b""))
     png = base64.b64decode(android.Device("192.168.1.50", "tv").screenshot(width=500))
-    assert Image.open(io.BytesIO(png)).size == (500, 250)
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == (500, 250)
 
 
 def test_android_tool_screenshot_timeout_becomes_tool_error(monkeypatch, tmp_path):

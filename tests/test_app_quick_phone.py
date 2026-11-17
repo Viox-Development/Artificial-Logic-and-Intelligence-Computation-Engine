@@ -177,7 +177,9 @@ def test_ask_region_paths(fake_server, monkeypatch):
     monkeypatch.setattr(quick, "select_region", lambda: Image.new("RGB", (40, 20)))
     qb.ask_region()
     img = qb.state.quick_pending["image"]
-    assert Image.open(io.BytesIO(base64.b64decode(img))).size == (40, 20) and len(urls) == 1
+    with Image.open(io.BytesIO(base64.b64decode(img))) as image:
+        assert image.size == (40, 20)
+    assert len(urls) == 1
 
 
 def test_explain_clipboard_truncates_and_empty(fake_server, monkeypatch):
