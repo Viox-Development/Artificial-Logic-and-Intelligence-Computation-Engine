@@ -288,6 +288,10 @@ have their own issue and are good places to start contributing.
 - Several "control the computer" features are Windows-only for now (see Platform support).
 - Parts of the interface and prompts are still in Turkish.
 
+## Ideas and feedback
+
+Have an idea, a wish, or something that annoyed you? [Share it in Ideas](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/categories/ideas), even if it is rough. Upvote the ideas you want most: they shape what gets built next. Questions go to [Q&A](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/categories/q-a), bugs to [issues](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/issues/new/choose).
+
 ## Contributing
 
 Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md), look for
