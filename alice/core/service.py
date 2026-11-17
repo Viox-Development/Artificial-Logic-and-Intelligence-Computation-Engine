@@ -151,7 +151,7 @@ class Core:
     def __init__(self, cfg: Config, store: Store | None = None, monitors: list[Monitor] | None = None,
                  notifier: Notifier | None = None, rules: RuleSet | None = None, tasks: TaskStore | None = None,
                  decider=None, run_agent: Callable[[str], str] | None = None,
-                 restart: Callable[[], None] | None = None):
+                 restart: Callable[[], None] | None = None, standing=None):
         self.cfg = cfg
         c = cfg.data.get("core", {})
         self.interval = float(c.get("interval", 15))
@@ -191,6 +191,15 @@ class Core:
         self.rules = rules or RuleSet()
         self.tasks = tasks or TaskStore()
         self.run_agent = run_agent
+        # Tasks ("Görevler", alice/core/tasks.py): standing responsibilities with their own triggers, memory and
+        # approvals. They run only when the core can run an agent (the same condition as scheduled jobs).
+        if standing is None:
+            from alice.core.tasks import TaskBook, TaskRunner, make_task_agent
+
+            standing = TaskRunner(TaskBook(), make_task_agent(cfg) if run_agent is not None else None,
+                                  notify=self._task_notify, store=self.store, mode=lambda: self.modes.current,
+                                  cfg=cfg)
+        self.standing = standing
         self.engine = RuleEngine(self.rules, self.store, self.notifier, decider, run_agent,
                                  mode=lambda: self.modes.current)
         self.stop_event = threading.Event()
@@ -270,6 +279,7 @@ class Core:
             ("kural/görev dosyası yükleme", self._reload_if_changed),
             ("kural değerlendirme", lambda: self.engine.evaluate(now)),
             ("zamanlanmış görevler", lambda: self._run_due(now)),
+            ("görevler", lambda: self.standing.tick(now)),
             ("güncelleme kontrolü", lambda: self._maybe_update(now)),
             ("hafıza işi", self._maybe_memory),
             ("PR takibi", lambda: self._maybe_prwatch(now)),
@@ -553,7 +563,9 @@ class Core:
             return
         if self.restart_pending:
             # don't cut off a running task or chat: restart once idle
-            if not self.running_tasks and not (self.busy_hook is not None and self.busy_hook()):
+            standing = getattr(self, "standing", None)  # None when __init__ was skipped (tests)
+            if (not self.running_tasks and not (standing is not None and standing.running)
+                    and not (self.busy_hook is not None and self.busy_hook())):
                 self.restart()
             return
         every = max(5.0, float(s.get("check_every_minutes") or 60)) * 60
@@ -613,6 +625,11 @@ class Core:
         except OSError:
             pass
         updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]], env={"ALICE_RESTARTED": "1"})
+
+    def _task_notify(self, title: str, body: str, severity: str = "info", kind: str = "task") -> None:
+        """A task's notification: desktop toast + event. Approvals are warnings, so the phone app's poller pushes
+        them to the phone too."""
+        self.notifier.send(Notification(title, body[:500], severity, "task", kind=kind))
 
     def _run_due(self, now: float) -> None:
         if self.run_agent is None:

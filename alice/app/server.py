@@ -37,7 +37,7 @@ from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
 from alice.tools.base import DesktopLock, ToolResult
 
 STATIC = Path(__file__).parent / "static"
-STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
+STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "tasks.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
                 "main.js": "text/javascript", "app.css": "text/css", "marked.min.js": "text/javascript",
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
                 "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript",
@@ -1338,6 +1338,17 @@ class AppState:
             self._journal = Journal(self.cfg)
         return self._journal
 
+    _tasks = None
+
+    @property
+    def tasks(self):
+        """Tasks ("Görevler"): standing background responsibilities and the approvals inbox."""
+        if self._tasks is None:
+            from alice.app.tasks_panel import TasksPanel
+
+            self._tasks = TasksPanel(self.cfg, self.router)
+        return self._tasks
+
     _automations = None
 
     @property
@@ -2534,6 +2545,13 @@ def make_handler(state: AppState):
                 return self._json(state.journal.eval_view())
             if u.path == "/api/automations":
                 return self._json(state.automations.view())
+            if u.path == "/api/tasks":
+                return self._json(state.tasks.view())
+            if u.path == "/api/tasks/approvals":
+                return self._json(state.tasks.approvals())
+            if u.path == "/api/tasks/log":
+                r = state.tasks.log((q.get("id") or [""])[0])
+                return self._json(r, 200 if r.get("ok") else 404)
             if u.path == "/api/system":
                 return self._json(state.system.view())
             if u.path == "/api/system/mictest":
@@ -2666,6 +2684,9 @@ def make_handler(state: AppState):
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/automations/action":
                     r = state.automations.action(str(d.get("action", "")), d)
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/tasks/action":
+                    r = state.tasks.action(str(d.get("action", "")), d)
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/system/action":
                     r = state.system.action(str(d.get("action", "")), d)

@@ -674,6 +674,7 @@ function paletteItems() {
   act("Eylemler", IC.update, "Güncellemeleri denetle", "GitHub'daki son sürüm", checkUpdate);
   act("Eylemler", IC.gear, "Ayarlar", "", () => showSettings("general"), "Ctrl+,");
   act("Git", IC.list, "Projeler", "Ajan takımları", () => goSection("projects"));
+  act("Git", IC.check, "Görevler", "Arka planda yürüttüğü sorumluluklar ve onay kutusu", () => goSection("tasks"));
   act("Git", IC.bolt, "Otomasyonlar", "Kurallar, zamanlanmış görevler, notlar, kayıtlar", () => goSection("auto"));
   act("Git", IC.term, "Sistem", "Çekirdek, asistan, ses, kurulum, kullanım", () => goSection("system"));
   act("Git", IC.plug, "Bağlantılar", "Servisler ve API anahtarları", () => goSection("connect"));
@@ -2688,8 +2689,8 @@ const secOf = (tab) => Object.keys(SECTIONS).find((k) => SECTIONS[k][1].includes
 function markSection(sec) {
   app.dataset.sec = sec;
   for (const b of document.querySelectorAll("#rail [data-sec]")) b.classList.toggle("on", b.dataset.sec === sec && b.classList.contains("rbtn"));
-  $("#sideTitle").textContent = sec === "chat" ? "Sohbetler" : sec === "projects" ? "Projeler" : SECTIONS[sec][0];
-  const inPage = sec in SECTIONS || (sec === "projects" && !S.proj);
+  $("#sideTitle").textContent = sec === "chat" ? "Sohbetler" : sec === "projects" ? "Projeler" : sec === "tasks" ? "Görevler" : SECTIONS[sec][0];
+  const inPage = sec in SECTIONS || sec === "tasks" || (sec === "projects" && !S.proj);
   if (!(sec in SECTIONS)) $("#sideNav").replaceChildren();
   app.classList.toggle("in-page", inPage);
   $("#pageView").hidden = !inPage;
@@ -2779,6 +2780,7 @@ async function drawOnboarding() {
 function goSection(sec) {
   if (sec === "chat") showChat();
   else if (sec === "projects") showProjects();
+  else if (sec === "tasks") showTasks();
   else showSettings(SECTIONS[sec][1][0]);
   closeSideOnMobile();
 }

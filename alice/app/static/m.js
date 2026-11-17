@@ -21,6 +21,7 @@ const S = {
   sid: (() => { try { return localStorage.getItem("alice.sid") || ""; } catch (e) { return ""; } })(),
   tab: "chat", status: {}, sessions: [], busy: false, pending: new Map(), online: true,
   remote: null, projects: [], images: [], cur: null, steps: null, notifTab: "pending", lastSeenEvent: 0,
+  taskAsks: [],
 };
 
 /* ================================================================== yardımcılar */
@@ -1305,8 +1306,53 @@ function dropPending(id) {
   if (CALL) drawCall();
   if (S.tab === "bell") renderBell();
 }
+/* Görev onayları (alice/core/tasks.py): arka plandaki bir görev karar istediğinde. Bilgisayarda da aynı kutu var;
+   hangisinden cevaplanırsa diğerinden düşer. Uygulama kapalıyken bildirimi Android servisi uyarı olayından atar. */
+async function loadTaskAsks() {
+  const r = await api("/api/tasks/approvals");
+  if (!r || !Array.isArray(r.approvals)) return;
+  const known = new Set(S.taskAsks.map((a) => a.id));
+  S.taskAsks = r.approvals;
+  const fresh = S.taskAsks.filter((a) => !known.has(a.id));
+  if (fresh.length && known.size && document.hidden && NATIVE && NATIVE.notify) {
+    try { NATIVE.notify("Onay bekliyor · " + (fresh[0].task || "Görev"), fresh[0].title, "task-" + fresh[0].id); } catch (e) { /* yok */ }
+  }
+  updateBellBadge();
+  if (S.tab === "bell" && S.notifTab === "pending" && !STACK.bell.length && (fresh.length || known.size !== S.taskAsks.length)) renderBell();
+}
+function drawTaskAsks(body) {
+  for (const a of S.taskAsks) {
+    const box = el("div", "ask2 task");
+    box.append(who("Görev · " + (a.task || ""), a.ts), el("p", "", a.title));
+    if (a.body) box.appendChild(el("code", "", a.body));
+    if (a.action) {
+      const det = el("details", "ta-act");
+      det.append(el("summary", "", "Onaylarsan yapılacak"), el("code", "", a.action));
+      box.appendChild(det);
+    }
+    const answer = async (decision, reply) => {
+      box.classList.add("done");
+      const r = await api("/api/tasks/action", { action: "answer", id: a.id, decision, reply: reply || "" });
+      if (!r || r.ok === false) { box.classList.remove("done"); return toast((r && r.error) || "olmadı"); }
+      haptic(15);
+      toast(decision === "approve" ? "Onaylandı, ALICE yapıyor" : decision === "reject" ? "Reddedildi" : "Cevap gitti");
+      S.taskAsks = S.taskAsks.filter((x) => x.id !== a.id);
+      updateBellBadge();
+      renderBell();
+    };
+    const acts = el("div", "acts");
+    acts.append(btn("go", "Onayla", () => answer("approve")), btn("no", "Reddet", () => answer("reject")));
+    const ans = el("div", "ans");
+    const inp = el("input");
+    inp.placeholder = "Cevap ya da düzeltme yaz";
+    const go = btn("", "Gönder", () => { const t = inp.value.trim(); if (t) answer("reply", t); });
+    ans.append(inp, go);
+    box.append(acts, ans);
+    body.appendChild(box);
+  }
+}
 function updateBellBadge() {
-  const n = S.pending.size + S.projects.filter((p) => p.questions).length;
+  const n = S.pending.size + S.taskAsks.length + S.projects.filter((p) => p.questions).length;
   const b = $("#bellBadge");
   b.hidden = !n;
   b.textContent = n;
@@ -1319,7 +1365,7 @@ function renderBell() {
   const hd = el("div", "hd");
   hd.appendChild(el("h1", "", "Bildirim"));
   const seg = el("div", "seg2");
-  const n = S.pending.size + S.projects.filter((p) => p.questions).length;
+  const n = S.pending.size + S.taskAsks.length + S.projects.filter((p) => p.questions).length;
   for (const [k, label] of [["pending", "Bekleyen"], ["all", "Hepsi"], ["warn", "Uyarılar"]]) {
     const b = btn(S.notifTab === k ? "on" : "", label, () => { S.notifTab = k; renderBell(); });
     if (k === "pending" && n) b.appendChild(el("i", "", String(n)));
@@ -1340,6 +1386,7 @@ function who(text, ts) {
   return w;
 }
 async function drawPending(body) {
+  drawTaskAsks(body);
   const items = [...S.pending.values()].sort((a, b) => b.at - a.at);
   for (const p of items) {
     const box = el("div", "ask2");
@@ -2209,9 +2256,12 @@ document.addEventListener("visibilitychange", () => {
   if (S.tab === "pc") { refreshPc(); grabShot(); }
   api("/api/state").then(applyStatus);
   loadProjects();
+  loadTaskAsks();
 });
 setInterval(() => { if (!document.hidden && S.tab === "pc") refreshPc(); }, 5000);
 setInterval(() => { if (!document.hidden) loadProjects(); }, 20000);
+setInterval(loadTaskAsks, 20000);  // also while hidden: the in-app notification needs it (cheap: one small request)
+loadTaskAsks();
 applyTheme();
 connect();
 (async () => {

@@ -448,3 +448,7 @@ body.in-call .toast { bottom: calc(var(--safe-b) + 150px); }
 .c-btn.hang svg { transform: rotate(135deg); }
 .call.ringing.outbound .c-btn.green button { animation: shake 1.2s ease-in-out infinite; }
 @keyframes shake { 0%, 60%, 100% { transform: rotate(0); } 10%, 30%, 50% { transform: rotate(-12deg); } 20%, 40% { transform: rotate(12deg); } }
+/* Görev onayları (bildirim kutusu) */
+.ask2.task .ta-act summary { font-size: 12.5px; color: var(--muted); }
+.ask2.task .ta-act code { margin-top: 6px; }
+.ask2.done { opacity: .5; pointer-events: none; }
