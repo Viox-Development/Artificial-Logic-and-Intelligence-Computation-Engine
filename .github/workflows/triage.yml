@@ -28,11 +28,11 @@ jobs:
     steps:
       - uses: actions/first-interaction@v3
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
             Thanks for opening your first issue in ALICE! A maintainer will triage it soon.
             If you would like to work on it yourself, say so here and we will assign it to you.
-          pr-message: |
+          pr_message: |
             Thanks for your first pull request to ALICE! 🎉
             A few things will happen automatically: CI runs the tests, the CLA check asks you to sign once,
             and the PR gets labels for the areas it touches. See CONTRIBUTING.md if anything is unclear.
