@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,7 +53,7 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-REPO = "hayatexe/Artificial-Logic-and-Intelligence-Computation-Engine"
+REPO = "Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine"
 API = "https://api.github.com"
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 WINDOWS = sys.platform == "win32"
@@ -63,6 +64,9 @@ BUILD_FILE = ".alice-build"
 GIT_INSTALL_RETRY = 86400.0  # seconds: if Git could not be installed with winget, it is retried no sooner than this
 DEFAULTS: dict[str, Any] = {
     "mode": "auto",              # auto | notify | off
+    # stable: yalnız yayınlanmış sürüm etiketlerine (vX.Y.Z) güncellenir. main'e birleşen her PR kullanıcıların
+    # bilgisayarında hemen çalışmasın diye varsayılan bu. main: dalın en son commit'ine (geliştirici için).
+    "channel": "stable",
     "branch": "main",
     "check_every_minutes": 60,
     "require_green_ci": True,
@@ -84,6 +88,9 @@ def settings(cfg: Any = None) -> dict[str, Any]:
     env = os.environ.get("ALICE_UPDATE_MODE")
     if env in ("auto", "notify", "off"):
         out["mode"] = env
+    channel = os.environ.get("ALICE_UPDATE_CHANNEL")
+    if channel in ("stable", "main"):
+        out["channel"] = channel
     return out
 
 
@@ -303,6 +310,30 @@ def remote_head(repo: Path, branch: str, timeout: float = 20.0) -> tuple[str, st
     return "", f"uzak dal bulunamadı: {branch}"
 
 
+TAG_RX = re.compile(r"^refs/tags/v(\d+)\.(\d+)\.(\d+)$")
+
+
+def latest_release(repo: Path, timeout: float = 20.0) -> tuple[str, str, str]:
+    """En yüksek sürüm etiketi: (commit sha, etiket, hata). Açıklamalı etiketlerde commit'in kendisi (^{}) alınır."""
+    code, out = _git(["ls-remote", "--tags", "origin", "refs/tags/v*"], repo, timeout=timeout)
+    if code != 0:
+        return "", "", out.strip().splitlines()[-1] if out.strip() else "ls-remote başarısız"
+    shas: dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        sha, ref = parts
+        peeled = ref.endswith("^{}")
+        ref = ref[:-3] if peeled else ref
+        if TAG_RX.match(ref) and (peeled or ref not in shas):
+            shas[ref] = sha
+    if not shas:
+        return "", "", "henüz yayınlanmış bir sürüm yok"
+    best = max(shas, key=lambda r: tuple(int(x) for x in TAG_RX.match(r).groups()))  # type: ignore[union-attr]
+    return shas[best], best.removeprefix("refs/tags/"), ""
+
+
 def contains(repo: Path, sha: str, head: str = "HEAD") -> bool:
     """Is `sha` already in the local branch (an ancestor of head, or head itself)? False if the commit is not local."""
     code, _ = _git(["merge-base", "--is-ancestor", sha, head], repo, timeout=20)
@@ -372,10 +403,11 @@ class UpdateInfo:
     commits: list[str] = field(default_factory=list)
     ci: str = "unknown"
     error: str = ""
-    running: str = ""       # commit this process started with (if mark_running was called)
-    bad: bool = False       # the remote commit was rolled back because it could not be opened before
-    ahead: bool = False     # the remote commit already exists locally (local branch is ahead): nothing to pull
-    on: str = ""            # local branch; if it differs from the configured branch, it is not pulled automatically
+    running: str = ""       # bu sürecin başladığı commit (mark_running çağrıldıysa)
+    bad: bool = False       # uzaktaki commit daha önce açılamadığı için geri alındı
+    ahead: bool = False     # uzaktaki commit yerelde zaten var (yerel dal önde): çekecek bir şey yok
+    on: str = ""            # yerelde açık dal; ayarlardaki daldan farklıysa otomatik çekilmez
+    tag: str = ""           # stable kanalında hedef sürüm etiketi (vX.Y.Z)
 
     @property
     def available(self) -> bool:
@@ -414,7 +446,7 @@ class UpdateInfo:
                 "blocked": self.blocked, "error": self.error, "count": len(self.commits), "stale": self.stale,
                 # On another branch on purpose (development): the UI shows it only when checked by hand.
                 "off_branch": bool(self.available and self.on and self.on not in ("HEAD", self.branch)),
-                "running": self.running[:7]}
+                "running": self.running[:7], "tag": self.tag}
 
 
 def _state_path() -> Path:
@@ -589,7 +621,11 @@ def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -
     if repo is None:
         return UpdateInfo(error=why)
     info = UpdateInfo(repo=repo, branch=branch, local=local_commit(repo), running=_RUNNING or "")
-    info.remote, info.error = remote_head(repo, branch, float(timeout or s.get("startup_timeout") or 12))
+    wait = float(timeout or s.get("startup_timeout") or 12)
+    if str(s.get("channel") or "stable") == "main":
+        info.remote, info.error = remote_head(repo, branch, wait)
+    else:
+        info.remote, info.tag, info.error = latest_release(repo, wait)
     info.bad = bool(info.remote) and info.remote in (read_state().get("bad") or [])
     # If the local branch is ahead of the remote (e.g. a feature branch cut from main), the SHAs differ but there is
     # nothing to pull. Without this check, every startup said "new version available" and did an empty pull and restart.
@@ -669,11 +705,13 @@ def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> t
     if local_commit(repo) != info.local:
         # Another process already pulled while we waited for the lock: don't pull again, the result is the same.
         return True, f"zaten güncellendi: {local_commit(repo)[:7]}"
-    say(f"güncelleme çekiliyor: {info.local[:7]} → {info.remote[:7]}")
-    code, out = _git(["fetch", "--prune", "origin", info.branch], repo, timeout=300)
+    say(f"güncelleme çekiliyor: {info.local[:7]} → {info.tag or info.remote[:7]}")
+    ref = ["tag", info.tag] if info.tag else [info.branch]
+    code, out = _git(["fetch", "--prune", "origin", *ref], repo, timeout=300)
     if code != 0:
         return False, f"fetch başarısız: {out.strip()[-300:]}"
-    code, out = _git(["merge", "--ff-only", "FETCH_HEAD"], repo, timeout=120)
+    # Etikette açıklamalı etiket nesnesi değil commit'in kendisi birleştirilir (yoksa ff yerine birleştirme ister).
+    code, out = _git(["merge", "--ff-only", info.remote if info.tag else "FETCH_HEAD"], repo, timeout=120)
     if code != 0:
         return False, ("fast-forward yapılamadı (yerel commit'lerin olabilir): " + out.strip()[-300:])
     new = local_commit(repo)

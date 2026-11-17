@@ -20,8 +20,8 @@ Definition in `~/.alice/feeds.toml`:
     metric = "feed.discord.yeni"   # optional: count of items passing the condition, usable as a metric in rules
     agent = ""                      # if set: when a notification goes out, ALICE wakes up and does this job
 
-    [feed.when]                     # which items are worth notifying (see alice/core/conditions.py)
-    any = ["hayat", "@everyone"]
+    [feed.when]                     # hangi öğe bildirime değer (bkz. alice/core/conditions.py)
+    any = ["alice", "@everyone"]
     none = ["bot"]
     ask = "Bu mesaj bana bir şey soruyor ya da acil mi?"
 

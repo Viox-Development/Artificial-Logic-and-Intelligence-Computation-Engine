@@ -1,0 +1,54 @@
+# Pull request labels by changed paths (actions/labeler v5 format).
+security-sensitive:
+  - changed-files:
+      - any-glob-to-any-file:
+          - alice/permissions.py
+          - alice/sandbox.py
+          - alice/sandbox_run.py
+          - alice/guard.py
+          - alice/gitsafe.py
+          - alice/updater.py
+          - alice/tools/shell.py
+          - alice/tools/github.py
+          - alice/tools/browser_ext.py
+          - alice/extension/**
+          - alice/connect/**
+agent:
+  - changed-files:
+      - any-glob-to-any-file: [alice/agent.py, alice/tools/**, alice/subagents.py, alice/multistep.py]
+app:
+  - changed-files:
+      - any-glob-to-any-file: [alice/app/**]
+voice:
+  - changed-files:
+      - any-glob-to-any-file: [alice/voice/**]
+core:
+  - changed-files:
+      - any-glob-to-any-file: [alice/core/**]
+providers:
+  - changed-files:
+      - any-glob-to-any-file: [alice/providers/**]
+memory:
+  - changed-files:
+      - any-glob-to-any-file: [alice/memory.py, alice/memdir.py, alice/memvec.py]
+team:
+  - changed-files:
+      - any-glob-to-any-file: [alice/team*.py, alice/council.py]
+sims:
+  - changed-files:
+      - any-glob-to-any-file: [alice/sims/**, alice/tools/flight.py]
+android:
+  - changed-files:
+      - any-glob-to-any-file: [android/**]
+relay:
+  - changed-files:
+      - any-glob-to-any-file: [relay/**]
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ["**/*.md", docs/**]
+tests:
+  - changed-files:
+      - any-glob-to-any-file: [tests/**]
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [.github/**]

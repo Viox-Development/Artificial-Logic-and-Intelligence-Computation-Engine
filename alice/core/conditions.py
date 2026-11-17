@@ -3,12 +3,12 @@
 Checks run from cheapest to most expensive; the first condition that fails drops the item:
 
     [feed.when]
-    any    = ["hayat", "@everyone"]   # at least one must appear in the text
-    all    = ["dcs", "güncelleme"]    # all must appear
-    none   = ["bot", "reklam"]        # none may appear
-    regex  = "\\b(acil|hemen)\\b"      # regular expression (case-insensitive)
-    fields = { "author.username" = ["ahmet", "ayse"], gameextrainfo = "*" }   # "*" = not empty
-    min    = { "statistics.viewCount" = 1000 }   # numeric lower bound
+    any    = ["alice", "@everyone"]   # metinde en az biri geçmeli
+    all    = ["dcs", "güncelleme"]    # hepsi geçmeli
+    none   = ["bot", "reklam"]        # hiçbiri geçmemeli
+    regex  = "\\b(acil|hemen)\\b"      # düzenli ifade (büyük/küçük harf duyarsız)
+    fields = { "author.username" = ["ahmet", "ayse"], gameextrainfo = "*" }   # "*" = boş değil
+    min    = { "statistics.viewCount" = 1000 }   # sayısal alt sınır
     max    = { "playtime_2weeks" = 60 }
     ask    = "Bu mesaj bana bir şey soruyor ya da acil bir şey mi?"   # by meaning: System One / fast model
 

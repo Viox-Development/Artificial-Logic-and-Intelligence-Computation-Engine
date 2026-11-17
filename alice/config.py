@@ -472,7 +472,7 @@ base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 vision_models = ["google/gemma-*", "meta-llama/llama-4-*", "*vl*", "*vision*"]
 max_input_tokens = 128000
-headers = { "HTTP-Referer" = "https://github.com/hayatexe/Artificial-Logic-and-Intelligence-Computation-Engine", "X-Title" = "ALICE" }
+headers = { "HTTP-Referer" = "https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine", "X-Title" = "ALICE" }
 
 [providers.groq]
 base_url = "https://api.groq.com/openai/v1"
@@ -593,11 +593,14 @@ disabled = []       # kapatılacak bağlantı adları, ör. ["discord"]
 paths = []          # ek tanım klasörleri
 
 [update]
-# ALICE kendini GitHub'daki depodan günceller (main'e yeni commit girince).
+# ALICE kendini GitHub'daki depodan günceller.
 # auto   = açılışta sessizce güncelle ve en son sürümle aç (varsayılan)
 # notify = sadece haber ver, güncellemeyi sen başlat
 # off    = hiç bakma
 mode = "auto"
+# stable = sadece yayınlanmış sürümlere (vX.Y.Z etiketleri) güncelle (varsayılan)
+# main   = main'e giren her commit'e güncelle (geliştiriciler için)
+channel = "stable"
 branch = "main"
 check_every_minutes = 60      # uygulama açıkken arka planda bu sıklıkta bakar
 require_green_ci = true       # yeni commit'in CI'ı kırmızıysa otomatik güncelleme yapılmaz

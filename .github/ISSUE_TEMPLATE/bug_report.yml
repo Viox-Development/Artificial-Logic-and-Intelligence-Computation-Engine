@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in ALICE does not work as expected.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please do **not** paste API keys, tokens, cookies, or personal data.
+        Security problems go through the Security tab ("Report a vulnerability"), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `alice ...`
+        2. Ask "..."
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Agent / tools
+        - Desktop app
+        - Voice
+        - Background core / automations
+        - Phone app
+        - Providers / models
+        - Memory
+        - Team projects
+        - Installer / updater
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ALICE version
+      description: Output of `git rev-parse --short HEAD` or the version shown in Settings.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and Python version
+      placeholder: Windows 11, Python 3.12
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `~/.alice/app.log` or `~/.alice/core.log`. Remove anything private first.
+      render: text

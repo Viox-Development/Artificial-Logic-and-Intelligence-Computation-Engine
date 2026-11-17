@@ -1,0 +1,28 @@
+# Release notes are drafted automatically from merged pull requests and their labels.
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "🚀 Features"
+    labels: [enhancement]
+  - title: "🐛 Fixes"
+    labels: [bug]
+  - title: "🔒 Security"
+    labels: [security, security-sensitive]
+  - title: "📦 Dependencies"
+    labels: [dependencies]
+  - title: "🧰 Maintenance"
+    labels: [ci, docs, tests]
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+exclude-labels: [skip-changelog]
+version-resolver:
+  major:
+    labels: [breaking]
+  minor:
+    labels: [enhancement]
+  default: patch
+template: |
+  ## Changes
+
+  $CHANGES
+
+  Thanks to everyone who contributed: $CONTRIBUTORS

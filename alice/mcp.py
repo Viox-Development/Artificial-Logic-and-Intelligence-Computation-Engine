@@ -5,8 +5,8 @@ MCP servers, etc.). config.toml:
 
     [mcp.servers.dosyalar]
     command = "npx"
-    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/hayat/Projeler"]
-    # env = { TOKEN = "${GITHUB_TOKEN}" }   # ${AD} is filled in from the environment / .env
+    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you/Projects"]
+    # env = { TOKEN = "${GITHUB_TOKEN}" }   # ${AD} ortamdan / .env'den doldurulur
     # enabled = false
     # trust_annotations = true   # trust the "readOnlyHint" tag: those tools count as reads (plan mode too,
     #                            # no prompt). Otherwise tagged tools count as writes (ask mode prompts).

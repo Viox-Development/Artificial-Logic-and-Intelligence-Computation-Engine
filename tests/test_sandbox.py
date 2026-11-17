@@ -242,3 +242,39 @@ def test_windows_sandbox_hook_write_is_reported(tmp_path):
     assert "GÜVENLİK" not in res.text
     res = TOOLS["run_command"].run(c, "Set-Content -Path .git/hooks/pre-commit -Value 'echo kotu'")
     assert "GÜVENLİK UYARISI" in res.text and "pre-commit" in res.text, res.text
+
+
+def test_personal_folders_are_never_sandbox_areas(workdir):
+    from pathlib import Path
+
+    for name in ("Downloads", "Desktop", "Documents"):
+        assert "kişisel klasör" in sandbox.boxable(Path.home() / name)
+        assert "kişisel klasör" in sandbox.boxable(Path.home() / name / "bir-proje")
+    from alice.config import alice_home
+
+    assert "kişisel klasör" in sandbox.boxable(alice_home() / "agents")
+    assert sandbox.boxable(workdir) == ""
+
+
+def test_label_low_restores_exes_and_repairs_old_labels(tmp_path, monkeypatch):
+    calls = []
+
+    class R:
+        returncode = 0
+        stdout = stderr = ""
+
+    monkeypatch.setattr(sandbox, "IS_WIN", True)
+    monkeypatch.setattr(sandbox, "_labels_path", lambda: tmp_path / "sandbox_dirs.json")
+    monkeypatch.setattr(sandbox, "_EXE_FIXED", set())
+    monkeypatch.setattr(sandbox.subprocess, "run", lambda argv, **k: calls.append(argv) or R())
+    proj = tmp_path / "proje"
+    sandbox.label_low(proj)
+    assert calls[0][1:3] == [str(proj), "/setintegritylevel"] and calls[0][3] == "(OI)(CI)low"
+    assert calls[1][1] == str(proj / "*.exe") and calls[1][3] == "M"  # .venv python'u düşük açılmasın
+    sandbox.label_low(proj)
+    assert len(calls) == 2  # aynı süreçte tekrar dokunulmaz
+
+    calls.clear()
+    monkeypatch.setattr(sandbox, "_EXE_FIXED", set())  # eski sürümün etiketlediği klasör, yeni süreç
+    sandbox.label_low(proj)
+    assert calls == [["icacls", str(proj / "*.exe"), "/setintegritylevel", "M", "/T", "/C", "/Q"]]

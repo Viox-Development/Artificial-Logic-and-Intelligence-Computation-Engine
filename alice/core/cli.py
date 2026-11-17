@@ -436,7 +436,7 @@ topic = "discord"
 # cooldown_minutes = 10      # bir bildirimden sonra gelenleri topla
 
 [feed.when]                  # hangi mesaj bildirime degsin (bos: hepsi)
-any = ["hayat", "@everyone"] # en az biri gecsin
+any = ["alice", "@everyone"] # en az biri gecsin
 none = ["bot"]               # bunlar gecmesin
 # ask = "Bu mesaj bana bir sey soruyor ya da acil mi?"   # anlamina gore: hizli model karar verir
 

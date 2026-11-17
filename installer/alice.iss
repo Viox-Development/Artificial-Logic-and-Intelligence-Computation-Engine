@@ -14,7 +14,7 @@
 AppId={{8F1C5E2A-6B7D-4A3E-9C21-5A1CE0000001}
 AppName=ALICE
 AppVersion={#AppVersion}
-AppPublisher=hayatexe
+AppPublisher=Viox Development
 DefaultDirName={localappdata}\ALICE
 DefaultGroupName=ALICE
 DisableProgramGroupPage=yes

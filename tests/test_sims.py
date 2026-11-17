@@ -835,18 +835,18 @@ def test_warthunder_threat_callouts():
 def test_warthunder_hud_parse_and_nick_learning():
     from alice.sims.warthunder import hud_events, learn_nick
 
-    msgs = [{"msg": "=R1N= Sgt_Hi_Ping (␗Su-30MKK) destroyed weapons/su_r_77_default/short"},
-            {"msg": "=WAPs= sapit (▄Su-30MK) set afire =R1N= Sgt_Hi_Ping (␗Su-30MKK)"},
-            {"msg": "=WAPs= sapit (▄Su-30MK) shot down =R1N= Sgt_Hi_Ping (␗Su-30MKK)"},
-            {"msg": "FSAF SAMP/T (TEL) shot down [SSQS] BlackBurn01 (☢MiG-29SMT)"}]
-    assert learn_nick(msgs, "su_30mkk") == "=R1N= Sgt_Hi_Ping"
-    assert learn_nick(msgs + [{"msg": "a (F-16C) shot down b (␗Su-30MKK)"}], "su_30mkk") is None  # two candidates
-    kill = [{"msg": "=R1N= Sgt_Hi_Ping (␗Su-30MKK) shot down [SSQS] BlackBurn01 (☢MiG-29SMT)"}]
-    assert hud_events(msgs + kill, "=R1N= Sgt_Hi_Ping") == [("fire", "Su-30MK"), ("killed", "Su-30MK"),
+    msgs = [{"msg": "=TAG= Pilot_One (␗Su-30MKK) destroyed weapons/su_r_77_default/short"},
+            {"msg": "=ENM= Enemy_One (▄Su-30MK) set afire =TAG= Pilot_One (␗Su-30MKK)"},
+            {"msg": "=ENM= Enemy_One (▄Su-30MK) shot down =TAG= Pilot_One (␗Su-30MKK)"},
+            {"msg": "FSAF SAMP/T (TEL) shot down [SQD] Enemy_Two (☢MiG-29SMT)"}]
+    assert learn_nick(msgs, "su_30mkk") == "=TAG= Pilot_One"
+    assert learn_nick(msgs + [{"msg": "a (F-16C) shot down b (␗Su-30MKK)"}], "su_30mkk") is None  # iki aday
+    kill = [{"msg": "=TAG= Pilot_One (␗Su-30MKK) shot down [SQD] Enemy_Two (☢MiG-29SMT)"}]
+    assert hud_events(msgs + kill, "=TAG= Pilot_One") == [("fire", "Su-30MK"), ("killed", "Su-30MK"),
                                                             ("kill", "MiG-29SMT")]
-    # On an AI SAM of type "TEL", the system's name is said as the shooter.
-    sam = [{"msg": "FSAF SAMP/T (TEL) shot down =R1N= Sgt_Hi_Ping (␗Su-30MKK)"}]
-    assert hud_events(sam, "=R1N= Sgt_Hi_Ping") == [("killed", "FSAF SAMP/T")]
+    # Yapay zekâ SAM'inde tip "TEL": düşüren olarak sistemin adı söylenir.
+    sam = [{"msg": "FSAF SAMP/T (TEL) shot down =TAG= Pilot_One (␗Su-30MKK)"}]
+    assert hud_events(sam, "=TAG= Pilot_One") == [("killed", "FSAF SAMP/T")]
     assert hud_events(kill, "") == []
 
 
