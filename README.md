@@ -131,7 +131,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 The script installs Python 3.11 and Git with winget if they are missing, creates `.venv`, installs the `computer`,
 `browser`, `app`, `core`, and `voice` extras plus local Whisper, downloads Chromium only if neither Chrome nor Edge is
 installed, then runs `alice init` and `alice shortcut`. A prebuilt
-`ALICE-Setup.exe` and the Android APK are on the [Releases](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases) page.
+`ALICE-Setup.exe` and the Android APK are attached to the [latest release](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases/latest).
 
 Manual install (also Linux and macOS):
 

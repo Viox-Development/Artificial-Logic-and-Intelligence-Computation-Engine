@@ -1,78 +1,84 @@
-name: Windows kurulumu
+name: Windows installer
 
-# ALICE-Setup.exe'yi (installer/alice.iss, Inno Setup) derler ve GitHub Releases'a koyar. Tek bir "windows" sürümü
-# her derlemede yenilenir (Releases'ta hep en son kurulum "Latest" olarak durur). En son Android APK'sı da aynı
-# sürüme eklenir: yeni bir bilgisayar ve telefon için tek indirme sayfası.
-# Kurulum kaynağı git geçmişiyle (sığ) içerir: kurulan ALICE kendini `git pull` ile günceller (alice/updater.py).
+# Builds ALICE-Setup.exe (installer/alice.iss, Inno Setup) from a release tag and attaches it to that release.
+# Installers only ever come from published vX.Y.Z releases, the same code the "stable" update channel installs, so
+# a new user never gets an unreleased commit from main. The install carries the git history (shallow): installed
+# ALICE updates itself with git (alice/updater.py).
+#
+# Rebuild for an existing release (for example one published before this workflow): run it by hand with its tag.
 
 on:
-  push:
-    branches: [main, master]
-    paths: ["alice/**", "pyproject.toml", "install.ps1", "installer/**", ".github/workflows/windows.yml"]
-  pull_request:  # sadece derler (yayınlamaz): kurulum betiği bozulduysa birleştirmeden görülsün
+  release:
+    types: [published]
+  pull_request:  # build only, no upload: a broken installer script shows up before merging
     paths: ["install.ps1", "installer/**", ".github/workflows/windows.yml"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (vX.Y.Z)"
+        required: true
 
 concurrency:
-  group: windows-installer
+  group: windows-installer-${{ github.event.release.tag_name || inputs.tag || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
   setup:
     runs-on: windows-latest
     steps:
+      - name: Check the tag
+        if: env.TAG != ''
+        shell: bash
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
       - uses: actions/checkout@v7
         with:
+          ref: ${{ env.TAG || github.ref }}
           fetch-depth: 1
-          # Kurulumun içine giden .git/config'e Actions anahtarı yazılmasın.
+          # Keep the Actions token out of the .git/config that ships in the installer.
           persist-credentials: false
-      - name: Kaynağı hazırla
+      - name: Prepare the source
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist\app | Out-Null
-          # android/ ve kurulumun kendisi gerekmez; .git kalır (güncelleme için).
+          # android/ and the installer itself are not needed; .git stays (for updates).
           robocopy . dist\app /E /XD android dist .claude /XF bubblewrap-*.zip /NFL /NDL /NJH /NJS /NP
           if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
           git -C dist\app remote set-url origin "https://github.com/$env:GITHUB_REPOSITORY.git"
-          # Git, Windows'ta .git'i gizli yapıyor; kuruluma kesin girsin. Girmezse kurulan ALICE depoyu bu commit'ten
-          # yeniden kurar (alice/updater.py, BUILD_FILE).
+          # A tag checkout is a detached HEAD; put the install on "main" like a clone, which the updater expects.
+          git -C dist\app checkout -q -B main
+          # Git hides .git on Windows; make sure it goes into the installer. Without it, installed ALICE re-creates the
+          # repo from this commit (alice/updater.py, BUILD_FILE).
           attrib -h dist\app\.git
-          Set-Content -NoNewline -Encoding ascii dist\app\.alice-build $env:GITHUB_SHA
+          Set-Content -NoNewline -Encoding ascii dist\app\.alice-build (git rev-parse HEAD)
           exit 0
-      - name: Derle (Inno Setup)
+      - name: Build (Inno Setup)
         shell: pwsh
         run: |
+          $version = if ($env:TAG) { $env:TAG.Substring(1) } else { "0.0.$env:GITHUB_RUN_NUMBER" }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc /Q "/DAppVersion=0.3.$env:GITHUB_RUN_NUMBER" "/DSourceDir=..\dist\app" installer\alice.iss
+          & $iscc /Q "/DAppVersion=$version" "/DSourceDir=..\dist\app" installer\alice.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Item dist\ALICE-Setup.exe | Format-List Name, Length
       - uses: actions/upload-artifact@v7
         with:
           name: ALICE-Setup
           path: dist/ALICE-Setup.exe
-      - name: Releases'a yükle
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      - name: Attach to the release
+        if: env.TAG != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $files = @("dist\ALICE-Setup.exe")
-          # En son imzalı APK (android-apk dalı) varsa aynı sürüme ekle.
-          gh api -H "Accept: application/vnd.github.raw" "repos/$env:GITHUB_REPOSITORY/contents/ALICE.apk?ref=android-apk" > dist\ALICE.apk 2>$null
-          if ($LASTEXITCODE -eq 0 -and (Get-Item dist\ALICE.apk).Length -gt 100000) { $files += "dist\ALICE.apk" }
+          gh release upload $env:TAG dist\ALICE-Setup.exe --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The old rolling "windows" release built from main is replaced by the installers on vX.Y.Z releases.
           gh release delete windows --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag 2>$null
-          $notes = @"
-          Always the newest build from `main`. What changed in each version is in the `vX.Y.Z` releases.
-
-          **Windows:** download `ALICE-Setup.exe` and run it. It needs no admin rights and installs Python and the required packages itself (internet required, takes a few minutes). Installed ALICE updates itself.
-
-          **Android:** `ALICE.apk` (signed). The installed app updates itself; this file is for installing it by hand.
-
-          Build 0.3.$env:GITHUB_RUN_NUMBER · commit $env:GITHUB_SHA
-          "@
-          gh release create windows @files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --latest `
-            --title "ALICE installers (Windows + Android)" --notes $notes
+          exit 0

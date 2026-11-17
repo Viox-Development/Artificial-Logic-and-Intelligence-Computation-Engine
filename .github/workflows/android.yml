@@ -1,26 +1,34 @@
 name: Android
 
-# Telefon uygulamasını (android/) derler. main'e gelince APK ve sürüm bilgisi "android-apk" dalına konur (tek commit,
-# her seferinde üstüne yazılır). Depo özel olduğu için telefon GitHub'dan indiremez: bilgisayardaki ALICE bu dalı çeker
-# ve telefona yerel ağdan verir (alice/app/phone_apk.py); uygulama yeni sürümü görünce kendini günceller.
-# İmza: Android bir uygulamayı ancak aynı anahtarla imzalanmış sürümle günceller. Anahtar depo gizli değişkenlerinde
-# durur: ALICE_KEYSTORE_B64 (base64 .jks), ALICE_KEYSTORE_PASSWORD ve ALICE_KEY_ALIAS. Yoksa APK derlenir ama
-# yayınlanmaz (her derlemede farklı bir anahtar olurdu, telefondaki uygulama güncellenemezdi).
+# Builds the phone app (android/). Pull requests and manual runs only build it. A published vX.Y.Z release attaches
+# ALICE.apk to that release and, when it is the latest release, also puts the APK and its version info on the
+# "android-apk" branch (one commit, overwritten each time). Installed phones update from there: the PC's ALICE pulls
+# that branch and serves the APK over the local network (alice/app/phone_apk.py). So phones, like the PC's stable
+# update channel, only ever get released code, never an unreleased commit from main.
+# Signing: Android updates an app only with a build signed by the same key. The key lives in the repo secrets
+# ALICE_KEYSTORE_B64 (base64 .jks), ALICE_KEYSTORE_PASSWORD and ALICE_KEY_ALIAS. Without them the APK is built but not
+# published (every build would have a different key and installed apps could not update).
 
 on:
-  push:
-    branches: [main, master]
-    paths: ["android/**", ".github/workflows/android.yml"]
+  release:
+    types: [published]
   pull_request:
     paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the APK to (vX.Y.Z); empty = build only"
+        required: false
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.event.release.tag_name || inputs.tag || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   apk:
@@ -29,7 +37,14 @@ jobs:
       run:
         working-directory: android
     steps:
+      - name: Check the tag
+        if: env.TAG != ''
+        working-directory: .
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.ref }}
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -62,29 +77,27 @@ jobs:
         with:
           name: ALICE-apk
           path: android/ALICE.apk
-      - name: Telefonlara yayınla (android-apk dalı)
-        if: env.SIGNED == '1' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      - name: Attach to the release
+        if: env.SIGNED == '1' && env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" ALICE.apk --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publish to phones (android-apk branch)
+        # Only for the latest release: rebuilding an older release by hand must not send phones back to old code.
+        if: env.SIGNED == '1' && env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          LATEST=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          if [ "$LATEST" != "$TAG" ]; then echo "$TAG is not the latest release ($LATEST): phones not updated"; exit 0; fi
+          COMMIT=$(git rev-parse HEAD)
           mkdir -p "$RUNNER_TEMP/dist" && cp ALICE.apk "$RUNNER_TEMP/dist/"
           cd "$RUNNER_TEMP/dist"
           SHA=$(sha256sum ALICE.apk | cut -d' ' -f1)
           printf '{"version_code": %s, "version_name": "0.2.%s", "sha256": "%s", "commit": "%s"}\n' \
-            "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$SHA" "$GITHUB_SHA" > version.json
+            "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$SHA" "$COMMIT" > version.json
           git init -q -b android-apk
           git add ALICE.apk version.json
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "ALICE.apk 0.2.$GITHUB_RUN_NUMBER"
+            commit -q -m "ALICE.apk 0.2.$GITHUB_RUN_NUMBER ($TAG)"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" android-apk
-      - name: Refresh the APK on the installers release
-        # One rolling "installers" release (windows.yml) carries ALICE-Setup.exe and the latest APK; there is no
-        # release per Android build. Installed phones update themselves from the android-apk branch, not from here.
-        # Uploading here as well matters: when windows.yml ran at the same time it attached the previous APK.
-        if: env.SIGNED == '1' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view windows --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload windows ALICE.apk --repo "$GITHUB_REPOSITORY" --clobber
-          fi
