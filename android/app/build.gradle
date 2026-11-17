@@ -53,5 +53,5 @@ dependencies {
     implementation "com.journeyapps:zxing-android-embedded:4.3.0"
     // zxing okuyucusu kamerayı açarken androidx.core.content.ContextCompat kullanıyor ama bu paketi kendisi getirmiyor:
     // eklenmeyince "QR kodu okut" her seferinde NoClassDefFoundError ile çöküyordu (7 Kasım, Android 14, Xiaomi).
-    implementation "androidx.core:core:1.13.1"
+    implementation "androidx.core:core:1.19.1"
 }
