@@ -3,6 +3,6 @@
   "private": true,
   "description": "ALICE aktarma sunucusu (Cloudflare Workers)",
   "devDependencies": {
-    "wrangler": "^4.40.0"
+    "wrangler": "^4.162.0"
   }
 }
