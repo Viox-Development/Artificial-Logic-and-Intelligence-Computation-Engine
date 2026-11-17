@@ -1,6 +1,6 @@
 # ALICE
 
-[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20(full)%20%7C%20Linux%20(partial)-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 **Artificial Logic and Intelligence Computation Engine.** An AI agent that lives on your computer, in the spirit of
 Claude Code and Codex, but not tied to one paid model. It chains free API tiers (and your own keys or subscriptions)
@@ -260,12 +260,30 @@ default = "low"   # off | low | medium | high
 More: [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md), [tool style](docs/TOOL-STYLE.md), and the
 [full guide (Turkish)](docs/README.tr.md).
 
+## Platform support
+
+ALICE is developed and used daily on **Windows**, where every feature works.
+
+| | Windows | Linux | macOS |
+|---|---|---|---|
+| Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | untested |
+| Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
+| Command sandbox | low integrity | bubblewrap | sandbox-exec |
+| UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
+| On-screen HUD, global shortcuts / quick bar | ✅ | ❌ | ❌ |
+| PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
+| Time machine, Steam and flight-sim integration, installer | ✅ | ❌ | ❌ |
+
+Bringing Linux and macOS closer to Windows is tracked in
+[#239](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/issues/239); most items
+have their own issue and are good places to start contributing.
+
 ## Known limitations
 
 - Games such as DCS and War Thunder are invisible to UI Automation; ALICE uses screenshots and key presses there.
 - Free models are weaker at tool calling than top paid models; long, complex tasks work best with Gemini Flash or a
   model you choose.
-- UI Automation is Windows only; on Linux and macOS ALICE uses the browser and the `computer` tool.
+- Several "control the computer" features are Windows-only for now (see Platform support).
 - Parts of the interface and prompts are still in Turkish.
 
 ## Contributing
