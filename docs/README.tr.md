@@ -71,7 +71,7 @@ Ekim 2026 itibarıyla ücretsiz katmanları taradım. Rakamlar sık değişiyor,
 | **Anthropic (Claude API)** | Resmi API, kullandıkça ücretli (console.anthropic.com). Claude Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1. Resmi `anthropic` paketiyle konuşuyor (`pip install anthropic`). Ücretli olduğu için otomatik sıraya **girmiyor**: model menüsünden ya da `/model brain anthropic:claude-opus-5-5` | elle seçilen güçlü model |
 | **Ollama (yerel)** | Limitsiz, offline, GPU'na bağlı | her zincirin sonunda son çare |
 
-Bu tablodakilere ek olarak `.env`'e anahtar yazarsan **Mistral** ve **SambaNova** da otomatik ölçülüp zincire girer. Varsayılan `config.toml`'da brain zincirinin başında NVIDIA'daki GLM 5.3 (1M bağlam) duruyor, ardından `auto` (ölçülen en iyi ücretsiz modeller), en sonda yerel Ollama.
+Bu tablodakilere ek olarak `.env`'e anahtar yazarsan **Mistral** ve **SambaNova** da otomatik ölçülüp zincire girer. Varsayılan `config.toml`'da brain zinciri `auto` (ölçülen en iyi ücretsiz modeller), en sonda yerel Ollama.
 
 **Tek sağlayıcıya güvenmiyorum.** Router her rol için bir zincir tutuyor. 429 gelince o model soğumaya alınıyor ve sıradakine geçiliyor, günlük kota dolunca 1 saat, anahtar yanlışsa sağlayıcı oturum boyunca, model katalogdan kalkmışsa o model kapatılıyor. İstek bir sağlayıcının token sınırını aşıyorsa (Groq'un 8K TPM'i gibi) o sağlayıcı o istek için atlanıyor. Yani bir sağlayıcı düşse de ALICE çalışmaya devam ediyor.
 
@@ -1018,7 +1018,7 @@ browser_headless = false
 
 [roles]
 # "auto": anahtarı olan sağlayıcılardaki ücretsiz modeller ölçülüp sıralanır (alice models)
-brain = ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]
+brain = ["auto", "ollama:qwen3:8b"]
 voice = ["auto", "ollama:qwen3:8b"]
 fast  = ["auto", "ollama:qwen3:8b"]
 vision = ["auto", "gemini:gemini-flash-lite-latest"]

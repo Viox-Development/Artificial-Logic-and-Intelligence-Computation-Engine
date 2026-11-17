@@ -410,8 +410,9 @@ voice = "off"
 # sabit modeller de yazabilirsin, ör. brain = ["gemini:gemini-flash-latest", "auto"].
 [roles]
 # Ana beyin (System 2): planlama, kod yazma, araç kullanma.
-# Başta GLM 5.3 (NVIDIA, 1M bağlam); kotası dolar ya da hata verirse ölçülen en iyi ücretsiz modellere geçer.
-brain = ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]
+# Measured best free models first; local Ollama as the last resort. (GLM 5.3 on NVIDIA used to lead this chain but
+# was retired by the provider: every first request timed out before falling back.)
+brain = ["auto", "ollama:qwen3:8b"]
 # Sesli asistan: beyin kadar yetenekli ama ilk kelimesi en çabuk gelen modeller (konuşmaya geç başlamasın).
 voice = ["auto", "ollama:qwen3:8b"]
 # Hızlı, kısa işler: özet, input'a yazılacak metni üretme, decider emülasyonu.

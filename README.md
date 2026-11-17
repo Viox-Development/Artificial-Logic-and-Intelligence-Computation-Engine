@@ -115,7 +115,7 @@ hour; a bad key skips the provider for the session. If one provider goes down, A
 | Any OpenAI-compatible server | LM Studio, vLLM, LiteLLM, your own | measured and added automatically |
 | Ollama (local) | Unlimited, offline | last resort in every chain |
 
-By default the brain chain starts with GLM 5.3 on NVIDIA (1M context), then the best measured free models, then local
+By default the brain chain uses the best measured free models from the providers you have keys for, then local
 Ollama. Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
 
 ## Install (Windows)
@@ -248,7 +248,7 @@ permission_mode = "auto"
 
 [roles]
 # "auto": the best measured free models from providers you have keys for
-brain  = ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]
+brain  = ["auto", "ollama:qwen3:8b"]
 voice  = ["auto", "ollama:qwen3:8b"]
 fast   = ["auto", "ollama:qwen3:8b"]
 vision = ["auto", "gemini:gemini-flash-lite-latest"]
