@@ -18,7 +18,8 @@ def run(*args):
 
 
 data = json.loads(run("list", "--json"))
-want = sorted(json.load(open("todos.json", encoding="utf-8")), key=lambda t: t["id"])
+with open("todos.json", encoding="utf-8") as f:
+    want = sorted(json.load(f), key=lambda t: t["id"])
 if data != want:
     sys.exit(f"--json output differs: {data!r}")
 if run("list").rstrip("\n") != TABLE:

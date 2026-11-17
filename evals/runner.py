@@ -443,8 +443,8 @@ def scoreboard(result: dict[str, Any]) -> str:
            f"- Tasks: {meta['tasks']} | permission mode: `{meta['mode']}` | ALICE {meta['alice_version']} "
            f"({meta['commit'] or 'no git'}) | Python {meta['python']} on {meta['platform']}", "",
            "## Summary", "",
-           "| Mode | Passed | Pass rate | Avg steps | Avg tool calls | Agent tokens | Council tokens | Time | "
-           "Model switches | Failed model calls |",
+           ("| Mode | Passed | Pass rate | Avg steps | Avg tool calls | Agent tokens | Council tokens | Time | "
+            "Model switches | Failed model calls |"),
            "|---|---|---|---|---|---|---|---|---|---|"]
     for label, rs in (("council off", plain), ("council on", with_c)):
         if not rs:
@@ -456,8 +456,8 @@ def scoreboard(result: dict[str, Any]) -> str:
     out += ["", "## Per task", ""]
     both = bool(plain and with_c)
     if both:
-        out += ["| Task | Category | Council off | Council on | Steps off/on | Tokens off/on | Time off/on | "
-                "Council verdict |", "|---|---|---|---|---|---|---|---|"]
+        out += [("| Task | Category | Council off | Council on | Steps off/on | Tokens off/on | Time off/on | "
+                 "Council verdict |"), "|---|---|---|---|---|---|---|---|"]
         on = {r["task"]: r for r in with_c}
         for r in plain:
             c = on.get(r["task"])
@@ -563,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
             except (AttributeError, OSError):
-                pass
+                pass  # not a real console (pipe or IDE): keep its encoding, output still works
     if a.render:
         result = json.loads(a.render.read_text(encoding="utf-8"))
         md = a.render.with_name("scoreboard.md")
