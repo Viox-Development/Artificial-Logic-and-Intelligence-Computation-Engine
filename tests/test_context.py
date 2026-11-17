@@ -61,11 +61,13 @@ def test_context_tokens_uses_provider_count():
     assert abs(a.context_tokens() - (before + 1000)) <= 1
 
 
-def test_legacy_brain_default_becomes_glm(tmp_path):
+def test_legacy_brain_default_follows_current_default(tmp_path):
+    # Untouched brain chains from an old `alice init` (including the retired GLM 5.3 one) get the current default.
     p = tmp_path / "config.toml"
-    p.write_text('[roles]\nbrain = ["auto", "ollama:qwen3:8b"]\nfast = ["auto"]\n', encoding="utf-8")
+    for old in ('["auto", "ollama:qwen3:8b"]', '["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]'):
+        p.write_text(f'[roles]\nbrain = {old}\nfast = ["auto"]\n', encoding="utf-8")
+        assert load_config(p).roles["brain"] == ["auto", "ollama:qwen3:8b"]
     cfg = load_config(p)
-    assert cfg.roles["brain"][0] == "nvidia:z-ai/glm-5.3"
     assert cfg.roles["fast"] == ["auto"]
     p.write_text('[roles]\nbrain = ["gemini:gemini-3.8-flash"]\n', encoding="utf-8")
     assert load_config(p).roles["brain"] == ["gemini:gemini-3.8-flash"]  # the user's choice stays
