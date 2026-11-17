@@ -161,7 +161,7 @@ class Screen:
             elements = [i for i in items if i.get("rect")]
         except Exception:  # noqa: BLE001 - image only if no UIA
             pass
-        with mss.mss() as sct:
+        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
             mon = sct.monitors[self.monitor] if 0 < self.monitor < len(sct.monitors) else self._monitor(sct)
             raw = sct.grab(mon)
         img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
@@ -193,7 +193,7 @@ class Screen:
 
         t0 = time.monotonic()
         prev = None
-        with mss.mss() as sct:
+        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
             mon = sct.monitors[self.monitor] if 0 < self.monitor < len(sct.monitors) else self._monitor(sct)
             while time.monotonic() - t0 < max_wait:
                 raw = sct.grab(mon)

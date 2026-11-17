@@ -62,7 +62,7 @@ def select_region():
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
         except (OSError, AttributeError):
             pass
-    with mss.mss() as s:
+    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as s:
         mon = s.monitors[0]  # all monitors
         shot = s.grab(mon)
         full = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")

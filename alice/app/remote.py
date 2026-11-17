@@ -173,7 +173,7 @@ def screen_jpeg(monitor: int = 1) -> bytes:
     import mss
     from PIL import Image
 
-    with mss.mss() as sct:
+    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
         mons = sct.monitors
         shot = sct.grab(mons[monitor] if 0 < monitor < len(mons) else mons[1])
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
@@ -259,7 +259,7 @@ def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
         raise ValueError("dokunulan yer okunamadı") from None
     if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
         raise ValueError("dokunulan yer ekranın dışında")
-    with mss.mss() as sct:
+    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
         m = sct.monitors[1]
     return m["left"] + round(fx * (m["width"] - 1)), m["top"] + round(fy * (m["height"] - 1))
 

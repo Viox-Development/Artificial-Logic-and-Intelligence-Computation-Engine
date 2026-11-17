@@ -128,7 +128,7 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
 
     from alice.tools.imaging import image_to_png_b64
 
-    with mss.mss() as sct:
+    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
         mons = sct.monitors
         if monitor >= len(mons):
             raise ToolError(f"monitör {monitor} yok, {len(mons) - 1} monitör var")

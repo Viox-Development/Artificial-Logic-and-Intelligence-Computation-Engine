@@ -604,7 +604,7 @@ class DesktopObserver:
             r = wintypes.RECT()
             if u32.GetWindowRect(h, ctypes.byref(r)) and r.right - r.left >= 50 and r.bottom - r.top >= 50:
                 rects.append((r.left, r.top, r.right, r.bottom))
-        with mss.mss() as sct:
+        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
             v = sct.monitors[0]
             box = window_union(rects, (v["left"], v["top"], v["left"] + v["width"], v["top"] + v["height"]))
             if box is None:

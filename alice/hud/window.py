@@ -349,7 +349,7 @@ class HudWindow:
                 from PIL import Image
 
                 if state["sct"] is None:
-                    state["sct"] = mss.mss()
+                    state["sct"] = mss.MSS() if hasattr(mss, "MSS") else mss.mss()
                 isl = self.island
                 shot = state["sct"].grab({"left": self.ox + isl.x, "top": self.oy + isl.y,
                                           "width": isl.cw, "height": isl.ch})

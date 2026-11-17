@@ -205,7 +205,7 @@ def monitor_layout() -> str:
     try:
         import mss
 
-        with mss.mss() as sct:
+        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
             mons = sct.monitors[1:]
     except Exception:  # noqa: BLE001
         return "bilinmiyor"
@@ -244,7 +244,7 @@ def screen_frame(max_width: int = 1280) -> str | None:
         from alice.tools.computer import _dpi_aware
 
         _dpi_aware()
-        with mss.mss() as sct:
+        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
             mon = sct.monitors[1]
             try:
                 import ctypes
