@@ -11,6 +11,10 @@ updates:
     groups:
       python-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # Pinned on purpose: coqui-tts (voice-xtts extra) breaks with transformers 5+.
+      - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -39,3 +43,9 @@ updates:
     groups:
       android:
         patterns: ["*"]
+    ignore:
+      # Major Gradle/AGP/AndroidX jumps need a manual SDK and build upgrade; they broke the APK build (#205).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "androidx.core:core"
+        update-types: ["version-update:semver-minor"]
