@@ -9,7 +9,7 @@ on:
     inputs:
       models:
         description: "Model chain for every role (provider:model, comma separated)"
-        default: "gemini:gemini-3.5-flash,gemini:gemini-flash-latest,groq:openai/gpt-oss-120b"
+        default: "nvidia:nvidia/nemotron-3-ultra-550b-a55b,nvidia:mistralai/mistral-large-4-1t-a52b"
       council:
         description: "Council: off, on, or both (compare)"
         default: "both"

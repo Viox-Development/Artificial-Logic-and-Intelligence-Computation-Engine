@@ -15,7 +15,7 @@ This is not part of CI. It needs API keys and spends model quota.
 
 ```bash
 pip install -e ".[dev]"
-python -m evals --models gemini:gemini-3.5-flash,gemini:gemini-flash-latest,groq:openai/gpt-oss-120b
+python -m evals --models nvidia:nvidia/nemotron-3-ultra-550b-a55b,nvidia:mistralai/mistral-large-4-1t-a52b
 ```
 
 One command runs every task with the council off and on, then writes:
@@ -75,6 +75,19 @@ There is no money cost on free tiers, but it uses quota. The first run of the fu
 on) is in the table below; use it to estimate whether your daily free limits are enough.
 
 COST_TABLE
+
+Pick a chain whose daily budget covers this. One agent step sends the whole conversation (10k-30k tokens), and a
+full set makes several hundred requests. That rules out some free tiers that are fine for chatting:
+
+- Gemini's free API tier allowed only **20 requests per model per day** at the time of the first run, so it was
+  used up after about one and a half tasks.
+- Groq's free tier caps a request at 8,000 tokens, which is smaller than one agent step, so Groq was never used.
+- Providers with a large context and a daily token budget (NVIDIA's free endpoints, EVREN while it is free) can
+  run the whole set.
+
+The runner makes one tiny request before it starts and stops if nothing answers. Runs where no model answered at
+all are shown as "no model" and left out of the pass rate. After three of them in a row it stops, because the
+chain is used up.
 
 Free-tier limits change often. If a provider runs out mid-run, ALICE fails over to the next model in the chain, and
 the scoreboard shows that as model switches and failed calls. Long chains of different models make results noisier.

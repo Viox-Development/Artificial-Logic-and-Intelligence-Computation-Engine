@@ -462,9 +462,10 @@ def scoreboard(result: dict[str, Any]) -> str:
                    f"{sm['seconds'] / 60:.1f} min | {sm['model_switches']} | {sm['failed_calls']} |")
     skipped = [r for r in rows if r.get("no_model")]
     if skipped:
-        out += ["", f"**{len(skipped)} run(s) got no answer from any model** (quota used up, requests too large for "
+        note = (f"**{len(skipped)} run(s) got no answer from any model** (quota used up, requests too large for "
                 "every model in the chain, or providers down). They say nothing about ALICE and are not counted "
-                "above; rerun them with another chain: " + ", ".join(sorted({r['task'] for r in skipped})) + "."]
+                "above; rerun them with another chain: ")
+        out += ["", note + ", ".join(sorted({r['task'] for r in skipped})) + "."]
     out += ["", "## Per task", ""]
     both = bool(plain and with_c)
     if both:
@@ -490,18 +491,18 @@ def scoreboard(result: dict[str, Any]) -> str:
         if pairs:
             so, sw = summarize([r for r, _ in pairs]), summarize(counted)
             out += ["", "## Does the council help?", "",
-                    f"- Over the {len(pairs)} task(s) where both runs got a model: passed {so['passed']} without the "
-                    f"council, {sw['passed']} with it.",
+                    (f"- Over the {len(pairs)} task(s) where both runs got a model: passed {so['passed']} without "
+                     f"the council, {sw['passed']} with it."),
                     f"- Passed only with the council: {', '.join(fixed) or 'none'}.",
                     f"- Passed only without the council: {', '.join(broke) or 'none'}.",
-                    f"- The council asked for a fix turn in {len(fix_turns)} of {len(counted)} runs; "
-                    f"{len(useful)} of those ended passing ({', '.join(useful) or '-'}).",
+                    (f"- The council asked for a fix turn in {len(fix_turns)} of {len(counted)} runs; "
+                     f"{len(useful)} of those ended passing ({', '.join(useful) or '-'})."),
                     f"- The council itself could not finish (model errors) in {len(failed)} run(s)"
                     + (f": {', '.join(failed)}." if failed else "."),
-                    f"- Cost: {_ktok(sw['tokens'] + sw['council_tokens'])} tokens with vs {_ktok(so['tokens'])} "
-                    f"without; time {sw['seconds'] / 60:.1f} vs {so['seconds'] / 60:.1f} min.",
-                    "- One run per task and mode: a single flip can be model noise, look at the totals over several "
-                    "runs."]
+                    (f"- Cost: {_ktok(sw['tokens'] + sw['council_tokens'])} tokens with vs {_ktok(so['tokens'])} "
+                     f"without; time {sw['seconds'] / 60:.1f} vs {so['seconds'] / 60:.1f} min."),
+                    ("- One run per task and mode: a single flip can be model noise, look at the totals over several "
+                     "runs.")]
     else:
         out += ["| Task | Category | Result | Steps | Tool calls | Tokens | Time | Models |",
                 "|---|---|---|---|---|---|---|---|"]
