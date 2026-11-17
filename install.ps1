@@ -72,8 +72,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "pywebview could not be installed; the app will open in an Edge window." -ForegroundColor Yellow
 }
 
-& .\.venv\Scriptslice.exe init
-& .\.venv\Scriptslice.exe shortcut
+& .\.venv\Scripts\alice.exe init
+& .\.venv\Scripts\alice.exe shortcut
 
 if ($All) {
     # Everything at once (scripts, developers). Normally the app's setup wizard installs only what you pick.
@@ -82,7 +82,7 @@ if ($All) {
     $chrome = Test-Path "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
     $edge = Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
     if (-not ($chrome -or $edge)) { & .\.venv\Scripts\python.exe -m playwright install chromium }
-    if ($Autostart) { & .\.venv\Scriptslice.exe core install }
+    if ($Autostart) { & .\.venv\Scripts\alice.exe core install }
 } else {
     # The app opens the setup wizard on first start: language, a model, and the features you want.
     & .\.venv\Scripts\python.exe -c "from alice.features import set_wizard_state; set_wizard_state(wizard='pending')"
@@ -94,5 +94,5 @@ if ($FromInstaller) {
     Write-Host "ALICE opens next and walks you through the rest."
     Start-Sleep -Seconds 2
 } else {
-    Write-Host "Start the app from the ALICE shortcut on your desktop, or in a terminal: .\.venv\Scriptslice.exe"
+    Write-Host "Start the app from the ALICE shortcut on your desktop, or in a terminal: .\.venv\Scripts\alice.exe"
 }
