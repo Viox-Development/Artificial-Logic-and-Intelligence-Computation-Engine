@@ -166,6 +166,7 @@ function pickSheet(title, sub, options, current) {
 /* ================================================================== sekmeler ve sayfa yığını */
 const STACK = { chat: [], proj: [], pc: [], bell: [], more: [] };
 function show(tab) {
+  if (!Object.prototype.hasOwnProperty.call(RENDER, tab)) tab = "chat"; // unknown or stored tab name: never call arbitrary keys
   if (S.tab === tab && STACK[tab].length) { popAll(tab); return; }
   S.tab = tab;
   $$("#views .view").forEach((v) => { v.hidden = v.dataset.tab !== tab; });

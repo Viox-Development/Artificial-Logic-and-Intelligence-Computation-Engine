@@ -1389,6 +1389,15 @@ def set_env_value(key: str, value: str, path: Path | None = None) -> Path:
     return path
 
 
+def make_private(path: Path) -> None:
+    """Restrict a secrets file to its owner (0600) on POSIX. On Windows the user profile's ACL already does this."""
+    if sys.platform != "win32":
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+
+
 def init_home(force: bool = False) -> list[Path]:
     home = alice_home()
     home.mkdir(parents=True, exist_ok=True)
@@ -1400,6 +1409,7 @@ def init_home(force: bool = False) -> list[Path]:
     env = home / ".env"
     if not env.exists():
         env.write_text(ENV_TEMPLATE, encoding="utf-8")
+        make_private(env)  # the user pastes keys into it by hand; keep it readable only by them from the start
         written.append(env)
     else:
         added = _add_missing_env_keys(env)

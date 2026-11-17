@@ -61,3 +61,18 @@ def test_env_file_with_bom_loads_first_key(tmp_path, monkeypatch):
     load_env_file(env)
     assert os.environ.get("BOMTEST_KEY") == "abc"
     monkeypatch.delenv("BOMTEST_KEY", raising=False)
+
+
+def test_new_env_file_is_private_on_posix(tmp_path, monkeypatch):
+    from alice import config
+
+    calls = []
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    monkeypatch.setattr(config.os, "chmod", lambda p, mode: calls.append((str(p), mode)))
+    monkeypatch.setenv("ALICE_HOME", str(tmp_path))
+    config.init_home()
+    assert (str(tmp_path / ".env"), 0o600) in calls
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    calls.clear()
+    config.make_private(tmp_path / ".env")
+    assert calls == []  # Windows: the profile ACL protects it

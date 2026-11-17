@@ -50,6 +50,9 @@ def set_env(path: Path, key: str, value: str) -> None:
         lines.append(f"{key}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    from alice.config import make_private
+
+    make_private(path)  # holds the OAuth client secret
     os.environ[key] = value
 
 
