@@ -415,11 +415,16 @@ class Agent:
         return any(m.get("role") == "assistant" for m in self.messages[1:-1])
 
     def _enable_groups_for(self, text: str = "", tool_names: tuple[str, ...] = ()) -> None:
-        from alice.tools.groups import group_of, groups_for_text
+        from alice.tools.groups import group_of, select_groups
 
         enabled: set[str] = self.ctx.state.setdefault("tool_groups", set())
         self.ctx.state["tool_names"] = tuple(self.tools)
-        guessed = groups_for_text(text, self.tools) - enabled if text else set()
+        guessed = set()
+        if text:
+            # Keywords in the message, filtered by the context: code-only tools open from words like "düzelt" (fix)
+            # only inside a code project, never by voice.
+            guessed = select_groups(text, cwd=getattr(self.ctx, "cwd", None), mode=getattr(self, "role", ""),
+                                    tool_names=self.tools) - enabled
         if guessed and self._cache_warm():
             # A group guessed from a word may not really be needed (broad patterns like "aç" (open), "token", "ekran"
             # (screen)). Adding it to the tool list in a long chat made the whole conversation get rewritten into the
@@ -429,7 +434,16 @@ class Agent:
             enabled |= guessed
         enabled |= {g for g in map(group_of, tool_names) if g}
         if getattr(getattr(self, "permissions", None), "mode", "") == "plan" and not getattr(self, "is_child", False):
-            enabled.add("plan")  # in plan mode exit_plan_mode is always ready
+            # In plan mode exit_plan_mode is always ready (only it and the todo list, not all 17 plan tools).
+            enabled.update(("exit_plan_mode", "todo_write"))
+
+    def _reopen_recent_tools(self) -> None:
+        """Keep the tools called in the latest messages loaded. The loaded set lives only in memory, so a saved chat
+        reopened after a restart started with the core alone and the model lost the tools it had just been using."""
+        from alice.tools.groups import recent_tools
+
+        enabled: set[str] = self.ctx.state.setdefault("tool_groups", set())
+        enabled |= {n for n in recent_tools(self.messages[:-1]) if n in self.tools} - enabled
 
     def _hint_groups(self, names: set[str]) -> None:
         """Add tool groups that are not loaded but may be needed to the last user message as a note."""
@@ -708,7 +722,10 @@ class Agent:
         if images:
             msg["_user_images"] = len(images)
         self.messages.append(msg)
-        self._enable_groups_for(content_text)
+        self._reopen_recent_tools()
+        # Guess tools from what the user wrote, not from ALICE's own plan-mode note ("adım adım", "ekrana dokunan"
+        # in it opened the plan tools and the computer tool on every plan-mode turn).
+        self._enable_groups_for(content_text[len(PLAN_NOTE):] if content_text.startswith(PLAN_NOTE) else content_text)
         final = ""
         steps = max_steps or self.max_steps
         self.busy = True

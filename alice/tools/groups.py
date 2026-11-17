@@ -1,8 +1,9 @@
-"""Tool groups: instead of sending definitions for all 33 tools (~5K tokens) on every request, send only what is needed.
+"""Tool groups: instead of sending definitions for all ~90 tools (~42K tokens) on every request, send only what is needed.
 
-Core tools always go. Other groups are added via keywords in the user's message, if used previously in the conversation,
-or when the model requests via `load_tools`, and stay for the rest of the session.
-Smaller request = fits more free models, faster, and less confusing.
+Core tools always go. Other groups (or, for large groups, single tools) are added via keywords in the user's message
+filtered by the context (code project or not, voice), tools used recently in the conversation, or when the model
+requests via `load_tools`, and stay for the rest of the session.
+Smaller request = fits more free models, faster, and less confusing. `python -m alice.tools.measure` prints the sizes.
 """
 
 from __future__ import annotations
@@ -140,6 +141,57 @@ TOOL_HINTS: dict[str, str] = {
     "weather": r"hava|yağmur|kar yağ|derece|sıcak|soğuk|şemsiye|rüzgar",
     "feedback": r"beğenmedim|yanlış (yaptın|cevap)|kötü cevap|saçmaladın|öyle deme",
     "phone_call": r"beni ara|ara beni|telefon(la|dan|uma)? ara|arar mısın|arayabilir misin|çaldır",
+    "game": r"sıra tabanlı|strateji oyunu|tur(u|unu)? (oyna|bitir|geç)|oyun oturumu",
+    # files: a coding request used to open all 13 tools (~5K tokens) on words like "kod", "bug", ".py"; edit_file
+    # in the core covers ordinary edits, so only the tool a word really points at opens.
+    "file_ops": r"taşı|kopyala|\bsil(in|e|er misin)?\b|yeniden adlandır|adını değiştir|çöp|toparla|"
+                r"\b(move|rename|delete|copy) (the |this |these )?(file|folder)",
+    "multi_edit": r"refactor|yeniden düzenle|birkaç (yer|değişiklik)|çok (yerde|değişiklik)|several (changes|places)",
+    "apply_patch": r"refactor|yeniden düzenle|\byama|\bpatch|(birden )?(çok|fazla|birkaç) dosya|several files|"
+                   r"across (the )?(files|codebase)|everywhere",
+    "notebook_edit": r"notebook|ipynb|jupyter",
+    "find_files": r"indirdiğim|indirilen|açtığım|nerede(ydi)?\b|\bpdf|excel|word dosya|belge(yi|si|m)\b|"
+                  r"downloads?\b|recent files|where is (my|the) file",
+    "send_file": r"dosya(yı|sını)? (gönder|göster|ver)|bana (gönder|göster)|send (me )?the file|show me the file",
+    "share": r"paylaş|bağlantı(sını)? ver|link(ini)? ver|\bshare\b",
+    "permissions": r"izin(ler)?\b|artık sorma|sormadan|permission",
+    "hooks": r"\bhook|her (dosya )?düzenleme(de|den)",
+    "usage": r"token|kullanım|nereye gitti|harcadı|\busage\b|\bcost\b",
+    "code_intel": r"lint|tip hata|derleme hata|tanım(ı|landığı)|nerede kullanıl|sembol|referans|type error|"
+                  r"compile error|definition|references|where is .* used",
+    "mcp_resources": r"\bmcp\b",
+    # plan: "önce X sonra Y" used to open 17 tools (~6K tokens).
+    "todo_write": r"önce .* sonra|ardından|sonra da|adım adım|planla|step by step|\bthen\b",
+    "run_plan": r"önce .* sonra|ardından|sonra da|adım adım|step by step",
+    "task_control": r"görev(i)? (onayla|durdur|iptal)|planı (onayla|durdur)|ne durumda",
+    "task": r"alt ajan|subagent|paralel|parallel|aynı anda",
+    "subagents": r"alt ajan|subagent|ajanlar(ım)?\b",
+    "agent_defs": r"ajan tanımla|ajan(ı|ları)? (oluştur|düzenle)|agent definition",
+    "process_output": r"arka planda|background|sunucu(yu)? başlat|dev server|npm run|\bwatch\b|start the server",
+    "process_stop": r"arka planda|background|sunucu(yu)? (başlat|durdur)|dev server|npm run|\bwatch\b|"
+                    r"stop the server",
+    "process_wait": r"arka planda|background|bitince|bitti(ğ|g)inde|wait for (the )?(process|command|build|server)",
+    "monitor": r"\bizle\b|\bwatch\b|bitince|bitti(ğ|g)inde|haber ver|monitor",
+    "notify": r"haber ver|bildir|notify",
+    "session": r"ayrı (sohbet|oturum)|devret|new session|hand ?off",
+    "skill": r"beceri|\bskill",
+    "enter_plan_mode": r"plan modu|plan mode|önce plan",
+    "exit_plan_mode": r"plan modu|plan mode",
+    "advisor": r"danış|advisor|ikinci görüş|second opinion",
+    "next_step": r"sıradaki adım|next step",
+    # github: commit words don't need the PR/CI tool or the reviewer, and vice versa.
+    "git": r"git\b|commit|push|pull\b|merge|birleştir|branch|\bdal\b|\bdiff\b|stash|rebase|worktree|klonla|clone",
+    "github": r"git ?hub|\brepo\b|pull request|\bpr\b|issue|\bci\b|klonla|clone|release|actions",
+    "code_review": r"review|\bincele|gözden geçir|kod kontrol|yorum(lar)?a? (bak|cevap)",
+    # team: "refactor" or "codebase" alone is not a reason to start an agent project.
+    "team": r"takım|ekip|ajanlar(ı)? (çağır|başlat)|orkestra|multi.?agent|büyük (iş|proje)|\bteam\b",
+    "council": r"kurul|eleştir|tartış|savun|artı.*eksi|council|pros and cons",
+    # diagnostics
+    "test_run": r"test(leri|lerimi)? (çalıştır|yap|koş)|pytest|unittest|birim test|entegrasyon test|"
+                r"run (the )?tests?|failing test|tests? (fail|pass)|testler(i)?\b",
+    "app_state": r"app_state|uygulama durumu|ajan durum|çalışıyor mu|ne yapıyor|durum raporu",
+    "service_diagnose": r"servis|\blog(lar)?ı?\b|durduruldu|çalışmıyor|crash|çöktü|patladı|teşhis|diagnos|"
+                        r"hata ayıkla",
 }
 _HINT_RX = {name: re.compile(rx, re.I) for name, rx in TOOL_HINTS.items()}
 _HINTED_GROUPS = {TOOL_TO_GROUP[n] for n in TOOL_HINTS}
@@ -192,6 +244,60 @@ def groups_for_text(text: str, tool_names=()) -> set[str]:
         rx = re.escape(srv) + ("|" + MCP_KEYWORDS[srv] if srv in MCP_KEYWORDS else "")
         if re.search(rx, text, re.I):
             out.add("mcp:" + srv)
+    return out
+
+
+# Tools that only make sense for code. Outside a code project (home folder, voice) words like "düzelt" (fix),
+# "değiştir" (change) or "incele" (look at) are about documents, settings or videos far more often than code, so
+# keyword guesses don't open these there; load_tools still does.
+CODE_TOOLS = {"multi_edit", "apply_patch", "code_intel", "code_review", "test_run", "notebook_edit"}
+
+# Files that mark a directory as a code project.
+PROJECT_MARKERS = (".git", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "package.json", "Cargo.toml",
+                   "go.mod", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "Makefile",
+                   "composer.json", "Gemfile", "deno.json", "pubspec.yaml", "mix.exs", "project.godot")
+PROJECT_GLOBS = ("*.sln", "*.csproj", "*.uproject")
+RECENT_MESSAGES = 60  # tools called in this many latest messages stay loaded (e.g. after reopening a saved chat)
+
+
+def is_project(cwd) -> bool:
+    """Is cwd a code project (markers in it, or inside a git repo), rather than the home folder or a plain folder?"""
+    from pathlib import Path
+
+    try:
+        cwd = Path(cwd).resolve()
+        home = Path.home().resolve()
+        if cwd == home:
+            return False
+        if any((cwd / m).exists() for m in PROJECT_MARKERS) or any(next(cwd.glob(g), None) for g in PROJECT_GLOBS):
+            return True
+        for d in cwd.parents:
+            if d == home:
+                return False  # a dotfiles repo in the home folder doesn't make every folder a project
+            if (d / ".git").exists():
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def recent_tools(messages, limit: int = RECENT_MESSAGES) -> set[str]:
+    """Names of the tools called in the last `limit` messages."""
+    out: set[str] = set()
+    for m in list(messages)[-limit:]:
+        for c in m.get("tool_calls") or []:
+            name = (c.get("function") or {}).get("name") if isinstance(c, dict) else None
+            if isinstance(name, str) and name:
+                out.add(name)
+    return out
+
+
+def select_groups(text: str, *, cwd=None, mode: str = "", tool_names=()) -> set[str]:
+    """Groups and single tools to open for a message, from simple rules (no model call): keywords in the message,
+    filtered by the context (code project or not, voice)."""
+    out = groups_for_text(text, tool_names)
+    if out & CODE_TOOLS and (mode == "voice" or cwd is None or not is_project(cwd)):
+        out -= CODE_TOOLS
     return out
 
 

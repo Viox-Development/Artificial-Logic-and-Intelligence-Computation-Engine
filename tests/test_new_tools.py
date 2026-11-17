@@ -272,7 +272,7 @@ def test_read_ipynb(ctx, workdir):
 
 def test_new_tools_are_visible():
     assert groups.group_of("apply_patch") == groups.group_of("file_ops") == "files"  # listed by name, loaded when needed
-    assert "files" in groups.groups_for_text("bu dosyayı masaüstüne taşı")
+    assert "file_ops" in groups.groups_for_text("bu dosyayı masaüstüne taşı")  # just the tool, not all 13
     assert groups.group_of("http_request") == "net"
     assert "net" in groups.groups_for_text("şu API'ye post isteği at")
     assert "net" in groups.groups_for_text("bu dosyayı indir")
