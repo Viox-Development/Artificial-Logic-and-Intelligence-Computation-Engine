@@ -1,4 +1,4 @@
-"""Yerel ağ yardımcıları: kendi IP'n, alt ağ taraması, ARP tablosu, Wake-on-LAN."""
+"""Local network helpers: your own IP, subnet scanning, ARP table, Wake-on-LAN."""
 
 from __future__ import annotations
 
@@ -12,20 +12,20 @@ from pathlib import Path
 
 
 def run(cmd: list[str], timeout: float = 15, encoding: str | None = None) -> subprocess.CompletedProcess:
-    """Komutu çalıştır; Windows'ta konsol kod sayfasıyla (Türkçe netsh/powercfg çıktısı bozulmasın) çöz.
-    encoding: çıktısını konsol kod sayfasında değil hep aynı kodlamada veren araçlar için (ör. adb: UTF-8)."""
+    """Run the command; on Windows decode with the console code page (so Turkish netsh/powercfg output is not garbled).
+    encoding: for tools that always print in one fixed encoding instead of the console code page (e.g. adb: UTF-8)."""
     enc = encoding or ("oem" if sys.platform == "win32" else "utf-8")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         return subprocess.run(cmd, capture_output=True, text=True, encoding=enc, errors="replace", timeout=timeout,
                               creationflags=flags)
     except subprocess.TimeoutExpired as e:
-        # Araçlar OSError yakalıyor; TimeoutExpired ham haliyle kullanıcıya uzun bir komut satırı olarak düşüyordu.
+        # The tools catch OSError, but a raw TimeoutExpired used to reach the user as a long command line.
         raise TimeoutError(f"{Path(cmd[0]).stem} {timeout:g} sn içinde cevap vermedi") from e
 
 
 def local_ip() -> str:
-    """Varsayılan ağ arayüzünün IP'si (paket gönderilmez, sadece yönlendirme tablosuna bakılır)."""
+    """IP of the default network interface (no packet is sent; only the routing table is checked)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("10.255.255.255", 1))
@@ -37,14 +37,14 @@ def local_ip() -> str:
 
 
 def subnet_hosts(ip: str | None = None) -> list[str]:
-    """Ev ağları neredeyse hep /24: kendi IP'n hariç 254 adres."""
+    """Home networks are almost always /24: 254 addresses, excluding your own IP."""
     ip = ip or local_ip()
     net = ipaddress.ip_network(f"{ip}/24", strict=False)
     return [str(h) for h in net.hosts() if str(h) != ip]
 
 
 def network_mismatch(host: str, me: str | None = None) -> str | None:
-    """host bilgisayarla aynı ev ağında görünmüyorsa nedenini anlatan metin, görünüyorsa None."""
+    """Text explaining why host is not visible on the computer's home network, or None if it is."""
     ip = host.split(":")[0].strip()
     me = me or local_ip()
     try:
@@ -71,7 +71,7 @@ def port_open(host: str, port: int, timeout: float = 0.4) -> bool:
 
 
 def scan_port(port: int, hosts: list[str] | None = None, timeout: float = 0.4) -> list[str]:
-    """Alt ağda port'u açık olan adresler (ör. 5555: ağ üzerinden ADB'si açık Android TV)."""
+    """Addresses on the subnet with the port open (e.g. 5555: an Android TV with network ADB enabled)."""
     hosts = hosts if hosts is not None else subnet_hosts()
     with ThreadPoolExecutor(64) as ex:
         hits = ex.map(lambda h: h if port_open(h, port, timeout) else None, hosts)
@@ -79,18 +79,18 @@ def scan_port(port: int, hosts: list[str] | None = None, timeout: float = 0.4) -
 
 
 def open_ports(host: str, ports, timeout: float = 0.25, workers: int = 256) -> list[int]:
-    """host'ta açık olan portlar (telefonun her seferinde değişen kablosuz hata ayıklama portunu bulmak için)."""
+    """Open ports on host (to find the phone's wireless debugging port, which changes every time)."""
     with ThreadPoolExecutor(workers) as ex:
         hits = ex.map(lambda p: p if port_open(host, p, timeout) else None, ports)
     return [p for p in hits if p]
 
 
-# macOS baştaki sıfırları yazmıyor (0:1a:2b:...), o yüzden her bayt 1-2 hane olabilir.
+# macOS omits leading zeros (0:1a:2b:...), so each byte may be 1-2 digits.
 ARP_LINE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})\)?\s+(?:at\s+)?([0-9a-fA-F]{1,2}(?:[-:][0-9a-fA-F]{1,2}){5})(?![\w:-])")
 
 
 def parse_arp(text: str) -> list[tuple[str, str]]:
-    """`arp -a` (Windows ve Linux/macOS biçimi) → [(ip, mac)]. Yayın ve çoklu yayın adresleri atlanır."""
+    """`arp -a` (Windows and Linux/macOS formats) → [(ip, mac)]. Broadcast and multicast addresses are skipped."""
     out = []
     for line in text.splitlines():
         m = ARP_LINE.search(line)
@@ -107,7 +107,7 @@ def parse_arp(text: str) -> list[tuple[str, str]]:
 
 
 def _poke(host: str) -> None:
-    # Boş bir UDP paketi bile ARP çözümlemesini tetikler; ping'den çok daha hafif.
+    # Even an empty UDP packet triggers ARP resolution; much lighter than ping.
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.sendto(b"", (host, 9))
@@ -125,7 +125,7 @@ def _hostname(ip: str) -> str:
 
 
 def devices(sweep: bool = True) -> list[dict[str, str]]:
-    """Ağdaki cihazlar: ip, mac, varsa adı. sweep: önce alt ağdaki her adrese dokun ki ARP tablosu dolsun."""
+    """Devices on the network: ip, mac, and name if any. sweep: first touch every subnet address so ARP fills up."""
     import time
 
     me = local_ip()

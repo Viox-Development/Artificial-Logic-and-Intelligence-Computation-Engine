@@ -1,29 +1,30 @@
-"""Skills ve özel alt ajanlar (Claude Code'daki skills ve .claude/agents gibi).
+"""Skills and custom subagents (like skills and .claude/agents in Claude Code).
 
-Skill: bir klasör ve içinde SKILL.md. Sistem istemine sadece adı ve tek satırlık açıklaması girer; iş ona uyunca
-model `skill` aracıyla tamamını okur (yanındaki betik ve dosyaların yollarıyla). Böylece "DCS görev editöründe
-tetik nasıl kurulur", "Unity build al" gibi bilgiler kod yazmadan ve istemi şişirmeden öğretilir.
+Skill: a folder with a SKILL.md inside. Only its name and one-line description go into the system prompt; when a
+task matches, the model reads the whole thing with the `skill` tool (along with the paths of the scripts and files
+next to it). This way, things like "how to set up a trigger in the DCS mission editor" or "make a Unity build" are
+taught without writing code or bloating the prompt.
 
   ~/.alice/skills/unity-build/SKILL.md
   ---
   name: unity-build
-  description: Unity projesinden Windows build'i almak (komut satırından, editörü açmadan)
+  description: Build a Windows player from a Unity project (from the command line, without opening the editor)
   ---
-  1. Unity.exe'yi `-batchmode -quit -projectPath ... -buildWindows64Player ...` ile çalıştır...
+  1. Run Unity.exe with `-batchmode -quit -projectPath ... -buildWindows64Player ...` ...
 
-Alt ajan: tek bir markdown dosyası. Gövdesi ajanın sistem istemi; ön bilgide araç listesi ve model.
+Subagent: a single markdown file. The body is the agent's system prompt; the front matter holds the tool list and model.
 
   ~/.alice/agents/inceleyici.md
   ---
   name: inceleyici
-  description: Kod değişikliklerini hata ve risk açısından inceler, değişiklik yapmaz
+  description: Reviews code changes for bugs and risks, makes no changes
   tools: read_file, grep, glob, list_dir, git
-  model: brain            # rol (brain/fast/vision) ya da "sağlayıcı:model"
+  model: brain            # role (brain/fast/vision) or "provider:model"
   max_steps: 30
   ---
-  Sen titiz bir kod inceleyicisin...
+  You are a meticulous code reviewer...
 
-Yerler (sonra gelen öncekini ezer): ~/.alice/..., <proje>/.claude/..., <proje>/.alice/...
+Locations (later ones override earlier ones): ~/.alice/..., <proje>/.claude/..., <proje>/.alice/...
 """
 
 from __future__ import annotations
@@ -103,14 +104,14 @@ def skills_prompt(cwd: Path | None = None) -> str:
             "`skill` tool with its name FIRST and follow what it says:\n" + "\n".join(lines))
 
 
-# ------------------------------------------------------------------------------------------- alt ajanlar
+# ------------------------------------------------------------------------------------------- subagents
 @dataclass
 class AgentDef:
     name: str
     description: str
     prompt: str
-    tools: list[str] = field(default_factory=list)  # boş: hepsi
-    model: str = ""  # boş: ana ajanla aynı
+    tools: list[str] = field(default_factory=list)  # empty: all
+    model: str = ""  # empty: same as the parent agent
     max_steps: int = 40
     path: Path | None = None
 
@@ -141,8 +142,8 @@ _AGENT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 
 def save_agent(name: str, description: str, prompt: str, tools: list[str] | None = None, model: str = "",
                max_steps: int = 40, where: str = "user", cwd: Path | None = None) -> AgentDef:
-    """Özel alt ajan tanımını yaz (varsa günceller). where=user: ~/.alice/agents (her projede);
-    where=project: <proje>/.alice/agents (yalnız o projede; repoyla paylaşılabilir)."""
+    """Write a custom subagent definition (updates it if it exists). where=user: ~/.alice/agents (in every project);
+    where=project: <proje>/.alice/agents (only in that project; can be shared through the repo)."""
     name = (name or "").strip().lower().replace(" ", "-")
     if not _AGENT_NAME.match(name):
         raise ValueError("ad küçük harf, rakam, - ve _ olmalı (en çok 40), ör. 'test-yazici'")
@@ -188,8 +189,8 @@ def agents_note(cwd: Path | None = None) -> str:
 
 
 def spawn(parent, adef: AgentDef, ctx=None, ui=None):
-    """Ana ajandan, tanımdaki istem/araç/modelle bir alt ajan üret. ctx/ui: alt ajanın kendi bağlamı ve arayüzü
-    (alice/subagents.py); verilmezse ana ajanınkiler."""
+    """From the parent agent, spawn a subagent with the prompt/tools/model from the definition. ctx/ui: the subagent's
+    own context and interface (alice/subagents.py); if not given, the parent agent's are used."""
     from alice.agent import Agent
 
     tools = list(parent.tools.values())
@@ -203,9 +204,9 @@ def spawn(parent, adef: AgentDef, ctx=None, ui=None):
     router = parent.router
     role = ""
     if model and ":" in model:
-        # Tanımdaki model yalnız bu alt ajana uygulanır: ortak router'ın role_overrides'ına yazılınca proje
-        # klasöründeki bir .alice/agents/*.md dosyası diğer sohbetlerin model menüsüne/zincirine sızıyordu.
-        # Sığ kopya: sağlık/soğuma/kullanım kayıtları ve istemciler ortak kalır, yalnız rol eşlemesi ayrılır.
+        # The model from the definition applies only to this subagent. Writing it into the shared router's
+        # role_overrides let a .alice/agents/*.md file in a project folder leak into other chats' model menu/chain.
+        # Shallow copy: health/cooldown/usage records and clients stay shared; only the role mapping is separated.
         import copy
 
         role = f"agent:{adef.name}"
@@ -219,7 +220,7 @@ def spawn(parent, adef: AgentDef, ctx=None, ui=None):
     child = Agent(parent.config, router, tools, ctx or parent.ctx, parent.permissions, ui or parent.ui,
                   getattr(parent, "decider", None), system_prompt=system, is_child=True)
     if adef.tools:
-        child.tool_specs = lambda: [t.spec() for t in tools]  # seçilen araçlar grup filtresinden bağımsız görünsün
+        child.tool_specs = lambda: [t.spec() for t in tools]  # chosen tools stay visible regardless of group filter
     if role:
         child.role = role
     elif model:

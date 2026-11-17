@@ -1,11 +1,11 @@
-"""Yerel ses motorunu (Chatterbox) ayrı bir sanal ortama kurar: ~/.alice/tts-venv.
+"""Installs the local speech engine (Chatterbox) into a separate virtual environment: ~/.alice/tts-venv.
 
-Neden ayrı ortam: Chatterbox belirli PyTorch/numpy sürümleri istiyor ve Python 3.11'de en sorunsuz
-kuruluyor; ALICE'in kendi ortamını bozmasın. Adımlar:
-  1. Python 3.11 bul (Windows'ta `py -3.11`), yoksa 3.12/3.10 ile dene
-  2. sanal ortam + pip install chatterbox-tts
-  3. NVIDIA kart varsa ve kurulan PyTorch CUDA'sızsa, aynı sürümün CUDA'lı halini kur
-  4. içe aktarma testi, config'e tts_local = "chatterbox" ve local_python yaz
+Why a separate environment: Chatterbox needs specific PyTorch/numpy versions and installs most smoothly on
+Python 3.11; it must not break ALICE's own environment. Steps:
+  1. Find Python 3.11 (on Windows `py -3.11`); if missing, try 3.12/3.10
+  2. virtual environment + pip install chatterbox-tts
+  3. If there is an NVIDIA card and the installed PyTorch has no CUDA, install the CUDA build of the same version
+  4. import test, write tts_local = "chatterbox" and local_python to the config
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _out(cmd: list[str]) -> str | None:
 
 
 def find_python() -> tuple[list[str], str] | None:
-    """(çalıştırma komutu, sürüm). 3.11 tercih edilir."""
+    """(run command, version). 3.11 is preferred."""
     import os
 
     cands: list[list[str]] = []
@@ -65,7 +65,7 @@ def has_nvidia() -> bool:
 
 
 def install(emit: Callable[[str], None] = print, run=None) -> Path:
-    """Kurar ve sunucunun Python yolunu döndürür. Hata olursa RuntimeError (Türkçe açıklamalı)."""
+    """Installs it and returns the server's Python path. On failure raises RuntimeError (Turkish message)."""
     def default_run(cmd: list[str]) -> int:
         emit("$ " + " ".join(cmd))
         return subprocess.call(cmd)
@@ -105,7 +105,7 @@ def install(emit: Callable[[str], None] = print, run=None) -> Path:
                 break
         else:
             emit("Uyarı: CUDA'lı PyTorch kurulamadı; ses işlemcide (yavaş) üretilecek.")
-    # Yerel Whisper: üretilen sesi dinleyip sondaki uydurmayı keser. torch/numpy sürümlerine dokunmasın.
+    # Local Whisper: checks the generated audio and trims hallucinated tail text. Leaves torch/numpy versions alone.
     emit("Whisper kuruluyor (sesi kontrol etmek için)")
     pins = _out([str(py), "-m", "pip", "freeze"]) or ""
     keep = [ln for ln in pins.splitlines() if ln.split("==")[0].lower() in ("torch", "torchaudio", "numpy")]

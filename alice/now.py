@@ -1,13 +1,14 @@
-"""Tek bir "şu an" durumu ve önsezi motoru.
+"""A single "now" state and anticipation engine.
 
-Şu an: mod, öndeki program, oyun ve maç durumu, bugünün uçuşları (kaç tane, ne kadar sürdü, son ölümlerden önce
-arkada düşman var mıydı), nabız ve alışkanlıktan gelen tahmin tek yerde toplanır. Sesli cevapların her cümlesine
-kısa hali eklenir (saat gibi), "Nasılım?" sorusu `now` aracıyla ayrıntılı cevaplanır: "Son 4 uçuşunun 3'ünde
-düşmeden önce arkanda düşman vardı, nabzın 128. Bir mola iyi gelir."
+Now: mode, the app in front, game and match state, today's flights (how many, how long they lasted, whether an enemy
+was behind before the deaths), heart rate and a guess from habit are collected in one place. A short version is added
+to every sentence of a voice reply (like a clock), and the "How am I?" question is answered in detail with the `now`
+tool: "In 3 of your last 4 flights an enemy was behind you before going down; your heart rate is 128. A break would help."
 
-Önsezi: alışkanlıklar kayıtlardan çıkarılır (ör. War Thunder'ı hangi gün hangi saatte açtığın). Beklenen oturumdan
-kısa süre önce hazırlık yapılır: uçuş anonslarının sesleri önceden üretilir, ilk anons beklemeden çalar. Tahmin
-ancak yeterli geçmiş varsa yapılır; hazırlık günde bir kez, sessizce.
+Anticipation: habits are extracted from the records (e.g. the day and time you usually open War Thunder). Shortly
+before the expected session, preparation is done: the sounds for flight callouts are generated in advance, so the
+first callout plays without waiting. A guess is only made if there is enough history; preparation happens once a day,
+quietly.
 """
 
 from __future__ import annotations
@@ -18,11 +19,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-GAME_KEY = "pc.proc.aces.exe.cpu"   # War Thunder açıkken çekirdek bunu 15 sn'de bir yazar
-SESSION_GAP = 2 * 3600.0            # bu kadar ara verilip açılırsa yeni oturum
-SIX_BEFORE_DEATH = 45.0             # uçuş bitmeden bu kadar önce "Arkanda düşman" dendiyse arkadan vuruldu
+GAME_KEY = "pc.proc.aces.exe.cpu"   # the core writes this every 15 s while War Thunder is open
+SESSION_GAP = 2 * 3600.0            # new session if it is reopened after a break this long
+SIX_BEFORE_DEATH = 45.0             # "Arkanda düşman" (enemy behind) said this long before the end: hit from behind
 HR_HIGH = 120.0
-ANTICIPATE_BEFORE = 20 * 60.0       # beklenen oturumdan bu kadar önce hazırlık
+ANTICIPATE_BEFORE = 20 * 60.0       # preparation this long before the expected session
 MIN_SESSIONS = 3
 
 APP_NAMES = {"aces.exe": "War Thunder", "dcs.exe": "DCS", "opera.exe": "Opera", "chrome.exe": "Chrome",
@@ -40,16 +41,16 @@ class Snapshot:
     flights_today: int = 0
     avg_min_today: float | None = None
     avg_min_usual: float | None = None
-    recent: int = 0                 # son uçuşlardan kaçı değerlendirildi
-    shot_from_six: int = 0          # bunların kaçında düşmeden önce arkada düşman vardı
+    recent: int = 0                 # how many of the last flights were evaluated
+    shot_from_six: int = 0          # in how many of these an enemy was behind before going down
     hr: float | None = None
-    next_game: float | None = None  # alışkanlığa göre beklenen War Thunder açılışı
+    next_game: float | None = None  # expected War Thunder launch based on habit
     advice: list[str] = field(default_factory=list)
 
 
-# ------------------------------------------------------------------ alışkanlık
+# ------------------------------------------------------------------ habit
 def session_starts(times: list[float], gap: float = SESSION_GAP) -> list[float]:
-    """Örnek zamanlarından oturum başlangıçları (araya 'gap'ten uzun boşluk girince yeni oturum)."""
+    """Session start times from the sample times (a new session begins after a gap longer than 'gap')."""
     out: list[float] = []
     prev = None
     for t in sorted(times):
@@ -60,8 +61,8 @@ def session_starts(times: list[float], gap: float = SESSION_GAP) -> list[float]:
 
 
 def predict_next(starts: list[float], now: float) -> float | None:
-    """Önümüzdeki 24 saatte beklenen açılış: aynı haftanın günü yeterince örnek varsa ondan, yoksa bütün
-    günlerden; dakika cinsinden ortanca. Yeterli geçmiş yoksa None."""
+    """Expected launch in the next 24 hours: from the same weekday if there are enough samples, otherwise from
+    all days; the median in minutes. None if there is not enough history."""
     if len(starts) < MIN_SESSIONS:
         return None
     today = datetime.fromtimestamp(now)
@@ -81,7 +82,7 @@ def game_times(store: Any, now: float, days: int = 28) -> list[float]:
     return [t for t, _ in store.series(GAME_KEY, since=now - days * 86400)]
 
 
-# ---------------------------------------------------------------------- şu an
+# ---------------------------------------------------------------------- now
 def snapshot(store: Any, now: float | None = None, flights: list[dict[str, Any]] | None = None,
              state: dict[str, Any] | None = None) -> Snapshot:
     now = time.time() if now is None else now
@@ -104,7 +105,7 @@ def snapshot(store: Any, now: float | None = None, flights: list[dict[str, Any]]
         flights = load_history(limit=200)
     day0 = datetime.fromtimestamp(now).replace(hour=6, minute=0, second=0, microsecond=0).timestamp()
     if datetime.fromtimestamp(now).hour < 6:
-        day0 -= 86400  # gece 2'deki maç "bugünün"
+        day0 -= 86400  # a match played at 2 a.m. still counts as "today's"
     fs = sorted((f for f in flights if f.get("start_wall") and f.get("duration_s")), key=lambda f: f["start_wall"])
     today = [f for f in fs if float(f["start_wall"]) >= day0]
     snap.flights_today = len(today)
@@ -143,7 +144,7 @@ def advise(s: Snapshot) -> list[str]:
 
 
 def line(s: Snapshot) -> str:
-    """Her sesli cümleye eklenen kısa durum (model gerekirse kullanır, okumaz)."""
+    """Short status appended to every spoken sentence (the model uses it if needed, does not read it out)."""
     parts = []
     if s.mode:
         parts.append(f"mod {s.mode}")
@@ -174,7 +175,7 @@ def describe(s: Snapshot) -> str:
 
 
 _cache: dict[str, Any] = {"at": -1e9, "line": "", "busy": False}
-VOICE_CACHE = 30.0  # sn: durum en çok bu kadar eski olur
+VOICE_CACHE = 30.0  # seconds: the status is at most this old
 
 
 def _refresh(now: float) -> None:
@@ -185,7 +186,7 @@ def _refresh(now: float) -> None:
             text = line(snapshot(st))
     except Exception:  # noqa: BLE001
         text = ""
-    try:  # önsezi: sabah genelde ilk sorduğun şeylerin hazır cevabı
+    try:  # anticipation: ready answers to what you usually ask first in the morning
         from alice.anticipate import ready_line
 
         ready = ready_line()
@@ -197,8 +198,8 @@ def _refresh(now: float) -> None:
 
 
 def voice_line(now: float | None = None, wait: bool = False) -> str:
-    """Sesli asistan için kısa durum. Hesap (~0,3 sn: uçuş kayıtları, veritabanı) arka planda yenilenir; sesli cevap
-    hiç beklemez, en çok 30 sn eski durumu görür. Hata vermez (çekirdek kaydı yoksa boş)."""
+    """Short status for the voice assistant. The calculation (~0.3 s: flight records, database) runs in the background;
+    a voice reply never waits and sees a status at most 30 s old. No errors: empty if the core has no record."""
     import threading
 
     now = time.monotonic() if now is None else now
@@ -211,9 +212,9 @@ def voice_line(now: float | None = None, wait: bool = False) -> str:
     return _cache["line"]
 
 
-# --------------------------------------------------------------------- önsezi
+# --------------------------------------------------------------------- anticipation
 class Anticipator:
-    """Beklenen War Thunder oturumundan önce hazırlık kancalarını günde bir kez çalıştırır."""
+    """Runs the preparation hooks once a day, shortly before the expected War Thunder session."""
 
     def __init__(self, store: Any, hooks: list[Callable[[], None]] | None = None):
         self.store = store
@@ -226,7 +227,7 @@ class Anticipator:
         if self.done_day == day or not self.hooks:
             return False
         times = game_times(self.store, now)
-        if times and now - max(times) < 3600:  # zaten oynuyor ya da az önce oynadı
+        if times and now - max(times) < 3600:  # already playing, or played a moment ago
             return False
         at = predict_next(session_starts(times), now)
         if at is None or not 0 <= at - now <= ANTICIPATE_BEFORE:
@@ -235,7 +236,7 @@ class Anticipator:
         for h in self.hooks:
             try:
                 h()
-            except Exception:  # noqa: BLE001 - hazırlık başarısız olsa da bir şey bozulmaz
+            except Exception:  # noqa: BLE001 - even if a preparation fails, nothing breaks
                 pass
         self.store.add_event("info", "Önsezi: uçuşa hazırlık",
                              f"War Thunder'ı genelde {datetime.fromtimestamp(at):%H:%M} gibi açıyorsun; uçuş sesleri "

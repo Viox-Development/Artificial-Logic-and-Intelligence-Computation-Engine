@@ -1,19 +1,19 @@
-"""git ve GitHub: depo klonlama, dal, commit, push, PR açma/birleştirme.
+"""git and GitHub: repo cloning, branches, commit, push, opening/merging PRs.
 
-Anahtar önceliği: Öncelikle kullanıcının `gh auth token` oturumu (keyring), yoksa GITHUB_TOKEN / GH_TOKEN (.env),
-yoksa config'teki GitHub MCP sunucusunun anahtarı, en son GITHUB_MODELS_TOKEN. Anahtar git'e yalnızca o komutun
-ortamında verilir (GIT_CONFIG_*), hiçbir dosyaya yazılmaz.
+Key priority: first the user's `gh auth token` session (keyring), otherwise GITHUB_TOKEN / GH_TOKEN (.env),
+otherwise the key of the GitHub MCP server in the config, and last GITHUB_MODELS_TOKEN. The key is given to git only in
+that command's environment (GIT_CONFIG_*) and is never written to any file.
 
-Kurallar (Claude Code / Codex'teki gibi), config.toml [github]:
-  protected_branches = ["main", "master"]  # bu dallara ve deponun varsayılan dalına push her izin modunda onay ister
+Rules (as in Claude Code / Codex), config.toml [github]:
+  protected_branches = ["main", "master"]  # pushing to these branches and the repo's default branch asks for approval in every permission mode
   merge_method = "squash"                  # merge | squash | rebase
-  require_checks = true                    # CI kırmızı ya da sürüyorsa birleştirme reddedilir (force=true onayla geçer)
-  clone_dir = ""                           # boş: ~/GitHub/<sahip>/<depo>
+  require_checks = true                    # if CI is red or still running, merging is refused (force=true passes with approval)
+  clone_dir = ""                           # empty: ~/GitHub/<owner>/<repo>
 
-- Okuma (status, diff, log, PR/issue listesi, CI durumu) hiç sormaz; plan modunda da çalışır.
-- commit, dal değiştirme, korumasız dala push, PR/issue açma, yorum: yerel ya da geri alınabilir; auto modda sormaz.
-- PR birleştirme/kapatma, korumalı dala push, force push: geri alınamaz; yolo dışında her zaman onay ister.
-- Commit'e .env ya da anahtara benzeyen bir şey giriyorsa reddedilir.
+- Reads (status, diff, log, PR/issue lists, CI status) never ask; they also work in plan mode.
+- commit, switching branches, pushing to an unprotected branch, opening PR/issue, comments: local or reversible; not asked in auto mode.
+- Merging/closing PRs, pushing to a protected branch, force push: irreversible; always asks for approval except in yolo mode.
+- A commit containing a .env or something that looks like a key is refused.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 DEFAULTS: dict[str, Any] = {"protected_branches": ["main", "master"], "merge_method": "squash",
                             "require_checks": True, "clone_dir": ""}
 
-# Commit'e girmemesi gereken anahtar kalıpları (eklenen satırlarda aranır).
-REPO_RX = re.compile(r"[\w-][\w.-]*/[\w-][\w.-]*")  # "sahip/depo"; ".." ile klasör dışına çıkılamaz
+# Key patterns that must not end up in a commit (searched in added lines).
+REPO_RX = re.compile(r"[\w-][\w.-]*/[\w-][\w.-]*")  # "owner/repo"; ".." cannot escape the folder
 SECRET_RX = re.compile(
     r"gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-[A-Za-z0-9_-]{32,}|AIza[0-9A-Za-z_-]{35}|"
     r"gsk_[A-Za-z0-9]{40,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
@@ -49,14 +49,14 @@ def settings(cfg: Any) -> dict[str, Any]:
 
 
 def _token_candidates(cfg: Any = None):
-    """Anahtarlar, öncelik sırasıyla (tembel: gh yalnızca gerekirse çalışır):
+    """Tokens, in priority order (lazy: gh only runs when needed):
 
-    1. `gh auth token` (keyring — kullanıcının bilgisayındaki girişi),
+    1. `gh auth token` (keyring — the user's login on this computer),
     2. GITHUB_TOKEN / GH_TOKEN (.env),
-    3. config'teki GitHub MCP sunucusunun anahtarı,
+    3. the key of the GitHub MCP server in the config,
     4. GITHUB_MODELS_TOKEN.
     """
-    # Öncelik: gh CLI oturumu (kullanıcı tercihi)
+    # Priority: gh CLI session (user's preference)
     gh = shutil.which("gh")
     if gh:
         try:
@@ -70,7 +70,7 @@ def _token_candidates(cfg: Any = None):
     for k in TOKEN_ENVS:
         if os.environ.get(k):
             yield os.environ[k]
-    # GitHub MCP sunucusu zaten bir anahtarla tanımlıysa onu kullan.
+    # If the GitHub MCP server is already defined with a key, use it.
     data = getattr(cfg, "data", None) or {}
     for name, spec in ((data.get("mcp") or {}).get("servers") or {}).items():
         if "github" not in name.lower():
@@ -91,7 +91,7 @@ _private_cache: dict[str, bool | None] = {}
 
 
 def _private_access(token: str) -> bool | None:
-    """Bu anahtar özel depoları görüyor mu? (None: sorulamadı). Süreç boyunca bir kez sorulur."""
+    """Can this key see private repos? (None: could not be asked). Asked once per process."""
     import hashlib
 
     import httpx
@@ -109,9 +109,9 @@ def _private_access(token: str) -> bool | None:
 
 
 def github_token(cfg: Any = None) -> str | None:
-    """Kullanılacak GitHub anahtarı. İlk aday (gh keyring) ince ayarlı (github_pat_) ve özel depoları göremiyorsa,
-    özel depolara erişen sıradaki anahtar seçilir: .env'deki yalnızca açık depolara yetkili anahtar yüzünden ALICE
-    kullanıcının özel depolarını hiç göremiyordu (7 Kasım: 7 depo, 0 özel; gh ile 16 özel)."""
+    """The GitHub key to use. If the first candidate (gh keyring) is a fine-grained token (github_pat_) that cannot see
+    private repos, the next key that can access private repos is chosen: the .env key was authorized only for public
+    repos, so ALICE could never see the user's private repos (7 Nov: 7 repos, 0 private; with gh, 16 private)."""
     tokens = _token_candidates(cfg)
     first = next(tokens, None)
     if first is None or not first.startswith("github_pat_") or _private_access(first) is not False:
@@ -123,8 +123,8 @@ def github_token(cfg: Any = None) -> str | None:
 
 
 def token_source(cfg: Any, token: str | None) -> str:
-    """Seçilen anahtarın nereden geldiğini _token_candidates ile aynı sırayla bul (gh, ortam, MCP, Models).
-    Audit raporu 'Auth: bilinmiyor' demesin: MCP sunucusundan gelen anahtar da adıyla görünsün."""
+    """Find where the chosen key came from, in the same order as _token_candidates (gh, environment, MCP, Models).
+    So the audit report doesn't say 'Auth: bilinmiyor' (unknown): a key from the MCP server shows up by name too."""
     if not token:
         return "yok"
     gh = shutil.which("gh")
@@ -157,7 +157,8 @@ def token_source(cfg: Any, token: str | None) -> str:
 
 # ---------------------------------------------------------------------------------------------- git
 def git_env(token: str | None) -> dict[str, str]:
-    """git'e anahtarı yalnızca bu sürecin ortamından ver; dosyaya, komut satırına, remote URL'ye yazılmaz."""
+    """Give git the key only through this process's environment; it is never written to a file, a command line,
+    or a remote URL."""
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     if token:
@@ -177,7 +178,7 @@ def run_git(args: list[str], cwd: Path, token: str | None = None, timeout: int =
     try:
         from alice.gitsafe import harden
 
-        # Hook'lar ve fsmonitor kapalı: sandbox'taki bir komutun .git'e bıraktığı program ALICE'in git'iyle çalışmasın.
+        # Hooks and fsmonitor are off: a program that a sandboxed command left in .git must not run with ALICE's git.
         r = subprocess.run([git, *harden(args, cwd)], cwd=cwd, capture_output=True, timeout=timeout, env=git_env(token),
                            stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired as e:
@@ -191,7 +192,7 @@ def run_git(args: list[str], cwd: Path, token: str | None = None, timeout: int =
 
 
 def parse_remote(url: str) -> str | None:
-    """'https://github.com/o/r(.git)' ya da 'git@github.com:o/r.git' -> 'o/r'."""
+    """'https://github.com/o/r(.git)' or 'git@github.com:o/r.git' -> 'o/r'."""
     m = re.match(r"^(?:https?://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
                  r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", url.strip())
     return f"{m.group(1)}/{m.group(2)}" if m else None
@@ -206,14 +207,14 @@ def repo_root(cwd: Path) -> Path:
 
 
 def list_branches(cwd: Path, fetch: bool = False, token: str | None = None) -> list[dict[str, Any]]:
-    """Yerel ve uzaktaki dallar (son commit'e göre, yenisi önce). Uzakta olup yerelde olmayan dal remote=True.
-    fetch: önce origin'in dallarını yenile (klondan sonra GitHub'da açılan dal da listede görünsün). Ağ yoksa ya
-    da yavaşsa eldeki liste kullanılır."""
+    """Local and remote branches (by last commit, newest first). A branch that is remote but not local gets remote=True.
+    fetch: first refresh origin's branches (so a branch opened on GitHub after the clone also appears in the list). If
+    there is no network or it is slow, the list at hand is used."""
     root = repo_root(cwd)
     if fetch:
         try:
             run_git(["fetch", "--prune", "origin"], root, token, timeout=20, check=False)
-        except ToolError:  # zaman aşımı: bilinen dallarla devam
+        except ToolError:  # timed out: continue with the known branches
             pass
     cur = current_branch(root)
     fmt = "%(refname)\t%(committerdate:unix)\t%(subject)"
@@ -237,13 +238,13 @@ def list_branches(cwd: Path, fetch: bool = False, token: str | None = None) -> l
             seen[name] = {"name": name, "current": name == cur, "remote": remote, "subject": subject[:100],
                           "ts": int(ts or 0)}
         elif not remote:
-            row["remote"] = False  # yerelde de var
+            row["remote"] = False  # also exists locally
     return list(seen.values())
 
 
 def switch_branch(cwd: Path, branch: str, create: bool = False, token: str | None = None) -> str:
-    """Dala geç. Yerelde yoksa uzaktakinden izleyen dal açılır (gerekirse önce fetch). Kaydedilmemiş değişiklik
-    geçişi engelliyorsa ham git hatası yerine ne yapılacağı söylenir."""
+    """Switch branch. If it is not local, a tracking branch is created from the remote one (fetching first if needed).
+    If unsaved changes block the switch, say what to do instead of showing the raw git error."""
     root = repo_root(cwd)
     branch = branch.strip()
     if branch.startswith("origin/"):
@@ -293,12 +294,12 @@ def protected(branch: str, cfg: Any, default_branch: str = "") -> bool:
 
 
 def staged_secrets(cwd: Path) -> list[str]:
-    """Commit'e girecek dosyalarda anahtar ya da .env var mı?"""
+    """Are there keys or a .env among the files that will go into the commit?"""
     return diff_secrets(cwd, ["--cached"])
 
 
 def diff_secrets(cwd: Path, spec: list[str]) -> list[str]:
-    """`git diff <spec>` ile eklenen dosya/satırlarda anahtar ya da .env var mı? (["--cached"] ya da ["taban..HEAD"])"""
+    """Are there keys or a .env in the files/lines added by `git diff <spec>`? (["--cached"] or ["base..HEAD"])"""
     hits = []
     _, names = run_git(["diff", *spec, "--name-only", "--diff-filter=AMR"], cwd, check=False)
     hits += [n for n in names.splitlines() if SECRET_FILES.search(n.strip())]
@@ -318,7 +319,7 @@ def clone_root(cfg: Any) -> Path:
 
 
 def clone_or_update(cfg: Any, repo: str, branch: str = "", token: str | None = None) -> tuple[Path, str]:
-    """Depoyu ~/GitHub/<sahip>/<depo> altına klonla; zaten varsa güncelle. (klasör, ne yapıldı) döner."""
+    """Clone the repo under ~/GitHub/<owner>/<repo>; update it if it already exists. Returns (folder, what was done)."""
     repo = parse_remote(repo) or repo.strip().strip("/")
     if not REPO_RX.fullmatch(repo):
         raise ToolError(f"depo adı 'sahip/depo' biçiminde olmalı: {repo}")
@@ -408,7 +409,7 @@ class GitHubAPI:
         return data.get("data") or {}
 
     def text(self, path: str) -> str:
-        """Düz metin uç (iş logları): GitHub geçici bir indirme adresine yönlendirir."""
+        """Plain-text endpoint (job logs): GitHub redirects to a temporary download address."""
         try:
             r = self.client.get(path, follow_redirects=True)
         except Exception as e:  # noqa: BLE001
@@ -418,7 +419,7 @@ class GitHubAPI:
         return r.text
 
     def checks(self, repo: str, ref: str) -> dict[str, Any]:
-        """CI özeti: state = success | failure | pending | none."""
+        """CI summary: state = success | failure | pending | none."""
         runs = self.get(f"/repos/{repo}/commits/{ref}/check-runs", per_page=100).get("check_runs", [])
         status = self.get(f"/repos/{repo}/commits/{ref}/status")
         items = [(c["name"], c.get("conclusion") or c.get("status")) for c in runs]
@@ -429,11 +430,11 @@ class GitHubAPI:
         return {"state": state, "failed": bad, "pending": waiting, "total": len(items)}
 
 
-# ----------------------------------------------------------------------------------- CI ve inceleme yardımcıları
-ALICE_MARK = "— ALICE"  # ALICE'in yazdığı cevapların imzası: PR takibi kendi cevaplarını yeni yorum sanmasın
+# ----------------------------------------------------------------------------------- CI and review helpers
+ALICE_MARK = "— ALICE"  # signature of ALICE's replies: PR tracking must not mistake its own replies for new comments
 
-# Arka planda kendiliğinden uygulanabilecek yorumların yazarları. Yabancının yorumu yalnız bildirilir: PR'a yorum
-# yazan herkes ALICE'e kod değiştirtebilmesin.
+# Authors whose comments may be applied automatically in the background. A stranger's comment is only reported:
+# anyone who can comment on a PR must not be able to make ALICE change code.
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 TRUSTED_BOTS = ("copilot-pull-request-reviewer", "copilot", "github-actions")
 _LOG_HIT = re.compile(r"(?i)(^|\s)(FAILED|ERROR|error[:\[]|E\s{2,}|Traceback|AssertionError|Exception:|"
@@ -442,7 +443,7 @@ _LOG_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
 
 
 def excerpt_log(text: str, limit: int = 4000) -> str:
-    """Uzun CI logundan işe yarayan kısım: hata satırları (bağlamıyla) ve son satırlar. Zaman damgaları atılır."""
+    """The useful part of a long CI log: error lines (with context) and the last lines. Timestamps are dropped."""
     lines = [_LOG_STAMP.sub("", ln) for ln in text.splitlines()]
     keep: list[int] = []
     for i, ln in enumerate(lines):
@@ -460,7 +461,7 @@ def excerpt_log(text: str, limit: int = 4000) -> str:
 
 
 def failed_jobs(api: GitHubAPI, repo: str, sha: str, with_logs: bool = True) -> list[dict[str, Any]]:
-    """Bu commit'te başarısız olan GitHub Actions işleri: ad, adres, çalıştırma kimliği ve logdan hata özeti."""
+    """GitHub Actions jobs that failed on this commit: name, address, run ID and an error summary from the log."""
     runs = api.get(f"/repos/{repo}/actions/runs", head_sha=sha, per_page=30).get("workflow_runs", [])
     out: list[dict[str, Any]] = []
     for run in runs:
@@ -483,7 +484,7 @@ def failed_jobs(api: GitHubAPI, repo: str, sha: str, with_logs: bool = True) -> 
 
 
 def rerun_failed(api: GitHubAPI, repo: str, sha: str) -> list[str]:
-    """Başarısız işleri yeniden çalıştır (yalnız başarısız olanlar). Yeniden başlatılan iş akışlarının adları."""
+    """Re-run the failed jobs (only the failed ones). Names of the workflows that were restarted."""
     runs = api.get(f"/repos/{repo}/actions/runs", head_sha=sha, per_page=30).get("workflow_runs", [])
     done = []
     for run in runs:
@@ -502,9 +503,9 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!) {
 
 
 def by_alice(body: str, cid: Any = None) -> bool:
-    """Yorumu ALICE mi yazdı: imza gövdenin SONUNDA olmalı; alıntı satırları ('> ') sayılmaz. Kullanıcı ALICE'in
-    cevabını alıntılayıp altına yazınca o yorum ALICE'inki sanılıp atlanmasın. İmzasız yazılanlar (gizli mod, genel
-    yorumlar) kimliklerinden tanınır."""
+    """Did ALICE write the comment? The signature must be at the END of the body; quoted lines ('> ') are not counted.
+    When the user quotes ALICE's reply and writes below it, that comment must not be taken as ALICE's and skipped.
+    Unsigned ones (undercover mode, general comments) are recognized by their IDs."""
     from alice import undercover
 
     if cid and undercover.is_own(cid):
@@ -514,8 +515,9 @@ def by_alice(body: str, cid: Any = None) -> bool:
 
 
 def trusted(author: str, association: str, kind: str = "") -> bool:
-    """Depoda yetkili kullanıcı ya da bilinen bot. Bot adı TAM eşleşmeli ve hesap gerçekten bot olmalı (kind:
-    GraphQL __typename; REST'te '[bot]' soneki): 'copilot-helper' gibi bir kullanıcı hesabı güvenilir sayılmasın."""
+    """An authorized user in the repo, or a known bot. The bot name must match EXACTLY and the account must really be
+    a bot (kind: GraphQL __typename; in REST, the '[bot]' suffix): a user account such as 'copilot-helper' must not be
+    trusted."""
     if association in TRUSTED_ASSOCIATIONS:
         return True
     low = (author or "").lower()
@@ -524,7 +526,7 @@ def trusted(author: str, association: str, kind: str = "") -> bool:
 
 
 def review_threads(api: GitHubAPI, repo: str, number: int) -> dict[str, list[dict[str, Any]]]:
-    """PR'daki inceleme konuşmaları (satır yorumları, çözüldü mü), inceleme özetleri ve genel yorumlar."""
+    """The review conversations in the PR (line comments, whether resolved), review summaries and general comments."""
     owner, name = repo.split("/", 1)
     pr = api.graphql(THREADS_QUERY, owner=owner, name=name, number=int(number))["repository"]["pullRequest"]
 
@@ -571,7 +573,7 @@ def format_threads(data: dict[str, list[dict[str, Any]]], only_open: bool = True
 
 def reply_to_comment(api: GitHubAPI, repo: str, number: int, comment_id: int, body: str,
                      sign: bool = True) -> dict[str, Any]:
-    """sign=False (gizli mod): imzasız; ALICE'in yazdığı kimliğinden anlaşılır."""
+    """sign=False (undercover mode): unsigned; recognized by ALICE's own ID."""
     from alice import undercover
 
     text = body.rstrip() + ("" if not sign or by_alice(body) else f"\n\n{ALICE_MARK}")
@@ -599,7 +601,7 @@ def _token(ctx: ToolContext) -> str | None:
     return api.token if api is not None else github_token(ctx.config)
 
 
-# --------------------------------------------------------------------------------------------- git aracı
+# --------------------------------------------------------------------------------------------- git tool
 GIT_READ = {"status", "diff", "log", "branches", "audit", "worktrees"}
 
 
@@ -704,7 +706,8 @@ class Git(Tool):
 
     @staticmethod
     def _worktree(ctx: ToolContext, root: Path, branch: str, create: bool) -> ToolResult:
-        """Ayrı çalışma kopyası: ~/.alice/worktrees/<depo>-<dal>. Açılınca çalışma klasörü oraya geçer."""
+        """Separate working copy: ~/.alice/worktrees/<repo>-<branch>.
+        Once it is opened, the working folder switches to it."""
         from alice.config import alice_home
 
         branch = branch.strip()
@@ -754,32 +757,32 @@ class Git(Tool):
         return ToolResult(out.splitlines()[0] if out else "commit'lendi")
 
     def _audit(self, ctx: ToolContext, root: Path) -> ToolResult:
-        """Depo ve yetki durumunu denetler (hepsi okuma)."""
+        """Audits the repo and auth status (all read-only)."""
         issues: list[str] = []
 
-        # 1. Uzak depo bilgisi ve Erişilebilirlik (Fetch Sağlığı)
-        # Rapor, URL'lerdeki kullanıcı:token kısmını MASKELEYEREK yazar; ham değer yalnızca tespit için tutulur
-        # (aksi hâlde audit'in kendisi anahtarı ajana/loga sızdırıyordu).
+        # 1. Remote info and reachability (fetch health)
+        # The report writes the user:token part of URLs MASKED; the raw value is kept only for detection
+        # (otherwise the audit itself was leaking the key to the agent/log).
         remotes_out = run_git(["remote", "-v"], root)[1]
         remotes_shown = re.sub(r"(https?://)[^/@\s]+:[^/@\s]+@", r"\1***:***@", remotes_out)
         lines = [f"Remotes:\n{remotes_shown or 'yok'}"]
         if not remotes_out.strip():
             issues.append("remote tanımlı değil: push/pull yapılamaz")
         else:
-            # Uzak bağlantı erişilebilirlik kontrolü (ls-remote); 15 sn ile sınırlı, ağ yoksa audit takılmaz.
+            # Remote reachability check (ls-remote); capped at 15 s so the audit doesn't hang when there is no network.
             fetch_check = run_git(["ls-remote", "--exit-code", "--refs", "origin", "HEAD"], root, timeout=15, check=False)
             if fetch_check[0] != 0:
                 issues.append("remote'a (origin) erişilemiyor veya ağ bağlantısı/yetki sorunu var")
             else:
                 lines.append("Remote Erişilebilirlik: OK (origin bağlantısı aktif)")
-        # Remote URL'de maskelemeyle gömülü anahtar bilgisi taşıyorsa
+        # If the remote URL has key info embedded in it (masked in the report)
         if re.search(r"(https?://)[^/@\s]+:[^/@\s]+@github\.com", remotes_out):
             issues.append("remote URL'de kullanıcı:token gömülü (`.git/config` temizlenmeli)")
         bad_hosts = set(re.findall(r"git@([^:]+):", remotes_out)) - {"github.com"}
         for host in sorted(bad_hosts):
             issues.append(f"remote ana makine tanınmıyor: {host}")
 
-        # 2. Dal ve Upstream durumu
+        # 2. Branch and upstream status
         branch = current_branch(root)
         if branch:
             upstream = run_git(["rev-parse", "--abbrev-ref", f"{branch}@{{u}}"], root, check=False)[1].strip()
@@ -792,7 +795,7 @@ class Git(Tool):
                     behind, ahead = ab_out.strip().split("\t")
                     lines.append(f"Durum: {ahead} ahead, {behind} behind")
                 
-                # Yerel-sadece commitler
+                # Local-only commits
                 local_only = run_git(["log", f"{upstream}..{branch}", "--oneline", "-n", "5"], root, check=False)[1]
                 if local_only.strip():
                     lines.append(f"Gönderilmemiş commitler (son 5):\n{local_only}")
@@ -803,14 +806,14 @@ class Git(Tool):
             lines.append("\nAyrık (detached) HEAD.")
             issues.append("ayrık HEAD: commit'lenecek dal yok")
 
-        # 2b. Upstream'i olmayan dallar (gönderilmemiş olabilir)
+        # 2b. Branches without an upstream (may not have been pushed)
         no_up = run_git(["for-each-ref", "--format=%(refname:short)", "refs/heads/"], root, check=False)[1].splitlines()
         orphans = [b.strip() for b in no_up if b.strip()
                    and not run_git(["rev-parse", "--abbrev-ref", f"{b.strip()}@{{u}}"], root, check=False)[1].strip()]
         if len(orphans) > 1 or (orphans and orphans != [branch]):
             lines.append("Upstream'siz diğer dallar: " + ", ".join(orphans))
 
-        # 3. Auth Durumu
+        # 3. Auth status
         token = _token(ctx)
         if token:
             source = token_source(ctx.config, token)
@@ -819,7 +822,7 @@ class Git(Tool):
         else:
             lines.append("\nAuth: Token bulunamadı.")
 
-        # 5. Uzak ile çelişen durum (upstream silinmiş olabilir)
+        # 5. State that contradicts the remote (the upstream may have been deleted)
         branches_vv = run_git(["branch", "-vv"], root, check=False)[1]
         if ": gone]" in branches_vv:
             issues.append("upstream'i silinmiş dal var (': gone]'), yeniden yayınlanmalı")
@@ -842,21 +845,21 @@ class Git(Tool):
                 default = _api(ctx).get(f"/repos/{repo}").get("default_branch", "")
             except ToolError:
                 default = ""
-        # Korumalı dala push yalnızca protected=true ile yapılır: risk_for o zaman onay ister.
+        # Pushing to a protected branch happens only with protected=true: risk_for then asks for approval.
         if protected(branch, ctx.config, default) and not (allow_protected or force):
             raise ToolError(f"'{branch}' korumalı dal (deponun ana dalı). Doğrudan push yerine yeni dal aç "
                             f"(git switch create=true), push et ve github pr_create kullan. Kullanıcı açıkça "
                             f"istediyse protected=true ile tekrar çağır; onay istenecek.")
-        # Ayrık HEAD (ör. PR takibinin worktree'si): yerel dal yok, HEAD uzak dala gönderilir.
+        # Detached HEAD (e.g. the PR tracker's worktree): no local branch, so HEAD is pushed to the remote branch.
         ref = branch if local else f"HEAD:refs/heads/{branch}"
         args = ["push"] + (["-u"] if local else []) + ["origin", ref] + (["--force-with-lease"] if force else [])
         _, out = run_git(args, root, _token(ctx), timeout=300)
         return ToolResult(out or f"{branch} gönderildi")
 
 
-# --------------------------------------------------------------------------------------------- github aracı
+# --------------------------------------------------------------------------------------------- github tool
 GH_READ = {"repos", "prs", "pr_view", "issues", "checks", "ci_wait", "ci_logs", "reviews", "watching"}
-WAIT_POLL = 15.0  # sn: ci_wait'in CI'a bakma aralığı
+WAIT_POLL = 15.0  # s: interval at which ci_wait checks CI
 GH_DANGER = {"pr_merge", "pr_close"}
 
 
@@ -918,7 +921,7 @@ class GitHub(Tool):
         if a in GH_READ:
             return READ
         if a in GH_DANGER or (a == "watch" and args.get("auto_merge")):
-            return DANGER  # ileride sormadan birleştirecek: kullanıcı onaylasın
+            return DANGER  # will merge later without asking: the user must approve
         return WRITE
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -1040,7 +1043,7 @@ class GitHub(Tool):
             text = format_threads(review_threads(api, repo, self._need(number)))
             from alice import guard
 
-            if guard.enabled(ctx):  # yorumları başkaları yazdı: içindeki "talimatlar" kullanıcıdan değil
+            if guard.enabled(ctx):  # others wrote these comments: "instructions" in them do not come from the user
                 guard.mark(ctx, "github")
                 text = guard.wrap("github", text)
             return ToolResult(text)
@@ -1078,8 +1081,9 @@ class GitHub(Tool):
         raise ToolError(f"bilinmeyen action: {action}")
 
     def _wait(self, ctx: ToolContext, api: GitHubAPI, repo: str, number: int, branch: str, minutes: int) -> ToolResult:
-        """CI bitene (ya da süre dolana) kadar bekle. Push'tan hemen sonra kontroller henüz görünmeyebilir: ilk
-        dakika "kontrol yok" bitmiş sayılmaz. Kullanıcı Durdur'a basarsa bırakır."""
+        """Wait until CI finishes (or the time runs out). Right after a push the checks may not be visible yet, so
+        the first minute of "kontrol yok" (no checks) does not count as done. If the user presses Durdur (Stop),
+        it stops waiting."""
         import time
 
         sha = self._sha(ctx, api, repo, number, branch)

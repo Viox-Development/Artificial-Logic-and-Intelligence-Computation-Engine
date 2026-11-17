@@ -1,10 +1,9 @@
-"""Yerel ses motorunun (Chatterbox) cümle sonundaki taşmalarını kesmek.
+"""Cutting overflows at the end of sentences from the local voice engine (Chatterbox).
 
-Chatterbox bazen cümle bitince devam edip yazılmayan şeyler söylüyor ya da sona cızırtı ekliyor.
-İki yol:
-  - by_words: Whisper'ın kelime zamanlarıyla, cümlenin son kelimesinin bittiği yerden kes (en doğrusu)
-  - by_length: Whisper yoksa, metnin uzunluğundan beklenen süreden sonra bir sessizlikle başlayan
-    ses parçalarını at
+Chatterbox sometimes continues speaking unwritten things after the sentence ends or adds static at the end.
+Two ways:
+  - by_words: with Whisper's word timestamps, cut from where the last word of the sentence ends (most accurate)
+  - by_length: if Whisper is not available, drop audio segments starting with silence after the expected time from text length
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ def cut(audio: Audio, seconds: float) -> Audio:
 
 
 def by_words(audio: Audio, words: list[tuple[str, float, float]], text: str, pad: float = 0.15) -> Audio | None:
-    """Cümlenin son kelimesinden sonrasını kes. Eşleşme bulunamazsa None."""
+    """Cut after the last word of the sentence. None if no match found."""
     want = fold(text)
     if not want or not words:
         return None
@@ -47,8 +46,8 @@ def by_words(audio: Audio, words: list[tuple[str, float, float]], text: str, pad
         for x in f:
             if any(_same(x, y) for y in want):
                 seen.add(x)
-        # Son kelime, cümlenin çoğu söylendikten sonra geldiyse orası gerçek son (sonra tekrar edilen
-        # son kelime uydurma kuyruğun parçası olabilir).
+        # If the last word comes after most of the sentence has been spoken, that is the real end
+        # (subsequent repeated last words might be part of the fabricated tail).
         if _same(f[-1], last) and len(seen) >= 0.6 * len(set(want)):
             if end + pad < audio.seconds:
                 return cut(audio, end + pad)
@@ -79,7 +78,7 @@ def _segments(audio: Audio, win: float = 0.02, rel: float = 0.06, gap: float = 0
 
 
 def by_length(audio: Audio, text: str, chars_per_sec: float = 11.0, slack: float = 0.8) -> Audio:
-    """Beklenen süreden sonra sessizlikle ayrılmış başlayan parçaları at."""
+    """Drop segments starting with silence after the expected duration."""
     expected = len(text.strip()) / chars_per_sec + slack
     segs = _segments(audio)
     if len(segs) < 2:
@@ -90,7 +89,7 @@ def by_length(audio: Audio, text: str, chars_per_sec: float = 11.0, slack: float
 
 
 def make_trimmer(stt=None) -> Callable[[Audio, str], Audio]:
-    """Whisper (Groq, kelime zamanlı) varsa onunla, yoksa uzunluğa göre kes."""
+    """Cut with Whisper (Groq, word-timed) if available, otherwise based on length."""
     def trim(audio: Audio, text: str) -> Audio:
         engine = next((e for e in getattr(stt, "engines", []) if hasattr(e, "words")), None) if stt else None
         if engine is not None:

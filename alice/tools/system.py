@@ -16,7 +16,7 @@ PROTECTED = {"system", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "
 
 
 def _gpu() -> str:
-    # Süre sınırı: WMI meşgulken ya da sürücü takılınca system_info (ve paralel araç grubu) sonsuza dek beklemesin.
+    # Time limit: when WMI is busy or a driver hangs, system_info (and the parallel tool group) must not wait forever.
     try:
         if shutil.which("nvidia-smi"):
             r = subprocess.run(["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
@@ -95,7 +95,7 @@ class ProcessList(Tool):
 
 
 def _same_name(proc_name: str, wanted: str) -> bool:
-    """Tam ad, Windows'ta '.exe' olmadan da: model çoğu zaman 'notepad' yazıyor, eskiden "eşleşen süreç yok" dönüyordu."""
+    """Exact name, also without '.exe' on Windows: the model often writes 'notepad' (it used to return no match)."""
     a, b = proc_name.lower(), wanted.strip().lower()
     return a == b or (sys.platform == "win32" and not b.endswith(".exe") and a == f"{b}.exe")
 
@@ -117,9 +117,9 @@ class ProcessKill(Tool):
     def risk_for(self, args: dict[str, Any]) -> str:
         n = (args.get("name") or "").lower()
         if n and not n.endswith(".exe") and f"{n}.exe" in PROTECTED:
-            n += ".exe"  # "explorer" de explorer.exe'yi kapatır (bkz. _same_name)
+            n += ".exe"  # "explorer" also closes explorer.exe (see _same_name)
         pid = args.get("pid")
-        if pid:  # PID ile verilince de korunan süreçleri (explorer, winlogon) ve ALICE'in kendisini sor
+        if pid:  # when given by PID too, ask before touching protected processes (explorer, winlogon) and ALICE itself
             import os
 
             try:
@@ -146,11 +146,11 @@ class ProcessKill(Tool):
             try:
                 p.terminate()
             except psutil.NoSuchProcess:
-                pass  # bu arada kendisi kapandı
+                pass  # it exited on its own in the meantime
             except psutil.Error as e:
                 failed[p.pid] = str(e) or type(e).__name__
         _, alive = psutil.wait_procs([p for p in targets if p.pid not in failed], timeout=3)
-        for p in alive:  # SIGTERM'i yok sayan süreç: zorla
+        for p in alive:  # process that ignores SIGTERM: force it
             try:
                 p.kill()
             except psutil.NoSuchProcess:
@@ -161,7 +161,7 @@ class ProcessKill(Tool):
             _, alive = psutil.wait_procs(alive, timeout=2)
         for p in alive:
             failed.setdefault(p.pid, "hâlâ çalışıyor")
-        # Eskiden kapanmayan süreçler de "sonlandırıldı" diye raporlanıyordu (erişim reddi, kapanmayı yok sayma).
+        # Processes that never exited used to be reported as "sonlandırıldı" too (access denied, exit ignored).
         ok = [str(p.pid) for p in targets if p.pid not in failed]
         parts = [f"sonlandırıldı: {', '.join(ok)}"] if ok else []
         parts += [f"{pid_}: kapatılamadı ({why})" for pid_, why in failed.items()]

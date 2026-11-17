@@ -1,19 +1,21 @@
-"""Zaman makinesi hafıza: ekranda gördüğün yazılar yerelde, şifreli ve aranabilir bir zaman çizgisine yazılır.
+"""Timeline memory: text you see on screen is written locally, encrypted, into a searchable timeline.
 
-"Geçen hafta Discord'da paylaşılan o linki bul." Sadece bu bilgisayarda kalır; istediğin an silinir. Varsayılan
-olarak KAPALI ([timeline] enabled = true ile açılır).
+"Find the link someone shared on Discord last week." It stays only on this computer; you can delete it at any time.
+Off by default (turn it on with [timeline] enabled = true).
 
-Nasıl:
-  * Her 'every' saniyede öndeki pencere yakalanır; bir öncekinden belirgin farklıysa Windows'un yerleşik OCR'ı ile
-    yazıya dökülür. Görüntü saklanmaz, sadece yazı, program adı ve pencere başlığı.
-  * Yazı ve başlık Windows DPAPI ile şifrelenir (yalnız senin Windows hesabın çözebilir), ~/.alice/timeline.db.
-  * Oyunda (uçuş modu, War Thunder/DCS önde), şifre yöneticilerinde ve gizli/özel tarayıcı pencerelerinde, başlığında
-    "şifre/password/banka" geçen pencerelerde kayıt yapılmaz. Liste [timeline] exclude ile genişler.
-  * keep_days günden eski kayıtlar kendiliğinden silinir.
+How it works:
+  * Every 'every' seconds the foreground window is captured; if it differs noticeably from the previous one, it is
+    turned into text with Windows' built-in OCR. Images are not stored, only the text, program name and window title.
+  * Text and title are encrypted with Windows DPAPI (only your Windows account can decrypt them), in
+    ~/.alice/timeline.db.
+  * Nothing is recorded in games (flight mode, War Thunder/DCS in front), in password managers, in private/incognito
+    browser windows, or in windows whose title contains "şifre/password/banka". The list is extended with
+    [timeline] exclude.
+  * Records older than keep_days are deleted automatically.
 
-  alice timeline search "aranan"   ara (son 30 gün)
-  alice timeline status            kaç kayıt, ne kadar yer
-  alice timeline wipe              hepsini sil
+  alice timeline search "aranan"   search (last 30 days)
+  alice timeline status            how many records, how much space
+  alice timeline wipe              delete everything
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ EXCLUDE_APPS = {"keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe"
                 "aces.exe", "dcs.exe", "credentialuibroker.exe", "consent.exe", "lockapp.exe"}
 EXCLUDE_TITLES = ("inprivate", "incognito", "gizli pencere", "özel pencere", "private browsing", "şifre", "parola",
                   "password", "banka", "bank", "kredi kartı", "1password", "bitwarden")
-SAME = 0.03          # küçük görüntüde piksellerin bu orandan azı değiştiyse aynı ekran: yeniden okunmaz
+SAME = 0.03          # on the small image: if fewer pixels than this ratio changed, it's the same screen, not re-read
 MAX_TEXT = 20_000
 
 
@@ -50,7 +52,8 @@ def _blob_cls():
 
 
 def protect(data: bytes) -> bytes:
-    """Windows DPAPI (CryptProtectData): yalnız bu Windows hesabı çözebilir. Windows dışında kayıt yapılmaz."""
+    """Windows DPAPI (CryptProtectData): only this Windows account can decrypt it. Nothing is recorded
+    outside Windows."""
     if sys.platform != "win32":
         raise RuntimeError("zaman çizgisi şimdilik sadece Windows'ta (DPAPI şifrelemesi)")
     import ctypes
@@ -83,7 +86,7 @@ def unprotect(data: bytes) -> bytes:
         ctypes.windll.kernel32.LocalFree(dst.pbData)
 
 
-# ---------------------------------------------------------------------- kayıt
+# ---------------------------------------------------------------------- record
 def db_path() -> Path:
     return alice_home() / "timeline.db"
 
@@ -103,7 +106,7 @@ class Timeline:
 
     def add(self, app: str, title: str, text: str, ts: float | None = None) -> None:
         with self._lock:
-            if self._closed:  # kapandıktan sonra gelen son kare (kaydedici iş parçacığı) sessizce düşer
+            if self._closed:  # a final frame arriving after closing (from the recorder thread) is silently dropped
                 return
             self._db.execute("INSERT INTO shots VALUES (?, ?, ?, ?)",
                              (time.time() if ts is None else ts, app, self.enc(title.encode("utf-8")),
@@ -111,7 +114,7 @@ class Timeline:
             self._db.commit()
 
     def search(self, query: str, days: float = 30, limit: int = 10, now: float | None = None) -> list[dict[str, Any]]:
-        """Büyük/küçük harf duyarsız; bütün kelimeler geçmeli. Yeniden eskiye."""
+        """Case-insensitive; all words must match. Newest first."""
         now = time.time() if now is None else now
         words = [w for w in query.casefold().split() if w]
         with self._lock:
@@ -121,7 +124,7 @@ class Timeline:
         for ts, app, title_b, text_b in rows:
             try:
                 title, text = self.dec(title_b).decode("utf-8"), self.dec(text_b).decode("utf-8")
-            except Exception:  # noqa: BLE001 - başka hesapta yazılmış/bozuk satır
+            except Exception:  # noqa: BLE001 - row written under another account, or corrupted
                 continue
             hay = f"{title}\n{text}".casefold()
             if all(w in hay for w in words):
@@ -151,8 +154,8 @@ class Timeline:
             return int(self._db.execute("SELECT COUNT(*) FROM shots").fetchone()[0])
 
     def close(self) -> None:
-        """Kilit altında: kaydedici iş parçacığı o an yazıyorsa yazımın bitmesi beklenir (kilitsiz kapatma yarım
-        işlemi/ProgrammingError'ı kaydediciye bırakıyordu); sonra gelen yazımlar sessizce düşer."""
+        """Under the lock: if the recorder thread is mid-write, wait for it to finish (closing without the lock
+        would leave a half-done operation or ProgrammingError there); later writes are silently dropped."""
         with self._lock:
             if self._closed:
                 return
@@ -169,7 +172,7 @@ def snippet(text: str, words: list[str], width: int = 160) -> str:
     return ("…" if start else "") + out + ("…" if start + width < len(flat) else "")
 
 
-# ------------------------------------------------------------------- yakalama
+# ------------------------------------------------------------------- capture
 def excluded(app: str, title: str, extra: list[str] | None = None) -> bool:
     a, t = (app or "").lower(), (title or "").casefold()
     extra_l = [x.casefold() for x in (extra or [])]
@@ -177,17 +180,18 @@ def excluded(app: str, title: str, extra: list[str] | None = None) -> bool:
 
 
 def different(prev: Any, cur: Any) -> bool:
-    """İki küçük gri görüntü belirgin farklı mı (ekran değişmediyse OCR boşuna çalışmasın)."""
+    """Are two small grayscale images noticeably different? (So OCR doesn't run needlessly when the screen
+    is unchanged.)"""
     if prev is None or cur is None or prev.size != cur.size:
         return True
     from PIL import ImageChops
 
-    hist = ImageChops.difference(prev, cur).histogram()  # gri: 256 kutu, numpy gerekmez
+    hist = ImageChops.difference(prev, cur).histogram()  # grayscale: 256 bins, no numpy needed
     return sum(hist[25:]) / max(1, sum(hist)) >= SAME
 
 
 def _foreground() -> tuple[str, str, tuple[int, int, int, int] | None]:
-    """(program, başlık, pencere kutusu)."""
+    """(program, title, window box)."""
     import ctypes
     from ctypes import wintypes
 
@@ -235,12 +239,12 @@ class Recorder:
         self.saved = 0
 
     def step(self, now: float | None = None) -> bool:
-        """Bir kez bak; kaydettiyse True."""
+        """Look once; return True if something was saved."""
         now = time.time() if now is None else now
         if now - self._pruned > 3600:
             self._pruned = now
             self.timeline.prune(float(self.cfg.get("keep_days", DEFAULTS["keep_days"])), now)
-        if self.mode() in ("flight", "quiet"):  # oyunda ekran okunmaz (performans ve odak)
+        if self.mode() in ("flight", "quiet"):  # the screen is not read in games (performance and focus)
             return False
         app, title, box = self.foreground()
         if box is None or excluded(app, title, self.cfg.get("exclude")):
@@ -269,7 +273,7 @@ class Recorder:
         while not self._stop.wait(every):
             try:
                 self.step()
-            except Exception:  # noqa: BLE001 - bir kare okunamasa da kayıt sürer
+            except Exception:  # noqa: BLE001 - a frame that can't be read doesn't stop recording
                 pass
 
     def start(self) -> "Recorder":
@@ -278,14 +282,14 @@ class Recorder:
         return self
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Kaydı durdur, süren kareyi bekle ve veritabanını kapat (çekirdek kapanırken yarım yazma kalmasın)."""
+        """Stop recording, wait for the frame in progress, close the database (no half-written data left behind)."""
         self._stop.set()
         t = self._thread
         if t is not None and t is not threading.current_thread():
             t.join(timeout)
         try:
             self.timeline.close()
-        except Exception:  # noqa: BLE001 - kapanışta hata çekirdeğin kapanmasını engellemesin
+        except Exception:  # noqa: BLE001 - an error at shutdown must not keep the core from closing
             pass
 
 

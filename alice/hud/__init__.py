@@ -1,13 +1,13 @@
-"""Ekran üstü HUD: oyunun, masaüstünün ve tarayıcının üstüne ok, kart, çerçeve çizen ayrı küçük süreç.
+"""On-screen HUD: a separate small process drawing arrows, cards, frames over games, desktop, and browser.
 
-  alice hud            HUD'u başlat (çekirdek [hud] enabled = true ise kendisi başlatır)
-  alice hud --demo     masaüstünde ok, kenar parlaması, kart ve ilerleme çubuğu çiz (30 sn)
+  alice hud            Start HUD (core starts it automatically if [hud] enabled = true)
+  alice hud --demo     Draw arrow, edge glow, card, and progress bar on desktop (30 s)
 
-Kodun geri kalanı yalnızca "göster" der (alice.hud.client.show); nasıl çizileceğini HUD bilir. HUD oyuna kod
-enjekte etmez, belleğini okumaz: sadece kendi saydam penceresini çizer (Discord ya da OBS katmanı gibi). Pencere
-tıklamaları altına geçirir, odak almaz, görev çubuğunda ve ALICE'in ekran görüntülerinde görünmez.
+The rest of the code only says "show" (alice.hud.client.show); HUD knows how to draw it. HUD does not inject code into games,
+does not read their memory: it only draws its own transparent window (like Discord or OBS overlay). The window
+passes clicks through, takes no focus, does not appear on taskbar or ALICE's screenshots.
 
-Komutlar 127.0.0.1'e UDP ile JSON gelir: {"kind": "arrow", "clock": 4, "text": "SAM 12 km", "ttl": 3}.
+Commands come via UDP to 127.0.0.1 as JSON: {"kind": "arrow", "clock": 4, "text": "SAM 12 km", "ttl": 3}.
 """
 
 PORT = 41240

@@ -1,22 +1,23 @@
-"""İzin modları.
+"""Permission modes.
 
-plan : sadece okuma/araştırma; dosya değiştiren, komut çalıştıran, ekrana dokunan her şey reddedilir
-ask  : okuma dışındaki her şey onay ister
-auto : tehlikeli komutlar (rm -r, format, registry, shutdown...), sistem klasörlerine yazma ve
-       başkasına giden mesajlar (send: Discord/WhatsApp/e-posta) onay ister; geri kalan her şey
-       (dosya düzenleme, komut, fare/klavye) serbest
-yolo : hiçbir şey sormaz
+plan : read/research only; anything that changes files, runs commands or touches the screen is denied
+ask  : everything except reading asks for confirmation
+auto : dangerous commands (rm -r, format, registry, shutdown...), writes to system folders and messages
+       sent to others (send: Discord/WhatsApp/e-mail) ask for confirmation; everything else
+       (file editing, commands, mouse/keyboard) is allowed
+yolo : never asks
 
-Kalıcı kurallar (Claude Code'daki allow/deny gibi), config.toml ve projede .alice/permissions.toml:
+Permanent rules (like allow/deny in Claude Code), in config.toml and in the project's .alice/permissions.toml:
   [permissions]
   allow = ["run_command(git status*)", "run_command(npm test*)", "edit_file(src/*)"]
   ask   = ["run_command(git push*)"]
   deny  = ["run_command(*rm -rf*)", "write_file(*.env)", "mcp__github__delete_*"]
-Biçim: "araç" ya da "araç(desen)". Araç adında * olabilir. Desen (büyük/küçük harf duyarsız, fnmatch) aracın asıl
-argümanına bakar: command, path, url, target, app, action ya da query (ilk bulunan). deny her modda (yolo dahil)
-geçerlidir; ask yolo dışında her zaman sorar; allow sormadan izin verir (plan modunu delmez; tehlikeli bir işe
-ancak desenli bir kural izin verir, "run_command" tek başına rm -r'yi serbest bırakmaz; dış içerik okunmuş bir turda
-desensiz kural komut çalıştırmayı, proje dışına yazmayı ve mesaj göndermeyi de sormadan geçirmez).
+Format: "tool" or "tool(pattern)". The tool name may contain *. The pattern (case-insensitive, fnmatch) is checked
+against the tool's main argument: command, path, url, target, app, action or query (the first one found). deny applies
+in every mode (yolo included); ask always asks except in yolo; allow grants permission without asking (it does not
+override plan mode). A dangerous action is only allowed by a rule with a pattern: a bare "run_command" does not let
+rm -r through by itself. And when external content has been read in the current turn, a rule without a pattern does not
+pass command execution, writes outside the project or sending messages without asking either.
 """
 
 from __future__ import annotations
@@ -70,10 +71,11 @@ def parse_rule(rule: str) -> tuple[str, str | None]:
 
 
 def _path_forms(raw: str, cwd: Path | None) -> list[str]:
-    """Yol argümanının kuralla karşılaştırılacak biçimleri: çözülmüş tam yol ve (proje içindeyse) projeye göre yolu.
-    Ham metin yalnız ".." içermiyorsa eklenir. Önceden yalnız ham metne bakılıyordu: "edit_file(gizli/*)" yasağı
-    "./gizli/a" ya da tam yolla deliniyor, "edit_file(src/*)" izni "src/../../dışarı" yazmaya izin veriyordu; "bu
-    projede hep izin ver" ile yazılan göreli kural da tam yolla gelen çağrıda hiç eşleşmiyordu."""
+    """Forms of a path argument to compare against a rule: the resolved absolute path and (if inside the project)
+    the path relative to the project. The raw text is added only if it does not contain "..". Previously only the raw
+    text was checked: the "edit_file(gizli/*)" ban was bypassed with "./gizli/a" or an absolute path, and the
+    "edit_file(src/*)" allow permitted writing to "src/../../dışarı"; a relative rule written with "bu projede hep
+    izin ver" (always allow in this project) also never matched a call that came with an absolute path."""
     out = []
     if ".." not in Path(raw).parts:
         out.append(raw)
@@ -97,7 +99,7 @@ def rule_matches(rule: str, tool_name: str, args: dict[str, Any], cwd: Path | No
     if spec is None:
         return True
     raw = primary_arg(args)
-    is_path = args.get("command") in (None, "") and args.get("path") not in (None, "")  # asıl argüman yol mu
+    is_path = args.get("command") in (None, "") and args.get("path") not in (None, "")  # is the main argument a path?
     values = _path_forms(raw, cwd) if is_path else [raw]
     pattern = spec.replace("\\", "/").lower()
     return any(fnmatch.fnmatchcase(v.replace("\\", "/").lower(), pattern) for v in values)
@@ -126,7 +128,7 @@ def _trusted(path: Path, text: str) -> bool:
 
 
 def _trust(path: Path, text: str) -> None:
-    """Bu içerik ALICE'in kendisi tarafından (kullanıcının onayıyla) yazıldı: allow kuralları geçerli."""
+    """This content was written by ALICE itself (with the user's approval): its allow rules are valid."""
     import json
 
     tp = _trust_path()
@@ -145,13 +147,13 @@ def _trust(path: Path, text: str) -> None:
 
 
 def project_rules(cwd: Path | None, include_untrusted: bool = False) -> dict[str, list[str]]:
-    """<proje>/.alice/permissions.toml ([permissions] başlıklı ya da başlıksız allow/ask/deny).
+    """<project>/.alice/permissions.toml (allow/ask/deny, with or without a [permissions] header).
 
-    Dosya projenin içinde: klonlanan bir repo ya da sandbox'taki bir komut `allow = ["*(*)"]` yazıp bütün onayları
-    atlatabiliyordu. Bu yüzden allow kuralları yalnız dosya ALICE'in yazdığı (kullanıcının "bu projede hep izin ver"
-    dediği) haliyle duruyorsa geçerli; içeriğin özeti ~/.alice/trusted-permissions.json'da. Elle ya da dışarıdan
-    değişen dosyanın allow'ları yok sayılır (include_untrusted ile listelenir); ask ve deny yalnız sıkılaştırdığı
-    için her zaman geçerli."""
+    The file lives inside the project: a cloned repo, or a command in the sandbox, could write `allow = ["*(*)"]`
+    and bypass all confirmations. So allow rules are valid only while the file is in the form ALICE wrote it (the one
+    the user approved with "bu projede hep izin ver" (always allow in this project)). A digest of the content is kept
+    in ~/.alice/trusted-permissions.json. The allow rules of a file changed by hand or from outside are ignored
+    (listed with include_untrusted). ask and deny are always valid since they only tighten."""
     if cwd is None:
         return {}
     path = Path(cwd) / ".alice" / "permissions.toml"
@@ -170,7 +172,7 @@ def project_rules(cwd: Path | None, include_untrusted: bool = False) -> dict[str
                 import tomli as tomllib
             text = path.read_text(encoding="utf-8-sig")
             data = tomllib.loads(text)
-        except Exception:  # noqa: BLE001 - bozuk dosya izinleri gevşetmesin: yok say
+        except Exception:  # noqa: BLE001 - a broken file must not loosen permissions: ignore it
             text, data = "", {}
         data = data.get("permissions", data) if isinstance(data, dict) else {}
         rules = {k: [str(r) for r in data.get(k, []) or []] for k in ("allow", "ask", "deny")}
@@ -182,7 +184,7 @@ def project_rules(cwd: Path | None, include_untrusted: bool = False) -> dict[str
 
 
 def project_rules_trusted(cwd: Path | None) -> bool:
-    """Projedeki allow kuralları geçerli mi (dosya yoksa ya da ALICE yazdıysa True)."""
+    """Are the allow rules in the project valid? (True if there is no file, or if ALICE wrote it.)"""
     rules = project_rules(cwd, include_untrusted=True)
     return not rules.get("allow") or project_rules(cwd).get("allow") == rules.get("allow")
 
@@ -206,7 +208,7 @@ def _write_project_rules(cwd: Path, rules: dict[str, list[str]]) -> Path:
 
 
 def trust_project_rules(cwd: Path) -> bool:
-    """Kullanıcı projedeki (elle ya da dışarıdan yazılmış) kuralları onayladı: olduğu gibi geçerli say."""
+    """The user approved the rules in the project (written by hand or from outside): treat them as valid as they are."""
     rules = project_rules(cwd, include_untrusted=True)
     if not rules:
         return False
@@ -215,8 +217,9 @@ def trust_project_rules(cwd: Path) -> bool:
 
 
 def suggest_rule(tool: Tool, args: dict[str, Any], cwd: Path | None = None) -> str:
-    """"Bu projede hep izin ver" denince yazılacak kural: dar ama işe yarar. Komutta ilk iki kelime ("git status*"),
-    dosya araçlarında dosyanın klasörü, diğerlerinde aracın adı."""
+    """The rule written when the user picks "bu projede hep izin ver" (always allow in this project): narrow but useful.
+    For a command, the first two words ("git status*"); for file tools, the file's folder;
+    for others, the tool's name."""
     name = tool.name
     if "command" in args and args.get("command"):
         words = str(args["command"]).split()
@@ -236,8 +239,8 @@ def suggest_rule(tool: Tool, args: dict[str, Any], cwd: Path | None = None) -> s
 
 
 def persist_allow(cwd: Path, rule: str) -> Path:
-    """Kuralı <proje>/.alice/permissions.toml'un allow listesine ekle (varsa tekrar eklemez)."""
-    # Onaylanmamış (dışarıdan gelen) allow kuralları burada da düşer: kullanıcının tek bir onayı onları aklamasın.
+    """Add the rule to the allow list of <project>/.alice/permissions.toml (not added again if already there)."""
+    # Unapproved (external) allow rules are dropped here too: a single user approval must not launder them.
     rules = dict(project_rules(cwd)) or {"allow": [], "ask": [], "deny": []}
     for k in ("allow", "ask", "deny"):
         rules.setdefault(k, [])
@@ -246,7 +249,7 @@ def persist_allow(cwd: Path, rule: str) -> Path:
     return _write_project_rules(cwd, rules)
 
 
-HISTORY_MAX = 2000  # satır: izin cevapları kaydı bu kadarla sınırlı
+HISTORY_MAX = 2000  # lines: the permission-answer history is capped at this many
 _HISTORY_LOCK = threading.Lock()
 
 
@@ -257,7 +260,8 @@ def history_path() -> Path:
 
 
 def record_answer(tool: Tool, args: dict[str, Any], cwd: Path | None, risk: str, answer: str) -> None:
-    """Sorulan izni ve cevabı kaydet: hep onaylanan işler için "artık sorma" önerisi bundan çıkar."""
+    """Record the permission asked and the answer: the "artık sorma" (stop asking) suggestion
+    for always-approved tasks comes from this."""
     import json
     import time
 
@@ -265,8 +269,8 @@ def record_answer(tool: Tool, args: dict[str, Any], cwd: Path | None, risk: str,
            "answer": answer, "cwd": str(cwd or "")}
     p = history_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Aynı anda iki sohbet cevap yazınca oku-değiştir-yaz birinin satırını siliyordu: kilit + geçici dosyadan
-    # os.replace (yarım yazılmış dosya okunmaz).
+    # When two chats wrote answers at the same time, read-modify-write deleted one of the lines: lock + os.replace
+    # from a temp file (a half-written file is never read).
     with _HISTORY_LOCK:
         try:
             lines = p.read_text(encoding="utf-8").splitlines()[-(HISTORY_MAX - 1):]
@@ -288,7 +292,7 @@ def _atomic_write(path: Path, text: str) -> None:
             try:
                 os.replace(tmp, path)
                 return
-            except PermissionError:  # Windows: hedef o an başka bir süreçte açık
+            except PermissionError:  # Windows: the target is open in another process at that moment
                 if attempt == 4:
                     raise
                 time.sleep(0.05)
@@ -298,8 +302,8 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def suggestions(cwd: Path | None = None, min_yes: int = 3) -> list[dict[str, Any]]:
-    """Kayıttan öneriler: en az min_yes kez onaylanmış, hiç reddedilmemiş, tehlikeli ya da başkasına giden olmayan,
-    henüz izinli olmayan kurallar. cwd verilirse yalnız o projede sorulanlar."""
+    """Suggestions from the history: rules approved at least min_yes times, never rejected, not dangerous or sent to
+    others, and not yet allowed. If cwd is given, only those asked in that project."""
     import json
 
     try:
@@ -308,7 +312,7 @@ def suggestions(cwd: Path | None = None, min_yes: int = 3) -> list[dict[str, Any
         return []
     stats: dict[str, dict[str, Any]] = {}
     for ln in text.splitlines():
-        # Bozuk bir satır (yarım yazma, elle düzenleme) ya da "rule"suz kayıt önerilerin tamamını yok etmesin: atla.
+        # A broken or half-written line, or a record without a "rule": skip it, don't drop all suggestions.
         try:
             r = json.loads(ln) if ln.strip() else None
             if not isinstance(r, dict) or not isinstance(r.get("rule"), str) or not r["rule"]:
@@ -329,14 +333,14 @@ def suggestions(cwd: Path | None = None, min_yes: int = 3) -> list[dict[str, Any
 
 
 def remove_project_rule(cwd: Path, kind: str, rule: str) -> bool:
-    """Projedeki .alice/permissions.toml'dan bir kuralı sil (uygulamadaki Asistan sekmesi)."""
+    """Delete a rule from the project's .alice/permissions.toml (the "Asistan" tab in the app)."""
     trusted = project_rules_trusted(cwd)
     rules = dict(project_rules(cwd, include_untrusted=True))
     if kind not in ("allow", "ask", "deny") or rule not in (rules.get(kind) or []):
         return False
     rules[kind] = [r for r in rules[kind] if r != rule]
     if not trusted:
-        rules["allow"] = []  # silme işlemi onaylanmamış allow'ları geçerli hale getirmesin
+        rules["allow"] = []  # deleting must not make unapproved allow rules valid
     _write_project_rules(cwd, rules)
     return True
 
@@ -345,10 +349,10 @@ class Permissions:
     def __init__(self, mode: str = "auto", rules: dict[str, list[str]] | None = None):
         if mode not in MODES:
             raise ValueError(f"geçersiz izin modu: {mode}")
-        self.before_plan: str | None = None  # plan modundan önceki mod: exit_plan_mode onaydan sonra ona döner
+        self.before_plan: str | None = None  # the mode before plan mode: exit_plan_mode returns to it after approval
         self._mode = mode
         self.always_allow: set[str] = set()
-        self.rules = rules  # None: config.toml [permissions] + projedeki .alice/permissions.toml
+        self.rules = rules  # None: config.toml [permissions] + the project's .alice/permissions.toml
 
     @property
     def mode(self) -> str:
@@ -371,17 +375,17 @@ class Permissions:
 
     @staticmethod
     def _risky_after_untrusted(tool: Tool, args: dict[str, Any], risk: str, ctx: ToolContext) -> bool:
-        """Dış içerik okunmuş bir turda onaya bağlanan işler: mesaj göndermek, komut çalıştırmak, çalışma klasörü
-        dışına yazmak."""
+        """Actions that need confirmation in a turn where external content was read: sending messages, running
+        commands, writing outside the working folder."""
         if tool.name == "run_command":
             from alice import sandbox
 
-            return not sandbox.usable(ctx, args)  # sandbox'ta çalışacaksa sormaya gerek yok: proje dışına yazamaz
+            return not sandbox.usable(ctx, args)  # sandboxed: cannot write outside the project
         if risk == SEND or tool.name == "process_kill" or "command" in args:
             return True
         if risk == WRITE:
-            # "path" ve yama metnindeki dosyalar (apply_patch'in "path"i yok: önceden hiç bakılmıyordu). Önek
-            # karşılaştırması C:\proje2'yi C:\proje'nin içinde sayıyordu; klasör sınırına göre bakılır.
+            # The "path" and the files in the patch text (apply_patch has no "path": it was never checked before).
+            # A prefix comparison counted C:\proje2 as inside C:\proje; the check now uses the folder boundary.
             try:
                 root = Path(ctx.cwd).resolve()
                 return any(not _inside(ctx.resolve(p), root) for p in _write_targets(args))
@@ -394,12 +398,12 @@ class Permissions:
             try:
                 if rule_matches(rule, tool.name, args, getattr(ctx, "cwd", None)):
                     return rule
-            except Exception:  # noqa: BLE001 - garip argüman kuralı bozmasın
+            except Exception:  # noqa: BLE001 - a weird argument must not break the rule
                 continue
         return None
 
     def decide(self, tool: Tool, args: dict[str, Any], ctx: ToolContext) -> str:
-        """'allow', 'ask' ya da 'deny' döndürür."""
+        """Returns 'allow', 'ask' or 'deny'."""
         if self.matching_rule(tool, args, ctx, "deny"):
             return "deny"
         if self.mode == "yolo":
@@ -415,14 +419,16 @@ class Permissions:
 
         allowed = self.matching_rule(tool, args, ctx, "allow")
         if allowed and (risk != DANGER or parse_rule(allowed)[1] is not None):
-            # Desensiz kural ("run_command" tek başına) kirli turda komut çalıştırmayı/proje dışına yazmayı/mesaj
-            # göndermeyi sormadan geçirmez: dış içerikten gelen talimat o aracın her kullanımını açmış olurdu.
-            # Desenli kurallar ("run_command(git status*)") dar olduğu için geçerli kalır.
+            # A rule without a pattern ("run_command" alone) does not let command execution, writing outside the
+            # project or sending messages through without asking in a tainted turn: an instruction from external content
+            # would have opened every use of that tool. Rules with a pattern ("run_command(git status*)") stay valid
+            # because they are narrow.
             if parse_rule(allowed)[1] is not None or not (
                     guard.tainted(ctx) and self._risky_after_untrusted(tool, args, risk, ctx)):
                 return "allow"
-        # Bu turda dış içerik okundu: talimat oradan gelmiş olabilir. Oturumluk "hep izin ver" (always_allow) bunu
-        # delmez: kullanıcı o onayı enjeksiyonu düşünerek vermedi (desenli allow kuralları yukarıda geçerli).
+        # External content was read in this turn: the instruction may have come from there. A session-long
+        # "hep izin ver" (always_allow) does not override this: the user did not give that approval with injection in
+        # mind (pattern allow rules above stay valid).
         if guard.tainted(ctx) and self._risky_after_untrusted(tool, args, risk, ctx):
             return "ask"
         if tool.name in self.always_allow and risk != DANGER:
@@ -444,7 +450,7 @@ class Permissions:
 
 
 def _inside(target: Path, root: Path) -> bool:
-    """target, root klasörünün içinde mi (Windows'ta büyük/küçük harf duyarsız)."""
+    """Is target inside the root folder? (Case-insensitive on Windows.)"""
     t, r = str(target), str(root)
     if sys.platform == "win32":
         t, r = t.lower(), r.lower()
@@ -453,8 +459,8 @@ def _inside(target: Path, root: Path) -> bool:
 
 
 def _write_targets(args: dict[str, Any]) -> list[str]:
-    """Yazma aracının dokunacağı yollar: "path" ve yama metnindeki dosyalar (apply_patch sistem klasörüne
-    yazarken önceden hiç sorulmuyordu)."""
+    """Paths a write tool will touch: "path" and the files in the patch text (apply_patch used to never ask
+    when writing to a system folder)."""
     out = [str(args["path"])] if "path" in args else []
     patch = args.get("patch")
     if isinstance(patch, str) and patch:
@@ -464,7 +470,7 @@ def _write_targets(args: dict[str, Any]) -> list[str]:
         try:
             ops = parse_patch(patch)
         except ToolError:
-            return out  # bozuk yama: araç zaten hata verip hiçbir şey yazmaz
+            return out  # broken patch: the tool itself errors and writes nothing
         for op in ops:
             out += [p for p in (op.path, op.move_to) if p]
     return out

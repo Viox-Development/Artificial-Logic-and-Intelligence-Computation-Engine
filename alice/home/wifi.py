@@ -1,7 +1,7 @@
-"""Wi-Fi: durum, ağ tarama, kayıtlı ağlar, bağlanma/kesme (Windows `netsh wlan`).
+"""Wi-Fi: status, network scan, saved networks, connect/disconnect (Windows `netsh wlan`).
 
-netsh'in anahtar adları sistem diline göre değişiyor ("Signal"/"Sinyal"), o yüzden ayrıştırma ada değil
-biçime dayanıyor: SSID satırı her dilde "SSID", sinyal her dilde "%" ile biten değer.
+netsh's key names change with the system language ("Signal"/"Sinyal"), so parsing relies on format, not names:
+the SSID line is "SSID" in every language, and the signal is a value ending in "%" in every language.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape
 from alice.home.net import run
 
 KV = re.compile(r"^\s*(.+?)\s*:\s(.*)$")
-# Türkçe Windows yüzdeyi başa yazabiliyor ("%87"); İngilizcede sonda ("87%").
+# Turkish Windows can put the percent sign first ("%87"); English puts it last ("87%").
 PERCENT = re.compile(r"(?:(\d{1,3})\s?%|%\s?(\d{1,3}))")
 
 
@@ -39,7 +39,7 @@ def _netsh(*args: str) -> str:
 
 
 def parse_status(text: str) -> dict:
-    """`netsh wlan show interfaces` → {connected, ssid, signal, fields}. fields: ham anahtar/değer çiftleri."""
+    """`netsh wlan show interfaces` → {connected, ssid, signal, fields}. fields: raw key/value pairs."""
     fields = [(m.group(1).strip(), m.group(2).strip()) for line in text.splitlines() if (m := KV.match(line))]
     ssid = next((v for k, v in fields if k == "SSID"), "")
     signal = next((p for _, v in fields if (p := _percent(v)) is not None), None)
@@ -47,7 +47,7 @@ def parse_status(text: str) -> dict:
 
 
 def parse_networks(text: str) -> list[dict]:
-    """`netsh wlan show networks mode=bssid` → [{ssid, signal, auth}] sinyale göre sıralı."""
+    """`netsh wlan show networks mode=bssid` → [{ssid, signal, auth}] sorted by signal."""
     nets: list[dict] = []
     cur: dict | None = None
     for line in text.splitlines():
@@ -67,7 +67,7 @@ def parse_networks(text: str) -> list[dict]:
 
 
 def parse_profiles(text: str) -> list[str]:
-    """`netsh wlan show profiles` → kayıtlı ağ adları."""
+    """`netsh wlan show profiles` → saved network names."""
     out = []
     for line in text.splitlines():
         if line.startswith("    ") and (m := KV.match(line)) and m.group(2).strip():
@@ -92,7 +92,7 @@ def profiles() -> list[str]:
 
 
 def profile_xml(ssid: str, password: str) -> str:
-    """WPA2-Personal (AES) profili; açık ağ için şifre boş."""
+    """WPA2-Personal (AES) profile; for an open network the password is empty."""
     name = escape(ssid)
     if password:
         sec = ("<authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption>"

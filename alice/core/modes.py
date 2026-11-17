@@ -1,15 +1,15 @@
-"""Ortama göre mod.
+"""Environment-based mode.
 
-Açık programlara ve saate bakarak mod seçilir. Mod, hangi bildirimlerin geçeceğini,
-seslinin açık olup olmadığını ve ALICE'in ekran kartını kullanıp kullanamayacağını belirler:
+Selects the mode based on running programs and time of day. The mode determines which notifications pass,
+whether voice is enabled, and whether ALICE can use the local graphics card:
 
-  flight : DCS / War Thunder açık. Sadece uçuşla ilgili ya da kritik şeyler konuşulur,
-           yerel GPU kullanılmaz (ağır işler buluta).
-  dev    : Unity / editör açık. Normal bildirimler, geliştirme odaklı.
-  quiet  : gece saatleri. Sadece uyarı ve üstü, sesli konuşma yok.
-  normal : geri kalan her şey.
+  flight : DCS / War Thunder running. Only flight-related or critical things are spoken,
+           local GPU is not used (heavy tasks go to the cloud).
+  dev    : Unity / editor running. Normal notifications, development-focused.
+  quiet  : night hours. Only warning and above, no voice speech.
+  normal : everything else.
 
-Config ([core.modes]) ile program listeleri ve politikalar değiştirilebilir.
+Program lists and policies can be changed via config ([core.modes]).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ DEFAULT_PROGRAMS = {
 DEFAULT_POLICIES: dict[str, dict[str, Any]] = {
     "normal": {"min_severity": "info", "topics": [], "voice": True, "local_gpu": True},
     "dev": {"min_severity": "info", "topics": [], "voice": True, "local_gpu": True},
-    # oyunda telefon mesajları da söylensin (WhatsApp/SMS); toplu bildirim özeti oyun bitince
+    # also speak phone messages during games (WhatsApp/SMS); bulk notification digest after the game ends
     "flight": {"min_severity": "critical", "topics": ["flight", "phone"], "voice": True, "local_gpu": False},
     "quiet": {"min_severity": "warn", "topics": [], "voice": False, "local_gpu": True},
 }
@@ -40,7 +40,7 @@ PRIORITY = ("flight", "dev", "quiet", "normal")
 class Policy:
     mode: str
     min_severity: str = "info"
-    topics: list[str] = field(default_factory=list)  # boş değilse bu konulardakiler min_severity'den bağımsız geçer
+    topics: list[str] = field(default_factory=list)  # if non-empty, these topics pass regardless of min_severity
     voice: bool = True
     local_gpu: bool = True
 
@@ -48,13 +48,13 @@ class Policy:
         if topic and topic in self.topics:
             return True
         rank = SEVERITIES.index(severity) if severity in SEVERITIES else 0
-        # Ayarda yazım hatası ("warning") her bildirimi ValueError ile düşürmesin: bilinmeyen seviye = info.
+        # Prevent config typos ("warning") from dropping every notification with ValueError: unknown level = info.
         floor = SEVERITIES.index(self.min_severity) if self.min_severity in SEVERITIES else 0
         return rank >= floor
 
 
 def parse_hours(spec: str) -> tuple[dtime, dtime] | None:
-    """'00:30-08:00' -> (00:30, 08:00). Boş ya da geçersizse None."""
+    """'00:30-08:00' -> (00:30, 08:00). None if empty or invalid."""
     try:
         a, b = (s.strip() for s in spec.split("-", 1))
         return dtime.fromisoformat(a), dtime.fromisoformat(b)
@@ -95,7 +95,7 @@ class ModeManager:
         return "normal"
 
     def update(self, processes: Iterable[str], now: datetime | None = None) -> tuple[str, bool]:
-        """Modu yeniden hesapla. (mod, değişti mi) döndürür."""
+        """Recalculate the mode. Returns (mode, changed)."""
         mode = self.detect(processes, now)
         changed = mode != self.current
         self.current = mode

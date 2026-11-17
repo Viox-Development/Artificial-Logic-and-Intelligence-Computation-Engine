@@ -1,7 +1,7 @@
-"""Ana ajan döngüsü (Claude Code / Codex tarzı).
+"""Main agent loop (Claude Code / Codex style).
 
-user mesajı -> model (araçlarla) -> tool_calls varsa izin kontrolü + çalıştır ->
-sonuçları geri ver -> model artık araç çağırmayınca tur biter.
+user message -> model (with tools) -> if there are tool_calls, permission check + run ->
+feed the results back -> the turn ends when the model stops calling tools.
 """
 
 from __future__ import annotations
@@ -24,17 +24,17 @@ from alice.providers.router import (AllProvidersFailed, Router, cache_write_toke
                                     estimate_tokens, strip_images)
 from alice.tools.base import COMPUTER, DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
-# Yutulan hatalar için iz: varsayılan olarak sessiz, `logging.basicConfig(level=logging.DEBUG)` ile görünür.
+# Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
 log = logging.getLogger(__name__)
 
 
 class UI(Protocol):
-    """Arayüzün (terminal ya da masaüstü uygulaması) ajan olaylarını gösterme sözleşmesi."""
+    """Contract for how the interface (terminal or desktop app) displays agent events."""
 
-    def stream_start(self) -> None: ...  # model cevabı başlıyor (ilk parça gelene kadar "düşünüyor")
+    def stream_start(self) -> None: ...  # model reply is starting ("thinking" until the first chunk arrives)
     def stream_delta(self, text: str) -> None: ...
-    # Opsiyonel: def thinking_delta(self, text: str) -> None  (modelin akıl yürütme metni)
-    def stream_reset(self) -> None: ...  # model akış ortasında düştü, yedek model baştan yazacak
+    # Optional: def thinking_delta(self, text: str) -> None  (the model's reasoning text)
+    def stream_reset(self) -> None: ...  # model dropped mid-stream, the fallback model will rewrite from the start
     def stream_end(self, text: str, source: str) -> None: ...
     def tool_start(self, call_id: str, name: str, summary: str) -> None: ...
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None: ...
@@ -82,10 +82,10 @@ class _Sink:
     def __init__(self, ui: UI, cancel: threading.Event):
         self.ui = ui
         self.cancel = cancel
-        self.dead = False  # tur durdurulduysa arkada süren model çağrısı artık arayüze yazmasın
+        self.dead = False  # if the turn was stopped, a model call still running in the background must no longer write to the UI
         self.parts: list[str] = []
 
-    first_at = 0.0  # bu model çağrısında ilk metnin geldiği an (oturum istatistiği: ilk kelime süresi)
+    first_at = 0.0  # moment the first text arrived in this model call (session statistic: time to first word)
 
     def on_delta(self, text: str) -> None:
         if self.dead:
@@ -95,12 +95,12 @@ class _Sink:
         self.parts.append(text)
         self.ui.stream_delta(text)
 
-    early: Any = None  # tamamlanan araç çağrısını cevap bitmeden başlatan ajan fonksiyonu
+    early: Any = None  # agent function that starts a completed tool call before the reply is finished
     early_reset: Any = None
 
     def on_reset(self) -> None:
         if self.early_reset is not None:
-            self.early_reset()  # model akışın ortasında değişti: erken başlatılanların sonucu kullanılmaz
+            self.early_reset()  # model changed mid-stream: results of early-started calls are not used
         if self.dead:
             return
         self.parts.clear()
@@ -145,7 +145,7 @@ _TOO_BIG = re.compile(r"istek ~(\d+) token, model sınırı (\d+)")
 
 
 def lean_specs(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Araç tanımlarının kısa hali: açıklamanın ilk cümlesi, parametre açıklamaları kırpılmış (dar bağlamlı modeller)."""
+    """Short form of the tool specs: first sentence of the description, parameter descriptions trimmed (narrow-context models)."""
     out = []
     for sp in specs:
         fn = dict(sp.get("function") or {})
@@ -161,11 +161,11 @@ def lean_specs(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def fits_after_compact(errors: list[str]) -> int:
-    """Modeller sadece konuşma bağlamlarına sığmadığı için düştüyse, sığacak en büyük bağlam (token); yoksa 0."""
+    """If models failed only because the conversation didn't fit their context, the largest context (tokens) that fits; else 0."""
     limits = [int(m.group(2)) for e in errors if (m := _TOO_BIG.search(e))]
     big = [int(m.group(1)) for e in errors if (m := _TOO_BIG.search(e))]
-    # Büyük bir model sadece kısa süreliğine meşgulse (birkaç dakikalık bekleme, hız sınırı) konuşmayı kalıcı olarak
-    # küçültme: beklemek daha iyi. Saatlik kota beklemesi ise kısa değil.
+    # If a large model is busy only briefly (a few minutes of waiting, rate limit), don't shrink the conversation
+    # permanently: waiting is better. An hourly-quota wait, however, is not short.
     for e in errors:
         w = re.search(r"soğumada \((\d+) sn\)", e)
         if (w and int(w.group(1)) < 300) or "rate_limit" in e or "429" in e:
@@ -179,14 +179,14 @@ def parse_args(raw: str | dict | None) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     if raw is not None and not isinstance(raw, str):
-        # Bazı sağlayıcılar argümanı liste/sayı olarak gönderiyor: çökmesin, modele hata olarak dönsün.
+        # Some providers send the arguments as a list/number: don't crash, return it to the model as an error.
         raise json.JSONDecodeError("argümanlar obje değil", str(raw), 0)
     if not raw or not raw.strip():
         return {}
     try:
         val = json.loads(raw)
     except json.JSONDecodeError:
-        # Bazı modeller sona fazladan metin ya da code fence ekliyor.
+        # Some models append extra text or a code fence at the end.
         cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip()
         m = re.search(r"\{.*\}", cleaned, re.S)
         if not m:
@@ -198,8 +198,8 @@ def parse_args(raw: str | dict | None) -> dict[str, Any]:
 
 
 def _sanitize_calls(msg: dict[str, Any]) -> None:
-    """Modelin tool_call'larında ad ya da argüman metin değilse (null, liste, sayı) metne çevir: yoksa döngü
-    çöküyor ve geçmişe giden bozuk çağrı sonraki her isteği 400 ile düşürüyordu."""
+    """If the name or arguments in the model's tool_calls are not strings (null, list, number), convert them to strings:
+    otherwise the loop crashes and the malformed call that went into the history made every later request fail with 400."""
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function")
         if not isinstance(fn, dict):
@@ -211,7 +211,7 @@ def _sanitize_calls(msg: dict[str, Any]) -> None:
             fn["arguments"] = "{}" if args is None else json.dumps(args, ensure_ascii=False)
 
 
-# Eski sabit özetleme sınırı. Eski config.toml'larda yazılı kaldığı için "auto" sayılır (modelin penceresine göre).
+# Old fixed summarization limit. Since it is still written in old config.toml files, it counts as "auto" (based on the model's window).
 LEGACY_COMPACT_AT = 48000
 PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiştiren, komut çalıştıran ya da ekrana "
              "dokunan araçlar reddedilecek. İşi incele, sonra adım adım net bir uygulama planı yaz ve kullanıcının "
@@ -219,40 +219,41 @@ PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiş
 
 
 _CATALOG_RX = re.compile(r"\n\n# Yüklenebilir araçlar\n.*?(?=\n\n# |\n\n<|\Z)", re.S)
-# Ret sayacı: izin verilmeyen çağrılar art arda bu kadar ya da turda toplam bu kadar olunca tur durur. Gözetimsiz
-# ajan (KAIROS, PR takibi, görevler) ya da plan modu reddedildikçe aynı şeyi başka biçimde deneyip duruyordu.
+# Denial counter: the turn stops after this many denied calls in a row, or this many in total in one turn. An unattended
+# agent (KAIROS, PR watching, tasks) or plan mode kept retrying the same thing in another form after each denial.
 DENIAL_LIMITS = (3, 20)
 DENIAL_HALT = ("İzin verilmeyen işlemleri art arda denediğim için durdum: bu iş şu anki izin moduyla yapılamıyor. "
                "İzin modunu değiştirip ya da ne yapmamı istediğini söyleyip \"devam et\" yazarsan sürdürürüm.")
 BUDGET_HALT = ("Bu tur için ayrılan token bütçesini ({used:,} / {budget:,}) doldurduğum için durdum. İş yarıda; "
                "\"devam et\" yazarsan kaldığım yerden sürdürürüm. (Sınır: [agent] turn_token_budget)")
-MAX_CUTOFFS = 3  # çıktı sınırında kesilen cevap en fazla bu kadar kez sürdürülür
+MAX_CUTOFFS = 3  # a reply cut off at the output limit is continued at most this many times
 CUTOFF_NOTE = ("Cevabın çıktı sınırına takılıp yarıda kesildi. Tam kaldığın yerden, önceki kısmı tekrar etmeden "
                "ve özür dilemeden devam et.")
-KEEP_OUTPUTS = 6  # son bu kadar araç çıktısı tam kalır
-OLD_OUTPUT_CHARS = 1200  # daha eskilerin uzunları bu kadara kısaltılır
-# Geçmişteki bir mesajı değiştirmek sağlayıcının prompt önbelleğini o noktadan sonrası için boşa çıkarır. Kısaltma
-# her adımda değil, toplu ve ancak gerektiğinde yapılır: önbellek zaten soğuduysa (son istekten bu kadar sn sonra)
-# ya da bağlam özetleme eşiğinin yarısını geçtiyse ve kısaltılacak yeterince eski çıktı biriktiyse.
+KEEP_OUTPUTS = 6  # the last this-many tool outputs stay in full
+OLD_OUTPUT_CHARS = 1200  # long older ones are shortened to this many characters
+# Changing a message in the history invalidates the provider's prompt cache from that point on. Trimming is not done
+# at every step, but in batches and only when needed: if the cache has already gone cold (this many seconds after the
+# last request), or the context has passed half of the summarization threshold and enough old outputs piled up to trim.
 CACHE_COLD_S = 300
-CACHE_LONG_S = 55 * 60  # cliproxy 1 saatlik önbellek yazıyor; bitime biraz pay
+CACHE_LONG_S = 55 * 60  # cliproxy writes a 1-hour cache; leave a small margin before it expires
 TRIM_BATCH = 8
-IMAGE_SLACK = 3  # ekran görüntüleri keep_images + bu kadar olunca topluca budanır
+IMAGE_SLACK = 3  # screenshots are pruned in bulk once there are keep_images + this many
 NUDGE_PREFIX = "[devam kontrolü] "
-# Cevabın sonu "yapacağım" diyorsa iş yarım kalmış demektir.
+# If the end of the reply says "I will do it" ("yapacağım"), the work is unfinished.
 _PROMISE_RX = re.compile(
     r"(yapaca[ğg][ıi]m|edece[ğg]im|ba[şs]l[ıi]yorum|bakaca[ğg][ıi]m|deneyece[ğg]im|ekleyece[ğg]im|d[üu]zeltece[ğg]im|"
     r"[çc]al[ıi][şs]t[ıi]raca[ğg][ıi]m|kontrol edece[ğg]im|yazaca[ğg][ıi]m|kuraca[ğg][ıi]m|indirece[ğg]im|"
     r"\blet me\b|\bi'll\b|\bi will\b|\bnext,? i\b|\bnow i\b)[^.!?]{0,60}[.:…]*\s*$", re.I)
-# "Bitince yazacağım": iş arka plana (proje, uzun komut) verilmiş, söz onun bitişine bağlı. Bu yarım kalmış iş
-# değil; 11 Kasım'da bu cevaba "yapmadan durdun" denince ALICE arka plan projesini 30 dk bekleyip kotayı yaktı.
+# "I'll write when it's done" ("Bitince yazacağım"): the work was handed to the background (project, long command),
+# and the promise depends on its completion. This is not unfinished work; on 11 November, when this reply was
+# answered with "you stopped without doing it" ("yapmadan durdun"), ALICE waited 30 min for the background project and burned the quota.
 _DEFERRED_RX = re.compile(
     r"\b(bitince|bitti[ğg]inde|tamamlan[ıi]nca|tamamland[ıi][ğg][ıi]nda|haz[ıi]r olunca|sonu[çc]lan[ıi]nca|"
     r"arka planda|once (it|they)('s| is| are)? (done|finished)|when (it|they) (finish|complete)\w*)\b", re.I)
 
 
 def _valid_summary(text: str) -> bool:
-    """Özet gerçekten özet mi? Boş/çok kısa, araç çağrısı biçiminde ya da dökümün kopyası olan metin değildir."""
+    """Is the summary really a summary? Text that is empty/too short, in tool-call form, or a copy of the transcript is not."""
     t = text.strip()
     if len(t) < 8:
         return False
@@ -264,7 +265,7 @@ def _valid_summary(text: str) -> bool:
 
 
 def _fallback_summary(old: list[dict[str, Any]]) -> str:
-    """Modelsiz özet: kullanıcının yazdıkları sırayla (kısaltılmış), dokunulan dosyalar ve son asistan cevabı."""
+    """Summary without a model: what the user wrote in order (shortened), touched files and the last assistant reply."""
     asks, files, last = [], [], ""
     for m in old:
         c = m.get("content")
@@ -290,7 +291,7 @@ def _fallback_summary(old: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-# Sonuç bildiren cevap: kanıt kontrolü yalnız bunlarda çalışır (her cevapta ek model çağrısı olmasın)
+# Reply that reports a result: the evidence check runs only on these (so there is no extra model call on every reply)
 _CLAIM_RX = re.compile(
     r"(yapt[ıi]m|kurdum|kuruldu|indirdim|indirildi|ba[şs]latt[ıi]m|a[çc]t[ıi]m|a[çc][ıi]ld[ıi]|g[öo]nderdim|"
     r"g[öo]nderildi|tamamlad[ıi]m|tamamland[ıi]|bitti|ayarlad[ıi]m|kaydettim|kaydedildi|sildim|silindi|"
@@ -299,7 +300,7 @@ _CLAIM_RX = re.compile(
 
 
 def _clip(text: str, limit: int) -> str:
-    """Uzun araç çıktısının başını ve sonunu tut (sonuç çoğu zaman sonda yazar), ortasını '…' ile kısalt."""
+    """Keep the head and tail of a long tool output (the result is usually at the end), shorten the middle with '…'."""
     if len(text) <= limit:
         return text
     head = limit * 2 // 3
@@ -327,83 +328,86 @@ class Agent:
         self.ui = ui or NullUI()
         self.decider = decider
         self.is_child = is_child
-        self.role = "brain"  # sesli asistan "voice" kullanır: ilk kelimesi en çabuk gelen modeller
+        self.role = "brain"  # the voice assistant uses "voice": models whose first word arrives fastest
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt or build_system_prompt(ctx.cwd)}]
         a = config.agent
         self.max_steps = int(a.get("max_steps", 80))
         self._compact_cfg = a.get("compact_at_tokens", "auto")
-        # Üst sınır (0 = yok). Proje ajanları ve kurul için konur: 1M bağlamlı modelde her adım yüz binlerce token
-        # gönderiyordu (bir proje ~100M token).
+        # Upper limit (0 = none). Set for project agents and the council: on a 1M-context model every step sent
+        # hundreds of thousands of tokens (one project ~100M tokens).
         self.compact_cap = 0
-        self._last_prompt: tuple[int, int, Any] | None = None  # (sağlayıcının saydığı token, mesaj sayısı, son mesaj)
+        self._last_prompt: tuple[int, int, Any] | None = None  # (tokens counted by the provider, message count, last message)
         self.output_limit = int(a.get("tool_output_chars", 12000))
         self.keep_images = int(a.get("keep_images", 2))
-        self._last_call_at = 0.0  # son model çağrısının bittiği an (monotonic): önbellek soğudu mu
+        self._last_call_at = 0.0  # moment the last model call finished (monotonic): has the cache gone cold
         self.stream = bool(a.get("stream", True))
-        # Araçlarla çalışırken iş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak, todo listesinde
-        # bitmemiş adım bırakmak) en fazla bu kadar kez devam etmesi hatırlatılır. 0 = kapalı.
+        # If, while working with tools, it stops before the job is done (saying "şimdi testleri çalıştıracağım" ("now I'll
+        # run the tests") and going silent, leaving an unfinished step in the todo list), it is reminded to continue at
+        # most this many times. 0 = off.
         self.finish_nudges = int(a.get("finish_nudges", 2))
         try:
             from alice.hooks import Hooks
 
-            self.hooks = Hooks.from_config(config, ctx.cwd)  # kullanıcının hook'ları (config.toml / hooks.toml)
-        except Exception:  # noqa: BLE001 - bozuk hook ayarı ajanı açılmaz yapmasın
+            self.hooks = Hooks.from_config(config, ctx.cwd)  # the user's hooks (config.toml / hooks.toml)
+        except Exception:  # noqa: BLE001 - a broken hook setting must not make the agent unable to start
             from alice.hooks import Hooks
 
             self.hooks = Hooks([], ctx.cwd)
         self.cancel = threading.Event()
-        # Durdurma isteği dışarıda da tutuluyorsa (takım üyesi): run_turn bayrağı temizledikten sonra buna bakar.
-        # Kontrol ile tur başlangıcı arasına düşen bir Durdur böylece kaybolmaz.
+        # If the stop request is also kept outside (team member): run_turn checks this after clearing the flag.
+        # That way a Stop that lands between the check and the start of the turn is not lost.
         self.stop_check: Any = None
         self.busy = False
-        # Çalışırken gelen kullanıcı mesajları (steer): bir sonraki model adımından önce konuşmaya girer.
+        # User messages that arrive while working (steer): they enter the conversation before the next model step.
         self._inbox: list[tuple[str, list[str]]] = []
         self._inbox_lock = threading.Lock()
-        self._steering = False  # tur, inbox'ı alabilecek noktada mı (finally'de kapanır)
+        self._steering = False  # is the turn at a point where it can take the inbox (closed in finally)
         self._call_counts: dict[str, int] = {}
         self._fail_counts: dict[str, int] = {}
         self._error_streak = 0
-        # Oturum istatistiği (durum çubuğundaki paneller): tur, adım, model ve araç süresi, ilk kelime süresi, token.
+        # Session statistics (panels in the status bar): turns, steps, model and tool time, time to first word, tokens.
         self.stats: dict[str, float] = {"turns": 0, "steps": 0, "llm_s": 0.0, "tool_s": 0.0, "ttft_s": 0.0,
                                         "ttft_n": 0, "gen_s": 0.0, "gen_tokens": 0, "input": 0, "cached": 0, "written": 0,
                                         "output": 0}
-        # Kullanım dökümü: tokenlar hangi modele, bağlam hangi araçların çıktısına gitti
+        # Usage breakdown: which model the tokens went to, which tools' outputs the context went to
         self.usage_models: dict[str, dict[str, float]] = {}
         self.usage_tools: dict[str, dict[str, float]] = {}
-        # Her araç adımından sonra çağrılır (oturumu kaydetmek için): tur takılır ya da çökerse iz kaybolmasın.
+        # Called after every tool step (to save the session): so no trace is lost if the turn hangs or crashes.
         self.on_step: Any = None
-        self.on_compact: Any = None  # özetlemede bağlamdan çıkan mesajlar buraya verilir (uygulama arşive yazar)
-        self.on_usage: Any = None  # her model cevabının kullanım bilgisi (token, varsa ücret) buraya da bildirilir
-        # Uzun süreli hafıza (alice.memory.LongMemory): oturum kuranlar bağlar; testler ve gözetimsiz görevlerde None.
+        self.on_compact: Any = None  # messages dropped from the context during summarization are passed here (the app writes them to the archive)
+        self.on_usage: Any = None  # usage info of every model reply (tokens, cost if any) is also reported here
+        # Long-term memory (alice.memory.LongMemory): whoever sets up the session attaches it; None in tests and unattended tasks.
         self.memory: Any = None
-        self._memory_surfaced: set[str] = set()  # bu sohbette mesaja eklenmiş notlar (tekrar eklenmesin)
+        self._memory_surfaced: set[str] = set()  # notes already added to a message in this chat (so they are not added again)
         self.memory_channel = ""
         self._memory_version: Any = -1
-        # Geri sarma için: kullanıcı mesajının indeksi -> o turda ilk değişen dosyaların eski hali.
+        # For rewind: index of the user message -> the old state of the files first changed in that turn.
         self.checkpoints: dict[int, dict[str, bytes | None]] = {}
         if not is_child:
             ctx.state["agent"] = self
 
     # ------------------------------------------------------------------ public
     def tool_specs(self) -> list[dict[str, Any]]:
-        """Modele gönderilen araçlar: temel araçlar + bu oturumda açılmış gruplar (bkz. tools/groups.py)."""
+        """Tools sent to the model: core tools + groups opened in this session (see tools/groups.py)."""
         if str(self.config.agent.get("tool_groups", "auto")) == "all":
             return [t.spec() for t in self.tools.values()]
         from alice.tools.groups import visible_tools
 
         tools = visible_tools(self.tools, self.ctx.state.setdefault("tool_groups", set()))
-        # Sıra sabit: önce gönderilenler aynı yerde kalır, yeni açılan grubun araçları sona eklenir. Araç listesi
-        # isteğin başında; ortasına araç girince prompt önbelleği listenin oradan sonrası için boşa çıkıyordu.
+        # The order is fixed: tools sent earlier stay in place, tools of a newly opened group are appended at the end.
+        # The tool list is at the start of the request; when a tool entered the middle, the prompt cache was wasted
+        # for everything after that point in the list.
         order: list[str] = self.__dict__.setdefault("_spec_order", [])
         by = {t.name: t for t in tools}
         order.extend(n for n in by if n not in order)
         return [by[n].spec() for n in order if n in by]
 
     def _cache_warm(self) -> bool:
-        """Araç listesi değişirse önbellekteki konuşma boşa mı gider? Sohbetin ilk isteğinden sonra evet: araç listesi
-        isteğin en başında (Claude'da araçlar, sistem isteminden de önce gelir), Gemini ve OpenAI da önbelleği istemin
-        başından eşleştiriyor. Araç eklenince sistem istemi ve konuşmanın tamamı önbellekten düşüyordu (ölçüm: her
-        yeni grup ~11-35K token yeniden yazma). Ayar: agent.cache_stable_tools = false eski davranış."""
+        """If the tool list changes, is the cached conversation wasted? After the first request of a chat, yes: the tool
+        list is at the very start of the request (in Claude, tools come even before the system prompt), and Gemini and
+        OpenAI also match the cache from the start of the prompt. When a tool was added, the system prompt and the whole
+        conversation dropped out of the cache (measured: every new group ~11-35K tokens rewritten). Setting:
+        agent.cache_stable_tools = false gives the old behavior."""
         if self.is_child or str(self.config.agent.get("tool_groups", "auto")) == "all":
             return False
         if not self.config.agent.get("cache_stable_tools", True):
@@ -417,18 +421,18 @@ class Agent:
         self.ctx.state["tool_names"] = tuple(self.tools)
         guessed = groups_for_text(text, self.tools) - enabled if text else set()
         if guessed and self._cache_warm():
-            # Kelimeden tahmin edilen grup gerçekten gerekmeyebilir ("aç", "token", "ekran" gibi geniş kalıplar).
-            # Uzun sohbette araç listesine eklemek bütün konuşmayı önbelleğe yeniden yazdırıyordu; bunun yerine
-            # mesaja not düşülür, model gerçekten gerekirse load_tools ile kendisi açar.
+            # A group guessed from a word may not really be needed (broad patterns like "aç" (open), "token", "ekran"
+            # (screen)). Adding it to the tool list in a long chat made the whole conversation get rewritten into the
+            # cache; instead a note is added to the message, and the model opens it itself with load_tools if needed.
             self._hint_groups(guessed)
         else:
             enabled |= guessed
         enabled |= {g for g in map(group_of, tool_names) if g}
         if getattr(getattr(self, "permissions", None), "mode", "") == "plan" and not getattr(self, "is_child", False):
-            enabled.add("plan")  # plan modunda exit_plan_mode hep hazır olsun
+            enabled.add("plan")  # in plan mode exit_plan_mode is always ready
 
     def _hint_groups(self, names: set[str]) -> None:
-        """Yüklenmeyen ama gerekebilecek araç gruplarını son kullanıcı mesajına not olarak ekle."""
+        """Add tool groups that are not loaded but may be needed to the last user message as a note."""
         from alice.tools.groups import all_groups
 
         if not self.messages or self.messages[-1].get("role") != "user":
@@ -455,20 +459,21 @@ class Agent:
                      self.decider, system_prompt=self.messages[0]["content"], is_child=True)
 
     def refresh_memory(self, force: bool = False) -> None:
-        """Hafızada yeni/değişen bilgi varsa sistem istemindeki profil bölümünü güncelle."""
+        """If there is new/changed information in memory, update the profile section of the system prompt."""
         mem = self.memory
         if mem is None or self.is_child:
             return
         try:
             from alice import projects
 
-            # Sistem istemi isteğin en başında: değişirse prompt önbelleği baştan kurulur. Eskiden her tur kaydedilince
-            # (mem.version) profil yeniden yazılıyor, her yeni mesajda önbellek sıfırlanıyordu. Sohbet başlamadan
-            # notlar ve projeler değişince yenilenir. Sohbet başladıktan sonra yalnız kullanıcı hafızayı elle
-            # değiştirince (not silme/düzenleme), klasör ya da gün değişince: tur sonu otomatik not çıkarımı ve proje
-            # taraması sistem istemini sohbetin ortasında değiştirip konuşmanın tamamını önbelleğe yeniden
-            # yazdırıyordu. Bu sohbette yeni çıkan notlar zaten konuşmanın içinde, eksik kalan ilgili not da hatırlama
-            # (recall) ile mesaja eklenir.
+            # The system prompt is at the very start of the request: if it changes, the prompt cache is rebuilt from
+            # scratch. Previously the profile was rewritten every time a turn was saved (mem.version), resetting the
+            # cache on every new message. It is refreshed when notes and projects change before the chat starts. After
+            # the chat has started, only when the user edits memory by hand (deleting/editing a note), or the folder or
+            # the day changes: the end-of-turn automatic note extraction and project scan changed the system prompt in
+            # the middle of the chat and made the whole conversation get rewritten into the cache. Notes newly created
+            # in this chat are already inside the conversation, and a relevant missing note is added to the message
+            # by recall.
             key = (str(self.ctx.cwd), getattr(mem, "user_edits", 0), time.strftime("%Y-%m-%d"))
             if len(self.messages) > 1 and isinstance(self._memory_version, tuple) and not force:
                 if self._memory_version[0] == key:
@@ -484,7 +489,7 @@ class Agent:
                                        if b)
                 self.messages[0]["content"] = with_memory(self.messages[0]["content"], profile)
                 self._memory_version = version
-        except Exception:  # noqa: BLE001 - hafıza hatası konuşmayı durdurmasın
+        except Exception:  # noqa: BLE001 - a memory error must not stop the conversation
             log.debug("hafıza profili yenilenemedi", exc_info=True)
 
     def _recall(self, user_text: str) -> str:
@@ -512,7 +517,7 @@ class Agent:
         self._update_magic_docs()
 
     def _update_magic_docs(self) -> None:
-        """Bu sohbette okunan sihirli belgeleri (# MAGIC DOC:) arka planda konuşmaya göre güncelle."""
+        """Update the magic docs (# MAGIC DOC:) read in this chat in the background according to the conversation."""
         if self.is_child or not self.ctx.state.get("magic_docs"):
             return
         import threading
@@ -524,14 +529,14 @@ class Agent:
                          name="alice-magicdocs").start()
 
     def _feed_buddy(self, user_text: str, reply: str) -> None:
-        """BUDDY konuşmayla doyar; ara sıra kısa bir yorum yapar (arka planda, turu bekletmez)."""
+        """BUDDY gets fed by the conversation; occasionally makes a short comment (in the background, doesn't hold up the turn)."""
         import threading
 
         from alice import buddy
 
         quiet = self.is_child or self.role == "voice" or self.memory_channel in ("ses", "telefon", "voice", "call")
         if not buddy.settings(self.config).get("enabled", True) or quiet:
-            return  # sesli konuşmada ve alt ajanlarda arkadaş yorum yapmaz (gereksiz model çağrısı)
+            return  # the buddy doesn't comment in voice conversations and sub-agents (unnecessary model call)
 
         def work() -> None:
             try:
@@ -542,8 +547,8 @@ class Agent:
         threading.Thread(target=work, daemon=True, name="alice-buddy").start()
 
     def sync_catalog(self) -> None:
-        """Sistem talimatının sonundaki 'Yüklenebilir araçlar' listesini güncel araçlarla yenile (MCP ve eklenti
-        araçları ajan kurulduktan sonra eklenebiliyor)."""
+        """Refresh the 'Yüklenebilir araçlar' (loadable tools) list at the end of the system instructions with the
+        current tools (MCP and plugin tools can be added after the agent is set up)."""
         if str(self.config.agent.get("tool_groups", "auto")) == "all":
             return
         from alice.tools.groups import catalog
@@ -556,8 +561,8 @@ class Agent:
             self.messages[0]["content"] = new
 
     def run_turn(self, user_text: str, max_steps: int | None = None, images: list[str] | None = None) -> str:
-        # Durdurma bayrağı her şeyden önce temizlenir: hatırlama ve kurulum sırasında basılan Durdur kaybolmasın
-        # (önceden _run_turn içinde temizleniyordu; o arada gelen durdurma isteği silinip tur sürüyordu).
+        # The stop flag is cleared before everything else: a Stop pressed during recall and setup must not be lost
+        # (it used to be cleared inside _run_turn; a stop request arriving in between was erased and the turn went on).
         self.cancel.clear()
         if self.stop_check is not None and self.stop_check():
             self.cancel.set()
@@ -572,17 +577,17 @@ class Agent:
         try:
             final = self._run_turn(user_text, max_steps, images, recall)
         finally:
-            self._last_turn_role = self.role  # sonraki turun yönlendirmesi önbelleği sıcak modelde kalabilsin
+            self._last_turn_role = self.role  # so the next turn's routing can stay on the model with the warm cache
             self.role = old_role
-        if not self._turn_blocked:  # hook'un engellediği mesaj hafızaya boş bir tur olarak yazılmasın
+        if not self._turn_blocked:  # a message blocked by a hook must not be written to memory as an empty turn
             self._remember_turn(user_text, final)
         return final
 
     ROUTE_ROLES = {"strong": "route-strong", "light": "route-light"}
 
     def _route_role(self, user_text: str) -> str | None:
-        """Jev ile bu tur için model katmanı (alice/providers/jev_route.py). Sadece ana beyin turunda; menüden
-        elle seçilen model (sabitleme) ya da kapalı [routing] varken dokunulmaz. None = bugünkü zincir."""
+        """Model tier for this turn via Jev (alice/providers/jev_route.py). Only on the main brain turn; left alone
+        when a model was picked by hand from the menu (pinning) or [routing] is off. None = today's chain."""
         rc = self.config.data.get("routing", {}) or {}
         router = self.router
         if (not rc.get("enabled") or self.is_child or self.role != "brain"
@@ -593,7 +598,7 @@ class Agent:
         sticky = self._sticky_role(rc)
         log = getattr(router, "on_event", None) or (lambda s: None)
         if sticky is not None and self._sticky_skips_jev(rc, sticky):
-            # Önbellek sıcak ve hafif katmana inmeyeceğiz; ağır katmanlar aynı modele gidiyor: Jev'e sormaya gerek yok.
+            # The cache is warm and we won't drop to the light tier; heavy tiers go to the same model: no need to ask Jev.
             log(f"yönlendirme: önbellek sıcak, {sticky} modelinde kalındı (Jev'e sorulmadı)")
             return None if sticky == "brain" else sticky
         prev = ""
@@ -607,8 +612,9 @@ class Agent:
         except Exception:  # noqa: BLE001
             pass
         if r.tier == "light" and sticky is not None:
-            # Uzun sohbetin önbelleği ağır modelde sıcak: hafif modele geçmek bütün bağlamı orada önbelleksiz ödetir,
-            # dönüşte de ağır modelin önbelleği yeniden yazılır. Kolay mesaj da aynı modelde kalır.
+            # The long chat's cache is warm on the heavy model: switching to the light model makes the whole context be
+            # paid for there without cache, and on return the heavy model's cache is rewritten. The easy message also
+            # stays on the same model.
             log(f"yönlendirme: önbellek sıcak, hafif model yerine {sticky} modelinde kalındı")
             return None if sticky == "brain" else sticky
         role = self.ROUTE_ROLES.get(r.tier)
@@ -616,18 +622,18 @@ class Agent:
             return None
         try:
             chain = jev_route.tier_chain(router, self.config, r.tier)
-        except Exception:  # noqa: BLE001 - zincir kurulamazsa bugünkü davranış
+        except Exception:  # noqa: BLE001 - if the chain can't be built, today's behavior
             return None
         if not chain:
             return None
         router.role_overrides[role] = chain
         return role
 
-    STICKY_TOKENS = 6000  # bağlam bundan kısaysa model değiştirmenin önbellek maliyeti önemsiz
+    STICKY_TOKENS = 6000  # if the context is shorter than this, the cache cost of switching models is negligible
 
     def _sticky_role(self, rc: dict[str, Any]) -> str | None:
-        """Önceki tur ağır bir modelde (beyin ya da güçlü katman) koştuysa ve önbelleği hâlâ sıcaksa o rol; değilse None.
-        [routing] cache_sticky = false eski davranışı geri getirir (kolay mesajlar her zaman hafif modele)."""
+        """The previous turn's role if it ran on a heavy model (brain or strong tier) and its cache is still warm;
+        else None. [routing] cache_sticky = false restores the old behavior (easy messages always go to the light model)."""
         prev = getattr(self, "_last_turn_role", None)
         if not rc.get("cache_sticky", True) or prev not in ("brain", "route-strong"):
             return None
@@ -644,13 +650,13 @@ class Agent:
         try:
             if self.context_tokens() < int(rc.get("cache_sticky_tokens", self.STICKY_TOKENS)):
                 return None
-        except Exception:  # noqa: BLE001 - ölçemiyorsak eski davranış
+        except Exception:  # noqa: BLE001 - if we can't measure, old behavior
             return None
         return prev
 
     def _sticky_skips_jev(self, rc: dict[str, Any], sticky: str) -> bool:
-        """Önbellekte kalınacaksa Jev'in cevabı sonucu değiştirir mi? Hafif katman zaten engelli; güçlü katman da
-        aynı modelle başlıyorsa Jev çağrısı (ağ gecikmesi) boşuna."""
+        """If we stay on the cache, would Jev's answer change the result? The light tier is already blocked; if the
+        strong tier also starts with the same model, the Jev call (network latency) is wasted."""
         from alice.providers import jev_route
 
         try:
@@ -686,7 +692,7 @@ class Agent:
         if not self.is_child:
             from alice import guard
 
-            guard.clear(self.ctx)  # kullanıcının yeni mesajı: önceki turda okunan dış içerik bu turu kısıtlamaz
+            guard.clear(self.ctx)  # the user's new message: external content read in the previous turn does not restrict this turn
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
         content: Any = content_text
@@ -1049,11 +1055,11 @@ class Agent:
 
         def check() -> None:
             try:
-                # 400 token düşünen modellerde (Cerebras qwen, step) düşünmeye gidip cevap boş dönüyordu.
+                # Thinking models (Cerebras qwen, step) spent the 400 tokens reasoning, so the reply came back empty.
                 box["res"] = self.router.chat(str(self.config.agent.get("verify_role", "fast")),
                                               [{"role": "user", "content": prompt}], temperature=0, max_tokens=1200,
                                               stream=_Quiet())
-            except Exception as e:  # noqa: BLE001 - iptal (StreamCancelled) dahil
+            except Exception as e:  # noqa: BLE001 - includes cancellation (StreamCancelled)
                 box["err"] = e
 
         worker = threading.Thread(target=check, daemon=True, name="alice-verify")
@@ -1070,7 +1076,7 @@ class Agent:
             res = box["res"]
             m = re.search(r"\{.*\}", res.text or "", re.S)
             bad = [str(x)[:160] for x in (json.loads(m.group(0)).get("unsupported") or [])] if m else []
-        except Exception:  # noqa: BLE001 - doğrulama yapılamadıysa cevabı engelleme
+        except Exception:  # noqa: BLE001 - if verification fails, do not block the reply
             return ""
         if not bad:
             return ""
@@ -1083,25 +1089,25 @@ class Agent:
                 "doğrulayamadıysan 'Düzeltme:' diye başlayıp hangi kısmın kesin olmadığını söyle.")
 
     def stop(self) -> None:
-        """Başka bir thread'den (ör. uygulamadaki Durdur butonu) mevcut turu durdur. Model ya da araç cevabı
-        beklenmez; çalışan komutlar da sonlandırılır."""
+        """Stop the current turn from another thread (e.g. the Durdur (Stop) button in the app). Does not wait
+        for a model or tool reply; running commands are terminated too."""
         self.cancel.set()
         from alice.tools.browser import abort_browser
         from alice.tools.shell import kill_foreground
 
         kill_foreground(self.ctx)
-        abort_browser(self.ctx, "stop")  # takılan tarayıcı çağrısı (sadece çalışan varsa)
+        abort_browser(self.ctx, "stop")  # a stuck browser call (only if one is running)
 
     def _interruptible(self, fn, *args: Any, **kwargs: Any) -> Any:
-        """fn'i ayrı bir thread'de çalıştır ve bitmesini beklerken durdurma isteğine bak. Durdurulursa beklemeden
-        Cancelled fırlatır; arkadaki çağrı kendi başına biter ve sonucu atılır."""
+        """Run fn in a separate thread and check for a stop request while waiting for it to finish. If stopped,
+        raises Cancelled without waiting; the background call finishes on its own and its result is dropped."""
         box: dict[str, Any] = {}
         done = threading.Event()
 
         def work() -> None:
             try:
                 box["res"] = fn(*args, **kwargs)
-            except BaseException as e:  # noqa: BLE001 - çağıran thread'de yeniden fırlatılır
+            except BaseException as e:  # noqa: BLE001 - re-raised in the calling thread
                 box["err"] = e
             finally:
                 done.set()
@@ -1115,9 +1121,9 @@ class Agent:
         return box["res"]
 
     def rewind(self, msg_index: int) -> tuple[str, list[str]]:
-        """Konuşmayı msg_index'teki kullanıcı mesajından öncesine geri sar ve o andan beri
-        ALICE'in dosya araçlarıyla değiştirdiği dosyaları eski haline getir.
-        (Shell komutlarının yaptığı değişiklikler izlenemez.) Mesajın metnini ve geri yüklenen dosyaları döndürür."""
+        """Rewind the conversation to just before the user message at msg_index and restore the files that
+        ALICE changed with its file tools since then. (Changes made by shell commands cannot be tracked.)
+        Returns the message text and the restored files."""
         if self.busy:
             raise RuntimeError("çalışırken geri sarılamaz")
         if not 0 < msg_index < len(self.messages) or self.messages[msg_index].get("role") != "user":
@@ -1151,7 +1157,7 @@ class Agent:
 
     # ------------------------------------------------------------------- tools
     def _run_tools(self, calls: list[dict[str, Any]]) -> None:
-        # Model gönderilmemiş bir grubun aracını çağırdıysa (sistem isteminden biliyor) grubu açık tut.
+        # A tool from an unsent group was called (the model knows it from the system prompt): keep the group open.
         self._enable_groups_for(tool_names=tuple(c["function"]["name"] for c in calls))
         results = self._execute_calls(calls)
         pending_images: list[tuple[str, list[str]]] = []
@@ -1171,9 +1177,9 @@ class Agent:
             tool_msg: dict[str, Any] = {"role": "tool", "tool_call_id": call["id"], "name": name, "content": text}
             tu = self.usage_tools.setdefault(name, {"calls": 0, "tokens": 0, "errors": 0})
             tu["calls"] += 1
-            tu["tokens"] += max(1, len(text) // 4)  # sonucun bağlama eklediği yaklaşık token
+            tu["tokens"] += max(1, len(text) // 4)  # approximate tokens the result adds to the context
             tu["errors"] += 1 if result.is_error else 0
-            if result.files:  # arayüz için (modele gitmez): sohbet yeniden açılınca dosya kartı yine görünsün
+            if result.files:  # for the UI (not sent to the model): the file card still shows when the chat is reopened
                 tool_msg["_files"] = result.files[:10]
             if result.card:
                 tool_msg["_card"] = result.card
@@ -1184,7 +1190,7 @@ class Agent:
             self.messages.append({"role": "user", "content": parts, "_image": True})
 
     def _loop_note(self, call: dict[str, Any], result: ToolResult) -> str:
-        """Zayıf modeller aynı hatalı çağrıyı tekrar tekrar yapıp takılıyor; bunu fark edip modele söyle."""
+        """Weak models get stuck repeating the same faulty call; notice this and tell the model."""
         if self.cancel.is_set():
             return ""
         key = _call_key(call)
@@ -1204,8 +1210,8 @@ class Agent:
         return ""
 
     def _execute_calls(self, calls: list[dict[str, Any]]) -> list[ToolResult]:
-        """Çağrıları sırayla işle; art arda gelen, izin gerektirmeyen ve paralel güvenli (salt okuma)
-        çağrıları aynı anda çalıştır. Arayüz olayları hep bu thread'den ve çağrı sırasıyla gider."""
+        """Process calls in order, but run consecutive calls that need no permission and are parallel-safe
+        (read-only) at the same time. UI events always go out from this thread, in call order."""
         results: list[ToolResult | None] = [None] * len(calls)
         i = 0
         while i < len(calls):
@@ -1214,7 +1220,7 @@ class Agent:
                 i += 1
                 continue
             early = self._take_early(calls[i])
-            if early is not None:  # cevap akarken başlatılmıştı: sonucu hazır (ya da az kaldı)
+            if early is not None:  # started while the reply was still streaming: result is ready (or nearly so)
                 tool, args, summary, fut = early
                 self.ui.tool_start(calls[i]["id"], tool.name, summary)
                 res = self._await(fut)
@@ -1238,7 +1244,7 @@ class Agent:
                         break
                     key = nxt[0].exclusive_key(nxt[1])
                     if key and key in busy:
-                        break  # aynı depoya/paket yöneticisine dokunan ikinci komut: öncekiler bitince çalışır
+                        break  # second command on the same repo/package manager: runs once the earlier ones finish
                     busy.add(key)
                     batch.append((j, nxt))
                     j += 1
@@ -1256,15 +1262,16 @@ class Agent:
                         self.ui.tool_end(calls[idx]["id"], tool.name, results[idx])
                         results[idx] = self._fence(tool, results[idx])
                 finally:
-                    # Durdurulduysa arkada süren salt okuma araçları beklenmez (with bloğu shutdown(wait=True) ile
-                    # hepsinin bitmesini bekliyordu).
+                    # If stopped, read-only tools still running in the background are not waited for (the old
+                    # with block used shutdown(wait=True) and waited for all of them to finish).
                     pool.shutdown(wait=False)
             i = j
         return [r if r is not None else ToolResult("çalıştırılmadı", is_error=True) for r in results]
 
     def _await(self, fut: Any) -> ToolResult:
-        """Paralel ya da erken başlatılan aracın sonucunu bekle; Durdur'a basılırsa beklemeden dön. Önceden
-        fut.result() süresiz bekliyordu: uzun bir grep ya da yavaş web_fetch durdurulan turu açık tutuyordu."""
+        """Wait for the result of a parallel or early-started tool; if Durdur (Stop) is pressed, return
+        without waiting. Previously fut.result() waited forever: a long grep or a slow web_fetch kept the
+        stopped turn open."""
         from concurrent.futures import TimeoutError as FutTimeout
 
         while True:
@@ -1277,9 +1284,10 @@ class Agent:
                 return ToolResult(f"{type(e).__name__}: {e}", is_error=True)
 
     def _early_start(self, call: dict[str, Any]) -> None:
-        """Akış sürerken tamamlanan araç çağrısı: paralel güvenliyse (salt okuma, izin gerekmez, hook yok, ekranı
-        kullanmaz) hemen arka planda başlat. Yüzlerce araç çağrısı olan işlerde modelin yazmayı bitirmesini beklemek
-        dakikalar kaybettiriyordu. Sonuç, cevap bitince aynı çağrı gelirse kullanılır."""
+        """A tool call that completes while the stream is still running: if it is parallel-safe (read-only,
+        needs no permission, no hooks, does not use the screen), start it in the background right away. In jobs
+        with hundreds of tool calls, waiting for the model to finish writing wasted minutes. The result is used
+        if the same call arrives once the reply is done."""
         try:
             prep = self._prepare(call, quiet=True)
             if isinstance(prep, ToolResult) or not self._parallel_ok(prep):
@@ -1292,7 +1300,7 @@ class Agent:
                 pool = self._early_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="alice-early")
             fut = pool.submit(self._run_tool, tool, args)
             self.__dict__.setdefault("_early", {})[call["id"]] = (args, tool, summary, fut)
-        except Exception:  # noqa: BLE001 - erken başlatma yalnız hızlandırır; olmazsa normal yol çalışır
+        except Exception:  # noqa: BLE001 - early start only speeds things up; if it fails, the normal path runs
             log.debug("araç erken başlatılamadı", exc_info=True)
 
     def _early_clear(self) -> None:
@@ -1308,21 +1316,22 @@ class Agent:
         except (json.JSONDecodeError, KeyError, TypeError):
             return None
         if final != args or call["function"].get("name") != tool.name:
-            return None  # son hâli farklı: normal yoldan yeniden çalışır
+            return None  # final form differs: runs again on the normal path
         return tool, args, summary, fut
 
     def _parallel_ok(self, prep: tuple[Tool, dict[str, Any], str]) -> bool:
         tool, args, _ = prep
         if self.hooks.has("PreToolUse") or self.hooks.has("PostToolUse"):
-            return False  # hook'lar her çağrıda sırayla çalışsın (paralel yol _execute'u atlıyor)
+            return False  # hooks must run in order for every call (the parallel path skips _execute)
         try:
             return bool(tool.parallel_for(self.ctx, args)) and self.permissions.decide(tool, args, self.ctx) == "allow"
-        except Exception:  # noqa: BLE001 - bozuk argüman: sıralı yolda hata olarak modele dönecek
+        except Exception:  # noqa: BLE001 - bad argument: the sequential path reports it to the model as an error
             return False
 
     def _prepare(self, call: dict[str, Any], quiet: bool = False) -> ToolResult | tuple[Tool, dict[str, Any], str]:
-        """Aracı bul, argümanları çöz, izni al. Hata ya da ret varsa ToolResult döner.
-        quiet=True iken izin sorulmaz (paralel gruba alınabilir mi diye bakarken)."""
+        """Find the tool, parse the arguments and get permission. Returns a ToolResult if there is an error
+        or a refusal. With quiet=True, permission is not asked (when checking whether a call can join a
+        parallel group)."""
         name = call["function"]["name"]
         tool = self.tools.get(name)
         if tool is None:
@@ -1338,7 +1347,7 @@ class Agent:
             return ToolResult(bad + " Düzeltip tekrar çağır.", is_error=True)
         hook_verdict = ""
         if not quiet and self.hooks.has("PreToolUse"):
-            # İzinden önce: hook argümanları değiştirebilir ya da izin kararı verebilir (bkz. alice.hooks.decision).
+            # Before permission: a hook may change the arguments or decide on permission (see alice.hooks.decision).
             from alice.hooks import decision, feedback
 
             results = self.hooks.run("PreToolUse", {"args": args}, tool.name)
@@ -1370,11 +1379,11 @@ class Agent:
                 return tool, args, summary
             verdict = self.permissions.decide(tool, args, self.ctx)
             if hook_verdict == "allow" and verdict == "ask":
-                verdict = "allow"  # hook onayladı; yasak kuralları ve plan modu yine geçerli
+                verdict = "allow"  # hook approved; deny rules and plan mode still apply
             elif hook_verdict == "ask" and verdict == "allow":
                 verdict = "ask"
             risk = tool.risk_for(args) if verdict == "ask" else ""
-        except Exception as e:  # noqa: BLE001 - zayıf modelin yanlış tipli argümanı (liste, null) turu ve geçmişi bozmasın
+        except Exception as e:  # noqa: BLE001 - weak model's wrong-typed arg (list, null) must not break turn/history
             return ToolResult(f"geçersiz argüman: {type(e).__name__}: {e}. Parametre tiplerini düzeltip tekrar dene.",
                               is_error=True)
         if verdict == "deny":
@@ -1739,8 +1748,8 @@ class Agent:
             m = self.messages[i]
             if m["role"] == "assistant" and m.get("tool_calls"):
                 answered = {x.get("tool_call_id") for x in self.messages[i + 1:] if x["role"] == "tool"}
-                # Sonuçlar çağrının hemen ardındaki tool bloğuna girmeli: araya yarım metin ya da görüntü mesajı
-                # girdiyse sona eklenen sonuç sahipsiz kalıyor ve sağlayıcı bütün konuşmayı reddediyordu.
+                # Results must go into the tool block right after the call: if a partial text or image message got in
+                # between, the appended result is orphaned and the provider rejected the whole conversation.
                 at = i + 1
                 while at < len(self.messages) and self.messages[at]["role"] == "tool":
                     at += 1

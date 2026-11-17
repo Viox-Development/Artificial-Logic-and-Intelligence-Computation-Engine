@@ -1,4 +1,4 @@
-"""Oyun oturumu aracı: bir oyunu turlar boyunca reflex'le oynamak ve oynarken öğrenmek (bkz. alice/reflex/game.py)."""
+"""Game session tool: play a game turn by turn with reflex, and learn it while playing (see alice/reflex/game.py)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolR
 
 STATE_KEY = "game_session"
 DEFAULT_PLAY = "Make the best legal next move."
-BOARD_SHOWN = 2500  # karakter: sonuçta gösterilen tahta
-SECOND_READ_TEMPERATURE = 0.5  # masanın ikinci, bağımsız okuması
-AFTER_MOVE_WAIT = 1.2  # sn: hamleden sonra masayı okumadan önce (animasyon)
+BOARD_SHOWN = 2500  # characters: the board shown in the result
+SECOND_READ_TEMPERATURE = 0.5  # the second, independent reading of the board
+AFTER_MOVE_WAIT = 1.2  # seconds: after a move, before reading the board (animation)
 
 
 class Game(Tool):
@@ -81,7 +81,7 @@ class Game(Tool):
             raise ToolError("turn için goal gerekli")
         return self._turn(ctx, sess, goal, max_steps)
 
-    # ------------------------------------------------------------------ modeller
+    # ------------------------------------------------------------------ models
     @staticmethod
     def _chat(ctx: ToolContext, role: str = "fast", max_tokens: int = 700, temperature: float = 0):
         if ctx.router is None:
@@ -100,13 +100,13 @@ class Game(Tool):
         return sess.observer
 
     def _discover(self, ctx: ToolContext, sess: Any) -> str:
-        """Oyunu tanı: görüntü modeli ekranı okur, ana model ne oynandığını çıkarıp kuralları ve arayüzü yazar
-        (doğrulanmamış). Kurallar her adımda Jev'e öncelikli gider; oynarken doğrulanır ya da düzeltilir."""
+        """Identify the game: the vision model reads the screen; the main model works out what is being played and
+        writes the rules and UI (unverified). Jev gets the rules first at every step; play verifies or fixes them."""
         from alice.reflex.game import discover
 
         try:
             scr = self._observer(ctx, sess, "").screen("")
-        except Exception as e:  # noqa: BLE001 - ekran okunamazsa keşifsiz başla
+        except Exception as e:  # noqa: BLE001 - if the screen can't be read, start without discovery
             return f"ilk ekran okunamadı ({e}); dersler oynadıkça birikecek\n"
         visible = [i.label for i in scr.items]
         board = self._read_board(ctx, sess, scr.image)
@@ -131,32 +131,32 @@ class Game(Tool):
         return self._read_board(ctx, sess, img)
 
     def _look_twice(self, ctx: ToolContext, sess: Any) -> tuple[str, str]:
-        """Aynı kareyi iki kez oku, ikincisini biraz çeşitlilikle (sıcaklık 0'da aynı cevap gelir, bilgi katmaz);
-        planlayıcı sadece iki okumanın uyuştuğu taşlara dayanır."""
+        """Read the same frame twice, the second time with some variety (at temperature 0 the answer repeats and
+        adds nothing); the planner relies only on pieces both readings agree on."""
         try:
             img = self._observer(ctx, sess, "").screen("").image
         except Exception as e:  # noqa: BLE001
             return f"(ekran okunamadı: {e})", ""
         return self._read_board(ctx, sess, img), self._read_board(ctx, sess, img, SECOND_READ_TEMPERATURE)
 
-    # ------------------------------------------------------------------ oynama
+    # ------------------------------------------------------------------ playing
     def _play(self, ctx: ToolContext, sess: Any, goal: str, max_steps: int) -> ToolResult:
-        """Bak -> planla (kurallarla) -> Jev yapsın -> tekrar bak -> beklenenle olanı kıyasla, kuralları düzelt."""
+        """Look -> plan (with the rules) -> Jev acts -> look again -> compare expected with actual, fix the rules."""
         from alice.reflex.game import plan_move
 
         if ctx.decider is None or ctx.router is None:
             raise ToolError("karar motoru yapılandırılmamış")
         if not any(r.get("kind") == "rule" for r in sess.lessons()):
-            # Başlangıçta menü vardı ya da oyun tanınamadı; masa/harita şimdi görünüyorsa ana model tekrar tanısın.
+            # Started on a menu or game unidentified; if a board/map is visible now, the main model re-identifies it.
             self._discover(ctx, sess)
         board, board2 = self._look_twice(ctx, sess)
         recent = [f"turn {t['turn']}: {t['summary']}" for t in sess.turns()[-3:] if t.get("summary")]
         plan = plan_move(self._chat(ctx, "brain", 600), sess.name, goal, board, sess.lessons(), recent, board2)
         if not plan:
             return ToolResult(f"hamle seçilemedi (tahta ya da plan yok).\ntahta:\n{board[:BOARD_SHOWN]}", is_error=True)
-        # Planlayıcının dayandığı ama henüz bilinmeyen kurallar: doğrulanmamış kural olarak yazılır, hamlenin sonucu
-        # onları doğrular ya da düşürür. Kurallar oyunun adından değil tahtadan çıkar ("Solitaire Collection" adıyla
-        # keşif hiç kural yazmamıştı).
+        # Rules the planner relies on but that aren't known yet are stored as unverified rules; the move's result
+        # verifies or drops them. Rules come from the board, not the game name: discovery under "Solitaire Collection"
+        # wrote no rules at all.
         new_rules = [{"trigger": "", "do": str(r), "kind": "rule"} for r in plan.get("rules_new") or [] if str(r).strip()]
         if new_rules:
             sess.apply({"add": new_rules}, source="prior")
@@ -175,15 +175,15 @@ class Game(Tool):
         agent = ScreenAgent(self._observer(ctx, sess, goal), ctx.decider, make_text_writer(ctx.router),
                             make_translator(ctx.router), emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         agent.track_changes = True
-        agent.stop_after_change = intent is not None  # hamle = ekranı değiştiren ilk eylem; sonucu tahtadan doğrula
+        agent.stop_after_change = intent is not None  # move = first screen-changing action; verify via the board
         why =f"\n\nThis move was chosen because: {intent.get('why', '')}\nExpected: {intent.get('expect', '')}" \
             if intent else ""
         res = agent.run(goal, max_steps=max_steps,
                         notes=lambda scr: sess.context([i.label for i in scr.items]) + why)
         board_after = ""
         if intent:
-            # Kart/taş yazı değil: beklenen oldu mu, görerek. Önce animasyon bitsin: Solitaire'de kart çekilmişti ama
-            # masa açılma animasyonu bitmeden okunup "değişmedi" denmişti.
+            # Check visually (cards/stones, not text) whether the expected happened. Let animations finish first:
+            # in Solitaire a card was drawn but read as "unchanged" before the table-opening animation ended.
             time.sleep(AFTER_MOVE_WAIT)
             board_after = self._look(ctx, sess)
         visible = [i.label for i in (agent.last.items if agent.last else [])]
@@ -191,11 +191,11 @@ class Game(Tool):
         summary, ops = reflect(self._chat(ctx), sess.name, goal, res.status, res.reason, agent.evidence,
                                sess.lessons(), visible, intent=intent, board_after=board_after)
         learned = sess.apply(ops, seen_texts=seen)
-        sure = sess.apply(code_lessons(agent.evidence))  # kodun kesin bildiği: iki kez işe yaramayan tıklama
+        sure = sess.apply(code_lessons(agent.evidence))  # what the code knows for certain: clicks that failed twice
         status = res.status
         if intent and ops.get("expected_happened") in (True, False):
-            # Hamlenin olup olmadığına tıklama sayısı değil tahta karar verir (4♣ ilk tıkta taşınmıştı, "yapılamadı"
-            # sayılıp yanlış kural yazılmıştı).
+            # The board, not the click count, decides whether the move happened (4♣ moved on the first click but
+            # was counted as "failed" and a wrong rule was written).
             status = "done" if ops["expected_happened"] else "failed"
         row = sess.record(goal, status, res.steps, summary)
         verdict = reflex_verdict(status) or ("SONUÇ: hamle beklendiği gibi OLMADI (tahtaya göre)."

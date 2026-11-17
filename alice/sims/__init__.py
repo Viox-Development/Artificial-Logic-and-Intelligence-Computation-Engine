@@ -1,10 +1,10 @@
-"""Uçuş simülasyonları: DCS ve War Thunder.
+"""Flight simulations: DCS and War Thunder.
 
-ALICE oyuna hiçbir şey göndermez, sadece okur ve konuşur.
+ALICE sends nothing to the game; it only reads and speaks.
 
-  flight      -> ortak uçuş durumu ve uçuş arkadaşı (yakıt, yaklaşma, G, karşı tedbir, uçuş sonrası)
-  dcs         -> Export.lua betiği, UDP dinleyici, görev dosyası okuma
-  kneeboard   -> görevin frekans/waypoint/notlarını oyun içi kneeboard sayfası yapma
-  checklists  -> sesli kontrol listeleri
-  warthunder  -> oyunun yerel göstergelerini (localhost:8111) okuma
+  flight      -> shared flight state and flight wingman (fuel, approach, G, countermeasures, post-flight)
+  dcs         -> Export.lua script, UDP listener, mission file reading
+  kneeboard   -> turning the mission's frequencies/waypoints/notes into an in-game kneeboard page
+  checklists  -> spoken checklists
+  warthunder  -> reading the game's local indicators (localhost:8111)
 """

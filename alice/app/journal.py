@@ -1,8 +1,8 @@
-"""Otomasyonlar → Notlar ve Kayıtlar: `alice notes`, `alice brief`, `alice report`, `alice log`, `alice eval` uygulamadan.
+"""Automations → Notes and Logs: `alice notes`, `alice brief`, `alice report`, `alice log`, `alice eval` from the app.
 
-Notlar: ALICE'e "not al" denenler; ara, ekle, sil. Sabah özeti ve haftalık rapor şimdi gösterilir ya da her gün/hafta
-kendiliğinden gelsin diye görev olarak kurulur. Kayıtlar: ALICE'in kimseye ne gönderdiği (mesaj, e-posta), beğenilmeyen
-cevaplar ve test seti (vakaları arka planda oynatır, ilerlemeyi gösterir).
+Notes: things ALICE was told to "take note of"; search, add, delete. Morning brief and weekly report shown now or
+scheduled as tasks to arrive automatically each day/week. Logs: what ALICE sent to whom (messages, emails), disliked
+replies, and the test suite (runs cases in the background, displays progress).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class Journal:
         self._eval_stop = threading.Event()
         self._eval_thread: threading.Thread | None = None
 
-    # ------------------------------------------------------------------ Notlar sekmesi
+    # ------------------------------------------------------------------ Notes tab
     def notes_view(self, q: str = "") -> dict[str, Any]:
         from alice.extras import notes
 
@@ -97,7 +97,7 @@ class Journal:
             return {"ok": False, "error": str(e)}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
-    # ------------------------------------------------------------------ Kayıtlar sekmesi
+    # ------------------------------------------------------------------ Logs tab
     def logs_view(self) -> dict[str, Any]:
         from alice import actionlog, evals
 
@@ -112,7 +112,7 @@ class Journal:
             import json
 
             last = json.loads(evals.results_path().read_text(encoding="utf-8"))
-            if not isinstance(last, dict):  # elle bozulmuş/yarım kayıt: hiç çalıştırılmamış say, sekme açılsın
+            if not isinstance(last, dict):  # manually corrupted/partial log: treat as never run, let tab open
                 raise ValueError("sonuç dosyası nesne değil")
             last = {"when": time.strftime("%d.%m %H:%M", time.localtime(float(last.get("ts") or 0))),
                     "passed": last.get("passed"), "total": last.get("total")}
@@ -120,7 +120,7 @@ class Journal:
             last = None
         try:
             cases = len(evals.load_cases())
-        except Exception:  # noqa: BLE001 - bozuk evals.toml: sekme yine açılsın
+        except Exception:  # noqa: BLE001 - corrupted evals.toml: let tab open anyway
             cases = 0
         return {"sent": sent, "feedback": feedback, "cases": cases, "cases_path": str(evals.evals_path()),
                 "last_run": last, "run": self.eval_view()}
@@ -195,6 +195,6 @@ class Journal:
                 summary += " · bozulanlar: " + ", ".join(cmp["broken"])
             with self._lock:
                 self._eval.update(state="stopped" if self._eval_stop.is_set() else "done", current="", summary=summary)
-        except Exception as e:  # noqa: BLE001 - ekranda göster
+        except Exception as e:  # noqa: BLE001 - display on screen
             with self._lock:
                 self._eval.update(state="error", current="", summary=f"çalıştırılamadı: {e}")

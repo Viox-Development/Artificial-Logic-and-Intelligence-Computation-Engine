@@ -1,20 +1,22 @@
-"""Telefon köprüsü: ALICE'e telefonun tarayıcısından ulaşma ve canlı saat verisi.
+"""Phone bridge: access ALICE from the phone's browser and live watch data.
 
-Yerel ağa açılan ayrı bir sunucu (varsayılan port 8765). Telefonda adres:
-  http://<bilgisayarın-IP'si>:8765/m?t=<anahtar>         -> telefon uygulaması (sohbet, bilgisayar, ekran)
-  POST http://<IP>:8765/api/watch  (X-Alice-Token: <anahtar>, JSON {"hr": 88})  -> canlı nabız
-Anahtar ~/.alice/phone-token dosyasında kalıcıdır; böylece telefondaki yer imi ve otomasyon
-her açılışta çalışır. `alice phone --new-token` ile değiştirilir.
+A separate server exposed to the local network (default port 8765). Address on the phone:
+  http://<computer-IP>:8765/m?t=<token>         -> phone web app (chat, computer, screen)
+  POST http://<IP>:8765/api/watch  (X-Alice-Token: <token>, JSON {"hr": 88})  -> live heart rate
+The token is persisted in ~/.alice/phone-token; this way bookmarks and automation on the phone
+work across restarts. Changed via `alice phone --new-token`.
 
-Anahtar adreste yalnız ilk açılışta (QR / yer imi) taşınır: sunucu onu HttpOnly, SameSite=Strict bir çereze çevirip
-anahtarsız adrese yönlendirir; sayfa sonra çerez ve X-Alice-Token / "Authorization: Bearer" başlığıyla konuşur
-(bkz. phone_handler). Bağlantı yerel ağda düz HTTP'dir: aynı ağdaki biri trafiği dinleyebilir. Yerleşik TLS yok
-(öz-imzalı sertifika için gereken `cryptography` ALICE'in bağımlılığı değil ve Android WebView öz-imzalı sertifikayı
-ek kod olmadan kabul etmiyor); evin dışından ya da güvenmediğin bir ağdan erişim için HTTPS olan aktarma sunucusunu
-(relay.py, `alice relay`) kullan.
+The token is only carried in the URL on the first visit (QR / bookmark): the server converts it to an HttpOnly,
+SameSite=Strict cookie and redirects to the tokenless URL; the page then communicates via cookie and
+X-Alice-Token / "Authorization: Bearer" header (see phone_handler). The connection is plain HTTP on the LAN:
+someone on the same network can sniff traffic. No built-in TLS (`cryptography` needed for self-signed certs is not
+an ALICE dependency and Android WebView does not accept self-signed certificates without extra code); for access
+outside the home or from untrusted networks, use the HTTPS relay server (relay.py, `alice relay`).
 
-Android uygulaması (android/) aynı sayfayı açar; konuşma tanıma, bildirim, arama ve QR ile bağlanma ekler. APK'yı
-bilgisayar verir (/api/phone/app.apk, bkz. phone_apk.py); uygulama yeni sürüm çıkınca kendini oradan günceller. Tarayıcıda düz HTTP'de mikrofon açılmaz; orada sesli yazma telefonun ses kaydedicisiyle yapılır.
+The Android app (android/) opens the same page; adds speech recognition, notifications, calling, and QR pairing.
+The computer provides the APK (/api/phone/app.apk, see phone_apk.py); the app updates itself from there when a new
+version is released. In the browser over plain HTTP, the microphone cannot open; voice input there uses the phone's
+audio recorder.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from alice.config import Config, alice_home
 
 
 def lan_ip() -> str:
-    """Bilgisayarın yerel ağ adresi (paket göndermeden, yönlendirme tablosundan)."""
+    """Local network IP of the computer (without sending packets, via routing table)."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
@@ -38,13 +40,13 @@ def lan_ip() -> str:
 
 
 def _hide(p: Path) -> None:
-    """Sandbox'taki (düşük bütünlüklü) komutlar anahtarı okuyamasın: okusa 127.0.0.1'deki telefon sunucusundan
-    bilgisayarı tam yetkiyle yönetebilirdi."""
+    """Prevent sandboxed (low-integrity) commands from reading the token: otherwise they could control the computer
+    with full privileges via the phone server on 127.0.0.1."""
     try:
         from alice.sandbox import hide_from_sandbox
 
         hide_from_sandbox(p)
-    except Exception:  # noqa: BLE001 - etiket konamadıysa anahtar yine çalışır
+    except Exception:  # noqa: BLE001 - if labeling fails, token still works
         pass
 
 
@@ -53,7 +55,7 @@ def token(new: bool = False) -> str:
     if not new and p.exists():
         t = p.read_text(encoding="utf-8").strip()
         if len(t) >= 24:
-            _hide(p)  # eski sürümün yazdığı dosya da etiketlensin
+            _hide(p)  # ensure files written by older versions are also labeled
             return t
     t = secrets.token_urlsafe(24)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -67,8 +69,8 @@ def token(new: bool = False) -> str:
 
 
 def pair_url(ip: str, port: int, tok: str) -> str:
-    """Telefonun okuttuğu adres. Uzaktan erişim kuruluysa aktarma adresi de içinde: telefon evdeyken yerel adresi,
-    dışarıdayken aktarma sunucusunu kullanır."""
+    """Pairing URL for the phone. Includes the relay address if remote access is set up: phone uses LAN address
+    at home and relay server when away."""
     from urllib.parse import quote
 
     from alice.app import relay
@@ -89,19 +91,20 @@ def _relay_log(line: str) -> None:
 
 
 COOKIE = "alice_phone"
-COOKIE_MAX_AGE = 400 * 24 * 3600  # tarayıcıların izin verdiği en uzun süre: telefondaki yer imi QR'siz çalışsın
-ENTRY_PAGES = ("/m", "/")  # QR/yer imi adresleri: ?t= burada bir kez kabul edilip çereze çevrilir
+COOKIE_MAX_AGE = 400 * 24 * 3600  # longest duration allowed by browsers: allows phone bookmark to work without QR
+ENTRY_PAGES = ("/m", "/")  # QR/bookmark URLs: ?t= is accepted once here and converted to a cookie
 
 
 def phone_handler(base: type, state) -> type:
-    """Telefon sunucusunun istek işleyicisi: anahtar adreste dolaşmasın.
+    """Request handler for the phone server: prevents token leakage in URLs.
 
-    - Giriş sayfası (/m?t=..., /?t=...) doğru anahtarla gelirse HttpOnly + SameSite=Strict çerez kurulur ve anahtarsız
-      adrese yönlendirilir (303): anahtar tarayıcı geçmişinde, ekran görüntüsünde, yer iminde kalmaz.
-    - Sonraki GET'ler çerezle, API çağrıları X-Alice-Token ya da "Authorization: Bearer" başlığıyla doğrulanır.
-      POST yalnız başlıkla: çerez tek başına yazan isteğe yetmez (CSRF'e karşı ikinci kat; SameSite zaten engeller).
-    - ?t= API'lerde hâlâ kabul edilir: telefona kurulu eski uygulama sürümleri (olay akışı, erişilebilirlik
-      denetimi) ve saat otomasyonları onu kullanıyor; yeni sayfa kodu adrese anahtar koymaz.
+    - If an entry page (/m?t=..., /?t=...) arrives with the valid token, an HttpOnly + SameSite=Strict cookie is set
+      and redirected (303) to the tokenless URL: token is not left in browser history, screenshots, or bookmarks.
+    - Subsequent GETs are verified via cookie, API calls via X-Alice-Token or "Authorization: Bearer" header.
+      POST requires header only: cookie alone is insufficient for state-changing requests (defense-in-depth against
+      CSRF; SameSite already mitigates).
+    - ?t= is still accepted on APIs: older app versions installed on phones (event stream, accessibility check) and
+      watch automations use it; new frontend code does not include token in URL.
     """
     from http.cookies import CookieError, SimpleCookie
     from urllib.parse import parse_qs, urlencode, urlparse
@@ -142,7 +145,7 @@ def phone_handler(base: type, state) -> type:
             host = (self.headers.get("Host") or "").split(":")[0]
             from alice.app import relay
 
-            # Aktarma sunucusu HTTPS'tir: oradan gelen çerez yalnız HTTPS'te gitsin. Yerel ağ düz HTTP (Secure olmaz).
+            # Relay server is HTTPS: cookies originating from there must only go over HTTPS. LAN is plain HTTP (no Secure).
             secure = "; Secure" if host and host == relay.host() else ""
             self.send_response(303)
             self.send_header("Location", path + ("?" + rest if rest else ""))
@@ -168,25 +171,25 @@ class PhoneServer:
         from alice.app import relay
 
         relay_host = relay.host()
-        if relay_host:  # evin dışından aktarma sunucusu üzerinden gelen istekler (bkz. relay.py)
+        if relay_host:  # requests coming from outside home via relay server (see relay.py)
             self.state.allowed_hosts.add(relay_host)
-        self._own_store = store is None  # kendi açtığımız depoyu stop() kapatır
+        self._own_store = store is None  # stop() closes the store only if we opened it ourselves
         self.state.watch_store = store or Store()
         self.port = int(port if port is not None else cfg.data.get("phone", {}).get("port", 8765))
         self.server = AppServer(self.state, self.port, host="0.0.0.0", owns_state=state is None)
         httpd = self.server.httpd
-        if getattr(httpd, "RequestHandlerClass", None) is not None:  # testlerde sahte sunucu olabilir
+        if getattr(httpd, "RequestHandlerClass", None) is not None:  # can be a mock server in tests
             httpd.RequestHandlerClass = phone_handler(httpd.RequestHandlerClass, self.state)
         self.server.start()
         from alice.app import phone_apk
 
-        phone_apk.refresh_async()  # telefon uygulamasının son sürümü bilgisayarda hazır olsun
+        phone_apk.refresh_async()  # ensure the latest version of the phone app is ready on computer
         self.relay = relay.start_for(self.server.httpd.server_address[1], log=_relay_log)
         from alice.app import call
 
-        calls = getattr(self.state, "calls", None)  # testlerde sahte durum olabilir
+        calls = getattr(self.state, "calls", None)  # can be mock state in tests
         if calls is not None:
-            call.register(calls)  # ALICE telefonla arayabilsin (phone_call aracı)
+            call.register(calls)  # allow ALICE to place phone calls (phone_call tool)
 
     @property
     def url(self) -> str:

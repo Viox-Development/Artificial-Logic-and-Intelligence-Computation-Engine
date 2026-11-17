@@ -1,8 +1,8 @@
-"""Sesli kontrol listeleri.
+"""Spoken checklists.
 
-Listeler markdown: başlık listenin adı, her "- " satırı bir adım. Önce ~/.alice/checklists/
-(kendi listelerin), sonra paketle gelenler (F-16C, basitleştirilmiş) aranır.
-"Alice, iniş kontrol listesi" -> ilk adım okunur; "tamam" / "devam" -> sonraki adım.
+Lists are markdown: the heading is the list's name, each "- " line is a step. First ~/.alice/checklists/
+(your own lists) is searched, then the bundled ones (F-16C, simplified).
+"Alice, iniş kontrol listesi" (landing checklist) -> the first step is read; "tamam" / "devam" -> the next step.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class Checklist:
 
 def load_all() -> dict[str, Checklist]:
     out: dict[str, Checklist] = {}
-    for folder in (BUILTIN, alice_home() / "checklists"):  # kullanıcınınki üstüne yazar
+    for folder in (BUILTIN, alice_home() / "checklists"):  # the user's own lists overwrite the built-in ones
         if not folder.is_dir():
             continue
         for p in sorted(folder.glob("*.md")):
@@ -61,7 +61,7 @@ def find(name: str, lists: dict[str, Checklist] | None = None) -> Checklist | No
 
 
 class Runner:
-    """Bir listenin neresinde olunduğunu tutar."""
+    """Keeps track of where we are in a list."""
 
     def __init__(self, cl: Checklist):
         self.cl = cl

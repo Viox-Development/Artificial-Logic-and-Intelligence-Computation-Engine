@@ -1,4 +1,4 @@
-"""BUDDY ve KAIROS araçları: arkadaşın hâli, okşama/besleme; arka plan nöbetinin durumu, aç/kapa, şimdi uyandır."""
+"""BUDDY and KAIROS tools: your buddy's state, petting/feeding; the background watch's status, on/off, wake now."""
 from __future__ import annotations
 
 from datetime import datetime

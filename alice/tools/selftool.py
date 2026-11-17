@@ -1,4 +1,4 @@
-"""make_tool: ALICE'in bir işi yapacak aracı yoksa aracı kendisi yazması (ayrıntı: alice/selftools.py)."""
+"""make_tool: ALICE writes a tool itself when no existing tool can do the job (details: alice/selftools.py)."""
 
 from __future__ import annotations
 
@@ -82,10 +82,10 @@ class MakeTool(Tool):
         if action == "install":
             try:
                 path, tools = selftools.install(name.strip().lower())
-            except Exception as e:  # noqa: BLE001 - yükleme hatası modele anlamlı dönsün
+            except Exception as e:  # noqa: BLE001 - make the install error meaningful to the model
                 raise ToolError(f"eklenmedi: {type(e).__name__}: {e}") from e
             agent = ctx.state.get("agent")
-            if agent is not None:  # aynı konuşmada hemen kullanılsın (grup beklemeden görünür)
+            if agent is not None:  # usable right away in this conversation (visible without waiting for the group)
                 for t in tools:
                     agent.tools[t.name] = t
             names = ", ".join(t.name for t in tools)

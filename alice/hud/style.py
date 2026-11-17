@@ -1,23 +1,26 @@
-"""HUD'un görünümü. Apple'ın Dynamic Island ve Live Activities kurallarına göre (developer.apple.com/design/human-
+"""Look of the HUD. Follows Apple's Dynamic Island and Live Activities rules (developer.apple.com/design/human-
 interface-guidelines/live-activities, /materials, /color):
 
-  * Tek yüzey, "Ada": ekranın üst ortasında tek bir kapsül. Tehdit, yakıt, sıcaklık, bildirim, konuşma hep onun
-    içinde; birden fazla şey varsa en önemlisi Adada, diğerleri yanında küçük dairelerde (minimal görünüm). Ayrı
-    ayrı yüzen paneller yok: HIG yarı saydam katmanları üst üste koymamayı ve tek yüzeyde dönüşümlü göstermeyi
-    söylüyor.
-  * Açık dil: beyaz-gri buzlu cam (arkasındaki ekran gerçekten bulanıklaşır, üstünde açık tül, kılcal
-    kenar ve üst kenarda ışık). Renkler masaüstü ve telefonla aynı Grafit paleti: yazı #18181B, vurgu mavi
-    #2F6BFF, cam beyaz ve zemin #F3F3F4. Siyah Ada ve doygun turuncu "oyun arayüzü" gibi duruyordu. Renk sadece
-    simge ve değerde, sadece anlam için; kritikte ince kırmızı çizgi ve yavaş nefes. Renkli nokta, renkli çerçeve yok.
-  * Yazı büyük ve en az orta kalınlıkta (HIG: "large, heavier-weight text"). Segoe UI Variable'ın Display/Text optik
-    boyutları SF'nin Windows'taki en yakın karşılığı. Simgeler SF Symbols gibi tek renk, yazıyla aynı ağırlıkta.
-  * Eş merkezli kenar boşlukları: içerik kenara sıkı, iç köşeler dış köşeyle uyumlu; köşeler Apple'ın sürekli köşesi
-    (squircle, n=5 süper elips).
-  * Hareket: Ada boyut değiştirirken yay gibi büyür/küçülür, içerik değişince eskisi söner yenisi belirir; hiçbir
-    animasyon 2 sn'yi geçmez.
+  * One surface, "Island": a single capsule at the top center of the screen. Threats, fuel, temperature,
+    notifications and speech all live inside it; if there is more than one thing, the most important one is in the
+    Island and the others are small circles beside it (minimal view). There are no separate floating panels: HIG says
+    not to stack translucent layers and to alternate content on a single surface.
+  * Light language: white-gray frosted glass (the screen behind it is actually blurred, with a light veil on top, a
+    hairline edge and light on the top edge). Colors are the same Graphite palette as the desktop and phone: text
+    #18181B, accent blue #2F6BFF, glass white and background #F3F3F4. A black Island and saturated orange looked like
+    a "game interface". Color is only on icons and values, and only for meaning; for critical, a thin red line and a
+    slow breath. No colored dots, no colored borders.
+  * Text is large and at least medium weight (HIG: "large, heavier-weight text"). Segoe UI Variable's Display/Text
+    optical sizes are the closest Windows match to SF. Icons are single-color like SF Symbols, at the same weight as the
+    text.
+  * Concentric margins: content is tight to the edge, inner corners match the outer corner; corners are Apple's
+    continuous corner (squircle, n=5 super-ellipse).
+  * Motion: the Island grows and shrinks like a spring when its size changes; when content changes, the old one fades
+    out and the new one fades in. No animation lasts longer than 2 s.
 
-Ada dışında yalnızca iki şey çizilir: kritik tehdidin yönünde ekran kenarında yumuşak ışık, tıklanacak yerin etrafında
-macOS odak halkası. Bu modül Windows'a dokunmaz; pencereye basmak window.py'nin işi.
+Besides the Island, only two things are drawn: a soft light on the screen edge in the direction of a critical threat,
+and a macOS focus ring around the place to click. This module does not touch Windows; pressing the window is
+window.py's job.
 """
 
 from __future__ import annotations
@@ -32,42 +35,42 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from alice.hud.model import Item, clock_of
 
-# Renkler masaüstü ve telefonla aynı Grafit paleti (alice/app/static/app.css :root): vurgu mavi #2F6BFF, yazı #18181B,
-# zemin #F3F3F4. Vurgu rengi tek: bilgi ve uyarı aynı mavi, ayrımı simge ve yazı yapar. Kritik tehdit güvenlik için
-# kırmızı kalır. (Eski adlar korunur; çizim kodu bunları kullanıyor.)
+# Colors are the same Graphite palette as the desktop and phone (alice/app/static/app.css :root): accent blue #2F6BFF,
+# text #18181B, background #F3F3F4. There is one accent: info and warnings share the same blue, and only the icon and
+# text tell them apart. Critical threats stay red for safety. (Old names are kept; the drawing code uses them.)
 BRAND_BLUE = (47, 107, 255)      # #2F6BFF  --accent
 SHARK = (24, 24, 27)             # #18181B  --text
 ATHENS = (243, 243, 244)         # #F3F3F4  --side
-RED = (217, 58, 58)              # #D93A3A  --err: yalnız kritik
+RED = (217, 58, 58)              # #D93A3A  --err: critical only
 BLUE, GRAY = BRAND_BLUE, (155, 155, 163)  # GRAY: --faint
-ORANGE = GREEN = YELLOW = BRAND_BLUE  # eski adlar: paletin dışına çıkılmasın
-GLOW = {"info": BRAND_BLUE, "warn": BRAND_BLUE, "critical": (240, 100, 100)}  # kenar ışığı
+ORANGE = GREEN = YELLOW = BRAND_BLUE  # old names: don't step outside the palette
+GLOW = {"info": BRAND_BLUE, "warn": BRAND_BLUE, "critical": (240, 100, 100)}  # edge light
 COLORS = {"info": BRAND_BLUE, "warn": BRAND_BLUE, "critical": RED}
-LABEL = SHARK                    # ana yazı
-LABEL_2 = (*SHARK, 150)          # ikincil yazı: aynı renk, %59 (paletin dışına çıkmadan hiyerarşi)
-TINT = (255, 255, 255, 176)      # buzlu camın tülü: beyaz, arkası bulanık ekran
-TINT_SOLID = (*ATHENS, 242)      # arka plan alınamazsa: Athens Gray
-HAIRLINE = (*SHARK, 22)          # camı zeminden ayıran kılcal çizgi
-HIGHLIGHT = (255, 255, 255, 200)  # üst kenardaki ışık yansıması (cam kalınlığı hissi)
-TRACKING = -0.022                # em: apple.com'da 17 px yazıda -0,374 px; sıkı, tok görünüm
-SS = 3                           # kenar yumuşatma için büyütme
+LABEL = SHARK                    # main text
+LABEL_2 = (*SHARK, 150)          # secondary text: same color at 59% (hierarchy without leaving the palette)
+TINT = (255, 255, 255, 176)      # light veil of the glass: white, over the blurred screen
+TINT_SOLID = (*ATHENS, 242)      # if the background can't be captured: Athens Gray
+HAIRLINE = (*SHARK, 22)          # hairline separating the glass from the background
+HIGHLIGHT = (255, 255, 255, 200)  # light reflection on the top edge (sense of glass thickness)
+TRACKING = -0.022                # em: on apple.com, -0.374 px at 17 px text; tight, solid look
+SS = 3                           # magnification for edge smoothing
 
-FADE_IN, FADE_OUT, TURN = 0.22, 0.18, 0.2   # sn
-PULSE = 1.6                                 # sn: kritik nefes (0,6 Hz: saniyede 3 yanıp sönme sınırının çok altı)
-LISTEN_PULSE = 2.4                          # sn: dinlerken camın parıltısı (kritikten yavaş, sakin)
-WAVE_SPEED = 7.0                            # dalga evresi / sn
+FADE_IN, FADE_OUT, TURN = 0.22, 0.18, 0.2   # sec
+PULSE = 1.6                                 # sec: critical breath (0.6 Hz: far below the limit of 3 flashes per second)
+LISTEN_PULSE = 2.4                          # sec: glass shimmer while listening (slower than critical, calm)
+WAVE_SPEED = 7.0                            # waveform phase / sec
 PRIORITY = {"critical": 0, "warn": 1, "info": 2}
 
 
 def scale_for(screen_h: int) -> float:
-    """1080p'de 1; 1440p'de 1,33; 4K'da 2."""
+    """1 at 1080p; 1.33 at 1440p; 2 at 4K."""
     return max(1.0, min(2.0, screen_h / 1080))
 
 
-# ------------------------------------------------------------------ yazı
+# ------------------------------------------------------------------ text
 @lru_cache(maxsize=64)
 def font(size: int, weight: int = 600, display: bool = True) -> ImageFont.FreeTypeFont:
-    """Segoe UI Variable: weight 300-700, optik boyut (display büyük başlık, text gövde). Yoksa Segoe UI."""
+    """Segoe UI Variable: weight 300-700, optical size (display for big headings, text for body). Else Segoe UI."""
     for path in ("C:/Windows/Fonts/SegUIVar.ttf",):
         try:
             f = ImageFont.truetype(path, size)
@@ -84,14 +87,14 @@ def font(size: int, weight: int = 600, display: bool = True) -> ImageFont.FreeTy
 
 
 def _tw(s: str, f: ImageFont.FreeTypeFont, tracking: float = TRACKING) -> int:
-    """Harf aralığıyla birlikte yazı genişliği."""
+    """Text width including letter spacing."""
     return int(math.ceil(f.getlength(s) + tracking * f.size * max(0, len(s) - 1)))
 
 
 def text(d: ImageDraw.ImageDraw, xy: tuple[float, float], s: str, f: ImageFont.FreeTypeFont, fill: tuple,
          anchor: str = "lm", tracking: float = TRACKING) -> None:
-    """Negatif harf aralıklı yazı (PIL'de yok: harf harf, çiftlerin kendi aralığı korunarak çizilir).
-    anchor: l/r/m yatay + m/a dikey (lm, rm, la)."""
+    """Negative letter-spaced text (PIL doesn't have it: drawn letter by letter, keeping each pair's own kerning).
+    anchor: l/r/m horizontal + m/a vertical (lm, rm, la)."""
     if not s:
         return
     width = _tw(s, f, tracking)
@@ -109,7 +112,7 @@ def text(d: ImageDraw.ImageDraw, xy: tuple[float, float], s: str, f: ImageFont.F
 
 
 def tr_sentence(s: str) -> str:
-    """'ARKANDA · 900 m' -> 'Arkanda · 900 m' (Türkçe İ/ı ile). Büyük harfle bağırmak Apple dili değil."""
+    """'ARKANDA · 900 m' -> 'Arkanda · 900 m' (with Turkish İ/ı). Shouting in all caps isn't Apple's style."""
     def low(w: str) -> str:
         return w.replace("I", "ı").replace("İ", "i").lower()
 
@@ -117,7 +120,7 @@ def tr_sentence(s: str) -> str:
     out = []
     for p in parts:
         letters = [c for c in p if c.isalpha()]
-        # kısaltmalar (SAM, GPU, DCS) kalır; bağıran kelimeler (ARKANDA, YAKIT) küçülür
+        # abbreviations (SAM, GPU, DCS) stay; shouted words (ARKANDA, YAKIT) get lowercased
         out.append(low(p) if len(letters) > 3 and all(c.isupper() for c in letters) else p)
     t = " ".join(out)
     if t and t[0] == "i":
@@ -145,19 +148,19 @@ def _wrap(s: str, f: ImageFont.FreeTypeFont, width: int, max_lines: int = 3) -> 
     return lines
 
 
-# ------------------------------------------------------------------ şekil
+# ------------------------------------------------------------------ shape
 def squircle(box: tuple[float, float, float, float], r: float, n: float = 5.0, steps: int = 14) -> list[tuple]:
-    """Apple'ın sürekli köşeli dikdörtgeni: köşeler süper elips (n=5), dairesel köşeden daha yumuşak geçer.
-    r yükseklik/2'ye eşitse kapsül olur."""
+    """Apple's continuous-corner rectangle: corners are super-ellipses (n=5), a softer transition than a
+    circular corner. If r equals height/2 it becomes a capsule."""
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     r = max(0.0, min(r, w / 2, h / 2))
     if r < 0.5:
         return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-    if r >= min(w, h) / 2 - 0.5:  # kapsül/daire: uçlar tam yarım daire (süper elips burada kutu gibi duruyordu)
+    if r >= min(w, h) / 2 - 0.5:  # capsule/circle: ends are full half circles (the super-ellipse looked boxy here)
         n, e = 2.0, min(w, h) / 2
     else:
-        e = min(r * 1.28, w / 2, h / 2)  # süper elips köşe, aynı görünen yarıçap için biraz daha uzun
+        e = min(r * 1.28, w / 2, h / 2)  # super-ellipse corner, a bit longer for the same apparent radius
     pts = []
     for cx, cy, a0 in ((x1 - e, y0 + e, -90), (x1 - e, y1 - e, 0), (x0 + e, y1 - e, 90), (x0 + e, y0 + e, 180)):
         for i in range(steps + 1):
@@ -194,18 +197,18 @@ def _shadow(img: Image.Image, box: tuple, r: float, k: float, alpha: int = 120) 
     img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(12 * k)))
 
 
-# ------------------------------------------------------------------ simgeler (SF Symbols gibi, tek renk)
+# ------------------------------------------------------------------ icons (single color, like SF Symbols)
 def glyph(img: Image.Image, name: str, cx: float, cy: float, s: float, rgb: tuple, angle: float = 0.0) -> None:
-    """s: simgenin kutu boyu (yazı yüksekliği kadar). Hepsi 3 kat çizilip küçültülür."""
+    """s: the icon's box size (as tall as the text). All are drawn at 3x and scaled down."""
     big = _big(img.size)
     d = ImageDraw.Draw(big)
     col = (*rgb, 255)
     X = lambda v: v * SS  # noqa: E731
     h = s / 2
-    if name == "arrow":  # location.north.fill: yönü olan dolu ok
+    if name == "arrow":  # location.north.fill: filled arrow with a direction
         dx, dy = math.sin(math.radians(angle)), -math.cos(math.radians(angle))
         px, py = -dy, dx
-        shape = ((0.0, -1.0), (0.56, 0.7), (0.0, 0.34), (-0.56, 0.7))  # ucu kanatlardan uzak: yönü belli
+        shape = ((0.0, -1.0), (0.56, 0.7), (0.0, 0.34), (-0.56, 0.7))  # tip kept clear of the wings: direction is obvious
         d.polygon([(X(cx + (px * a - dx * b) * h), X(cy + (py * a - dy * b) * h)) for a, b in shape], fill=col)
     elif name == "warning":  # exclamationmark.triangle.fill
         tri = [(cx, cy - h * 0.95), (cx + h, cy + h * 0.8), (cx - h, cy + h * 0.8)]
@@ -213,7 +216,7 @@ def glyph(img: Image.Image, name: str, cx: float, cy: float, s: float, rgb: tupl
         d.line([(X(cx), X(cy - h * 0.35)), (X(cx), X(cy + h * 0.25))], fill=(255, 255, 255, 255), width=round(X(s * 0.11)))
         r = s * 0.07
         d.ellipse([X(cx - r), X(cy + h * 0.5 - r), X(cx + r), X(cy + h * 0.5 + r)], fill=(255, 255, 255, 255))
-    elif name == "drop":  # drop.fill (yakıt)
+    elif name == "drop":  # drop.fill (fuel)
         r = h * 0.62
         d.ellipse([X(cx - r), X(cy + h * 0.3 - r), X(cx + r), X(cy + h * 0.3 + r)], fill=col)
         d.polygon([(X(cx), X(cy - h)), (X(cx + r * 0.92), X(cy + h * 0.12)), (X(cx - r * 0.92), X(cy + h * 0.12))],
@@ -230,21 +233,21 @@ def glyph(img: Image.Image, name: str, cx: float, cy: float, s: float, rgb: tupl
     elif name == "cursor":  # cursorarrow
         pts = [(0, -1), (0.0, 0.62), (0.3, 0.32), (0.55, 0.92), (0.72, 0.84), (0.48, 0.25), (0.88, 0.25)]
         d.polygon([(X(cx - h * 0.4 + a * h), X(cy + b * h)) for a, b in pts], fill=col)
-    elif name == "radar":  # dot.radiowaves: yönü bilinmeyen tehdit (ok yerine; ok yanlış yön gösterirdi)
+    elif name == "radar":  # dot.radiowaves: threat of unknown direction (an arrow would point the wrong way)
         r = s * 0.13
         d.ellipse([X(cx - r), X(cy - r), X(cx + r), X(cy + r)], fill=col)
         for rr in (0.5, 0.9):
             for a0 in (-50, 130):
                 d.arc([X(cx - h * rr), X(cy - h * rr), X(cx + h * rr), X(cy + h * rr)], a0, a0 + 100, fill=col,
                       width=round(X(s * 0.1)))
-    elif name == "wave":  # waveform: ALICE dinliyor/konuşuyor; angle burada evre (her karede biraz kayar)
+    elif name == "wave":  # waveform: ALICE is listening/speaking; angle is the phase here (drifts a little each frame)
         n, bw = 4, s * 0.13
         for i in range(n):
             amp = 0.3 + 0.7 * abs(math.sin(math.radians(angle) + i * 0.95))
             x = cx + (i - (n - 1) / 2) * s * 0.24
             d.rounded_rectangle([X(x - bw / 2), X(cy - h * amp), X(x + bw / 2), X(cy + h * amp)],
                                 radius=X(bw / 2), fill=col)
-    elif name == "music":  # music.note: çalan şarkı
+    elif name == "music":  # music.note: the song currently playing
         w = round(X(s * 0.11))
         r = s * 0.17
         for hx in (-0.42, 0.42):
@@ -254,15 +257,15 @@ def glyph(img: Image.Image, name: str, cx: float, cy: float, s: float, rgb: tupl
                     (X(cx + hx * h + r - s * 0.08 - w / SS / 2), X(cy - h * 0.75))], fill=col, width=w)
         d.line([(X(cx - 0.42 * h + r - s * 0.08 - w / SS / 2), X(cy - h * 0.75)),
                 (X(cx + 0.42 * h + r - s * 0.08 - w / SS / 2), X(cy - h * 0.95))], fill=col, width=round(w * 1.4))
-    elif name == "clock":  # clock: geçmiş bildirimler
+    elif name == "clock":  # clock: past notifications
         w = round(X(s * 0.11))
         d.ellipse([X(cx - h), X(cy - h), X(cx + h), X(cy + h)], outline=col, width=w)
         d.line([(X(cx), X(cy - h * 0.55)), (X(cx), X(cy)), (X(cx + h * 0.4), X(cy + h * 0.25))], fill=col, width=w,
                joint="curve")
-    elif name == "gauge":  # gauge.with.needle: halka
+    elif name == "gauge":  # gauge.with.needle: ring
         d.arc([X(cx - h), X(cy - h), X(cx + h), X(cy + h)], 150, 390, fill=col, width=round(X(s * 0.13)))
         d.line([(X(cx), X(cy)), (X(cx + h * 0.55), X(cy - h * 0.4))], fill=col, width=round(X(s * 0.12)))
-    else:  # sparkle: ALICE'in işareti (dört köşeli yıldız)
+    else:  # sparkle: ALICE's mark (four-pointed star)
         k = 0.22
         pts = [(0, -1), (k, -k), (1, 0), (k, k), (0, 1), (-k, k), (-1, 0), (-k, -k)]
         d.polygon([(X(cx + a * h), X(cy + b * h)) for a, b in pts], fill=col)
@@ -270,7 +273,7 @@ def glyph(img: Image.Image, name: str, cx: float, cy: float, s: float, rgb: tupl
 
 
 def ring(img: Image.Image, cx: float, cy: float, r: float, value: float, rgb: tuple, k: float) -> None:
-    """Küçük ilerleme halkası (Saat uygulamasının kalan süre halkası gibi)."""
+    """Small progress ring (like the Clock app's remaining-time ring)."""
     big = _big(img.size)
     d = ImageDraw.Draw(big)
     w = round(2.6 * k * SS)
@@ -281,10 +284,10 @@ def ring(img: Image.Image, cx: float, cy: float, r: float, value: float, rgb: tu
     img.alpha_composite(_down(big, img.size))
 
 
-# ------------------------------------------------------------------ içerik
+# ------------------------------------------------------------------ content
 @dataclass
 class Entry:
-    """Adada gösterilecek tek şey."""
+    """One thing to show in the Island."""
     key: str
     kind: str              # status | card
     glyph: str
@@ -306,13 +309,13 @@ def _split(text: str) -> tuple[str, str]:
     if " · " in t:
         a, b = t.split(" · ", 1)
         return a, b
-    m = re.match(r"^(.*?)\s+(~?[\d.,]+\s*\S*)$", t)  # "Yakıt ~4 dk" -> ("Yakıt", "~4 dk")
+    m = re.match(r"^(.*?)\s+(~?[\d.,]+\s*\S*)$", t)  # e.g. "Yakıt ~4 dk" (fuel ~4 min) -> ("Yakıt", "~4 dk")
     return (m.group(1), m.group(2)) if m and m.group(1) else (t, "")
 
 
 def entries(items: list[Item]) -> list[Entry]:
-    """HUD komutları -> Ada içerikleri, önem sırasıyla (kritik önce, aynı önemde yeni olan önce). Kenar ışığı ve
-    odak halkası ayrıca çizilir; odak halkasının yazısı Adaya gelir."""
+    """HUD commands -> Island contents, in order of importance (critical first, then newer ones at the same level).
+    The edge light and focus ring are drawn separately; the focus ring's text goes to the Island."""
     out: list[Entry] = []
     for it in items:
         d, key = it.data, it.id or f"#{it.seq}"
@@ -340,12 +343,12 @@ def entries(items: list[Item]) -> list[Entry]:
                                   "warning" if sev in ("warn", "critical") else "sparkle")
             out.append(Entry(key, "card", g, title, body=" ".join(str(d.get("text") or "").split()), severity=sev,
                              seq=it.seq))
-    # kritik tehdit her şeyden önce; sonra yeni gelen kart (kısa ömürlü, Adayı genişletir); sonra önem sırası
+    # critical threat first; then a newly arrived card (short-lived, expands the Island); then by importance
     out.sort(key=lambda e: (e.severity != "critical", e.kind != "card", PRIORITY.get(e.severity, 2), -e.seq))
     return out
 
 
-# ------------------------------------------------------------------ Ada
+# ------------------------------------------------------------------ Island
 @dataclass
 class Layout:
     w: float
@@ -354,10 +357,10 @@ class Layout:
 
 
 def island_layout(e: Entry | None, k: float) -> Layout:
-    """İçeriğin istediği Ada boyutu. Kompakt: 38 pt yüksek kapsül; genişletilmiş (kart): 400 pt genişlik, köşe 26."""
+    """Island size the content asks for. Compact: 38 pt tall capsule; expanded (card): 400 pt wide, corner 26."""
     if e is None:
-        return Layout(126 * k, 38 * k, 19 * k)  # boşta: küçük kapsül (gösterilmez)
-    if e.kind == "card":  # HIG: sadece içeriğin gerektirdiği kadar yer; en fazla 400 pt
+        return Layout(126 * k, 38 * k, 19 * k)  # idle: small capsule (not shown)
+    if e.kind == "card":  # HIG: only as much room as the content needs; at most 400 pt
         fb = font(round(14 * k), 400, False)
         need = 72 * k + max(_tw(e.title, font(round(16 * k), 600)), _tw(e.body, fb) if e.body else 0)
         w = min(400 * k, max(240 * k, need))
@@ -371,7 +374,7 @@ def island_layout(e: Entry | None, k: float) -> Layout:
     return Layout(max(w, 112 * k), 38 * k, 19 * k)
 
 
-MARGIN = 48  # gölge ve ışıma payı (k cinsinden): bulanıklık kesilmesin
+MARGIN = 48  # shadow and glow allowance (in k units): so the blur isn't cut off
 
 
 def _ss_mask(W: int, H: int, box: tuple, r: float) -> Image.Image:
@@ -382,24 +385,24 @@ def _ss_mask(W: int, H: int, box: tuple, r: float) -> Image.Image:
 
 @lru_cache(maxsize=64)
 def _glass_parts(w: int, h: int, r: int, crit: bool | str, pulse_q: float, k: float) -> tuple:
-    """Buzlu cam parçaları (boyut başına bir kez): (gölge ya da ışıma, şekil maskesi, kılcal çizgi + ışık)."""
+    """Frosted glass parts (once per size): (shadow or glow, shape mask, hairline + light)."""
     m = round(MARGIN * k)
     W, H = w + 2 * m, h + 2 * m
     box = (m, m, m + w, m + h)
-    q = 4  # bulanıklık çeyrek çözünürlükte: aynı görünür, 16 kat ucuz
+    q = 4  # blur at quarter resolution: looks the same, 16x cheaper
     under = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     small = Image.new("RGBA", (max(1, W // q), max(1, H // q)), (0, 0, 0, 0))
     listen = crit == "listen"
     crit = bool(crit) and not listen
-    if crit:  # kritik: nefes alan kırmızı ışıma
+    if crit:  # critical: breathing red glow
         g = (3 + 3 * pulse_q) * k
         poly = squircle((box[0] - g, box[1] - g, box[2] + g, box[3] + g), r + g)
         fill, blur = (*GLOW["critical"], int(80 + 70 * (1 - pulse_q))), 9 * k
-    elif listen:  # dinliyor: Siri/Gemini gibi yumuşak mavi parıltı, kritikten sakin
+    elif listen:  # listening: soft blue shimmer like Siri/Gemini, calmer than critical
         g = (2 + 3 * pulse_q) * k
         poly = squircle((box[0] - g, box[1] - g, box[2] + g, box[3] + g), r + g)
         fill, blur = (*BRAND_BLUE, int(55 + 45 * pulse_q)), 11 * k
-    else:  # Liquid Glass gibi çok hafif gölge: açık gökyüzünde de cam seçilsin
+    else:  # very light shadow like Liquid Glass: the glass stays visible even against an open sky
         poly = squircle((box[0], box[1] + 3 * k, box[2], box[3] + 3 * k), r)
         fill, blur = (0, 0, 0, 46), 10 * k
     ImageDraw.Draw(small).polygon([(x / q, y / q) for x, y in poly], fill=fill)
@@ -411,13 +414,13 @@ def _glass_parts(w: int, h: int, r: int, crit: bool | str, pulse_q: float, k: fl
     d.line(pts + [pts[0]], fill=(*RED, 220) if crit else HAIRLINE,
            width=max(1, round((1.6 if crit else 1.0) * k * SS)))
     over = big.resize((W, H), Image.LANCZOS)
-    # Üst kenar ışığı: iç şekil - 1 px aşağı kaydırılmış iç şekil = yalnız üst kenarda ince şerit; yanlara doğru
-    # söner. (Kontur noktalarını sıralayıp çizmek köşelerde "kulak" bırakıyordu, canlı ekranda görüldü.)
+    # Top-edge light: inner shape minus the inner shape shifted down by 1 px = a thin strip only on the top edge, fading
+    # toward the sides. (Tracing the outline points in order left a "ear" at the corners; seen on the live screen.)
     inner = _ss_mask(W, H, (box[0] + k, box[1] + k, box[2] - k, box[3] - k), max(0.0, r - k))
     shifted = Image.new("L", (W, H), 0)
     shifted.paste(inner, (0, max(1, round(1.2 * k))))
     band = ImageChops.subtract(inner, shifted)
-    fade = Image.linear_gradient("L").rotate(90).resize((W, H))  # soldan sağa 0..255
+    fade = Image.linear_gradient("L").rotate(90).resize((W, H))  # left to right 0..255
     fade = fade.point(lambda v: int(255 * max(0.0, 1 - abs(v / 255 - 0.5) * 2) ** 0.6))
     band = ImageChops.multiply(band, fade).point(lambda v: v * HIGHLIGHT[3] // 255)
     shine = Image.new("RGBA", (W, H), HIGHLIGHT[:3] + (0,))
@@ -427,7 +430,7 @@ def _glass_parts(w: int, h: int, r: int, crit: bool | str, pulse_q: float, k: fl
 
 
 def _glass(w: int, h: int, r: int, crit: bool | str, pulse_q: float, k: float, behind: Image.Image | None) -> Image.Image:
-    """Bir cam yüzey: arkadaki (bulanık) ekran + açık tül, şekle kırpılmış; üstte kılcal çizgi ve ışık."""
+    """One glass surface: the (blurred) screen behind + light veil, clipped to the shape; hairline and light on top."""
     under, mask, over = _glass_parts(w, h, r, crit, pulse_q, k)
     img = under.copy()
     if behind is not None and behind.size == under.size:
@@ -443,7 +446,7 @@ def _glass(w: int, h: int, r: int, crit: bool | str, pulse_q: float, k: float, b
 
 @lru_cache(maxsize=64)
 def _content(sig: tuple, w: int, h: int, k: float) -> Image.Image:
-    """Adanın içeriği (simge, yazı, değer), hedef boyutta bir kez çizilir."""
+    """The Island's content (icon, text, value), drawn once at the target size."""
     kind, gname, title, value, body, sev, angle, progress = sig
     rgb = COLORS.get(sev, BLUE)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -488,7 +491,7 @@ def _fade(img: Image.Image, a: float) -> Image.Image:
 
 
 def _behind(backdrop: Image.Image | None, x: int, y: int, W: int, H: int) -> Image.Image | None:
-    """Bulanık arka planın bu yüzeyin altına düşen parçası (tuval koordinatı)."""
+    """The part of the blurred background that falls under this surface (canvas coordinates)."""
     if backdrop is None:
         return None
     return backdrop.crop((x, y, x + W, y + H))
@@ -508,14 +511,14 @@ def draw_island(img: Image.Image, e: Entry | None, box: tuple, r: float, k: floa
         return
     lay = island_layout(e, k)
     c = _content(_sig(e), round(lay.w), round(lay.h), k)
-    if c.width > w or c.height > h:  # yay henüz açılmadı: taşan kısmı gösterme
+    if c.width > w or c.height > h:  # spring hasn't opened yet: don't show the overflow
         c = c.crop((0, 0, min(c.width, w), min(c.height, h)))
     img.alpha_composite(_fade(c, content_alpha), (round(x0), round(y0)))
 
 
 def draw_minimal(img: Image.Image, e: Entry, cx: float, cy: float, d_: float, k: float, alpha: float,
                  backdrop: Image.Image | None = None) -> None:
-    """Ada yanında ayrık küçük cam daire: ikinci/üçüncü içeriğin yalnızca simgesi (HIG minimal görünüm)."""
+    """Separate small glass circle beside the Island: only the icon of the second/third content (HIG minimal view)."""
     d = max(2, round(d_))
     m = round(MARGIN * k)
     px, py = round(cx - d / 2) - m, round(cy - d / 2) - m
@@ -525,14 +528,14 @@ def draw_minimal(img: Image.Image, e: Entry, cx: float, cy: float, d_: float, k:
 
 
 class Spring:
-    """Sönümlü yay (hafif aşıp oturur): Adanın boyutu içeriğe göre böyle değişir."""
+    """Damped spring (overshoots slightly, then settles): the Island's size changes this way based on its content."""
 
     def __init__(self, value: float, stiffness: float = 260.0, damping: float = 24.0):
         self.x, self.v, self.target = value, 0.0, value
         self.k, self.c = stiffness, damping
 
     def step(self, dt: float) -> bool:
-        """Bir kare ilerlet; hâlâ hareket ediyorsa True."""
+        """Advance one frame; True if it is still moving."""
         dt = min(dt, 1 / 30)
         for _ in range(4):
             h = dt / 4
@@ -546,12 +549,13 @@ class Spring:
 
 
 class Island:
-    """Adanın canlı durumu: hangi içerik, boyut yayları, içerik geçişi. Her karede `frame` resmi verir."""
+    """Live state of the Island: which content, size springs, content transitions.
+    `frame` gives the image for each frame."""
 
     MAX_W, MAX_H, MINIMALS = 420, 170, 2
 
     def __init__(self, sw: int, sh: int, top: float = 10.0, backdrop=None):
-        self.backdrop = backdrop   # () -> Adanın tuvali boyunda bulanık arka plan ya da None
+        self.backdrop = backdrop   # () -> blurred background the size of the Island's canvas, or None
         self.k = scale_for(sh)
         k = self.k
         self.sw, self.sh = sw, sh
@@ -560,19 +564,19 @@ class Island:
         self.top = top * k
         idle = island_layout(None, k)
         self.w, self.h, self.r = Spring(idle.w), Spring(idle.h), Spring(idle.r)
-        self.shown = 0.0           # 0-1: Adanın kendisi görünür mü (boşken söner)
+        self.shown = 0.0           # 0-1: is the Island itself visible (fades out when idle)
         self.current: Entry | None = None
         self.prev: Entry | None = None
         self.changed_at = -1e9
         self.minimals: list[Entry] = []
         self.started = -1e9
         self.last_t: float | None = None
-        self.angle: float | None = None     # şu an çizilen ok açısı (yeni yöne döner, zıplamaz)
-        self.turn = (0.0, 0.0, -1e9)        # (nereden, nereye, başladığı an)
-        self.calm = False                   # yalnız nabız atıyor (boyut/geçiş/dönüş yok): seyrek çizilebilir
+        self.angle: float | None = None     # arrow angle being drawn now (turns to the new direction, doesn't jump)
+        self.turn = (0.0, 0.0, -1e9)        # (from, to, moment it started)
+        self.calm = False                   # only the pulse is running (no size/transition/turn): can be drawn sparsely
 
     def update(self, ents: list[Entry], now: float) -> bool:
-        """Yeni içerik listesi. Görünecek bir şey varsa True."""
+        """New content list. True if there is anything to show."""
         top = ents[0] if ents else None
         cur = self.current
         if top is not None and (cur is None or top.key != cur.key or (top.title, top.value, top.body, top.angle,
@@ -595,7 +599,7 @@ class Island:
         return self.current is not None or self.shown > 0.01
 
     def frame(self, now: float) -> tuple[Image.Image, bool]:
-        """(resim, hâlâ hareket ediyor mu)."""
+        """(image, still moving or not)."""
         dt = 1 / 60 if self.last_t is None else now - self.last_t
         self.last_t = now
         moving = any([self.w.step(dt), self.h.step(dt), self.r.step(dt)])
@@ -605,7 +609,7 @@ class Island:
             if abs(self.shown - target_shown) < 0.01:
                 self.shown = target_shown
             moving = True
-        t = (now - self.changed_at) / 0.32  # içerik geçişi: eski söner, yeni belirir
+        t = (now - self.changed_at) / 0.32  # content transition: old fades out, new fades in
         content = self.current if t >= 0.4 or self.prev is None else self.prev
         content_alpha = (min(1.0, (t - 0.4) / 0.6) if t < 1 else 1.0) if content is self.current else max(0.0, 1 - t / 0.4)
         if t < 1:
@@ -623,10 +627,10 @@ class Island:
             pulse = 0.5 + 0.5 * math.sin((now - self.started) * 2 * math.pi / PULSE)
             self.calm = not moving
             moving = True
-        elif self.current is not None and self.current.glyph == "wave":  # dinlerken dalga oynar, cam hafif parlar
+        elif self.current is not None and self.current.glyph == "wave":  # waves move while listening; glass glows
             pulse = 0.5 + 0.5 * math.sin((now - self.started) * 2 * math.pi / LISTEN_PULSE)
             if content is self.current:
-                content = replace(content, angle=round(now * WAVE_SPEED) % 8 * 45.0)  # 8 evre: önbellek tutar
+                content = replace(content, angle=round(now * WAVE_SPEED) % 8 * 45.0)  # 8 phases: the cache holds them
             self.calm = not moving
             moving = True
         img = Image.new("RGBA", (self.cw, self.ch), (0, 0, 0, 0))
@@ -635,17 +639,17 @@ class Island:
         if self.shown > 0.005 and self.backdrop is not None:
             try:
                 bd = self.backdrop()
-            except Exception:  # noqa: BLE001 - arka plan alınamazsa düz açık cam
+            except Exception:  # noqa: BLE001 - if the background can't be captured, use plain clear glass
                 bd = None
         if self.shown > 0.005:
             cx, top = self.cw / 2, self.top
             w, h = self.w.x, self.h.x
-            grow = 0.86 + 0.14 * self.shown  # belirirken küçükten
+            grow = 0.86 + 0.14 * self.shown  # starts small while appearing
             w, h = w * grow, h * grow
             box = (cx - w / 2, top, cx + w / 2, top + h)
             draw_island(img, content, box, min(self.r.x, h / 2), k, content_alpha, pulse, bd)
             x = box[2] + 6 * k
-            for e in self.minimals:  # sağda ayrık küçük daireler
+            for e in self.minimals:  # small separate circles on the right
                 d_ = 38 * k * grow
                 draw_minimal(img, e, x + d_ / 2, top + d_ / 2, d_, k, 1.0, bd)
                 x += d_ + 6 * k
@@ -654,7 +658,7 @@ class Island:
         return img, moving
 
 
-# ------------------------------------------------------------------ kenar ışığı ve odak halkası
+# ------------------------------------------------------------------ edge light and focus ring
 @dataclass
 class Sprite:
     key: str
@@ -667,7 +671,8 @@ class Sprite:
 
 
 def layout(items: list[Item], sw: int, sh: int) -> list[Sprite]:
-    """Ada dışında çizilenler: kritik/uyarı tehdidin kenar ışığı ve tıklanacak yerin odak halkası."""
+    """Drawn outside the Island: edge light for a critical/warning threat, and the focus ring
+    around the place to click."""
     k = scale_for(sh)
     out: list[Sprite] = []
     for it in items:
@@ -683,14 +688,14 @@ def layout(items: list[Item], sw: int, sh: int) -> list[Sprite]:
 
 
 def _edge_sprite(key: str, it: Item, sw: int, sh: int, k: float) -> Sprite:
-    """Işının değdiği kenarda yumuşak ışık; köşeye yakınsa köşede yuvarlak ışık."""
+    """Soft light on the edge the beam hits; a round light in the corner if it is near a corner."""
     ang = (clock_of(it.data.get("clock")) or 12) % 12 * 30.0
     dx, dy = math.sin(math.radians(ang)), -math.cos(math.radians(ang))
     tx = (sw / 2) / abs(dx) if abs(dx) > 1e-6 else math.inf
     ty = (sh / 2) / abs(dy) if abs(dy) > 1e-6 else math.inf
     t = min(tx, ty)
     ex, ey = sw / 2 + dx * t, sh / 2 + dy * t
-    depth = round(180 * k)  # derin: en parlak kısım görev çubuğunun altında kalıp kaybolmasın
+    depth = round(180 * k)  # deep: so the brightest part isn't hidden and lost under the taskbar
     if min(ex, sw - ex) < sw * 0.14 and min(ey, sh - ey) < sh * 0.14:
         r = round(320 * k)
         return Sprite(key, it, 0 if ex < sw / 2 else sw - r, 0 if ey < sh / 2 else sh - r, r, r, ang)
@@ -726,14 +731,14 @@ def render(sp: Sprite, sh: int, alpha: float = 1.0, grow: float = 1.0, pulse: fl
     k = scale_for(sh)
     img = Image.new("RGBA", (max(1, sp.w), max(1, sp.h)), (0, 0, 0, 0))
     sev = sp.item.data.get("severity", "info")
-    rgb = GLOW.get(sev, GLOW["info"]) if sp.item.kind == "edge" else BLUE  # kenar ışığı canlı, halka marka mavisi
+    rgb = GLOW.get(sev, GLOW["info"]) if sp.item.kind == "edge" else BLUE  # edge light is vivid; the ring is brand blue
     if sp.item.kind == "edge":
         peak = (0.7 + 0.25 * (1 - pulse)) if sev == "critical" else 0.6
         mask = _edge_mask(img.width, img.height, sp.x <= 0, sp.y <= 0).point(lambda v: int(v * peak))
         glow = Image.new("RGBA", img.size, (*rgb, 0))
         glow.putalpha(mask)
         img.alpha_composite(glow)
-    elif sp.item.kind == "box":  # macOS odak halkası: mavi, eş merkezli sürekli köşe, yumuşak dış ışık
+    elif sp.item.kind == "box":  # macOS focus ring: blue, concentric continuous corner, soft outer glow
         d = sp.item.data
         pad = 16 * k
         bw, bh = float(d["w"]), float(d["h"])
@@ -785,7 +790,7 @@ def spring(t: float) -> float:
 
 @dataclass
 class Anim:
-    """Kenar ışığı ve odak halkasının animasyonu."""
+    """Animation of the edge light and focus ring."""
     shown_at: float
     gone_at: float | None = None
     angle: float | None = None
@@ -799,25 +804,26 @@ class Anim:
             t_out = (now - self.gone_at) / FADE_OUT
             alpha *= 1 - ease_out(t_out)
             moving = t_out < 1
-        grow = 1.08 - 0.08 * spring(t_in / 1.5) if sp.item.kind == "box" else 1.0  # odak halkası dışarıdan oturur
+        grow = 1.08 - 0.08 * spring(t_in / 1.5) if sp.item.kind == "box" else 1.0  # the focus ring settles in from outside
         pulse = 0.0
         if sp.item.kind == "edge" and sp.item.data.get("severity") == "critical":
             pulse = 0.5 + 0.5 * math.sin((now - self.shown_at) * 2 * math.pi / PULSE)
-            if self.gone_at is None:  # sönerken nabız "hareket" sayılmaz: yoksa ışık hiç kapanmıyordu
+            if self.gone_at is None:  # while fading out the pulse isn't "motion", or the light would never turn off
                 moving = True
         return alpha, grow, pulse, moving
 
 
-# ------------------------------------------------------------------ ALICE'in imleci
+# ------------------------------------------------------------------ ALICE's pointer
 CLICKS = ("click", "double_click", "right_click", "middle_click")
-GLIDE_MIN, GLIDE_MAX = 0.16, 0.34  # sn: kayma süresi mesafeyle artar; tıklama önizlemesi (0,4 sn) bitmeden oturur
-RIPPLE = 0.55                      # sn: tıklanan yerde yayılıp sönen halka
-POINTER_IDLE = 1.5                 # sn: son hareketten sonra bu kadar durur, sonra söner
+GLIDE_MIN, GLIDE_MAX = 0.16, 0.34  # sec: glide time grows with distance; it settles before the 0.4 s click preview
+RIPPLE = 0.55                      # sec: ring that spreads and fades at the clicked spot
+POINTER_IDLE = 1.5                 # sec: stays still this long after the last move, then fades
 
 
 class Pointer:
-    """ALICE'in kendi imleci (gerçek imleçten ayrı, yalnız görsel): yeni hedefe ışınlanmaz, eğri bir yoldan kayar;
-    tıklamada halka dalgası yayılır; boşta kalınca söner. Pencere imlecin ucuyla birlikte taşınır, resim küçük."""
+    """ALICE's own pointer (separate from the real cursor, visual only): it doesn't teleport to a new target;
+    it glides along a curved path. A ring wave spreads on click; it fades when idle. The window moves with the
+    pointer tip, so the image stays small."""
 
     def __init__(self, sh: int):
         self.k = scale_for(sh)
@@ -834,7 +840,8 @@ class Pointer:
         return self.shown_at is not None
 
     def go(self, x: float, y: float, action: str, now: float, origin: tuple[float, float] | None = None) -> None:
-        """Yeni hedef. Görünürken bulunduğu yerden, değilse gerçek imlecin yerinden (bilinmiyorsa hedefte belirir)."""
+        """New target. If visible, starts from where it is; otherwise from the real cursor's position
+        (if that is unknown, it appears at the target)."""
         if self.active and self.gone_at is None:
             start = self.at(now)
         else:
@@ -843,7 +850,7 @@ class Pointer:
         self.gone_at = None
         dx, dy = x - start[0], y - start[1]
         dist = math.hypot(dx, dy)
-        bend = min(0.18 * dist, 140 * self.k)  # elle yapılan hareket gibi hafif kavis
+        bend = min(0.18 * dist, 140 * self.k)  # a slight curve, like a hand-made movement
         mx, my = (start[0] + x) / 2, (start[1] + y) / 2
         nx, ny = (-dy / dist, dx / dist) if dist > 1 else (0.0, 0.0)
         self.start, self.end, self.ctrl = start, (x, y), (mx + nx * bend, my + ny * bend)
@@ -859,13 +866,13 @@ class Pointer:
 
     def at(self, now: float) -> tuple[float, float]:
         u = self._t(now)
-        u = u * u * (3 - 2 * u)  # yumuşak kalkış ve duruş
+        u = u * u * (3 - 2 * u)  # soft start and stop
         (x0, y0), (cx, cy), (x1, y1) = self.start, self.ctrl, self.end
         a, b, c = (1 - u) ** 2, 2 * (1 - u) * u, u * u
         return a * x0 + b * cx + c * x1, a * y0 + b * cy + c * y1
 
     def frame(self, now: float) -> tuple[Image.Image | None, float, float, bool]:
-        """(resim ya da None: tamamen söndü, sol üst x, y, hareket ediyor mu)."""
+        """(image or None: fully faded out, top-left x, y, whether it is moving)."""
         if self.shown_at is None:
             return None, 0.0, 0.0, False
         k, S = self.k, self.size
@@ -882,7 +889,7 @@ class Pointer:
         moving = self._t(now) < 1 or (self.click and tr < 1) or self.gone_at is not None or alpha < 0.999
         img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         c = S / 2
-        if self.click and 0 <= tr < 1:  # tıklandı: halka yayılıp söner
+        if self.click and 0 <= tr < 1:  # clicked: ring spreads and fades
             big = _big(img.size)
             d = ImageDraw.Draw(big)
             rr = (7 + 34 * ease_out(tr)) * k
@@ -895,7 +902,7 @@ class Pointer:
 
 @lru_cache(maxsize=4)
 def _pointer_layer(size: int, s: float, k: float) -> Image.Image:
-    """Ucu (cx, cy) noktasında duran mavi ok: beyaz kenarlı, hafif gölgeli (her zeminde seçilsin)."""
+    """Blue arrow whose tip sits at (cx, cy): white edge, slight shadow (so it stands out on any background)."""
     pts = [(0, 0), (0, 0.78), (0.21, 0.6), (0.36, 0.95), (0.5, 0.89), (0.35, 0.55), (0.62, 0.55)]
     c = size / 2
     poly = [(c + a * s, c + b * s) for a, b in pts]
@@ -916,8 +923,8 @@ def _pointer_glyph(img: Image.Image, cx: float, cy: float, s: float, k: float) -
 
 
 def blur_backdrop(img: Image.Image, k: float = 1.0) -> Image.Image:
-    """Camın arkası: ekran parçası çeyrek çözünürlükte bulanıklaştırılıp biraz doygunlaştırılır (Apple'ın cam
-    malzemesi rengi soldurmaz, yumuşatır). Ucuz: 700x200'lük parça için ~2 ms."""
+    """Behind the glass: the screen piece is blurred at quarter resolution and slightly saturated (Apple's glass
+    material softens color rather than washing it out). Cheap: about 2 ms for a 700x200 piece."""
     from PIL import ImageEnhance
 
     q = 4
@@ -929,7 +936,7 @@ def blur_backdrop(img: Image.Image, k: float = 1.0) -> Image.Image:
 
 def preview(items: list[dict[str, Any]], sw: int = 1920, sh: int = 1080,
             background: Image.Image | None = None) -> Image.Image:
-    """Komutların son halini tek resimde göster (rapor ve deneme için; pencere açmaz)."""
+    """Show the final state of the commands in one image (for reports and tests; doesn't open a window)."""
     from alice.hud.model import HudModel
 
     m = HudModel()
@@ -940,12 +947,12 @@ def preview(items: list[dict[str, Any]], sw: int = 1920, sh: int = 1080,
     for sp in layout(m.visible(), sw, sh):
         img.alpha_composite(render(sp, sh, pulse=0.3), (sp.x, sp.y))
     isl = Island(sw, sh)
-    if background is not None:  # buzlu cam: arkadaki resmin bulanık hali
+    if background is not None:  # frosted glass: blurred version of the image behind
         bg = img.crop((isl.x, isl.y, isl.x + isl.cw, isl.y + isl.ch)).convert("RGB")
         blurred = blur_backdrop(bg, isl.k)
         isl.backdrop = lambda: blurred
     isl.update(entries(m.visible()), 0.0)
-    for t in range(0, 120):  # yaylar ve geçişler otursun
+    for t in range(0, 120):  # let the springs and transitions settle
         frame, _ = isl.frame(t / 60)
     img.alpha_composite(frame, (isl.x, isl.y))
     return img

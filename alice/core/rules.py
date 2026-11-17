@@ -1,12 +1,14 @@
-"""Kurallar: "şu metrik uzun süre şöyle olursa haber ver".
+"""Rules: "tell me if this metric stays like this for a long time" ("şu metrik uzun süre şöyle olursa haber ver").
 
-Karar zinciri ucuzdan pahalıya:
-  1. Kural: metrik eşiği belirtilen süre boyunca aşıyor mu? (yapay zekâ yok)
-  2. confirm doluysa: durum belirsiz, Jev'e (System One) "haber vermeye değer mi?" sorulur
-  3. action = "agent" ise: ALICE'in kendisi uyanır, prompt'taki araştırmayı yapar, sonucu söyler
+The decision chain, from cheapest to most expensive:
+  1. Rule: has the metric stayed past the threshold for the required time? (no AI involved)
+  2. If confirm is set: the situation is ambiguous, so Jev (System One) is asked "haber vermeye değer mi?"
+     ("is it worth reporting?")
+  3. If action = "agent": ALICE itself wakes up, does the research in the prompt, and reports the result
 
-Kurallar ~/.alice/rules.json'da durur. Kullanıcı kuralı elle yazmaz; "nabzım uzun süre
-yüksek kalırsa beni uyar" der, `parse_rule` bunu hızlı modelle kurala çevirir.
+Rules live in ~/.alice/rules.json. The user does not write rules by hand; they say "nabzım uzun süre yüksek
+kalırsa beni uyar" (meaning "tell me if my heart rate stays high for a long time"), and `parse_rule` turns that
+into a rule with the fast model.
 """
 
 from __future__ import annotations
@@ -27,25 +29,25 @@ from alice.core.store import Store
 OPS: dict[str, Callable[[float, float], bool]] = {
     ">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "==": operator.eq, "!=": operator.ne}
 
-# Süresiz (duration=0) kurallarda son ölçüm bundan eskiyse kural değerlendirilmez.
+# For rules without a duration (duration=0): skip evaluation if the last measurement is older than this.
 FRESH = 120.0
 
 
 @dataclass
 class Rule:
-    metric: str                       # anahtar ya da glob: "pc.gpu.temp", "pc.disk.*.percent"
+    metric: str                       # key or glob: "pc.gpu.temp", "pc.disk.*.percent"
     op: str
     threshold: float
-    message: str                      # {value}, {key}, {match}, {threshold} yer tutucuları
-    duration: float = 0.0             # saniye; koşul bu kadar süre kesintisiz sağlanmalı
-    cooldown: float = 1800.0          # aynı anahtar için tekrar uyarmadan önce beklenecek süre
+    message: str                      # placeholders: {value}, {key}, {match}, {threshold}
+    duration: float = 0.0             # seconds; the condition must hold continuously for this long
+    cooldown: float = 1800.0          # how long to wait before alerting again for the same key
     severity: str = "warn"            # info | warn | critical
     topic: str = "pc"
-    modes: list[str] = field(default_factory=list)  # boşsa her modda; doluysa sadece bu modlarda
-    confirm: str = ""                 # doluysa Jev'e sorulacak evet/hayır sorusu
+    modes: list[str] = field(default_factory=list)  # empty: every mode; if set, only in these modes
+    confirm: str = ""                 # if set, a yes/no question for Jev (System One)
     action: str = "notify"            # notify | agent
-    prompt: str = ""                  # action=agent ise ALICE'e verilecek görev
-    description: str = ""             # kullanıcının kendi cümlesi
+    prompt: str = ""                  # if action=agent: the task given to ALICE
+    description: str = ""             # the user's own words
     enabled: bool = True
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
@@ -102,7 +104,7 @@ DEFAULT_RULES = [
          description="nabzım uzun süre yüksek kalırsa beni uyar", id="hr-high"),
 ]
 
-# rules.json ilk yazıldıktan sonra eklenen varsayılanlar: yüklerken eksikse eklenir.
+# Defaults added after rules.json was first written: added on load if they are missing.
 ADDED_LATER = {"disk-low"}
 
 
@@ -119,7 +121,7 @@ class RuleSet:
         from alice.core.schedule import read_json_list
 
         data = read_json_list(self.path)
-        if data is None:  # bozuk dosya: eldekini koru, çekirdek düşmesin
+        if data is None:  # corrupt file: keep what we have so the core doesn't crash
             return
         rules = []
         for d in data:
@@ -127,10 +129,10 @@ class RuleSet:
                 rules.append(Rule.from_dict(d))
             except (TypeError, ValueError, AttributeError):
                 continue
-        # Sonradan eklenen varsayılan kural eski rules.json'a da girsin; kullanıcı onu silmişse geri gelmesin.
+        # A default rule added later should also reach an old rules.json; if the user deleted it, it must not come back.
         have = {r.id for r in rules}
         removed = self._removed()
-        # Varsayılanlardan hiçbiri yoksa kullanıcı hepsini silmiş: yenisini de dayatma.
+        # If none of the defaults are present, the user deleted them all: don't impose the new one either.
         had_defaults = bool(have & {r.id for r in DEFAULT_RULES if r.id not in ADDED_LATER})
         added = [Rule.from_dict(asdict(r)) for r in DEFAULT_RULES
                  if had_defaults and r.id in ADDED_LATER and r.id not in have and r.id not in removed]
@@ -189,7 +191,7 @@ class Firing:
 
 
 class RuleEngine:
-    """Kuralları depodaki veriye karşı değerlendirir ve tetiklenenleri bildirir."""
+    """Evaluates rules against the data in the store and reports the ones that fire."""
 
     def __init__(self, rules: RuleSet, store: Store, notifier: Notifier, decider=None,
                  run_agent: Callable[[str], str] | None = None, mode: Callable[[], str] = lambda: "normal"):
@@ -198,12 +200,12 @@ class RuleEngine:
         self.notifier = notifier
         self.decider = decider
         self.run_agent = run_agent
-        self.sync_agent = False  # testler için: ajan eylemini aynı iş parçacığında çalıştır
+        self.sync_agent = False  # for tests: run the agent action on the same thread
         self.mode = mode
         self.last_fired: dict[tuple[str, str], float] = {}
 
     def check(self, rule: Rule, key: str, now: float) -> float | None:
-        """Koşul sağlanıyorsa son değeri, sağlanmıyorsa None döndürür."""
+        """Return the last value if the condition holds, or None if it does not."""
         cmp = OPS[rule.op]
         if rule.duration <= 0:
             last = self.store.last(key)
@@ -213,8 +215,8 @@ class RuleEngine:
         pts = self.store.series(key, since=now - rule.duration, until=now)
         if not pts or any(not cmp(v, rule.threshold) for _, v in pts):
             return None
-        # Ölçümler pencerenin büyük kısmını kapsamıyorsa (servis yeni açıldı, veri kesildi)
-        # koşul henüz "uzun süre" sağlanmış sayılmaz; son ölçüm de taze olmalı.
+        # If the measurements don't cover most of the window (service just started, data gap),
+        # the condition is not yet counted as held for "a long time"; the last measurement must also be fresh.
         if pts[0][0] > now - rule.duration * 0.8 or now - pts[-1][0] > FRESH:
             return None
         return pts[-1][1]
@@ -246,8 +248,8 @@ class RuleEngine:
                     self.last_fired[(rule.id, key)] = now
                     fired.append(Firing(rule, key, value, text))
                     self._act(fired[-1])
-                except Exception as e:  # noqa: BLE001 - tek bozuk kural çekirdek turunu ve diğer kuralları durdurmasın
-                    self.last_fired[(rule.id, key)] = now  # her turda aynı hatayı tekrarlama
+                except Exception as e:  # noqa: BLE001 - one broken rule must not stop the core turn or the other rules
+                    self.last_fired[(rule.id, key)] = now  # don't repeat the same error every turn
                     print(f"kural hatası ({rule.id}, {key}): {e!r}")
         return fired
 
@@ -274,18 +276,18 @@ class RuleEngine:
         try:
             d = self.decider.decide(state, {"notify": Noul(rule.confirm)})
             return float(d["notify"].value) >= 0.5
-        except (DeciderError, Exception):  # noqa: BLE001 - karar motoru yoksa/bozuk cevap verirse kural tek başına karar verir
+        except (DeciderError, Exception):  # noqa: BLE001 - no decider, or a broken answer: the rule decides alone
             return True
 
     def _act(self, f: Firing) -> None:
         r = f.rule
         if r.action == "agent" and self.run_agent is not None:
-            # Ajan turu dakikalar sürebilir: çekirdek turunu (izleme, görevler, durum dosyası) bekletmesin.
+            # An agent turn can take minutes: don't make the core turn (monitoring, tasks, status file) wait.
             def work() -> None:
                 prompt = f"{r.prompt}\n\n(Bu görevi şu uyarı tetikledi: {f.text})"
                 try:
                     body = self.run_agent(prompt)
-                except Exception as e:  # noqa: BLE001 - ajan çökse de uyarı kaybolmasın
+                except Exception as e:  # noqa: BLE001 - even if the agent crashes, the alert must not be lost
                     body = f"{f.text}\n(araştırma başarısız: {e})"
                 try:
                     self.notifier.send(Notification("ALICE", (body or f.text)[:500], r.severity, r.topic))
@@ -300,7 +302,7 @@ class RuleEngine:
             self.notifier.send(Notification("ALICE", f.text, r.severity, r.topic))
 
 
-# --------------------------------------------------------- doğal dil -> kural
+# --------------------------------------------------------- natural language -> rule
 PARSE_PROMPT = """Convert the user's request into a monitoring rule for a background assistant.
 Available metric keys (glob * allowed): {keys}
 Common keys: pc.cpu.percent, pc.cpu.temp, pc.gpu.temp, pc.gpu.util, pc.gpu.mem_percent, pc.mem.percent,

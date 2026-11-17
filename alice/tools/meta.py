@@ -1,4 +1,4 @@
-"""Ajanın kendini yönetmesi için araçlar: todo listesi, kalıcı hafıza, alt ajan, reflex."""
+"""Tools for the agent to manage itself: todo list, persistent memory, sub-agent, reflex."""
 
 from __future__ import annotations
 
@@ -78,8 +78,8 @@ class Memory(Tool):
     risk = WRITE
 
     def risk_for(self, args: dict[str, Any]) -> str:
-        # Not yazmak hafızanın olağan işi (Claude Code'da da sorulmaz); silmek ve yedeğe dönmek geri alınabilir ama
-        # kullanıcının bilgisi kaybolabilir: sorulur.
+        # Writing a note is memory's normal job (Claude Code doesn't ask either); deleting or restoring a backup
+        # can be undone, but the user's information may be lost, so it asks.
         return WRITE if args.get("action") in ("delete", "forget", "restore") else READ
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -219,10 +219,10 @@ class Task(Tool):
         "id": {"type": "string", "description": "Devam ettirilecek alt ajan (aN). Boş: yeni alt ajan."},
         "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 40 (özel ajanda kendi sınırı)."},
     }, ["prompt"])
-    risk = READ  # alt ajanın kendi araç çağrıları ayrı ayrı izin kontrolünden geçer
+    risk = READ  # each of the sub-agent's own tool calls goes through its own permission check
 
     def parallel_for(self, ctx: ToolContext, args: dict[str, Any]) -> bool:
-        return True  # her alt ajan kendi bağlamında; aynı cevaptaki task'lar aynı anda çalışır
+        return True  # each sub-agent has its own context; task calls in the same reply run at the same time
 
     def summary(self, args: dict[str, Any]) -> str:
         who = args.get("id") or args.get("name") or args.get("agent") or ""
@@ -230,7 +230,7 @@ class Task(Tool):
         return (f"{who}: " if who else "") + str(args.get("prompt", ""))[:110].replace("\n", " ") + bg
 
     def run(self, ctx: ToolContext, prompt: str, max_steps: int | None = None, agent: str = "", name: str = "",
-            background: bool = False, id: str = "") -> ToolResult:  # noqa: A002 - modelin gördüğü ad
+            background: bool = False, id: str = "") -> ToolResult:  # noqa: A002 - the name the model sees
         from alice import subagents
 
         parent = ctx.state.get("agent")
@@ -384,15 +384,15 @@ class Reflex(Tool):
         if hold_seconds:
             observer.hold_seconds = max(0.05, min(float(hold_seconds), 10.0))
         loop.allow_irreversible = bool(allow_irreversible)
-        loop.consult = make_consultant(ctx.router)  # takılınca içeriden danış, ana modele tam tur harcatma
+        loop.consult = make_consultant(ctx.router)  # when stuck, ask from inside; no full main-model turn
         if ((getattr(ctx.config, "data", None) or {}).get("reflex", {}) or {}).get("plan", True):
-            loop.plan = make_planner(ctx.router)  # çok parçalı hedef adımlara bölünür, her adım ayrı doğrulanır
+            loop.plan = make_planner(ctx.router)  # multi-part goals: split into steps, verify each
         extra = {k: v for k, v in (("text", text), ("keys", keys), ("press_first", press_first)) if v}
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "", **extra)
         status = getattr(res, "status", "")
         verdict = reflex_verdict(status)
         if status in ("max_steps", "needs_help") and multi_part_goal(goal) and "planın" not in getattr(res, "reason", ""):
-            # Uzun hedef tek parça denendi ve bitmedi: ana model aynı uzun hedefi yeniden yollamasın.
+            # A long goal was tried as one piece and did not finish: the main model must not resend the same long goal.
             verdict += ("\nBu hedef birkaç iş içeriyordu. Aynısını tekrar yollama: yukarıdaki adımlara bakıp nerede "
                         "kaldığını bul ve kalanını tek işlik kısa hedeflerle (her çağrıda bir menü, bir alan, bir tuş) "
                         "sırayla çağır.")
@@ -400,8 +400,8 @@ class Reflex(Tool):
 
 
 def reflex_verdict(status: str) -> str:
-    """Durumu açıkça söyle: modeller "Jev cevap verdi" ile "hedef yapıldı"yı karıştırıp kullanıcıya "çalışıyor,
-    başardı" diyordu (needs_help sonucunda bile)."""
+    """State the status plainly: models confused "Jev cevap verdi" (Jev replied) with "hedef yapıldı" (goal done)
+    and told the user "çalışıyor, başardı" (it's working, it succeeded), even on a needs_help result."""
     return {"done": "SONUÇ: hedef yapıldı.",
             "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle doğru "
                        "şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
@@ -424,12 +424,12 @@ def reflex_verdict(status: str) -> str:
 
 
 def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:
-    """Kullanıcının son mesajı: sohbet penceresinde görünür; reflex onu ekrandaki bir hedef sanmasın."""
+    """The user's last message: it is visible in the chat window; reflex must not mistake it for a target on screen."""
     for m in reversed(getattr((getattr(ctx, "state", None) or {}).get("agent"), "messages", None) or []):
         if m.get("role") != "user" or m.get("_nudge"):
             continue
-        # İçeriğe hafızadan hatırlananlar eklenir (proje adları dahil): onlar da "yankı" sayılınca kenar çubuğundaki
-        # projeler listeden düşüyordu. Kullanıcının yazdığı _display'de.
+        # Memory recalls are added to the content (project names included). When those were also counted as an
+        # "echo" (yankı), projects dropped off the sidebar list. The user's own text is in _display.
         text = m.get("_display") or m.get("content")
         if isinstance(text, list):
             text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
@@ -453,7 +453,7 @@ class AskUser(Tool):
 
     def run(self, ctx: ToolContext, question: str, options: list[str], multi: bool = False) -> ToolResult:
         ui = getattr(ctx.state.get("agent"), "ui", None)
-        # Sınıfta tanımlı olmalı: alt ajan/ses arayüzlerinin __getattr__'ı her adı sessizce yutan bir fonksiyon döndürür.
+        # Must be defined on the class: sub-agent/voice __getattr__ silently returns a function for any name.
         ask = getattr(ui, "ask_choice", None) if callable(getattr(type(ui), "ask_choice", None)) else None
         opts = [str(o).strip() for o in options or [] if str(o).strip()][:6]
         if len(opts) < 2:
@@ -546,13 +546,13 @@ class Feedback(Tool):
         return ToolResult("kaydedildi" + (", test setine eklendi" if new else ""))
 
 
-# send_file ile gösterilen dosyalar: arayüzdeki "Aç / Klasörde göster" düğmeleri sadece bunları açabilir.
+# Files shown with send_file: the "Aç / Klasörde göster" (Open / Show in folder) buttons in the UI can only open these.
 SENT_FILES: set[str] = set()
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
 
 class SendFile(Tool):
-    """Claude Code'daki SendUserFile karşılığı."""
+    """Equivalent of SendUserFile in Claude Code."""
 
     name = "send_file"
     parallel_safe = True
@@ -588,7 +588,7 @@ class SendFile(Tool):
                     from alice.tools.imaging import file_to_png_b64
 
                     images.append(file_to_png_b64(p, int(ctx.config.agent.get("screenshot_max_width", 1366))))
-                except Exception:  # noqa: BLE001 - önizleme olmasa da kart gösterilir
+                except Exception:  # noqa: BLE001 - the card is shown even without a preview
                     pass
         if not files:
             raise ToolError("gösterilecek dosya yok: " + ", ".join(missing))
@@ -599,7 +599,7 @@ class SendFile(Tool):
 
 
 class NextStep(Tool):
-    """Claude Code'daki tur sonu kutusu: kısa özet, varsa tek soru ve cevap düğmeleri. Turu bekletmez."""
+    """Claude Code's end-of-turn box: short summary, optional question with buttons. Does not block the turn."""
 
     name = "next_step"
     parallel_safe = True
@@ -627,7 +627,7 @@ class NextStep(Tool):
 
 
 class ExitPlanMode(Tool):
-    """Claude Code'daki ExitPlanMode karşılığı: plan modunda hazırlanan planı onaya sunar."""
+    """Equivalent of ExitPlanMode in Claude Code: presents the plan prepared in plan mode for approval."""
 
     name = "exit_plan_mode"
     description = ("Plan modunda hazırladığın uygulama planını kullanıcıya onay için sunar. Onaylanırsa plan modu "

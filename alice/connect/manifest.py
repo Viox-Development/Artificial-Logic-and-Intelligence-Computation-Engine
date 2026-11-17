@@ -1,21 +1,21 @@
-"""Bağlantı tanımları (manifest): bir siteyi ALICE aracına çeviren TOML dosyası.
+"""Connection definitions (manifest): TOML files that turn a website into an ALICE tool.
 
-Yeni bir servis eklemek için kod yazmak gerekmiyor; `~/.alice/connect/<ad>.toml` açıp şunu yazmak yetiyor:
+No code is needed to add a new service: just open `~/.alice/connect/<ad>.toml` and write this:
 
     name = "steam"
     title = "Steam"
-    description = "Kütüphane, oynama süreleri, arkadaşlar."
+    description = "Library, playtime, friends."
     base_url = "https://api.steampowered.com"
 
     [auth]
     kind = "api_key"          # none | api_key | bearer | oauth2
-    env = "STEAM_API_KEY"     # anahtar .env'den okunur
+    env = "STEAM_API_KEY"     # the key is read from .env
     place = "query"           # query | header
     name = "key"
     help = "https://steamcommunity.com/dev/apikey"
 
     [actions.library]
-    summary = "Kütüphanendeki oyunlar"
+    summary = "Games in your library"
     method = "GET"
     path = "/IPlayerService/GetOwnedGames/v1/"
     query = { include_appinfo = "1", format = "json" }
@@ -26,7 +26,7 @@ Yeni bir servis eklemek için kod yazmak gerekmiyor; `~/.alice/connect/<ad>.toml
     required = true
     description = "SteamID64"
 
-Yerleşik tanımlar `alice/connect/builtin/*.toml` içinde; kullanıcınınki aynı adı taşıyorsa onunki geçerli.
+Built-in definitions live in `alice/connect/builtin/*.toml`; if a user definition has the same name, the user's one wins.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ BUILTIN_DIR = Path(__file__).parent / "builtin"
 
 
 class ManifestError(ValueError):
-    """Tanım dosyası bozuk. ALICE düşmez; bozuk tanım atlanır ve sebebi yazılır."""
+    """Broken definition file. ALICE does not crash: the definition is skipped and the reason is written out."""
 
 
 @dataclass
@@ -60,7 +60,7 @@ class Param:
     type: str = "string"
     description: str = ""
     required: bool = False
-    into: str = ""      # query | path | body | header (boş: metoda göre seçilir)
+    into: str = ""      # query | path | body | header (empty: chosen by method)
     enum: list[str] = field(default_factory=list)
     default: Any = None
 
@@ -75,12 +75,12 @@ class Action:
     headers: dict[str, str] = field(default_factory=dict)
     body: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Param] = field(default_factory=dict)
-    pick: str = ""              # cevabın hangi alanı gösterilsin, ör. "response.games"
-    fields: list[str] = field(default_factory=list)  # liste sonuçlarında gösterilecek alanlar
+    pick: str = ""              # which field of the response to show, e.g. "response.games"
+    fields: list[str] = field(default_factory=list)  # fields to show for list results
     limit: int = 25
-    writes: bool = False        # true: izin sistemi "yazma" riski saysın
-    sends: bool = False         # true: başkasına giden mesaj/gönderi (auto modda da onay sorulur)
-    cache_seconds: float = 0.0  # okuyan eylemin cevabı bu kadar saniye hatırlanır (0: hiç)
+    writes: bool = False        # true: the permission system counts this as a "write" risk
+    sends: bool = False         # true: a message/post sent to someone else (approval is still asked in auto mode)
+    cache_seconds: float = 0.0  # a read action's response is remembered for this many seconds (0: not at all)
 
 
 @dataclass
@@ -98,7 +98,7 @@ class Auth:
     token_url: str = ""
     scopes: list[str] = field(default_factory=list)
     pkce: bool = True
-    # Servis geri dönüş adresini önceden kaydettiriyorsa (Spotify gibi) sabit port şart.
+    # If the service requires the redirect address to be registered in advance (like Spotify), a fixed port is required.
     redirect_port: int = 0
     extra_authorize: dict[str, str] = field(default_factory=dict)
 
@@ -200,7 +200,7 @@ def user_dir() -> Path:
 
 
 def discover(cfg: Any = None, emit: Any = None) -> tuple[dict[str, Manifest], list[str]]:
-    """Yerleşik + kullanıcı tanımlarını yükle. (ad -> manifest, hatalar). Aynı ad: kullanıcınınki kazanır."""
+    """Load built-in and user definitions. Returns (name -> manifest, errors). Same name: the user's one wins."""
     data = getattr(cfg, "data", None) or {}
     conf = data.get("connect") or {}
     out: dict[str, Manifest] = {}

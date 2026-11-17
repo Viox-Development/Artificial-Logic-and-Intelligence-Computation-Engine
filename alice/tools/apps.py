@@ -1,7 +1,7 @@
-"""`app` aracı: uygulamayı/siteyi doğru yoldan aç ve tarifteki akışı çalıştır.
+"""`app` tool: open an app or site by the right route and run the flow from its recipe.
 
-Yol seçimi tarifte yazılı (bkz. alice/apps.py): resmî API varsa model oraya yönlendirilir, uygulamanın
-derin bağlantısı varsa o kullanılır, kalanı tarayıcı + reflex ile yapılır.
+The route is chosen as written in the recipe (see alice/apps.py): if an official API exists, the model is
+directed to it; if the app has a deep link, that is used; the rest is done with the browser + reflex.
 """
 
 from __future__ import annotations
@@ -14,21 +14,21 @@ from alice.tools.base import COMPUTER, READ, SEND, Tool, ToolContext, ToolError,
 
 
 def _open_web(ctx: ToolContext, url: str) -> str:
-    """Kullanıcının kendi tarayıcısında aç (oturumları orada açık). Bağlanamazsa varsayılan tarayıcı."""
+    """Open in the user's own browser (their sessions are logged in there). If it can't connect, use the default browser."""
     from alice.tools.browser import Browser
 
     try:
-        # browser aracının kendi mantığı: site zaten bir sekmedeyse ona geç, yoksa aç.
+        # The browser tool's own logic: switch to the site if it is already open in a tab, otherwise open it.
         return Browser().run(ctx, action="goto", url=url).text
-    except Exception as e:  # noqa: BLE001 - tarayıcıya bağlanamamak işin sonu değil
+    except Exception as e:  # noqa: BLE001 - failing to connect to the browser is not the end of the job
         from alice.tools.desktop import open_app
 
         ctx.emit(f"tarayıcıya bağlanılamadı ({e}), varsayılan tarayıcıyla açılıyor")
         return open_app(url)
 
 
-WINDOW_WAIT = 20.0  # saniye: uygulama açılınca penceresinin gelmesi için en fazla
-# Tarayıcı pencereleri: "(7) WhatsApp - Opera" sekmesi masaüstü WhatsApp'ın penceresi sanılmasın.
+WINDOW_WAIT = 20.0  # seconds: the maximum time to wait for the app's window to appear after launch
+# Browser windows: a "(7) WhatsApp - Opera" tab must not be mistaken for the desktop WhatsApp window.
 BROWSER_TITLE_RX = re.compile(r" - (Opera|Google Chrome|Microsoft.?.?.? ?Edge|Mozilla Firefox|Brave|Vivaldi|Yandex)( |$)")
 _installed: dict[str, bool] = {}
 
@@ -41,11 +41,11 @@ def _app_windows(app: App) -> list[str]:
 
 
 def desktop_available(app: App) -> bool:
-    """Uygulama açık ya da kurulu mu? Kurulu olma bilgisi süreç boyunca hatırlanır (ilk arama ~2 sn)."""
+    """Is the app open or installed? Installation info is remembered for the process lifetime (the first lookup takes ~2 s)."""
     try:
         if _app_windows(app):
             return True
-    except Exception:  # noqa: BLE001 - pencere listesi alınamazsa kurulu olup olmadığına bak
+    except Exception:  # noqa: BLE001 - if the window list can't be read, check whether it is installed
         pass
     key = (app.exe or app.label).lower()
     if key not in _installed:
@@ -59,14 +59,14 @@ def desktop_available(app: App) -> bool:
 
 
 def preferred(app: App, apps: dict[str, App]) -> App:
-    """Web kaydının masaüstü karşılığı kuruluysa onu kullan: WhatsApp Web'in oturumu kapalıydı (QR istiyordu) ama
-    kullanıcının masaüstü uygulaması açıktı ve oturumu vardı."""
+    """If the desktop counterpart of a web record is installed, use it: WhatsApp Web's session was closed (it asked
+    for a QR code), but the user's desktop app was open and had a session."""
     alt = apps.get(app.desktop) if app.desktop else None
     return alt if alt is not None and desktop_available(alt) else app
 
 
 def _ensure_window(app: App, wait: float = WINDOW_WAIT, sleep=None) -> str:
-    """Uygulamanın penceresi yoksa aç, gelmesini bekle, öne al. Bulunan pencere başlığını döndürür."""
+    """Open the app if it has no window, wait for it to appear, and focus it. Returns the window title."""
     import time
 
     from alice.tools.desktop import focus_window, open_app
@@ -155,7 +155,7 @@ class AppTool(Tool):
         if args.get("action") == "flow":
             app = find(str(args.get("name", "")))
             if app is not None and str(args.get("flow", "")) in app.sends:
-                return SEND  # mesaj/DM/e-posta: başkasına gidiyor, geri alınamaz
+                return SEND  # message/DM/e-mail: going to someone else, cannot be undone
         return COMPUTER
 
     def summary(self, args: dict[str, Any]) -> str:

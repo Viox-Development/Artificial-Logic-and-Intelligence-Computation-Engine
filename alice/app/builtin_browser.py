@@ -1,14 +1,15 @@
-"""Yerleşik tarayıcı: ALICE'in kendi Chromium'u, uygulamanın içindeki bir panelde canlı görünür.
+"""Built-in browser: ALICE's own Chromium, shown live in a panel inside the app.
 
-ChatGPT/Claude'daki ajan tarayıcısı gibi: tarayıcı görünmez (headless) çalışır, kalıcı bir profili vardır
-(~/.alice/builtin-browser; bir kez giriş yapılan siteler açık kalır). İki taraf aynı tarayıcıya bağlanır:
+Like the agent browser in ChatGPT/Claude: the browser runs invisibly (headless) and has a persistent profile
+(~/.alice/builtin-browser; sites you have logged in to once stay logged in). Both sides connect to the same browser:
 
-* Ajan, tarayıcı aracıyla (Playwright, connect_over_cdp) sayfayı sürer.
-* Uygulama, DevTools protokolüyle doğrudan bağlanıp ekranı canlı gösterir; kullanıcı görüntüye tıklayıp yazarak
-  kontrolü istediği an devralır. Ajan çalışırken de görüntü akar (Playwright'ın tek iş parçacığına bağlı değil).
+* The agent drives the page through the browser tool (Playwright, connect_over_cdp).
+* The app connects directly over the DevTools protocol and shows the screen live; the user can take over control
+  at any moment by clicking on the image and typing. The image keeps streaming while the agent works too (it is not
+  tied to Playwright's single thread).
 
-Ayrıca sayfanın konsol hataları ve başarısız ağ istekleri toplanır: ALICE bir arayüz değişikliğini "çalıştır, aç,
-hatalara bak" diye doğrulayabilsin (preview aracı).
+The page's console errors and failed network requests are also collected, so ALICE can verify a UI change by
+"run it, open it, look at the errors" (the preview tool).
 """
 
 from __future__ import annotations
@@ -46,8 +47,9 @@ def _free_port() -> int:
 
 
 def find_chromium() -> str | None:
-    """Kullanılacak Chromium: ALICE_CHROMIUM, Edge/Chrome, en son varsayılan tarayıcı (Chromium tabanlıysa).
-    Görünmez çalışmada Edge ve Chrome en güvenilirleri (Opera GX gibi türevler başlangıçta pencere/izin açabiliyor)."""
+    """The Chromium to use: ALICE_CHROMIUM, Edge/Chrome, and last the default browser (if it is Chromium-based).
+    For invisible runs Edge and Chrome are the most reliable (derivatives like Opera GX can open windows/prompts at
+    startup)."""
     from alice.tools.browser import default_browser_exe, is_chromium
 
     cands = [os.environ.get("ALICE_CHROMIUM", "")]
@@ -67,7 +69,7 @@ def find_chromium() -> str | None:
 
 
 class CDPPage:
-    """Bir sekmeye DevTools bağlantısı: komut gönderir, konsol ve ağ olaylarını toplar."""
+    """DevTools connection to one tab: sends commands, collects console and network events."""
 
     def __init__(self, ws_url: str, enable: bool = True):
         from websockets.sync.client import connect
@@ -97,7 +99,7 @@ class CDPPage:
                         slot[0].set()
                 else:
                     self._event(msg.get("method", ""), msg.get("params") or {})
-        except Exception:  # noqa: BLE001 - bağlantı kapandı
+        except Exception:  # noqa: BLE001 - connection closed
             pass
         self.closed = True
         for ev, box in list(self._waiting.values()):
@@ -163,13 +165,13 @@ class BuiltinBrowser:
         self.proc: subprocess.Popen | None = None
         self.port = 0
         self._pages: dict[str, CDPPage] = {}
-        self.target = ""  # kullanıcının panelde seçtiği sekme; boş: en son etkin olan
+        self.target = ""  # tab the user picked in the panel; empty: the most recently active one
         self._lock = threading.Lock()
-        # Sekme bağlantıları: panelin kare istekleri, girdi uç noktası ve ajanın aracı aynı anda değiştirir.
-        # start()'ın kilidinden ayrı: page() içinde start() çağrılırken kilitlenmesin.
+        # Tab connections: the panel's frame requests, the input endpoint and the agent's tool modify them at once.
+        # Separate from start()'s lock so it doesn't deadlock when page() calls start().
         self._pages_lock = threading.Lock()
 
-    # ----------------------------------------------------------------------------------------- yaşam döngüsü
+    # --------------------------------------------------------------------------------------------- lifecycle
     @property
     def endpoint(self) -> str:
         self.start()
@@ -178,7 +180,7 @@ class BuiltinBrowser:
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    no_sandbox = False  # sayfa çizen süreç sandbox'ta açılamadıysa (kısıtlı ortam) bir kez sandbox'sız denenir
+    no_sandbox = False  # if the renderer can't start in the sandbox (restricted environment), retry once without it
 
     def start(self) -> None:
         with self._lock:
@@ -190,8 +192,8 @@ class BuiltinBrowser:
             self.profile.mkdir(parents=True, exist_ok=True)
             self._launch(exe)
             if not self._renders() and not self.no_sandbox:
-                # Tarayıcı açıldı ama sayfa çizen süreç cevap vermiyor (bazı kısıtlı ortamlarda renderer sandbox'ı
-                # açılamıyor): bir kez sandbox'sız yeniden başlat.
+                # The browser started but the page-rendering process isn't responding (in some restricted
+                # environments the renderer sandbox can't start): restart once without the sandbox.
                 self._kill()
                 self.no_sandbox = True
                 self._launch(exe)
@@ -201,9 +203,9 @@ class BuiltinBrowser:
 
     def _launch(self, exe: str) -> None:
         self.port = _free_port()
-        # --remote-allow-origins verilmez: ALICE'in CDP istemcileri (websockets, Playwright) Origin göndermez ve
-        # Origin'siz bağlantı kabul edilir; "*" ise tarayıcıda açılan herhangi bir sayfanın bu porta bağlanıp
-        # tarayıcıyı sürmesine izin veriyordu.
+        # --remote-allow-origins is not passed: ALICE's CDP clients (websockets, Playwright) don't send an Origin and
+        # connections without an Origin are accepted; "*" would have let any page opened in the browser connect to
+        # this port and drive the browser.
         args = [exe, f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}", "--headless=new",
                 f"--window-size={VIEWPORT[0]},{VIEWPORT[1]}", "--no-first-run", "--no-default-browser-check",
                 "--disable-features=Translate,MediaRouter",
@@ -222,7 +224,7 @@ class BuiltinBrowser:
         raise BrowserError("yerleşik tarayıcı açılmadı")
 
     def _renders(self) -> bool:
-        """Sayfa gerçekten çalışıyor mu: boş sayfada küçük bir ifade 5 sn içinde değerlendirilebiliyor mu."""
+        """Is the page really working: can a small expression be evaluated on a blank page within 5 s."""
         try:
             tabs = [t for t in self._http("/json/list") if t.get("type") == "page"]
             if not tabs:
@@ -235,7 +237,7 @@ class BuiltinBrowser:
                 conn.close()
         except (BrowserError, OSError, KeyError):
             return False
-        except Exception:  # noqa: BLE001 - bağlantı kurulamadı
+        except Exception:  # noqa: BLE001 - could not connect
             return False
 
     def _kill(self) -> None:
@@ -261,10 +263,10 @@ class BuiltinBrowser:
                 self.proc.kill()
         self.proc = None
 
-    # ------------------------------------------------------------------------------------------------ sekmeler
+    # ---------------------------------------------------------------------------------------------------- tabs
     def _http(self, path: str, method: str = "GET") -> Any:
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method)
-        with urllib.request.urlopen(req, timeout=3) as r:  # noqa: S310 - yalnız kendi yerel portumuz
+        with urllib.request.urlopen(req, timeout=3) as r:  # noqa: S310 - only our own local port
             body = r.read()
         return json.loads(body) if body.strip().startswith((b"{", b"[")) else {}
 
@@ -283,7 +285,7 @@ class BuiltinBrowser:
         for t in tabs:
             if t["id"] == self.target:
                 return t
-        return tabs[0]  # en son etkin olan (ajanın üzerinde çalıştığı)
+        return tabs[0]  # the most recently active one (the one the agent is working on)
 
     def page(self) -> tuple[CDPPage, dict[str, Any]]:
         self.start()
@@ -316,7 +318,7 @@ class BuiltinBrowser:
         if self.target == tab_id:
             self.target = ""
 
-    # ----------------------------------------------------------------------------------------- görüntü/girdi
+    # ------------------------------------------------------------------------------------------- frame/input
     def frame(self, quality: int = 60) -> dict[str, Any]:
         conn, tab = self.page()
         shot = conn.send("Page.captureScreenshot", {"format": "jpeg", "quality": quality}, timeout=10)

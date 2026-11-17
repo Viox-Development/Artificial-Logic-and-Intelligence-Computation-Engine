@@ -1,7 +1,7 @@
-"""`alice doctor` için yeni özelliklerin kontrolü: her biri (ad, durum, ayrıntı) satırı döndürür.
+"""Checks for the new `alice doctor` features: each returns a row of (name, status, detail).
 
-Durum: "ok" çalışıyor | "warn" çalışıyor ama eksik/kısıtlı | "off" kapalı/kurulmamış (hata değil) | "fail" bozuk.
-Ağ isteği atan kontroller kısa zaman aşımıyla çalışır; biri düşse de diğerleri sürer.
+Status: "ok" working | "warn" working but missing/limited | "off" disabled/not installed (not an error) | "fail" broken.
+Checks that make network requests run with a short timeout; if one fails, the others still run.
 """
 
 from __future__ import annotations
@@ -23,11 +23,11 @@ class Check:
 def _safe(name: str, fn: Callable[[], Check]) -> Check:
     try:
         return fn()
-    except Exception as e:  # noqa: BLE001 - bir kontrol çökerse onu "fail" yaz, diğerleri sürsün
+    except Exception as e:  # noqa: BLE001 - if a check crashes, record it as "fail" so the others keep running
         return Check(name, "fail", f"{type(e).__name__}: {str(e)[:160]}")
 
 
-# ------------------------------------------------------------------------------------------- kontroller
+# ------------------------------------------------------------------------------------------- checks
 def check_grounding(cfg, network: bool = True) -> Check:
     name = "Google araması"
     if not cfg.agent.get("search_grounding", True):
@@ -47,7 +47,7 @@ def check_grounding(cfg, network: bool = True) -> Check:
         return Check(name, "warn", f"çalışmıyor ({str(e)[:120]}); DuckDuckGo/Bing'e düşülüyor",
                      "ücretsiz anahtarda grounding kapalı olabilir; sorun değil, klasik arama çalışır")
     finally:
-        web._grounding["down_until"] = 0.0  # doctor'un denemesi gerçek kullanımı bir saat kilitlemesin
+        web._grounding["down_until"] = 0.0  # the doctor's probe must not lock real usage for an hour
     return Check(name, "ok", f"çalışıyor ({time.monotonic() - t0:.1f} sn, {len(res['sources'])} kaynak)")
 
 
@@ -116,7 +116,7 @@ def check_calendar(cfg, network: bool = True) -> Check:
         return Check(name, "off", "bağlantı tanımı kapalı")
     ok, why = runner.ready(m)
     if ok and network and "upcoming" in m.actions:
-        # "Bağlı" görünüp her istekte 404 veriyordu ({calendarId} doldurulmuyordu): gerçekten bir kez oku.
+        # Looked "Bağlı" (connected) but 404'd on every request ({calendarId} unfilled): read it once for real.
         from datetime import datetime, timedelta
 
         now = datetime.now().astimezone()
@@ -130,7 +130,7 @@ def check_calendar(cfg, network: bool = True) -> Check:
     if ok:
         return Check(name, "ok", "bağlı")
     if "yeniden giriş" in why:
-        # Bağlıydı ama Google girişi reddediyor: kapalı ("off") değil, kullanıcının yapması gereken bir iş.
+        # Was connected, but Google rejects the sign-in: not "off" (disabled), but something the user must fix.
         return Check(name, "fail", "Google girişi geçersiz; ALICE jetonu kendisi yenileyemiyor",
                      "Sistem → Kurulum → Takvimi bağla (komut: alice connect google_calendar). Her hafta "
                      "tekrarlıyorsa Google Cloud'da OAuth uygulamasını 'In production'a al")
@@ -256,8 +256,8 @@ def run_all(cfg, cwd=None, network: bool = True) -> list[Check]:
 
 
 def test_ref(router, name: str, pc: Any, explicit: str = "") -> str:
-    """Bir sağlayıcıyı test etmek için model: rolde yazılı olan, yoksa ölçüm önbelleğinde o sağlayıcının çalışan en
-    iyi modeli, yoksa sabit listesinin ilki. Roller "auto" iken sağlayıcılar "atlandı" görünüyordu."""
+    """Model for testing a provider: the one written in the role, else the best working model for it in the measurement
+    cache, else the first of its fixed list. With roles on "auto", providers showed as "atlandı" (skipped)."""
     if explicit:
         return explicit
     try:
@@ -274,18 +274,18 @@ def test_ref(router, name: str, pc: Any, explicit: str = "") -> str:
     return f"{name}:{models[0]}" if models else ""
 
 
-PROBE_TIMEOUT = 30.0  # sn: "Hepsini dene"de bir sağlayıcı en fazla bu kadar beklenir (normalde 180 sn)
-PROBE_TOKENS = 512  # düşünen modeller (GLM Flash) önce düşünür; 50 token'da cevaba gelmeden kesiliyordu
+PROBE_TIMEOUT = 30.0  # sec: in "Hepsini dene" (Try all), a provider waits at most this long (normally 180 sec)
+PROBE_TOKENS = 512  # thinking models (GLM Flash) think first; with 50 tokens they were cut off before answering
 
 
-# Krediyle çalışan sağlayıcıda (Vercel) test için en ucuz görünen model: kalıp sırası önemli.
+# For a credit-billed provider (Vercel), the model that looks cheapest to test with; pattern order matters.
 CHEAP_HINTS = ("flash-lite", "nano", "haiku", "mini", "small", "flash", "8b")
 
 
 def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) -> list[str]:
-    """Bir sağlayıcıyı denemek için aday modeller (sırayla, en fazla limit): rolde yazılı olan, son ölçümde
-    çalışanlar, ölçülmüş diğerleri, yoksa sağlayıcının canlı kataloğundan. Hiç ölçülmemiş sağlayıcı (SambaNova)
-    önceden "atlandı" görünüyordu; bir model yoğunsa (Z.ai) kardeşi denenmeden kırmızı çıkıyordu."""
+    """Candidate models for a provider (in order, at most limit): the one written in the role, the working ones
+    from the last measurement, other measured ones, else the provider's live catalog. A never-measured provider
+    (SambaNova) used to look "atlandı" (skipped); when one model was busy (Z.ai), its sibling went red untried."""
     from alice.providers import ranking
 
     out: list[str] = [explicit] if explicit else []
@@ -302,10 +302,10 @@ def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) ->
         try:
             ids = [str(m.get("id") or m.get("name") or "").removeprefix("models/")
                    for m in router.client(name).list_models()]
-        except Exception:  # noqa: BLE001 - katalog alınamazsa elimizdekiyle dene
+        except Exception:  # noqa: BLE001 - if the catalog can't be fetched, try with what we have
             ids = []
         ids = [i for i in ids if i and not any(x in i.lower() for x in ranking.EXCLUDE)]
-        if not getattr(pc, "auto", True):  # krediyle: en ucuz görüneni
+        if not getattr(pc, "auto", True):  # credit-billed: the one that looks cheapest
             def cheap(i: str) -> int:
                 return next((n for n, h in enumerate(CHEAP_HINTS) if h in i.lower()), len(CHEAP_HINTS))
             ids.sort(key=cheap)
@@ -320,7 +320,7 @@ def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) ->
 
 
 def short_err(err: str, limit: int = 160) -> str:
-    """Sağlayıcı hatasından okunur kısa metin: ham JSON yerine içindeki "message", bilinen durumlar Türkçe."""
+    """Short readable text from a provider error: the "message" inside instead of raw JSON; known cases in Turkish."""
     import re
 
     kind = ""
@@ -343,8 +343,8 @@ def short_err(err: str, limit: int = 160) -> str:
 
 def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
-    """Her sağlayıcıya kısa bir istek: `alice doctor` ve uygulamadaki Kurulum → Hepsini dene ortak kullanır.
-    status: ok | warn (geçici: yoğun/hız sınırı) | fail | off (anahtar yok, kurulu değil, elle seçilen)."""
+    """A short request to each provider: `alice doctor` and the app's Kurulum → Hepsini dene (Setup → Try all) share it.
+    status: ok | warn (temporary: busy/rate limit) | fail | off (no key, not installed, chosen by hand)."""
     from alice.providers.chatgpt import make_client
     from alice.providers.router import AllProvidersFailed, Router
 
@@ -353,7 +353,7 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
     for chain in cfg.roles.values():
         for ref in chain:
             p = ref.split(":", 1)[0]
-            if p in router.providers_cfg:  # "auto" bir sağlayıcı değil
+            if p in router.providers_cfg:  # "auto" is not a provider
                 explicit.setdefault(p, ref)
     rows = []
     for name, pc in router.providers_cfg.items():
@@ -387,7 +387,7 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                     break
                 if "payment" in err.lower() and "required" in err.lower():
                     row.update(status="fail", detail=short_err(err))
-                    break  # diğer modeller de aynı hesapta: denemeye gerek yok
+                    break  # other models are on the same account too: no need to try them
                 if err.startswith(("[rate_limit]", "[server]")):
                     row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); "
                                                      "ALICE sıradaki modelle devam eder")

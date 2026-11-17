@@ -1,4 +1,4 @@
-"""Uçuş aracı (tek araç, context'e az yük): canlı durum, son değerlendirme, kontrol listesi, kneeboard."""
+"""Flight tool (one tool, light on context): live status, last debrief, checklists, kneeboard."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class Flight(Tool):
             return self._kneeboard(action[len("kneeboard_"):], mission, text)
         return self._status(action)
 
-    # ----------------------------------------------------------- durum
+    # ----------------------------------------------------------- status
     @staticmethod
     def _status(action: str) -> ToolResult:
         from alice.sims import hub
@@ -103,7 +103,7 @@ class Flight(Tool):
         d = Debrief(**json.loads(files[-1].read_text(encoding="utf-8")))
         return ToolResult(f"{d.summary()}\nRapor: {files[-1].with_suffix('.html')}")
 
-    # -------------------------------------------------- kontrol listesi
+    # -------------------------------------------------- checklists
     @staticmethod
     def _checklist(ctx: ToolContext, action: str, name: str) -> ToolResult:
         from alice.sims.checklists import Runner, find, load_all
@@ -212,11 +212,11 @@ TOOLS = [Flight(), DcsWingman()]
 
 
 def _number(value: Any) -> float | None:
-    """Model sayıyı bazen yazı olarak gönderir ("10", "12,5", "10 mil"); sayıya çevir, olmazsa None."""
+    """The model sometimes sends a number as text ("10", "12,5", "10 mil" = 10 miles); convert it, else None."""
     if value is None or isinstance(value, (int, float)):
         return value
     text = str(value)
-    m = re.search(r"-?\d{1,3}(?:([.,])\d{3})(?:\1\d{3})*(?![.,]?\d)", text)  # "5.000", "12,000"
+    m = re.search(r"-?\d{1,3}(?:([.,])\d{3})(?:\1\d{3})*(?![.,]?\d)", text)  # "5.000", "12,000" (thousands separators)
     if m:
         return float(re.sub(r"[.,]", "", m.group()))
     m = re.search(r"-?\d+(?:[.,]\d+)?", text)

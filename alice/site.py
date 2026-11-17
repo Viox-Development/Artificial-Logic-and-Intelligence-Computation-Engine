@@ -1,7 +1,7 @@
-"""Projedeki web sitesi: giriş sayfasını bulma, güvenli sunma ve ekran görüntüsü alma.
+"""The project's website: finding the entry page, serving it safely, and taking screenshots.
 
-Önizleme sekmesi ve kurulun "kullanıcı gözü" incelemesi bunu kullanır. Gizli dosyalar (.env, .git ...) hiçbir
-zaman sunulmaz.
+The preview tab and the board's "user eye" review use this. Hidden files (.env, .git ...) are never
+served.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ from pathlib import Path
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", ".alice"}
 ENTRY_DIRS = ("", "dist", "build", "public", "site", "www", "docs", "src", "web", "frontend")
 VIEWPORTS = {"masaüstü": (1366, 860), "telefon": (390, 844)}
-# Referans siteleri incelerken: ilk ekran, sayfanın aşağısı (bölüm ritmi) ve telefon.
+# When studying reference sites: the first screen, the lower part of the page (section rhythm), and the phone view.
 STUDY_VIEWPORTS = {"masaüstü": (1440, 900), "uzun": (1440, 2600), "telefon": (390, 844)}
 
 
 def find_entry(root: Path) -> str:
-    """Sitenin giriş sayfası (köke göre yol) ya da boş. Önce bilinen klasörler, sonra iki seviye derinlik."""
+    """The site's entry page (path relative to the root), or empty. Known folders first, then two levels deep."""
     root = Path(root)
     for d in ENTRY_DIRS:
         f = root / d / "index.html"
@@ -43,7 +43,7 @@ def find_entry(root: Path) -> str:
 
 
 def safe_path(root: Path, rel: str) -> Path | None:
-    """Köke göre güvenli dosya yolu: dışarı çıkan, gizli (.env, .git) ya da atlanan klasördeki yollar None."""
+    """Safe path relative to the root: paths that leave it, are hidden (.env, .git) or in a skipped folder give None."""
     root = Path(root).resolve()
     parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
     if any(p == ".." or p.startswith(".") or p in SKIP_DIRS for p in parts):
@@ -53,7 +53,7 @@ def safe_path(root: Path, rel: str) -> Path | None:
         inside = path.relative_to(root)
     except ValueError:
         return None
-    if any(p.startswith(".") or p in SKIP_DIRS for p in inside.parts):  # bağlantı (symlink) gizli dosyaya çıkıyorsa
+    if any(p.startswith(".") or p in SKIP_DIRS for p in inside.parts):  # if a link (symlink) points to a hidden file
         return None
     if path.is_dir():
         path = path / "index.html"
@@ -68,7 +68,7 @@ def content_type(path: Path) -> str:
 
 
 def last_change(root: Path, limit: int = 3000) -> float:
-    """Sitedeki dosyaların en son değişme zamanı (önizleme kendini yenilesin diye)."""
+    """Latest modification time of the site's files (so the preview can refresh itself)."""
     newest, n = 0.0, 0
     stack = [Path(root)]
     while stack and n < limit:
@@ -91,10 +91,10 @@ class _Quiet(SimpleHTTPRequestHandler):
     def log_message(self, *args) -> None:  # noqa: D401
         pass
 
-    def guess_type(self, path):  # metin dosyaları utf-8 ilan edilsin (yoksa tarayıcı Türkçe harfleri bozuyor)
+    def guess_type(self, path):  # declare text files as utf-8 (otherwise the browser garbles Turkish letters)
         return content_type(Path(str(path)))
 
-    def send_head(self):  # gizli dosyaları sunma (yol çözülmüş haliyle denetlenir: %2eenv gibi kaçışlar da yakalanır)
+    def send_head(self):  # never serve hidden files (checked after decoding, so %2eenv-style escapes are caught)
         from urllib.parse import unquote
 
         rel = unquote(self.path.split("?", 1)[0].split("#", 1)[0])
@@ -105,15 +105,15 @@ class _Quiet(SimpleHTTPRequestHandler):
 
 
 def serve(root: Path) -> tuple[ThreadingHTTPServer, str]:
-    """Klasörü 127.0.0.1'de geçici olarak sun (ekran görüntüsü için). (sunucu, adres) döner; işin bitince shutdown."""
+    """Temporarily serve the folder on 127.0.0.1 (for screenshots). Returns (server, address); shut down when done."""
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Quiet, directory=str(root)))
     threading.Thread(target=httpd.serve_forever, daemon=True, name="site-preview").start()
     return httpd, f"http://127.0.0.1:{httpd.server_address[1]}/"
 
 
 def screenshots(root: Path, entry: str = "", timeout: float = 20.0) -> dict[str, str]:
-    """Sitenin masaüstü ve telefon ekran görüntüleri (base64 PNG). Tarayıcı yoksa ya da site açılmazsa boş sözlük:
-    inceleme görüntüsüz devam eder."""
+    """The site's desktop and phone screenshots (base64 PNG). If there is no browser or the site fails to open,
+    an empty dict is returned and the review continues without images."""
     entry = entry or find_entry(root)
     if not entry:
         return {}
@@ -126,8 +126,8 @@ def screenshots(root: Path, entry: str = "", timeout: float = 20.0) -> dict[str,
 
 
 def reachable(url: str, timeout: float = 12.0) -> tuple[bool, str]:
-    """Dış adres açılıyor mu? (tarayıcı açılmayan sitenin hata sayfasının da görüntüsünü alıyor; o "referans" sanılmasın)
-    Döner: (açılıyor mu, son adres ya da hata)."""
+    """Does the external address open? (A browser also screenshots the error page of a site that won't open,
+    so that page must not be taken for a "reference"). Returns: (opens or not, final address or error)."""
     import httpx
 
     try:
@@ -145,7 +145,7 @@ def reachable(url: str, timeout: float = 12.0) -> tuple[bool, str]:
 
 def capture(url: str, timeout: float = 20.0, settle: int = 600,
             viewports: dict[str, tuple[int, int]] | None = None) -> dict[str, str]:
-    """Adresin ekran görüntüleri (varsayılan masaüstü + telefon): önce Playwright, yoksa komut satırı tarayıcısı."""
+    """Screenshots of the address (default: desktop + phone): Playwright first, otherwise the command-line browser."""
     vp = viewports or VIEWPORTS
     return _pw_capture(url, timeout, settle, vp) or _cli_capture(url, timeout, settle, vp)
 
@@ -164,19 +164,19 @@ def _pw_capture(url: str, timeout: float, settle: int, viewports: dict[str, tupl
                 for name, (w, h) in (viewports or VIEWPORTS).items():
                     page = browser.new_page(viewport={"width": w, "height": h})
                     page.goto(url, wait_until="load", timeout=timeout * 1000)
-                    page.wait_for_timeout(settle)  # giriş animasyonları otursun
+                    page.wait_for_timeout(settle)  # let entry animations settle
                     out[name] = base64.b64encode(page.screenshot(full_page=False)).decode()
                     page.close()
             finally:
                 browser.close()
-    except Exception:  # noqa: BLE001 - tarayıcı yok/çöktü/site açılmadı: komut satırı tarayıcısı denenir
+    except Exception:  # noqa: BLE001 - no browser, crash, or site not opening: try the command-line browser
         return out
     return out
 
 
 def browser_exe() -> str:
-    """Pencere açmadan ekran görüntüsü alabilecek Chromium tabanlı tarayıcı: ALICE_CHROMIUM, sonra Edge (Windows'ta
-    her zaman kurulu), Chrome, Chromium. Bulunamazsa boş."""
+    """A Chromium-based browser that can take screenshots without opening a window: ALICE_CHROMIUM, then Edge
+    (always installed on Windows), Chrome, Chromium. Empty if none is found."""
     exe = os.environ.get("ALICE_CHROMIUM", "")
     if exe and Path(exe).is_file():
         return exe
@@ -200,7 +200,7 @@ def browser_exe() -> str:
 
 
 def cli_screenshots(root: Path, entry: str = "", timeout: float = 20.0) -> dict[str, str]:
-    """Playwright olmadan: yerel siteyi sun ve komut satırı tarayıcısıyla görüntüle."""
+    """Without Playwright: serve the local site and capture it with the command-line browser."""
     entry = entry or find_entry(root)
     if not entry or not browser_exe():
         return {}
@@ -214,7 +214,7 @@ def cli_screenshots(root: Path, entry: str = "", timeout: float = 20.0) -> dict[
 
 def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
                  viewports: dict[str, tuple[int, int]] | None = None) -> dict[str, str]:
-    """Tarayıcıyı komut satırından görünmez (headless) çalıştırıp ekran görüntüsü al; ek kurulum gerekmez."""
+    """Run the browser invisibly (headless) from the command line and take a screenshot; no extra setup needed."""
     exe = browser_exe()
     if not exe:
         return {}
@@ -222,13 +222,13 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
 
     out: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="alice-shot-") as tmp:
-        # Görünüm boyutları aynı anda çekilir (her biri kendi profiliyle): sırayla çekmek süreyi ikiye katlıyordu.
+        # Viewport sizes are captured at once (each with its own profile): capturing them in turn doubled the time.
         jobs: list[tuple[str, Path, subprocess.Popen]] = []
         for i, (name, (w, h)) in enumerate((viewports or VIEWPORTS).items()):
             png = Path(tmp) / f"{i}.png"
             cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
                    "--no-default-browser-check", "--disable-extensions", "--mute-audio",
-                   f"--user-data-dir={Path(tmp) / f'profile{i}'}",  # açık tarayıcıya bağlanmasın
+                   f"--user-data-dir={Path(tmp) / f'profile{i}'}",  # don't attach to an open browser
                    f"--window-size={w},{h}", f"--virtual-time-budget={1900 + settle}", f"--screenshot={png}", url]
             if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0:
                 cmd.insert(1, "--no-sandbox")
@@ -243,13 +243,13 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
                 break
             jobs.append((name, png, proc))
         procs = [proc for _, _, proc in jobs]
-        # Görüntü yazılınca beklemeden geç: headless tarayıcı ekran görüntüsünden sonra bazen saniyelerce kapanmıyor.
+        # Don't wait once the image is written: headless browsers sometimes take seconds to exit after a screenshot.
         deadline = time.monotonic() + timeout
         sizes: dict[str, int] = {}
         while jobs and time.monotonic() < deadline:
             for name, png, proc in list(jobs):
                 size = png.stat().st_size if png.is_file() else 0
-                done = proc.poll() is not None or (size > 1000 and sizes.get(name) == size)  # boyut sabitlendi
+                done = proc.poll() is not None or (size > 1000 and sizes.get(name) == size)  # size stopped changing
                 sizes[name] = size
                 if done:
                     jobs.remove((name, png, proc))
@@ -257,7 +257,7 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
                         out[name] = base64.b64encode(png.read_bytes()).decode()
             if jobs:
                 time.sleep(0.2)
-        # Görüntüsü alınmış ama kapanmamış ya da süresi dolan tarayıcılar: geçici profil klasörü silinebilsin diye kapat.
+        # Close browsers that got their image but did not exit or timed out, so the temp profile can be deleted.
         for proc in procs:
             if proc.poll() is None:
                 proc.kill()
@@ -269,13 +269,13 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
 
 
 def _launch(p):
-    """Önce ALICE_CHROMIUM ile verilen tarayıcı, sonra Playwright'ın kendi tarayıcısı, sonra sistemdeki Chrome/Edge."""
+    """First the browser given by ALICE_CHROMIUM, then Playwright's own browser, then the system's Chrome/Edge."""
     exe = os.environ.get("ALICE_CHROMIUM", "")
     if exe:
         return p.chromium.launch(executable_path=exe)
     try:
         return p.chromium.launch()
-    except Exception:  # noqa: BLE001 - indirilmiş tarayıcı yoksa sistemdeki Chrome/Edge
+    except Exception:  # noqa: BLE001 - if no downloaded browser, use the system's Chrome/Edge
         for channel in ("chrome", "msedge"):
             try:
                 return p.chromium.launch(channel=channel)

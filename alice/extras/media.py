@@ -1,7 +1,7 @@
-"""Müzik, ses seviyesi ve kapatma zamanlayıcısı.
+"""Music, volume level and shutdown timer.
 
-Windows: medya tuşları (Spotify, YouTube, her oynatıcı dinler) ve ses tuşları; tam seviye için
-pycaw kuruluysa o. Linux: playerctl ve pactl. macOS: osascript.
+Windows: media keys (Spotify, YouTube, every player listens to them) and volume keys; for an exact level,
+pycaw if it is installed. Linux: playerctl and pactl. macOS: osascript.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def set_volume(percent: int) -> str:
             vol.SetMasterVolumeLevelScalar(percent / 100, None)
             return f"ses %{percent}"
         except Exception:
-            # pycaw yoksa: önce sıfıra indir, sonra her basış ~%2.
+            # without pycaw: first drop to zero, then each press is ~2%.
             _press(VK["volume_down"], 50)
             _press(VK["volume_up"], round(percent / 2))
             return f"ses yaklaşık %{percent}"
@@ -97,7 +97,7 @@ def cancel_shutdown() -> str:
 
 
 def pause_in(minutes: float) -> str:
-    """Müziği X dakika sonra durdur (uyku zamanlayıcısı). Süreç açık kaldığı sürece çalışır."""
+    """Pause the music after X minutes (sleep timer). Works only while the process stays open."""
     old = _timers.pop("pause", None)
     if old:
         old.cancel()

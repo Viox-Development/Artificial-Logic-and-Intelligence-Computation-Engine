@@ -1,9 +1,9 @@
-"""Ses seçimi için dinleme testi.
+"""Listening test for voice selection.
 
-Her aday ses aynı Türkçe cümleleri farklı duygularla seslendirir; sonuç bir HTML sayfasında
-yan yana dinlenir. Yerel motorlar (XTTS, Chatterbox) bir referans kayıttan klonladığı için
-onların adaylığı "bulut sesini ne kadar iyi taklit ediyor?" sorusunun da cevabıdır: duygu
-kütüphanesi fikri buna dayanıyor. Var olan dosyalar yeniden üretilmez (kotayı korur).
+Each candidate voice reads the same Turkish sentences with different emotions; the results are listened to
+side by side on an HTML page. Local engines (XTTS, Chatterbox) clone from a reference recording, so their
+candidacy is also an answer to "how well does it imitate the cloud voice?": the emotion-library idea rests on
+this. Existing files are not regenerated (this preserves the quota).
 """
 
 from __future__ import annotations
@@ -33,8 +33,9 @@ def audition_dir() -> Path:
 def run_audition(engines: list, emotions: list[str] | None = None, out: Path | None = None,
                  emit: Callable[[str], None] = lambda s: None, sleep: Callable[[float], None] = time.sleep,
                  max_wait: float = 120) -> Path:
-    """engines: synth(text, emotion) ve name'i olan motorlar. index.html yolunu döndürür.
-    Dakikalık kota dolarsa bekleyip devam eder; günlük kota dolarsa o sağlayıcının kalanını atlar."""
+    """engines: engines with synth(text, emotion) and name. Returns the index.html path.
+    If the per-minute quota is used up, it waits and continues; if the daily quota is used up, it skips the
+    remaining samples for that provider."""
     from alice.voice.tts import QuotaError
 
     exhausted: set[str] = set()
@@ -59,7 +60,7 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
                         eng.synth(SAMPLES[emo], emo).save(path)
                         err = None
                         model = getattr(eng, "last_model", "")
-                        if model:  # hangi model ve talimat biçimiyle üretildi (sayfada gösterilir)
+                        if model:  # which model and instruction format produced it (shown on the page)
                             row[f"{emo}@"] = f"{model} · {getattr(eng, 'last_format', '')}"
                         break
                     except QuotaError as q:
@@ -80,7 +81,7 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
                         emit(f"  {provider} için kalan örnekler atlanıyor; yarın aynı komutla kaldığın yerden devam eder")
                     continue
             row[emo] = fname
-    # Önceki çalıştırmalardan kalanları da sayfaya ekle.
+    # Also add the leftovers from previous runs to the page.
     meta = out / "results.json"
     try:
         old = json.loads(meta.read_text(encoding="utf-8"))

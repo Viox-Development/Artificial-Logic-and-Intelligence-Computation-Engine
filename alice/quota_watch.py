@@ -1,9 +1,9 @@
-"""Abonelik kotası uyarısı: cliproxy hesaplarından biri (Claude 5 saatlik / haftalık, ChatGPT pencereleri) dolmak
-üzereyken kullanıcıya bir kez haber ver. Hesaplar arası geçişi proxy ve router zaten yapıyor; eksik olan, kota
-bitmeden önce görünür olmasıydı (iş yarıda yavaş ya da ücretsiz modele düşünce fark ediliyordu).
+"""Subscription quota warning: when one of the cliproxy accounts (Claude 5-hour / weekly, ChatGPT windows) is about
+to run out, tell the user once. The proxy and router already switch between accounts; what was missing was making it
+visible before the quota ran out (work was noticed only when it became slow or fell back to a free model).
 
-Her pencere (hesap + pencere + sıfırlanma zamanı) için her eşik bir kez bildirilir; pencere sıfırlanınca yeniden.
-Proxy'ye en fazla `interval` saniyede bir sorulur ve bu tur bitişinde arka planda yapılır."""
+Each threshold is reported once for each window (account + window + reset time); again after the window resets.
+The proxy is asked at most once every `interval` seconds, and this is done in the background at the end of each turn."""
 from __future__ import annotations
 
 import threading
@@ -12,11 +12,11 @@ from datetime import datetime
 from typing import Any, Callable
 
 THRESHOLDS = (80, 95)
-INTERVAL = 300.0  # sn
+INTERVAL = 300.0  # sec
 
 
 def proxy_accounts() -> list[dict[str, Any]]:
-    """cliproxy hesapları (kart özetiyle aynı biçim). Proxy kapalıysa boş; başlatmaya çalışmaz."""
+    """cliproxy accounts (same format as the card summary). Empty if the proxy is off; it does not try to start it."""
     from alice.app import cliproxy
 
     if not cliproxy.settings().get("installed"):
@@ -35,7 +35,7 @@ class QuotaWatch:
         self._lock = threading.Lock()
 
     def maybe_check(self, now: float | None = None) -> bool:
-        """Zamanı geldiyse arka planda kontrol et. Başlatıldıysa True."""
+        """If it is time, check in the background. Returns True if a check was started."""
         now = time.monotonic() if now is None else now
         with self._lock:
             if self._last and now - self._last < self.interval:
@@ -48,11 +48,11 @@ class QuotaWatch:
         try:
             for msg in self.check(self.fetch()):
                 self.notify(msg)
-        except Exception:  # noqa: BLE001 - proxy kapalı / cevap bozuk: uyarı yok, ALICE etkilenmez
+        except Exception:  # noqa: BLE001 - proxy off / broken response: no warning, ALICE is not affected
             pass
 
     def check(self, accounts: list[dict[str, Any]]) -> list[str]:
-        """Yeni geçilen eşikler için uyarı metinleri."""
+        """Warning texts for newly crossed thresholds."""
         out: list[str] = []
         for acc in accounts:
             if acc.get("disabled"):

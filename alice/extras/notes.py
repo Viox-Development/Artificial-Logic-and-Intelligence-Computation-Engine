@@ -1,6 +1,6 @@
-"""Notlar: "Alice, not al…" ve sonradan "geçen hafta ne not almıştım?"
+"""Notes: "Alice, take a note…" and later "what notes did I take last week?".
 
-~/.alice/notes.jsonl, satır başına bir not: {"ts": epoch, "text": "..."}.
+~/.alice/notes.jsonl, one note per line: {"ts": epoch, "text": "..."}.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def remove_last() -> Note | None:
 
 
 def remove(ts: float) -> Note | None:
-    """Zaman damgasıyla tek bir notu sil (uygulamadaki Sil)."""
+    """Delete a single note by timestamp (Delete in the app)."""
     notes = all_notes()
     hit = next((n for n in notes if abs(n.ts - ts) < 1e-6), None)
     if hit is None:

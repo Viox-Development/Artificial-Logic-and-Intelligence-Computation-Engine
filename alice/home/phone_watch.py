@@ -1,11 +1,15 @@
-"""Telefon bildirimleri bilgisayarda: WhatsApp/SMS/Telegram gibi mesajları sesli söyler, gerisini biriktirir.
+"""Phone notifications on the computer: reads WhatsApp/SMS/Telegram etc. messages aloud, batches the rest.
 
-Telefon ADB ile bağlıysa ([android] phone, `android` aracı connect) 20 sn'de bir `dumpsys notification` okunur.
-  * Mesajlaşma uygulamalarından yeni bildirim -> hemen ("WhatsApp, Ahmet: akşam geliyor musun?"); aynı uygulama
-    en sık 30 sn'de bir (grup sohbetleri art arda düşmesin, araya gelenler sayılır)
-  * diğerleri birikir; normal modda saatte bir toplu söylenir ("Telefonda 5 bildirim: Instagram 3, Gmail 2")
-Oyun/uçuş modunda mesajlar da söylenir (konu "phone" uçuş politikasından geçer), toplu özet beklemeye alınır.
-Telefon bağlı değilse sessizce bekler; ayar dosyası 5 dk'da bir yeniden okunur, eşleştirince yeniden başlatma gerekmez.
+If the phone is connected via ADB ([android] phone, the `android` tool's connect), `dumpsys notification`
+is read every 20 s.
+  * New notification from a messaging app -> spoken right away ("WhatsApp, Ahmet: akşam geliyor musun?"); the same
+    app at most once every 30 s (so group chats don't fire back to back; messages arriving in between are counted)
+  * others accumulate; in normal mode they are read out as a batch once an hour
+    ("Telefonda 5 bildirim: Instagram 3, Gmail 2")
+In game/flight mode messages are spoken too (the topic goes through the "phone" flight policy), and the batch
+summary is held back.
+If the phone is not connected it waits silently; the settings file is re-read every 5 min, and no restart is
+needed after pairing.
 """
 
 from __future__ import annotations
@@ -49,7 +53,7 @@ class PhoneWatch:
         self.clock = clock
         self.background = background
         self.last_poll = float("-inf")
-        self.seen: set[tuple[str, str, str]] | None = None  # None: ilk okuma, mevcutlar söylenmez
+        self.seen: set[tuple[str, str, str]] | None = None  # None: first read; existing ones are not spoken
         self.app_last: dict[str, float] = {}
         self.pending: dict[str, int] = {}
         self.last_digest = clock()
@@ -57,7 +61,7 @@ class PhoneWatch:
         self._serial = ""
         self._serial_at = float("-inf")
 
-    # ---------------------------------------------------------------- okuma
+    # ---------------------------------------------------------------- reading
     def _read_adb(self) -> list[dict[str, str]] | None:
         now = time.time()
         if now - self._serial_at > 300:
@@ -76,7 +80,7 @@ class PhoneWatch:
         try:
             d = adb.Device(conf["phone"], "phone", adb.adb_path(conf.get("adb", "")))
             return d.notifications()
-        except Exception:  # noqa: BLE001 - telefon uzaklaştı/kilitlendi: sonra yine dene
+        except Exception:  # noqa: BLE001 - phone moved away/locked: try again later
             return None
 
     def collect(self) -> list[tuple[str, float | None, str | None]]:
@@ -96,7 +100,7 @@ class PhoneWatch:
             return
         self.handle(items, self.clock())
 
-    # ---------------------------------------------------------------- karar
+    # ---------------------------------------------------------------- decision
     def handle(self, items: list[dict[str, Any]], now: float) -> list[str]:
         keys = {(i.get("app", ""), i.get("title", ""), i.get("text", "")) for i in items}
         if self.seen is None:

@@ -1,9 +1,8 @@
-"""feeds.toml'u yorumlarına dokunmadan düzenle: akış ekle, sil, aç/kapa.
+"""Edit feeds.toml without touching its comments: add, remove, enable/disable feeds.
 
-Kullanıcı dosyayı elle de düzenliyor; baştan yazmak yorumları ve sıralamayı silerdi. Bu yüzden dosya
-`[[feed]]` satırlarından bloklara bölünür (ilk bloktan önceki kısım önsöz), işlem sadece ilgili blokta
-yapılır. Bir bloğun `[feed.when]` gibi alt tabloları, TOML kuralı gereği bir sonraki `[[feed]]`'e kadar
-o bloğa aittir.
+The user also edits the file manually; rewriting from scratch would wipe out comments and ordering. Hence the file
+is split into blocks by `[[feed]]` lines (the part before the first block is the preamble), and operations are only
+done on the relevant block. Subtables like `[feed.when]` belong to that block until the next `[[feed]]` per TOML rules.
 """
 
 from __future__ import annotations
@@ -26,14 +25,14 @@ def _key(k: str) -> str:
 
 
 def toml_value(v: Any) -> str:
-    """Akışta geçen değerler için küçük TOML yazıcısı (metin, sayı, bool, liste, satır içi tablo)."""
+    """Small TOML writer for feed values (string, number, bool, list, inline table)."""
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return repr(v) if isinstance(v, float) and not v.is_integer() else str(int(v) if isinstance(v, float) else v)
     if isinstance(v, str):
         if "\\" in v and "'" not in v and "\n" not in v:
-            return f"'{v}'"  # regex gibi ters bölülü metin: TOML literal, kaçış yok
+            return f"'{v}'"  # backslashed text like regex: TOML literal, no escaping
         return json.dumps(v, ensure_ascii=False)
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(toml_value(x) for x in v) + "]"
@@ -79,8 +78,8 @@ def names(path: Path | None = None) -> list[str]:
 
 
 def add_feed(feed: dict[str, Any], path: Path | None = None) -> str:
-    """Doğrula ve dosyanın sonuna ekle. Hatalıysa ValueError (modele dönen anlaşılır metin)."""
-    parse_feed(json.loads(json.dumps(feed)))  # kopya üstünde doğrula: parse_feed alt tabloları değiştirebilir
+    """Validate and append to the end of the file. Invalid feed raises ValueError (clear text returned to model)."""
+    parse_feed(json.loads(json.dumps(feed)))  # validate on a copy: parse_feed may mutate subtables
     p = path or feeds_path()
     name = str(feed["name"])
     if name in names(p):
@@ -117,7 +116,7 @@ def set_enabled(name: str, on: bool, path: Path | None = None) -> bool:
     for i, b in enumerate(blocks):
         if _name(b) != name:
             continue
-        head = b.split("\n[feed.", 1)  # enabled satırı ana tabloda olmalı, alt tablolarda değil
+        head = b.split("\n[feed.", 1)  # enabled line must be in the main table, not in subtables
         main = head[0]
         line = f"enabled = {'true' if on else 'false'}"
         if re.search(r"(?m)^enabled\s*=", main):

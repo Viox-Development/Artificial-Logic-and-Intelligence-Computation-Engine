@@ -16,11 +16,11 @@ from alice.tools.base import WRITE, Tool, ToolContext, ToolError, ToolResult, ma
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache",
              "dist", "build", ".idea", ".vs", "bin", "obj", "Library", "Temp", ".gradle", "AppData",
              "site-packages"}
-# Dosya araması sınırları: ev klasörü gibi büyük bir yerde aranınca ajan dakikalarca takılmasın.
+# File search limits: keep the agent from hanging for minutes when searching a large place like the home folder.
 SEARCH_SECONDS = 20.0
 SEARCH_MAX_FILES = 20000
 SEARCH_MAX_BYTES = 2_000_000
-# Sayfalamalı grep'te belleğe en fazla bu kadar eşleşme satırı toplanır (sayfa boyutundan bağımsız üst sınır).
+# Paginated grep collects at most this many matching lines in memory (a cap independent of the page size).
 MAX_SCAN_LINES = 5000
 
 
@@ -29,8 +29,8 @@ def _skip_dir(name: str) -> bool:
 
 
 def glob_regex(pattern: str) -> "re.Pattern[str]":
-    """Glob desenini (ör. '**/*.py', 'src/**/*.cs', '*.txt') göreli yola uyan regex'e çevir.
-    '**/' sıfır ya da daha fazla klasör, '*' ve '?' tek klasör adı içinde eşleşir. Windows'ta büyük/küçük harf duyarsız."""
+    """Convert a glob pattern (e.g. '**/*.py', 'src/**/*.cs', '*.txt') into a regex matching relative paths.
+    '**/' matches zero or more folders, '*' and '?' match within a single folder name. Case-insensitive on Windows."""
     pat = pattern.replace("\\", "/")
     while pat.startswith("./"):
         pat = pat[2:]
@@ -69,7 +69,7 @@ def _limit_note(reason: str) -> str:
 
 
 def _with_note(body: str, note: str) -> ToolResult:
-    # Kesilen aramada notu başa koy ki zayıf modeller "eşleşme yok"u kesin sonuç sanmasın.
+    # Put the note first in a cut search, so weak models don't take "eşleşme yok" for a definitive result.
     return ToolResult(note + body, is_error=bool(note))
 
 
@@ -82,8 +82,8 @@ def _is_binary(path: Path) -> bool:
             head = f.read(4096)
     except OSError:
         return True
-    # PowerShell'in `>` ile yazdığı dosyalar UTF-16: içleri sıfır bayt dolu ama metin. Eskiden binary sayılıp
-    # okunamıyordu (2026-11-13 sohbetinde 740 baytlık bir .txt).
+    # Files written by PowerShell's `>` are UTF-16: full of zero bytes but still text. They used to count as binary and
+    # could not be read (a 740-byte .txt in the 2026-11-13 chat).
     if head.startswith(_UTF16_BOMS):
         return False
     return b"\0" in head
@@ -102,7 +102,7 @@ def _read_text(path: Path) -> str:
 
 
 def file_encoding(path: Path) -> str:
-    """Dosyanın _read_text'in çözdüğü kodlaması (yazarken aynısı kullanılsın). Okunamazsa utf-8."""
+    """The encoding _read_text uses to decode the file (writes reuse the same one). Falls back to utf-8 if unreadable."""
     try:
         raw = path.read_bytes()
     except OSError:
@@ -121,7 +121,7 @@ def file_encoding(path: Path) -> str:
 
 
 def write_encoded(path: Path, text: str, encoding: str) -> None:
-    """Metni verilen kodlamayla yaz; eski tek baytlık kodlamaya sığmayan karakter varsa UTF-8'e geç."""
+    """Write text in the given encoding; use UTF-8 if it has characters the old single-byte encoding can't hold."""
     try:
         data = text.encode(encoding)
     except UnicodeEncodeError:
@@ -130,14 +130,14 @@ def write_encoded(path: Path, text: str, encoding: str) -> None:
 
 
 def _write_like(path: Path, text: str) -> None:
-    """Düzenlenen dosyayı aynı kodlamayla geri yaz: UTF-16 bir .ps1/.reg sessizce UTF-8'e dönmesin, UTF-8 BOM'lu
-    bir .ps1'in BOM'u düşmesin (Windows PowerShell 5.1 BOM'suz dosyayı ANSI okur, Türkçe karakterler bozulur),
-    cp1254 bir .bat UTF-8'e çevrilmesin."""
+    """Write an edited file back in the same encoding, so a UTF-16 .ps1/.reg does not silently become UTF-8 and
+    a UTF-8 BOM'd .ps1 keeps its BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI, so Turkish characters
+    get garbled). A cp1254 .bat must not be converted to UTF-8."""
     write_encoded(path, text, file_encoding(path))
 
 
 def snapshot(ctx: ToolContext, p: Path) -> None:
-    """Geri sarma için: bu turda dosyaya ilk dokunulmadan önceki halini sakla."""
+    """For undo: save the file's state from before it was first touched in this turn."""
     cp = ctx.state.get("checkpoint")
     if cp is None:
         return
@@ -166,7 +166,7 @@ def _page_range(pages: str | None, total: int) -> list[int]:
 
 
 def read_pdf(p: Path, pages: str | None, max_chars: int) -> str:
-    """PDF'ten metin: pypdf varsa onunla, yoksa pdftotext (poppler) ile."""
+    """Extract text from a PDF: with pypdf if available, otherwise with pdftotext (poppler)."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -179,7 +179,7 @@ def read_pdf(p: Path, pages: str | None, max_chars: int) -> str:
                      for i in _page_range(pages, total)]
         except ToolError:
             raise
-        except Exception as e:  # noqa: BLE001 - bozuk/şifreli PDF
+        except Exception as e:  # noqa: BLE001 - corrupt/encrypted PDF
             raise ToolError(f"PDF okunamadı: {type(e).__name__}: {e}") from e
         text = "\n\n".join(parts)
     elif shutil.which("pdftotext"):
@@ -202,7 +202,7 @@ def read_pdf(p: Path, pages: str | None, max_chars: int) -> str:
 
 
 def render_notebook(p: Path) -> str:
-    """Jupyter defterini hücre hücre okunur metne çevir (kaynak + metin çıktıları)."""
+    """Convert a Jupyter notebook into readable text cell by cell (source + text outputs)."""
     import json
 
     try:
@@ -232,8 +232,8 @@ def _mtime(p: Path) -> int:
 
 
 def _stamp(p: Path) -> tuple[int, int]:
-    """Dosyanın hâli: (değişme zamanı, boyut). Yalnız zamana bakılınca Windows'ta art arda iki yazma aynı zamanı
-    alabiliyor, arada değişen dosya "değişmedi" sayılıyordu; boyut da karşılaştırılır."""
+    """The file's state: (modification time, size). Time alone is not enough on Windows: two writes in a row can
+    get the same timestamp, and a file changed in between was counted as "unchanged". Size is compared too."""
     try:
         st = p.stat()
         return st.st_mtime_ns, st.st_size
@@ -242,7 +242,7 @@ def _stamp(p: Path) -> tuple[int, int]:
 
 
 def mark_read(ctx: ToolContext, p: Path) -> None:
-    """Bu oturumda okundu: düzenleme araçları dosyanın hangi hâline göre yazıldığını bilsin."""
+    """Mark as read in this session: so editing tools know which state of the file they are writing against."""
     ctx.state.setdefault("read_files", {})[str(p)] = _stamp(p)
 
 
@@ -250,10 +250,10 @@ _READS = ("read_file", "write_file", "edit_file", "multi_edit", "notebook_edit")
 
 
 def restore_reads(ctx: ToolContext, messages: list[dict[str, Any]], saved_at: float) -> int:
-    """Diskten yüklenen sohbetin "okundu" kaydını geçmişten geri kur. Kayıt yalnız bellekte tutuluyordu: ALICE
-    yeniden başlayınca (güncelleme, çökme) model az önce okuduğu dosyayı düzenlemek isteyince "bu oturumda okunmadı"
-    hatası alıyor, aynı dosyayı yeniden okumak zorunda kalıyordu. Yalnız sohbetin son kaydından (saved_at) sonra
-    diskte değişmemiş dosyalar okunmuş sayılır: değişmişse eski içeriğe göre düzenleme yine reddedilir."""
+    """Rebuild the "read" record of a chat loaded from disk, from its history. The record was only kept in memory, so
+    after ALICE restarted (update, crash) a model that wanted to edit a file it had just read got a "not read in this
+    session" error and had to read it again. Only files unchanged on disk since the chat's last save (saved_at) count
+    as read; if one changed, editing against the old content is still rejected."""
     ok = {m.get("tool_call_id") for m in messages
           if m.get("role") == "tool" and not str(m.get("content") or "").startswith("HATA:")}
     n = 0
@@ -264,7 +264,7 @@ def restore_reads(ctx: ToolContext, messages: list[dict[str, Any]], saved_at: fl
                 continue
             try:
                 args = json.loads(fn.get("arguments") or "{}")
-                if fn.get("name") == "apply_patch":  # yamanın yazdığı dosyalar (eklenen, düzenlenen, taşınan)
+                if fn.get("name") == "apply_patch":  # files the patch wrote (added, edited, moved)
                     from alice.tools.patch import parse_patch
 
                     paths = [o.move_to or o.path for o in parse_patch(str(args.get("patch") or ""))
@@ -272,21 +272,21 @@ def restore_reads(ctx: ToolContext, messages: list[dict[str, Any]], saved_at: fl
                 else:
                     paths = [args.get("path")]
                 targets = [ctx.resolve(str(x)) for x in paths if x]
-            except Exception:  # noqa: BLE001 - bozuk geçmiş kaydı: atla
+            except Exception:  # noqa: BLE001 - corrupt history record: skip
                 continue
             for p in targets:
                 if not p.is_file():
                     continue
-                if _mtime(p) / 1e9 <= saved_at:  # kayıttan sonra (aynı saniye içinde bile) değişen dosya okunmuş sayılmaz
+                if _mtime(p) / 1e9 <= saved_at:  # changed after the save (even in the same second): not read
                     mark_read(ctx, p)
                     n += 1
     return n
 
 
 def require_read(ctx: ToolContext, p: Path) -> None:
-    """Okumadan düzenleme yok (Claude Code'daki Edit/Write kuralı). Model dosyanın içeriğini tahmin edip ya da eski
-    hâlini hatırlayıp üzerine yazmasın; okunduktan sonra dosya diskte değiştiyse (kullanıcı, başka araç) yeniden
-    okunsun. [agent] require_read_before_edit = false ile kapatılır."""
+    """No editing without reading first (the Edit/Write rule from Claude Code). The model must not guess the file's
+    content or overwrite it from memory of an old version; if the file changed on disk after it was read (by the user
+    or another tool), it must be read again. Disabled with [agent] require_read_before_edit = false."""
     if not ctx.config.agent.get("require_read_before_edit", True):
         return
     seen = ctx.state.get("read_files", {})
@@ -300,8 +300,8 @@ def require_read(ctx: ToolContext, p: Path) -> None:
 
 
 def _find_symbol_range(lines: list[str], symbol: str) -> tuple[int, int]:
-    """Metin içindeki sembol/fonksiyon/sınıf tanımının başlangıç ve bitiş satır indekslerini (0 tabanlı) bulur.
-    Python, JS/TS, Rust ve C-style dillerini destekler."""
+    """Finds the start and end line indices (0-based) of a symbol/function/class definition in the text.
+    Supports Python, JS/TS, Rust and C-style languages."""
     import re
     symbol_pat = re.escape(symbol)
     patterns = [
@@ -319,7 +319,7 @@ def _find_symbol_range(lines: list[str], symbol: str) -> tuple[int, int]:
                 break
 
     if not matches:
-        # Fallback: kelime sınırı olan herhangi bir satır eşleşmesi
+        # Fallback: any line that matches as a whole word
         fallback_pat = re.compile(r"\b" + symbol_pat + r"\b")
         for idx, line in enumerate(lines):
             if fallback_pat.search(line):
@@ -407,14 +407,14 @@ class ReadFile(Tool):
         limit = max(int(limit or 2000), 1)
         chunk = lines[start - 1:start - 1 + limit]
         if not chunk and lines:
-            # Eskiden "(boş dosya)" diyordu: model dolu dosyayı boş sanıyordu.
+            # It used to say "(boş dosya)" (empty file): the model took a full file for an empty one.
             raise ToolError(f"offset={start} dosyanın sonunu geçiyor: {p.name} {len(lines)} satır")
         body = "\n".join(f"{i:>6}\t{line[:2000]}" for i, line in enumerate(chunk, start))
         more = len(lines) - (start - 1 + len(chunk))
         if more > 0:
             body += f"\n... ({more} satır daha, offset={start + len(chunk)} ile devam et)"
-        # Sadece içerik gerçekten teslim edildikten sonra "okundu" say: sembol bulunamazsa dosya okunmuş sayılmasın
-        # (yoksa edit_file, içeriği hiç görmemiş bir ajana izin verirdi).
+        # Count the file as "read" only once its content is actually delivered: if the symbol is not found, it must not be
+        # counted (otherwise edit_file would let an agent edit content it never saw).
         mark_read(ctx, p)
         return ToolResult(header + (body or "(boş dosya)"))
 
@@ -446,26 +446,26 @@ class WriteFile(Tool):
         existed = p.exists()
         before = _read_text(p) if existed and not _is_binary(p) else ""
         p.write_text(content, encoding="utf-8", newline="")
-        mark_read(ctx, p)  # kendi yazdığı hâli biliyor: ardından düzenleyebilsin
+        mark_read(ctx, p)  # it knows the state it just wrote, so it can edit right after
         return ToolResult(f"{'güncellendi' if existed else 'oluşturuldu'}: {p} ({len(content.splitlines())} satır)",
                           diff=make_diff(path, before, content))
 
 
 def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "") -> tuple[str, int]:
-    """Bir değişikliği bellekteki metne uygula. Bulunamazsa ya da belirsizse ToolError."""
+    """Apply one change to the text in memory. Raises ToolError if it is not found or ambiguous."""
     if old == new:
         raise ToolError(f"{where}old_string ve new_string aynı")
     if not old:
         raise ToolError(f"{where}old_string boş olamaz")
     count = text.count(old)
     if count == 0 and "\r\n" in text:
-        # CRLF dosyalarda modelin LF göndermesi çok yaygın.
+        # Models often send LF for CRLF files.
         old_crlf = old.replace("\r\n", "\n").replace("\n", "\r\n")
         if old_crlf in text:
             old, new = old_crlf, new.replace("\r\n", "\n").replace("\n", "\r\n")
             count = text.count(old)
     if count == 0:
-        # Hata teşhisi: hangi türde uyuşmazlık var? İçerik neredeyse aynı mı, gerçekten yok mu?
+        # Diagnose the error: what kind of mismatch is it? Is the content nearly the same, or really absent?
         norm_old = "".join(old.split())
         norm_text = "".join(text.split())
         if norm_old in norm_text:
@@ -475,8 +475,8 @@ def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "
             hint = _similar_hint(text, old)
         raise ToolError(f"{where}old_string dosyada bulunamadı. Dosyayı read_file ile tekrar oku ve birebir kopyala.{hint}")
     if "\r\n" in text and text.count("\r\n") == text.count("\n") and "\n" in new and "\r\n" not in old:
-        # CRLF dosyada eski metin satır sonu içermeyince yeni metnin LF'leri dönüştürülmüyor, dosya karışık satır
-        # sonlu kalıyordu.
+        # In a CRLF file, when the old text has no line ending, the new text's LFs were not converted and the file
+        # kept mixed line endings.
         new = new.replace("\r\n", "\n").replace("\n", "\r\n")
     if count > 1 and not replace_all:
         lines = text.splitlines()
@@ -495,7 +495,7 @@ def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "
 
 
 def _similar_hint(text: str, old: str) -> str:
-    """Bulunamayan old_string için en benzer satırları bulup yönlendirici ipucu üretir."""
+    """For an old_string that was not found, find the most similar lines and produce a guiding hint."""
     lines = text.splitlines()
     old_lines = [l.strip() for l in old.splitlines() if l.strip()]
     if not old_lines:
@@ -601,8 +601,8 @@ class MultiEdit(Tool):
                           diff=make_diff(path, before.replace("\r\n", "\n"), text.replace("\r\n", "\n")))
 
 
-# Kullanıcının "İndirilenler", "Masaüstü" dediği klasörler. Model bunları bulmak için onlarca PowerShell komutu
-# deniyordu (voice.log: bir dakikada 40+ run_command); adı doğrudan klasöre çevrilir.
+# Folders the user calls "İndirilenler" (Downloads), "Masaüstü" (Desktop). The model used to try dozens of PowerShell
+# commands to find them (voice.log: 40+ run_command calls in a minute); the name now maps straight to the folder.
 KNOWN_FOLDERS = {
     "downloads": ["Downloads"], "indirilenler": ["Downloads"], "i̇ndirilenler": ["Downloads"],
     "desktop": ["OneDrive/Desktop", "OneDrive/Masaüstü", "Desktop"], "masaüstü": ["OneDrive/Desktop",
@@ -615,15 +615,15 @@ KNOWN_FOLDERS = {
 
 
 def known_folder(path: str) -> Path | None:
-    """'İndirilenler', 'downloads', 'Masaüstü' -> kullanıcının o klasörü (OneDrive'a taşınmışsa orası)."""
+    """'İndirilenler', 'downloads', 'Masaüstü' -> the user's folder for that (the OneDrive one if it was moved there)."""
     key = path.strip().strip("/\\").lower()
     for cand in KNOWN_FOLDERS.get(key, []):
         p = Path.home() / cand
         if p.is_dir():
             return p
     if KNOWN_FOLDERS.get(key) == ["Downloads"]:
-        # Taşınmış İndirilenler (Özellikler > Konum, başka disk) ~/Downloads'ta değil: Windows'un bildiği konum.
-        # Eskiden None dönüp "klasör yok: <çalışma klasörü>/İndirilenler" deniyordu.
+        # A moved Downloads folder (other drive, Properties > Location) is not in ~/Downloads: use Windows' location.
+        # It used to return None and report "klasör yok: <çalışma klasörü>/İndirilenler" (folder not found).
         from alice.tools.fetch_file import downloads_dir
 
         p = downloads_dir()
@@ -703,13 +703,13 @@ class Glob(Tool):
 
         base = ctx.resolve(path)
         rx = glob_regex(pattern)
-        # "**" yoksa desen derinliği sınırlı: daha derine inmeye gerek yok.
+        # Without "**" the pattern's depth is bounded: no need to go any deeper.
         max_depth = None if "**" in pattern else pattern.replace("\\", "/").strip("/").count("/")
         hits: list[Path] = []
         note = ""
         deadline = time.monotonic() + SEARCH_SECONDS
-        # Path.glob sadece eşleşmeleri verir: az eşleşmede süre/durdurma hiç kontrol edilmiyor ve atlanacak
-        # klasörlere (AppData, node_modules) yine de iniyordu. Kendimiz yürüyoruz, klasör başına kontrol ediyoruz.
+        # Path.glob only yields matches: with few matches, the time/stop checks never ran and it still descended
+        # into folders to skip (AppData, node_modules). We walk ourselves and check per folder.
         for root, dirs, files in os.walk(base):
             if ctx.cancelled():
                 note = _limit_note("kullanıcı durdurdu")
@@ -773,15 +773,15 @@ class Grep(Tool):
         context = max(0, min(int(context or 0), 20))
         max_results = max(1, int(max_results or 200))
         offset = max(0, int(offset or 0))
-        multiline = multiline or "\\n" in pattern  # satır sonu arayan desen tek satırda asla eşleşmez
+        multiline = multiline or "\\n" in pattern  # a pattern that looks for a line end never matches a single line
         rg = shutil.which("rg")
-        exact_total = True  # rg content modu dosya başına 100 eşleşmede kesiliyor: toplam o zaman "en az" olur
+        exact_total = True  # rg content mode stops at 100 matches per file: then the total is an "at least" count
         if rg:
             lines, note = self._rg(rg, ctx, base, pattern, glob, output_mode, context, ignore_case, multiline)
             if output_mode == "content" and len(lines) > offset + max_results:
                 exact_total = False
         else:
-            # Python yolunda tüm eşleşmeleri topla (üst sınır MAX_SCAN_LINES): erken kesilirse sayı "en az" olur.
+            # Python path: collect all matches (cap MAX_SCAN_LINES); if cut early, the count is an "at least" number.
             lines, note, cut = self._py(ctx, base, pattern, glob, output_mode, context, ignore_case, multiline,
                                         MAX_SCAN_LINES)
             if cut:
@@ -793,7 +793,7 @@ class Grep(Tool):
         shown_total = f"{total}" if exact_total else f"en az {total}"
         if not page:
             if offset and total:
-                # offset son sayfayı geçmiş: "eşleşme yok" demek yanıltıcı, eşleşmeler var ama bu sayfada değil.
+                # offset is past the last page: "eşleşme yok" would mislead; there are matches, just not on this page.
                 body = f"bu sayfada sonuç yok ({shown_total} eşleşme satırı var, offset={offset} son sayfayı geçiyor)"
             else:
                 body = f"eşleşme yok (pattern={pattern!r}"
@@ -828,11 +828,11 @@ class Grep(Tool):
             cmd.append("-i")
         if multiline:
             cmd += ["-U", "--multiline-dotall"]
-            # rg dosyayı ham okur: CRLF dosyada '\n' deseni '\r' yüzünden tutmasın diye '\r?\n' yap.
+            # rg reads files raw: so a '\n' pattern doesn't fail on '\r' in CRLF files, turn it into '\r?\n'.
             pattern = re.sub(r"(?<!\\)\\n", r"\\r?\\n", pattern)
         if glob:
             cmd += ["-g", glob]
-        # Göreli yollar: hem okunaklı hem modele daha az token.
+        # Relative paths: more readable and fewer tokens for the model.
         cmd += ["-e", pattern, "." if base.is_dir() else str(base)]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
@@ -840,7 +840,7 @@ class Grep(Tool):
         except subprocess.TimeoutExpired:
             return [], _limit_note("60 sn doldu")
         if r.returncode == 2 and not r.stdout.strip():
-            # rg hatası (desteklenmeyen regex, olmayan yol): "eşleşme yok" diye yutulursa model yanlış sonuca varıyor.
+            # rg error (bad regex, missing path): swallowing it as "eşleşme yok" misleads the model.
             raise ToolError(f"rg hatası: {(r.stderr or '').strip()[:300]}")
         lines = [ln[2:] if ln.startswith("./") or ln.startswith(".\\") else ln for ln in r.stdout.splitlines()]
         return lines, ""
@@ -856,7 +856,7 @@ class Grep(Tool):
             raise ToolError(f"geçersiz regex: {e}") from e
         out: list[str] = []
         note = ""
-        truncated = False  # tarama erken bittiyse eşleşme sayısı "en az" olur
+        truncated = False  # if the scan ended early, the match count is an "at least" number
         deadline = time.monotonic() + SEARCH_SECONDS
         files = [base] if base.is_file() else self._walk(base)
         for n, f in enumerate(files):
@@ -878,7 +878,7 @@ class Grep(Tool):
             try:
                 if f.stat().st_size > SEARCH_MAX_BYTES or _is_binary(f):
                     continue
-                text = _read_text(f).replace("\r\n", "\n")  # CRLF: çok satırlı "\\n" deseni Windows dosyasında da tutsun
+                text = _read_text(f).replace("\r\n", "\n")  # CRLF: multiline "\\n" patterns match Windows files too
             except OSError:
                 continue
             shown = str(f.relative_to(base) if base.is_dir() else f)
@@ -907,7 +907,7 @@ class Grep(Tool):
                         shown_lines.add(j)
                         prev = j
             if len(out) >= enough:
-                truncated = True  # daha fazla eşleşme olabilir: tam sayı bilinmiyor
+                truncated = True  # more matches may exist: the exact count is unknown
                 break
         return out, note, truncated
 
@@ -920,8 +920,8 @@ class Grep(Tool):
 
 
 def _glob_match(name: str, pattern: str, rel: str | None = None) -> bool:
-    """fnmatch + '*.{ts,tsx}' gibi süslü parantezli seçenekler (rg -g ile aynı davranış).
-    rg gibi: desende '/' varsa (ör. 'src/**/*.py') arama köküne göre göreli yola (rel), yoksa dosya adına bakılır."""
+    """fnmatch, plus brace alternatives such as '*.{ts,tsx}' (same behavior as rg -g).
+    Like rg: a '/' in the pattern (e.g. 'src/**/*.py') matches the path relative to the root (rel), else the file name."""
     m = re.search(r"\{([^{}]*)\}", pattern)
     if m:
         return any(_glob_match(name, pattern[:m.start()] + alt + pattern[m.end():], rel)
@@ -999,12 +999,12 @@ class FileOps(Tool):
         dest = ctx.resolve(destination)
         given = Path(destination.rstrip("/\\")).name
         if given and given != dest.name and given.lower() == dest.name.lower():
-            # Windows'ta resolve() var olan dosyanın diskteki harflerini döndürür: "Rapor.txt" hedefi "rapor.txt"
-            # oluyordu. Kullanıcının yazdığı ad korunur.
+            # On Windows, resolve() returns the on-disk letter case of an existing file: a "Rapor.txt" target became
+            # "rapor.txt". The name the user typed is kept.
             dest = dest.with_name(given)
         into_dir = dest.is_dir() or len(sources) > 1 or destination.endswith(("/", "\\"))
         if into_dir and _same_file(sources[0], dest) and len(sources) == 1:
-            into_dir = False  # klasörün kendi adını değiştirme (yalnız harf farkı), içine taşıma değil
+            into_dir = False  # renaming a folder to its own name (case only), not moving it inside itself
         if len(sources) > 1 and dest.exists() and not dest.is_dir():
             raise ToolError(f"birden fazla kaynak için destination bir klasör olmalı: {dest}")
         plan = [(s, dest / s.name if into_dir else dest) for s in sources]
@@ -1018,8 +1018,8 @@ class FileOps(Tool):
         for s, d in plan:
             d.parent.mkdir(parents=True, exist_ok=True)
             if action == "move" and d.name != s.name and d.parent == s.parent and _same_file(s, d):
-                # Windows'ta yalnız büyük/küçük harf değişen ad ("rapor.txt" -> "Rapor.txt"): hedef "var" görünür
-                # ama kaynağın kendisidir. Eskiden overwrite=true ile kaynak çöpe atılıp taşıma patlıyordu.
+                # On Windows, a name that changes only in letter case ("rapor.txt" -> "Rapor.txt"): the target looks
+                # "existing" but is the source itself. Before, overwrite=true trashed the source and the move failed.
                 snapshot(ctx, s)
                 os.rename(s, d)
                 done.append(f"{s} -> {d}")

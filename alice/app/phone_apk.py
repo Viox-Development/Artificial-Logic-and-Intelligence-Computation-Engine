@@ -1,9 +1,10 @@
-"""Telefon uygulamasının (Android) son sürümü: bilgisayar indirir, telefona yerel ağdan verir.
+"""Latest version of the phone app (Android): downloaded by the PC, served to the phone over the local network.
 
-CI (.github/workflows/android.yml) her derlemede APK'yı ve sürüm bilgisini depodaki "android-apk" dalına koyar
-(tek commit, her seferinde üstüne yazılır). Depo özel olduğu için telefon GitHub'dan indiremez; bilgisayarın
-zaten git erişimi var. ALICE bu dalı ara ara çeker, ~/.alice/phone/ altına koyar; telefondaki uygulama
-/api/phone/app ile sürümü sorar, yeniyse /api/phone/app.apk'den indirip kendini günceller.
+CI (.github/workflows/android.yml) places the APK and version info into the "android-apk" branch of the repo
+on each build (single commit, overwritten each time). Because the repo is private, the phone cannot download from
+GitHub; the PC already has git access. ALICE fetches this branch periodically and stores it under ~/.alice/phone/;
+the app on the phone queries the version via /api/phone/app, and if it is newer, downloads it from /api/phone/app.apk
+and updates itself.
 """
 
 from __future__ import annotations
@@ -18,8 +19,8 @@ from typing import Any
 from alice.config import alice_home
 
 BRANCH = "android-apk"
-REF = "refs/alice/android-apk"  # kullanıcının dal listesine karışmasın diye ayrı bir ref
-EVERY = 30 * 60.0  # sn: bu sıklıktan fazla çekilmez
+REF = "refs/alice/android-apk"  # separate ref so it does not mix into the user's branch list
+EVERY = 30 * 60.0  # seconds: will not be fetched more frequently than this
 _lock = threading.Lock()
 _last = {"at": 0.0, "error": ""}
 
@@ -33,7 +34,7 @@ def apk_path() -> Path:
 
 
 def info() -> dict[str, Any] | None:
-    """Bilgisayardaki APK'nın sürümü: {"version_code", "version_name", "size", "sha256"} ya da None."""
+    """Version of the APK on the PC: {"version_code", "version_name", "size", "sha256"} or None."""
     try:
         meta = json.loads((folder() / "version.json").read_text(encoding="utf-8"))
         size = apk_path().stat().st_size
@@ -52,11 +53,10 @@ def _git(args: list[str], repo: Path, timeout: float = 60.0) -> tuple[int, str]:
 
 
 def _blob(repo: Path, name: str) -> bytes | None:
-    """REF'teki dosyanın baytları (git cat-file metin olmayan içeriği bozmasın diye doğrudan okunur)."""
+    """Bytes of the file at REF (read directly so git cat-file does not corrupt non-text content)."""
     import subprocess
 
     from alice.updater import NO_WINDOW
-
     try:
         r = subprocess.run(["git", "cat-file", "blob", f"{REF}:{name}"], cwd=str(repo), capture_output=True,
                            timeout=60, creationflags=NO_WINDOW)
@@ -66,7 +66,7 @@ def _blob(repo: Path, name: str) -> bytes | None:
 
 
 def refresh(force: bool = False, repo: Path | None = None) -> dict[str, Any] | None:
-    """android-apk dalını çek; daha yeni bir APK varsa yerine koy. Sonuçta bilgisayardaki sürümü döndürür."""
+    """Fetch the android-apk branch; replace if there is a newer APK. Returns the version on the PC."""
     from alice.updater import repo_dir
 
     with _lock:

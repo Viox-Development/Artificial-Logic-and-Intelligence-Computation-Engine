@@ -1,13 +1,14 @@
-"""ALICE'in kendi git çağrıları için koruma ve sandbox'ın .git'e dokunduğunu fark etme.
+"""ALICE's protection for its own git calls, and detecting when the sandbox touches .git.
 
-Sandbox'taki komut proje klasörüne yazabilir; .git de onun içinde. Kandırılmış bir komut .git/hooks/pre-commit
-koyar ya da .git/config'e core.fsmonitor / core.hooksPath yazarsa, ALICE sonradan sandbox DIŞINDA git çalıştırdığında
-(commit, status, ekip PR'ı, inceleme) o program tam yetkiyle çalışırdı. Klasörü kilitlemek işe yaramadı (sandbox
-yeniden adlandırıp baştan oluşturabiliyor). Bu yüzden:
+A command run in the sandbox can write to the project folder, and .git is inside it. If a tricked command puts
+.git/hooks/pre-commit or writes core.fsmonitor / core.hooksPath into .git/config, then when ALICE later runs git
+outside the sandbox (commit, status, team PR, review) that program would run with full privileges. Locking the folder
+did not help (the sandbox can rename it and create it again from scratch). So:
 
-  * ALICE'in git çağrıları hook'ları kapalı (core.hooksPath sandbox'ın yazamadığı, var olmayan bir klasör),
-    fsmonitor kapalı, ext:: protokolü yasak ve fark komutlarında dış diff/textconv programları kapalı çalışır.
-  * Sandbox'taki komuttan önce/sonra .git/hooks ve .git/config'in izi alınır; değiştiyse araç sonucunda uyarılır.
+  * ALICE's git calls run with hooks off (core.hooksPath points to a nonexistent folder the sandbox cannot write to),
+    fsmonitor off, the ext:: protocol forbidden, and external diff/textconv programs off for diff commands.
+  * Before and after a command in the sandbox, a trace of .git/hooks and .git/config is taken; if it changed, the
+    tool result carries a warning.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ _DIFF_CMDS = {"diff", "show", "log"}
 def no_hooks_dir() -> Path:
     from alice.config import alice_home
 
-    return alice_home() / "git-hooks-off"  # oluşturulmaz; ~/.alice'e sandbox yazamaz
+    return alice_home() / "git-hooks-off"  # not created; the sandbox cannot write to ~/.alice
 
 
 def config_args() -> list[str]:
@@ -34,9 +35,10 @@ def config_args() -> list[str]:
             "-c", "protocol.ext.allow=never"]
 
 
-# Deponun kendi config'inde (include'lar dahil) program çalıştıran ayarlar. Sandbox'taki komut .git/config'e
-# filter.x.process, core.sshCommand, credential.helper... yazarsa ALICE'in sandbox dışındaki git'i onu tam yetkiyle
-# çalıştırırdı. ALICE'in çağrılarında bunlar zararsız değerle ezilir (boş komut = filtre/sürücü yok).
+# Settings in the repo's own config (includes too) that run programs. If a sandboxed command writes
+# filter.x.process, core.sshCommand, credential.helper... to .git/config, ALICE's git outside the sandbox would run
+# it with full privileges. In ALICE's calls these are overridden with harmless values
+# (an empty command = no filter/driver).
 _SAFE_DEFAULTS = {"core.sshcommand": "ssh", "core.gitproxy": "", "core.askpass": "", "core.alternaterefscommand": "",
                   "core.editor": "true", "sequence.editor": "true", "gpg.program": "gpg", "gpg.openpgp.program": "gpg",
                   "gpg.x509.program": "gpgsm", "gpg.ssh.program": "ssh-keygen",
@@ -47,7 +49,7 @@ _cache: dict[str, tuple[float, list[str]]] = {}
 
 
 def _local_config(cwd: Path) -> list[tuple[str, str]]:
-    """Deponun yerel config'i (include'lar dahil). `git config` hiçbir program çalıştırmaz."""
+    """The repo's local config (includes too). `git config` runs no programs."""
     try:
         r = subprocess.run(["git", "-C", str(cwd), "config", "--local", "--includes", "--list", "-z"],
                            capture_output=True, timeout=10, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
@@ -77,7 +79,7 @@ def _global_helpers() -> list[str]:
 
 
 def repo_overrides(cwd: Path | str | None) -> list[str]:
-    """Deponun program çalıştıran yerel ayarlarını ezen `-c` argümanları. git-lfs filtresi korunur."""
+    """`-c` arguments that override the repo's local settings that run programs. The git-lfs filter is kept."""
     if cwd is None:
         return []
     dirs = _git_dirs(Path(cwd))
@@ -105,7 +107,7 @@ def repo_overrides(cwd: Path | str | None) -> list[str]:
             out += ["-c", f"{key}="]
         elif (m := _REMOTE_RX.match(key)):
             out += ["-c", f"{key}=git-{'upload-pack' if m.group(2) == 'uploadpack' else 'receive-pack'}"]
-    if helpers:  # boş değer listeyi sıfırlar: kullanıcının genel (gh, manager) yardımcıları geri eklenir
+    if helpers:  # an empty value resets the list: the user's global helpers (gh, manager) are added back
         for h in _global_helpers():
             out += ["-c", f"credential.helper={h}"]
     out = list(dict.fromkeys(_pairs(out)))
@@ -119,13 +121,13 @@ def _pairs(args: list[str]) -> list[str]:
 
 
 def harden(args: list[str] | tuple[str, ...], cwd: Path | str | None = None) -> list[str]:
-    """git'e verilecek argümanların (alt komut dahil, `git`ten sonrası) korumalı hali. cwd verilirse deponun program
-    çalıştıran yerel ayarları da ezilir (`-C yol` argümanlarda varsa o kullanılır)."""
+    """The protected form of the arguments given to git (subcommand included, everything after `git`). If cwd is given,
+    the repo's local settings that run programs are overridden too (`-C path` in the arguments is used if present)."""
     args = list(args)
     if cwd is None and "-C" in args[:-1]:
         cwd = args[args.index("-C") + 1]
     i = 0
-    while i < len(args):  # alt komutu bul: "-c a=b" / "-C yol" ikişer, diğer seçenekler birer argüman
+    while i < len(args):  # find the subcommand: "-c a=b" / "-C path" take two each, other options take one each
         if args[i] in ("-c", "-C"):
             i += 2
         elif args[i].startswith("-"):
@@ -137,9 +139,9 @@ def harden(args: list[str] | tuple[str, ...], cwd: Path | str | None = None) -> 
     return config_args() + repo_overrides(cwd) + args
 
 
-# ------------------------------------------------------------------------------------------- iz
+# ------------------------------------------------------------------------------------------- trace
 def _git_dirs(cwd: Path) -> list[Path]:
-    """cwd'yi içeren deponun git klasörü (worktree'de ortak klasör de). Depo değilse []."""
+    """The git folder of the repo containing cwd (for a worktree, the common folder too). [] if it is not a repo."""
     try:
         cur = Path(cwd).resolve()
     except OSError:
@@ -176,7 +178,7 @@ def _digest(p: Path) -> str:
 
 
 def snapshot(cwd: Path) -> dict[str, str]:
-    """{yol: içerik özeti} — .git/config ve .git/hooks altındaki dosyalar."""
+    """{path: content digest} — the files under .git/config and .git/hooks."""
     out: dict[str, str] = {}
     for gd in _git_dirs(cwd):
         cfg = gd / "config"

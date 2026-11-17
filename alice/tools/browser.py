@@ -1,8 +1,8 @@
-"""Playwright ile tarayıcı kontrolü.
+"""Browser control with Playwright.
 
-Profil ~/.alice/browser-profile'da kalıcı, yani bir kere giriş yaptığın siteler
-sonraki oturumlarda da açık kalır. Sayfa, pixel yerine ID'li etkileşimli öğe
-listesine (DOM snapshot) çevrilir; hem beyin hem reflex döngüsü bunu kullanır.
+The profile in ~/.alice/browser-profile is persistent, so sites you logged into once stay open in later sessions.
+The page is converted into a list of interactive elements with IDs (DOM snapshot) instead of pixels; both the
+brain and the reflex loop use it.
 """
 
 from __future__ import annotations
@@ -58,26 +58,26 @@ SNAPSHOT_JS = r"""
 
 TEXT_JS = "() => document.body ? document.body.innerText : ''"
 
-# Öğenin sayfa içi kutusu + pencerenin ekrandaki yeri: HUD'da çerçevelemek için (screen_box ekrana çevirir).
+# Element box within the page + window position on screen, for framing on the HUD (screen_box maps it to screen).
 PLACE_JS = """el => { const r = el.getBoundingClientRect(); return {
   left: r.left, top: r.top, width: r.width, height: r.height, sx: window.screenX, sy: window.screenY,
   ow: window.outerWidth, oh: window.outerHeight, iw: window.innerWidth, ih: window.innerHeight,
   dpr: window.devicePixelRatio, visible: document.visibilityState === 'visible' }; }"""
-# Gösterilen öğenin sayfa içi çerçevesi (HUD kapalıyken highlight): 3 sn sonra eski haline döner.
+# Page-level outline of the shown element (highlight when the HUD is off); restored to its old style after 3 s.
 OUTLINE_JS = """el => { const o = el.style.outline, f = el.style.outlineOffset;
   el.style.outline = '3px solid #ffb000'; el.style.outlineOffset = '2px';
   setTimeout(() => { el.style.outline = o; el.style.outlineOffset = f; }, 3000); }"""
-MAX_TOOLBAR = 400  # CSS px: sekme+adres çubuğu bundan yüksekse ölçüm saçmadır (yakınlaştırma, tam ekran oyunu)
-PAD = 4  # CSS px: çerçeve öğenin kenarına yapışmasın
+MAX_TOOLBAR = 400  # CSS px: if the tab+address bar is taller, the measurement is nonsense (zoom, fullscreen game)
+PAD = 4  # CSS px: keep the outline from touching the element's edge
 
 
 def screen_box(info: Any) -> tuple[int, int, int, int] | None:
-    """PLACE_JS çıktısını fiziksel ekran pikseline (x, y, w, h) çevir; hesaplanamıyorsa None.
+    """Convert PLACE_JS output to physical screen pixels (x, y, w, h); return None if it cannot be computed.
 
-    Chromium'da pencere ölçüleri (screenX/Y, outer*/inner*) ve öğe kutusu aynı CSS pikseliyle gelir; devicePixelRatio
-    ile çarpınca fiziksel piksel olur. Sayfanın ekrandaki sol üstü: pencerenin sol üstü + yan çerçeve + üstteki
-    sekme/adres çubuğu (outerHeight - innerHeight, alt çerçeve düşülerek). Sekme arka plandaysa ya da öğe görünür
-    alanın dışındaysa çizilecek bir şey yoktur."""
+    In Chromium the window measurements (screenX/Y, outer*/inner*) and the element box come in the same CSS pixels;
+    multiplying by devicePixelRatio gives physical pixels. The page's top-left on screen is the window's top-left +
+    side border + the tab/address bar above it (outerHeight - innerHeight, minus the bottom border). If the tab is in
+    the background, or the element is outside the visible area, there is nothing to draw."""
     if not isinstance(info, dict) or not info.get("visible"):
         return None
     try:
@@ -92,7 +92,7 @@ def screen_box(info: Any) -> tuple[int, int, int, int] | None:
     toolbar = v["oh"] - v["ih"] - side
     if not 0 <= toolbar <= MAX_TOOLBAR:
         return None
-    # Görünür alana kırp: yarısı aşağıda kalan öğenin görünen kısmı çerçevelenir.
+    # Clip to the visible area: for an element half below the fold, only its visible part is framed.
     left, top = max(0.0, v["left"] - PAD), max(0.0, v["top"] - PAD)
     right, bottom = min(v["iw"], v["left"] + v["width"] + PAD), min(v["ih"], v["top"] + v["height"] + PAD)
     if right - left < 2 or bottom - top < 2:
@@ -102,27 +102,27 @@ def screen_box(info: Any) -> tuple[int, int, int, int] | None:
 
 
 def mark_on_hud(b: Any, loc: Any, label: str, ttl: float | None = None, wait: bool = False) -> bool:
-    """Öğeyi HUD'da çerçevele. HUD kapalıysa, tarayıcı görünmezse (headless) ya da konum hesaplanamıyorsa hiçbir şey
-    yapmaz; tarayıcı eylemi bundan asla etkilenmez."""
+    """Frame the element on the HUD. If the HUD is off, the browser is invisible (headless), or the position cannot be
+    computed, it does nothing; the browser action is never affected by this."""
     from alice.hud import client, views
 
     if not client.active or getattr(b, "headless", False):
         return False
     try:
         box = screen_box(loc.evaluate(PLACE_JS, timeout=2000))
-    except Exception:  # noqa: BLE001 - çerçeve süs: ölçülemezse sessizce atla
+    except Exception:  # noqa: BLE001 - decorative frame: if it cannot be measured, skip silently
         return False
     if box is None:
         return False
     return views.page_target(*box, label=label, ttl=views.PAGE_TTL if ttl is None else ttl, wait=wait)
 
-# Fonksiyon başı: "function", "async function", "(a, b) =>", "x =>", "async () =>". "(() => 1)()" gibi
-# hemen çağrılan ifadeler ya da içinde ok fonksiyonu geçen ifadeler bu kalıba uymaz, ifade olarak sarılır.
+# Start of a function: "function", "async function", "(a, b) =>", "x =>", "async () =>". Expressions like
+# "(() => 1)()" (immediately invoked) or ones that merely contain an arrow function don't match this; they get wrapped.
 _JS_FN_HEAD = re.compile(r"^(?:async\b\s*)?(?:function\b|(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>)")
 
 
 def js_function(js: str) -> str:
-    """Modelin yazdığı JS'i çağrılabilir fonksiyon metnine çevir: zaten fonksiyonsa olduğu gibi, değilse ifade olarak sar."""
+    """Turn model-written JS into a callable function: keep it if it is one already, else wrap it as an expression."""
     body = js.strip()
     if _JS_FN_HEAD.match(body):
         return body
@@ -133,7 +133,7 @@ CHROMIUM_FAMILY = ("opera", "chrome", "msedge", "brave", "vivaldi", "chromium", 
 
 
 def default_browser_exe() -> str | None:
-    """Windows'ta varsayılan tarayıcının exe yolu (ör. Opera GX). Bulunamazsa None."""
+    """Exe path of the default browser on Windows (e.g. Opera GX). Returns None if not found."""
     if sys.platform != "win32":
         return None
     try:
@@ -161,15 +161,15 @@ def is_chromium(exe: str) -> bool:
 
 def cdp_alive(endpoint: str, timeout: float = 0.4) -> bool:
     try:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # yerel port, proxy'ye gitmesin
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # local port, do not go through the proxy
         with opener.open(endpoint.rstrip("/") + "/json/version", timeout=timeout):
             return True
     except Exception:  # noqa: BLE001
         return False
 
 
-# Tarayıcının "Allow remote debugging for this browser instance" ayarı (opera://inspect, chrome://inspect)
-# açıkken portu ve yolu kullanıcı veri klasöründeki DevToolsActivePort dosyasına yazar.
+# When the browser's "Allow remote debugging for this browser instance" setting (opera://inspect, chrome://inspect)
+# is on, it writes the port and path to the DevToolsActivePort file in the user data folder.
 USER_DATA_DIRS = [
     ("APPDATA", r"Opera Software\Opera GX Stable"), ("APPDATA", r"Opera Software\Opera Stable"),
     ("LOCALAPPDATA", r"Google\Chrome\User Data"), ("LOCALAPPDATA", r"Microsoft\Edge\User Data"),
@@ -188,7 +188,7 @@ def _port_open(port: int, timeout: float = 0.3) -> bool:
 
 
 def devtools_active_endpoint(dirs: list[Path] | None = None) -> str | None:
-    """Kullanıcının açık tarayıcısında uzaktan hata ayıklama açıksa ws:// adresi."""
+    """ws:// address if remote debugging is enabled in the user's open browser."""
     if dirs is None:
         dirs = [Path(os.environ[env]) / sub for env, sub in USER_DATA_DIRS if os.environ.get(env)]
     for d in dirs:
@@ -214,7 +214,7 @@ def bridge_alive(port: int, timeout: float = 0.4) -> bool:
 
 
 def ensure_bridge(port: int, wait: float = 8.0) -> bool:
-    """Tarayıcı köprüsü çalışmıyorsa çekirdekten bağımsız (ayrık) bir süreç olarak başlat."""
+    """If the browser bridge is not running, start it as a process independent of the core (detached)."""
     if bridge_alive(port):
         return True
     import subprocess
@@ -222,7 +222,7 @@ def ensure_bridge(port: int, wait: float = 8.0) -> bool:
 
     exe = Path(sys.executable)
     if sys.platform == "win32" and (exe.parent / "pythonw.exe").exists():
-        exe = exe.parent / "pythonw.exe"  # konsol penceresi açılmasın
+        exe = exe.parent / "pythonw.exe"  # do not open a console window
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
@@ -245,7 +245,7 @@ def user_browser_endpoint(cdp: str | None, bridge_port: int | None = None) -> st
         return cdp
     found = devtools_active_endpoint()
     if found and bridge_port:
-        # Doğrudan bağlanmak yerine köprü üzerinden: çekirdek yeniden başlasa da tarayıcı izni tekrar sormaz.
+        # Through the bridge, not a direct connection: the browser won't ask permission again if the core restarts.
         from alice.tools.browser_bridge import endpoint
 
         if ensure_bridge(bridge_port):
@@ -265,8 +265,8 @@ NO_SEPARATE = ("Kullanıcının açık tarayıcısına bağlanılamıyor ve ayr�
 
 
 class BrowserSession:
-    """Önce kullanıcının açık tarayıcısına (uzaktan hata ayıklama portu açıksa) bağlanır; yoksa
-    varsayılan tarayıcıyı (Chromium tabanlıysa, ör. Opera GX) ALICE profiliyle açar."""
+    """First connects to the user's open browser (if its remote debugging port is on); otherwise launches the default
+    browser (if Chromium-based, e.g. Opera GX) with the ALICE profile."""
 
     def __init__(self, headless: bool = False, executable: str | None = None, cdp: str | None = None,
                  allow_launch: bool = True, bridge_port: int | None = None):
@@ -280,8 +280,8 @@ class BrowserSession:
         self._pw = sync_playwright().start()
         _register_exit_cleanup()
         self.driver_pid = _driver_pid(self._pw)
-        self.aborted = ""  # "timeout" | "stop": sürücü öldürüldü, bu oturum artık kullanılamaz
-        self.headless = bool(headless and not endpoint)  # ekranda görünmüyor: HUD'da çerçevelenecek bir şey yok
+        self.aborted = ""  # "timeout" | "stop": driver killed, this session can no longer be used
+        self.headless = bool(headless and not endpoint)  # not visible on screen: nothing to frame on the HUD
         self._bridge_port = None
         if bridge_port and endpoint:
             from alice.tools.browser_bridge import endpoint as bridge_endpoint
@@ -291,7 +291,7 @@ class BrowserSession:
         try:
             self._start(endpoint, headless, executable)
         except BaseException:
-            # Bağlantı/başlatma başarısız: Playwright sürücüsü açık kalırsa sonraki deneme de patlıyor.
+            # Connection/launch failed: if the Playwright driver stays open, the next attempt fails too.
             try:
                 self._pw.stop()
             except Exception:  # noqa: BLE001
@@ -299,26 +299,26 @@ class BrowserSession:
             raise
 
     def alive(self) -> bool:
-        """Tarayıcı bağlantısı hâlâ çalışıyor mu (Opera yeniden başladı, köprü kapandı, ALICE penceresi kapatıldı)."""
+        """Is the browser connection still working? (Opera restarted, bridge closed, ALICE window closed)."""
         if getattr(self, "aborted", ""):
             return False
         port = getattr(self, "_bridge_port", None)
         if port and not bridge_alive(port):
-            # Köprü tarayıcıyı ölü sayıp kapandığında Playwright bunu fark etmiyor (is_connected True kalıyor) ve
-            # sonraki çağrı ölü sokete gidip sonsuza dek bekliyordu.
+            # When the bridge gives up on the browser and closes, Playwright does not notice (is_connected stays True),
+            # so the next call went to the dead socket and waited forever.
             return False
         try:
             if self._browser is not None:
                 return bool(self._browser.is_connected())
-            # ALICE'in kendi penceresi: kullanıcı kapatınca bağlam kapanır; eskiden True dönüyordu ve sonraki her
-            # çağrı "Target page, context or browser has been closed" ile düşüyordu, yeniden açılmıyordu.
+            # ALICE's own window: the context closes when the user closes it. It used to return True, and every next
+            # call failed with "Target page, context or browser has been closed" and never reopened.
             return not getattr(self, "_ctx_closed", False)
         except Exception:  # noqa: BLE001
             return False
 
     def abort(self, reason: str) -> None:
-        """Takılan çağrıyı kes: Playwright sürücüsünü öldür, bekleyen her çağrı "Connection closed" ile hemen döner.
-        Başka thread'den (bekçi, Durdur düğmesi) çağrılabilir; kullanıcının tarayıcısına dokunmaz."""
+        """Cut a stuck call: kill the Playwright driver, so every pending call returns at once with "Connection closed".
+        Can be called from another thread (watchdog, Stop button); does not touch the user's browser."""
         if getattr(self, "aborted", ""):
             return
         self.aborted = reason
@@ -329,15 +329,15 @@ class BrowserSession:
             import psutil
 
             psutil.Process(pid).kill()
-        except Exception:  # noqa: BLE001 - süreç zaten bitmiş olabilir
+        except Exception:  # noqa: BLE001 - the process may already have exited
             pass
 
     def _mark_closed(self, *_: Any) -> None:
         self._ctx_closed = True
 
     def ensure_page(self):
-        """Etkin sekme kapatıldıysa (kullanıcı kapattı, site kendini kapattı) açık bir sekmeye, o da yoksa yeni
-        sekmeye geç. Yoksa her işlem kapanmış sayfada "Target closed" hatası veriyordu."""
+        """If the active tab was closed (by the user, or the site closed itself), switch to an open tab, or to a new
+        one if there is none. Otherwise every action failed on a closed page with a "Target closed" error."""
         page = getattr(self, "page", None)
         if page is not None and not _is_closed(page):
             return page
@@ -350,12 +350,12 @@ class BrowserSession:
         self._browser = None
         self._cdp = None
         if endpoint:
-            # Tarayıcı bağlantı için kullanıcıdan bir kez onay isteyebilir: ona zaman tanı.
+            # The browser may ask the user once for permission to connect: give it time.
             headers = None
             if getattr(self, "_bridge_port", None):
                 from alice.tools.browser_bridge import TOKEN_HEADER, read_token
 
-                token = read_token()  # eski sürüm köprü anahtar yazmamışsa başlıksız (o köprü istemez)
+                token = read_token()  # an older version wrote no bridge key, so no header (that bridge does not want one)
                 headers = {TOKEN_HEADER: token} if token else None
             browser = self._pw.chromium.connect_over_cdp(endpoint, timeout=60000, headers=headers)
             self._browser = browser
@@ -384,7 +384,7 @@ class BrowserSession:
 
     def _launch(self, profile, kwargs):
         try:
-            # Sistemde kurulu Chrome/Edge varsa onu kullan (ayrı indirme gerekmez).
+            # If Chrome/Edge is installed on the system, use it (no separate download needed).
             return self._pw.chromium.launch_persistent_context(str(profile), channel="chrome", **kwargs)
         except Exception:  # noqa: BLE001
             try:
@@ -393,8 +393,8 @@ class BrowserSession:
                 return self._pw.chromium.launch_persistent_context(str(profile), **kwargs)
 
     def targets(self) -> list[dict[str, Any]]:
-        """Sekmelerin başlık/adresleri tarayıcının kendisinden (sayfaya sormadan: arka planda uyutulan sekmeler
-        sayfa içi komutlara hiç cevap vermiyor, ALICE kilitleniyordu)."""
+        """Tab titles/addresses come from the browser itself (without asking the page: background-suspended tabs
+        never answer in-page commands, and ALICE used to freeze)."""
         if self._browser is None:
             return []
         try:
@@ -417,7 +417,7 @@ class BrowserSession:
         return ""
 
     def _visible_page(self):
-        """Kullanıcının şu an baktığı sekme: öndeki tarayıcı penceresinin başlığıyla eşleşen sekme."""
+        """The tab the user is looking at now: the tab whose title matches the foreground browser window."""
         try:
             from alice.tools.desktop import active_title
 
@@ -433,11 +433,11 @@ class BrowserSession:
         return None
 
     def evaluate(self, js: str, arg: Any = None, timeout: float = 10000) -> Any:
-        """Sayfada JS çalıştır, ama süre sınırıyla (page.evaluate sınırsız bekler)."""
+        """Run JS on the page, but with a time limit (page.evaluate waits forever)."""
         page = self.page
         if self.attached:
             try:
-                page.bring_to_front()  # uyutulmuş sekmeyi uyandır
+                page.bring_to_front()  # wake the suspended tab
             except Exception:  # noqa: BLE001
                 pass
         fn = js_function(js)
@@ -449,7 +449,7 @@ class BrowserSession:
             raise
 
     def tab_for(self, url: str):
-        """Kullanıcının tarayıcısında goto için sekme: aynı site açıksa o sekme, öndeki sekme boşsa o, yoksa yeni."""
+        """Tab for goto in the user's browser: the same site's tab if it is open, the front tab if it is blank, otherwise a new one."""
         want = host_of(url)
         for p in self.ctx.pages:
             if want and host_of(p.url) == want:
@@ -459,7 +459,7 @@ class BrowserSession:
         return self.ctx.new_page()
 
     def _on_page(self, page) -> None:
-        self.page = page  # yeni sekme açılınca ona geç
+        self.page = page  # when a new tab opens, switch to it
 
     def snapshot(self, limit: int = 120) -> list[dict[str, Any]]:
         return self.evaluate(SNAPSHOT_JS, limit)
@@ -474,7 +474,7 @@ class BrowserSession:
 
     def close(self) -> None:
         try:
-            if not self.attached and not getattr(self, "aborted", ""):  # kullanıcının tarayıcısını kapatma, bağlantıyı bırak
+            if not self.attached and not getattr(self, "aborted", ""):  # do not close the user's browser
                 self.ctx.close()
         finally:
             self._pw.stop()
@@ -483,7 +483,7 @@ class BrowserSession:
 def _driver_pid(pw: Any) -> int | None:
     try:
         return int(pw._impl_obj._connection._transport._proc.pid)
-    except Exception:  # noqa: BLE001 - Playwright iç yapısı değişirse bekçi sadece kesemez
+    except Exception:  # noqa: BLE001 - if Playwright's internals change, the watchdog can only fail to kill
         return None
 
 
@@ -495,12 +495,12 @@ def _is_closed(page) -> bool:
 
 
 def kill_playwright_drivers() -> int:
-    """Bu sürecin başlattığı Playwright sürücülerini (node ... run-driver) sessizce sonlandır.
+    """Quietly terminate the Playwright drivers (node ... run-driver) started by this process.
 
-    ALICE kapanırken ya da güncelleme sonrası yeniden başlarken sürücü, kapanmış boruya yazmaya çalışıp
-    "Error: EPIPE: broken pipe" yığınını core.log'a döküyordu. Playwright nesneleri oluşturuldukları iş parçacığına
-    bağlı olduğundan çıkışta düzgün stop() her zaman mümkün değil; sürücü zaten sahipsiz kalacağı için öldürülür.
-    Tarayıcı köprüsü (ayrı süreç) ve kullanıcının tarayıcısı etkilenmez."""
+    When ALICE shut down or restarted after an update, the driver tried to write to a closed pipe and dumped an
+    "Error: EPIPE: broken pipe" stack into core.log. Playwright objects are bound to the thread they were created on,
+    so a clean stop() at exit is not always possible; the driver is killed because it would be orphaned anyway.
+    The browser bridge (a separate process) and the user's browser are not affected."""
     try:
         import psutil
 
@@ -513,13 +513,13 @@ def kill_playwright_drivers() -> int:
             cmd = " ".join(p.cmdline()).lower()
             if "playwright" in cmd and "run-driver" in cmd:
                 found[p.pid] = p
-        except Exception:  # noqa: BLE001 - süreç bu arada bitmiş olabilir
+        except Exception:  # noqa: BLE001 - the process may have exited in the meantime
             continue
     n = 0
     for p in found.values():
         try:
-            # Windows'ta venv'in python.exe'si asıl python'u alt süreç olarak açar: ikisi aynı komut satırını taşır.
-            # Biri diğerinin çocuğuysa ikisi de öldürülür ama tek sürücü sayılır.
+            # On Windows the venv's python.exe launches the real python as a child process: both carry the same command
+            # line. If one is the other's child, both are killed but counted as one driver.
             top = p.ppid() not in found
             p.kill()
             n += top
@@ -540,10 +540,10 @@ def _register_exit_cleanup() -> None:
         _ATEXIT = True
 
 
-# Playwright'ın bağlantı koptuğunda verdiği hatalar (Opera kapandı/yeniden başladı, köprü ölü bağlantıyı kesti).
+# Errors Playwright raises when the connection drops (Opera closed/restarted, the bridge cut a dead connection).
 _CONNECTION_LOST = ("has been closed", "target closed", "browser closed", "connection closed", "not connected",
                     "disconnected", "websocket error", "socket closed", "connection refused", "econnrefused")
-# Bağlantı kopunca yeni bağlantıyla bir kez daha denenebilen eylemler: tekrar etmek bir şeyi iki kez yapmaz.
+# Actions that can be retried once on a new connection when it drops: repeating them does not do anything twice.
 RETRY_SAFE = ("goto", "snapshot", "text", "screenshot", "tabs", "highlight")
 RECONNECT_HINT = ("tarayıcı bağlantısı koptu (Opera kapandı, yeniden başladı ya da cevap vermiyor); bağlantı "
                   "sıfırlandı. İşlem yapılmış olabilir: browser action=snapshot ile sayfaya bak, sonra gerekiyorsa tekrar dene.")
@@ -554,25 +554,26 @@ def connection_lost(e: BaseException) -> bool:
     return any(k in msg for k in _CONNECTION_LOST)
 
 
-# Bir eylemin en uzun süresi (sn). Playwright'ın bazı çağrıları (CDP komutları, ölü bağlantıdaki istekler) süre
-# sınırı tanımıyor; süre dolunca sürücü öldürülür ki ALICE dakikalarca "çalışıyor" diye takılı kalmasın.
-ROOT_AGAIN = 60.0  # sn: bu sürede aynı sitenin ana sayfası yine istenirse açık sekmeyi ana sayfaya götür
+# Maximum time for one action (s). Some Playwright calls (CDP commands, requests on a dead connection) have no time
+# limit; when the time runs out the driver is killed so ALICE does not sit "working" for minutes.
+ROOT_AGAIN = 60.0  # s: if the same site's home page is requested again within this time, go to it in the open tab
 ACTION_BUDGET = {"goto": 120.0, "back": 60.0, "screenshot": 40.0, "download": 270.0}
 DEFAULT_BUDGET = 45.0
-CONNECT_BUDGET = 70.0  # yeni bağlantı: tarayıcı kullanıcıdan izin isteyebilir (connect_over_cdp 60 sn bekler)
+CONNECT_BUDGET = 70.0  # new connection: the browser may ask the user for permission (connect_over_cdp waits 60 s)
 STOPPED = "durduruldu (kullanıcı kesti)"
 
 
 def abort_browser(ctx: ToolContext, reason: str = "stop") -> None:
-    """Çalışan tarayıcı çağrısını kes (Durdur düğmesi, bekçi). Başka thread'den çağrılır. Çağrı yoksa bağlantıya
-    dokunmaz: boşuna koparılırsa tarayıcı tekrar izin sorabilir."""
+    """Cut the running browser call (Stop button, watchdog). Called from another thread. If there is no call, the
+    connection is left alone: cutting it for nothing could make the browser ask for permission again."""
     b = ctx.state.get("browser")
     if b is not None and ctx.state.get("browser_busy"):
         b.abort(reason)
 
 
 class _Watchdog:
-    """Eylem süresini aşarsa o anki oturumu keser. Oturum eylemin içinde açılabildiği için ateşlendiği anda bakar."""
+    """Cuts the current session if the action runs over time. The session may be opened inside the action, so it is
+    looked up at the moment the timer fires."""
 
     def __init__(self, ctx: ToolContext, seconds: float):
         self.timer = threading.Timer(seconds, abort_browser, args=(ctx, "timeout"))
@@ -602,7 +603,7 @@ def _timeout_hint(action: str) -> str:
 
 
 def drop_browser(ctx: ToolContext) -> None:
-    """Oturumu bırak: sonraki çağrı yeniden bağlanır (kullanıcının tarayıcısı kapatılmaz)."""
+    """Drop the session: the next call reconnects (the user's browser is not closed)."""
     b = ctx.state.pop("browser", None)
     if b is not None:
         try:
@@ -613,25 +614,25 @@ def drop_browser(ctx: ToolContext) -> None:
 
 def get_browser(ctx: ToolContext, separate: bool = False) -> BrowserSession:
     b = ctx.state.get("browser")
-    if b is not None and not b.alive():  # bağlantı ölmüş: her araç çağrısı "browser has been closed" demesin
+    if b is not None and not b.alive():  # connection is dead: stop tool calls from saying "browser has been closed"
         drop_browser(ctx)
         b = None
     builtin = ctx.state.get("builtin_browser")
     if (callable(builtin) and not separate
             and str(ctx.config.agent.get("browser", "builtin") or "builtin").lower() == "builtin"):
-        # Uygulamanın yerleşik tarayıcısı: ekranı panelde canlı görünür, kullanıcı istediği an devralır.
+        # The app's built-in browser: its screen is visible live in the panel, and the user can take over at any time.
         if b is None or not getattr(b, "builtin", False):
             drop_browser(ctx)
             b = BrowserSession(cdp=builtin().endpoint, allow_launch=False)
             b.builtin = True
-            b.headless = True  # ekranda pencere yok: HUD'da çerçeveleme yapılmaz
+            b.headless = True  # no window on screen: no framing on the HUD
             ctx.state["browser"] = b
         b.ensure_page()
         return b
     from alice.tools import browser_ext
 
     hub = None if separate else browser_ext.hub()
-    if hub is not None:  # ALICE eklentisi bağlı: uzaktan hata ayıklama yok, Opera izin sormaz
+    if hub is not None:  # ALICE extension connected: no remote debugging, so Opera does not ask for permission
         if not getattr(b, "extension", False):
             drop_browser(ctx)
             b = ctx.state["browser"] = browser_ext.ExtBrowserSession(hub)
@@ -720,7 +721,7 @@ class Browser(Tool):
         except Exception as e:  # noqa: BLE001
             if action == "close" or not connection_lost(e):
                 raise
-            # Bağlantı ölmüş: oturumu at ki ALICE "browser has been closed" deyip orada kalmasın.
+            # Connection is dead: drop the session so ALICE does not get stuck saying "browser has been closed".
             reason = _aborted(ctx)
             drop_browser(ctx)
             if reason == "stop":
@@ -728,7 +729,7 @@ class Browser(Tool):
             if action not in RETRY_SAFE:
                 raise ToolError(_timeout_hint(action) if reason == "timeout" else RECONNECT_HINT) from e
         try:
-            return self._guarded(ctx, action, kw)  # yeni bağlantıyla bir kez daha
+            return self._guarded(ctx, action, kw)  # once more, on the new connection
         except ToolError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -757,7 +758,7 @@ class Browser(Tool):
              js: str | None = None, index: int | None = None, separate: bool = False) -> ToolResult:
         from alice.tools.computer import as_bool, as_number
 
-        # Zayıf modeller sayıları/bayrakları metin gönderiyor: "false" metni Enter'a bastırıyordu (bool("false")).
+        # Weak models send numbers/flags as text: the text "false" was pressing Enter (bool("false") is True).
         submit, separate = as_bool(submit, "submit"), as_bool(separate, "separate")
         amount = as_number(600 if amount is None else amount, "amount", int)
         index = None if index is None else as_number(index, "index", int)
@@ -766,7 +767,7 @@ class Browser(Tool):
         if action == "close":
             b = ctx.state.get("browser")
             if b is not None and b.attached:
-                # Kullanıcının kendi tarayıcısı: bağlantıyı açık tut, yeniden bağlanmak Opera'da yine izin sorar.
+                # The user's own browser: keep the connection open, since reconnecting makes Opera ask for permission again.
                 return ToolResult("kullanıcının tarayıcısı açık bırakıldı (ALICE'in ayrı penceresi yok)")
             ctx.state.pop("browser", None)
             if b:
@@ -774,7 +775,7 @@ class Browser(Tool):
             return ToolResult("tarayıcı kapatıldı")
         b = get_browser(ctx, separate)
         if b.attached and action in ("snapshot", "text", "screenshot"):
-            # Kullanıcı bu arada başka sekmeye geçmiş olabilir: "ekrandaki" neyse ona bak.
+            # The user may have switched to another tab in the meantime: look at whatever is "on screen".
             seen = b._visible_page()
             if seen is not None:
                 b.page = seen
@@ -794,13 +795,13 @@ class Browser(Tool):
                 raise ToolError("goto için url gerekli")
             if "://" not in url:
                 url = "https://" + url
-            if b.attached:  # kullanıcının kendi tarayıcısı: açık site sekmesini kullan, her seferinde yeni açma
+            if b.attached:  # the user's own browser: use the open site tab, do not open a new one every time
                 b.page = page = b.tab_for(url)
                 page.bring_to_front()
                 root = urlparse(url).path.strip("/") == "" and not urlparse(url).query
                 if host_of(page.url) == host_of(url) and root:
-                    # İlk istekte içindekini (çalan video) bozma; kısa sürede aynı ana sayfa yine istenirse
-                    # ("ana sayfaya geç") gerçekten git: model sekmenin hâlâ videoda olduğunu görüp tekrar istemiştir.
+                    # On the first request, do not disturb what is inside (e.g. a playing video); if the same home
+                    # page is requested again soon ("go to the home page"), really go: the model saw it still playing.
                     last = ctx.state.get("browser_root_switch")
                     ctx.state["browser_root_switch"] = (host_of(url), time.monotonic())
                     if not (last and last[0] == host_of(url) and time.monotonic() - last[1] < ROOT_AGAIN):
@@ -810,8 +811,8 @@ class Browser(Tool):
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)
             except Exception as e:  # noqa: BLE001
-                # Yeni açılan tarayıcı (ör. Opera GX'in GX Corner'ı) kendi başlangıç sayfasını yüklerken ilk gidiş
-                # ERR_ABORTED alıyor; bir saniye sonra tekrar dene.
+                # A newly opened browser (e.g. Opera GX's GX Corner) gets ERR_ABORTED on the first navigation while it
+                # loads its own start page; retry after one second.
                 if "ERR_ABORTED" not in str(e):
                     raise
                 page.wait_for_timeout(1000)
@@ -823,7 +824,7 @@ class Browser(Tool):
         if action == "click":
             loc = b.locator(element_id)
             loc.scroll_into_view_if_needed(timeout=5000)
-            mark_on_hud(b, loc, "tıklıyorum", wait=True)  # HUD açıksa nereye tıklayacağını önceden göster
+            mark_on_hud(b, loc, "tıklıyorum", wait=True)  # if the HUD is on, show where it will click first
             loc.click(timeout=8000)
             page.wait_for_timeout(600)
             return snap(f"tıklandı: [{element_id}]")
@@ -837,7 +838,7 @@ class Browser(Tool):
                 return ToolResult(f"gösterildi: [{element_id}] ekranda çerçevelendi")
             if getattr(b, "headless", False):
                 return ToolResult("tarayıcı görünmez (headless) çalışıyor; kullanıcıya gösterilemez")
-            loc.evaluate(OUTLINE_JS, timeout=2000)  # HUD yok: sayfanın içinde kısa süre çerçevele
+            loc.evaluate(OUTLINE_JS, timeout=2000)  # no HUD: briefly frame it inside the page
             return ToolResult(f"gösterildi: [{element_id}] sayfada çerçevelendi")
         if action == "type":
             loc = b.locator(element_id)
@@ -869,7 +870,7 @@ class Browser(Tool):
         if action == "text":
             return ToolResult(truncate(f"{b.title_of(page)}\n{page.url}\n\n{b.evaluate(TEXT_JS)}", limit))
         if action == "screenshot":
-            png = page.screenshot(type="png", timeout=15000)  # donmuş sekmede sonsuza dek beklemesin
+            png = page.screenshot(type="png", timeout=15000)  # do not wait forever on a frozen tab
             from io import BytesIO
 
             from PIL import Image

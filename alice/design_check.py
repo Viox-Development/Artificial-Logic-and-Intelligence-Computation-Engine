@@ -1,9 +1,10 @@
-"""Web sitesi tasarımında "yapay zekâ yapımı" kalıpları: koddan sayılan denetim ve ekran görüntüsünden eleştiri.
+"""Patterns of "AI-made" look in website design: a code-based audit and a critique from screenshots.
 
-Modeller tasarım yaparken hep aynı kalıplara kayıyor ("AETH-SYS // BRİFİNG-01" gibi mono etiketler, "> İNCELE"
-düğmeleri, "128.400+" sayaç satırı, neon parlamalar, "Geleceği şekillendiriyoruz" sloganları). Kurul ve ajanlar bunu
-gözle fark etmeyince site "dünyanın en AI slop sitesi" oluyor. Buradaki denetim modelden bağımsız: kalıplar dosyalardan
-sayılır, ajanlara ve kurula somut "şu dosyada şu var, şöyle düzelt" olarak gider.
+Models keep drifting into the same patterns when designing (mono labels like "AETH-SYS // BRİFİNG-01", "> İNCELE"
+buttons, "128.400+" counter lines, neon glows, "Geleceği şekillendiriyoruz" slogans). If the board and agents do not
+notice these by eye, the site becomes "the most AI slop site in the world". The audit here does not depend on the model:
+the patterns are counted from the files and sent to the agents and the board as concrete "this file has this, fix it
+this way".
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ class Hit:
             self.examples.append(item)
 
 
-# (kural, başlık, düzeltme, en az kaç kez görülünce sorun sayılır)
+# (rule, title, fix, minimum number of occurrences before it counts as a problem)
 RULES: dict[str, tuple[str, str, int]] = {
     "slash_labels": ("Kod/terminal süsü etiketler (\"AETH-SYS // BRİFİNG-01\", \"SEC-02 // ...\")",
                      "Bölüm üstü etiketleri kaldır ya da sade bir küçük başlık yap (\"Platformlar\"). '//' ve kod "
@@ -93,7 +94,7 @@ BUZZWORDS = ("geleceği", "üstünlük", "tavizsiz", "yeni nesil", "son teknoloj
 
 
 def _around(text: str, m: re.Match, before: int = 18, after: int = 22) -> str:
-    """Eşleşmenin çevresi, sözcük ortasından kesmeden."""
+    """Context around the match, without cutting through a word."""
     a, b = max(0, m.start() - before), min(len(text), m.end() + after)
     while a > 0 and not text[a - 1].isspace() and m.start() - a < before + 15:
         a -= 1
@@ -103,7 +104,7 @@ def _around(text: str, m: re.Match, before: int = 18, after: int = 22) -> str:
 
 
 def visible_text(raw: str) -> str:
-    """HTML'den görünen metin (kaba): script/style ve etiketler çıkarılır."""
+    """Visible text from HTML (rough): script/style and tags are removed."""
     raw = re.sub(r"<(script|style|svg|noscript)\b.*?</\1>", " ", raw, flags=re.S | re.I)
     raw = re.sub(r"<!--.*?-->", " ", raw, flags=re.S)
     raw = re.sub(r"<[^>]+>", "\n", raw)
@@ -130,7 +131,7 @@ def _files(root: Path) -> list[Path]:
 
 
 def lint(root: Path) -> list[Hit]:
-    """Sitedeki kalıpları say. Döner: eşiği aşan kurallar (en çok görülen önce)."""
+    """Count the patterns on the site. Returns the rules over the threshold (most frequent first)."""
     hits = {k: Hit(k, t, f) for k, (t, f, _) in RULES.items()}
     root = Path(root)
     counter_js = False
@@ -173,13 +174,13 @@ def lint(root: Path) -> list[Hit]:
         for m in _TICKER.finditer(raw):
             hits["ticker"].add(rel, raw[m.start():m.end()])
     if counter_js and hits["stat_counters"].count:
-        hits["stat_counters"].count += 2  # sayaç animasyonu da varsa kesin kalıp
+        hits["stat_counters"].count += 2  # if there is also a counter animation, it is a sure pattern
     found = [h for k, h in hits.items() if h.count >= RULES[k][2]]
     return sorted(found, key=lambda h: -h.count)
 
 
 def report(hits: list[Hit], limit: int = 8) -> str:
-    """Ajanlara/kurula gidecek kısa rapor. Sorun yoksa boş."""
+    """Short report for the agents/board. Empty if there is no problem."""
     if not hits:
         return ""
     rows = []
@@ -230,7 +231,7 @@ Bu sitenin tasarımını somut ve ölçülebilir biçimde çöz (sıfat değil g
 
 
 def _vision_chat(router, text: str, images: list[str], max_tokens: int = 1500) -> str:
-    """Görüntüleri görebilen modele tek seferlik soru. Model yoksa ya da hata olursa boş."""
+    """One-off question to a model that can see images. Empty if there is no model or on error."""
     if not images or router is None:
         return ""
     from alice.providers import picker
@@ -247,7 +248,7 @@ def _vision_chat(router, text: str, images: list[str], max_tokens: int = 1500) -
     parts += [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}} for b in images]
     try:
         res = router.chat(role, [{"role": "user", "content": parts}], temperature=0.3, max_tokens=max_tokens)
-    except Exception:  # noqa: BLE001 - görsel model yok/hata
+    except Exception:  # noqa: BLE001 - no vision model or error
         return ""
     finally:
         router.role_overrides.pop(role, None)
@@ -255,7 +256,7 @@ def _vision_chat(router, text: str, images: list[str], max_tokens: int = 1500) -
 
 
 def study(router, shots: dict[str, str], url: str, goal: str, note: str = "") -> str:
-    """Referans sitenin ekran görüntülerini çözümlet: düzen, tipografi, renk, görsel dil, alınacaklar."""
+    """Analyze the reference site's screenshots: layout, typography, color, visual language, takeaways."""
     text = STUDY_PROMPT.format(url=url, views=", ".join(shots), goal=goal[:600],
                                note=f"Özellikle bak: {note}\n" if note.strip() else "")
     return _vision_chat(router, text, list(shots.values()), max_tokens=1800)
@@ -263,8 +264,8 @@ def study(router, shots: dict[str, str], url: str, goal: str, note: str = "") ->
 
 def critique(router, shots: dict[str, str], goal: str, design: str = "", lint_text: str = "",
              refs: dict[str, str] | None = None) -> str:
-    """Ekran görüntülerini görebilen bir modele eleştirt. refs: araştırmadaki referans sitelerin görüntüleri
-    (karşılaştırma için, en çok 2). Model yoksa ya da hata olursa boş."""
+    """Have a model that can see screenshots critique them. refs: screenshots of the reference sites from
+    the research (for comparison, at most 2). Empty if there is no model or on error."""
     if not shots:
         return ""
     refs = dict(list((refs or {}).items())[:2])

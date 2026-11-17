@@ -1,40 +1,40 @@
-"""ALICE kendi kendini günceller.
+"""ALICE updates itself.
 
-Depo `git clone` ile kurulduğu için güncelleme ölçüsü basit: yerel HEAD ile GitHub'daki dalın
-(varsayılan `main`) ucu aynı mı? Kontrol `git ls-remote` ile yapılır; bu tek bir ağ turu, fetch
-yapmadığı için açılışta saniyenin altında biter.
+Since the repo was installed with `git clone`, the update check is simple: is the local HEAD the same as
+the tip of the branch on GitHub (default `main`)? The check uses `git ls-remote`, a single network round trip;
+since it does not fetch, it finishes in under a second at startup.
 
-Akış:
+Flow:
 
-* `alice update --check`  : yeni commit var mı, neler değişmiş, CI yeşil mi
-* `alice update`          : fast-forward çek, gerekiyorsa bağımlılıkları kur
-* `alice app`             : config [update] mode="auto" ise açılışta sessizce günceller ve
-                            güncelleme varsa kendini yeniden başlatıp en son sürümü açar
-* uygulama açıkken        : arka planda periyodik kontrol, arayüzde "Güncelle ve yeniden başlat"
-* arka plan çekirdeği     : uygulama kapalıyken kendisi çeker; boştayken (çalışan görev yokken)
-                            sessizce yeniden başlar. Uygulama açıksa çekmez, işi arayüzü olana bırakır.
-* bayat süreç             : diskteki kod çalışan süreçten yeniyse (başka bir süreç ya da elle
-                            `git pull` çekti) süreç bunu fark eder: uygulama "yeniden başlat" der,
-                            çekirdek boşta kalınca kendini yeniden başlatır. Eski süreç yeni dosyaları
-                            yarı yarıya yükleyip karışık sürümle çalışmasın diye.
+* `alice update --check`  : is there a new commit, what changed, is CI green
+* `alice update`          : fast-forward pull, install dependencies if needed
+* `alice app`             : if config [update] mode="auto", it updates silently at startup and
+                            if there is an update, restarts itself and opens the latest version
+* while the app is open   : periodic check in the background, UI shows "Güncelle ve yeniden başlat" (Update and restart)
+* background core        : pulls by itself while the app is closed; when idle (no task running)
+                            it restarts silently. If the app is open it does not pull; it leaves the job to the UI.
+* stale process        : if the code on disk is newer than the running process (a manual `git pull` or another
+                            process pulled it), the process notices: the app says "yeniden başlat" (restart),
+                            and an idle core restarts itself, so the old process does not run a mix of
+                            old and new files.
 
-Kurallar:
+Rules:
 
-* Çalışma ağacı kirliyse (kendi değişikliklerin varsa) otomatik güncelleme yapılmaz, sadece haber verilir.
-* `require_green_ci = true` iken commit'in CI'ı kırmızıysa otomatik güncelleme yapılmaz; elle
-  `alice update --force` bunu geçer. (CI durumu anahtarsız GitHub API'siyle okunur, ulaşılamazsa
-  "bilinmiyor" sayılır ve güncelleme yapılır.)
-* `pyproject.toml` değiştiyse güncellemeden sonra `pip install -e .` otomatik çalışır; hangi
-  opsiyonel paketlerin kurulu olduğu tespit edilip aynı extra'larla kurulur.
+* If the working tree is dirty (you have your own changes), no automatic update is done; you are only notified.
+* When `require_green_ci = true` and the commit's CI is red, no automatic update is done; `alice update --force`
+  gets past this manually. (CI status is read with the keyless GitHub API; if it cannot be reached it counts as
+  "bilinmiyor" (unknown) and the update goes ahead.)
+* If `pyproject.toml` changed, `pip install -e .` runs automatically after the update; which optional packages
+  are installed is detected and they are installed with the same extras.
 
-Geri alma (bozuk sürüm ALICE'i açılmaz bırakmasın):
+Rollback (a broken version must not leave ALICE unable to start):
 
-* Duman testi: çekilen sürümün ana modülleri ayrı bir Python sürecinde içe aktarılır. Hata verirse (sözdizimi,
-  eksik paket) çalışma ağacı hemen önceki commit'e döner, o commit "bozuk" diye işaretlenir.
-* Açılış sağlığı: güncellemeden sonraki açılışlar sayılır. Yeni sürüm HEALTHY_AFTER saniye ayakta kalınca sağlam
-  sayılır. Üst üste MAX_BAD_BOOTS açılış sağlam sayılmadan biterse (açılıp çöktü) önceki commit'e dönülür.
-* Bozuk işaretli commit otomatik olarak bir daha çekilmez (yeni bir commit gelince o denenir); `alice update
-  --force` yine de çeker. Geri alma bir kez bildirilir.
+* Smoke test: the main modules of the pulled version are imported in a separate Python process. If it fails
+  (syntax error, missing package), the working tree returns to the previous commit and it is marked "bozuk" (broken).
+* Boot health: boots after an update are counted. The new version is healthy once it stays up for HEALTHY_AFTER
+  seconds. If MAX_BAD_BOOTS boots in a row end before that (open and crash), it rolls back to the previous commit.
+* A commit marked broken is not pulled again automatically (it is tried when a new commit arrives); `alice update
+  --force` still pulls it. The rollback is reported once.
 """
 
 from __future__ import annotations
@@ -57,10 +57,10 @@ API = "https://api.github.com"
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 WINDOWS = sys.platform == "win32"
 REMOTE_URL = f"https://github.com/{REPO}.git"
-# Windows kurulumunun (ALICE-Setup.exe) hangi commit'ten derlendiği. Kurulumda .git yoksa depo bu commit'ten yeniden
-# kurulur (dosyalara dokunmadan), böylece exe ile kurulan ALICE de kendini güncelleyebilir.
+# The commit the Windows installer (ALICE-Setup.exe) was built from. If there is no .git in the install, the repo is
+# re-created from this commit (without touching the files), so an ALICE installed via the exe can update itself too.
 BUILD_FILE = ".alice-build"
-GIT_INSTALL_RETRY = 86400.0  # saniye: winget ile Git kurulamadıysa en erken bu kadar sonra tekrar denenir
+GIT_INSTALL_RETRY = 86400.0  # seconds: if Git could not be installed with winget, it is retried no sooner than this
 DEFAULTS: dict[str, Any] = {
     "mode": "auto",              # auto | notify | off
     "branch": "main",
@@ -69,11 +69,11 @@ DEFAULTS: dict[str, Any] = {
     "startup_timeout": 12,
     "startup_check": True,
 }
-# extra adı -> o extra kurulduysa içe aktarılabilen bir modül
+# extra name -> a module that can be imported if that extra is installed
 SMOKE_MODULES = ("alice.cli", "alice.agent", "alice.memory", "alice.app.server", "alice.core.service",
                  "alice.voice.live", "alice.tools")
-HEALTHY_AFTER = 90.0  # saniye: yeni sürüm bu kadar ayakta kalınca sağlam sayılır
-MAX_BAD_BOOTS = 2     # bu kadar açılış sağlam sayılmadan biterse geri dön
+HEALTHY_AFTER = 90.0  # seconds: the new version counts as healthy once it stays up this long
+MAX_BAD_BOOTS = 2     # if this many boots end without counting as healthy, roll back
 EXTRA_PROBE = {"computer": "mss", "browser": "playwright", "app": "webview", "core": "pystray",
                "voice": "sounddevice", "home": "websockets"}
 
@@ -87,32 +87,32 @@ def settings(cfg: Any = None) -> dict[str, Any]:
     return out
 
 
-# --------------------------------------------------------------------------------- git yardımcıları
+# --------------------------------------------------------------------------------- git helpers
 _NET = ("ls-remote", "fetch", "pull")
 _token_cache: list[Any] = []
 
 
 def _auth_env() -> dict[str, str]:
-    """Özel depo: ağ işlemlerinde ALICE'in GitHub anahtarı (.env ya da `gh auth`) git'e verilir. Kurulum
-    sihirbazıyla kurulan bir bilgisayarda git'in kendi kayıtlı girişi olmayabilir; güncelleme yine çalışsın.
-    Anahtar yalnızca bu komutun ortamına girer (alice.tools.github.git_env)."""
+    """Private repo: for network operations, ALICE's GitHub key (.env or `gh auth`) is given to git. On a machine
+    set up with the installer wizard, git may not have its own saved login; the update should still work.
+    The key only enters this command's environment (alice.tools.github.git_env)."""
     try:
         from alice.tools.github import git_env, github_token
 
         if not _token_cache or time.monotonic() - _token_cache[1] > 3600:
-            # Ayar dosyası da verilmeli: depoya erişen anahtar oradaki GitHub bağlantısında olabiliyor. Ayarsız
-            # çağrılınca .env'deki (bu özel depoya yetkisiz) anahtar seçiliyor, git onu her kayıtlı girişin önüne
-            # koyduğu için güncelleme 403 ile düşüyordu (7 Kasım).
+            # Pass the config file too: the key that can reach the repo may be in its GitHub connection.
+            # Without it, the key from .env (not authorized for this private repo) gets picked, and since git puts it
+            # before every saved login, the update failed with 403 (7 Kasım / November 7).
             from alice.config import load_config
 
             try:
                 cfg = load_config()
-            except Exception:  # noqa: BLE001 - ayar okunamazsa yine dene
+            except Exception:  # noqa: BLE001 - if the config cannot be read, try anyway
                 cfg = None
             _token_cache[:] = [github_token(cfg), time.monotonic()]
         token = _token_cache[0]
         return {k: v for k, v in git_env(token).items() if k.startswith("GIT_CONFIG_")} if token else {}
-    except Exception:  # noqa: BLE001 - anahtar yoksa git'in kendi girişiyle dener
+    except Exception:  # noqa: BLE001 - if there is no key, try with git's own login
         return {}
 
 
@@ -124,13 +124,13 @@ def _git(args: list[str], cwd: Path, timeout: float = 30.0) -> tuple[int, str]:
             code, out = _git_run(args, cwd, timeout, {**env, **auth})
             if code == 0 or not any(s in out for s in ("403", "not granted", "Authentication failed")):
                 return code, out
-            # ALICE'in anahtarı bu depoya yetkili değil: git'in kendi kayıtlı girişiyle bir kez daha dene.
+            # ALICE's key is not authorized for this repo: try once more with git's own saved login.
     return _git_run(args, cwd, timeout, env)
 
 
 def git_exe() -> str | None:
-    """git'in yolu. Exe kurulumunda Git winget ile yeni kurulmuşsa PATH'e henüz girmemiş olur (kurulumun hemen ardından
-    açılan ALICE eski PATH'le çalışır): o zaman Git'in bilinen kurulum klasörlerine bakılır."""
+    """Path to git. In the exe install, if Git was just installed with winget it is not yet in PATH (ALICE started right
+    after the install runs with the old PATH): then Git's known install folders are checked."""
     found = shutil.which("git")
     if found or not WINDOWS:
         return found
@@ -150,7 +150,7 @@ _git_install_lock = threading.Lock()
 
 
 def git_installing() -> bool:
-    """winget ile Git şu an arka planda kuruluyor mu."""
+    """Is Git currently being installed in the background with winget?"""
     t = _git_install
     return t is not None and t.is_alive()
 
@@ -165,9 +165,9 @@ def _install_git(winget: str) -> None:
 
 
 def ensure_git(wait: bool = False) -> str | None:
-    """Git yoksa (Windows, winget varsa) kullanıcıya özel kur; günde en çok bir deneme. Kurulum arka planda yapılır
-    ve beklenmez (wait=False): winget 15 dakikaya kadar sürebiliyor, `alice app` açılışı bu sırada donuyordu. Kurulum
-    bitince sonraki kontrol Git'i bulur."""
+    """If Git is missing (Windows, winget available), install it for the user; at most one try per day. The install
+    runs in the background and is not awaited (wait=False): winget can take up to 15 minutes, and the `alice app`
+    startup used to freeze during that time. Once the install finishes, the next check finds Git."""
     global _git_install
     exe = git_exe()
     if exe or not WINDOWS:
@@ -202,7 +202,7 @@ def _git_run(args: list[str], cwd: Path, timeout: float, env: dict[str, str]) ->
 
 
 def repo_dir() -> Path | None:
-    """ALICE'in çalıştığı git deposu (editable kurulumda klonladığın klasör). Değilse None."""
+    """The git repo ALICE runs from (the folder you cloned in an editable install). None if it is not one."""
     root = Path(__file__).resolve().parent.parent
     if not (root / ".git").exists():
         return None
@@ -214,35 +214,36 @@ def repo_dir() -> Path | None:
 
 
 def install_root() -> Path | None:
-    """ALICE'in kaynak klasörü (editable kurulum: klon ya da exe'nin kurduğu klasör)."""
+    """ALICE's source folder (editable install: the clone, or the folder the exe installed)."""
     root = Path(__file__).resolve().parent.parent
     return root if (root / "alice" / "__init__.py").exists() and (root / "pyproject.toml").exists() else None
 
 
 def bootstrap_repo(root: Path, branch: str = "main") -> tuple[Path | None, str]:
-    """Kurulumda .git yoksa depoyu kurulumun derlendiği commit'ten (BUILD_FILE) yeniden kur. Çalışma dosyalarına
-    dokunulmaz: yalnız geçmiş indirilir ve dizin o commit'e bağlanır; sonraki güncellemeler normal yoldan çekilir."""
+    """If there is no .git in the install, re-create the repo from the commit the install was built from (BUILD_FILE).
+    The working files are not touched: only the history is downloaded and the folder is attached to that commit;
+    later updates are pulled the normal way."""
     try:
         sha = (root / BUILD_FILE).read_text(encoding="utf-8").strip()
     except OSError:
         sha = ""
     if not sha:
         return None, ""
-    # HEAD ayarlardaki dala bağlanır: başka dalda kalırsa otomatik güncelleme "depo 'main' dalında" diye durur.
+    # Attach HEAD to the configured branch; else auto-update stops with "depo 'main' dalında" (repo is on 'main').
     steps = [["init", "-q"], ["symbolic-ref", "HEAD", f"refs/heads/{branch}"], ["remote", "add", "origin", REMOTE_URL],
              ["fetch", "--depth", "1", "origin", sha], ["reset", "-q", "--mixed", "FETCH_HEAD"]]
     if WINDOWS:
-        steps.insert(1, ["config", "core.autocrlf", "true"])  # kurulumdaki dosyalar CRLF: "değişmiş" görünmesin
+        steps.insert(1, ["config", "core.autocrlf", "true"])  # install files are CRLF: so they don't look "changed"
     for args in steps:
         code, out = _git(args, root, timeout=300 if args[0] == "fetch" else 30)
         if code != 0:
-            shutil.rmtree(root / ".git", ignore_errors=True)  # yarım depo kalmasın, sonraki kontrol baştan denesin
+            shutil.rmtree(root / ".git", ignore_errors=True)  # no half-made repo left; the next check retries
             return None, f"git {args[0]} başarısız: {out.strip()[-200:]}"
     return repo_dir(), ""
 
 
 def _find_repo(branch: str = "main") -> tuple[Path | None, str]:
-    """Depo yoksa sebebini bul ve düzeltilebiliyorsa düzelt: Git'i bul/kur, eksik .git'i yeniden kur."""
+    """If there is no repo, find the reason and fix it if possible: find/install Git, re-create a missing .git."""
     repo = repo_dir()
     if repo is not None:
         return repo, ""
@@ -254,10 +255,10 @@ def _find_repo(branch: str = "main") -> tuple[Path | None, str]:
             return None, "Git arka planda kuruluyor; kurulum bitince güncelleme kendiliğinden denenecek"
         return None, ("Git bulunamadı; otomatik güncelleme için Git gerekiyor. Git'i kur (winget install Git.Git "
                       "ya da git-scm.com) ve ALICE'i yeniden aç")
-    # Uygulama ve çekirdek aynı anda buraya girebilir: biri .git'i kurarken öbürü yarım depoyu silmesin.
+    # The app and the core may both get here at once: one installing .git must not let the other delete it half-made.
     try:
         with update_lock():
-            repo = repo_dir()  # kilidi beklerken başka süreç kurmuş olabilir
+            repo = repo_dir()  # another process may have set it up while we waited for the lock
             if repo is not None:
                 return repo, ""
             if (root / ".git").exists():
@@ -289,12 +290,12 @@ def is_dirty(repo: Path) -> bool:
 
 
 def remote_head(repo: Path, branch: str, timeout: float = 20.0) -> tuple[str, str]:
-    """(sha, hata). Ağ turu bir tane: ls-remote fetch yapmaz."""
+    """(sha, error). One network round trip: ls-remote does not fetch."""
     code, out = _git(["ls-remote", "--heads", "origin", branch], repo, timeout=timeout)
     if code != 0:
         return "", out.strip().splitlines()[-1] if out.strip() else "ls-remote başarısız"
-    # ls-remote deseni sondan eşleşir: "main" deseni "refs/heads/x/main"i de getirir ve o (alfabetik önce gelen) dal
-    # alınıp yanlış commit "yeni sürüm" sanılıyordu. Tam ad aranır.
+    # ls-remote matches the pattern from the end: "main" also returns "refs/heads/x/main", and that branch (sorted
+    # first) was taken, so the wrong commit was treated as a "new version". The full name is searched.
     for line in out.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[1] == f"refs/heads/{branch}":
@@ -303,14 +304,14 @@ def remote_head(repo: Path, branch: str, timeout: float = 20.0) -> tuple[str, st
 
 
 def contains(repo: Path, sha: str, head: str = "HEAD") -> bool:
-    """`sha` yerel dalda zaten var mı (head'in atası ya da kendisi)? Commit yerelde yoksa False."""
+    """Is `sha` already in the local branch (an ancestor of head, or head itself)? False if the commit is not local."""
     code, _ = _git(["merge-base", "--is-ancestor", sha, head], repo, timeout=20)
     return code == 0
 
 
-# --------------------------------------------------------------------------------- GitHub (anahtarsız)
+# --------------------------------------------------------------------------------- GitHub (keyless)
 def _api(path: str, timeout: float = 8.0) -> Any:
-    """Anahtarsız GitHub API çağrısı. Ulaşılamazsa None (güncelleme buna takılmaz)."""
+    """Keyless GitHub API call. None if it cannot be reached (the update does not get stuck on it)."""
     import httpx
 
     try:
@@ -319,12 +320,12 @@ def _api(path: str, timeout: float = 8.0) -> Any:
         if r.status_code >= 400:
             return None
         return r.json()
-    except Exception:  # noqa: BLE001 - güncelleme kontrolü ağ hatasında sessizce "bilinmiyor"a düşer
+    except Exception:  # noqa: BLE001 - on a network error the update check quietly falls back to "bilinmiyor" (unknown)
         return None
 
 
 def commit_log(local: str, remote: str, timeout: float = 8.0) -> list[str]:
-    """İki commit arasındaki commit başlıkları (yeniden eskiye). Ulaşılamazsa boş liste."""
+    """Commit headlines between two commits (newest first). An empty list if they cannot be reached."""
     data = _api(f"/repos/{REPO}/compare/{local}...{remote}", timeout)
     if not isinstance(data, dict):
         return []
@@ -337,7 +338,7 @@ def commit_log(local: str, remote: str, timeout: float = 8.0) -> list[str]:
 
 
 def ci_state(sha: str, timeout: float = 8.0) -> str:
-    """"green" | "red" | "pending" | "unknown". Hem klasik status'lara hem check-run'lara bakar."""
+    """"green" | "red" | "pending" | "unknown". Checks both classic statuses and check-runs."""
     if not sha:
         return "unknown"
     seen = False
@@ -360,7 +361,7 @@ def ci_state(sha: str, timeout: float = 8.0) -> str:
     return "green" if seen else "unknown"
 
 
-# --------------------------------------------------------------------------------- durum
+# --------------------------------------------------------------------------------- status
 @dataclass
 class UpdateInfo:
     repo: Path | None = None
@@ -371,10 +372,10 @@ class UpdateInfo:
     commits: list[str] = field(default_factory=list)
     ci: str = "unknown"
     error: str = ""
-    running: str = ""       # bu sürecin başladığı commit (mark_running çağrıldıysa)
-    bad: bool = False       # uzaktaki commit daha önce açılamadığı için geri alındı
-    ahead: bool = False     # uzaktaki commit yerelde zaten var (yerel dal önde): çekecek bir şey yok
-    on: str = ""            # yerelde açık dal; ayarlardaki daldan farklıysa otomatik çekilmez
+    running: str = ""       # commit this process started with (if mark_running was called)
+    bad: bool = False       # the remote commit was rolled back because it could not be opened before
+    ahead: bool = False     # the remote commit already exists locally (local branch is ahead): nothing to pull
+    on: str = ""            # local branch; if it differs from the configured branch, it is not pulled automatically
 
     @property
     def available(self) -> bool:
@@ -382,17 +383,17 @@ class UpdateInfo:
 
     @property
     def stale(self) -> bool:
-        """Diskteki kod bu süreçten yeni: yeniden başlamak yeter, çekecek bir şey yok."""
+        """The code on disk is newer than this process: a restart is enough, there is nothing to pull."""
         return bool(self.running and self.local and self.running != self.local)
 
     @property
     def can_auto(self) -> bool:
-        """Soru sormadan uygulanabilir mi?"""
+        """Can it be applied without asking?"""
         return self.available and not self.blocked
 
     @property
     def blocked(self) -> str:
-        """Otomatik güncellemeyi durduran sebep (boşsa engel yok). Elle `--force` bunları geçer."""
+        """The reason that stops the automatic update (empty means no block). A manual `--force` gets past these."""
         if not self.available:
             return ""
         if self.bad:
@@ -404,14 +405,14 @@ class UpdateInfo:
         if self.ci == "red":
             return "yeni commit'in CI'ı kırmızı"
         if self.ci == "pending":
-            return "CI hâlâ sürüyor"  # birkaç dakika sonraki kontrolde yeşilse kendiliğinden geçer
+            return "CI hâlâ sürüyor"  # if it turns green at a check a few minutes later, it passes by itself
         return ""
 
     def as_dict(self) -> dict[str, Any]:
         return {"available": self.available, "branch": self.branch, "local": self.local[:7],
                 "remote": self.remote[:7], "commits": self.commits, "ci": self.ci, "dirty": self.dirty,
                 "blocked": self.blocked, "error": self.error, "count": len(self.commits), "stale": self.stale,
-                # Depo bilerek başka bir dalda (geliştirme): arayüz her açılışta çubuk çıkarmaz, elle denetlenince gösterir.
+                # On another branch on purpose (development): the UI shows it only when checked by hand.
                 "off_branch": bool(self.available and self.on and self.on not in ("HEAD", self.branch)),
                 "running": self.running[:7]}
 
@@ -429,9 +430,9 @@ def read_state() -> dict[str, Any]:
 
 
 def write_state(**kw: Any) -> None:
-    """Geçici dosyaya yazıp yerine koyar. Uygulama ve çekirdek aynı dosyayı yazıyor: doğrudan write_text sırasında
-    öbür süreç dosyayı yarım/boş okuyup {} sanıyor, kendi yazışında "bad" listesini ve bekleyen sağlık kontrolünü
-    siliyordu (geri alınmış bozuk sürüm yeniden çekilebilirdi)."""
+    """Writes to a temp file and then replaces the target. The app and the core write the same file: during a direct
+    write_text, the other process reads the file half-written or empty, takes it as {}, and in its own write wipes out
+    the "bad" list and the pending health check (a rolled-back broken version could be pulled again)."""
     import threading
 
     data = {**read_state(), **kw}
@@ -444,7 +445,7 @@ def write_state(**kw: Any) -> None:
             try:
                 os.replace(tmp, p)
                 break
-            except PermissionError:  # Windows: öbür süreç tam o an okuyor
+            except PermissionError:  # Windows: the other process is reading it at that moment
                 if i == 4:
                     raise
                 time.sleep(0.05)
@@ -455,15 +456,15 @@ def write_state(**kw: Any) -> None:
             pass
 
 
-# --------------------------------------------------------------------------------- süreçler arası
+# --------------------------------------------------------------------------------- between processes
 _RUNNING: str | None = None
-# saniye: bu kadar eski kilit, çökmüş bir süreçten kalmıştır. Meşru bir güncelleme en çok fetch 300 + pip 900 +
-# duman testi 180 sn sürebilir; 900 sn'de kilit güncelleme sürerken "bayat" sayılıp ikinci süreç git'e giriyordu.
+# seconds: a lock this old was left by a crashed process. A legitimate update can take up to fetch 300 + pip 900 +
+# smoke test 180 sec. At 900 sec, a lock held by a running update was seen as stale and a second process entered git.
 LOCK_STALE = 1800.0
 
 
 def mark_running() -> str:
-    """Bu sürecin hangi commit'le başladığını hatırla (uygulama ve çekirdek açılışta çağırır)."""
+    """Remember which commit this process started with (the app and the core call this at startup)."""
     global _RUNNING
     if _RUNNING is None:
         repo = repo_dir()
@@ -484,8 +485,8 @@ class UpdateBusy(RuntimeError):
 
 
 def _holder_alive(p: Path) -> bool:
-    """Kilidi tutan süreç hâlâ yaşıyor mu. Okunamıyorsa (yazılırken) ya da psutil yoksa yaşıyor sayılır; yalnız
-    yaşı belirler."""
+    """Is the process holding the lock still alive? If it cannot be read (it is being written) or psutil is missing,
+    it counts as alive; only its age decides."""
     try:
         pid = int(p.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -500,8 +501,8 @@ def _holder_alive(p: Path) -> bool:
         return True
 
 
-class update_lock:  # noqa: N801 - bağlam yöneticisi olarak okunur: with update_lock():
-    """Aynı anda tek süreç güncellesin (uygulama ve çekirdek aynı anda git'e girerse index.lock çakışır)."""
+class update_lock:  # noqa: N801 - used as a context manager: with update_lock():
+    """Only one process updates at a time (if the app and the core enter git at once, index.lock conflicts)."""
 
     def __enter__(self) -> "update_lock":
         p = _lock_path()
@@ -531,7 +532,7 @@ def _app_pid_path() -> Path:
 
 
 def mark_app() -> None:
-    """Uygulama açık: çekirdek güncellemeyi ona bıraksın."""
+    """The app is open: the core leaves the update to it."""
     try:
         _app_pid_path().parent.mkdir(parents=True, exist_ok=True)
         _app_pid_path().write_text(str(os.getpid()), encoding="utf-8")
@@ -558,30 +559,30 @@ def app_running() -> bool:
         if not psutil.pid_exists(pid):
             return False
         cmd = " ".join(psutil.Process(pid).cmdline()).lower()
-    except Exception:  # noqa: BLE001 - emin değilsek açık say: çekirdek gereksiz yere çekmesin
+    except Exception:  # noqa: BLE001 - if unsure, count it as open: the core should not pull for nothing
         return True
-    return "alice" in cmd and "app" in cmd  # pid başka bir programa geçmiş olabilir
+    return "alice" in cmd and "app" in cmd  # the pid may have been reassigned to another program
 
 
 def local_log(repo: Path, a: str, b: str, limit: int = 20) -> list[str]:
-    """İki commit arası başlıklar, yerel git'ten (fetch sonrası; API gerekmez)."""
+    """Headlines between two commits, from local git (after fetch; no API needed)."""
     code, out = _git(["log", "--format=%s", f"-n{limit}", f"{a}..{b}"], repo, timeout=20)
     return [line.strip()[:120] for line in out.splitlines() if line.strip()] if code == 0 else []
 
 
 def consume_announcement(who: str) -> dict[str, Any] | None:
-    """Son güncellemeyi bu tüketici (app | core) henüz duyurmadıysa döndür ve duyurulmuş say."""
+    """If this consumer (app | core) has not yet announced the last update, return it and mark it as announced."""
     st = read_state()
     if not st.get("last_update") or st.get(f"announced_{who}"):
         return None
     if time.time() - float(st.get("last_update") or 0) > 7 * 86400:
-        return None  # bir haftadan eski güncellemeyi artık duyurma
+        return None  # don't announce an update older than a week
     write_state(**{f"announced_{who}": True})
     return {"from": st.get("update_from", ""), "to": st.get("update_to", ""), "changes": st.get("changes") or []}
 
 
 def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -> UpdateInfo:
-    """Yeni commit var mı? Ağ turu: 1 (ls-remote) + ayrıntı istenirse 2 anahtarsız API çağrısı."""
+    """Is there a new commit? Network round trips: 1 (ls-remote), plus 2 keyless API calls if details are requested."""
     s = settings(cfg)
     branch = str(s.get("branch") or "main")
     repo, why = _find_repo(branch)
@@ -590,8 +591,8 @@ def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -
     info = UpdateInfo(repo=repo, branch=branch, local=local_commit(repo), running=_RUNNING or "")
     info.remote, info.error = remote_head(repo, branch, float(timeout or s.get("startup_timeout") or 12))
     info.bad = bool(info.remote) and info.remote in (read_state().get("bad") or [])
-    # Yerel dal uzaktakinden öndeyse (ör. main'den açılmış bir özellik dalı) SHA'lar farklıdır ama çekecek bir şey
-    # yoktur. Bu bakılmazsa her açılışta "yeni sürüm var" denip boş bir çekme ve yeniden başlatma yapılıyordu.
+    # If the local branch is ahead of the remote (e.g. a feature branch cut from main), the SHAs differ but there is
+    # nothing to pull. Without this check, every startup said "new version available" and did an empty pull and restart.
     info.ahead = info.local != info.remote and bool(info.remote) and contains(repo, info.remote)
     info.on = current_branch(repo)
     if info.available:
@@ -603,9 +604,9 @@ def check(cfg: Any = None, timeout: float | None = None, details: bool = True) -
     return info
 
 
-# --------------------------------------------------------------------------------- uygulama
+# --------------------------------------------------------------------------------- application
 def installed_extras() -> list[str]:
-    """Kurulu opsiyonel paketlere bakıp hangi extra'larla kurulduğunu tahmin et."""
+    """Check the installed optional packages and guess which extras they were installed with."""
     import importlib.util
 
     out = []
@@ -621,7 +622,7 @@ def installed_extras() -> list[str]:
 def _pip_needed(repo: Path, local: str, remote: str) -> bool:
     code, out = _git(["diff", "--name-only", f"{local}..{remote}"], repo, timeout=30)
     if code != 0:
-        return True  # emin değilsek kur: eksik bağımlılıkla açılmaktan iyidir
+        return True  # if unsure, install: better than starting with missing dependencies
     names = set(out.split())
     return bool(names & {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"})
 
@@ -646,7 +647,7 @@ def install_deps(repo: Path, emit: Callable[[str], None] | None = None) -> bool:
 
 def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = False,
                  emit: Callable[[str], None] | None = None) -> tuple[bool, str]:
-    """Fast-forward çek ve gerekirse bağımlılıkları kur. (başarılı mı, mesaj)."""
+    """Pull with fast-forward and install dependencies if needed. (success, message)."""
     info = info or check(cfg)
     say = emit or (lambda _m: None)
     if info.error and not info.available:
@@ -666,7 +667,7 @@ def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = 
 
 def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> tuple[bool, str]:
     if local_commit(repo) != info.local:
-        # Kilidi beklerken başka bir süreç zaten çekti: tekrar çekme, sonuç aynı.
+        # Another process already pulled while we waited for the lock: don't pull again, the result is the same.
         return True, f"zaten güncellendi: {local_commit(repo)[:7]}"
     say(f"güncelleme çekiliyor: {info.local[:7]} → {info.remote[:7]}")
     code, out = _git(["fetch", "--prune", "origin", info.branch], repo, timeout=300)
@@ -677,7 +678,7 @@ def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> t
         return False, ("fast-forward yapılamadı (yerel commit'lerin olabilir): " + out.strip()[-300:])
     new = local_commit(repo)
     if new == info.local:
-        # Çekme bir şey getirmedi: "güncellendi" deyip yeniden başlatırsak açılışta aynı döngüye gireriz.
+        # Nothing was pulled: restarting after "güncellendi" (updated) would loop at startup.
         write_state(local=new, remote=info.remote)
         return False, "zaten en son sürümdesin"
     if _pip_needed(repo, info.local, new):
@@ -695,9 +696,9 @@ def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> t
     return True, f"güncellendi: {info.local[:7]} → {new[:7]}" + (f" ({n} commit)" if n else "")
 
 
-# --------------------------------------------------------------------------------- geri alma
+# --------------------------------------------------------------------------------- rollback
 def smoke_test(repo: Path, timeout: float = 180.0) -> str:
-    """Yeni kodun ana modülleri temiz bir süreçte içe aktarılabiliyor mu? Sorun yoksa "", varsa kısa hata."""
+    """Can the main modules of the new code be imported in a clean process? "" if fine, otherwise a short error."""
     code = "import importlib\nfor m in %r:\n    importlib.import_module(m)\n" % (SMOKE_MODULES,)
     try:
         r = subprocess.run([sys.executable, "-c", code], cwd=str(repo), capture_output=True, text=True,
@@ -714,10 +715,10 @@ def smoke_test(repo: Path, timeout: float = 180.0) -> str:
 
 
 def rollback(repo: Path, good: str, bad: str, reason: str) -> bool:
-    """Çalışma ağacını iyi commit'e döndür, kötüyü bir daha otomatik çekilmesin diye işaretle.
+    """Reset the working tree to the good commit, and mark the bad one so it is not pulled again automatically.
 
-    --keep: `alice update --force` kirli ağaçta çekip duman testi düşünce --hard kullanıcının kaydedilmemiş
-    değişikliklerini siliyordu. --keep onları korur (fast-forward zaten çakışan dosyalara dokunmamıştı)."""
+    --keep: when `alice update --force` pulled into a dirty tree and the smoke test failed, --hard deleted the user's
+    unsaved changes. --keep preserves them (the fast-forward had not touched conflicting files anyway)."""
     code, _ = _git(["reset", "--keep", good], repo, timeout=60)
     if code != 0 and not is_dirty(repo):
         code, _ = _git(["reset", "--hard", good], repo, timeout=60)
@@ -730,8 +731,8 @@ def rollback(repo: Path, good: str, bad: str, reason: str) -> bool:
 
 
 def boot_check(repo: Path | None = None) -> str:
-    """Açılışta çağrılır. Güncellemeden sonra üst üste MAX_BAD_BOOTS açılış sağlam sayılmadan bittiyse önceki
-    commit'e döner ve "rolled" döndürür (çağıran yeniden başlatmalı); aksi halde ""."""
+    """Called at startup. If MAX_BAD_BOOTS boots in a row after an update end without counting as healthy, it goes
+    back to the previous commit and returns "rolled" (the caller must restart); otherwise ""."""
     st = read_state()
     pending = st.get("pending_health") or ""
     repo = repo or repo_dir()
@@ -740,7 +741,7 @@ def boot_check(repo: Path | None = None) -> str:
     boots = int(st.get("bad_boots") or 0)
     if boots >= MAX_BAD_BOOTS and st.get("update_from"):
         if is_dirty(repo):
-            return ""  # elle değişiklik yapılmış: dokunma
+            return ""  # manual changes were made: don't touch
         ok = rollback(repo, str(st["update_from"]), pending, f"{boots} açılış üst üste çöktü")
         return "rolled" if ok else ""
     write_state(bad_boots=boots + 1)
@@ -748,13 +749,13 @@ def boot_check(repo: Path | None = None) -> str:
 
 
 def boot_healthy() -> None:
-    """Süreç HEALTHY_AFTER saniye ayakta kaldı: yeni sürüm sağlam."""
+    """The process stayed up for HEALTHY_AFTER seconds: the new version is healthy."""
     if read_state().get("pending_health"):
         write_state(pending_health="", bad_boots=0)
 
 
 def watch_health(delay: float = HEALTHY_AFTER) -> None:
-    """Arka planda bekle, süreç hâlâ yaşıyorsa sağlam say (uygulama ve çekirdek açılışta çağırır)."""
+    """Wait in the background, then count the process as healthy if it is still alive (app and core call this)."""
     import threading
 
     if not read_state().get("pending_health"):
@@ -765,7 +766,7 @@ def watch_health(delay: float = HEALTHY_AFTER) -> None:
 
 
 def consume_rollback(who: str) -> dict[str, Any] | None:
-    """Geri alma olduysa bu tüketici (app | core) için bir kez döndür."""
+    """If a rollback happened, return it once for this consumer (app | core)."""
     rb = read_state().get("rollback")
     if not isinstance(rb, dict) or rb.get(f"announced_{who}") or time.time() - float(rb.get("ts") or 0) > 7 * 86400:
         return None
@@ -774,7 +775,7 @@ def consume_rollback(who: str) -> dict[str, Any] | None:
 
 
 def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, str] | None = None) -> None:
-    """Aynı komutla yeni bir süreç başlat ve bu süreci bitir. Dönmez."""
+    """Start a new process with the same command and end this one. Does not return."""
     args = argv if argv is not None else [sys.executable, "-m", "alice", *sys.argv[1:]]
     time.sleep(delay)
     try:
@@ -791,17 +792,17 @@ def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, st
 
 
 def _before_exit() -> None:
-    """os._exit atexit'i çalıştırmaz: sahipsiz kalacak Playwright sürücüsü core.log'a EPIPE yığını dökmesin."""
+    """os._exit does not run atexit: an orphaned Playwright driver must not dump an EPIPE trace into core.log."""
     try:
         from alice.tools.browser import kill_playwright_drivers
 
         kill_playwright_drivers()
-    except Exception:  # noqa: BLE001 - çıkışı hiçbir şey engellemesin
+    except Exception:  # noqa: BLE001 - nothing should block the exit
         pass
 
 
 def prepare(info: UpdateInfo, cfg: Any = None, ci_timeout: float = 5.0) -> UpdateInfo:
-    """Ayrıntısız kontrolün (tek ls-remote) üstüne otomatik uygulama için gerekenleri ekle: kirli ağaç, CI."""
+    """Add what automatic apply needs on top of the basic check (a single ls-remote): dirty tree, CI."""
     if not info.available:
         return info
     info.dirty = is_dirty(info.repo) if info.repo else False
@@ -812,20 +813,20 @@ def prepare(info: UpdateInfo, cfg: Any = None, ci_timeout: float = 5.0) -> Updat
 
 def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
                    restart_argv: list[str] | None = None) -> UpdateInfo | None:
-    """Açılışta çağrılır. mode="auto" ise güncellemeyi uygular ve süreci yeniden başlatır (dönmez).
+    """Called at startup. If mode="auto", it applies the update and restarts the process (does not return).
 
-    Geri dönen değer: kontrol sonucu (uygulanmadıysa arayüzde haber vermek için), ya da kapalıysa None.
+    Return value: the check result (so the UI can report it if it was not applied), or None if disabled.
     """
     s = settings(cfg)
     if s.get("mode") != "auto" or not s.get("startup_check", True):
-        return None  # notify/off: açılış hiç bekletilmez, kontrolü arka plan thread'i yapar
+        return None  # notify/off: startup is never held up, the background thread does the check
     if os.environ.get("ALICE_NO_UPDATE") or os.environ.get("ALICE_RESTARTED"):
-        return None  # yeniden başlatılan süreç tekrar kontrol edip döngüye girmesin
+        return None  # a restarted process must not check again and loop
     say = emit or (lambda _m: None)
-    # Her açılışta bakılır (tek ls-remote, saniyenin altında). Eskiden son 10 dakikada "güncel" denmişse hiç
-    # bakılmıyordu: merge'den hemen sonra açılan ALICE yeni sürümü görmüyordu.
-    # Açılışı bekletmemek için burada sadece tek ls-remote turu var; commit listesi gibi ayrıntılar
-    # (anahtarsız GitHub API) atlanır, CI'a da yalnız güncelleme varken ve kısa zaman aşımıyla bakılır.
+    # Checked on every startup (a single ls-remote, under a second). Before, a check within the last 10 minutes
+    # was skipped: an ALICE opened right after a merge did not see the new version.
+    # To avoid holding up startup, only one ls-remote runs here; details like the commit list (keyless GitHub
+    # API) are skipped, and CI is checked only when there is an update, with a short timeout.
     info = check(cfg, timeout=float(s.get("startup_timeout") or 12), details=False)
     if not info.available:
         return info
@@ -840,16 +841,16 @@ def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
         return info
     say("en son sürümle yeniden başlatılıyor…")
     args = restart_argv if restart_argv is not None else [sys.executable, "-m", "alice", *sys.argv[1:]]
-    # Yeni süreç açılışta tekrar kontrol edip döngüye girmesin: bayrak yalnız çocuğun ortamına konur.
+    # The new process must not check again at startup and loop: the flag is set only in the child's environment.
     restart(args, env={"ALICE_RESTARTED": "1"})
-    return None  # pragma: no cover - restart dönmez
+    return None  # pragma: no cover - restart does not return
 
 
-CI_RECHECK = 180.0  # saniye: yeni sürüm CI'ı bitmeyi bekliyorsa bu aralıkla tekrar bakılır (saatte bir değil)
+CI_RECHECK = 180.0  # seconds: while the new version's CI is pending, check again at this interval (not hourly)
 
 
 def due(cfg: Any = None) -> bool:
-    """Periyodik kontrolün zamanı geldi mi (uygulama açıkken)."""
+    """Is it time for the periodic check (while the app is open)?"""
     s = settings(cfg)
     if s.get("mode") == "off":
         return False

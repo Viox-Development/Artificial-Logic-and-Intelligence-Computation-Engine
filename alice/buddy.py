@@ -1,18 +1,18 @@
-"""BUDDY: ALICE'in köşesinde yaşayan küçük arkadaş (bir tür Tamagotchi).
+"""BUDDY: Little friend living in ALICE's corner (a kind of Tamagotchi).
 
-İki parçası var:
-* Kemikler (bones): türü, nadirliği, gözleri, şapkası, parlaklığı ve özellik puanları. Kullanıcıya özel bir
-  tohumdan HER SEFERİNDE yeniden hesaplanır, dosyaya yazılmaz: dosyayı düzenleyip "efsanevi" yapmak mümkün olmasın.
-* Ruh (soul): adı ve kişiliği. İlk açılışta bir kez (hızlı modelle, yoksa listeden) seçilir ve saklanır.
+It has two parts:
+* Bones: species, rarity, eyes, hat, shininess, and stat points. Recalculated EVERY TIME from a
+  user-specific seed, not written to file: so editing the file to make it "legendary" isn't possible.
+* Soul: name and personality. Chosen once on first run (with a fast model, otherwise from a list) and stored.
 
-Bakım durumu (tokluk, enerji, keyif, deneyim) ``~/.alice/buddy.json`` dosyasında durur ve zamanla değişir:
-konuştukça doyar ve deneyim kazanır, okşanınca keyiflenir, gece uyuyup enerji toplar, uzun süre ilgisiz kalırsa
-acıkır ve keyfi kaçar. Ara sıra konuşmaya kısa bir yorum yapar (seyrek, hızlı modelle).
+Care state (fullness, energy, mood, experience) lives in ``~/.alice/buddy.json`` and changes over time:
+it fills up and gains experience as you talk, cheers up when petted, sleeps at night to gather energy,
+gets hungry and grumpy if neglected for long. Occasionally makes a short comment on chat (rarely, fast model).
 
 config.toml:
   [buddy]
   enabled = true
-  chatter = true      # konuşmalara ara sıra yorum yapsın
+  chatter = true      # occasionally comment on conversations
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ STATS = ("ODAK", "MERAK", "SABIR", "ŞAKA", "KAOS")
 EYES = ("o", "•", "^", "◉", "°", "@", "ø")
 HATS = {"yok": "", "taç": " ♔ ", "silindir": " ▄█▄ ", "anten": "  ¦  ", "hale": " ◯ ", "kurdele": " ⋈ ", "yaprak": " ❦ "}
 
-# Türler: ad -> 3-4 satırlık çizim. {e} göz yerine geçer.
+# Species: name -> 3-4 line drawing. {e} stands in for eyes.
 SPECIES: dict[str, list[str]] = {
     "baykuş": [" ,___, ", " ({e},{e}) ", " /)  ) ", '  "  " '],
     "tilki": [" /\\_/\\ ", "( {e}.{e} )", " > ^ < ", "  ~~~ "],
@@ -92,7 +92,7 @@ class Bones:
 
 
 def roll(seed: str | None = None) -> Bones:
-    """Tohumdan kemikler: aynı kullanıcı her zaman aynı arkadaşı alır."""
+    """Bones from seed: the same user always gets the same buddy."""
     digest = hashlib.sha256(f"{seed or user_seed()}|{SALT}".encode()).digest()
     rng = random.Random(int.from_bytes(digest[:8], "big"))
     pick = rng.uniform(0, sum(w for _, w, _ in RARITIES))
@@ -118,7 +118,7 @@ def roll(seed: str | None = None) -> Bones:
     return Bones(species, rarity, eye, hat, shiny, stats)
 
 
-# ------------------------------------------------------------------------------------------ durum
+# ------------------------------------------------------------------------------------------ state
 def state_path() -> Path:
     from alice.config import alice_home
 
@@ -150,7 +150,7 @@ def _night(ts: float) -> bool:
 
 
 def _decay(st: dict[str, Any], now: float) -> None:
-    """Son güncellemeden bu yana geçen zamanın etkisi (saat saat)."""
+    """Effect of elapsed time since last update (hour by hour)."""
     for k in ("food", "energy", "mood"):
         st.setdefault(k, 80.0)
     last = float(st.get("updated") or now)
@@ -165,7 +165,7 @@ def _decay(st: dict[str, Any], now: float) -> None:
     day_h = hours - night_h
     st["food"] = _clamp(st.get("food", 80) - 4 * hours)
     st["energy"] = _clamp(st.get("energy", 80) + 10 * night_h - 3 * day_h)
-    low = 1.5 if st["food"] > 30 else 4.0  # açken keyfi daha hızlı kaçar
+    low = 1.5 if st["food"] > 30 else 4.0  # mood drops faster when hungry
     st["mood"] = _clamp(st.get("mood", 80) - low * hours)
     st["updated"] = now
 
@@ -189,7 +189,7 @@ def _soul(st: dict[str, Any], bones: Bones, router: Any = None) -> None:
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
             name = str(data.get("name") or "").strip()[:20]
             persona = str(data.get("persona") or "").strip()[:200]
-        except Exception:  # noqa: BLE001 - model yoksa listeden
+        except Exception:  # noqa: BLE001 - from list if no model
             pass
     rng = random.Random(hashlib.sha256((user_seed() + "|ad").encode()).digest())
     st["name"] = name or rng.choice(NAMES)
@@ -213,7 +213,7 @@ def _face_eye(word: str, bones: Bones) -> str:
 
 
 def view(cfg: Any = None, path: Path | None = None, router: Any = None, now: float | None = None) -> dict[str, Any]:
-    """Şu anki hâl (uygulama ve araç için). İlk çağrıda ruhu da oluşturur."""
+    """Current state (for app and tool). Also creates the soul on first call."""
     now = now or time.time()
     bones = roll()
     with _lock:
@@ -235,7 +235,7 @@ def view(cfg: Any = None, path: Path | None = None, router: Any = None, now: flo
 
 
 def act(action: str, value: str = "", path: Path | None = None, now: float | None = None) -> str:
-    """pet | feed | rename. Kısa sonuç cümlesi."""
+    """pet | feed | rename. Short result sentence."""
     now = now or time.time()
     with _lock:
         st = _load(path)
@@ -268,7 +268,7 @@ def act(action: str, value: str = "", path: Path | None = None, now: float | Non
 
 def on_turn(cfg: Any, router: Any = None, user: str = "", reply: str = "", path: Path | None = None,
             now: float | None = None, chance: float = 0.35) -> str:
-    """Bir konuşma turu bitti: doyur, deneyim ver; ara sıra kısa bir yorum yap. Yorumu döndürür ("" = sustu)."""
+    """A conversation turn ended: feed, grant exp; occasionally make a short comment. Returns comment ("" = silent)."""
     s = settings(cfg)
     if not s.get("enabled", True):
         return ""
@@ -307,7 +307,7 @@ def on_turn(cfg: Any, router: Any = None, user: str = "", reply: str = "", path:
 
 
 def card(cfg: Any = None, path: Path | None = None) -> str:
-    """Metin olarak kart (araç ve CLI için)."""
+    """Text card (for tool and CLI)."""
     v = view(cfg, path)
     stats = "  ".join(f"{k} {n}" for k, n in v["stats"].items())
     return "\n".join(v["art"]) + (

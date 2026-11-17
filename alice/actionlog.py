@@ -1,10 +1,11 @@
-"""Eylem kaydı: ALICE'in senin adına başkasına gönderdiği her şey (mesaj, DM, e-posta).
+"""Action log: everything ALICE sends to someone else on your behalf (message, DM, e-mail).
 
-"Bugün kime ne yazdın?" sorusunun cevabı burada. Gönderilen de, reddedilen de, başarısız olan da yazılır:
-güven için sadece yapılanı değil, yapılmak istenip durdurulanı da görmek gerekiyor.
+The answer to "Bugün kime ne yazdın?" (who did you write to today, and what?) lives here. Sent, rejected and
+failed actions are all recorded: for trust you need to see not only what was done, but also what was attempted
+and stopped.
 
-Kayıt `~/.alice/actions.jsonl` (satır başına bir JSON), 1 MB'ı geçince eskisi `.1` olur. Bilgisayarından
-çıkmaz.
+The log is `~/.alice/actions.jsonl` (one JSON per line); once it exceeds 1 MB the old file becomes `.1`. It never
+leaves your computer.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any
 from alice.config import alice_home
 
 MAX_BYTES = 1_000_000
-OUTCOMES = {"sent": "gönderildi", "failed": "başarısız", "rejected": "reddedildi", "blocked": "engellendi"}
+OUTCOMES = {"sent": "gönderildi", "failed": "başarısız", "rejected": "reddedildi", "blocked": "engellendi"}  # (sent, failed, rejected, blocked)
 _lock = threading.Lock()
 
 
@@ -44,21 +45,22 @@ def log(tool: str, summary: str, outcome: str, args: dict[str, Any] | None = Non
             with open(p, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
     except OSError:
-        pass  # kayıt yazılamadı diye eylem durmasın
+        pass  # the action must not stop just because the log could not be written
 
 
 def _read_lines(p: Path) -> list[str]:
     try:
-        # Yarım yazılmış (çökme/elektrik kesintisi) satırdaki bozuk bayt UnicodeDecodeError ile bütün kaydı
-        # okunmaz yapıyordu ("bugün kime ne yazdın" sorusu hata veriyordu).
+        # A corrupt byte in a half-written line (crash/power cut) used to make the whole log unreadable with
+        # UnicodeDecodeError (the "bugün kime ne yazdın" question returned an error).
         return p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
 
 
 def recent(limit: int = 50, since: float = 0.0) -> list[dict[str, Any]]:
-    """En yeniden eskiye. Dosya döndüyse istenen pencere `.1`'den tamamlanır: dönüşten hemen sonra bugünün
-    önceki kayıtları kaybolmuş gibi görünüyordu. İki dosya kilit altında okunur ki arada dönüş olmasın."""
+    """Newest to oldest. If the file has rotated, the requested window is completed from `.1`: right after a
+    rotation, earlier entries from today looked like they had vanished. Both files are read under the lock so
+    that no rotation happens in between."""
     p = path()
     out: list[dict[str, Any]] = []
     with _lock:

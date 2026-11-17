@@ -1,8 +1,8 @@
-"""Klasör seçici: çalışma klasörünü elle yol yazmadan seçmek için gezinme verisi.
+"""Folder picker: navigation data for selecting the working directory without typing paths manually.
 
-Arayüz bir klasörün alt klasörlerini, hızlı yerleri (ev, masaüstü, belgeler, indirilenler, GitHub, sürücüler) ve son
-kullanılan klasörleri ister; buradaki fonksiyonlar bunları üretir. Sadece okur, tek yazdığı şey "yeni klasör" ve son
-kullanılanlar listesidir.
+The UI requests subdirectories of a folder, quick places (home, desktop, documents, downloads, GitHub, drives), and
+recently used folders; the functions here produce them. Read-only, the only things written are "new folder" and the
+recently used list.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _recent_file() -> Path:
 
 
 def recent_dirs() -> list[str]:
-    """Son seçilen klasörler, en yenisi başta; artık olmayanlar atlanır."""
+    """Recently selected folders, newest first; nonexistent ones are skipped."""
     try:
         rows = json.loads(_recent_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -52,7 +52,7 @@ def _first_dir(*names: str) -> Path | None:
 
 
 def places(clone_root: Path | None = None) -> list[dict[str, str]]:
-    """Hızlı yerler: varsa ev, masaüstü, belgeler, indirilenler, GitHub ve (Windows'ta) sürücüler."""
+    """Quick places: home, desktop, documents, downloads, GitHub, and (on Windows) drives if present."""
     out: list[dict[str, str]] = [{"label": "Ev", "path": str(Path.home()), "icon": "home"}]
     for label, icon, names in (("Masaüstü", "screen", ("Desktop", "Masaüstü")),
                                ("Belgeler", "file", ("Documents", "Belgeler")),
@@ -73,7 +73,7 @@ def places(clone_root: Path | None = None) -> list[dict[str, str]]:
 
 
 def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
-    """Bir klasörün alt klasörleri. Boş yol ev klasörü demek. Erişilemeyen klasörde hata döner."""
+    """Subdirectories of a folder. Empty path means home folder. Returns an error on inaccessible folders."""
     p = Path(path).expanduser() if path else Path.home()
     try:
         p = p.resolve()
@@ -99,7 +99,7 @@ def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
         if len(dirs) >= LIST_MAX:
             break
     parent = str(p.parent) if p.parent != p else ""
-    # Ekmek kırıntısı: kökten bu klasöre kadar her parça tıklanabilir.
+    # Breadcrumbs: every segment from root to this folder is clickable.
     crumbs = [{"name": part.name or str(part), "path": str(part)} for part in reversed([p, *p.parents])]
     return {"ok": True, "path": str(p), "parent": parent, "dirs": dirs, "crumbs": crumbs,
             "git": (p / ".git").is_dir(), "truncated": len(dirs) >= LIST_MAX}

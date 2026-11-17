@@ -1,9 +1,10 @@
-"""Yerel CLIProxyAPI: hesap listesi, yeni hesap bağlama (OAuth linki), hesap silme.
+"""Local CLIProxyAPI: account list, connecting new accounts (OAuth link), deleting accounts.
 
-CLIProxyAPI `~/.alice/cliproxy` klasöründe çalışır (config.yaml, auths/, keys.txt). ALICE arayüzündeki
-"Claude Code proxy" kartı buradan beslenir: kullanıcı uygulamada bir servis seçip giriş linkine basar,
-hesap tarayıcıda eklenir. Birden çok hesap eklenirse proxy istekleri aralarında paylaştırır; biri limite
-takılınca otomatik sıradakine geçer (CLIProxyAPI'nin varsayılan round-robin + failover davranışı).
+CLIProxyAPI runs in the `~/.alice/cliproxy` directory (config.yaml, auths/, keys.txt). The
+"Claude Code proxy" card in the ALICE UI is fed from here: the user selects a service in the app and clicks the
+login link, and the account is added in the browser. If multiple accounts are added, the proxy distributes requests
+between them; when one hits a limit, it automatically switches to the next (CLIProxyAPI's default round-robin +
+failover behavior).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from alice.config import alice_home
 
 TIMEOUT = 6.0
 
-# Arayüzde "hesap ekle" için görünen servisler (CLIProxyAPI'nin OAuth destekledikleri).
+# Services displayed for "add account" in the UI (those supported by CLIProxyAPI for OAuth).
 PROVIDERS: tuple[tuple[str, str], ...] = (
     ("claude", "Claude (Pro / Max)"),
     ("codex", "ChatGPT (Codex)"),
@@ -37,17 +38,17 @@ FILE_PREFIXES = (("claude-", "claude"), ("codex-", "codex"), ("antigravity-", "a
 
 
 def home() -> Any:
-    """CLIProxyAPI klasörü (`~/.alice/cliproxy`)."""
+    """CLIProxyAPI directory (`~/.alice/cliproxy`)."""
     return alice_home() / "cliproxy"
 
 
 def binary_name() -> str:
-    """Platforma göre çalıştırılabilir dosya adı."""
+    """Executable file name according to the platform."""
     return "cli-proxy-api.exe" if os.name == "nt" else "cli-proxy-api"
 
 
 def settings() -> dict[str, Any]:
-    """Klasör, port ve yönetim anahtarı. Kurulu değilse installed=False, anahtar yoksa key=""."""
+    """Directory, port, and management key. If not installed, installed=False; if no key, key=""."""
     h = home()
     port = 8317
     try:
@@ -68,19 +69,19 @@ def settings() -> dict[str, Any]:
             "installed": (h / binary_name()).exists()}
 
 
-MODELS_TTL = 120.0  # sn
+MODELS_TTL = 120.0  # s
 _SKIP_MODELS = ("image", "embedding", "codex-auto-review", "tts")
 _models_cache: dict[str, Any] = {"at": 0.0, "ids": []}
 
 
 def live_models(fetch: Any = None) -> list[str]:
-    """Proxy'nin şu an sunduğu sohbet modelleri (/v1/models; bağlı hesaplara göre değişir). config'teki sabit
-    liste sadece Claude/GPT içeriyordu: Kimi ya da sonradan bağlanan hesapların modelleri menüde hiç görünmüyordu.
-    Proxy kapalıysa ya da cevap vermezse son bilinen liste (ilk seferde boş) döner."""
+    """Chat models currently offered by the proxy (/v1/models; varies by connected accounts). The hardcoded list in
+    config only contained Claude/GPT: models of Kimi or subsequently connected accounts were never visible in the menu.
+    If the proxy is down or does not respond, the last known list (initially empty) is returned."""
     now = time.monotonic()
     if _models_cache["at"] and now - _models_cache["at"] < MODELS_TTL:
         return list(_models_cache["ids"])
-    _models_cache["at"] = now  # hata da olsa her menü açılışında yeniden denenmesin
+    _models_cache["at"] = now  # do not retry on every menu open even if there is an error
     try:
         if fetch is None:
             s = settings()
@@ -96,13 +97,13 @@ def live_models(fetch: Any = None) -> list[str]:
             data = fetch()
         ids = sorted({str(m.get("id") or "") for m in data if isinstance(m, dict)} - {""})
         _models_cache["ids"] = [i for i in ids if not any(k in i.lower() for k in _SKIP_MODELS)]
-    except Exception:  # noqa: BLE001 - proxy kapalı: menü yine açılsın
+    except Exception:  # noqa: BLE001 - proxy is down: menu should still open
         pass
     return list(_models_cache["ids"])
 
 
-# Proxy modellerinin arayüzdeki grupları: (önek, grup kimliği, etiket). Kimlik gizleme deseni olarak da kullanılır:
-# "cliproxy:kimi-*" gizlenince bütün Kimi modelleri gizlenir.
+# UI groups for proxy models: (prefix, group ID, label). Also used as an ID hide pattern:
+# hiding "cliproxy:kimi-*" hides all Kimi models.
 GROUPS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("claude-",), "claude", "Claude (abonelik)"),
     (("gpt-", "codex", "o3", "o4"), "codex", "ChatGPT (abonelik)"),
@@ -113,7 +114,7 @@ GROUPS: tuple[tuple[tuple[str, ...], str, str], ...] = (
 
 
 def model_group(model: str) -> tuple[str, str, str]:
-    """(grup kimliği, etiket, gizleme deseni) - ör. kimi-k3 -> ("kimi", "Kimi", "cliproxy:kimi-*")."""
+    """(group ID, label, hide pattern) - e.g. kimi-k3 -> ("kimi", "Kimi", "cliproxy:kimi-*")."""
     low = model.lower()
     for prefixes, gid, label in GROUPS:
         if low.startswith(prefixes):
@@ -122,8 +123,8 @@ def model_group(model: str) -> tuple[str, str, str]:
 
 
 def tidy_models(ids: list[str], keep: int = 2) -> list[str]:
-    """Menü boğulmasın: tarihli sabit sürümler (…-20250514) ve eski kuşaklar atılır, her aileden en yeni `keep`
-    sürüm kalır. Aile = sürüm numaraları çıkarılmış ad (claude-opus-#, kimi-k#-code, gpt-#-terra)."""
+    """Keep menu uncluttered: dated fixed versions (…-20250514) and older generations are dropped, keeping the newest
+    `keep` versions per family. Family = name stripped of version numbers (claude-opus-#, kimi-k#-code, gpt-#-terra)."""
     import re as _re
 
     def nums(m: str) -> tuple[int, ...]:
@@ -131,7 +132,7 @@ def tidy_models(ids: list[str], keep: int = 2) -> list[str]:
 
     fresh = [m for m in ids if not _re.search(r"-\d{8}$", m)]
     top: dict[str, int] = {}
-    for m in fresh:  # satıcı başına en yeni ana sürüm (claude 5, kimi 3); gpt-oss-120b gibi adlar hesaba girmez
+    for m in fresh:  # newest major version per vendor (claude 5, kimi 3); names like gpt-oss-120b are not counted
         n = nums(m)
         if n and n[0] < 50:
             v = m.split("-", 1)[0]
@@ -141,7 +142,7 @@ def tidy_models(ids: list[str], keep: int = 2) -> list[str]:
         n = nums(m)
         v = m.split("-", 1)[0]
         if n and n[0] < 50 and n[0] < top.get(v, 0) - 1:
-            continue  # iki kuşak eski (claude-3-7-sonnet)
+            continue  # two generations old (claude-3-7-sonnet)
         fams.setdefault(_re.sub(r"\d+(?:[.-]\d+)*", "#", m), []).append(m)
     out: list[str] = []
     for members in fams.values():
@@ -164,25 +165,25 @@ def _req(method: str, path: str) -> dict[str, Any]:
         return {}
 
 
-# ------------------------------------------------------------------ başlatma
+# ------------------------------------------------------------------ startup
 _start_lock = threading.Lock()
 _last_start = 0.0
 START_RETRY_SECONDS = 60.0
 
 
 def running() -> bool:
-    """Yönetim API'si cevap veriyorsa proxy çalışıyor demektir."""
+    """If the management API responds, the proxy is running."""
     try:
         _req("GET", "/v8/management/credentials")
         return True
-    except Exception:  # noqa: BLE001 - kapalı/erişilemez
+    except Exception:  # noqa: BLE001 - closed/unreachable
         return False
 
 
 def ensure_affinity(path: Any) -> bool:
-    """Eski kurulumların config.yaml'ına routing.session-affinity ekle: aynı konuşma aynı hesapta kalsın. Hesaplar
-    sırayla dağıtılınca her istek başka hesaba (başka önbelleğe) gidiyor, Gemini'de önbellek isabeti %40'ta
-    kalıyordu. Kullanıcı açıkça false yazdıysa dokunulmaz. Değiştiyse True."""
+    """Add routing.session-affinity to config.yaml of older installations: keeps the same chat on the same account.
+    When accounts are distributed round-robin, each request goes to a different account (different cache), and
+    Gemini cache hit rate stayed at 40%. Left untouched if user explicitly set false. True if modified."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -202,7 +203,7 @@ def ensure_affinity(path: Any) -> bool:
 
 
 def start(wait_seconds: float = 8.0) -> dict[str, Any]:
-    """Proxy kapalıysa arka planda (ALICE'den bağımsız) başlat ve uç cevap verene kadar bekle."""
+    """If proxy is down, start it in the background (independent of ALICE) and wait until endpoint responds."""
     global _last_start
     s = settings()
     if not s["installed"]:
@@ -221,14 +222,14 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
             return {"ok": False, "error": f"{binary_name()} bulunamadı"}
         ensure_affinity(s["dir"] / "config.yaml")
         try:
-            log = open(s["dir"] / "server.out.log", "ab")  # noqa: SIM115 - çocuk süreç yazacak
+            log = open(s["dir"] / "server.out.log", "ab")  # noqa: SIM115 - child process will write
         except OSError:
             log = subprocess.DEVNULL
         kwargs: dict[str, Any] = {"cwd": str(s["dir"]), "stdout": log, "stderr": subprocess.STDOUT,
                                   "stdin": subprocess.DEVNULL, "close_fds": True}
         if os.name == "nt":
-            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW: ALICE kapansa da çalışsın,
-            # konsol penceresi açılmasın.
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW: keep running even if ALICE exits,
+            # do not open a console window.
             kwargs["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000
         try:
             subprocess.Popen([str(exe), "-config", str(s["dir"] / "config.yaml")], **kwargs)
@@ -246,7 +247,7 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
 
 
 def ensure_started() -> dict[str, Any]:
-    """Kuruluysa ve kapalıysa başlat; kurulu değilse sessizce atla."""
+    """Start if installed and down; silently skip if not installed."""
     if not settings()["installed"]:
         return {"ok": True, "skipped": "kurulu değil"}
     if running():
@@ -255,7 +256,7 @@ def ensure_started() -> dict[str, Any]:
 
 
 def start_in_background(install: bool = False, version: str = "") -> None:
-    """ALICE açılışını bekletmeden proxy'yi (gerekirse önce kurup) başlatmayı dene."""
+    """Try starting the proxy (installing first if needed) without blocking ALICE startup."""
 
     def run() -> None:
         if install:
@@ -263,7 +264,7 @@ def start_in_background(install: bool = False, version: str = "") -> None:
                 from alice.app import cliproxy_setup
 
                 cliproxy_setup.ensure_installed(version)
-            except Exception:  # noqa: BLE001 - indirme başarısızsa proxy'siz devam
+            except Exception:  # noqa: BLE001 - continue without proxy if download fails
                 pass
         ensure_started()
 
@@ -285,7 +286,7 @@ def _num(value: Any) -> float | None:
         return None
 
 
-# (sinyal öneki, etiket). Claude: 5 saatlik ve haftalık pencere; ChatGPT (Codex): birincil ve ikincil pencere.
+# (signal prefix, label). Claude: 5-hour and weekly window; ChatGPT (Codex): primary and secondary window.
 _WINDOWS = (("Anthropic-Ratelimit-Unified-5h", "5 saat"), ("Anthropic-Ratelimit-Unified-7d", "7 gün"),
             ("X-Codex-Primary", "kısa dönem"), ("X-Codex-Secondary", "hafta"))
 
@@ -298,7 +299,7 @@ def _window_label(sig: dict[str, Any], prefix: str, label: str) -> str:
 
 
 def _iso_ts(value: Any) -> float:
-    """ISO zaman damgası (Go'nun 7-9 haneli kesirli saniyesiyle) -> unix; okunamazsa 0."""
+    """ISO timestamp (with Go's 7-9 digit fractional seconds) -> unix; 0 if unreadable."""
     if not value:
         return 0.0
     from datetime import datetime
@@ -311,10 +312,10 @@ def _iso_ts(value: Any) -> float:
 
 
 def _quota_summary(quota: Any, now: float | None = None) -> dict[str, Any]:
-    """Hesabın kota pencereleri: {"windows": [{label, percent, reset, stale}], label, percent, reset}. Üstteki
-    label/percent/reset en dolu penceredir (çubuk onu gösterir). Önceden yalnız ilk pencere (5 saat) gösteriliyordu:
-    haftalığı %91 olan hesap "%13" görünüyordu. Sinyaller hesabın son isteğinden kalmadır; sıfırlanma zamanı geçmiş
-    pencere artık boştur (%0, stale): dün dolan 5 saatlik pencere bugün hâlâ "%100" diye gösteriliyordu."""
+    """Account quota windows: {"windows": [{label, percent, reset, stale}], label, percent, reset}. Top-level
+    label/percent/reset is the most utilized window (the bar shows it). Previously only the first window (5h) was shown:
+    an account at 91% weekly appeared as "13%". Signals remain from account's last request; a window past its reset time
+    is now empty (0%, stale): a 5-hour window filled yesterday was still being shown as "100%" today."""
     sig = (quota or {}).get("signals") if isinstance(quota, dict) else None
     if not isinstance(sig, dict):
         return {}
@@ -348,14 +349,14 @@ def _duration(seconds: float) -> str:
 
 
 def _cooldown_summary(cooldowns: Any, now: float | None = None) -> str:
-    """Bekleyen model varsa ne kadar kaldığı ("3 gün", "2 sa", "15 dk"), yoksa boş. Proxy süreyi `remaining_seconds`
-    ve `retry_at` ile veriyor; önceden bunlar okunmuyor, kart "beklemede · beklemede" yazıyordu."""
+    """If any model is waiting, how much time is left ("3 gün", "2 sa", "15 dk"), otherwise empty. Proxy reports time
+    via `remaining_seconds` and `retry_at`; previously these were not read, and card displayed "beklemede · beklemede"."""
     if not cooldowns:
         return ""
     items = cooldowns if isinstance(cooldowns, list) else [cooldowns]
     now = time.time() if now is None else now
     best = 0.0
-    unknown = False  # süresi okunamayan kayıt: proxy beklemede diyor ama ne kadar bilinmiyor
+    unknown = False  # unreadable duration record: proxy says waiting but duration is unknown
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -368,7 +369,7 @@ def _cooldown_summary(cooldowns: Any, now: float | None = None) -> str:
             unknown = True
         elif left > 0:
             best = max(best, left)
-    # Süresi geçmiş kayıtlar engel sayılmaz: proxy temizlemeden bıraksa hesap sonsuza dek "meşgul" kalıyordu.
+    # Expired records are not considered blockers: if proxy left without clearing, account stayed "busy" forever.
     return _duration(best) if best > 0 else "kısa süre" if unknown else ""
 
 
@@ -376,8 +377,8 @@ _SIGN_IN_CODES = ("invalid_grant", "refresh_failed", "unauthorized", "invalid_to
 
 
 def _account_error(f: dict[str, Any]) -> tuple[bool, str]:
-    """(yeniden giriş gerekli mi, kısa hata). Proxy, yenileme jetonu ölmüş hesabı `status: error, unavailable: true`
-    diye bildiriyor ama `requires_sign_in` çoğu zaman false kalıyor: kart bu hesapları "hazır" gösteriyordu."""
+    """(whether re-login is required, short error). Proxy reports an account with dead refresh token as
+    `status: error, unavailable: true`, but `requires_sign_in` often remains false: card was showing them as "ready"."""
     err = f.get("refresh_error") if isinstance(f.get("refresh_error"), dict) else {}
     code = str(err.get("code") or "").lower()
     msg = str(err.get("message") or f.get("status_message") or "")
@@ -387,7 +388,7 @@ def _account_error(f: dict[str, Any]) -> tuple[bool, str]:
         return True, "giriş süresi dolmuş"
     if str(f.get("status") or "").lower() == "error" or f.get("unavailable"):
         if f.get("quota_blocked") or _cooldown_summary(f.get("cooldowns")):
-            return False, ""  # kota: ayrı gösterilir
+            return False, ""  # quota: displayed separately
         return False, " ".join(msg.split())[:120] or "hata"
     return False, ""
 
@@ -422,19 +423,19 @@ def _account(f: dict[str, Any]) -> dict[str, Any]:
         "cooldown": cooldown,
         "quota": _quota_summary(f.get("quota")),
         "failed": int(f.get("failed") or 0),
-        # Ham cooldowns listesi değil, hâlâ süren bekleme: süresi geçmiş kayıt hesabı meşgul göstermez.
+        # Not raw cooldowns list, but currently active cooldown: expired records do not mark the account as busy.
         "ready": not (sign_in or error or f.get("disabled") or f.get("quota_blocked") or cooldown),
     }
 
 
-READY_TTL = 60.0  # sn
+READY_TTL = 60.0  # s
 _ready_cache: dict[str, Any] = {"at": 0.0, "groups": {}}
 
 
 def groups_ready(fetch: Any = None) -> dict[str, bool]:
-    """Servis (claude, codex, antigravity...) -> kullanılabilir en az bir hesabı var mı. Hesabı olmayan servis
-    sözlükte yoktur. Router bununla bütün hesapları dolu/girişi düşmüş servisi atlar: her istekte önce o servisi
-    deneyip hata beklemek yerine doğrudan sıradakine geçer. Proxy'ye ulaşılamazsa boş döner (hiçbiri atlanmaz)."""
+    """Service (claude, codex, antigravity...) -> whether it has at least one usable account. Services without accounts
+    are not in the dict. Router uses this to skip services with all accounts full/logged out: instead of trying that
+    service first on every request and waiting for an error, it moves straight to next. Returns empty if proxy unreachable (none skipped)."""
     now = time.monotonic()
     if fetch is None and _ready_cache["at"] and now - _ready_cache["at"] < READY_TTL:
         return dict(_ready_cache["groups"])
@@ -447,7 +448,7 @@ def groups_ready(fetch: Any = None) -> dict[str, bool]:
                 acc = _account(f)
                 if acc["provider"]:
                     out[acc["provider"]] = out.get(acc["provider"], False) or acc["ready"]
-    except Exception:  # noqa: BLE001 - proxy kapalı: bilinmiyor
+    except Exception:  # noqa: BLE001 - proxy is down: unknown
         out = {}
     if fetch is None:
         _ready_cache.update(at=now, groups=out)
@@ -455,7 +456,7 @@ def groups_ready(fetch: Any = None) -> dict[str, bool]:
 
 
 def status() -> dict[str, Any]:
-    """Kartın ihtiyacı olan her şey: kurulu mu, çalışıyor mu, hesaplar, eklenebilecek servisler."""
+    """Everything the card needs: whether installed, running, accounts, and services that can be added."""
     s = settings()
     out: dict[str, Any] = {
         "installed": bool(s["installed"]),
@@ -471,7 +472,7 @@ def status() -> dict[str, Any]:
         return out
     try:
         data = _req("GET", "/v8/management/credentials")
-    except Exception as e:  # noqa: BLE001 - kapalıysa başlatmayı dene, yine olmazsa "çalışmıyor" de
+    except Exception as e:  # noqa: BLE001 - if down try starting it, if still fails report "not running"
         started = start()
         if not started.get("ok"):
             out["error"] = str(started.get("error") or e)[:200]
@@ -489,14 +490,14 @@ def status() -> dict[str, Any]:
 
 
 def login_url(provider: str) -> dict[str, Any]:
-    """Bir servis için OAuth giriş linki başlat: {ok, url, state}. Kullanıcı linke basıp kendi hesabıyla girer."""
+    """Initiate OAuth login link for a service: {ok, url, state}. User clicks the link and signs in with their account."""
     provider = str(provider or "").strip().lower()
     if provider not in PROVIDER_NAMES and provider not in ("meta", "devin"):
         return {"ok": False, "error": "bilinmeyen servis"}
     try:
-        # is_webui=1: proxy tarayıcının döndüğü localhost:54545/1455 adresini dinleyip
-        # yönetim callback'ine yönlendirsin. Bu bayrak olmadan tarayıcı "bağlantı reddedildi"de kalıyor
-        # ve hesap hiç eklenmiyordu.
+        # is_webui=1: proxy listens to localhost:54545/1455 returned by the browser and
+        # redirects to management callback. Without this flag, browser got stuck on "connection refused"
+        # and account was never added.
         d = _req("GET", f"/v8/management/oauth/auth-url?provider={quote(provider)}&is_webui=1")
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:200]}
@@ -507,7 +508,7 @@ def login_url(provider: str) -> dict[str, Any]:
 
 
 def login_state(state: str) -> dict[str, Any]:
-    """Giriş tamamlandı mı: status "ok" ise hesap eklendi, "wait" ise devam ediyor."""
+    """Whether sign-in is complete: if status is "ok", account is added; if "wait", it is ongoing."""
     state = str(state or "").strip()
     if not state:
         return {"ok": False, "error": "eksik state"}
@@ -519,7 +520,7 @@ def login_state(state: str) -> dict[str, Any]:
 
 
 def cancel_login(state: str) -> dict[str, Any]:
-    """Vazgeçilen girişi iptal et."""
+    """Cancel an abandoned sign-in."""
     state = str(state or "").strip()
     if not state:
         return {"ok": False, "error": "eksik state"}
@@ -531,7 +532,7 @@ def cancel_login(state: str) -> dict[str, Any]:
 
 
 def remove(name: str) -> dict[str, Any]:
-    """Bir hesabı (auth dosyasını) kaldır. Ad dosya adı olmalı: claude-....json."""
+    """Remove an account (auth file). Name must be the file name: claude-....json."""
     name = str(name or "").strip()
     if not name.endswith(".json") or "/" in name or "\\" in name or ".." in name:
         return {"ok": False, "error": "geçersiz hesap adı"}

@@ -1,14 +1,14 @@
-"""Telefon uygulaması (/m): bilgisayarı telefondan yönetmek için durum, canlı ekran ve kontroller.
+"""Phone app (/m): status, live screen and controls for managing the computer from the phone.
 
-Telefon köprüsünün (alice phone) aynı sunucusunda, aynı anahtarla çalışır; yalnız yerel ağdan ulaşılır.
-  GET  /api/remote/status   -> mod, şu an durumu, sıcaklık/kullanım, öndeki program, son olaylar, önsezi
-  GET  /api/remote/screen   -> ekranın küçültülmüş JPEG'i (telefonda canlı görmek için)
-  GET  /api/remote/apps     -> Başlat menüsündeki uygulamalar (açmak için)
-  GET  /api/remote/windows  -> açık pencereler, öndeki işaretli (öne getirmek için: action "focus")
-  POST /api/remote/action   -> {"action": ...}: ses, medya, kilitle, uyku, kapatma zamanlayıcısı, uygulama/site aç,
-                               panoya yaz, metin yaz, HUD gizle/göster
+Runs on the same server and key as the phone bridge (alice phone); reachable only from the local network.
+  GET  /api/remote/status   -> mode, current state, temperature/usage, foreground program, recent events, anticipation
+  GET  /api/remote/screen   -> downscaled JPEG of the screen (for live viewing on the phone)
+  GET  /api/remote/apps     -> apps in the Start menu (to open)
+  GET  /api/remote/windows  -> open windows, foreground one marked (to bring to front: action "focus")
+  POST /api/remote/action   -> {"action": ...}: volume, media, lock, sleep, shutdown timer, open app/site,
+                               write to clipboard, type text, hide/show HUD
 
-Kapatma ve uyku telefondaki onaydan sonra gelir (arayüz sorar); kapatma her zaman 60 sn gecikmeli ve iptal edilebilir.
+Shutdown and sleep come after phone confirmation (the UI asks); shutdown is always delayed 60 s and can be cancelled.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ import time
 from typing import Any
 
 IS_WIN = sys.platform == "win32"
-SCREEN_W = 1280          # telefona giden ekran genişliği
+SCREEN_W = 1280          # screen width sent to the phone
 SCREEN_QUALITY = 62
-SCREEN_MIN_GAP = 0.35    # sn: ekran en sık bu kadar yakalanır (birkaç telefon aynı anda isterse)
+SCREEN_MIN_GAP = 0.35    # s: the screen is captured at most this often (if several phones ask at once)
 _screen_cache: dict[str, Any] = {"at": 0.0, "jpg": b""}
-PHONE_SKIP_KINDS = ("mode", "flight", "sam")  # telefona bildirilmeyen olaylar (mod değişimi, oyun içi uyarılar)
-NOW_CACHE = 30.0         # sn: uçuş geçmişinden hesaplanan "şu an" (~1 sn sürüyor) en çok bu kadar eski
+PHONE_SKIP_KINDS = ("mode", "flight", "sam")  # events not sent to the phone (mode changes, in-game warnings)
+NOW_CACHE = 30.0         # s: the "şu an" (now) state computed from flight history (~1 s to compute) is at most this old
 _now_cache: dict[str, Any] = {"at": -1e9, "now": {}}
 
 
@@ -55,9 +55,9 @@ def status() -> dict[str, Any]:
                 from alice.now import APP_NAMES
 
                 out["app"] = APP_NAMES.get(fg[2].lower(), fg[2].rsplit(".", 1)[0])
-            # Oyun içi uçuş uyarıları (SAM, füze, kilit) telefona gitmez: oyunda zaten sesli söyleniyor, telefon
-            # uygulaması her birini bildirim yapıyordu (7 Kasım: bir çatışmada onlarca "Füze atıldı!"). Çatışmada
-            # bu uyarılar son olayları doldurmasın diye daha geniş bakılıp sonra süzülür.
+            # In-game flight warnings (SAM, missile, lock) don't go to the phone: the game already speaks them aloud,
+            # and the phone app used to notify for each one (7 Nov: dozens of "Füze atıldı!" in one fight). So during
+            # a fight these warnings are looked up more widely and filtered afterwards, so they don't fill recent events.
             out["events"] = [{"ts": e.ts, "kind": e.kind, "title": e.title, "body": (e.body or "")[:240],
                               "severity": e.severity} for e in store.events(limit=300)
                              if e.kind not in PHONE_SKIP_KINDS and e.delivered][:15]
@@ -74,9 +74,9 @@ def status() -> dict[str, Any]:
                     "flights_today": snap.flights_today, "avg_min_today": snap.avg_min_today,
                     "next_game": snap.next_game, "advice": snap.advice, "in_game": snap.in_game})
             out["now"] = _now_cache["now"]
-    except Exception:  # noqa: BLE001 - veritabanı meşgul: kart yine açılsın
+    except Exception:  # noqa: BLE001 - database busy: the card still opens
         out.setdefault("events", [])
-    try:  # medya kartında ne çaldığı (Spotify, Sonora, tarayıcı...)
+    try:  # what is playing in the media card (Spotify, Sonora, browser...)
         from alice.extras import nowplaying
 
         n = nowplaying.now()
@@ -99,8 +99,8 @@ SERIES_POINTS = 20
 
 
 def series(store, minutes: float = SERIES_MINUTES, points: int = SERIES_POINTS) -> dict[str, list[float]]:
-    """Telefondaki küçük grafikler: her ölçümün son birkaç dakikası, eşit aralıklı en fazla `points` değer.
-    Aralıkta örnek yoksa bir önceki değer tekrarlanır; hiç örnek yoksa liste boştur."""
+    """Small charts on the phone: the last few minutes of each measurement, at most `points` evenly spaced values.
+    If a bucket has no sample, the previous value is repeated; the list is empty if there are no samples at all."""
     now = time.time()
     since = now - minutes * 60
     step = (now - since) / points
@@ -126,7 +126,7 @@ def series(store, minutes: float = SERIES_MINUTES, points: int = SERIES_POINTS) 
 
 
 def windows() -> list[dict[str, Any]]:
-    """Açık pencereler (başlığı olan, simge durumunda olmayanlar dahil), öndeki işaretli. Telefondan öne getirmek için."""
+    """Open windows (titled, incl. non-minimized), foreground one marked. To bring to front from the phone."""
     rows: list[dict[str, Any]] = []
     if IS_WIN:
         try:
@@ -159,14 +159,14 @@ def windows() -> list[dict[str, Any]]:
             for title in list_windows():
                 app = title.rsplit(" - ", 1)[-1].strip() if " - " in title else title
                 rows.append({"title": title, "app": app[:40], "active": False, "minimized": False})
-        except Exception:  # noqa: BLE001 - wmctrl yok
+        except Exception:  # noqa: BLE001 - wmctrl not installed
             return []
     rows.sort(key=lambda r: (not r["active"], r["minimized"]))
     return rows[:20]
 
 
 def screen_jpeg(monitor: int = 1) -> bytes:
-    """Ekranın küçültülmüş hali. HUD ve ALICE'in kendi pencereleri görüntüye girmez (ekran görüntüsünden hariç)."""
+    """Downscaled screen. The HUD and ALICE's own windows stay out of the image (excluded from the screenshot)."""
     now = time.monotonic()
     if now - _screen_cache["at"] < SCREEN_MIN_GAP and _screen_cache["jpg"]:
         return _screen_cache["jpg"]
@@ -217,7 +217,7 @@ def _sleep() -> str:
 
 
 def _foreground_title() -> str | None:
-    """Odaktaki pencerenin başlığı ("" = masaüstü/başlıksız). Windows dışında None (bilinmiyor)."""
+    """Title of the focused window ("" = desktop/untitled). None outside Windows (unknown)."""
     if not IS_WIN:
         return None
     import ctypes
@@ -232,8 +232,8 @@ def _foreground_title() -> str | None:
 
 
 def _type(text: str, enter: bool = False) -> str:
-    """Odaktaki pencereye yaz. Telefondan bakan kullanıcı hangi pencerenin odakta olduğunu göremiyor: yazının nereye
-    gittiği söylenir, odakta pencere yoksa yazılmaz (eskiden masaüstüne yazılıp "hiçbir şey olmadı" sanılıyordu)."""
+    """Type into the focused window. The phone user cannot see which window has focus, so the target is reported;
+    with no window focused, nothing is typed (it used to go to the desktop and looked like "nothing happened")."""
     from alice.tools.computer import press_keys, type_text
 
     title = _foreground_title()
@@ -242,17 +242,17 @@ def _type(text: str, enter: bool = False) -> str:
     type_text(text)
     if enter:
         press_keys("enter")
-    _screen_cache["at"] = 0.0  # sonucu hemen görsün
+    _screen_cache["at"] = 0.0  # show the result right away
     return f"yazıldı → {title[:60]}" if title else "yazıldı"
 
 
 def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
-    """Telefondaki ekran görüntüsünde dokunulan yer (0-1 kesirleri) -> ana ekranın pikseli (screen_jpeg ile aynı ekran)."""
+    """Point tapped on the phone's screenshot (0-1 fractions) -> pixel on the main screen (as in screen_jpeg)."""
     import mss
 
     from alice.tools.computer import _pyautogui
 
-    _pyautogui()  # DPI farkındalığı: mss ile pyautogui aynı pikselleri görsün (%125/%150 ölçekte)
+    _pyautogui()  # DPI awareness: mss and pyautogui must see the same pixels (at 125%/150% scaling)
     try:
         fx, fy = float(d.get("x")), float(d.get("y"))
     except (TypeError, ValueError):
@@ -275,7 +275,7 @@ def _click(d: dict[str, Any]) -> str:
 
 
 def _scroll(d: dict[str, Any]) -> str:
-    """Tekerlek: dy > 0 aşağı, < 0 yukarı (çentik)."""
+    """Wheel: dy > 0 down, < 0 up (notches)."""
     from alice.tools.computer import _pyautogui
 
     pg = _pyautogui()
@@ -286,7 +286,7 @@ def _scroll(d: dict[str, Any]) -> str:
         dy = 0
     if dy:
         pg.moveTo(x, y)
-        pg.scroll(-dy * 120)  # Windows tekerleğinde bir çentik 120 birim
+        pg.scroll(-dy * 120)  # on Windows, one wheel notch is 120 units
         _screen_cache["at"] = 0.0
     return "tamam"
 
@@ -309,14 +309,14 @@ def _hud_toggle() -> str:
 
 
 def action(d: dict[str, Any]) -> str:
-    """Telefondan gelen bir kontrol. Başarısızsa ValueError (mesajı telefona gider)."""
+    """A control from the phone. On failure raises ValueError (the message is sent to the phone)."""
     from alice.extras import media
 
     a = str(d.get("action") or "")
     if a in ("play_pause", "next", "previous"):
         from alice.extras import nowplaying
 
-        if nowplaying.control(a):  # tam çalan uygulamaya (medya tuşu son odaklanana gidiyordu)
+        if nowplaying.control(a):  # to the app that is actually playing (the media key used to go to the last-focused one)
             return "tamam"
     if a in ("play_pause", "next", "previous", "mute", "volume_up", "volume_down"):
         return media.key(a, int(d.get("times") or (3 if a.startswith("volume") else 1)))
@@ -327,7 +327,7 @@ def action(d: dict[str, Any]) -> str:
     if a == "sleep":
         return _sleep()
     if a == "shutdown":
-        return media.shutdown_in(1)  # 60 sn: telefondan "İptal" ile geri alınır
+        return media.shutdown_in(1)  # 60 s: undo from the phone with "İptal" (Cancel)
     if a == "cancel_shutdown":
         return media.cancel_shutdown()
     if a == "open":
@@ -342,7 +342,7 @@ def action(d: dict[str, Any]) -> str:
         if not text:
             raise ValueError("yazılacak metin boş")
         return _type(text[:2000], enter=bool(d.get("enter")))
-    if a == "click":  # telefondaki canlı ekranda dokunma
+    if a == "click":  # tap on the live screen on the phone
         return _click(d)
     if a == "scroll":
         return _scroll(d)

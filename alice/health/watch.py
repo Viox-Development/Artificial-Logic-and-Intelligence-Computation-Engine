@@ -1,4 +1,4 @@
-"""Gadgetbridge veritabanından içe alma, canlı veri girişi ve veri sıklığı ölçümü."""
+"""Importing from the Gadgetbridge database, live data intake, and measuring data frequency."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 from alice.config import alice_home
 from alice.core.store import Store
 
-# Gadgetbridge sütunu -> ALICE anahtarı ve geçerli aralık
+# Gadgetbridge column -> ALICE key and valid range
 COLUMNS = {
     "HEART_RATE": ("watch.hr", 30, 230),
     "STEPS": ("watch.steps", 0, 10000),
@@ -54,11 +54,11 @@ def _match(col: str) -> str | None:
 
 
 def import_gadgetbridge(db: Path, store: Store) -> dict[str, int]:
-    """Son içe almadan beri gelen örnekleri depoya yaz. Anahtar başına eklenen sayı döner."""
+    """Write the samples that arrived since the last import to the store. Returns the count added per key."""
     st = _load_state()
     marks: dict[str, float] = st.get("marks", {})
     added: dict[str, int] = {}
-    # Telefon dosyayı yazarken açmamak için kopyasından oku.
+    # Read from a copy so the phone's file is not opened while it is being written.
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "gb.db"
         shutil.copy2(db, copy)
@@ -85,7 +85,7 @@ def import_gadgetbridge(db: Path, store: Store) -> dict[str, int]:
                         last = max(last, ts)
                         if v is None or not lo <= v <= hi or (kind == "STEPS" and v == 0):
                             continue
-                        sec = ts / 1000 if ts > 1e11 else ts  # bazı tablolar milisaniye
+                        sec = ts / 1000 if ts > 1e11 else ts  # some tables use milliseconds
                         batch.append((float(sec), float(v)))
                     for sec, v in batch:
                         store.add(key, v, ts=sec)
@@ -101,7 +101,7 @@ def import_gadgetbridge(db: Path, store: Store) -> dict[str, int]:
 
 
 def ingest(store: Store, payload: dict[str, Any]) -> int:
-    """Canlı veri: {"hr": 88, "ts": 1700000000} ya da {"samples": [{...}, ...]}. Eklenen sayı."""
+    """Live data: {"hr": 88, "ts": 1700000000} or {"samples": [{...}, ...]}. Returns the number added."""
     items = payload.get("samples") if isinstance(payload.get("samples"), list) else [payload]
     n = 0
     for item in items:
@@ -127,7 +127,7 @@ def ingest(store: Store, payload: dict[str, Any]) -> int:
 
 
 def cadence(store: Store, key: str = "watch.hr", since_hours: float = 24) -> dict[str, Any]:
-    """Veri ne sıklıkla geliyor? Planın 'Gadgetbridge testi' sorusunun cevabı."""
+    """How often is data arriving? The answer to the plan's 'Gadgetbridge testi' (Gadgetbridge test) question."""
     pts = store.series(key, since=time.time() - since_hours * 3600)
     last = store.last(key)
     out: dict[str, Any] = {"key": key, "count": len(pts), "last_age_s": time.time() - last[0] if last else None}
@@ -145,7 +145,7 @@ def cadence(store: Store, key: str = "watch.hr", since_hours: float = 24) -> dic
 
 
 def find_export(path: str) -> Path | None:
-    """Ayardaki yol bir dosyaysa o, klasörse içindeki en yeni .db."""
+    """If the path in settings is a file, that file; if it is a folder, the newest .db inside it."""
     if not path:
         return None
     p = Path(path).expanduser()
@@ -158,7 +158,7 @@ def find_export(path: str) -> Path | None:
 
 
 class WatchMonitor:
-    """Çekirdek gözlemcisi: dışa aktarılan veritabanı değiştikçe içe alır."""
+    """Core observer: imports whenever the exported database changes."""
 
     name = "watch"
 
@@ -175,7 +175,7 @@ class WatchMonitor:
         mt = db.stat().st_mtime
         if mt <= self._mtime:
             return []
-        # Senkronizasyon yazmayı bitirsin.
+        # Let the sync finish writing.
         if time.time() - mt < 10:
             return []
         self._mtime = mt

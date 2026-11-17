@@ -1,13 +1,14 @@
-"""Günlük sağlık raporu: ALICE'in kendi bileşenlerinden bozulanı kendisi söylesin.
+"""Daily health report: let ALICE itself say which of its own components is broken.
 
-Takvim iki hafta her saat 404 verdi; hata sadece olay kaydına "hafıza işi hata verdi" diye yazıldığı için kimse fark
-etmedi. Günde bir (sabah 9'dan sonra) şunlara bakılır:
-  * `alice doctor` kontrolleri (takvim gerçekten okunur, Gmail token'ı yenilenir ...): bozuk ya da eksik olanlar
-  * son 24 saatte en az 3 kez tekrarlanan hata kayıtları
-  * çoğu isteği hata veren modeller (usage.json: dün ve bugün)
-  * dolmak üzere olan diskler, şişen veritabanı
-Sadece yeni çıkan sorunlar bildirilir; süren sorun 3 günde bir hatırlatılır, düzelen sorun bir kez "düzeldi" diye
-söylenir. Sorun yoksa susar. Bildirim mod yüzünden susturulursa (uçuş) sonraki turda yeniden denenir.
+The calendar returned 404 every hour for two weeks; nobody noticed, because the error was only written to the event log
+as "memory job failed" ("hafıza işi hata verdi"). It is checked once a day (after 9 in the morning):
+  * `alice doctor` checks (the calendar is really read, the Gmail token is refreshed ...): the broken or missing ones
+  * error records repeated at least 3 times in the last 24 hours
+  * models that fail most requests (usage.json: yesterday and today)
+  * disks about to fill up, a bloated database
+Only newly appearing problems are reported; an ongoing problem is reminded about every 3 days, and a problem that gets
+fixed is announced once as "fixed" ("düzeldi"). If there is no problem, it stays silent. If the notification is silenced
+by the mode (flight), it is retried on the next turn.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from alice.config import alice_home
 RUN_EVERY = 20 * 3600
 REMIND_EVERY = 3 * 86400
 START_HOUR = 9
-ERROR_REPEAT = 3       # 24 saatte bu kadar tekrarlanan hata sorun sayılır
+ERROR_REPEAT = 3       # this many repeated errors within 24 hours count as a problem
 MODEL_MIN_ERRORS = 5
 
 
@@ -48,7 +49,7 @@ def _save(path: Path, st: dict[str, Any]) -> None:
 
 def collect(cfg, store, now: float | None = None, network: bool = True,
             doctor_checks: Callable[[], list] | None = None, usage: dict[str, Any] | None = None) -> dict[str, str]:
-    """Şu anki sorunlar: {anahtar: tek satır açıklama}."""
+    """Current problems: {key: one-line description}."""
     now = time.time() if now is None else now
     found: dict[str, str] = {}
     try:
@@ -59,9 +60,9 @@ def collect(cfg, store, now: float | None = None, network: bool = True,
         else:
             checks = doctor_checks()
         for c in checks:
-            if c.status == "fail" or (c.status == "warn" and "sorun değil" not in c.fix):  # yedeği çalışan uyarı değil
+            if c.status == "fail" or (c.status == "warn" and "sorun değil" not in c.fix):  # a warning whose fallback works ("sorun değil": "no problem") is not a problem
                 found[f"doctor:{c.name}"] = f"{c.name}: {c.detail}" + (f" (çözüm: {c.fix})" if c.fix else "")
-    except Exception as e:  # noqa: BLE001 - kontrol listesi çökse de diğerleri sürsün
+    except Exception as e:  # noqa: BLE001 - even if the check list crashes, the others keep running
         found["doctor"] = f"kontroller çalışmadı: {str(e)[:120]}"
     if store is not None:
         counts: dict[str, list] = {}
@@ -101,12 +102,12 @@ def collect(cfg, store, now: float | None = None, network: bool = True,
 
 def report(cfg, store, send: Callable[[str, str], bool], now: float | None = None, force: bool = False,
            path: Path | None = None, **kw) -> str | None:
-    """Vakti geldiyse kontrol et, yeni/düzelen sorun varsa `send(başlık, metin)` ile söyle. Söylenen metni döndürür."""
+    """If it is time, check; if there are new or fixed problems, tell via `send(title, body)`. Returns the text said."""
     now = time.time() if now is None else now
     path = path or state_path()
     st = _load(path)
     pending = st.get("pending")
-    if pending and not force:  # önceki rapor susturulmuştu (uçuş modu): kontrolü tekrarlamadan yeniden dene
+    if pending and not force:  # previous report was silenced (flight mode): retry the send, skip the checks
         if send(pending["title"], pending["body"]):
             st.pop("pending")
             _save(path, st)
@@ -140,7 +141,7 @@ def report(cfg, store, send: Callable[[str, str], bool], now: float | None = Non
 
 
 def summary_now(cfg, store, **kw) -> str:
-    """Sohbetten "sağlığın nasıl?" için: bildirim durumuna bakmadan şu anki sorunlar."""
+    """For chat questions like "sağlığın nasıl?" (how is my health?): current problems, ignoring notification state."""
     found = collect(cfg, store, **kw)
     if not found:
         return "Her şey çalışıyor: kontrollerde, hata kayıtlarında ve modellerde sorun yok."

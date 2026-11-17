@@ -1,9 +1,9 @@
-"""DCS World bağlantısı.
+"""DCS World connection.
 
-  install()       -> Saved Games\\DCS*\\Scripts altına alice_export.lua koyar, Export.lua'ya bir satır ekler;
-                     Scripts\\Hooks altına kanat adamı hook'unu koyar (bkz. alice/sims/wingmen.py)
-  DCSListener     -> betiğin UDP ile gönderdiği veriyi alır, FlightState'e çevirir
-  read_mission()  -> .miz görev dosyasından oyuncunun grubunu, frekansını ve waypoint'lerini çıkarır
+  install()       -> Puts alice_export.lua in Saved Games\\DCS*\\Scripts, adds one line to Export.lua;
+                     puts the wingman hook in Scripts\\Hooks (see alice/sims/wingmen.py)
+  DCSListener     -> receives the data the script sends over UDP and turns it into FlightState
+  read_mission()  -> extracts the player's group, frequency and waypoints from the .miz mission file
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ EXPORT_LINE = ("pcall(function() local aliceLfs = require('lfs'); "
 
 
 def saved_games_dirs() -> list[Path]:
-    """DCS'in Saved Games klasörleri (kararlı ve open beta)."""
+    """DCS's Saved Games folders (stable and open beta)."""
     base = Path(os.environ.get("USERPROFILE", Path.home())) / "Saved Games"
     return [p for p in (base / "DCS", base / "DCS.openbeta") if p.is_dir()]
 
@@ -43,13 +43,13 @@ def _export_lua(port: int) -> str:
 
 
 def _lua_str(text: str) -> str:
-    """Python metni -> güvenli Lua string sabiti (tırnak, ters bölü kaçışlı; kontrol karakterleri atılır)."""
+    """Python text -> safe Lua string literal (quoted and backslash-escaped; control characters dropped)."""
     clean = "".join(ch for ch in str(text) if ch >= " " and ch != "\x7f")[:60]
     return '"' + clean.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def hook_lua(port: int = WINGMEN_PORT, names: list[str] | None = None) -> str:
-    """Kanat adamı hook'unun kurulacak içeriği: port ve isteğe bağlı sabit grup listesi ([sims] dcs_wingmen)."""
+    """Content of the wingman hook to install: port and optional fixed group list ([sims] dcs_wingmen)."""
     table = "{" + ", ".join(_lua_str(n) for n in (names or []) if str(n).strip()) + "}"
     return (HOOK.read_text(encoding="utf-8")
             .replace("local ALICE_PORT = 41231", f"local ALICE_PORT = {int(port)}", 1)
@@ -58,7 +58,7 @@ def hook_lua(port: int = WINGMEN_PORT, names: list[str] | None = None) -> str:
 
 def install(dirs: list[Path] | None = None, port: int = PORT, wingmen_port: int = WINGMEN_PORT,
             wingmen: list[str] | None = None) -> list[Path]:
-    """Betiği ve kanat hook'unu kur. Export.lua'da satır zaten varsa tekrar eklemez. Kurulan klasörleri döndürür."""
+    """Install the script and wingman hook. Doesn't re-add the line if Export.lua has it. Returns installed folders."""
     done = []
     lua, hook = _export_lua(port), hook_lua(wingmen_port, wingmen)
     for d in dirs if dirs is not None else saved_games_dirs():
@@ -77,7 +77,7 @@ def install(dirs: list[Path] | None = None, port: int = PORT, wingmen_port: int 
 
 def ensure_installed(dirs: list[Path] | None = None, port: int = PORT, wingmen_port: int = WINGMEN_PORT,
                      wingmen: list[str] | None = None) -> list[Path]:
-    """Kurulu değilse ya da betik/hook değişmişse kur (çekirdek açılışta çağırır). Kurulan klasörleri döndürür."""
+    """Install if missing or if the script/hook changed (the core calls this on startup). Returns installed folders."""
     lua, hook = _export_lua(port), hook_lua(wingmen_port, wingmen)
     read = lambda p: p.read_text(encoding="utf-8", errors="replace") if p.exists() else None  # noqa: E731
     todo = []
@@ -109,20 +109,20 @@ def uninstall(dirs: list[Path] | None = None) -> list[Path]:
 
 
 def to_state(d: dict[str, Any], internal_fuel_kg: float | None = None) -> FlightState:
-    """Betiğin gönderdiği sözlüğü FlightState'e çevir."""
+    """Convert the dict sent by the script into a FlightState."""
     aircraft = str(d.get("aircraft") or "")
     fuel = None
     fi, fe = d.get("fuel_int"), d.get("fuel_ext")
     if isinstance(fi, (int, float)):
         cap = internal_fuel_kg or profile_for(aircraft).internal_fuel_kg
-        # Bazı modüller kilogram, bazıları dolu depoya oran (0-1) veriyor.
+        # Some modules report kg, others a fraction of a full tank (0-1).
         fuel = fi * cap if fi <= 1.5 else fi
         if isinstance(fe, (int, float)) and fe > 0:
             fuel += fe * cap if fe <= 1.5 else fe
     ext_kg = None
     if isinstance(fe, (int, float)) and fe >= 0:
         ext_kg = fe * (internal_fuel_kg or profile_for(aircraft).internal_fuel_kg) if fe <= 1.5 else fe
-    # Oran veren modülde kapasiteyi bilmiyorsak kilo tahmindir: dakika hesabı (orandan bağımsız) olur, bingo olmaz.
+    # Ratio-reporting module, capacity unknown: kg is an estimate; minutes stay ratio-independent and bingo won't fire.
     guess = isinstance(fi, (int, float)) and fi <= 1.5 and not internal_fuel_kg and aircraft not in PROFILES
     num = lambda k: float(d[k]) if isinstance(d.get(k), (int, float)) else None  # noqa: E731
     return FlightState(t=float(d.get("t") or 0), source="dcs", aircraft=aircraft, ias=num("ias"), tas=num("tas"),
@@ -152,7 +152,7 @@ def _extra(d: dict[str, Any], num: Callable[[str], float | None]) -> dict[str, A
     wx, wz = num("wind_x"), num("wind_z")
     if wx is not None and wz is not None:
         e["wind_kt"] = math.hypot(wx, wz) / 0.514444
-        e["wind_from"] = (math.degrees(math.atan2(wz, wx)) + 180) % 360  # rüzgarın geldiği yön
+        e["wind_from"] = (math.degrees(math.atan2(wz, wx)) + 180) % 360  # direction the wind blows from
     for k in ("weapons", "warnings", "mode", "radios", "ack"):
         if isinstance(d.get(k), str) and d[k].strip("/ "):
             e[k] = d[k]
@@ -162,7 +162,7 @@ def _extra(d: dict[str, Any], num: Callable[[str], float | None]) -> dict[str, A
 
 
 def parse_rwr(text: str) -> list[dict[str, Any]]:
-    """Betiğin RWR satırı -> temaslar. Açı burna göre radyan (sağa pozitif), saat yönüne çevrilir (12 = önü)."""
+    """RWR line -> contacts. Bearing off the nose in radians (right positive) -> clock (12 = ahead)."""
     out = []
     for part in text.split(";"):
         f = part.split("|")
@@ -179,13 +179,13 @@ def parse_rwr(text: str) -> list[dict[str, Any]]:
 
 
 def clock_of(rel_deg: float) -> int:
-    """Burna göre açı (derece, sağa pozitif) -> saat yönü 1-12."""
+    """Angle off the nose (degrees, right positive) -> clock position 1-12."""
     c = round((rel_deg % 360) / 30) % 12
     return 12 if c == 0 else c
 
 
 class DCSListener:
-    """UDP'den gelen veriyi companion'a ve (saniyede bir) depoya iletir."""
+    """Forwards UDP data to the companion and (once a second) to the store."""
 
     def __init__(self, on_state: Callable[[FlightState], None], on_restricted: Callable[[], None] = lambda: None,
                  on_end: Callable[[], None] = lambda: None, on_metrics: Callable[[list], None] = lambda rows: None,
@@ -262,18 +262,18 @@ class DCSListener:
             if isinstance(data, dict):
                 try:
                     self.handle(data)
-                except Exception:  # bir paket bozuksa dinleyici ölmesin
+                except Exception:  # if a packet is malformed, don't let the listener die
                     pass
 
 
-# ------------------------------------------------------------ görev dosyası
+# ------------------------------------------------------------ mission file
 class LuaError(ValueError):
     pass
 
 
 def parse_lua_table(text: str) -> Any:
-    """DCS görev dosyasındaki `mission = { ... }` gibi Lua tablolarını Python'a çevirir.
-    Sadece veri sözdizimi: tablo, string, sayı, true/false/nil, yorumlar."""
+    """Converts Lua tables such as `mission = { ... }` in a DCS mission file into Python.
+    Data syntax only: tables, strings, numbers, true/false/nil, comments."""
     i = 0
     n = len(text)
 
@@ -406,14 +406,14 @@ class MissionInfo:
     theatre: str = ""
 
     def legs(self) -> list[tuple[Waypoint, float, float]]:
-        """(waypoint, önceki noktadan mesafe nm, gerçek kerteriz derece)."""
+        """(waypoint, distance in nm from the previous point, true bearing in degrees)."""
         out = []
         prev = None
         for wp in self.waypoints:
             if prev is None:
                 out.append((wp, 0.0, 0.0))
             else:
-                dx, dy = wp.x - prev.x, wp.y - prev.y  # x kuzey, y doğu
+                dx, dy = wp.x - prev.x, wp.y - prev.y  # x is north, y is east
                 out.append((wp, math.hypot(dx, dy) / NM, (math.degrees(math.atan2(dy, dx)) + 360) % 360))
             prev = wp
         return out
@@ -452,7 +452,7 @@ def read_mission(path: Path) -> MissionInfo:
 
 
 def latest_mission(dirs: list[Path] | None = None) -> Path | None:
-    """En son değiştirilen .miz (görevler ve çok oyunculu indirilenler)."""
+    """Most recently modified .miz (missions and multiplayer downloads)."""
     cands = []
     for d in dirs if dirs is not None else saved_games_dirs():
         for sub in ("Missions", "MissionEditor", "Tracks", "Temp"):
@@ -468,7 +468,7 @@ _seq = [0]
 
 
 def send_command(kind: str, arg: str, port: int = PORT) -> int:
-    """Betiğin komut kanalına (port+1) gönder; dönen sıra numarası betiğin "ack" alanında gelir."""
+    """Send to the script's command channel (port+1); the returned sequence number arrives in its "ack" field."""
     if kind == "cmd" and arg not in COMMANDS:
         raise ValueError(f"izin verilmeyen komut: {arg}")
     _seq[0] += 1
@@ -478,8 +478,8 @@ def send_command(kind: str, arg: str, port: int = PORT) -> int:
 
 
 def current_mission(dirs: list[Path] | None = None) -> Path | None:
-    """Şu an yüklü görev: DCS günlüğündeki son "loadMission <yol>" satırı (genelde Temp/DCS/tempMission.miz).
-    Günlükte yoksa en son değiştirilen görev."""
+    """Currently loaded mission: the last "loadMission <path>" line in the DCS log (usually Temp/DCS/tempMission.miz).
+    If the log has none, the most recently modified mission."""
     for d in dirs if dirs is not None else saved_games_dirs():
         log = d / "Logs" / "dcs.log"
         try:
@@ -495,7 +495,7 @@ def current_mission(dirs: list[Path] | None = None) -> Path | None:
 
 
 def briefing_text(m: MissionInfo) -> str:
-    """Kalkıştan önce sesli brifing: görev, uçak, rota (ilk iki ayak ve toplam), telsiz, açıklamanın başı."""
+    """Pre-takeoff spoken briefing: mission, aircraft, route (first two legs and total), radio, description start."""
     parts = [f"Görev: {m.name}." + (f" {m.group} grubundasın." if m.group else "")]
     legs = m.legs()
     if len(legs) > 1:
@@ -513,9 +513,9 @@ def briefing_text(m: MissionInfo) -> str:
     return " ".join(parts)
 
 
-# ---------------------------------------------------------------- komutlar
+# ---------------------------------------------------------------- commands
 def dcs_cmd(argv: list[str]) -> int:
-    """alice dcs install | uninstall | status | kneeboard [görev.miz]"""
+    """alice dcs install | uninstall | status | kneeboard [mission.miz]"""
     from rich.console import Console
 
     console = Console(highlight=False)

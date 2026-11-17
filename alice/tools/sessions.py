@@ -1,9 +1,9 @@
-"""session: bir işi ayrı bir sohbette başlat ya da yarım işi oraya devret (Claude Code'daki start_session ve
-hand_off karşılığı).
+"""session: start a task in a separate chat, or hand an unfinished task off to one (equivalent of
+start_session and hand_off in Claude Code).
 
-Ayrı sohbet kendi başına çalışır (kenar çubuğunda görünür, kullanıcı açıp yönlendirebilir); turu bitince sonucu
-bu sohbete "[Oturum bitti]" mesajıyla bildirir. fork=true yeni sohbete bu konuşmanın geçmişini de verir: iş bu
-konuşmada öğrenilenlere dayanıyorsa baştan araştırma yapılmaz. Uygulama içinde çalışır (ctx.state["sessions"]).
+A separate chat runs on its own (shown in the sidebar, the user can steer it). When its turn ends, it reports
+the result here as an "[Oturum bitti]" message. fork=true also gives the new chat this conversation's history,
+so work based on what was learned here is not researched again. Runs only inside the app (ctx.state["sessions"]).
 """
 
 from __future__ import annotations

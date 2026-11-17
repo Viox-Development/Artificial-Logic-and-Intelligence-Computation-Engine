@@ -1,12 +1,12 @@
-"""Zamanlanmış görevler.
+"""Scheduled tasks.
 
-"Her pazar gece Unity projelerimi yedekle" gibi bir cümle hızlı modelle cron ifadesine ve
-ALICE'e verilecek bir göreve çevrilir, kullanıcıya gösterilir, onaylanınca kaydedilir
-(~/.alice/tasks.json). Servis her turda vadesi gelen görevleri çalıştırır. Bilgisayar
-kapalıyken kaçırılan görev, catch_up açıksa açılışta bir kez telafi edilir.
+A sentence like "Her pazar gece Unity projelerimi yedekle" ("back up my Unity projects every Sunday night") is
+turned by the fast model into a cron expression and a task for ALICE, shown to the user, and saved once approved
+(~/.alice/tasks.json). The service runs the tasks that are due on every turn. A task missed while the computer
+was off is caught up once at startup if catch_up is on.
 
-Cron: "dakika saat gün ay haftanın_günü"; *, a-b, a,b, */n desteklenir. Haftanın günü
-0-6 (0 = pazar, 7 de pazar). Gün ve haftanın günü ikisi de kısıtlıysa biri tutması yeter.
+Cron: "dakika saat gün ay haftanın_günü" (minute hour day month weekday); *, a-b, a,b, */n are supported. Weekday
+is 0-6 (0 = Sunday, 7 is also Sunday). If both day and weekday are restricted, matching either one is enough.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ _SAVE_LOCK = threading.Lock()
 
 
 def write_json_atomic(path: Path, data: Any) -> None:
-    """Önce geçici dosyaya yaz, sonra yerine koy: çökme/elektrik kesintisi ya da iki iş parçacığının aynı anda
-    yazması yarım (bozuk) JSON bırakmasın; bozuk dosya çekirdeği her açılışta düşürüyordu."""
+    """Write to a temporary file first, then replace the target: a crash, power cut, or two threads writing at
+    the same time must not leave half-written (corrupt) JSON; a corrupt file used to crash the core on every startup."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with _SAVE_LOCK:
         tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
@@ -37,7 +37,7 @@ def write_json_atomic(path: Path, data: Any) -> None:
 
 
 def read_json_list(path: Path) -> list[Any] | None:
-    """JSON listesi oku; dosya bozuksa None (çağıran eldekini korusun, çekirdek düşmesin)."""
+    """Read a JSON list; None if the file is corrupt (the caller keeps what it has so the core doesn't crash)."""
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig") or "[]")
     except (OSError, ValueError):
@@ -94,7 +94,7 @@ class Cron:
         return dom_ok or dow_ok
 
     def next_after(self, dt: datetime) -> datetime:
-        """dt'den sonraki ilk eşleşen dakika."""
+        """The first matching minute after dt."""
         t = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
         limit = t + timedelta(days=366 * 5)
         while t < limit:
@@ -120,7 +120,7 @@ class Cron:
         return dom_ok or dow_ok
 
     def describe(self) -> str:
-        """Kabaca Türkçe açıklama, onay ekranında göstermek için."""
+        """A rough Turkish description, for display on the confirmation screen."""
         mi, h, dom, mon, dow = self.expr.split()
         when = f"{int(h):02d}:{int(mi):02d}" if mi.isdigit() and h.isdigit() else f"dakika={mi} saat={h}"
         days = []
@@ -136,23 +136,23 @@ class Cron:
 @dataclass
 class ScheduledTask:
     cron: str
-    prompt: str                     # ALICE'e verilecek görev
-    description: str = ""           # kullanıcının cümlesi
-    catch_up: bool = True           # bilgisayar kapalıyken kaçırıldıysa açılışta çalıştır
+    prompt: str                     # task given to ALICE
+    description: str = ""           # the user's own words
+    catch_up: bool = True           # if missed while the computer was off, run it once at startup
     notify: bool = True
-    once: bool = False              # tek seferlik ("yarın 17:00", "5 dakika sonra"): çalışınca silinir
+    once: bool = False              # one-time ("yarın 17:00", "5 dakika sonra" = "in 5 minutes"): deleted once it runs
     enabled: bool = True
     created: float = field(default_factory=time.time)
     last_run: float | None = None
     last_result: str = ""
-    pending: bool = False           # "şimdi çalıştır" istendi
-    project: str = ""               # dolu: prompt yerine bu proje şablonu otonom proje olarak başlatılır
-    cwd: str = ""                   # project: çalışma klasörü (boş: şablondaki)
+    pending: bool = False           # "run now" was requested
+    project: str = ""               # if set: start this project template as an autonomous project, not the prompt
+    cwd: str = ""                   # project: working folder (empty: the template's)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def __post_init__(self) -> None:
-        # Geçersizse hemen hata. "30 Şubat" gibi hiç gelmeyen tarih de kaydedilmeden reddedilsin; yoksa due()
-        # her turda patlayıp diğer bütün görevleri durduruyordu.
+        # Fail right away if invalid. A date that never comes, like "30 Şubat" (30 February), is rejected before
+        # it is saved; otherwise due() would blow up every turn and stop all the other tasks.
         Cron(self.cron).next_after(datetime.now())
 
     @classmethod
@@ -177,8 +177,8 @@ class ScheduledTask:
 
 
 def start_project(task: ScheduledTask, starter: Any) -> str:
-    """Zamanı gelen proje görevini başlat: şablondaki hedef, ayarlar ve ajanlarla otonom proje. starter: uygulamanın
-    create_project'i (proje Projeler sayfasında görünsün diye uygulamada kurulur). Sonuç satırı döndürür."""
+    """Start a due project task: an autonomous project with the template's goal, settings and agents. starter: the
+    app's create_project (wired up in the app so the project appears on the Projects page). Returns a result line."""
     from alice.team_store import list_templates
 
     if starter is None:
@@ -189,7 +189,7 @@ def start_project(task: ScheduledTask, starter: Any) -> str:
     goal = str(tpl.get("goal") or "") + ("\n\n" + task.prompt if task.prompt.strip() else "")
     try:
         pid = starter({**tpl, "goal": goal, "cwd": task.cwd or tpl.get("cwd") or ""})
-    except Exception as e:  # noqa: BLE001 - klasör yok, PR dalı açılamadı vb.: sonuç olarak bildirilir
+    except Exception as e:  # noqa: BLE001 - folder missing, PR branch failed, etc.: reported as the result
         return f"proje başlatılamadı: {str(e)[:300]}"
     if not pid:
         return "proje başlatılamadı: uygulama hazır değil"
@@ -207,7 +207,7 @@ class TaskStore:
             self.tasks = []
             return
         data = read_json_list(self.path)
-        if data is None:  # bozuk dosya: eldekini koru
+        if data is None:  # corrupt file: keep what we have
             return
         tasks = []
         for d in data:
@@ -237,12 +237,12 @@ class TaskStore:
         return False
 
     def due(self, now: float | None = None, grace: float = 600) -> list[tuple[ScheduledTask, bool]]:
-        """Vadesi gelen görevler: (görev, telafi mi). Kaçırılmış ve catch_up kapalı olanların
-        last_run'ı sessizce ileri alınır ki bir sonraki zamanı beklesinler."""
+        """Due tasks as (task, is_catch_up). The last_run of missed tasks with catch_up off is quietly moved
+        forward so they wait for their next time."""
         now = time.time() if now is None else now
         out = []
         changed = False
-        missed: list[str] = []  # telafi edilmeyecek, kaçırılmış tek seferlik görevler: silinir
+        missed: list[str] = []  # missed one-time tasks that won't be caught up: deleted
         for t in self.tasks:
             if t.pending:
                 out.append((t, False))
@@ -251,14 +251,14 @@ class TaskStore:
                 continue
             try:
                 nxt = t.next_run().timestamp()
-            except ValueError:  # hiç gelmeyen tarih: bu görevi atla, diğerlerini durdurma
+            except ValueError:  # a date that never comes: skip this task, don't stop the others
                 continue
             if nxt > now:
                 continue
             late = now - nxt > grace
             if late and not t.catch_up:
                 if t.once:
-                    # Listede kalırsa cron aynı günü ertesi yıl yeniden üretir ve "tek seferlik" iş o zaman çalışır.
+                    # If it stays in the list, cron regenerates the same day next year and the one-time task runs then.
                     missed.append(t.id)
                 else:
                     t.last_run = now
@@ -278,7 +278,7 @@ class TaskStore:
         self.save()
 
 
-# ------------------------------------------------------- doğal dil -> görev
+# ------------------------------------------------------- natural language -> task
 PARSE_PROMPT = """Convert the user's request into a scheduled task for a desktop assistant (ALICE) that can run
 shell commands, edit files, browse the web and use the computer. Now: {now}.
 Reply ONLY with JSON:

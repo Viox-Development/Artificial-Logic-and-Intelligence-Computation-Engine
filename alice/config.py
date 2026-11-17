@@ -1,7 +1,7 @@
-"""Config yükleme: ~/.alice/config.toml + .env dosyaları + ortam değişkenleri.
+"""Config loading: ~/.alice/config.toml + .env files + environment variables.
 
-Varsayılanlar DEFAULT_CONFIG_TOML içinde durur; `alice init` aynı metni diske yazar,
-böylece kullanıcının düzenlediği dosya ile koddaki varsayılanlar hiç ayrışmaz.
+Defaults reside in DEFAULT_CONFIG_TOML; `alice init` writes the same text to disk,
+so that the user's edited file and the defaults in code never diverge.
 """
 
 from __future__ import annotations
@@ -686,7 +686,7 @@ GOOGLE_CLIENT_SECRET=
 """
 
 
-# Eski varsayılan kişilikler; dosya hâlâ bunlardan biriyle aynıysa (kullanıcı hiç dokunmamışsa) yenisiyle değiştirilir.
+# Older default personalities; if the file is still identical to one of these (user never edited), replace with new one.
 OLD_PERSONALITY_TEMPLATE = """# ALICE'in kişiliği
 
 Bu dosya her oturumda ALICE'e okunur. İstediğin gibi değiştir.
@@ -902,7 +902,7 @@ Bu dosya her oturumda ALICE'e okunur. İstediğin gibi değiştir.
 
 
 def personality_text() -> str:
-    """~/.alice/personality.md içeriği; hiç değiştirilmemiş eski varsayılan şablonsa yenisine yükseltilir."""
+    """Contents of ~/.alice/personality.md; upgraded to new one if untouched old default template."""
     pers = alice_home() / "personality.md"
     if not pers.is_file():
         return ""
@@ -918,7 +918,7 @@ def personality_text() -> str:
 
 
 def _expand_env(text: str) -> str:
-    """'${CLOUDFLARE_ACCOUNT_ID}' gibi yer tutucuları ortam değişkeniyle doldur; tanımsızsa olduğu gibi bırak."""
+    """Populate placeholders like '${CLOUDFLARE_ACCOUNT_ID}' with environment variable; leave as-is if undefined."""
     return re.sub(r"\$\{([A-Z0-9_]+)\}", lambda m: os.environ.get(m.group(1), "").strip() or m.group(0), text)
 
 
@@ -932,18 +932,18 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-# .env dosyalarından ortama yüklenen anahtar adları: sandbox'taki komutlara verilmezler (sandbox.scrub_env).
+# Names of keys loaded into the environment from .env files: stripped from commands in sandbox (sandbox.scrub_env).
 LOADED_ENV_KEYS: set[str] = set()
 
 
 def load_env_file(path: Path) -> None:
-    """Basit KEY=VALUE parser. Zaten tanımlı ortam değişkenlerinin üstüne yazmaz."""
+    """Simple KEY=VALUE parser. Does not overwrite already defined environment variables."""
     if not path.is_file():
         return
-    # utf-8-sig: Not Defteri'nin eklediği BOM ilk anahtarın adına yapışıp ("﻿GEMINI_API_KEY") onu yok ediyordu.
+    # utf-8-sig: BOM added by Notepad was attaching to the first key name ("﻿GEMINI_API_KEY"), destroying it.
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:  # sandbox'taki süreç (ALICE'i içe aktaran bir test) gizli .env'i okuyamaz
+    except OSError:  # process in sandbox (a test importing ALICE) cannot read hidden .env
         return
     for raw in text.splitlines():
         line = raw.strip()
@@ -965,8 +965,8 @@ _cliproxy_cache: dict[str, Any] = {"path": "", "mtime": 0.0, "key": ""}
 
 
 def cliproxy_local_key() -> str:
-    """Yerel CLIProxyAPI'nin istemci anahtarı (~/.alice/cliproxy/keys.txt, api_key=). Yoksa "". Dosya değişmedikçe
-    önbellekten."""
+    """Client key of local CLIProxyAPI (~/.alice/cliproxy/keys.txt, api_key=). Empty string "" if none.
+    Cached unless file changes."""
     path = alice_home() / "cliproxy" / "keys.txt"
     try:
         mtime = path.stat().st_mtime
@@ -993,31 +993,31 @@ class ProviderConfig:
     vision_models: list[str] = field(default_factory=list)
     max_input_tokens: int = 32000
     headers: dict[str, str] = field(default_factory=dict)
-    # Doluysa katalog bu liste olur (/models sorulmaz): ücretsiz modelleri olan ama /models'ta paralıları da
-    # listeleyen sağlayıcılar (Z.ai) ya da /models'u olmayanlar için. Boş: /models'tan okunur.
+    # If populated, catalog uses this list (/models not queried): for providers that have free models but list paid
+    # ones in /models too (Z.ai) or lack /models. Empty: read from /models.
     models: list[str] = field(default_factory=list)
-    # false: otomatik sıralamaya ("auto" zinciri) hiç girmez, sadece elle seçilince kullanılır (krediyle çalışan
-    # Vercel AI Gateway gibi: otomatik zincire girse aylık krediyi bir günde yakardı).
+    # false: never enters automatic ranking ("auto" chain), used only when explicitly selected (like credit-based
+    # Vercel AI Gateway: if it entered auto chain it would burn monthly credit in a day).
     auto: bool = True
-    # "chatgpt": API anahtarı yerine ChatGPT hesabıyla giriş (alice/providers/chatgpt.py)
+    # "chatgpt": login with ChatGPT account instead of API key (alice/providers/chatgpt.py)
     auth: str = ""
-    # API biçimi: "" OpenAI uyumlu (çoğu sağlayıcı), "anthropic" resmi Claude API (alice/providers/anthropic_api.py)
+    # API format: "" OpenAI compatible (most providers), "anthropic" official Claude API (alice/providers/anthropic_api.py)
     kind: str = ""
-    # Arayüzden eklenen OpenAI uyumlu sunucu: Anahtarlar sayfasından silinebilir.
+    # OpenAI-compatible server added via UI: can be deleted from Keys page.
     custom: bool = False
-    # Anahtar havuzunda tek bir anahtarın istemcisi bu alanla kurulur (alice/providers/keypool.py).
+    # In keypool, client for a single key is set up with this field (alice/providers/keypool.py).
     key_override: str = ""
 
     @property
     def api_keys(self) -> list[str]:
-        """Sağlayıcının bütün anahtarları: GEMINI_API_KEY, sonra GEMINI_API_KEY_2, _3... (sırayla, boşlar atlanır).
-        Birden fazlaysa istekler aralarında paylaştırılır, kotası dolan ya da sınıra takılan anahtar beklerken
-        diğerleriyle devam edilir."""
+        """All keys for provider: GEMINI_API_KEY, then GEMINI_API_KEY_2, _3... (in order, empties skipped).
+        If more than one, requests are load-balanced; keys hitting quota or rate limits wait while continuing
+        with others."""
         if self.key_override:
             return [self.key_override]
         if self.name == "cliproxy":
-            # Yerel proxy yalnız kendi config.yaml'ındaki anahtarı kabul eder; ALICE onu keys.txt ile birlikte üretti.
-            # .env'deki kopya bir şekilde değişince bütün abonelik modelleri "Invalid API key" veriyordu (13 Kasım).
+            # Local proxy only accepts the key from its own config.yaml; ALICE generated it along with keys.txt.
+            # When the copy in .env somehow changed, all subscription models returned "Invalid API key" (Nov 13).
             local = cliproxy_local_key()
             if local:
                 return [local]
@@ -1044,7 +1044,7 @@ class ProviderConfig:
 
     @property
     def enabled(self) -> bool:
-        if "${" in self.base_url:  # adresteki ortam değişkeni (Cloudflare hesap kimliği) tanımlı değil
+        if "${" in self.base_url:  # environment variable in URL (Cloudflare account ID) is undefined
             return False
         if self.auth == "chatgpt":
             from alice.providers.chatgpt import logged_in
@@ -1056,13 +1056,13 @@ class ProviderConfig:
         low = model.lower()
         if any(fnmatch.fnmatch(low, p.lower()) for p in self.vision_models):
             return True
-        # Görsel anladığı bilinen aileler, sağlayıcı listesinde yazmasa da (ör. Gemini API'deki Gemma 4): Gemini
-        # günlük kotası dolunca görme rolü bunlara düşebilsin. Görseli reddederse router o modeli görmeden çıkarır.
+        # Model families known to understand images even if not explicitly listed by provider (e.g. Gemma 4 on Gemini API):
+        # allows vision role to fall back to these when daily Gemini quota is exhausted. If image rejected, router drops model.
         return (any(fnmatch.fnmatch(low, p) for p in KNOWN_VISION)
                 and not any(fnmatch.fnmatch(low, p) for p in NOT_VISION))
 
 
-_warned_providers: set[str] = set()  # base_url'siz sağlayıcı uyarısı süreç başına bir kez
+_warned_providers: set[str] = set()  # warning for provider without base_url shown once per process
 
 
 @dataclass
@@ -1083,7 +1083,7 @@ class Config:
         return self.data.get("decider", {})
 
     def provider_errors(self) -> dict[str, str]:
-        """Kullanılamayan [providers.x] tanımları ve sebebi (providers() bunları atlar)."""
+        """Usable [providers.x] definitions and their failure reasons (providers() skips these)."""
         out = {}
         for name, p in (self.data.get("providers", {}) or {}).items():
             if not isinstance(p, dict):
@@ -1097,8 +1097,7 @@ class Config:
         bad = self.provider_errors()
         for name, p in (self.data.get("providers", {}) or {}).items():
             if name in bad:
-                # base_url'siz özel sağlayıcı her yerde KeyError veriyordu (uygulama, doctor, yönlendirme): atla, bir
-                # kez uyar.
+                # Custom provider without base_url threw KeyError everywhere (app, doctor, routing): skip and warn once.
                 if name not in _warned_providers:
                     _warned_providers.add(name)
                     print(f"UYARI: [providers.{name}] kullanılmıyor: {bad[name]}", file=sys.stderr)
@@ -1123,14 +1122,14 @@ class Config:
 
 
 def _section_header(text: str, section: str) -> re.Match[str] | None:
-    """[section] başlık satırı. Başlığın sonunda yorum olabilir ("[kairos]   # arka plan nöbeti"): eskiden bu
-    eşleşmiyordu, bölüm sona ikinci kez ekleniyor ve config.toml geçersiz TOML olup tüm ayarlar varsayılana dönüyordu."""
+    """[section] header line. Can have comment at end of header ("[kairos]   # background watch"): previously this
+    did not match, causing section to be added a second time at end, making config.toml invalid TOML and resetting all settings to defaults."""
     return re.search(rf"(?m)^[ \t]*\[[ \t]*{re.escape(section)}[ \t]*\][ \t]*(?:#[^\n]*)?$", text)
 
 
 def _value_end(body: str, start: int) -> int:
-    """body[start:]'taki `key = değer` atamasının bittiği yer: değer birden çok satıra yayılıyorsa (çok satırlı dizi,
-    üç tırnaklı metin) hepsi. Sadece ilk satırı değiştirmek kalan satırları sahipsiz bırakıp dosyayı bozuyordu."""
+    """Where `key = value` assignment ending at body[start:]: if value spans multiple lines (multiline array,
+    triple-quoted string), covers all of it. Modifying only the first line left orphan lines, corrupting the file."""
     pos = start
     while True:
         nl = body.find("\n", pos)
@@ -1145,12 +1144,12 @@ def _value_end(body: str, start: int) -> int:
 
 
 def set_config_value(section: str, key: str, value: Any) -> Path:
-    """~/.alice/config.toml'da [section] altındaki key'i yaz (yoksa ekle). value TOML'a çevrilir."""
+    """Write key under [section] in ~/.alice/config.toml (add if missing). value is converted to TOML."""
     import json
 
     init_home()
     path = alice_home() / "config.toml"
-    text = path.read_text(encoding="utf-8-sig")  # Not Defteri BOM'u ilk başlığın eşleşmesini engellemesin
+    text = path.read_text(encoding="utf-8-sig")  # ensure Notepad BOM does not prevent matching first section header
     line = f"{key} = {json.dumps(value, ensure_ascii=False)}"
     sec = _section_header(text, section)
     if not sec:
@@ -1170,7 +1169,7 @@ def set_config_value(section: str, key: str, value: Any) -> Path:
 
 
 def remove_config_section(section: str) -> bool:
-    """~/.alice/config.toml'dan [section] bölümünü (bir sonraki bölüm başlığına kadar) sil. Yoksa False."""
+    """Delete [section] block from ~/.alice/config.toml (up to next section header). False if not found."""
     path = alice_home() / "config.toml"
     try:
         text = path.read_text(encoding="utf-8-sig")
@@ -1197,21 +1196,21 @@ def load_config(path: Path | None = None, cwd: Path | None = None) -> Config:
     cfg_path = path or (home / "config.toml")
     if cfg_path.is_file():
         try:
-            # utf-8-sig: Not Defteri'nin eklediği BOM'u tomllib reddediyor.
+            # utf-8-sig: tomllib rejects BOM added by Notepad.
             user = tomllib.loads(cfg_path.read_text(encoding="utf-8-sig"))
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-            # Elle düzenlemede tek yazım hatası çekirdeği/uygulamayı açılışta sessizce düşürmesin: varsayılanlarla aç.
+            # Prevent a single typo in manual edit from silently crashing core/app on launch: open with defaults.
             print(f"UYARI: {cfg_path} okunamadı, varsayılan ayarlar kullanılıyor: {e}", file=sys.stderr)
             user = {}
         _drop_legacy_defaults(user)
-        # Rol listeleri birleştirilmez, kullanıcınınki tamamen geçerlidir.
+        # Role lists are not merged; the user's list takes precedence entirely.
         data = _deep_merge(data, user)
     return Config(data=data, path=cfg_path if cfg_path.is_file() else None)
 
 
-# `alice init` eski varsayılanları config.toml'a yazmıştı. Kullanıcı bunlara dokunmadıysa yeni varsayılan geçerli
-# olsun (ör. ana modelin GLM 5.3 olması); kullanıcının değiştirdiği değerler olduğu gibi kalır.
-# Bölüm adı noktalı olabilir ("providers.cloudflare").
+# `alice init` wrote old defaults into config.toml. If the user never touched them, apply new defaults
+# (e.g. main model becoming GLM 5.3); values changed by the user remain intact.
+# Section name can be dotted ("providers.cloudflare").
 LEGACY_DEFAULTS: list[tuple[tuple[str, str], Any]] = [
     (("roles", "brain"), ["auto", "ollama:qwen3:8b"]),
     (("providers.cloudflare", "models"), ["@cf/moonshotai/kimi-k2.5", "@cf/zai-org/glm-4.7-flash",
@@ -1230,8 +1229,8 @@ def _drop_legacy_defaults(user: dict[str, Any]) -> None:
 
 
 def _add_missing_env_keys(env: Path) -> list[str]:
-    """Eski .env'de olmayan yeni sağlayıcı satırlarını (açıklamasıyla) sona ekle; var olanlara dokunma.
-    Eklenen anahtar adlarını döndürür (boşsa eklenecek bir şey yoktu)."""
+    """Append new provider lines (with comments) missing from old .env to end; do not touch existing ones.
+    Returns names of added keys (empty if nothing to add)."""
     try:
         text = env.read_text(encoding="utf-8-sig")
     except OSError:
@@ -1259,8 +1258,8 @@ _LAST_ADDED: list[str] = []
 
 
 def refresh_home() -> list[str]:
-    """Açılışta çağrılır: ~/.alice eksiklerini tamamla, güncellemeyle gelen yeni anahtar satırlarını .env'e ekle.
-    Bu çağrıda .env'e eklenen anahtar adlarını döndürür (arayüz "yeni sağlayıcı geldi" desin diye)."""
+    """Called on startup: complete missing ~/.alice files, append new key lines from updates into .env.
+    Returns names of keys added to .env in this call (so UI can notify 'new provider arrived')."""
     _LAST_ADDED.clear()
     try:
         init_home()
@@ -1269,7 +1268,7 @@ def refresh_home() -> list[str]:
     return list(_LAST_ADDED)
 
 
-# --------------------------------------------------------------------------- .env düzenleme (arayüzden)
+# --------------------------------------------------------------------------- .env editing (from UI)
 ENV_KEY_RE = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
 
 
@@ -1277,8 +1276,8 @@ def env_path() -> Path:
     return alice_home() / ".env"
 
 
-# Bazı servisler iki değer ister (Cloudflare: token + hesap kimliği; Google: client id + secret). Uygulamada tek kartta,
-# iki ayrı adlı kutu olarak gösterilir; yoksa aynı başlık iki kez görünüp "aynı anahtarı iki kere istiyor" sanılıyordu.
+# Some services require two values (Cloudflare: token + account id; Google: client id + secret). In the app, they
+# appear in a single card as two distinct named fields; otherwise same title appeared twice, mistaken for "asking same key twice".
 _FIELD_NAMES = {"_ACCOUNT_ID": "Hesap kimliği (Account ID)", "_API_TOKEN": "API token", "_CLIENT_ID": "Client ID",
                 "_CLIENT_SECRET": "Client secret"}
 
@@ -1288,8 +1287,8 @@ def _field_name(key: str) -> str:
 
 
 def env_catalog() -> list[dict[str, str]]:
-    """ENV_TEMPLATE'teki anahtarlar: ad, görünen ad, nereden alınacağı (bağlantı), açıklama, grup.
-    part_of: aynı servisin ilk anahtarı (iki değer isteyen servislerde ikisi de aynı karta düşer); field: kutunun adı."""
+    """Keys in ENV_TEMPLATE: name, display name, where to get (URL), description, group.
+    part_of: first key of same service (services requiring two values map to same card); field: field label."""
     out: list[dict[str, str]] = []
     group, notes = "model", []
     for raw in ENV_TEMPLATE.splitlines():
@@ -1306,7 +1305,7 @@ def env_catalog() -> list[dict[str, str]]:
         key = line.split("=", 1)[0].strip()
         text = " ".join(notes)
         notes = []
-        if not text and out:  # açıklamasız satır bir öncekinin parçası (CLOUDFLARE_ACCOUNT_ID, GOOGLE_CLIENT_SECRET)
+        if not text and out:  # line without description is part of previous (CLOUDFLARE_ACCOUNT_ID, GOOGLE_CLIENT_SECRET)
             prev = out[-1]
             prev["field"] = _field_name(prev["key"])
             out.append({"key": key, "label": prev["label"], "url": prev["url"], "help": prev["help"], "group": group,
@@ -1316,7 +1315,7 @@ def env_catalog() -> list[dict[str, str]]:
         url = m.group(0).rstrip(").,") if m else ""
         label, _, rest = text.partition("->")
         rest = rest.replace(url, "", 1).strip(" ()") if url else rest.strip()
-        if rest.count(")") > rest.count("("):  # bağlantıdan sonra kapanan parantez: "(... token). Hesap..."
+        if rest.count(")") > rest.count("("):  # closing parenthesis after link: "(... token). Account..."
             rest = rest.replace(")", "", 1)
         out.append({"key": key, "label": label.strip() or key, "url": url, "help": rest, "group": group,
                     "part_of": key, "field": "Anahtar"})
@@ -1324,7 +1323,7 @@ def env_catalog() -> list[dict[str, str]]:
 
 
 def read_env(path: Path | None = None) -> dict[str, str]:
-    """.env dosyasındaki dolu KEY=VALUE çiftleri (load_env_file ile aynı ayrıştırma)."""
+    """Non-empty KEY=VALUE pairs in .env file (same parsing as load_env_file)."""
     path = path or env_path()
     out: dict[str, str] = {}
     try:
@@ -1344,7 +1343,7 @@ def read_env(path: Path | None = None) -> dict[str, str]:
 
 
 def mask_secret(value: str) -> str:
-    """Arayüzde gösterilecek hali: sadece son 4 karakter (anahtarın tamamı tarayıcıya hiç gitmez)."""
+    """Masked representation for UI: only last 4 characters (full key never sent to browser)."""
     value = value.strip()
     if not value:
         return ""
@@ -1352,8 +1351,8 @@ def mask_secret(value: str) -> str:
 
 
 def set_env_value(key: str, value: str, path: Path | None = None) -> Path:
-    """~/.alice/.env'de KEY satırını yaz (yoksa ekle), boş değerle temizle; bu süreçte de hemen geçerli olsun.
-    Dosyadaki yorumlara ve diğer satırlara dokunulmaz."""
+    """Write KEY line in ~/.alice/.env (add if missing), clear if value empty; takes effect immediately in this process too.
+    Comments and other lines in the file are left untouched."""
     key = key.strip()
     value = value.strip()
     if not ENV_KEY_RE.fullmatch(key):
@@ -1375,7 +1374,7 @@ def set_env_value(key: str, value: str, path: Path | None = None) -> Path:
     tmp = path.with_suffix(".env.tmp")
     tmp.write_text(text, encoding="utf-8")
     if sys.platform != "win32":
-        os.chmod(tmp, 0o600)  # anahtar dosyası sadece kullanıcıya açık
+        os.chmod(tmp, 0o600)  # key file only readable by user
     tmp.replace(path)
     if value:
         os.environ[key] = value

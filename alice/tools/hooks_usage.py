@@ -1,4 +1,4 @@
-"""hooks aracı (sohbetten hook ekle/sil/dene) ve usage aracı (bu oturumda tokenlar nereye gitti)."""
+"""hooks tool (add/remove/test hooks from chat) and usage tool (where tokens went in this session)."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class HooksTool(Tool):
     risk = READ
 
     def risk_for(self, args: dict[str, Any]) -> str:
-        # Eklenen hook her sohbette kendiliğinden komut çalıştırır: her zaman sorulur.
+        # An added hook runs commands automatically in every chat: it always asks first.
         return {"add": DANGER, "remove": WRITE, "test": EXEC}.get(str(args.get("action")), READ)
 
     def summary(self, args: dict[str, Any]) -> str:

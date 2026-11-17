@@ -1,22 +1,22 @@
-"""Ses komutları.
+"""Voice commands.
 
-  alice voice [--ptt <tuş>] [--no-wake]   sesli asistanı başlat (bas-konuş + "Hey Alice")
+  alice voice [--ptt <key>] [--no-wake]   start the voice assistant (push-to-talk + "Hey Alice")
   alice voice audition [--voices Aoede,Kore] [--local xtts,chatterbox] [--emotions calm,urgent]
-                                      dinleme testi: örnekleri üretir, HTML sayfasını açar
-  alice voice use <aday>              sesi seç: gemini:Aoede, xtts, chatterbox
-  alice voice library                 seçili bulut sesiyle duygu kütüphanesini oluştur (yerel motorlar için)
-  alice voice say "metin" [--emotion urgent] [--engine cloud|local]
-  alice voice test                    mikrofonu 5 sn dinle, seviyeyi ve duyulanı göster
-  alice voice enroll [--off]          sesini tanıt: ALICE sadece senin sesine cevap versin (--off: kapat)
-  alice voice status                  motorlar, kütüphane, opsiyonel paketler
-  alice voice gecikme [--days 7]      susmandan ALICE'in ilk sesine kadar geçen süre (özet)
+                                      listening test: generates samples and opens the HTML page
+  alice voice use <candidate>         choose the voice: gemini:Aoede, xtts, chatterbox
+  alice voice library                 build the emotion library with the selected cloud voice (for local engines)
+  alice voice say "text" [--emotion urgent] [--engine cloud|local]
+  alice voice test                    listen to the microphone for 5 sec, show the level and what is heard
+  alice voice enroll [--off]          enroll your voice: ALICE answers only your voice (--off: turn it off)
+  alice voice status                  engines, library, optional packages
+  alice voice gecikme [--days 7]      latency (gecikme): time from going quiet to ALICE's first sound (summary)
   alice voice replay [--runs 3] [--label L] [--threshold 0.3]
-                                      gerçek ses korpusunu yeniden oynat: yanlış/kaçan uyanma, ses izi
+                                      replay the real voice corpus: false/missed wake-ups, voice trace
   alice voice corpus [stats|import|label|rm <id>]
-                                      gerçek ses korpusu: say, son kayıtları içe al, etiketle, sil
-  alice voice models                  hesabında hangi Gemini ses modelleri var (kota harcamaz)
-  alice voice install-local           yerel ses motorunu (Chatterbox) ayrı ortama kur
-  alice voice on | off                çekirdek açılınca sesli asistan da açılsın / açılmasın
+                                      real voice corpus: stats, import recent recordings, label, delete
+  alice voice models                  which Gemini voice models your account has (uses no quota)
+  alice voice install-local           install the local voice engine (Chatterbox) in a separate environment
+  alice voice on | off                start the voice assistant when the core starts / don't start it
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ OPTIONAL = (("sounddevice", "mikrofon ve ses çalma", "voice"), ("pynput", "bas-
 
 
 def _parser(prog: str):
-    """Yardım ve hata metinleri Türkçe argparse (alice.cli ile aynı)."""
+    """Help and error messages via the Turkish argparse (same as alice.cli)."""
     from alice.cli import TrArgumentParser
 
     return TrArgumentParser(prog=prog)
@@ -303,7 +303,7 @@ def _audition(cfg, argv) -> int:
 
             eng.library = _single_ref_library(Path(a.ref))
         elif not lib.exists() and engines:
-            # Referans yoksa ilk bulut sesinin "sakin" örneği referans olur.
+            # No reference? Then the "sakin" (calm) sample of the first cloud voice becomes the reference.
             from alice.voice.audition import audition_dir
 
             run_audition(engines[:1], ["calm"], emit=lambda s: console.print(f"[dim]{s}[/]"))
@@ -323,7 +323,7 @@ def _audition(cfg, argv) -> int:
 
 
 def _attach_verifier(cfg, engines) -> None:
-    """Gemini çıktısını Whisper'la kontrol et: talimat da okunduysa o biçim o modelde bir daha kullanılmaz."""
+    """Verify Gemini output with Whisper: if the instruction got read aloud, that format is not reused on that model."""
     from alice.voice.stt import make_stt
     from alice.voice.tts import GeminiTTS, make_verifier
 
@@ -461,7 +461,7 @@ def _test(cfg, argv) -> int:
 
 
 def _record_one(mic, vad, seconds: float = 15.0):
-    """Bir konuşmayı kaydet (sessizliğe kadar). Süre dolarsa None."""
+    """Record one utterance (until silence). Returns None if time runs out."""
     import time
 
     from alice.voice.listen import utterances
@@ -479,7 +479,7 @@ def _record_one(mic, vad, seconds: float = 15.0):
 
 
 def _enroll(cfg, argv) -> int:
-    """Sesini tanıt: birkaç cümle oku, ALICE sesinin izini çıkarsın; sonra sadece senin sesin uyandırır."""
+    """Enroll your voice: read a few sentences so ALICE takes your voiceprint; then only your voice wakes it."""
     from alice.voice import speaker_id as sid
 
     if "--off" in argv:

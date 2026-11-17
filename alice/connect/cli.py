@@ -1,4 +1,4 @@
-"""`alice connect`: bağlantıları listele, bağlan (OAuth), dene, kaldır."""
+"""`alice connect`: list connections, connect (OAuth), test, remove."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ description = "Arama ifadesi"
 
 
 def _gmail(a) -> int:
-    """alice connect gmail [--account ad] [--logout]: birden fazla Gmail hesabı."""
+    """alice connect gmail [--account name] [--logout]: multiple Gmail accounts."""
     from alice.connect import store
     from alice.tools import gmail
 

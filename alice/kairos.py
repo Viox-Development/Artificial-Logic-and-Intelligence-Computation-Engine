@@ -1,25 +1,25 @@
-"""KAIROS: arka planda kendi kendine uyanan, durumu kollayan ALICE.
+"""KAIROS: ALICE, which wakes up on its own in the background and keeps an eye on the state.
 
-Çekirdek her turda ``Kairos.tick()`` çağırır. Vakti gelince (ALICE'in bir önceki uyanışta kendi seçtiği süre
-dolunca) temiz bağlamlı bir ajan uyanır, o anın durumunu görür ve kendisi karar verir:
-  * çoğu uyanış sessiz biter: söylenecek bir şey yoksa hiçbir şey yapmaz;
-  * işe yarar bir şey varsa (günü gelmiş ama konuşulmamış bir takip, kırmızıya dönen bir PR, yaklaşan bir
-    etkinlik için hazırlık) tek bir kısa bildirim gönderir ya da günün kaydına not düşer;
-  * sonunda ``kairos_sleep`` ile bir sonraki uyanışı seçer (meşgul bir günde sık, sakin bir günde seyrek).
+The core calls ``Kairos.tick()`` every turn. When the time comes (once the interval ALICE picked itself at its last
+wake-up has passed), an agent with a clean context wakes up, sees the state at that moment and decides for itself:
+  * most wake-ups end silently: if there is nothing to say, it does nothing;
+  * if something is useful (a follow-up whose day has come but was never discussed, a PR that turned red, preparation
+    for an upcoming event), it sends a single short notification or notes it in the day's log;
+  * at the end it picks the next wake-up with ``kairos_sleep`` (often on a busy day, rarely on a quiet one).
 
-Güvenlik: ajan plan modunda çalışır, yani yalnız okur, bildirim gönderir ve günün kaydına yazar; dosya
-değiştiremez, komut çalıştıramaz, kimseye mesaj atamaz. Günlük uyanış sınırı, sessiz saatler ve oyun/uçuş modu
-(bildirimleri susturan modlar) uyanışı erteler.
+Safety: the agent runs in plan mode, meaning it only reads, sends notifications and writes to the day's log; it
+cannot change files, run commands or message anyone. The daily wake limit, quiet hours and game/flight mode (modes
+that mute notifications) postpone a wake-up.
 
-Durum ``~/.alice/kairos.json`` dosyasında: sıradaki uyanış, bugünkü uyanış sayısı ve son uyanışların özeti
-(Ayarlar > Asistan'da görünür).
+State is kept in ``~/.alice/kairos.json``: the next wake-up, today's wake count and a summary of recent wake-ups
+(visible under Settings > Assistant).
 
 config.toml:
   [kairos]
   enabled = false
-  min_minutes = 20       # iki uyanış arası en az
-  max_minutes = 240      # en çok
-  daily_wakes = 16       # günde en fazla uyanış
+  min_minutes = 20       # minimum gap between two wake-ups
+  max_minutes = 240      # maximum
+  daily_wakes = 16       # maximum wake-ups per day
   quiet_hours = "00:30-07:00"
 """
 from __future__ import annotations
@@ -63,9 +63,9 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
 def save_state(data: dict[str, Any], path: Path | None = None) -> None:
     path = path or state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Her yazan kendi geçici dosyasını kullanır: çekirdek (tick/uyanış) ile uygulama ("şimdi uyan", aç/kapat) aynı
-    # anda yazınca ortak "kairos.tmp" birinin elinden kayıyor, os.replace FileNotFoundError veriyordu (uyanışın
-    # özeti ve sıradaki uyanış zamanı kayboluyordu).
+    # Each writer uses its own temp file: when the core (tick/wake-up) and the app ("şimdi uyan" = wake now, on/off)
+    # write at the same time, a shared "kairos.tmp" was getting lost from under one of them, and os.replace raised
+    # FileNotFoundError (the wake-up's summary and the next wake-up time were being lost).
     fd, tmp = tempfile.mkstemp(prefix=".kairos-", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -74,7 +74,7 @@ def save_state(data: dict[str, Any], path: Path | None = None) -> None:
             try:
                 os.replace(tmp, path)
                 break
-            except PermissionError:  # Windows: hedef o an başka biri tarafından okunuyor/değiştiriliyor
+            except PermissionError:  # Windows: the target is being read or changed by someone else at that moment
                 if attempt == 4:
                     raise
                 time.sleep(0.05)
@@ -87,8 +87,8 @@ def save_state(data: dict[str, Any], path: Path | None = None) -> None:
 
 
 def is_enabled(cfg: Any, st: dict[str, Any] | None = None) -> bool:
-    """Durum dosyasındaki seçim (uygulamadan/araçtan) config'tekinin önüne geçer: çekirdek yeniden başlamadan
-    açılıp kapanabilsin."""
+    """A choice in the state file (made from the app or a tool) overrides the one in config, so the core can
+    be switched on and off without restarting."""
     st = load_state() if st is None else st
     if "enabled" in st:
         return bool(st["enabled"])
@@ -105,19 +105,19 @@ def set_enabled(cfg: Any, on: bool, path: Path | None = None) -> None:
         from alice.config import set_config_value
 
         set_config_value("kairos", "enabled", bool(on))
-    except Exception:  # noqa: BLE001 - dosyaya yazılamasa da durum dosyası yeter
+    except Exception:  # noqa: BLE001 - the state file is enough even if it cannot be written
         pass
 
 
 def request_wake(path: Path | None = None) -> None:
-    """Uygulamadan "şimdi uyan": sıradaki uyanışı şimdiye çek (çekirdek bir sonraki turda uyanır)."""
+    """From the app, "şimdi uyan" (wake now): pull the next wake-up to now (the core wakes on its next turn)."""
     data = load_state(path)
     data["next"] = time.time()
     data["forced"] = True
     save_state(data, path)
 
 
-# ------------------------------------------------------------------------------------------- uyku aracı
+# ------------------------------------------------------------------------------------------- sleep tool
 class KairosSleep(Tool):
     name = "kairos_sleep"
     description = ("KAIROS: bir sonraki uyanışı seç ve bu uyanışı bitir. minutes: kaç dakika sonra (sınırlar içinde "
@@ -157,7 +157,7 @@ def _fmt_ts(ts: float) -> str:
 
 
 class Kairos:
-    """Çekirdeğin turunda tick(); vakti gelince arka planda bir uyanış başlatır."""
+    """Core calls tick() on its turn; when the time comes, it starts a wake-up in the background."""
 
     def __init__(self, cfg: Any, store: Any = None, memory: Callable[[], Any] = lambda: None,
                  policy: Callable[[], Any] = lambda: None, idle: Callable[[], float | None] | None = None,
@@ -177,7 +177,7 @@ class Kairos:
         self.path = path
         self._thread: threading.Thread | None = None
 
-    # ---------------------------------------------------------------- kapı
+    # ---------------------------------------------------------------- gate
     def tick(self) -> bool:
         s = settings(self.cfg)
         st = load_state(self.path)
@@ -187,7 +187,7 @@ class Kairos:
             return False
         now = self.clock()
         nxt = float(st.get("next") or 0)
-        if not nxt:  # ilk açılış: hemen değil, biraz sonra
+        if not nxt:  # first start: not right away, but a little later
             st["next"] = now + float(s["first_minutes"]) * 60
             save_state(st, self.path)
             return False
@@ -201,7 +201,7 @@ class Kairos:
             save_state(st, self.path)
             return False
         st["forced"] = False
-        st["next"] = now + float(s["max_minutes"]) * 60  # uyanış yarıda kalırsa bile döngüye girmesin
+        st["next"] = now + float(s["max_minutes"]) * 60  # even if a wake-up is cut short, don't let it loop
         save_state(st, self.path)
         self._thread = threading.Thread(target=self.wake, daemon=True, name="alice-kairos")
         self._thread.start()
@@ -229,7 +229,7 @@ class Kairos:
             nxt = datetime.fromtimestamp(nxt.timestamp() + 86400)
         return nxt.timestamp() - now
 
-    # ---------------------------------------------------------------- uyanış
+    # ---------------------------------------------------------------- wake-up
     def context(self, now: float, st: dict[str, Any]) -> str:
         rows: list[str] = []
         idle = None
@@ -293,12 +293,12 @@ class Kairos:
         summary, sleep = "", None
         try:
             summary, sleep = self.runner(prompt)
-        except Exception as e:  # noqa: BLE001 - bir uyanışın hatası nöbeti bitirmesin
+        except Exception as e:  # noqa: BLE001 - one wake-up's error must not end the watch
             summary = f"hata: {str(e)[:160]}"
         minutes, reason = sleep if sleep else ((lo + hi) // 2, "seçilmedi")
         minutes = max(lo, min(hi, int(minutes or lo)))
         summary = " ".join((summary or "").split())[:300] or "sessiz"
-        st = load_state(self.path)  # uyanış sürerken uygulama "şimdi uyan" demiş olabilir
+        st = load_state(self.path)  # the app may have said "şimdi uyan" while the wake-up was running
         today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
         if st.get("day") != today:
             st["day"], st["wakes"] = today, 0
@@ -318,7 +318,7 @@ class Kairos:
         return summary
 
     def _run_agent(self, prompt: str) -> tuple[str, Any]:
-        """Temiz bağlamlı, plan modunda ajan; kairos_sleep aracıyla. (özet, (dakika, neden) | None)"""
+        """Agent with a clean context in plan mode, using the kairos_sleep tool. (summary, (minutes, reason) | None)"""
         from alice.agent import Agent, NullUI
         from alice.decider import Decider
         from alice.permissions import Permissions
@@ -328,7 +328,7 @@ class Kairos:
         router = Router(self.cfg)
         decider = Decider.from_config(self.cfg, router)
         ctx = ToolContext(cwd=Path.home(), config=self.cfg, router=router, decider=decider)
-        ctx.state["tool_groups"] = {"notify"}  # bildirim aracı baştan görünsün; diğerleri load_tools ile
+        ctx.state["tool_groups"] = {"notify"}  # notify tool visible from the start; others via load_tools
         mode = str(settings(self.cfg).get("permission_mode") or "plan")
         tools = [t for t in all_tools(self.cfg) if t.name != "enter_plan_mode"] + [KairosSleep()]
         agent = Agent(self.cfg, router, tools, ctx, Permissions(mode), NullUI(approve="n"), decider)
@@ -342,7 +342,7 @@ class Kairos:
 
 
 def view(path: Path | None = None) -> dict[str, Any]:
-    """Uygulama için: açık mı, sıradaki uyanış, bugünkü sayı ve son uyanışlar."""
+    """For the app: whether it is on, the next wake-up, today's count and the recent wake-ups."""
     st = load_state(path)
     return {"next": st.get("next"), "wakes": st.get("wakes", 0), "day": st.get("day", ""),
             "skipped": st.get("skipped", ""), "history": list(reversed(st.get("history") or []))[:15]}

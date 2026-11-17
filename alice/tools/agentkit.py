@@ -1,12 +1,12 @@
-"""Claude Code'da olup ALICE'te eksik kalan araçlar.
+"""Tools that exist in Claude Code but are missing from ALICE.
 
-- notify: kullanıcıya bildirim (masaüstü/HUD kartı, mod politikasına uyar). Claude Code'daki PushNotification.
-- enter_plan_mode: büyük bir işe başlamadan önce ALICE kendini plan moduna alır (yalnız okur, planı exit_plan_mode
-  ile onaya sunar). Claude Code'daki EnterPlanMode.
-- mcp_resources: bağlı MCP sunucularının kaynaklarını listele/oku. ListMcpResources + ReadMcpResource.
-- code_intel: kodu anlama: hata/uyarı teşhisi (ruff/pyright, tsc/node, go vet, cargo, JSON/TOML), bir dosyanın
-  sembolleri, bir sembolün tanımı ve kullanıldığı yerler. Claude Code'daki LSP aracının dil sunucusu kurmadan
-  çalışan karşılığı.
+- notify: notifies the user (desktop/HUD card, follows the mode policy). PushNotification in Claude Code.
+- enter_plan_mode: before starting a big task, ALICE puts itself into plan mode (read-only; it presents the plan for
+  approval with exit_plan_mode). EnterPlanMode in Claude Code.
+- mcp_resources: lists/reads the resources of connected MCP servers. ListMcpResources + ReadMcpResource.
+- code_intel: code understanding: error/warning diagnostics (ruff/pyright, tsc/node, go vet, cargo, JSON/TOML), a
+  file's symbols, a symbol's definition and where it is used. The counterpart of Claude Code's LSP tool that works
+  without installing a language server.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class Notify(Tool):
         raise ToolError("bildirim gönderilemedi: çekirdek çalışmıyor ve masaüstü bildirimi başarısız")
 
 
-# ---------------------------------------------------------------------------------------------------- plan modu
+# ---------------------------------------------------------------------------------------------------- plan mode
 class EnterPlanMode(Tool):
     name = "enter_plan_mode"
     description = ("Kendini plan moduna alır: dosya yazma ve komut çalıştırma kapanır, sadece okuyup araştırırsın; "
@@ -94,10 +94,10 @@ class EnterPlanMode(Tool):
                           + (f" Gerekçe: {reason}" if reason else ""))
 
 
-# ---------------------------------------------------------------------------------------------------- MCP kaynakları
+# ---------------------------------------------------------------------------------------------------- MCP resources
 class McpResources(Tool):
     name = "mcp_resources"
-    untrusted = True  # kaynak içeriği dışarıdan gelir
+    untrusted = True  # resource content comes from outside
     description = ("Bağlı MCP sunucularının kaynaklarını (dosya, belge, şema, kayıt) listeler ve okur.\n"
                    "- list: bütün sunucuların (ya da server verilirse birinin) kaynakları: uri, ad, tür.\n"
                    "- read: uri ile kaynağın içeriği. Sunucu birden çoksa server ver.")
@@ -155,14 +155,14 @@ class McpResources(Tool):
         raise ToolError(f"bilinmeyen action: {action}")
 
 
-# ---------------------------------------------------------------------------------------------------- kod zekâsı
+# ---------------------------------------------------------------------------------------------------- code intelligence
 _DEF_PATTERNS = [
     r"^\s*(?:async\s+)?def\s+{n}\b", r"^\s*class\s+{n}\b",  # Python
     r"\bfunction\s*\*?\s*{n}\s*\(", r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+{n}\b",  # JS/TS
     r"^\s*(?:export\s+)?(?:const|let|var)\s+{n}\s*[=:]", r"^\s*(?:export\s+)?(?:interface|type|enum)\s+{n}\b",
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+{n}\b", r"^\s*(?:pub\s+)?(?:struct|enum|trait)\s+{n}\b",  # Rust
     r"^\s*func\s+(?:\([^)]*\)\s*)?{n}\s*\(", r"^\s*type\s+{n}\s+",  # Go
-    r"^\s*(?:public|private|protected|internal|static|\s)*[\w<>\[\],\s]+\s+{n}\s*\([^;]*$",  # C#/Java metodu
+    r"^\s*(?:public|private|protected|internal|static|\s)*[\w<>\[\],\s]+\s+{n}\s*\([^;]*$",  # C#/Java method
 ]
 _CALL_LINE = re.compile(r"\s*(?:return|await|new|throw|yield|else|if|elif|while|for|case|print|assert|raise|"
                         r"echo|var\s+\w+\s*=|let\s+\w+\s*=|const\s+\w+\s*=\s*\w+\()\b")
@@ -185,7 +185,7 @@ def _code_files(root: Path, limit: int = 20000) -> list[Path]:
 
 
 def _search(root: Path, regex: str, word: str = "", limit: int = 120) -> list[tuple[Path, int, str]]:
-    """(dosya, satır, metin). ripgrep varsa onunla, yoksa Python ile."""
+    """(file, line, text). Uses ripgrep if available, otherwise Python."""
     rg = shutil.which("rg")
     hits: list[tuple[Path, int, str]] = []
     if rg:
@@ -222,7 +222,7 @@ def _py_symbols(path: Path) -> list[str]:
             if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 args = ", ".join(a.arg for a in ch.args.args)
                 out.append(f"{'  ' * depth}{ch.lineno}: def {prefix}{ch.name}({args})")
-                if depth < 1:  # iç içe fonksiyonların yalnız ilk katı
+                if depth < 1:  # only the first level of nested functions
                     walk(ch, f"{prefix}{ch.name}.", depth + 1)
             elif isinstance(ch, ast.ClassDef):
                 out.append(f"{'  ' * depth}{ch.lineno}: class {prefix}{ch.name}")
@@ -252,7 +252,7 @@ def _regex_symbols(path: Path) -> list[str]:
 
 
 def _diagnose(path: Path, root: Path) -> tuple[str, list[str]]:
-    """(kullanılan denetçiler, bulgular). Bulgu yoksa boş liste."""
+    """(checkers used, findings). Empty list if there are no findings."""
     ext = path.suffix.lower()
     used, found = [], []
     if ext in (".py", ".pyi"):
@@ -341,7 +341,7 @@ class CodeIntel(Tool):
     risk = READ
 
     def risk_for(self, args: dict[str, Any]) -> str:
-        return EXEC if args.get("action") == "diagnostics" else READ  # denetçi programları çalıştırır
+        return EXEC if args.get("action") == "diagnostics" else READ  # runs checker programs
 
     def summary(self, args: dict[str, Any]) -> str:
         return f"{args.get('action')} {args.get('symbol') or ', '.join((args.get('paths') or [])[:2])}".strip()
@@ -376,7 +376,7 @@ class CodeIntel(Tool):
             base = ctx.resolve(root) if root else ctx.cwd
             if action == "definition":
                 rx = "|".join(p.replace("{n}", re.escape(symbol)) for p in _DEF_PATTERNS)
-                # C#/Java kalıbı "return f(x)" gibi çağrılara da uyar (ripgrep geriye bakış desteklemiyor): ele.
+                # the C#/Java pattern also matches calls like "return f(x)" (ripgrep doesn't support lookbehind): filter them out.
                 hits = [h for h in _search(base, rx) if not _CALL_LINE.match(h[2])]
             else:
                 hits = _search(base, "", word=symbol, limit=150)
@@ -398,7 +398,7 @@ TOOLS = [Notify(), EnterPlanMode(), McpResources(), CodeIntel()]
 
 
 class Advisor(Tool):
-    """Daha güçlü bir modele danış: konuşmanın tamamını görür, araç kullanmaz, kısa ve somut tavsiye verir."""
+    """Consult a stronger model: it sees the whole conversation, uses no tools, and gives short, concrete advice."""
 
     name = "advisor"
     description = ("Daha güçlü bir modele (danışman) danış. Zor bir karar, takıldığın bir hata, emin olmadığın bir plan "
@@ -418,7 +418,7 @@ class Advisor(Tool):
         if router is None or agent is None:
             raise ToolError("danışman bu ortamda kullanılamıyor")
         msgs = [m for m in list(agent.messages) if not m.get("_image")]
-        # Son asistan mesajı bu aracı çağıran adım: sonucu henüz yok, gönderilirse sağlayıcı reddeder.
+        # The last assistant message is the call to this tool: no result yet, and the provider would reject it.
         while msgs and msgs[-1].get("role") == "assistant" and msgs[-1].get("tool_calls"):
             msgs.pop()
         msgs.append({"role": "user", "content": (

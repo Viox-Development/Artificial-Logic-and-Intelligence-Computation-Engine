@@ -1,13 +1,13 @@
-"""ZTE ZXHN modemleri (H3600, H1600 ve aynı arayüzü kullanan yeni sürümler): giriş, bağlı cihazlar, yeniden başlatma.
+"""ZTE ZXHN modems (H3600, H1600 and newer firmware using the same web UI): login, connected devices, restart.
 
-Web arayüzünün kendi kullandığı uçlar:
-* Giriş: `?_type=loginData&_tag=login_entry` (JSON, oturum anahtarı) + `login_token` (tuz);
-  şifre sha256(şifre + tuz) olarak gider.
-* Sayfalar menüye girilerek açılır (`?_type=menuView&_tag=<menü>`); menü sayfası yeni geçici oturum anahtarını
-  JavaScript içinde (`_sessionTmpToken = "\\x.."`) verir.
-* Bazı sürümler POST gövdesinin sha256'sını modemin genel RSA anahtarıyla şifreleyip `Check` başlığında ister;
-  `cryptography` kuruluysa eklenir.
-Modem şifresi `.env` içinde MODEM_PASSWORD (kullanıcı adı config'te [modem] user).
+The endpoints the web UI itself uses:
+* Login: `?_type=loginData&_tag=login_entry` (JSON, session key) + `login_token` (salt);
+  the password is sent as sha256(password + salt).
+* Pages are opened by entering a menu (`?_type=menuView&_tag=<menu>`); the menu page gives a new temporary session key
+  inside JavaScript (`_sessionTmpToken = "\\x.."`).
+* Some firmware versions encrypt the sha256 of the POST body with the modem's public RSA key and expect it in the
+  `Check` header; added when `cryptography` is installed.
+The modem password is in `.env` as MODEM_PASSWORD (the username is in config under [modem] user).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import httpx
 
-# ZTE web arayüzünün JavaScript'indeki genel anahtar (H1600/H3600 v7+ yazılımları).
+# Public key from the ZTE web UI's JavaScript (H1600/H3600 v7+ firmware).
 CHECK_KEY = ("-----BEGIN PUBLIC KEY-----\n"
              "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAodPTerkUVCYmv28SOfRV\n"
              "7UKHVujx/HjCUTAWy9l0L5H0JV0LfDudTdMNPEKloZsNam3YrtEnq6jqMLJV4ASb\n"
@@ -49,20 +49,20 @@ def check_header(body: str) -> str | None:
 
 
 def tmp_token(page: str) -> str | None:
-    """Menü sayfasındaki `_sessionTmpToken = "\\x41\\x42..."` satırından anahtarı çöz."""
+    """Decode the key from the `_sessionTmpToken = "\\x41\\x42..."` line of the menu page."""
     m = re.search(r'_sessionTmpToken\s*=\s*"([^"]+)"', page)
     if not m:
         return None
     raw = m.group(1)
     if "\\x" in raw:
-        # Yalnız \xNN kaçışları çözülür; araya düz karakter karışsa da bytes.fromhex gibi ValueError atmaz.
+        # Only \xNN escapes are decoded; stray plain characters don't raise ValueError the way bytes.fromhex does.
         text = re.sub(r"\\x([0-9a-fA-F]{2})", lambda h: chr(int(h.group(1), 16)), raw)
         return text.encode("latin-1", "replace").decode("utf-8", "replace")
     return raw
 
 
 def instances(xml_text: str) -> list[dict[str, str]]:
-    """ZTE XML'indeki her <Instance> → {ParaName: ParaValue}."""
+    """Each <Instance> in the ZTE XML → {ParaName: ParaValue}."""
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -88,7 +88,7 @@ def _pick(d: dict[str, str], *names: str) -> str:
 
 
 def device_rows(lan_xml: str, wifi_xml: str) -> list[dict[str, str]]:
-    """Kablolu ve kablosuz listeleri tek listede birleştir (MAC'e göre tekil)."""
+    """Merge the wired and wireless lists into one list (unique by MAC)."""
     rows: dict[str, dict[str, str]] = {}
     for xml_text, link in ((lan_xml, "kablo"), (wifi_xml, "Wi-Fi")):
         for d in instances(xml_text):
@@ -134,7 +134,7 @@ class ZTE:
         except (TypeError, ValueError):
             lock = 0
         msg = info.get("loginErrMsg") or ""
-        if lock > 0:  # -1: kilit yok demek; "modem girişi -1 sn kilitli" diye yanlış hata veriliyordu
+        if lock > 0:  # -1 means no lock; it used to give the wrong error "modem girişi -1 sn kilitli"
             raise ModemError(f"modem girişi {lock} sn kilitli (çok fazla yanlış deneme); sonra tekrar dene")
         if msg:
             raise ModemError(f"modem girişi reddedildi ({msg}): kullanıcı adı ya da şifre yanlış olabilir")
@@ -207,7 +207,7 @@ class ZTE:
                        data=f"IF_ACTION=Restart&Btn_restart=&_sessionTOKEN={self.token}"
                             f"&_sessionTOKENByPost={self.post_token}")
         except (httpx.TransportError, ModemError):
-            # Modem isteği alır almaz kapanıp cevabı yarıda kesebiliyor; gerçekten kapanıyor mu diye bak.
+            # The modem may go down right after getting the request and cut the reply; check if it really went down.
             try:
                 self.c.get(self.base, timeout=3)
             except httpx.TransportError:

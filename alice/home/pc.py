@@ -1,6 +1,6 @@
-"""Bilgisayarın kendisi: kilit, uyku, ekran kapatma, güç planı, monitör parlaklığı, Wake-on-LAN bilgisi.
+"""The computer itself: lock, sleep, screen off, power plan, monitor brightness, Wake-on-LAN info.
 
-Windows'a özgü; diğer sistemlerde anlaşılır bir hata döner.
+Windows-only; on other systems it returns an understandable error.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sys
 
 from alice.home.net import run
 
-# Windows'un hazır güç planları (adları sistem diline göre değişir, GUID'ler değişmez).
+# Windows' built-in power plans (names change with the system language, GUIDs do not).
 PLAN_ALIASES = {
     "381b4222-f694-41f0-9685-ff5bb260df2e": ("dengeli", "balanced"),
     "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": ("yüksek performans", "performans", "high performance", "performance"),
@@ -36,7 +36,7 @@ def monitor_off() -> str:
     _windows()
     import ctypes
 
-    # SendMessage yayında takılabiliyor, PostMessage beklemez. SC_MONITORPOWER, 2 = kapat.
+    # SendMessage can hang while broadcasting; PostMessage does not wait. SC_MONITORPOWER, 2 = off.
     ctypes.windll.user32.PostMessageW(0xFFFF, 0x0112, 0xF170, 2)  # type: ignore[attr-defined]
     return "ekran kapatıldı (fare ya da klavye açar)"
 
@@ -61,14 +61,14 @@ def restart_in(minutes: float = 0) -> str:
     return f"{sec} sn sonra yeniden başlayacak (iptal: media cancel_shutdown)" if sec else "yeniden başlıyor"
 
 
-# ---------- güç planı ----------
+# ---------- power plan ----------
 
 PLAN_LINE = re.compile(r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+\((.+?)\)"
                        r"(\s*\*)?")
 
 
 def parse_plans(text: str) -> list[dict]:
-    """`powercfg /list` çıktısı (her dilde) → [{guid, name, active}]."""
+    """`powercfg /list` output (in any language) → [{guid, name, active}]."""
     return [{"guid": m.group(1).lower(), "name": m.group(2).strip(), "active": bool(m.group(3))}
             for m in PLAN_LINE.finditer(text)]
 
@@ -103,13 +103,13 @@ def set_plan(wanted: str) -> str:
     return f"güç planı: {p['name']}"
 
 
-# ---------- parlaklık ----------
+# ---------- brightness ----------
 
 VCP_BRIGHTNESS = 0x10
 
 
 def _physical_monitors() -> list[tuple[object, str]]:
-    """DDC/CI ile konuşulabilen harici monitörler: [(handle, açıklama)]. İşin bitince _release çağır."""
+    """External monitors that speak DDC/CI: [(handle, description)]. Call _release when done."""
     import ctypes
     from ctypes import wintypes
 
@@ -141,7 +141,7 @@ def _release(mons: list[tuple[object, str]]) -> None:
 
 
 def _wmi_brightness(level: int | None) -> str:
-    """Dizüstünün kendi ekranı DDC/CI konuşmaz; onun parlaklığı WMI'dan."""
+    """The laptop's built-in screen does not speak DDC/CI, so its brightness comes from WMI."""
     if level is None:
         ps = "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness).CurrentBrightness"
     else:
@@ -157,7 +157,7 @@ def _wmi_brightness(level: int | None) -> str:
 
 
 def brightness(level: int | None = None, monitor: int | None = None) -> str:
-    """level None ise oku, değilse 0-100'e ayarla. monitor: 1'den başlayan sıra, boşsa hepsi."""
+    """If level is None, read it; otherwise set it to 0-100. monitor: 1-based index; if empty, all monitors."""
     _windows()
     import ctypes
     from ctypes import wintypes
@@ -189,7 +189,7 @@ def brightness(level: int | None = None, monitor: int | None = None) -> str:
 # ---------- Wake-on-LAN ----------
 
 def wol_info() -> str:
-    """Bu bilgisayarı başka bir cihazdan uyandırmak için gereken bilgiler ve durum."""
+    """Information and status needed to wake this computer from another device."""
     _windows()
     from alice.home.net import local_ip
 

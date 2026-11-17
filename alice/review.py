@@ -1,15 +1,16 @@
-"""Bağımsız kod incelemesi: değişikliği yazan konuşmadan ayrı, temiz bağlamlı bir inceleyici ajan.
+"""Independent code review: a reviewer agent with a clean context, separate from the conversation that wrote the change.
 
-Kodu yazan model kendi hatasını görmekte zorlanır; konuşmanın varsayımlarını taşır. Burada:
+The model that wrote the code has trouble seeing its own mistakes; it carries the conversation's assumptions. Here:
 
-1. Fark toplanır: yerel değişiklikler (ana daldan ayrıldığı noktadan bu yana, commit'lenmemişler dahil) ya da bir
-   GitHub PR'ı.
-2. İnceleyici ajan farkı ve gerektiğinde depodaki dosyaları (yalnız okuma araçlarıyla) inceler, bulguları JSON
-   olarak verir: dosya, satır, önem, ne yanlış, hangi durumda bozulur.
-3. Ayrı bir doğrulayıcı ajan her bulguyu kodda kontrol eder; çürütülenler atılır (yanlış alarm raporlanmasın).
-4. İstenirse sonuç PR'a satır yorumlarıyla bir inceleme olarak yazılır.
+1. The diff is collected: local changes (since the point where the branch split off the main branch, including
+   uncommitted ones) or a GitHub PR.
+2. The reviewer agent examines the diff and, when needed, the files in the repo (with read-only tools only), and gives
+   the findings as JSON: file, line, severity, what is wrong, and under what conditions it breaks.
+3. A separate verifier agent checks each finding against the code; refuted ones are dropped (so false alarms are not
+   reported).
+4. If requested, the result is written to the PR as a review with line comments.
 
-İnceleme için model seçici "inceleme" alanındaki en güçlü modelleri kullanır (alice/providers/picker.py).
+For the review, the model picker uses the strongest models in the "inceleme" (review) area (alice/providers/picker.py).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 READ_TOOLS = ("read_file", "grep", "glob", "list_dir")
-MAX_DIFF = 60_000  # karakter: daha büyük fark kısaltılır (dosya listesi her zaman verilir)
+MAX_DIFF = 60_000  # characters: a larger diff is shortened (the file list is always given)
 SEVERITIES = ("critical", "high", "medium", "low")
 
 FOCUS = {
@@ -41,7 +42,7 @@ FOCUS = {
             "(var olmayan parametre, değişmiş varsayılan, eski davranış tarifi). Yalnız koda göre YANLIŞ olanı yaz, "
             "eksik doküman ya da üslup değil.",
 }
-# deep: her biri ayrı odaklı inceleyiciler aynı anda çalışır, bulgular birleşip tek doğrulayıcıdan geçer.
+# deep: each one runs its own focused reviewers at the same time; the findings are merged and go through one verifier.
 DEEP = ("bugs", "security", "performance", "tests")
 
 REVIEWER = """Sen bağımsız bir kod inceleyicisisin. Bu değişikliği sen yazmadın ve yazarın konuşmasını görmüyorsun.
@@ -90,9 +91,9 @@ class Finding:
         return head + "\n  " + "\n  ".join(body)
 
 
-# ------------------------------------------------------------------------------------------------- fark
+# ------------------------------------------------------------------------------------------------- diff
 def local_diff(cwd: Path, base: str = "") -> tuple[str, str]:
-    """(başlık, fark): ana daldan ayrılınan noktadan bu yana bütün değişiklikler (commit'lenmemişler dahil)."""
+    """(title, diff): all changes since the branch split off the main branch (including uncommitted ones)."""
     from alice.tools.github import ToolError, current_branch, repo_root, run_git
 
     root = repo_root(cwd)
@@ -104,7 +105,7 @@ def local_diff(cwd: Path, base: str = "") -> tuple[str, str]:
     _, diff = run_git(["diff", "--no-color", "-U5", start], root)
     _, untracked = run_git(["ls-files", "--others", "--exclude-standard"], root, check=False)
     extra = []
-    for name in untracked.splitlines()[:20]:  # yeni dosyalar farkta görünmüyor: içerikleriyle eklenir
+    for name in untracked.splitlines()[:20]:  # new files don't appear in the diff: they are added with their contents
         p = root / name.strip()
         try:
             if p.is_file() and p.stat().st_size < 60_000:
@@ -119,7 +120,7 @@ def local_diff(cwd: Path, base: str = "") -> tuple[str, str]:
 
 
 def pr_diff(api: Any, repo: str, number: int) -> tuple[str, str, str]:
-    """(başlık, fark, uç commit) — GitHub'dan."""
+    """(title, diff, head commit) — from GitHub."""
     from alice.tools.github import ToolError
 
     pr = api.get(f"/repos/{repo}/pulls/{number}")
@@ -139,7 +140,7 @@ def shorten(diff: str, limit: int = MAX_DIFF) -> str:
     return diff[:limit] + f"\n… (fark kısaltıldı; değişen dosyalar: {', '.join(files)}. Gerekirse read_file ile oku.)"
 
 
-# ----------------------------------------------------------------------------------------------- ajanlar
+# ----------------------------------------------------------------------------------------------- agents
 def _agent(cfg: Any, router: Any, cwd: Path, system: str) -> Any:
     from alice.agent import Agent, NullUI
     from alice.permissions import Permissions
@@ -148,7 +149,7 @@ def _agent(cfg: Any, router: Any, cwd: Path, system: str) -> Any:
     tools = [t for t in all_tools(cfg) if t.name in READ_TOOLS]
     ctx = ToolContext(cwd=cwd, config=cfg, router=router)
     agent = Agent(cfg, router, tools, ctx, Permissions("auto"), NullUI(approve="n"), system_prompt=system, is_child=True)
-    agent.tool_specs = lambda: [t.spec() for t in tools]  # grup filtresinden bağımsız: yalnız okuma araçları
+    agent.tool_specs = lambda: [t.spec() for t in tools]  # independent of the group filter: read-only tools only
     try:
         from alice.providers import picker
 
@@ -156,13 +157,13 @@ def _agent(cfg: Any, router: Any, cwd: Path, system: str) -> Any:
         if chain:
             router.role_overrides["review:code"] = chain
             agent.role = "review:code"
-    except Exception:  # noqa: BLE001 - seçici çalışmazsa ana model
+    except Exception:  # noqa: BLE001 - if the picker fails, use the main model
         pass
     return agent
 
 
 def parse_json(text: str, key: str) -> list[dict[str, Any]]:
-    """Cevaptaki JSON (kod bloğunda ya da düz). Bulunamazsa boş liste."""
+    """JSON in the reply (in a code block or plain). An empty list if none is found."""
     for m in re.finditer(r"\{.*\}", text or "", re.S):
         try:
             data = json.loads(m.group(0))
@@ -194,8 +195,8 @@ def _review_one(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: 
 
 
 def _dedupe(findings: list[Finding]) -> list[Finding]:
-    """Farklı odaklı inceleyiciler aynı sorunu bulabilir: aynı dosyada 2 satır içinde, başlığı aynı olanlardan biri
-    kalır (önemi yüksek olan)."""
+    """Reviewers with different focuses can find the same problem: of findings in the same file within 2 lines with
+    the same title, only one is kept (the more severe one)."""
     kept: list[Finding] = []
     for f in sorted(findings, key=lambda f: SEVERITIES.index(f.severity)):
         key = re.sub(r"\W+", " ", f.title.lower()).strip()
@@ -216,7 +217,7 @@ def review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str =
         findings = _dedupe([f for part in parts for f in part])
     else:
         findings = _review_one(cfg, router, cwd, title, diff, focus)
-    # Kural tabanlı iş akışı bulguları kesin: doğrulayıcıya gitmez (bir model onları "yanlış alarm" diye atamasın).
+    # Rule-based workflow findings are certain: they skip the verifier (a model must not dismiss them as "false alarms").
     static = workflow_findings(cwd, diff)
     if not findings or not verify:
         return _sorted(static + findings)
@@ -228,7 +229,7 @@ def review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str =
     kept = []
     for i, f in enumerate(findings):
         v = verdicts.get(i)
-        if v is None:  # doğrulayıcı bakmadı: bulgu durur, işaretsiz
+        if v is None:  # the verifier did not check it: the finding stays, unmarked
             kept.append(f)
             continue
         f.verdict, f.reason = str(v.get("verdict") or "").upper(), str(v.get("reason") or "")[:300]
@@ -238,7 +239,7 @@ def review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str =
 
 
 def _safe_review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str) -> list[Finding]:
-    """deep modunda bir inceleyicinin hatası (model yok, zaman aşımı) ötekilerin bulgularını yok etmesin."""
+    """An error in one reviewer in deep mode (no model, timeout) must not wipe out the others' findings."""
     import logging
 
     try:
@@ -249,8 +250,8 @@ def _safe_review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus:
 
 
 def workflow_findings(cwd: Path, diff: str) -> list[Finding]:
-    """Farkta değişen GitHub Actions iş akışlarını kural tabanlı denetle (alice/workflow_audit.py). Yalnız değişen
-    satırlara düşen bulgular döner; dosya yerelde yoksa (başka depodaki PR) denetlenmez."""
+    """Rule-based audit of the GitHub Actions workflows changed in the diff (alice/workflow_audit.py). Only findings
+    on changed lines are returned; if the file is not present locally (a PR from another repo), it is not audited."""
     from alice import workflow_audit
 
     out: list[Finding] = []
@@ -263,8 +264,8 @@ def workflow_findings(cwd: Path, diff: str) -> list[Finding]:
             continue
         rows = text.splitlines()
         for issue in workflow_audit.audit(text):
-            # Yalnız bu değişiklikte EKLENEN satırlar; yereldeki dosya PR'ınkinden farklıysa (başka dal açık)
-            # satır metni tutmaz ve bulgu yanlış yere düşmesin diye atlanır.
+            # Only lines ADDED in this change; if the local file differs from the PR's (another branch is open),
+            # the line text won't match and the finding is skipped so it doesn't land on the wrong line.
             n = issue.line
             if n in added and 0 < n <= len(rows) and rows[n - 1].rstrip() == added[n].rstrip():
                 out.append(Finding(file=path, line=issue.line, severity=issue.severity, title=issue.title,
@@ -286,9 +287,9 @@ _HUNK_RX = re.compile(r"@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def _diff_rows(diff: str) -> dict[str, list[tuple[int, str, str]]]:
-    """Farkı dosya -> [(yeni dosyadaki satır no, "+" ya da " ", metin)] olarak çöz. Parça (hunk) başlığındaki satır
-    sayıları izlenir: parçanın içinde "++ x" diye eklenen bir satır ("+++ x" görünür) dosya başlığı sanılmaz. Sayılar
-    tükenince (ya da hiç parça başlığı yoksa) eski hoşgörülü davranış sürer."""
+    """Parse the diff into file -> [(line number in the new file, "+" or " ", text)]. The line counts in the hunk
+    header are tracked: a line added inside a hunk as "++ x" (shown as "+++ x") is not mistaken for a file header.
+    Once the counts run out (or if there is no hunk header at all), the old lenient behavior continues."""
     out: dict[str, list[tuple[int, str, str]]] = {}
     cur: list[tuple[int, str, str]] | None = None
     line = old_left = new_left = 0
@@ -309,7 +310,7 @@ def _diff_rows(diff: str) -> dict[str, list[tuple[int, str, str]]]:
                     cur.append((line, " ", raw[1:]))
                 line, old_left, new_left = line + 1, old_left - 1, new_left - 1
                 continue
-            old_left = new_left = 0  # sayılar tutmuyor: başlık gibi çöz
+            old_left = new_left = 0  # counts don't match: parse it like a header
         if raw.startswith("+++ "):
             path = raw[4:].strip()
             cur = None if path == "/dev/null" else out.setdefault(path[2:] if path.startswith("b/") else path, [])
@@ -331,19 +332,19 @@ def _diff_rows(diff: str) -> dict[str, list[tuple[int, str, str]]]:
 
 
 def diff_lines(diff: str) -> dict[str, set[int]]:
-    """Farkta yorum yazılabilen satırlar (yeni dosyadaki satır numaraları: eklenen ve bağlam satırları). GitHub satır
-    yorumunu yalnız bunlara kabul eder; birinin dışında olması bütün incelemeyi reddettirir."""
+    """Lines in the diff where a comment can be written (line numbers in the new file: added and context lines). GitHub
+    accepts line comments only on these; one outside them makes it reject the whole review."""
     return {path: {n for n, _, _ in rows} for path, rows in _diff_rows(diff).items()}
 
 
 def _added_lines(diff: str) -> dict[str, dict[int, str]]:
-    """Farkta eklenen satırlar: dosya -> {yeni dosyadaki satır no: metin}."""
+    """Lines added in the diff: file -> {line number in the new file: text}."""
     return {path: {n: text for n, kind, text in rows if kind == "+"} for path, rows in _diff_rows(diff).items()}
 
 
 def _anchor(f: Finding, lines: dict[str, set[int]]) -> int:
-    """Bulgunun yazılacağı satır: tam satır farktaysa o, değilse aynı dosyada 3 satır içindeki en yakın fark satırı;
-    hiçbiri yoksa 0 (bulgu inceleme metnine gider)."""
+    """The line where the finding is written: that line if it is in the diff; otherwise the nearest diff line in the
+    same file within 3 lines; 0 if neither (the finding goes into the review text)."""
     ok = lines.get(f.file) or set()
     if f.line in ok:
         return f.line
@@ -352,9 +353,9 @@ def _anchor(f: Finding, lines: dict[str, set[int]]) -> int:
 
 
 def post(api: Any, repo: str, number: int, sha: str, findings: list[Finding], diff: str = "") -> str:
-    """Bulguları PR'a satır yorumlarıyla tek bir inceleme olarak yaz. Farktaki satıra düşen bulgu o satıra yorum olur;
-    farkın dışında kalanlar (değişmemiş bir yerdeki sorun) inceleme metnine konur. GitHub yine reddederse hepsi
-    metne gider."""
+    """Write the findings to the PR as a single review with line comments. A finding on a line in the diff becomes a
+    comment on that line; those outside the diff (a problem in an unchanged place) go into the review text. If GitHub
+    still rejects it, everything goes into the text."""
     from alice.tools.github import ALICE_MARK, ToolError
 
     lines = diff_lines(diff) if diff else {}

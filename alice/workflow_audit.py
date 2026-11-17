@@ -1,17 +1,17 @@
-"""GitHub Actions iş akışı denetimi: bilinen tehlikeli desenleri kural tabanlı bulur (model gerekmez).
+"""GitHub Actions workflow auditing: finds known dangerous patterns rule-based (no model required).
 
-claude-code-action deposundaki iş akışı sertleştirme kontrolünden esinlenildi; kurallar oradaki kuruma özel olanlar
-değil, her depoda geçerli bilinen açıklar:
+Inspired by the workflow hardening check in the claude-code-action repository; the rules are not specific
+to that organization, but known vulnerabilities valid in any repository:
 
-1. Ayrıcalıklı tetikleyicide (pull_request_target / workflow_run) PR'ın kodunu checkout etmek ("pwn request"):
-   iş akışı depo sırlarıyla ve yazma yetkisiyle çalışır, saldırganın kodu da onunla çalışır.
-2. run:/script: içinde dışarıdan gelen metni ${{ }} ile doğrudan yazmak (komut enjeksiyonu): issue başlığı,
-   PR gövdesi, yorum, dal adı, commit mesajı saldırganın yazdığı metindir.
-3. permissions: write-all — her işe her yetki.
-4. Üçüncü taraf aksiyonu tam commit SHA'sına sabitlememek: etiket sonradan başka koda taşınabilir.
+1. Checking out a PR's code on a privileged trigger (pull_request_target / workflow_run) ("pwn request"):
+   the workflow runs with repository secrets and write permissions, and the attacker's code runs with them too.
+2. Embedding untrusted text directly with ${{ }} inside run:/script: (command injection): issue title,
+   PR body, comment, branch name, commit message are attacker-controlled text.
+3. permissions: write-all — all permissions to every job.
+4. Not pinning a third-party action to a full commit SHA: the tag can be moved to different code later.
 
-Satır bazlı çalışır (PyYAML gerekmez); amaç inceleme sırasında kesin, açıklanabilir bulgu üretmek. Satır numaraları
-1'den başlar.
+Works line-by-line (PyYAML not required); the goal is to produce definitive, explainable findings during review. Line numbers
+start at 1.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 _WORKFLOW_RX = re.compile(r"(^|/)\.github/workflows/[^/]+\.ya?ml$", re.I)
 _PRIVILEGED_RX = re.compile(r"^\s*-?\s*['\"]?(pull_request_target|workflow_run)['\"]?\s*(:|$|,|\])|"
                             r"\[\s*[^\]]*\b(pull_request_target|workflow_run)\b")
-# Saldırganın yazabildiği bağlam alanları (GitHub'ın "untrusted input" listesi).
+# Context fields that the attacker can write to (GitHub's "untrusted input" list).
 _UNTRUSTED = (r"github\.event\.(?:issue\.(?:title|body)|pull_request\.(?:title|body|head\.ref|head\.label|"
               r"head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|"
               r"discussion\.(?:title|body)|head_commit\.(?:message|author\.(?:name|email))|"
@@ -41,7 +41,7 @@ _TRUSTED_OWNERS = {"actions", "github"}
 @dataclass
 class Issue:
     line: int
-    severity: str  # critical | high | medium | low (review.SEVERITIES ile aynı)
+    severity: str  # critical | high | medium | low (same as review.SEVERITIES)
     title: str
     detail: str
     fix: str
@@ -52,12 +52,12 @@ def is_workflow(path: str) -> bool:
 
 
 def _code(line: str) -> str:
-    """Yorum satırı mı? Yorumları denetleme (örnek kod yorumda durabilir)."""
+    """Is it a comment line? Do not audit comments (example code might be in a comment)."""
     return "" if line.lstrip().startswith("#") else line
 
 
 def _privileged(lines: list[str]) -> bool:
-    """Tetikleyiciler arasında ayrıcalıklı olan var mı (jobs: bölümünden önce)."""
+    """Are there any privileged triggers among the triggers (before the jobs: section)."""
     for raw in lines:
         line = _code(raw)
         if re.match(r"^jobs\s*:", line):
@@ -68,7 +68,7 @@ def _privileged(lines: list[str]) -> bool:
 
 
 def _script_lines(lines: list[str]) -> set[int]:
-    """run: ve script: (actions/github-script) içeriğinin satırları (0'dan başlayan sıra)."""
+    """Line numbers (0-indexed) of run: and script: (actions/github-script) contents."""
     out: set[int] = set()
     i = 0
     while i < len(lines):
@@ -78,7 +78,7 @@ def _script_lines(lines: list[str]) -> set[int]:
             continue
         indent, rest = len(m.group(1)), m.group(3).strip()
         if rest and not rest.startswith(("|", ">")):
-            out.add(i)  # tek satırlık: run: echo ...
+            out.add(i)  # single line: run: echo ...
             i += 1
             continue
         out.add(i)

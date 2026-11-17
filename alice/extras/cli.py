@@ -1,8 +1,8 @@
-"""Ekleme komutları.
+"""Extra commands.
 
-  alice notes [add "metin" | search "kelime" [süre] | undo]
-  alice brief [--install 08:00] [--weekdays]     sabah özeti (şimdi göster ya da her sabah kur)
-  alice report [--days 7] [--open] [--install 20:00]   haftalık bilgisayar raporu (pazar akşamı kurulur)
+  alice notes [add "metin" (text) | search "kelime" (word) [süre (duration)] | undo]
+  alice brief [--install 08:00] [--weekdays]     morning summary (show now, or install for every morning)
+  alice report [--days 7] [--open] [--install 20:00]   weekly computer report (installed on Sunday evenings)
 """
 
 from __future__ import annotations
