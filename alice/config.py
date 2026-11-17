@@ -1213,10 +1213,11 @@ def load_config(path: Path | None = None, cwd: Path | None = None) -> Config:
 
 
 # `alice init` wrote old defaults into config.toml. If the user never touched them, apply new defaults
-# (e.g. main model becoming GLM 5.3); values changed by the user remain intact.
+# (e.g. a retired model leaving the brain chain); values changed by the user remain intact.
 # Section name can be dotted ("providers.cloudflare").
 LEGACY_DEFAULTS: list[tuple[tuple[str, str], Any]] = [
     (("roles", "brain"), ["auto", "ollama:qwen3:8b"]),
+    (("roles", "brain"), ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]),  # NVIDIA retired GLM 5.3
     (("providers.cloudflare", "models"), ["@cf/moonshotai/kimi-k2.5", "@cf/zai-org/glm-4.7-flash",
                                           "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/google/gemma-4-26b-a4b-it",
                                           "@cf/meta/llama-4-scout-17b-16e-instruct"]),

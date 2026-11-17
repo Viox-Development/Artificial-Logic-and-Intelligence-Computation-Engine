@@ -368,6 +368,22 @@ def test_old_cloudflare_list_with_paid_kimi_is_replaced(monkeypatch):
     assert load_config().data["providers"]["cloudflare"]["models"][0] == "@cf/benim/modelim"  # stays if the user changed it by hand
 
 
+def test_retired_glm_brain_chain_from_old_init_is_replaced():
+    # `alice init` used to write the GLM 5.3 chain into config.toml; NVIDIA retired the model.
+    from alice.config import alice_home, init_home, load_config
+
+    init_home()
+    p = alice_home() / "config.toml"
+    text = p.read_text(encoding="utf-8")
+    old_line = 'brain = ["nvidia:z-ai/glm-5.3", "auto", "ollama:qwen3:8b"]'
+    p.write_text(text.replace('brain = ["auto", "ollama:qwen3:8b"]', old_line, 1), encoding="utf-8")
+    assert old_line in p.read_text(encoding="utf-8")
+    assert load_config().data["roles"]["brain"] == ["auto", "ollama:qwen3:8b"]
+    p.write_text(p.read_text(encoding="utf-8").replace(old_line, 'brain = ["nvidia:z-ai/glm-5.3"]', 1),
+                 encoding="utf-8")
+    assert load_config().data["roles"]["brain"] == ["nvidia:z-ai/glm-5.3"]  # a hand-edited chain stays
+
+
 def test_model_not_on_free_plan_does_not_kill_whole_provider():
     from alice.providers.openai_compat import classify_error
 
