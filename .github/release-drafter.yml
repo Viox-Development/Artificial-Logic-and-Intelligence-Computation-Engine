@@ -1,6 +1,10 @@
 # Release notes are drafted automatically from merged pull requests and their labels.
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
+# Only vX.Y.Z tags are releases. The installer workflows also publish "windows" and "android-v*" releases; without
+# this, the drafter treated the newest installer as the previous release, restarted the version at 0.1.0 and dropped
+# every pull request merged before it from the notes.
+tag-prefix: v
 categories:
   - title: "🚀 Features"
     labels: [enhancement]
@@ -12,8 +16,9 @@ categories:
     labels: [dependencies]
   - title: "🧰 Maintenance"
     labels: [ci, docs, tests]
-change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-template: "- $TITLE (#$NUMBER, by @$AUTHOR)"
 exclude-labels: [skip-changelog]
+exclude-contributors: [dependabot, "dependabot[bot]", "github-actions[bot]"]
 version-resolver:
   major:
     labels: [breaking]
@@ -25,4 +30,4 @@ template: |
 
   $CHANGES
 
-  Thanks to everyone who contributed: $CONTRIBUTORS
+  Thanks to everyone who contributed to this release: $CONTRIBUTORS 💙
