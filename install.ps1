@@ -1,19 +1,20 @@
-﻿# ALICE Windows kurulumu. Repo klasöründe çalıştır:
-#   powershell -ExecutionPolicy Bypass -File install.ps1
-# Kurulum sihirbazı (ALICE-Setup.exe, installer/alice.iss) bunu -FromInstaller ile çağırır.
-param([switch]$FromInstaller, [switch]$Autostart)
+﻿# ALICE Windows setup. Run it in the repo folder:
+#   powershell -ExecutionPolicy Bypass -File install.ps1          # ALICE and the app; pick the rest in the app
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -All     # every optional feature, no wizard
+# The installer (ALICE-Setup.exe, installer/alice.iss) runs it with -FromInstaller.
+param([switch]$FromInstaller, [switch]$All, [switch]$Autostart)
 $ErrorActionPreference = "Stop"
-Set-Location -LiteralPath $PSScriptRoot  # kurulumdan çağrılınca çalışma klasörü farklı olabilir
+Set-Location -LiteralPath $PSScriptRoot  # the installer may start it from another folder
 
 trap {
     Write-Host ""
-    Write-Host "Kurulum tamamlanamadı: $_" -ForegroundColor Red
-    if ($FromInstaller) { Read-Host "Kapatmak için Enter" | Out-Null }
+    Write-Host "Setup could not finish: $_" -ForegroundColor Red
+    if ($FromInstaller) { Read-Host "Press Enter to close" | Out-Null }
     exit 1
 }
 
-# Python'u bul. "python" komutu çoğu zaman Microsoft Store'un sahte kısayolu oluyor ya da winget'ten
-# sonra PATH güncellenmemiş oluyor; bu yüzden önce bilinen kurulum klasörlerine ve py başlatıcısına bak.
+# Find Python. "python" is often the Microsoft Store stub, or PATH is stale right after winget, so look in the
+# known install folders and the py launcher first.
 function Test-Py([string]$exe, [string[]]$pre) {
     try {
         $out = & $exe @pre -c "import sys; print(sys.executable if sys.version_info[:2] >= (3, 10) else '')" 2>$null
@@ -44,54 +45,54 @@ function Find-Python {
 
 $py = Find-Python
 if (-not $py -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Host "Python bulunamadı, Python 3.11 kuruluyor (winget)..." -ForegroundColor Yellow
+    Write-Host "Python not found, installing Python 3.11 (winget)..." -ForegroundColor Yellow
     winget install -e --id Python.Python.3.11 --scope user --accept-package-agreements --accept-source-agreements
     $py = Find-Python
 }
 if (-not $py) {
-    throw "Python bulunamadı. python.org'dan Python 3.11 kur ('Add python.exe to PATH' işaretli), PowerShell'i kapatıp aç, tekrar dene."
+    throw "Python not found. Install Python 3.11 from python.org (tick 'Add python.exe to PATH'), reopen PowerShell and try again."
 }
 Write-Host "Python: $py"
 
-# Otomatik güncelleme git ile çalışır (ALICE kendi deposunu çeker). Git yoksa kur; kurulamazsa ALICE yine çalışır.
+# Auto-update uses git (ALICE pulls its own repo). Install it if missing; ALICE still runs without it.
 if (-not (Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Host "Git kuruluyor (otomatik güncelleme için)..." -ForegroundColor Yellow
+    Write-Host "Installing Git (for auto-update)..." -ForegroundColor Yellow
     winget install -e --id Git.Git --scope user --accept-package-agreements --accept-source-agreements | Out-Null
 }
 
 if (-not (Test-Path ".venv")) { & $py -m venv .venv }
-if (-not (Test-Path ".\.venv\Scripts\python.exe")) { throw "Sanal ortam (.venv) oluşturulamadı." }
+if (-not (Test-Path ".\.venv\Scripts\python.exe")) { throw "Could not create the virtual environment (.venv)." }
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip | Out-Null
-& .\.venv\Scripts\python.exe -m pip install -e ".[computer,browser]"
-if ($LASTEXITCODE -ne 0) { throw "Paket kurulumu başarısız oldu, yukarıdaki hatayı kontrol et." }
 
-# Uygulama penceresi (pywebview). Kurulamazsa sorun değil: ALICE Edge'in uygulama moduyla açılır.
+# ALICE and the app window (pywebview). Without pywebview the app opens in an Edge app window.
 & .\.venv\Scripts\python.exe -m pip install -e ".[app]"
-if ($LASTEXITCODE -ne 0) { Write-Host "pywebview kurulamadı, uygulama Edge penceresinde açılacak." -ForegroundColor Yellow }
+if ($LASTEXITCODE -ne 0) {
+    & .\.venv\Scripts\python.exe -m pip install -e "."
+    if ($LASTEXITCODE -ne 0) { throw "Package install failed, see the error above." }
+    Write-Host "pywebview could not be installed; the app will open in an Edge window." -ForegroundColor Yellow
+}
 
-# Çekirdek tepsi simgesi, ses (mikrofon, bas-konuş, konuşma algılama) ve kısayollar.
-& .\.venv\Scripts\python.exe -m pip install -e ".[core,voice]"
-if ($LASTEXITCODE -ne 0) { Write-Host "Ses paketleri kurulamadı; yazılı kullanım çalışır." -ForegroundColor Yellow }
+& .\.venv\Scriptslice.exe init
+& .\.venv\Scriptslice.exe shortcut
 
-# Yerel Whisper: "Hey Alice"i bilgisayarda algılar (her cümle buluta gitmez) ve Groq kotası bitince yedek olur.
-& .\.venv\Scripts\python.exe -m pip install faster-whisper
-if ($LASTEXITCODE -ne 0) { Write-Host "Yerel Whisper kurulamadı; konuşma tanıma bulutta (Groq) çalışır." -ForegroundColor Yellow }
-
-# Chrome ya da Edge kuruluysa ALICE onları kullanır; ikisi de yoksa Playwright Chromium indir.
-$chrome = Test-Path "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
-$edge = Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-if (-not ($chrome -or $edge)) { & .\.venv\Scripts\python.exe -m playwright install chromium }
-
-& .\.venv\Scripts\alice.exe init
-& .\.venv\Scripts\alice.exe shortcut
-if ($Autostart) { & .\.venv\Scripts\alice.exe core install }
+if ($All) {
+    # Everything at once (scripts, developers). Normally the app's setup wizard installs only what you pick.
+    & .\.venv\Scripts\python.exe -m pip install -e ".[computer,browser,core,voice,home,voice-local]"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Some optional packages failed; ALICE still runs without them." -ForegroundColor Yellow }
+    $chrome = Test-Path "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+    $edge = Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+    if (-not ($chrome -or $edge)) { & .\.venv\Scripts\python.exe -m playwright install chromium }
+    if ($Autostart) { & .\.venv\Scriptslice.exe core install }
+} else {
+    # The app opens the setup wizard on first start: language, a model, and the features you want.
+    & .\.venv\Scripts\python.exe -c "from alice.features import set_wizard_state; set_wizard_state(wizard='pending')"
+}
 
 Write-Host ""
-Write-Host "Kurulum tamam." -ForegroundColor Green
-Write-Host "1) $env:USERPROFILE\.alice\.env dosyasına API anahtarlarını yaz (en az GEMINI_API_KEY)."
-Write-Host "2) .\.venv\Scripts\alice.exe doctor"
-Write-Host "3) Masaüstündeki ALICE kısayoluna çift tıkla (uygulama), ya da terminal için: .\.venv\Scripts\alice.exe"
+Write-Host "ALICE is installed." -ForegroundColor Green
 if ($FromInstaller) {
-    Write-Host "Bu pencere birkaç saniye içinde kapanacak; ALICE'i kurulum sihirbazından açabilirsin."
-    Start-Sleep -Seconds 4
+    Write-Host "ALICE opens next and walks you through the rest."
+    Start-Sleep -Seconds 2
+} else {
+    Write-Host "Start the app from the ALICE shortcut on your desktop, or in a terminal: .\.venv\Scriptslice.exe"
 }

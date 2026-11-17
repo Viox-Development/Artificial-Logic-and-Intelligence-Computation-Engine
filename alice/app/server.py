@@ -37,7 +37,7 @@ from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
 from alice.tools.base import DesktopLock, ToolResult
 
 STATIC = Path(__file__).parent / "static"
-STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "ui.js": "text/javascript", "buddy.js": "text/javascript",
+STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
                 "main.js": "text/javascript", "app.css": "text/css", "marked.min.js": "text/javascript",
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
                 "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript",
@@ -1316,6 +1316,17 @@ class AppState:
             self._setup = SetupPanel(self.cfg, self.router, self.system)
         return self._setup
 
+    _features = None
+
+    @property
+    def features(self):
+        """First-run wizard and Settings → Features: optional features installed from the app."""
+        if self._features is None:
+            from alice.app.features_panel import FeaturesPanel
+
+            self._features = FeaturesPanel(self)
+        return self._features
+
     _journal = None
 
     @property
@@ -2513,6 +2524,8 @@ def make_handler(state: AppState):
                 return self._json(state.setup.scores_view())
             if u.path == "/api/setup":
                 return self._json(state.setup.view())
+            if u.path == "/api/features":
+                return self._json(state.features.view())
             if u.path == "/api/notes":
                 return self._json(state.journal.notes_view((q.get("q") or [""])[0]))
             if u.path == "/api/logs":
@@ -2638,6 +2651,9 @@ def make_handler(state: AppState):
                     return self._json({"ok": ok}, 200 if ok else 400)
                 if p == "/api/voice/preview":
                     r = state.voice_preview(str(d.get("voice", "")))
+                    return self._json(r, 200 if r.get("ok") else 400)
+                if p == "/api/features/action":
+                    r = state.features.action(str(d.get("action", "")), d)
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/setup/action":
                     r = state.setup.action(str(d.get("action", "")), d)

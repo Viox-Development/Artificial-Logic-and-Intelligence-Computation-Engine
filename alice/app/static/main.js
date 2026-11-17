@@ -116,6 +116,7 @@ function onBackground(ev) {
   await loadHistory();
   connect();
   loadSessions();
+  maybeWizard();  // first start after the installer: language, a model, optional features
   await loadProjects();
   // Telefondan/bağlantıdan gelen adres: #projects (listeyi aç) ya da #p=<id> (projeyi aç)
   const h = location.hash;

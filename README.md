@@ -122,18 +122,32 @@ Ollama. Free tiers change often; `alice models --write` scans the live catalogs 
 
 ## Install (Windows)
 
-You need Python 3.10 or newer ("Add to PATH" checked).
+The easy way: download `ALICE-Setup.exe` from the
+[latest release](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases/latest)
+and run it. It needs no admin rights, sets up Python and ALICE in a few minutes, then opens ALICE on a short setup
+wizard:
+
+1. **Language**: English or Turkish.
+2. **Connect a model**: paste a free API key (Gemini recommended; the wizard links to the page and tests the key) or
+   sign in with ChatGPT.
+3. **Pick features**: voice, offline speech recognition, computer control, browser automation, the background core
+   (with start at sign-in) and the phone app. Only what you pick is downloaded; each card shows its size.
+
+You can add features later in Settings → System → Setup → Manage features. The Android APK is attached to the same
+release.
+
+From source:
 
 ```powershell
 git clone https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine
 cd Artificial-Logic-and-Intelligence-Computation-Engine
-powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1        # ALICE and the app; the wizard picks the rest
+powershell -ExecutionPolicy Bypass -File install.ps1 -All   # or every optional feature at once, no wizard
 ```
 
-The script installs Python 3.11 and Git with winget if they are missing, creates `.venv`, installs the `computer`,
-`browser`, `app`, `core`, and `voice` extras plus local Whisper, downloads Chromium only if neither Chrome nor Edge is
-installed, then runs `alice init` and `alice shortcut`. A prebuilt
-`ALICE-Setup.exe` and the Android APK are attached to the [latest release](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases/latest).
+The script installs Python 3.11 and Git with winget if they are missing, creates `.venv`, installs ALICE and the app
+window, then runs `alice init` and `alice shortcut`. With `-All` it also installs the `computer`, `browser`, `core`,
+`voice`, `home` and `voice-local` extras and downloads Chromium only if neither Chrome nor Edge is installed.
 
 Manual install (also Linux and macOS):
 

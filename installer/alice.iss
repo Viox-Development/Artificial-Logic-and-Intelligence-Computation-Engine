@@ -1,7 +1,8 @@
-; ALICE Windows kurulumu (Inno Setup 6). GitHub Actions'ta derlenir (.github/workflows/windows.yml):
-;   iscc /DAppVersion=0.3.N /DSourceDir=..\dist\app installer\alice.iss
-; Yönetici izni istemez: %LOCALAPPDATA%\ALICE'ye kurar. Kaynak kod (git geçmişiyle, otomatik güncelleme için) kurulumun
-; içindedir; Python, sanal ortam ve paketler kurulumun sonunda install.ps1 ile hazırlanır (internet gerekir).
+; ALICE Windows installer (Inno Setup 6), built by .github/workflows/windows.yml:
+;   iscc /DAppVersion=X.Y.Z /DSourceDir=..\dist\app installer\alice.iss
+; No admin rights: installs to %LOCALAPPDATA%\ALICE. The source (with git history, for auto-update) is inside the
+; installer; install.ps1 then sets up Python, the venv and ALICE itself (internet needed). Optional features (voice,
+; computer control, browser, background core, phone) are picked afterwards in the app's setup wizard.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -29,38 +30,27 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[Tasks]
-Name: "autostart"; Description: "Oturum açılınca ALICE arka planda başlasın (sesli asistan, bildirimler)"; Flags: checkedonce
+Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
-; Python'u bulur (yoksa winget ile kurar), .venv açar, paketleri kurar, kısayolları oluşturur. Görünür pencere:
-; kurulum birkaç dakika sürer, kullanıcı ilerlemeyi görsün.
+; Finds Python (installs it with winget if missing), creates .venv, installs ALICE and makes the shortcut. The window
+; stays visible so the progress shows.
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -FromInstaller {code:AutostartArg}"; \
-  WorkingDir: "{app}"; StatusMsg: "Python ve paketler kuruluyor (birkaç dakika sürebilir)..."; Flags: waituntilterminated
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -FromInstaller"; \
+  WorkingDir: "{app}"; StatusMsg: "Installing Python and ALICE..."; Flags: waituntilterminated
+; Then ALICE opens on its setup wizard: language, a model, and the optional features to install.
 Filename: "{app}\.venv\Scripts\pythonw.exe"; Parameters: "-m alice app"; WorkingDir: "{app}"; \
-  Description: "ALICE'i şimdi aç"; Flags: postinstall nowait skipifsilent skipifdoesntexist
+  Description: "Open ALICE and finish setup"; Flags: postinstall nowait skipifsilent skipifdoesntexist
 
 [UninstallRun]
-; Çekirdeği kapat (dosyalar silinebilsin); kullanıcı verisi (~\.alice) silinmez.
+; Stop the core so the files can be deleted, and remove its autostart entry; user data (~\.alice) is kept.
 Filename: "{app}\.venv\Scripts\python.exe"; Parameters: "-c ""from alice.app.system import stop_core; stop_core()"""; Flags: runhidden skipifdoesntexist; RunOnceId: "StopCore"
 Filename: "{app}\.venv\Scripts\python.exe"; Parameters: "-m alice core uninstall"; Flags: runhidden skipifdoesntexist; RunOnceId: "Autostart"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.venv"
 Type: filesandordirs; Name: "{app}"
-
-[Code]
-function AutostartArg(Param: String): String;
-begin
-  if WizardIsTaskSelected('autostart') then
-    Result := '-Autostart'
-  else
-    Result := '';
-end;

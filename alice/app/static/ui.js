@@ -1793,6 +1793,10 @@ function setupPane(pane) {
   const marks = { ok: ["ok", "✓"], warn: ["warn", "!"], off: ["off", "–"], fail: ["fail", "✗"], skip: ["off", "–"] };
   function draw(d) {
     body.replaceChildren();
+    // Optional features (voice, computer control, browser, core, phone) and the first-run wizard again.
+    body.appendChild(card("Özellikler", "Ses, bilgisayar kontrolü, tarayıcı, arka plan çekirdeği, telefon uygulaması: ihtiyacın olanı kur.",
+      btn("Özellikleri yönet", () => openFeatures().then(() => setTimeout(load, 300)), true),
+      btn("Kurulum sihirbazı", () => openWizard(0))));
     // Sağlayıcılar
     body.appendChild(el("div", "sec", "Modeller"));
     // Modeller

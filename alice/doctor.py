@@ -342,9 +342,11 @@ def short_err(err: str, limit: int = 160) -> str:
 
 
 def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
-                    timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None) -> list[dict[str, Any]]:
+                    timeout: float = PROBE_TIMEOUT, factory: Callable[[Any], Any] | None = None,
+                    only: set[str] | None = None) -> list[dict[str, Any]]:
     """A short request to each provider: `alice doctor` and the app's Kurulum → Hepsini dene (Setup → Try all) share it.
-    status: ok | warn (temporary: busy/rate limit) | fail | off (no key, not installed, chosen by hand)."""
+    status: ok | warn (temporary: busy/rate limit) | fail | off (no key, not installed, chosen by hand).
+    `only`: probe just these providers (the setup wizard tests the key that was just pasted)."""
     from alice.providers.chatgpt import make_client
     from alice.providers.router import AllProvidersFailed, Router
 
@@ -357,6 +359,8 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
                 explicit.setdefault(p, ref)
     rows = []
     for name, pc in router.providers_cfg.items():
+        if only is not None and name not in only:
+            continue
         key = "gerekmez" if not pc.needs_key else ("var" if pc.api_key else "yok")
         row = {"name": name, "key": key, "env": pc.api_key_env or "", "model": "", "status": "off", "detail": ""}
         rows.append(row)
