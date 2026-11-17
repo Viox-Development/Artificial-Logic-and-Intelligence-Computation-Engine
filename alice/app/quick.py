@@ -1,12 +1,12 @@
-"""Hızlı bar: hangi programdayken olursan ol kısayolla açılan küçük ALICE kutusu.
+"""Quick bar: a small ALICE box opened with a hotkey regardless of what program you are in.
 
-  Ctrl+Alt+A  hızlı bar (yaz ya da mikrofon tuşuna basılı tutup konuş)
-  Ctrl+Alt+S  ekrandan alan seç ve sor (hata mesajı, Unity console...)
-  Ctrl+Alt+C  panodaki metni açıklat (kopyaladığın bir hata)
+  Ctrl+Alt+A  quick bar (type or hold the mic button to talk)
+  Ctrl+Alt+S  select screen region and ask (error message, Unity console...)
+  Ctrl+Alt+C  explain clipboard text (a copied error)
 
-Arka planda kendi yerel sunucusu ve ajanıyla çalışır; pencere Edge/Chrome'un adres
-çubuksuz uygulama modunda açılır, böylece açılması anlıktır. Kısayollar config'te
-[quick] altında değiştirilebilir. Çekirdek (alice core run) varsa onunla birlikte başlar.
+Runs in the background with its own local server and agent; the window opens in Edge/Chrome
+address-bar-less app mode, so opening it is instantaneous. Hotkeys can be changed in config
+under [quick]. If core (alice core run) is running, it starts alongside it.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any
 
 from alice.config import Config, alice_home
 
-IDLE_NEW = 600  # bu kadar saniye kullanılmadıysa hızlı bar yeni konuşmayla açılır
+IDLE_NEW = 600  # if unused for this many seconds, quick bar opens with a new conversation
 
 EXPLAIN_CLIPBOARD = "Panoya kopyaladığım şunu kısaca açıkla; bir hataysa nedenini ve çözümünü söyle:\n\n{text}"
 
@@ -49,7 +49,7 @@ def png_b64(img, max_width: int = 1600) -> str:
 
 
 def select_region():
-    """Ekranı karart, fareyle alan seçtir. Seçilen alanın PIL görüntüsünü döndürür (Esc = None)."""
+    """Dim the screen, let the user select a region with mouse. Returns PIL image of selected region (Esc = None)."""
     import tkinter as tk
 
     import mss
@@ -63,7 +63,7 @@ def select_region():
         except (OSError, AttributeError):
             pass
     with mss.mss() as s:
-        mon = s.monitors[0]  # tüm ekranlar
+        mon = s.monitors[0]  # all monitors
         shot = s.grab(mon)
         full = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
     result: dict[str, Any] = {}
@@ -158,7 +158,7 @@ class QuickBar:
     def ask_region(self) -> None:
         try:
             img = select_region()
-        except Exception as e:  # tkinter/mss yoksa
+        except Exception as e:  # if tkinter/mss is not available
             self.state.bus.publish({"type": "info", "text": f"alan seçilemedi: {e}"})
             return
         if img is not None:
@@ -188,8 +188,8 @@ class QuickBar:
         webbrowser.open(url)
 
     def start_hotkeys(self) -> bool:
-        """Global kısayolları dinle. Windows'ta RegisterHotKey (klavyeyi yavaşlatan kanca yok), diğerlerinde pynput.
-        Başarısızsa False."""
+        """Listen for global hotkeys. RegisterHotKey on Windows (no keyboard-slowing hook), pynput on others.
+        False on failure."""
         def bg(fn):
             return lambda: threading.Thread(target=fn, daemon=True).start()
 

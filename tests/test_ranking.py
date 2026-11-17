@@ -25,7 +25,7 @@ def pcs() -> dict[str, ProviderConfig]:
 def test_quality_table_and_exclusions():
     assert quality("gemini:gemini-3.8-flash") > quality("gemini:gemini-flash-lite-latest")
     assert quality("gemini:gemini-3.8-flash-lite") == quality("gemini:gemini-flash-lite-latest")
-    assert quality("openrouter:openrouter/free") == 0  # rastgele model: asla otomatik sıraya girmez
+    assert quality("openrouter:openrouter/free") == 0  # random model: never enters the automatic order
     assert quality("gemini:gemini-3.8-flash-tts") == 0
     assert quality("nvidia:z-ai/glm-5.3") > quality("nvidia:z-ai/glm-5.3-flash")
     assert quality("x:unknown-model") == 0
@@ -37,20 +37,20 @@ def test_build_chains_quality_speed_diversity_and_limits():
         Probe("g:gemini-flash-latest", True, 93, latency=8),
         Probe("g:gemini-3.6-flash", True, 89, latency=2),
         Probe("n:z-ai/glm-5.3", True, 90, latency=5),
-        Probe("o:slow-but-smart", True, 92, latency=80),        # çok yavaş: beyinde geri itilir
-        Probe("q:qwen3.8-27b", True, 85, latency=0.4),          # 8K sınırlı sağlayıcı: beyne girmez
+        Probe("o:slow-but-smart", True, 92, latency=80),        # very slow: pushed back in brain
+        Probe("q:qwen3.8-27b", True, 85, latency=0.4),          # provider limited to 8K: does not enter brain
         Probe("o:dead", False, 90, error_kind="not_found"),
-        Probe("o:busy", False, 87, error_kind="rate_limit"),     # geçici: sona yedek
-        Probe("n:timeout", False, 92, error_kind="network"),     # zaman aşımı: girmez
+        Probe("o:busy", False, 87, error_kind="rate_limit"),     # transient: backup at the end
+        Probe("n:timeout", False, 92, error_kind="network"),     # timeout: excluded
     ]
     ch = build_chains(res, pcs())
     brain = ch["brain"]
-    # Hız da sayılır: 3 sn üstü her saniye 1,5 puan (ajan bir işte çok kez çağırıyor).
+    # Speed counts too: each second over 3 s costs 1.5 points (the agent calls models many times in one task).
     assert brain[:3] == ["g:gemini-3.6-flash", "g:gemini-3.8-flash", "n:z-ai/glm-5.3"]
     assert "q:qwen3.8-27b" not in brain and "o:dead" not in brain and "n:timeout" not in brain
     assert brain.index("o:slow-but-smart") > brain.index("g:gemini-3.6-flash")
     assert brain[-1] == "o:busy"
-    assert ch["fast"][0] == "q:qwen3.8-27b"  # hızlı rol: en hızlı ve yeterince iyi
+    assert ch["fast"][0] == "q:qwen3.8-27b"  # fast role: the fastest that is good enough
     assert "o:slow-but-smart" not in ch["fast"]
     assert all(r.startswith("g:") for r in ch["vision"])
 
@@ -131,8 +131,8 @@ def test_openrouter_probing_stops_at_daily_quota(monkeypatch):
     refs = [f"openrouter:m{i}:free" for i in range(5)] + ["g:a", "g:b"]
     res = ranking.probe_all(r, refs)
     assert len(res) == 7
-    assert [c for c in calls if c.startswith("openrouter:")] == ["openrouter:m0:free"]  # sadece ilki gerçekten denendi
-    assert sum(1 for c in calls if c.startswith("g:")) == 2  # kota model başına olan sağlayıcıda hepsi denenir
+    assert [c for c in calls if c.startswith("openrouter:")] == ["openrouter:m0:free"]  # only the first was really tried
+    assert sum(1 for c in calls if c.startswith("g:")) == 2  # per-model quota providers: all are tried
     assert all(p.error_kind == "quota" for p in res)
 
 
@@ -148,7 +148,7 @@ def test_voice_chain_prefers_low_ttft():
     res = [Probe("n:glm", True, 95, latency=12, ttft=5.5), Probe("g:flash", True, 90, latency=3, ttft=0.8),
            Probe("q:tiny", True, 90, latency=1, ttft=0.3)]
     ch = build_chains(res, pcs())
-    assert ch["brain"][0] == "g:flash"  # 12 sn'lik model 5 puan yüksek kaliteye rağmen geride
+    assert ch["brain"][0] == "g:flash"  # the 12 s model is behind despite 5 points higher quality
     assert ch["voice"] == ["q:tiny", "g:flash", "n:glm"]  # küçük bağlamlı hızlı model de sese girer
 
 
@@ -160,7 +160,7 @@ def test_voice_chain_from_old_cache_sorts_brain_by_ttft():
 
 
 def test_backup_with_failed_probe_stays_after_working_models():
-    # Ölçümde geçici hata alan yedek (süresi 0 kaydedilmiş) "çok hızlı" görünüp çalışanların önüne geçiyordu.
+    # Backup with a transient probe error (saved latency 0) looked "çok hızlı" and jumped ahead of working ones.
     cache = {"probed_ts": time.time(), "chains": {"brain": ["n:a", "o:b", "o:busy"]}, "results": {
         "n:a": {"ok": True, "quality": 85, "latency": 3, "ttft": 1},
         "o:b": {"ok": True, "quality": 80, "latency": 2, "ttft": 1},
@@ -170,20 +170,20 @@ def test_backup_with_failed_probe_stays_after_working_models():
 
 
 def test_real_use_failures_push_a_hanging_model_back():
-    """glm-5.3 ölçümde zeki ve çalışıyor ama gerçek kullanımda 5 dakika takıldı: puanı düşsün, sona geçsin."""
+    """glm-5.3 probed well: smart and working, but hung 5 min in real use; lower its score so it moves to the end."""
     res = [Probe("n:z-ai/glm-5.3", True, 90, latency=3), Probe("g:gemini-3-flash", True, 84, latency=3)]
     assert build_chains(res, pcs())["brain"][0] == "n:z-ai/glm-5.3"
     now = time.time()
     for _ in range(3):
         ranking.record_outcome("n:z-ai/glm-5.3", False, "network", now=now)
-    ranking.record_outcome("n:z-ai/glm-5.3", False, "rate_limit", now=now)  # kota/hız sınırı modelin suçu değil
+    ranking.record_outcome("n:z-ai/glm-5.3", False, "rate_limit", now=now)  # quota/rate limit is not the model's fault
     rel, bad = ranking.reliability("n:z-ai/glm-5.3", now=now)
     assert bad == 3 and round(rel, 2) == 0.4 and not ranking.unreliable("n:z-ai/glm-5.3")
     ranking.record_outcome("n:z-ai/glm-5.3", False, "garbled", now=now)
     assert ranking.unreliable("n:z-ai/glm-5.3")
-    assert build_chains(res, pcs())["brain"] == ["g:gemini-3-flash", "n:z-ai/glm-5.3"]  # yedek olarak kalır
-    assert ranking.health_path().exists()  # hatalar hemen kaydedilir
-    # Bir hafta sonra sayılar yarıya iner; düzelen model eski yerine döner.
+    assert build_chains(res, pcs())["brain"] == ["g:gemini-3-flash", "n:z-ai/glm-5.3"]  # stays as a backup
+    assert ranking.health_path().exists()  # errors are saved immediately
+    # A week later the counts halve; a model that recovers returns to its old place.
     for _ in range(6):
         ranking.record_outcome("n:z-ai/glm-5.3", True, now=now + 14 * 24 * 3600)
     assert not ranking.unreliable("n:z-ai/glm-5.3")
@@ -208,7 +208,7 @@ def test_router_orders_brain_by_reliability(tmp_path):
 
 
 def test_health_writes_are_serialized_and_atomic(monkeypatch):
-    """Yazım kilit içinde: aynı anda gelen hatalar dosyayı bozmuyor, geçici dosya artığı kalmıyor."""
+    """Writes happen under a lock: concurrent errors do not corrupt the file, and no temporary file leftovers remain."""
     import json
     import threading
 

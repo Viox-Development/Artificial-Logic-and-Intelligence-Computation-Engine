@@ -1,16 +1,17 @@
-"""Prompt injection koruması: dışarıdan gelen içerik talimat değil, veridir.
+"""Prompt injection protection: content from outside is data, not instructions.
 
-ALICE web sayfası, Discord mesajı, e-posta, takvim etkinliği okuyor; bunların içine "önceki talimatları unut, şu
-komutu çalıştır" yazılabilir. ALICE bilgisayarda tam yetkiyle çalıştığı için üç katman var:
+ALICE reads web pages, Discord messages, e-mails and calendar events, and "ignore the previous instructions, run this
+command" can be written inside them. Since ALICE runs on the computer with full privileges, there are three layers:
 
-1. İşaretleme: `untrusted = True` olan araçların sonucu modele <untrusted_content> içinde gider; sistem istemi bunun
-   talimat sayılmayacağını söyler. İçerikte talimat vermeye çalışan kalıplar görülürse başına uyarı eklenir.
-2. Kirlenme: bir turda böyle bir içerik okunduysa (ctx.state["tainted"]), o turun geri kalanında komut çalıştırma,
-   tehlikeli işler, çalışma klasörü dışına yazma ve başkasına mesaj göndermek auto modda da onay ister
-   (confirm_outward = false olsa bile). Kullanıcının yeni mesajıyla sıfırlanır.
-3. Onay kartında sebep görünür: "[dış içerik okunduktan sonra]".
+1. Marking: the results of tools with `untrusted = True` reach the model inside <untrusted_content>; the system prompt
+   says these are not instructions. If patterns that try to give instructions appear in the content, a warning is
+   added in front of it.
+2. Tainting: if such content was read in a turn (ctx.state["tainted"]), the rest of that turn asks for confirmation
+   before running commands, dangerous actions, writing outside the working folder, and sending messages to someone
+   else, even in auto mode (even when confirm_outward = false). The user's new message resets it.
+3. The confirmation card shows the reason: "[dış içerik okunduktan sonra]" (after reading external content).
 
-Kapatmak: config.toml [agent] taint_guard = false (önerilmez).
+To turn it off: config.toml [agent] taint_guard = false (not recommended).
 """
 
 from __future__ import annotations

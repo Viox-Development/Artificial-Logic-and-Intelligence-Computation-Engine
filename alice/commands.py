@@ -1,16 +1,16 @@
-"""Slash komutları: yerleşikler + kullanıcının yazdığı özel komutlar.
+"""Slash commands: built-ins + custom commands written by the user.
 
-Özel komut = bir Markdown dosyası. ~/.alice/commands/ (her yerde geçerli) ya da
-proje klasöründe .alice/commands/ (Claude Code uyumluluğu için .claude/commands/ da okunur).
+A custom command is a Markdown file. ~/.alice/commands/ (valid everywhere) or
+the project folder's .alice/commands/ (.claude/commands/ is also read, for Claude Code compatibility).
 
   ~/.alice/commands/review.md:
       ---
-      description: Değişiklikleri incele
+      description: Review changes
       ---
-      Bu projedeki son değişiklikleri incele, hataları listele. Odak: $ARGUMENTS
+      Review the recent changes in this project and list the bugs. Focus: $ARGUMENTS
 
-`/review performans` yazınca dosyanın gövdesi $ARGUMENTS yerine "performans" konmuş
-halde ALICE'e normal mesaj olarak gider.
+Typing `/review performans` sends the file body to ALICE as a normal message, with $ARGUMENTS replaced by
+"performans" (Turkish for "performance").
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ BUILTINS: dict[str, str] = {
     "security-review": "Değişikliklerde güvenlik açığı ara (sır sızıntısı, enjeksiyon, yetki, güvensiz komut)",
 }
 
-# Kullanıcının aynı adlı özel komutu varsa onunki geçerli (eski ~/.alice/commands/review.md'ler çalışmaya devam etsin).
+# If the user has a custom command with the same name, theirs wins (old ~/.alice/commands/review.md files keep working).
 OVERRIDABLE = {"review", "security-review"}
 
 REVIEW_PROMPT = (
@@ -52,7 +52,7 @@ REVIEW_PROMPT = (
     "dosya:satır, ne yanlış, hangi girdiyle bozulur, önerilen düzeltme. Önem sırasına diz (kritik, önemli, küçük). Stil "
     "zevklerini ve emin olmadığın tahminleri ayrı bir 'belki' başlığına koy. Değişiklik YAPMA; sadece raporla."
 )
-# /review deep|derin|performans|test ...: code_review aracını o odakla, bağımsız ajan(lar)la çalıştırır.
+# /review deep|derin|performans|test ...: run the code_review tool with that focus, using independent agent(s).
 DEEP_WORDS = {"deep": "deep", "derin": "deep", "performance": "performance", "performans": "performance",
               "tests": "tests", "test": "tests", "docs": "docs", "doküman": "docs", "dokuman": "docs"}
 TOOL_REVIEW_PROMPT = (
@@ -69,7 +69,7 @@ SECURITY_PROMPT = (
 
 
 def builtin_prompt(text: str) -> str | None:
-    """Model'e mesaj olarak giden yerleşik komutlar (/init, /kurul, /review, /security-review); değilse None."""
+    """Built-in commands sent to the model as a message (/init, /kurul, /review, /security-review); else None."""
     name, args = _split(text.strip())
     name = name.lower()
     if name == "init":
@@ -96,7 +96,7 @@ INIT_PROMPT = (
 
 
 def council_prompt(args: str) -> str:
-    """/kurul <konu>: konuyu inceleme kuruluna sorduran mesaj."""
+    """/kurul <topic>: the message that asks the review council about the topic."""
     topic = args.strip() or "Bu konuşmada en son konuştuğumuz konu ya da değişiklik"
     return (f"Şunu inceleme kuruluna sor (council aracı; konu kritikse critical=true): {topic}\n\nKurulun kararını, "
             "doğrulanmış bulguları ve kimin neyi neden savunduğunu bana kısaca özetle.")
@@ -134,7 +134,7 @@ def _parse(path: Path) -> CustomCommand:
 
 def load_custom(cwd: Path) -> dict[str, CustomCommand]:
     out: dict[str, CustomCommand] = {}
-    # Sonra gelen öncekini ezer: proje komutları kişisel komutlardan önceliklidir.
+    # Later entries overwrite earlier ones: project commands take priority over personal commands.
     for d in (alice_home() / "commands", cwd / ".claude" / "commands", cwd / ".alice" / "commands"):
         if not d.is_dir():
             continue
@@ -156,7 +156,7 @@ def catalog(cwd: Path) -> list[dict[str, str]]:
 
 
 def expand_custom(text: str, cwd: Path) -> str | None:
-    """'/isim argümanlar' özel bir komutsa genişletilmiş mesajı döndür, değilse None."""
+    """If '/name args' is a custom command, return the expanded message; otherwise None."""
     if not text.startswith("/"):
         return None
     name, args = _split(text)
@@ -165,7 +165,8 @@ def expand_custom(text: str, cwd: Path) -> str | None:
 
 
 def _split(text: str) -> tuple[str, str]:
-    """'/ad argümanlar' -> (ad, argümanlar). Ad ilk boşlukta ya da satır sonunda biter: "/kurul\\nkonu" (Shift+Enter)
-    eskiden yalnız boşlukta bölündüğü için ad "kurul\\nkonu" sayılıyor ve "bilinmeyen komut" deniyordu."""
+    """'/name args' -> (name, args). The name ends at the first space or at the end of the line:
+    "/kurul\\nkonu" (Shift+Enter). It used to split only at a space, so the name became "kurul\\nkonu" and
+    "bilinmeyen komut" ("unknown command") was reported."""
     parts = text[1:].split(None, 1)
     return (parts[0] if parts else ""), (parts[1].strip() if len(parts) > 1 else "")

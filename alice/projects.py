@@ -1,16 +1,17 @@
-"""Kullanıcının projeleri: bilgisayardaki repo/Unity/Python/Node projelerini bul, kısa kartlarını çıkar.
+"""User's projects: find repo/Unity/Python/Node projects on the computer and extract a short card for each.
 
-ALICE "Unity projemi aç", "FPS oyununda en son ne yapmıştık", "ALICE reposunda kaç commit var" dendiğinde hangi
-klasörden bahsedildiğini bilmiyordu. Bu modül ev klasöründeki bilinen yerleri (Masaüstü, Belgeler, GitHub,
-source/repos, Unity...) ve Windows'ta diğer sürücülerin üst klasörlerini sığ bir şekilde tarar; .git, Unity
-(Assets + ProjectSettings), pyproject/package.json/.sln gibi işaretlerden projeyi tanır. Kartlar
-~/.alice/projects.json'da durur, 12 saatte bir arka planda yenilenir. En son çalışılanlar sistem istemine
-girer; ayrıntı `projects` aracıyla.
+ALICE did not know which folder was meant when the user said "Unity projemi aç" ("open my Unity project"),
+"FPS oyununda en son ne yapmıştık" ("what did we last do in the FPS game") or "ALICE reposunda kaç commit var"
+("how many commits are in the ALICE repo"). This module shallowly scans the known places in the home folder
+(Masaüstü/Desktop, Belgeler/Documents, GitHub, source/repos, Unity...) and the top folders of other drives on
+Windows; it recognizes a project from markers such as .git, Unity (Assets + ProjectSettings), pyproject/package.json
+or .sln. Cards are kept in ~/.alice/projects.json and refreshed in the background every 12 hours. The most recently
+worked-on ones enter the system prompt; details come from the `projects` tool.
 
 config.toml:
   [projects]
-  paths = ["D:/Oyunlar/Unity"]   # ek kök klasörler
-  depth = 3                      # köklerin altında kaç seviye inilir
+  paths = ["D:/Oyunlar/Unity"]   # extra root folders
+  depth = 3                      # how many levels to descend below the roots
   enabled = true
 """
 
@@ -58,7 +59,7 @@ class Project:
     remote: str = ""
     branch: str = ""
     last_commit: str = ""
-    active: float = 0.0  # son çalışma zamanı (son commit ya da en yeni dosya)
+    active: float = 0.0  # last activity time (last commit or newest file)
     readme: str = ""
 
     def line(self, now: float | None = None) -> str:
@@ -72,9 +73,9 @@ class Project:
         return f"{self.name} ({meta}{when}) {self.path}{gist}"
 
 
-# ------------------------------------------------------------------------------------------- tarama
+# ------------------------------------------------------------------------------------------- scanning
 def roots(cfg=None) -> list[tuple[Path, int]]:
-    """(kök, derinlik). Ev klasöründeki bilinen yerler + config'teki yollar + Windows'ta diğer sürücüler."""
+    """(root, depth) pairs: known places in the home folder + paths from the config + other drives on Windows."""
     o = (cfg.data.get("projects", {}) if cfg is not None else {}) or {}
     depth = int(o.get("depth", 3))
     home = Path.home()
@@ -100,7 +101,7 @@ def roots(cfg=None) -> list[tuple[Path, int]]:
 
 
 def detect(path: Path) -> str | None:
-    """Klasör bir proje kökü mü? Türünü döndür (git deposu ama tanınmayan tür: 'repo')."""
+    """Is this folder a project root? Return its kind (a git repo of an unrecognized kind: 'repo')."""
     try:
         names = set(os.listdir(path))
     except OSError:
@@ -127,7 +128,7 @@ def scan(cfg=None, limit: int = 300, deadline: float = 20.0) -> list[Project]:
             key = str(p).lower()
             if key not in found:
                 found[key] = card(p, kind)
-            return  # proje içinde alt proje aranmaz
+            return  # sub-projects inside a project are not searched
         if left <= 0:
             return
         try:
@@ -179,13 +180,13 @@ def card(path: Path, kind: str) -> Project:
 
 
 def _clean_remote(url: str) -> str:
-    url = re.sub(r"https://[^@/]+@", "https://", url)  # URL içine gömülü token kart dosyasına yazılmasın
+    url = re.sub(r"https://[^@/]+@", "https://", url)  # keep a token embedded in the URL out of the card file
     m = re.search(r"github\.com[:/]+([\w.-]+/[\w.-]+?)(?:\.git)?$", url)
     return m.group(1) if m else url
 
 
 def commits(path: Path, n: int = 5) -> list[tuple[float, str]]:
-    """Son n commit (zaman, mesaj), .git/logs/HEAD'den: git kurulu olmasa da çalışır."""
+    """Last n commits (time, message), read from .git/logs/HEAD: works even when git is not installed."""
     try:
         with open(path / ".git" / "logs" / "HEAD", "rb") as f:
             f.seek(0, 2)
@@ -253,7 +254,7 @@ def newest_mtime(path: Path, cap: int = 400) -> float:
     return best
 
 
-# ------------------------------------------------------------------------------------------- önbellek
+# ------------------------------------------------------------------------------------------- cache
 def cache_path() -> Path:
     return alice_home() / "projects.json"
 
@@ -289,7 +290,7 @@ def refresh(cfg=None) -> list[Project]:
 
 
 def get(cfg=None, background: bool = True) -> list[Project]:
-    """Önbellekteki projeler; eskiyse arka planda yenilenir (ilk açılışta da beklemeden boş döner)."""
+    """Cached projects; if stale, refreshed in the background (on first start, returns empty without waiting)."""
     if not enabled(cfg):
         return []
     scanned, projects = load()
@@ -300,7 +301,7 @@ def get(cfg=None, background: bool = True) -> list[Project]:
             def run() -> None:
                 try:
                     refresh(cfg)
-                except Exception:  # noqa: BLE001 - tarama ipucu; hata ALICE'i etkilemesin
+                except Exception:  # noqa: BLE001 - scan is only a hint; an error must not affect ALICE
                     pass
                 finally:
                     _refreshing.clear()
@@ -330,7 +331,7 @@ def find(query: str, projects: list[Project]) -> list[Project]:
 
 
 def brief(cfg=None, n: int = 8) -> str:
-    """Sistem istemine giren kısa liste: en son çalışılan n proje."""
+    """Short list that goes into the system prompt: the n most recently worked-on projects."""
     projects = get(cfg)[:n]
     if not projects:
         return ""
@@ -340,7 +341,7 @@ def brief(cfg=None, n: int = 8) -> str:
 
 
 def names(cfg=None, n: int = 20) -> list[str]:
-    """Ses tanıma ipucu için proje adları."""
+    """Project names, as a hint for speech recognition."""
     try:
         return [p.name for p in get(cfg)[:n]]
     except Exception:  # noqa: BLE001

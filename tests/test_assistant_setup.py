@@ -1,4 +1,4 @@
-"""alice doctor'un yeni kontrolleri, alice setup google sihirbazı ve uygulamadaki Asistan sekmesi."""
+"""New alice doctor checks, the alice setup google wizard, and the Asistan (Assistant) tab in the app."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_doctor_checks_run_offline(workdir):
     assert all(c.status in ("ok", "warn", "off", "fail") for c in checks)
     gm = next(c for c in checks if c.name == "Gmail")
     assert gm.status == "off" and "alice setup google" in gm.fix
-    assert next(c for c in checks if c.name == "Google araması").status == "off"  # anahtar yok
+    assert next(c for c in checks if c.name == "Google araması").status == "off"  # no key
 
 
 def test_doctor_one_broken_check_does_not_stop_others(monkeypatch, workdir):
@@ -80,7 +80,7 @@ def test_wizard_full_flow_with_downloaded_json(tmp_path, monkeypatch):
     assert rc == 0
     assert opened == [url for _, url, _ in setup_google.STEPS]
     assert "GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com" in (tmp_path / ".env").read_text(encoding="utf-8")
-    assert gmail == ["okul", "kisisel"]  # "Okul!" geçersiz ad: tekrar soruldu
+    assert gmail == ["okul", "kisisel"]  # "Okul!" is an invalid name: asked again
     assert any("Takvim bağlandı" in s for s in said) and "okul (okul@x.com)" in said[-1]
     monkeypatch.delenv("GOOGLE_CLIENT_ID")
     monkeypatch.delenv("GOOGLE_CLIENT_SECRET")
@@ -100,7 +100,7 @@ def test_wizard_quit_midway(tmp_path, monkeypatch):
     assert not (tmp_path / ".env").exists()
 
 
-# ----------------------------------------------------------------------------------------- Asistan sekmesi
+# ----------------------------------------------------------------------------------------- Assistant (Asistan) tab
 @pytest.fixture
 def app(workdir):
     state = AppState(make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["a:m"]}), workdir, "auto",
@@ -125,10 +125,10 @@ def test_assistant_tab_status_settings_rules_and_gmail(app, workdir, isolated_ho
 
     assert client.post("/api/assistant/set", json={"section": "agent", "key": "sandbox", "value": "on"}).json()["ok"]
     assert state.cfg.data["agent"]["sandbox"] == "on"
-    assert load_config().agent["sandbox"] == "on"  # config.toml'a yazıldı
+    assert load_config().agent["sandbox"] == "on"  # written to config.toml
     assert client.post("/api/assistant/set", json={"section": "greeting", "key": "enabled", "value": False}).json()["ok"]
     bad = client.post("/api/assistant/set", json={"section": "agent", "key": "permission_mode", "value": "yolo"})
-    assert bad.status_code == 400  # sadece izin verilen ayarlar
+    assert bad.status_code == 400  # only allowed settings
     assert client.post("/api/assistant/set", json={"section": "agent", "key": "sandbox", "value": "yok"}).status_code == 400
 
     r = client.post("/api/assistant/action", json={"action": "rule_delete", "kind": "allow",

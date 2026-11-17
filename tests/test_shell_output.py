@@ -16,14 +16,14 @@ def ctx(tmp_path):
 
 
 def _script(tmp_path: Path, code: str) -> str:
-    """Kodu geçici bir .py dosyasına yaz ve onu çalıştıracak komutu döndür.
+    """Write the code to a temporary .py file and return the command that runs it.
 
-    'py -3' Ubuntu'da yok; satır içi -c ise PowerShell'de tırnakları bozuyor. Betik dosyası iki tarafta da çalışır.
+    'py -3' is not available on Ubuntu; inline -c breaks the quotes in PowerShell. A script file works on both sides.
     """
     p = tmp_path / "script.py"
     p.write_text(code, encoding="utf-8")
-    # PowerShell tırnaklı bir yolu tek başına komut sanmıyor (UnexpectedToken): Windows'ta '&' çağrı operatörü,
-    # bash'te ise düz yol gerekir.
+    # PowerShell does not treat a quoted path alone as a command (UnexpectedToken): on Windows the '&' call
+    # operator is needed, while bash needs a plain path.
     call = f'& "{sys.executable}" "{p}"' if sys.platform == "win32" else f'"{sys.executable}" "{p}"'
     return call
 
@@ -42,17 +42,17 @@ def test_no_dump_when_output_fits(ctx, tmp_path):
 
 
 def test_windows_argv_puts_command_on_own_line_not_encoded(monkeypatch):
-    # Kurulum ayrı satırda, -Command düz metin: PowerShell'in hata konumu kullanıcı komutuna denk gelsin ve
-    # stderr CLIXML'e sarılmasın (bkz. shell_argv yorumu, 2026-11-13 oturumu).
+    # Setup on its own line, -Command as plain text: PowerShell's error position points at the user's command and
+    # stderr is not wrapped in CLIXML (see shell_argv comment, 2026-11-13 session).
     import alice.tools.shell as sh
     monkeypatch.setattr(sh, "IS_WIN", True)
-    monkeypatch.setattr(sh.shutil, "which", lambda n: None)  # pwsh yok -> powershell
+    monkeypatch.setattr(sh.shutil, "which", lambda n: None)  # no pwsh -> powershell
     argv = sh.shell_argv("gh api x --jq .content")
     assert argv[0] == "powershell"
     assert "-EncodedCommand" not in argv and "-Command" in argv
     script = argv[-1]
     assert script.startswith("[Console]::OutputEncoding")
-    # kullanıcı komutu kurulum satırından sonra, kendi satırında
+    # the user's command comes after the setup line, on its own line
     assert script.split("\n", 1)[1] == "gh api x --jq .content"
 
 
@@ -82,7 +82,7 @@ def _wait_gone(pid: int, secs: float = 10) -> bool:
 
 
 def test_timeout_kills_console_children(ctx, tmp_path):
-    # Zaman aşımında yalnız kabuk değil, takılan konsol alt süreçleri de ölmeli.
+    # On timeout, not only the shell but also the hung console child processes must die.
     pidfile = tmp_path / "child.pid"
     res = RunCommand().run(ctx, command=_spawn_sleeper_script(tmp_path, pidfile), timeout=4)
     assert res.is_error and "ZAMAN AŞIMI" in res.text
@@ -91,7 +91,7 @@ def test_timeout_kills_console_children(ctx, tmp_path):
 
 
 def test_timeout_keeps_gui_children(ctx, tmp_path, monkeypatch):
-    # Pencereli program (burada GUI sayılan uyuyan alt süreç) zaman aşımında açık kalır.
+    # A windowed program (here the sleeping child process, which counts as GUI) stays open on timeout.
     import psutil
 
     import alice.tools.shell as sh
@@ -109,14 +109,14 @@ def test_timeout_keeps_gui_children(ctx, tmp_path, monkeypatch):
 def test_is_gui_exe_reads_pe_subsystem():
     import alice.tools.shell as sh
     exe = Path(sys.executable)
-    assert sh._is_gui_exe(str(exe)) is False  # python.exe konsol
+    assert sh._is_gui_exe(str(exe)) is False  # python.exe is a console app
     pyw = exe.with_name("pythonw.exe")
     if pyw.exists():
         assert sh._is_gui_exe(str(pyw)) is True
 
 
 def test_process_output_tail_chars_zero_or_negative_returns_no_output(ctx, tmp_path):
-    # data[-0:] eskiden bütün logu döndürüyordu.
+    # data[-0:] used to return the entire log.
     import time
 
     from alice.tools.shell import BgProc, ProcessOutput

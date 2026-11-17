@@ -1,16 +1,18 @@
-"""Çekirdeğin iki küçük nöbetçisi.
+"""The core's two small watchdogs.
 
-GameHealth: oyun/uçuş modundayken bilgisayar gerçekten kritik seviyeye gelirse söyler: ekran kartı ya da işlemci
-ısınması, ekran kartı belleği ya da RAM dolması (RAM'de en çok yer kaplayan arka plan programını da söyler: "Discord
-1,8 GB"). Oyunda ekran kartı 85-88 derecede saatlerce durur (normal): 85'te konuşmak her 15 dakikada bir "ekran kartı
-86 derece" demek oluyordu (1 Kasım, 23 kez). Sınırlar artık kartın kendini yavaşlatmaya başladığı seviyede. Koşul iki
-dakika sürmeden konuşmaz, aynı uyarıyı 30 dakikada bir tekrarlar, değer sınırın 5 altına inince yeniden kurulur.
+GameHealth: while in game/flight mode, speaks up if the computer really reaches a critical level: GPU or CPU
+overheating, GPU memory or RAM filling up (it also names the background program using the most RAM: "Discord
+1.8 GB"). In a game the GPU sits at 85-88 degrees for hours (normal): speaking at 85 meant saying "GPU
+86 degrees" every 15 minutes (Nov 1, 23 times). Limits now sit where the card starts slowing itself down. A condition
+does not speak until it has lasted two minutes; the same warning repeats at most every 30 minutes, and it is re-armed
+once the value drops 5 below the limit.
 
-NetWatch: internet bağlantısını arka planda 30 sn'de bir yoklar (1.1.1.1 ve 8.8.8.8'e TCP). 45 sn'den uzun kopmayı ve
-geri gelişi (ne kadar kesik kaldığıyla) bildirir, her kesintiyi "net" olayı olarak kaydeder; haftalık özet sayar.
+NetWatch: pings the internet connection in the background every 30 sec (TCP to 1.1.1.1 and 8.8.8.8). Reports drops
+longer than 45 sec and the return (with how long it was down), and records each outage as a "net" event; counts them
+in the weekly summary.
 
-SystemGauges: HUD açıkken aynı sınırlara yaklaşan değeri köşede küçük bir çubuk olarak gösterir (konuşmaz). Sesli
-uyarıların yerine geçmez, onlara eklenir; HUD kapalıyken çekirdeğe hiç bağlanmaz.
+SystemGauges: while the HUD is open, shows a value nearing these limits as a small bar in the corner (it does not
+speak). It does not replace the voice alerts, it adds to them; when the HUD is closed it never connects to the core.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from typing import Callable
 
 from alice.core.notify import Notification
 
-# (anahtar, sınır, metin) — metin {v} ile değeri alır
+# (key, limit, text) — text takes the value via {v}
 GAME_LIMITS = (
     ("pc.gpu.temp", 93.0, "Ekran kartı {v:.0f} derece, kritik: kart kendini yavaşlatmaya başlar."),
     ("pc.cpu.temp", 95.0, "İşlemci {v:.0f} derece, kritik: oyun takılabilir."),
@@ -31,9 +33,9 @@ GAME_LIMITS = (
 )
 GAME_HOLD = 120.0
 GAME_REPEAT = 1800.0
-GAME_PROCS = ("aces", "dcs", "robloxplayerbeta")  # RAM önerisinde oyunun kendisini söyleme
-# HUD çubuğu: (anahtar, ad, birim, görünmeye başladığı değer). Sınır GAME_LIMITS'ten gelir. Sıcaklıkta sınırın %90'ı
-# (GPU 84°C) oyunda normal seviye (85-88): çubuk orada hep açık kalırdı, o yüzden sınırın birkaç derece altından başlar.
+GAME_PROCS = ("aces", "dcs", "robloxplayerbeta")  # don't name the game itself in the RAM suggestion
+# HUD bar: (key, name, unit, value where it appears). The limit comes from GAME_LIMITS; temperatures start at 90%
+# of the limit (GPU 84°C): normal in-game play is 85-88, so the bar would stay on all the time otherwise.
 GAUGES = (
     ("pc.gpu.temp", "GPU", "°C", 88.0),
     ("pc.cpu.temp", "CPU", "°C", 90.0),
@@ -68,7 +70,7 @@ class GameHealth:
                 continue
             start = self.since.setdefault(key, now)
             since_said = now - self.said.get(key, float("-inf"))
-            # yeniden kurulsa da 10 dk dolmadan tekrar yok: sınırda gidip gelen değer her seferinde konuşturmasın
+            # even if re-armed, no repeat within 10 min: a value bouncing around the limit must not keep speaking
             if now - start < GAME_HOLD or since_said < GAME_REPEAT / 3 or (
                     not self.armed.get(key, True) and since_said < GAME_REPEAT):
                 continue
@@ -97,9 +99,9 @@ class GameHealth:
 
 
 class SystemGauges:
-    """Çekirdek kancası (her tur çağrılır): sınıra yaklaşan değer için HUD'a çubuk gönderir. Her turda aynı kimlikle
-    yeniden gönderilir; değer düşünce gönderim durur ve çubuk ttl dolunca (yaklaşık bir buçuk tur) kendiliğinden
-    kaybolur."""
+    """Core hook (called every turn): sends a HUD bar for a value nearing its limit.
+    It is re-sent every turn with the same id; once the value drops, sending stops
+    and the bar vanishes by itself when its ttl runs out (about 1.5 turns)."""
 
     def __init__(self, store, interval: float = 15.0, clock: Callable[[], float] = time.time):
         self.store = store
@@ -116,7 +118,7 @@ class SystemGauges:
         shown = []
         for key, name, unit, start in GAUGES:
             last = self.store.last(key)
-            if not last or last[1] is None or now - last[0] >= 120:  # bayat ölçüm çubuk açmasın
+            if not last or last[1] is None or now - last[0] >= 120:  # a stale sample must not open a bar
                 continue
             if views.system_gauge(name, float(last[1]), self.limits[key], unit, warn=start, ttl=self.ttl):
                 shown.append(name)
@@ -124,7 +126,7 @@ class SystemGauges:
 
 
 def _online(hosts=(("1.1.1.1", 443), ("8.8.8.8", 53)), timeout: float = 2.0) -> float | None:
-    """Bağlantı süresi (ms); hiçbirine ulaşılamazsa None."""
+    """Connection time (ms); None if none of the hosts can be reached."""
     for host in hosts:
         t0 = time.monotonic()
         try:
@@ -148,7 +150,7 @@ class NetWatch:
         self.clock = clock
         self.background = background
         self.last_probe = float("-inf")
-        self.result: float | None | bool = False  # False: henüz ölçülmedi
+        self.result: float | None | bool = False  # False: not measured yet
         self.down_since: float | None = None
         self.announced = False
         self._lock = threading.Lock()
@@ -196,7 +198,7 @@ class NetWatch:
 
 
 def outages(store, since: float) -> tuple[int, float]:
-    """Kesinti sayısı ve toplam dakika (haftalık özet için)."""
+    """Outage count and total minutes (for the weekly summary)."""
     evs = [e for e in store.events(since=since, kind="net", limit=500) if e.title == "İnternet kesintisi"]
     total = 0.0
     for e in evs:

@@ -8,20 +8,20 @@ def test_old_samples_thinned_to_one_per_minute():
     day = 86400.0
     now = 100 * day
     old = now - 5 * day
-    for i in range(120):  # iki dakika, saniyede bir
+    for i in range(120):  # two minutes, one per second
         s.add_many([("wt.g", float(i % 2), None), ("core.mode", None, "flight" if i < 90 else "normal")], ts=old + i)
-    s.add("wt.g", 7.0, ts=now - 60)  # yeni ölçüm dokunulmaz
+    s.add("wt.g", 7.0, ts=now - 60)  # new measurement is left untouched
     removed = s.thin(now)
     assert removed == 240 - 4
     assert [v for _, v in s.series("wt.g")] == [0.5, 0.5, 7.0]
-    assert [t for _, t in s.texts("core.mode")] == ["flight", "normal"]  # dakikanın son değeri
-    assert s.thin(now) == 0  # aynı aralık bir daha işlenmez
-    s.add("wt.g", 1.0, ts=old + 10)  # işlenmiş aralığa sonradan gelen satır olduğu gibi kalır
+    assert [t for _, t in s.texts("core.mode")] == ["flight", "normal"]  # last value of the minute
+    assert s.thin(now) == 0  # the same range is never processed again
+    s.add("wt.g", 1.0, ts=old + 10)  # a row added later to an already-processed range stays as is
     assert s.thin(now) == 0
 
 
 def test_thin_failure_midway_does_not_lose_samples():
-    """Özetler geri yazılamadan hata olursa silme sonraki commit'le kalıcı olmamalı."""
+    """If the summaries fail to be written back, the deletion must not be made permanent by the next commit."""
     import sqlite3
 
     import pytest
@@ -46,5 +46,5 @@ def test_thin_failure_midway_does_not_lose_samples():
     with pytest.raises(sqlite3.OperationalError):
         s.thin(now)
     s._db = real
-    s.add("x", 1.0, ts=now)  # sonraki yazmanın commit'i yarım silmeyi kalıcı yapmasın
+    s.add("x", 1.0, ts=now)  # the next write's commit must not make the half-done deletion permanent
     assert len(s.series("wt.g")) == 120

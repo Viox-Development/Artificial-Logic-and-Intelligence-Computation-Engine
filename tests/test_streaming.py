@@ -74,7 +74,7 @@ def test_stream_cancel():
 class StreamingFake(FakeProvider):
     def chat_stream(self, model, messages, on_delta, cancel=None, **kw):
         item = self.script.pop(0)
-        if isinstance(item, tuple):  # (parça, sonra hata)
+        if isinstance(item, tuple):  # (chunk, then error)
             on_delta(item[0])
             raise item[1]
         res = self.chat_from(item, model)
@@ -132,7 +132,7 @@ def test_agent_streams_and_stop_from_other_thread(workdir):
                   system_prompt="s")
     t = threading.Thread(target=agent.run_turn, args=("uzun iş",))
     t.start()
-    for _ in range(200):  # tur başlamadan durdurulursa run_turn bayrağı sıfırlar; akış başlayınca durdur
+    for _ in range(200):  # if stopped before the turn starts, run_turn resets the flag; stop once streaming starts
         if ("delta", "başlıyorum") in ui.events:
             break
         time.sleep(0.01)
@@ -162,7 +162,7 @@ def test_diff_on_edit_and_write(workdir):
     (workdir / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
     from alice.tools.files import ReadFile
 
-    ReadFile().run(ctx, path="a.py")  # okumadan düzenleme reddedilir
+    ReadFile().run(ctx, path="a.py")  # editing without reading first is rejected
     r = EditFile().run(ctx, path="a.py", old_string="y = 2", new_string="y = 3")
     assert "-y = 2" in r.diff and "+y = 3" in r.diff
     r = WriteFile().run(ctx, path="new.py", content="print(1)\n")
@@ -195,7 +195,7 @@ def test_stream_reports_tool_progress():
 
 
 def test_stream_aborts_when_only_keepalives_arrive():
-    class Trickle(httpx.SyncByteStream):  # sağlayıcı "işliyorum" der ama hiç cevap vermez
+    class Trickle(httpx.SyncByteStream):  # the provider says "işliyorum" (processing) but never answers
         def __iter__(self):
             for _ in range(200):
                 time.sleep(0.01)
@@ -210,8 +210,8 @@ def test_stream_aborts_when_only_keepalives_arrive():
 
 
 def test_stream_gives_up_when_first_answer_never_comes():
-    """glm-5.3 (NVIDIA) bağlantıyı açık tutup 5 dakikadan fazla hiç cevap vermedi: ilk veri gelmezse vazgeç,
-    hata 'zaman aşımı' olsun ki router modeli uzun süre atlasın."""
+    """glm-5.3 (NVIDIA) kept the connection open and sent no answer for over 5 minutes: if the first data never
+    comes, give up, with the error 'zaman aşımı' (timeout) so the router skips the model for a while."""
     class Trickle(httpx.SyncByteStream):
         def __iter__(self):
             for _ in range(200):

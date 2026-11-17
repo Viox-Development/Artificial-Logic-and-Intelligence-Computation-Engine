@@ -27,7 +27,7 @@ def test_bills_and_dates_become_reminders_once(tmp_path):
     router = Router({
         "Konu: Faturanız": {"kind": "bill", "title": "Turkcell faturası", "due": "2026-11-10", "amount": "349,90 TL"},
         "Konu: Ödev": {"kind": "date", "title": "Algoritma ödevi teslimi", "due": "2026-11-03T23:59", "amount": None},
-        "Konu: Eski": {"kind": "bill", "title": "Eski fatura", "due": "2026-10-01", "amount": None},  # geçmiş: alınmaz
+        "Konu: Eski": {"kind": "bill", "title": "Eski fatura", "due": "2026-10-01", "amount": None},  # past: not picked up
     })
     mails = [("okul", "1", "Turkcell", "Faturanız", "Turkcell faturanız hazır"),
              ("okul", "2", "Hoca", "Ödev", "Ödev teslimi yarın"),
@@ -39,10 +39,10 @@ def test_bills_and_dates_become_reminders_once(tmp_path):
     added = mailwatch.scan(None, router, mem, lambda t, b: sent.append(b) or True, now=now.timestamp(), **kw)
     assert added == ["Turkcell faturası son ödeme 10.11, 349,90 TL.", "Algoritma ödevi teslimi: 03.11 23:59."]
     fups = {f.text: f.due for f in mem.followups()}
-    assert datetime.fromtimestamp(fups[added[0]]) == datetime(2026, 11, 8, 10)  # 2 gün önce sabah
-    assert datetime.fromtimestamp(fups[added[1]]) == datetime(2026, 11, 2, 14, 5)  # vakti geçti: hemen
+    assert datetime.fromtimestamp(fups[added[0]]) == datetime(2026, 11, 8, 10)  # 2 days before, in the morning
+    assert datetime.fromtimestamp(fups[added[1]]) == datetime(2026, 11, 2, 14, 5)  # time already passed: immediately
     assert "Takvime de eklememi istersen söyle." in sent[0]
     calls = router.calls
-    assert mailwatch.scan(None, router, mem, lambda t, b: True, now=now.timestamp() + 600, **kw) == []  # 2 saat
+    assert mailwatch.scan(None, router, mem, lambda t, b: True, now=now.timestamp() + 600, **kw) == []  # 2 hours
     assert mailwatch.scan(None, router, mem, lambda t, b: True, now=now.timestamp() + 8000, **kw) == []
-    assert router.calls == calls  # okunan mail bir daha modele gitmez
+    assert router.calls == calls  # a mail already read never goes to the model again

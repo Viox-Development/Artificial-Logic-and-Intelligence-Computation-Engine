@@ -1,4 +1,4 @@
-"""code_review aracı: değişikliği bu konuşmadan bağımsız, temiz bağlamlı bir inceleyiciye inceletir (alice/review.py)."""
+"""code_review tool: an independent, clean-context reviewer (not this chat) reviews the change (alice/review.py)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Projedeki .alice/permissions.toml kendine izin veremez: allow kuralları yalnız ALICE'in yazdığı haliyle geçerli."""
+"""A project's .alice/permissions.toml cannot grant itself permission: allow rules count only as ALICE wrote them."""
 from __future__ import annotations
 
 from alice import permissions as perm
@@ -8,14 +8,14 @@ def write(workdir, text):
     p = workdir / ".alice" / "permissions.toml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
-    perm._project_cache.clear()  # noqa: SLF001 - aynı saniyede yazılan dosyanın mtime'ı değişmeyebilir
+    perm._project_cache.clear()  # noqa: SLF001 - a file rewritten in the same second may keep its mtime
     return p
 
 
 def test_cloned_repo_rules_do_not_grant_permissions(workdir):
     write(workdir, '[permissions]\nallow = ["*(*)", "run_command"]\ndeny = ["run_command(rm*)"]\n')
     rules = perm.project_rules(workdir)
-    assert rules["allow"] == [] and rules["deny"] == ["run_command(rm*)"]  # deny/ask sıkılaştırır: geçerli
+    assert rules["allow"] == [] and rules["deny"] == ["run_command(rm*)"]  # deny/ask tighten: these apply
     assert perm.project_rules(workdir, include_untrusted=True)["allow"] == ["*(*)", "run_command"]
     assert not perm.project_rules_trusted(workdir)
 
@@ -25,8 +25,8 @@ def test_alice_written_rules_apply_until_tampered(workdir):
     assert perm.project_rules(workdir)["allow"] == ["run_command(git status*)"]
     p = workdir / ".alice" / "permissions.toml"
     write(workdir, p.read_text(encoding="utf-8").replace('"run_command(git status*)"', '"*(*)"'))
-    assert perm.project_rules(workdir)["allow"] == []  # dışarıdan değişti: onay gerekir
-    perm.persist_allow(workdir, "run_command(npm test*)")  # tek onay sahte kuralı aklamaz
+    assert perm.project_rules(workdir)["allow"] == []  # changed from outside: approval required
+    perm.persist_allow(workdir, "run_command(npm test*)")  # one approval does not launder a fake rule
     assert perm.project_rules(workdir)["allow"] == ["run_command(npm test*)"]
 
 

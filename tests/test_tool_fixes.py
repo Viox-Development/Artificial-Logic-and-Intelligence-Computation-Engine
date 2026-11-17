@@ -1,4 +1,4 @@
-"""Araçlardaki somut hataların düzeltmelerini sabitleyen odaklı testler."""
+"""Focused tests that pin down fixes for concrete bugs in the tools."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _edit(ctx, name, old, new):
 
 
 def test_edit_keeps_utf8_bom(ctx, workdir):
-    # Windows PowerShell 5.1 BOM'suz UTF-8 betiği ANSI okur: düzenleme BOM'u düşürmemeli
+    # Windows PowerShell 5.1 reads a UTF-8 script without a BOM as ANSI: editing must not drop the BOM
     f = workdir / "s.ps1"
     f.write_bytes("﻿Write-Host 'çalıştı'\n".encode("utf-8"))
     _edit(ctx, "s.ps1", "çalıştı", "bitti ğ")
@@ -115,7 +115,7 @@ def test_apply_patch_keeps_encoding_and_marks_read(ctx, workdir):
     ApplyPatch().run(ctx, patch=patch)
     assert f.read_bytes() == "﻿Write-Host 'ğ'\r\n".encode("utf-8")
     assert not g.exists() and (workdir / "v.txt").read_bytes() == "öz\r\n".encode("utf-16")
-    # yamanın yazdığı dosya hemen edit_file ile düzenlenebilmeli
+    # a file written by the patch must be editable with edit_file right away
     EditFile().run(ctx, path="s.ps1", old_string="ğ", new_string="ü")
 
 
@@ -137,7 +137,7 @@ def test_process_wait_sees_last_line_written_just_before_exit(ctx, workdir):
         returncode = None
 
         def poll(self):
-            # süreç son satırını yazıp hemen çıkıyor (okuma ile poll arasında)
+            # the process writes its last line and exits right away (between the read and the poll)
             if self.returncode is None:
                 with open(log, "ab") as fh:
                     fh.write(b"ERROR boom\n")

@@ -1,5 +1,5 @@
-"""Ses yığınının dayanıklılığı: araya girme yarışları, Live bağlantı sızıntısı, yerel ses sunucusu girdi denetimi,
-Türkçe cümle bölme/sayı okuma, mikrofon hataları. Gerçek ses aygıtı ya da ağ kullanılmaz (sunucu testi 127.0.0.1)."""
+"""Audio pipeline robustness: barge-in races, Live connection leak, local voice server input checks,
+Turkish sentence splitting/number reading, mic errors. No real audio device or network is used (server test on 127.0.0.1)."""
 
 from __future__ import annotations
 
@@ -31,12 +31,12 @@ def wait_for(cond, t=3.0):
 def split(text: str) -> list[str]:
     s = SentenceSplitter()
     out: list[str] = []
-    for ch in text:  # akış gibi harf harf
+    for ch in text:  # one character at a time, like a stream
         out += s.feed(ch)
     return out + s.flush()
 
 
-# ------------------------------------------------------------- Türkçe metin
+# ------------------------------------------------------------- Turkish text
 def test_splitter_keeps_abbreviations_and_ordinals_in_one_sentence():
     out = split("Osmanlı İmparatorluğu 15. yüzyılda büyüdü. Prof. Dr. Ahmet Yılmaz geldi, elma armut vb. "
                 "şeyler aldı. Skor toplam 15. Sonra bitti. GPU 3.5 derece arttı!")
@@ -47,7 +47,7 @@ def test_splitter_keeps_abbreviations_and_ordinals_in_one_sentence():
 
 def test_splitter_waits_for_next_char_after_number_dot():
     s = SentenceSplitter()
-    assert s.feed("Bu iş tam 3. ") == []  # sıra sayısı mı cümle sonu mu: sonraki harf belirler
+    assert s.feed("Bu iş tam 3. ") == []  # ordinal number or sentence end? the next character decides
     assert s.feed("kez oldu. ") == ["Bu iş tam üçüncü kez oldu."]
 
 
@@ -105,12 +105,12 @@ def test_speaker_drops_emoji_but_keeps_playful_tone():
     tts = _TTS()
     sp = Speaker(tts, player=_Player())
     assert sp.say("Yine mi sen 😄") is True
-    assert sp.say("🎉") is False  # sadece emoji: söylenecek bir şey yok
+    assert sp.say("🎉") is False  # emoji only: nothing to say
     assert sp.wait(3)
     assert tts.calls == [("Yine mi sen", "playful")]
 
 
-# ---------------------------------------------------------- Live: araya girme
+# ---------------------------------------------------------- Live: barge-in
 class _FakeStream:
     def __init__(self, written):
         self.written = written
@@ -127,7 +127,7 @@ class _FakeStream:
 
 
 def test_audio_out_drops_chunk_dequeued_right_before_interrupt(monkeypatch):
-    """Çalma iş parçacığı parçayı kuyruktan aldığı anda araya girilirse (clear), o parça çalınmamalı."""
+    """If barge-in (clear) happens right as the playback thread dequeues a chunk, that chunk must not play."""
     from alice.voice.live import AudioOut
 
     written: list[bytes] = []
@@ -146,8 +146,8 @@ def test_audio_out_drops_chunk_dequeued_right_before_interrupt(monkeypatch):
             item = super().get(*a, **k)
             if self.first and item is not None:
                 self.first = False
-                out.clear()  # kullanıcı tam bu anda konuştu
-                out.put(b"\x02\x00" * 4800)  # yeni cevabın sesi
+                out.clear()  # the user spoke at this exact moment
+                out.put(b"\x02\x00" * 4800)  # audio of the new answer
                 super().put(None)
             return item
 
@@ -175,7 +175,7 @@ def test_audio_out_plays_and_stops_on_close(monkeypatch):
     assert b"".join(written).count(b"\x03\x00") == 800
 
 
-# ------------------------------------------------------- Live: bağlantılar
+# ------------------------------------------------------- Live: connections
 class _WS:
     def __init__(self, reply: bool = True):
         self.reply = reply
@@ -224,7 +224,7 @@ def test_slow_prefetch_connection_is_closed_after_discard(monkeypatch):
     opened: list[_WS] = []
 
     def connect(url, **k):
-        gate.wait(5)  # ağ yavaş: bağlantı geç açılıyor
+        gate.wait(5)  # slow network: the connection opens late
         ws = _WS()
         opened.append(ws)
         return ws
@@ -233,9 +233,9 @@ def test_slow_prefetch_connection_is_closed_after_discard(monkeypatch):
     s.PREFETCH_WAIT = 0.05
     s.prefetch()
     s.discard()
-    time.sleep(0.2)  # discard beklemeyi bıraktı
+    time.sleep(0.2)  # discard stopped waiting
     gate.set()
-    assert wait_for(lambda: opened and opened[0].closed)  # eskiden sunucuda açık kalıyordu
+    assert wait_for(lambda: opened and opened[0].closed)  # it used to stay open on the server
 
 
 def test_take_abandons_slow_prefetch_and_closes_it_later(monkeypatch):
@@ -255,20 +255,20 @@ def test_take_abandons_slow_prefetch_and_closes_it_later(monkeypatch):
     s.PREFETCH_WAIT = 0.05
     s.prefetch()
     s.converse("selam", queue.Queue(), threading.Event())
-    assert len(opened) == 1 and opened[0].closed  # converse yeni bağlantı açtı ve kapattı
+    assert len(opened) == 1 and opened[0].closed  # converse opened a new connection and closed it
     gate.set()
     assert wait_for(lambda: len(opened) == 2 and opened[1].closed)
 
 
 def test_dropped_connection_ends_session_instead_of_hanging(monkeypatch):
-    ws = _WS(reply=False)  # cevap gelmeden bağlantı kopuyor
+    ws = _WS(reply=False)  # the connection drops before a reply arrives
     s = _session(monkeypatch, lambda url, **k: ws, live_idle=30)
     logs: list[str] = []
     s.log = logs.append
 
     def drop():
         time.sleep(0.2)
-        ws.close()  # bağlantı koptu
+        ws.close()  # connection dropped
 
     threading.Thread(target=drop, daemon=True).start()
     t0 = time.monotonic()
@@ -305,14 +305,14 @@ def test_background_counter_returns_to_zero(monkeypatch):
     s.agent = SimpleNamespace(_enable_groups_for=lambda **k: None,
                               _execute_calls=lambda c: done.wait(3) and [ToolResult("bitti")])
     s._run_call(ws, {"id": "b1", "name": "computer_task", "args": {"goal": "x"}})
-    assert s._tasks == 1 and s._bg == 0  # ekran görevi sayılır ama oturumu açık tutmaz
-    s._run_call(ws, {"id": "b2", "name": "computer_task", "args": {"goal": "y"}})  # ikincisi reddedilir
+    assert s._tasks == 1 and s._bg == 0  # the screen task counts, but does not keep the session open
+    s._run_call(ws, {"id": "b2", "name": "computer_task", "args": {"goal": "y"}})  # the second one is rejected
     assert "zaten" in json.dumps(sent[-1], ensure_ascii=False)
     done.set()
     assert wait_for(lambda: s._tasks == 0)
 
 
-# ---------------------------------------------------- yerel ses sunucusu
+# ---------------------------------------------------- local voice server
 @pytest.fixture()
 def server(monkeypatch):
     from http.server import ThreadingHTTPServer
@@ -355,7 +355,7 @@ def test_tts_server_rejects_bad_input_with_400(server):
         status, data = _post(port, body)
         assert status == 400, body
         assert "error" in json.loads(data)
-    assert got == []  # model hiç çağrılmadı
+    assert got == []  # the model was never called
 
 
 def test_tts_server_limits_body_and_accepts_good_request(server):
@@ -419,7 +419,7 @@ def test_tts_server_caps_model_tokens():
 
     model = SimpleNamespace(t3=SimpleNamespace(inference=inference))
     tts_server.cap_tokens(model)
-    tts_server.cap_tokens(model)  # ikinci kez sarmaz
+    tts_server.cap_tokens(model)  # a second call does not wrap again
     tts_server.TOKENS["max"] = 200
     model.t3.inference(max_new_tokens=1000)
     assert seen["max_new_tokens"] == 200
@@ -427,7 +427,7 @@ def test_tts_server_caps_model_tokens():
     assert seen["max_new_tokens"] == 200
 
 
-# --------------------------------------------------------------- mikrofon
+# --------------------------------------------------------------- microphone
 class _Speaker:
     speaking = False
 
@@ -502,7 +502,7 @@ def test_assistant_retries_mic_open_and_reports_clearly(monkeypatch):
     t.start()
     t.join(5)
     assert not t.is_alive() and tries[0] == 3 and mic.exited
-    assert sum("mikrofon açılamadı" in e for e in emitted) == 1  # bir kez söylenir, sessizce yeniden denenir
+    assert sum("mikrofon açılamadı" in e for e in emitted) == 1  # announced once, retried silently
     assert any("mikrofon açıldı" in m for m in logs)
 
 
@@ -544,7 +544,7 @@ def test_push_to_talk_mic_error_does_not_kill_listening(monkeypatch):
         def record(self, m):
             frames = []
             while self.pressed.is_set():
-                frames.append(m.read())  # ilk okuma hata verir
+                frames.append(m.read())  # the first read raises an error
             return Audio(b"".join(frames), 16000)
 
         def stop(self):
@@ -559,7 +559,7 @@ def test_push_to_talk_mic_error_does_not_kill_listening(monkeypatch):
     def read():
         reads[0] += 1
         if reads[0] == 3:
-            ptt.pressed.clear()  # tuş bırakıldı
+            ptt.pressed.clear()  # key released
         if reads[0] > 10:
             va.stop_event.set()
         return orig()
@@ -568,10 +568,10 @@ def test_push_to_talk_mic_error_does_not_kill_listening(monkeypatch):
     t = threading.Thread(target=va.run, daemon=True)
     t.start()
     t.join(5)
-    assert not t.is_alive() and reopened and reads[0] > 10  # hata sonrası dinleme sürdü
+    assert not t.is_alive() and reopened and reads[0] > 10  # listening continued after the error
 
 
-# ----------------------------------------------------------- ses aygıtları
+# ----------------------------------------------------------- audio devices
 def _fake_sd(monkeypatch, fail_open=False):
     sd = ModuleType("sounddevice")
     state = {"opened": 0, "closed": 0}
@@ -610,7 +610,7 @@ def test_microphone_open_read_reopen_with_fake_device(monkeypatch):
     mic = Microphone(auto_gain=False)
     with mic as m:
         assert m.name == "Test Mic" and m.read() == b"\x10\x00" * Microphone.FRAME
-        # 0,06 sn'lik varsayılan arabellekte döngü takılınca ses sessizce kayboluyordu ("Alice" kesiliyordu)
+        # with the default 0.06 s buffer, audio silently dropped whenever the loop stalled (cutting off "Alice")
         assert state["latency"] >= 0.3
         m.reopen()
         assert state["opened"] == 2 and state["closed"] == 1
@@ -647,7 +647,7 @@ def test_player_cli_backend_plays_and_stops(monkeypatch):
     p = audio.Player.__new__(audio.Player)
     p._stop, p._proc, p.backend = threading.Event(), None, "paplay"
     threading.Timer(0.1, p.stop).start()
-    assert p.play(Audio(b"\0\0" * 16000, 16000)) is False  # durduruldu
+    assert p.play(Audio(b"\0\0" * 16000, 16000)) is False  # stopped
     assert started and started[0][0] == "paplay" and p._proc.killed
     none = audio.Player.__new__(audio.Player)
     none._stop, none._proc, none.backend = threading.Event(), None, "none"

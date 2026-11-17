@@ -1,9 +1,9 @@
-"""ALICE'in tek Python'u.
+"""ALICE's single Python.
 
-Aynı makinede ALICE iki ortamdan başlıyordu: Windows açılışındaki kısayol .venv'den, elle/uygulamadan başlatınca
-sistem Python'undan. Paketler ortamdan ortama değiştiği için bir özellik bazen var bazen yok oluyordu (OCR). Burada
-çekirdeğin çalışacağı Python bir kez kaydedilir (~/.alice/python.json); başka bir Python'dan başlatılan çekirdek
-kendini kayıtlı olanla yeniden başlatır, açılış kısayolu ve arka plan başlatmaları da hep onu kullanır.
+ALICE used to start from two environments on the same machine: the shortcut venv on Windows startup, or system Python when
+started manually or from an app. Because packages varied between environments, a feature was sometimes present and sometimes
+missing (like OCR). Here, the Python that the core runs on is recorded once (~/.alice/python.json); a core started from another
+Python restarts itself with the recorded one, and the startup shortcut and background launches always use it too.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REEXEC_ENV = "ALICE_REEXEC"  # yeniden başlatılan süreç bir daha yönlendirmesin (döngü olmasın)
+REEXEC_ENV = "ALICE_REEXEC"  # restarted process should not redirect again (prevent loop)
 
 
 def _path() -> Path:
@@ -24,7 +24,7 @@ def _path() -> Path:
 
 
 def gui_python(exe: str | Path) -> Path:
-    """Konsol penceresi açmayan karşılığı (Windows'ta pythonw.exe)."""
+    """The counterpart that doesn't open a console window (pythonw.exe on Windows)."""
     exe = Path(exe)
     if sys.platform == "win32":
         w = exe.with_name("pythonw.exe")
@@ -34,7 +34,7 @@ def gui_python(exe: str | Path) -> Path:
 
 
 def canonical() -> Path | None:
-    """Kayıtlı Python (hâlâ duruyorsa)."""
+    """The recorded Python (if still present)."""
     try:
         p = Path(json.loads(_path().read_text(encoding="utf-8"))["python"])
     except (OSError, ValueError, KeyError, TypeError):
@@ -51,12 +51,12 @@ def remember(exe: str | Path | None = None) -> Path:
 
 
 def python() -> Path:
-    """Çekirdek ve yardımcı süreçler bununla başlatılır: kayıtlı olan, yoksa şu anki."""
+    """Core and helper processes are started with this: the recorded one, or current if none."""
     return canonical() or gui_python(sys.executable)
 
 
 def same(a: str | Path, b: str | Path) -> bool:
-    """Aynı ortam mı (python.exe ile pythonw.exe aynı klasörde: aynı)."""
+    """Are they the same environment (python.exe and pythonw.exe in the same folder: same)."""
     try:
         return Path(a).resolve().parent == Path(b).resolve().parent
     except OSError:
@@ -64,8 +64,8 @@ def same(a: str | Path, b: str | Path) -> bool:
 
 
 def redirect_core(argv: list[str], popen=subprocess.Popen) -> bool:
-    """Çekirdek kayıtlı Python'dan başka biriyle başladıysa kayıtlıyla yeniden başlat; başlattıysa True (bu süreç
-    çıkmalı). İlk çalışmada kayıt yoksa şu anki Python kaydedilir."""
+    """If core started with a Python other than the recorded one, restart with the recorded one; returns True if restarted
+    (this process should exit). If no record on first run, saves current Python."""
     if os.environ.get(REEXEC_ENV):
         return False
     want = canonical()

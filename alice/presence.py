@@ -1,23 +1,23 @@
-"""Bilgisayar başına dönünce karşılama (Jarvis'in "Hoş geldiniz efendim, bugün iki şey var" anı).
+"""Greeting upon returning to the computer (Jarvis's "Welcome back sir, two things today" moment).
 
-Çekirdek her turda klavye/fare boşta kalma süresine bakar. Uzun süre (varsayılan 90 dk) uzakta kalıp döndüğünde,
-söyleyecek bir şey varsa kısa bir sesli brifing verir:
-  * günü gelen takipler ("Matematik sınavın nasıl geçti?"), hatırlatmalar, yarım kalan iş
-  * bugünün kalan takvimi (Google Takvim bağlıysa)
-  * okunmamış önemli e-postalar (Gmail bağlıysa)
-Söyleyecek bir şey yoksa sadece günün ilk dönüşünde kısa bir selam verir; yoksa susar.
-Günün ilk karşılaması öğleden önceyse sabah özetine döner: hava, bugünün programı ([brief] days), dünden kalan notlar
-ve sağlık raporunun bekleyen sorunları da eklenir. Bilgisayar sabah açıldığında (çekirdek yeni başladı, uzaklık
-ölçülemedi) da bu özet bir kez söylenir; hangi gün söylendiği dosyada durur, ALICE yeniden başlasa da tekrarlamaz. Metni hızlı model senin
-kişiliğinle yazar (model yoksa kalıp cümle). Sonra birkaç saniye "Hey Alice" demeden cevap verebilirsin; konuşma
-hafızaya da yazılır, Live "az önceki konuşma"da görür. Uçuş/oyun modu bildirimleri susturuyorsa karşılama da susar.
+The core checks keyboard/mouse idle time on every turn. When returning after a long absence (default 90 min),
+if there is something to say, it gives a short spoken briefing:
+  * due follow-ups ("How was your math exam?"), reminders, unfinished work
+  * remaining calendar for today (if Google Calendar is connected)
+  * unread important emails (if Gmail is connected)
+If there is nothing to say, it just gives a short greeting on the first return; otherwise it stays silent.
+If the first greeting is before noon, it switches to the morning summary: weather, today's schedule ([brief] days), remaining notes from yesterday,
+and pending issues from the health report are also added. When the computer is turned on in the morning (core just started, absence
+could not be measured), this summary is also spoken once; the day it was spoken is kept in a file so ALICE does not repeat it even if restarted. The text is written quickly by the model with your
+personality (fallback sentence if no model). Then you can reply for a few seconds without saying "Hey Alice"; the conversation
+is also written to memory, and Live sees it in "previous conversation". If flight/game mode silences notifications, the greeting is also silenced.
 
 config.toml:
   [greeting]
   enabled = true
-  away_minutes = 90      # bu kadar uzakta kalınca dönüş sayılır
-  min_gap_hours = 3      # iki karşılama arası en az
-  quiet_hours = "00:30-07:00"   # bu saatlerde karşılama yok
+  away_minutes = 90      # considered away after this long
+  min_gap_hours = 3      # minimum between two greetings
+  quiet_hours = "00:30-07:00"   # no greeting during these hours
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ from datetime import datetime
 from typing import Any, Callable
 
 DEFAULTS = {"enabled": True, "away_minutes": 90, "min_gap_hours": 3, "quiet_hours": "00:30-07:00",
-            "morning_until": 13}  # günün ilk karşılaması bu saatten önceyse sabah özeti
+            "morning_until": 13}  # morning summary if first greeting is before this hour
 
 
 def idle_seconds() -> float | None:
-    """Klavye/fare son kullanımdan beri geçen süre. Ölçülemiyorsa None."""
+    """Time elapsed since last keyboard/mouse usage. None if unmeasurable."""
     try:
         if sys.platform == "win32":
             class LASTINPUTINFO(ctypes.Structure):
@@ -82,9 +82,9 @@ def _away_text(seconds: float) -> str:
     return f"{int(seconds // 60)} dakikadır"
 
 
-# ------------------------------------------------------------------------------------------- brifing
+# ------------------------------------------------------------------------------------------- briefing
 def today_events(cfg, now: datetime, client: Any = None) -> list[str]:
-    """Bugünün kalan etkinlikleri ("15:00 Dişçi"), Google Takvim bağlıysa."""
+    """Remaining events for today ("15:00 Dentist"), if Google Calendar is connected."""
     try:
         from alice.connect import runner
         from alice.connect.manifest import discover
@@ -96,7 +96,7 @@ def today_events(cfg, now: datetime, client: Any = None) -> list[str]:
         end = start.replace(hour=23, minute=59, second=0)
         data = runner.call(m, m.actions["upcoming"], {"timeMin": start.isoformat(), "timeMax": end.isoformat(),
                                                        "maxResults": 8}, client=client, cache=False)
-    except Exception:  # noqa: BLE001 - takvim ipucu; ulaşılamazsa brifing yine çalışır
+    except Exception:  # noqa: BLE001 - calendar hint; briefing still works if unreachable
         return []
     out = []
     for ev in (data or {}).get("items") or []:
@@ -108,7 +108,7 @@ def today_events(cfg, now: datetime, client: Any = None) -> list[str]:
 
 
 def unread_mail(cfg) -> list[str]:
-    """Bağlı Gmail hesaplarındaki okunmamış önemli e-postalar ("okul: Hoca — Proje teslimi")."""
+    """Unread important emails in connected Gmail accounts ("school: Professor — Project submission")."""
     try:
         from alice.tools.gmail import important_unread
 
@@ -118,7 +118,7 @@ def unread_mail(cfg) -> list[str]:
 
 
 def morning_info(cfg, now: datetime) -> dict[str, Any]:
-    """Sabah özetinin ek parçaları: hava, bugünün programı, dünden kalan notlar, sağlık raporunun bekleyen sorunu."""
+    """Additional parts of the morning summary: weather, today's schedule, remaining notes from yesterday, health report pending issue."""
     from alice.extras import brief
 
     data = (getattr(cfg, "data", None) or {})
@@ -205,7 +205,7 @@ def compose(b: dict[str, Any], mem=None, router=None) -> str:
             text = (res.message.get("content") or "").strip()
             if text:
                 return text
-        except Exception:  # noqa: BLE001 - model yoksa kalıp cümle
+        except Exception:  # noqa: BLE001 - fallback sentence if no model
             pass
     parts = [f"{b['greeting']}, hoş geldin."]
     if mo and mo.get("weather"):
@@ -219,9 +219,9 @@ def compose(b: dict[str, Any], mem=None, router=None) -> str:
     return " ".join(parts)
 
 
-# ------------------------------------------------------------------------------------------- izleyici
+# ------------------------------------------------------------------------------------------- watcher
 class Greeter:
-    """Çekirdeğin her turunda tick(); uzun yokluktan dönüşte karşılamayı arka planda hazırlayıp söyler."""
+    """tick() on every core turn; prepares and speaks greeting in the background upon return from long absence."""
 
     def __init__(self, cfg, notify: Callable[[Any], bool], memory: Callable[[], Any] = lambda: None,
                  router: Callable[[], Any] = lambda: None, idle: Callable[[], float | None] = idle_seconds,
@@ -233,7 +233,7 @@ class Greeter:
         self.router = router
         self.idle = idle
         self.clock = clock
-        self.voice: Any = None  # VoiceAssistant: karşılamadan sonra "Hey Alice" demeden cevap verilebilsin
+        self.voice: Any = None  # VoiceAssistant: allow replying without saying "Hey Alice" after greeting
         self.away_since: float | None = None
         self.last_greet = 0.0
         self.morning = morning
@@ -250,7 +250,7 @@ class Greeter:
         self._busy = threading.Lock()
 
     def tick(self) -> bool:
-        """Dönüş algılandıysa karşılamayı başlatır ve True döner."""
+        """Starts greeting and returns True if return is detected."""
         s = settings(self.cfg)
         if not s.get("enabled", True):
             return False
@@ -260,7 +260,7 @@ class Greeter:
         now = time.time()
         if not self._started:
             self._started = True
-            # Sabah bilgisayar açıldı: çekirdek yeni başladı, yokluk ölçülemedi ama günün ilk özeti henüz yapılmadı
+            # Computer turned on in the morning: core just started, absence could not be measured but first summary of the day not done yet
             today = self.clock()
             if (idle < 300 and self.last_day != today.strftime("%Y-%m-%d") and 6 <= today.hour < int(s["morning_until"])
                     and self._allowed(s, now)):
@@ -287,8 +287,7 @@ class Greeter:
         return not (span and in_hours(self.clock(), span))
 
     def _greet_bg(self, away: float) -> None:
-        """Arka plandaki karşılama: hafıza kapanmışken (çekirdek kapanıyor) ya da özet hazırlanamazken iş parçacığı
-        izsiz çökmesin; karşılama bu sefer atlanır."""
+        """Background greeting: do not let thread crash silently when memory is closed (core shutting down) or summary cannot be prepared; greeting is skipped this time."""
         try:
             self.greet(away)
         except Exception:  # noqa: BLE001
@@ -305,7 +304,7 @@ class Greeter:
             if first_today and now.hour < int(settings(self.cfg)["morning_until"]):
                 try:
                     mo = self.morning(self.cfg, now)
-                except Exception:  # noqa: BLE001 - sabah ekleri olmadan da karşıla
+                except Exception:  # noqa: BLE001 - greet even without morning extras
                     mo = None
             b = briefing(mem, self.cfg, away, now, mo)
             if not has_news(b) and not first_today:
@@ -315,7 +314,7 @@ class Greeter:
 
             if not self.notify(Notification("Hoş geldin", text, "info", "presence", kind="info",
                                             emotion="cheerful")):
-                return ""  # mod susturdu: sayma, sonra tekrar denenebilsin
+                return ""  # mode silenced: do not count, can be retried later
             self.last_greet = time.time()
             self.last_day = now.strftime("%Y-%m-%d")
             try:
@@ -333,7 +332,7 @@ class Greeter:
                 mem.record("(bilgisayarın başına döndü)", text, "karşılama")
                 for f in b["followups"]:
                     if f.kind in ("ask", "remind"):
-                        mem.done_followup(f.id)  # soruldu; cevap konuşmada gelir
+                        mem.done_followup(f.id)  # asked; answer comes in conversation
             except Exception:  # noqa: BLE001
                 pass
         va = self.voice
@@ -343,4 +342,3 @@ class Greeter:
                 va.armed_until = max(getattr(va, "armed_until", 0.0), time.monotonic() + float(va.follow_up))
             except Exception:  # noqa: BLE001
                 pass
-

@@ -1,4 +1,4 @@
-"""Zekâ puanı gerçek benchmark'tan (LMArena): ad eşleştirme, puanlama, indirme, tabloyla birleştirme."""
+"""Intelligence score from the real benchmark (LMArena): name matching, scoring, download, table merge."""
 
 from __future__ import annotations
 
@@ -42,38 +42,38 @@ def test_norm(ref, key):
 def test_build_scores_relative_to_leader_and_weights_categories():
     s = arena.build(ROWS)
     assert s["gemini-4-argon"]["q"] == 100
-    assert s["gemini-3-flash"]["name"] == "Gemini 3 Flash"  # parantezsiz çeşit (Minimal değil)
-    # GLM-5.3: genelde 52 Elo geride (74), kodda 30 (85): ağırlıklı ortalama ikisinin arası (2 Elo = 1 puan)
+    assert s["gemini-3-flash"]["name"] == "Gemini 3 Flash"  # the variant without parentheses (not Minimal)
+    # GLM-5.3: usually 52 Elo behind (74), 30 in coding (85): the weighted average is between the two (2 Elo = 1 point)
     assert 74 < s["glm-5.3"]["q"] < 85
-    assert "some-model" not in s  # ajan işiyle ilgisiz kategori sayılmaz
-    assert s["mistral-medium-2508"]["name"] == "Mistral Medium 3.1 (2508)"  # tarihli kimlik de bulunur
+    assert "some-model" not in s  # categories unrelated to agent work do not count
+    assert s["mistral-medium-2508"]["name"] == "Mistral Medium 3.1 (2508)"  # the dated identity is found too
 
 
 def test_lookup_exact_aliases_and_no_guessing():
     d = data()
-    assert arena.lookup("gemini:gemini-flash-latest", d)["name"] == "Gemini 3.8 Flash (High)"  # en yeni Flash
+    assert arena.lookup("gemini:gemini-flash-latest", d)["name"] == "Gemini 3.8 Flash (High)"  # newest Flash
     assert arena.lookup("gemini:gemini-flash-lite-latest", d)["name"] == "Gemini 3.5 Flash-Lite"
     assert arena.lookup("mistral:mistral-large-latest", d)["name"] == "Mistral Large 4"
     assert arena.lookup("mistral:mistral-medium-2508", d)["name"] == "Mistral Medium 3.1 (2508)"
     assert arena.lookup("cohere:command-a-03-2025", d)["name"] == "Command A (03-2025)"
-    assert arena.lookup("cohere:command-a-plus-05-2026", d) is None  # "command-a"nın puanını almaz
-    assert arena.lookup("gemini:gemini-3.8-flash-lite", d) is None  # Flash'ın değil
+    assert arena.lookup("cohere:command-a-plus-05-2026", d) is None  # does not take the score of "command-a"
+    assert arena.lookup("gemini:gemini-3.8-flash-lite", d) is None  # not Flash's
     assert arena.lookup("openrouter:moonshotai/kimi-k3:free", d)["name"] == "Kimi K3 (Max)"
 
 
 def test_quality_prefers_arena_and_rescales_table_guesses():
-    assert ranking.quality("nvidia:z-ai/glm-5.3") == ranking.table_quality("nvidia:z-ai/glm-5.3") == 90  # veri yok
+    assert ranking.quality("nvidia:z-ai/glm-5.3") == ranking.table_quality("nvidia:z-ai/glm-5.3") == 90  # no data
     arena.set_cache(data())
     assert ranking.quality("nvidia:z-ai/glm-5.3") == round(arena.lookup("nvidia:z-ai/glm-5.3")["q"])
-    assert ranking.quality("cloudflare:@cf/zai-org/glm-4.7-flash") < 45  # tabloda 72'ydi: gerçekte zayıf
-    # LMArena'da olmayan model: tablodaki tahmin, iki kaynakta da olanların farkı kadar düşürülür
+    assert ranking.quality("cloudflare:@cf/zai-org/glm-4.7-flash") < 45  # it was 72 in the table: actually weak
+    # Model not on LMArena: the table estimate is lowered by the gap seen for models present in both sources
     off = ranking._table_offset()
     assert off < 0 and ranking.quality("openrouter:dots-studio/dots-3-note-preview:free") == 74 + off
-    assert ranking.quality("openrouter:openrouter/free") == 0  # hariç tutulanlar yine hariç
+    assert ranking.quality("openrouter:openrouter/free") == 0  # excluded ones stay excluded
 
 
 def test_fetch_pages_in_parallel_and_keeps_only_agent_categories(tmp_path):
-    rows = ROWS * 10  # 190 satır, 2 sayfa
+    rows = ROWS * 10  # 190 rows, 2 pages
     seen = []
 
     def get(url, params):
@@ -103,12 +103,12 @@ def test_live_speed_replaces_single_probe_after_enough_calls():
     r = {"ok": True, "quality": 88, "latency": 2, "ttft": 0.4, "tps": 200}
     for _ in range(2):
         ranking.record_outcome(ref, True, ttft=3.0, tps=20)
-    assert ranking.with_context(r, ref, None)["ttft"] == 0.4  # henüz az çağrı: ölçüm geçerli
+    assert ranking.with_context(r, ref, None)["ttft"] == 0.4  # too few calls so far: the measurement stands
     ranking.record_outcome(ref, True, ttft=3.0, tps=20)
     live = ranking.with_context(r, ref, None)
     assert live["ttft"] == 3.0 and live["tps"] == 20 and live["live_calls"] == 3
     assert ranking.role_score(live, "voice") < ranking.role_score(r, "voice") - 20
-    ranking.record_outcome(ref, True, ttft=1.0)  # üstel ortalama: yeni çağrı %30 ağırlıkla
+    ranking.record_outcome(ref, True, ttft=1.0)  # exponential average: the new call gets 30% weight
     assert ranking.with_context(r, ref, None)["ttft"] == pytest.approx(2.4)
 
 
@@ -117,23 +117,23 @@ def test_hyphen_between_name_and_version_does_not_matter():
 
 
 def test_brain_prefers_smart_enough_over_fastest():
-    """Kullanıcının tablosu: flash-lite (zekâ 67, çok hızlı) ana modelin başına geçmişti; 3.5-flash (82) 5. idi."""
+    """User's table: flash-lite (intelligence 67, very fast) was ranked first for brain; 3.5-flash (82) was 5th."""
     lite = {"quality": 67, "latency": 0.6, "ttft": 0.6, "context": 1_000_000}
     flash = {"quality": 82, "latency": 2.6, "ttft": 2.6, "context": 1_000_000}
     assert ranking.role_score(flash, "brain") > ranking.role_score(lite, "brain")
-    assert ranking.role_score(lite, "voice") > ranking.role_score(flash, "voice")  # seste ilk kelime önemli
+    assert ranking.role_score(lite, "voice") > ranking.role_score(flash, "voice")  # the first word matters for voice
 
 
 def test_proxy_names_dashed_versions_and_effort_suffixes():
-    """Abonelik proxy'sinin adları (claude-opus-5-5, gemini-3.8-flash-high) sıralamada bulunur: önceden Opus dahil
-    proxy modellerinin hepsi "zekâ bilinmiyor" görünüyordu."""
+    """Subscription proxy names (claude-opus-5-5, gemini-3.8-flash-high) are found in the ranking: before this,
+    all proxy models, Opus included, showed "zekâ bilinmiyor" (intelligence unknown)."""
     rows = ROWS + [row("Claude Opus 5.5 (High)", 1513), row("Claude Fable 5.1 (Max)", 1513)]
     d = {"fetched_ts": time.time(), "scores": arena.build(rows)}
     assert arena.lookup("cliproxy:claude-opus-5-5", d)["name"] == "Claude Opus 5.5 (High)"
     assert arena.lookup("cliproxy:gemini-3.8-flash-high", d)["name"] == "Gemini 3.8 Flash (High)"
-    near = arena.lookup("cliproxy:claude-fable-5-2", d)  # sıralamaya girmemiş yeni ara sürüm: bir öncekinin puanı
+    near = arena.lookup("cliproxy:claude-fable-5-2", d)  # a newer minor version not in the ranking: the previous one's score
     assert near["name"] == "Claude Fable 5.1 (Max)" and near["estimated"]
-    assert arena.lookup("cliproxy:claude-fable-6-0", d) is None  # ana sürüm farkı: tahmin yok
+    assert arena.lookup("cliproxy:claude-fable-6-0", d) is None  # major version gap: no estimate
 
 
 def test_old_scale_cache_is_rescaled_on_load(tmp_path):
@@ -143,4 +143,4 @@ def test_old_scale_cache_is_rescaled_on_load(tmp_path):
     p.write_text(json.dumps({"fetched_ts": time.time(), "scores": {"x": {"q": 70.0, "name": "X", "elo": 1}}}),
                  encoding="utf-8")
     d = arena.load(p)
-    assert d["elo_per_point"] == arena.ELO_PER_POINT and d["scores"]["x"]["q"] == 55.0  # 30 geride -> 45 geride
+    assert d["elo_per_point"] == arena.ELO_PER_POINT and d["scores"]["x"]["q"] == 55.0  # 30 behind -> 45 behind

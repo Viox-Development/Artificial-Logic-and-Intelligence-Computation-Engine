@@ -1,4 +1,4 @@
-"""Çekirdek döngü mantık incelemesinde bulunan hataların testleri."""
+"""Tests for the bugs found in the core loop logic review."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from tests.test_agent import make_agent
 
 
 def assert_tool_pairs_valid(messages):
-    """OpenAI uyumlu API'lerin kuralı: tool_calls'lu her asistan mesajının hemen ardından her çağrının sonucu gelir;
-    sahipsiz tool mesajı olmaz."""
+    """The rule of OpenAI-compatible APIs: every assistant message with tool_calls must be followed right away
+    by the result of each call; a tool message with no owner is not allowed."""
     i = 0
     while i < len(messages):
         m = messages[i]
@@ -49,7 +49,7 @@ def test_repair_after_interrupt_keeps_results_next_to_their_calls(workdir):
             {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
             {"id": "c2", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "c1", "name": "read_file", "content": "a"},
-        # Kesilince yarım kalan metin asistan mesajı olarak eklenmiş olabilir.
+        # An interrupted, half-written text may have been added as an assistant message.
         {"role": "assistant", "content": "bakıyorum [durduruldu]"},
     ]
     agent._repair_after_interrupt()
@@ -79,7 +79,7 @@ def test_interrupt_while_describing_tool_image_leaves_valid_history(workdir, mon
         raise KeyboardInterrupt
 
     monkeypatch.setattr(agent, "_describe_images", boom)
-    # Akışta gelen metin sink'te kalmış olsun (gerçek akışta olduğu gibi).
+    # Leave the text that arrived in the stream sitting in the sink (as in a real stream).
     orig = agent.router.chat
 
     def chat(role, messages, tools=None, stream=None, **kw):
@@ -91,7 +91,7 @@ def test_interrupt_while_describing_tool_image_leaves_valid_history(workdir, mon
     monkeypatch.setattr(agent.router, "chat", chat)
     agent.run_turn("bak")
     assert_tool_pairs_valid(agent.messages)
-    # Aynı metin ikinci kez "[durduruldu]" diye eklenmesin.
+    # The same text must not be added a second time as "[durduruldu]".
     assert sum(1 for m in agent.messages if m["role"] == "assistant" and "bakıyorum" in (m.get("content") or "")) == 1
 
 
@@ -106,7 +106,7 @@ def test_malformed_tool_call_fields_are_fed_back_not_crash(workdir):
     assert [m["tool_call_id"] for m in tools] == ["n1", "n2", "n3"]
     assert all(m["content"].startswith("HATA") for m in tools)
     calls = next(m for m in agent.messages if m.get("tool_calls"))["tool_calls"]
-    # Geçmişe giden çağrılar API'nin kabul edeceği biçimde: ad ve argümanlar metin.
+    # Calls sent back into history are in a form the API accepts: name and arguments are strings.
     assert all(isinstance(c["function"]["name"], str) and isinstance(c["function"]["arguments"], str) for c in calls)
     assert_tool_pairs_valid(agent.messages)
 
@@ -190,7 +190,7 @@ def test_recall_and_profile_are_bounded_with_huge_fact():
     out = m.recall("kahve")
     assert out and len(out) < 3000
     prof = m.profile(chars=500)
-    assert "şekersiz" in prof  # tek dev bilgi geri kalanları profilden atmasın
+    assert "şekersiz" in prof  # a single huge fact must not push the rest out of the profile
 
 
 # --------------------------------------------------------------- mentions

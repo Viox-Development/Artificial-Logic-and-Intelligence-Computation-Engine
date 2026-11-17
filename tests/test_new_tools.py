@@ -1,4 +1,4 @@
-"""grep modları, apply_patch, file_ops, PDF/ipynb okuma."""
+"""grep modes, apply_patch, file_ops, PDF/ipynb reading."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def test_grep_context_lines(grep_ctx):
 def test_grep_multiline(grep_ctx):
     out = Grep().run(grep_ctx, pattern=r"def foo\(\):\n\s+return 1", multiline=True, glob="*.py").text
     assert "3:def foo():" in out.replace("\\", "/")
-    # '\n' içeren desen kendiliğinden çok satırlı aranır
+    # a pattern containing '\n' is automatically searched as multiline
     assert "a.py" in Grep().run(grep_ctx, pattern=r"foo\(\):\n\s+return", glob="*.py").text
 
 
@@ -74,7 +74,7 @@ def test_grep_brace_glob_and_offset(grep_ctx):
 
 
 def test_grep_path_glob_matches_relative_path_like_rg(grep_ctx, workdir):
-    # Python yedeği eskiden glob'u yalnız dosya adına uyguluyordu: 'src/**/*.py' hiçbir şey bulmuyordu.
+    # The Python fallback used to apply the glob only to the file name, so 'src/**/*.py' matched nothing.
     (workdir / "src" / "deep").mkdir()
     (workdir / "src" / "deep" / "c.py").write_text("foo = 1\n", encoding="utf-8")
     (workdir / "lib" / "src").mkdir(parents=True)
@@ -119,7 +119,7 @@ def test_apply_patch_add_update_delete(ctx, workdir):
     assert (workdir / "src" / "a.py").read_text(encoding="utf-8") == "def foo():\n    return 10\n\ndef bar():\n    return 1\n"
     assert (workdir / "src" / "new.py").read_text(encoding="utf-8") == "X = 1\nY = 2\n"
     assert not (workdir / "old.txt").exists()
-    trashed = list((alice_home() / "trash").rglob("old.txt"))  # kalıcı silinmedi, ALICE çöpünde
+    trashed = list((alice_home() / "trash").rglob("old.txt"))  # not permanently deleted: it is in ALICE's trash
     assert len(trashed) == 1 and trashed[0].read_text(encoding="utf-8") == "eski\n"
     assert "çöpünde" in r.text
     assert "+    return 10" in r.diff
@@ -148,20 +148,20 @@ def test_apply_patch_whitespace_tolerance_crlf_and_move(ctx, workdir):
 
 
 def test_apply_patch_update_requires_read_like_edit_file(ctx, workdir):
-    # edit_file gibi: okunmamış ya da okunduktan sonra değişmiş dosya yamayla düzenlenmez.
+    # Like edit_file: a file that was not read, or changed after it was read, is not edited by a patch.
     f = workdir / "r.txt"
     f.write_text("bir\n", encoding="utf-8")
     patch = "*** Begin Patch\n*** Update File: r.txt\n-bir\n+BIR\n*** End Patch"
     with pytest.raises(ToolError, match="okunmadı"):
         ApplyPatch().run(ctx, patch=patch)
     ReadFile().run(ctx, path="r.txt")
-    f.write_text("bir\nek\n", encoding="utf-8")  # okunduktan sonra dışarıdan değişti
+    f.write_text("bir\nek\n", encoding="utf-8")  # changed externally after it was read
     with pytest.raises(ToolError, match="değişti"):
         ApplyPatch().run(ctx, patch=patch)
     assert f.read_text(encoding="utf-8") == "bir\nek\n"
     ReadFile().run(ctx, path="r.txt")
     ApplyPatch().run(ctx, patch=patch)
-    # Yamanın yazdığı hâl okunmuş sayılır: hemen ardından tekrar düzenlenebilir.
+    # The content the patch wrote counts as read: it can be edited again right away.
     ApplyPatch().run(ctx, patch="*** Begin Patch\n*** Update File: r.txt\n-ek\n+EK\n*** End Patch")
     assert f.read_text(encoding="utf-8") == "BIR\nEK\n"
 
@@ -220,11 +220,11 @@ def test_file_ops_risk(ctx):
     assert t.risk_for({"action": "delete", "paths": [f"f{i}" for i in range(30)]}) == DANGER
 
 
-# ------------------------------------------------------------------ read_file: PDF ve ipynb
+# ------------------------------------------------------------------ read_file: PDF and ipynb
 
 
 def _pdf(texts: list[str]) -> bytes:
-    """Metin içeren en küçük geçerli PDF (sayfa başına bir satır)."""
+    """Smallest valid PDF containing text (one line per page)."""
     n = len(texts)
     objs = ["<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [" + " ".join(f"{3 + 2 * i} 0 R" for i in range(n)) + f"] /Count {n} >>"]
@@ -267,11 +267,11 @@ def test_read_ipynb(ctx, workdir):
     assert "hücre 1 [markdown]" in out and "print(1)" in out and "# çıktı:" in out and "# 1" in out
 
 
-# ------------------------------------------------------------------ gruplar
+# ------------------------------------------------------------------ groups
 
 
 def test_new_tools_are_visible():
-    assert groups.group_of("apply_patch") == groups.group_of("file_ops") == "files"  # adıyla listede, gerekince yüklenir
+    assert groups.group_of("apply_patch") == groups.group_of("file_ops") == "files"  # listed by name, loaded when needed
     assert "files" in groups.groups_for_text("bu dosyayı masaüstüne taşı")
     assert groups.group_of("http_request") == "net"
     assert "net" in groups.groups_for_text("şu API'ye post isteği at")
@@ -279,7 +279,7 @@ def test_new_tools_are_visible():
 
 
 def test_requests_are_small_and_tools_load_on_demand(tmp_path):
-    """Her istekte sadece temel araçların tanımı gider; diğerleri adıyla listelenir, sözle ya da load_tools ile açılır."""
+    """Each request sends only core tool definitions; others are listed by name and opened by words or load_tools."""
     from alice.agent import Agent
     from alice.permissions import Permissions
     from alice.providers.router import estimate_tokens
@@ -293,11 +293,11 @@ def test_requests_are_small_and_tools_load_on_demand(tmp_path):
     specs = agent.tool_specs()
     assert {s["function"]["name"] for s in specs} >= {"read_file", "run_command", "memory", "load_tools"}
     assert "youtube" not in {s["function"]["name"] for s in specs}
-    assert estimate_tokens([], specs) < 6000  # önceden ~9.200
+    assert estimate_tokens([], specs) < 6000  # previously ~9.200
     system = agent.messages[0]["content"]
     assert "# Yüklenebilir araçlar" in system and "youtube" in system and "file_ops" in system
     agent.sync_catalog()
-    assert agent.messages[0]["content"].count("# Yüklenebilir araçlar") == 1  # tekrar eklenmez
+    assert agent.messages[0]["content"].count("# Yüklenebilir araçlar") == 1  # not added again
     agent._enable_groups_for("YouTube'da lofi aç")
     assert "youtube" in {s["function"]["name"] for s in agent.tool_specs()}
 
@@ -315,13 +315,13 @@ def test_old_tool_outputs_are_shortened(tmp_path):
     import time
 
     agent._last_call_at = time.monotonic()
-    agent._shrink_old_outputs()  # önbellek sıcak, bağlam rahat: geçmiş değişmez (prompt önbelleği bozulmasın)
+    agent._shrink_old_outputs()  # cache warm, context fine: keep history as is (keeps the prompt cache intact)
     assert all(len(m["content"]) == 5000 for m in agent.messages if m["role"] == "tool")
-    agent._last_call_at = time.monotonic() - 400  # önbellek zaten soğudu: şimdi kısaltmanın bedeli yok
+    agent._last_call_at = time.monotonic() - 400  # cache has already gone cold: shortening now costs nothing
     agent._shrink_old_outputs()
     tools = [m for m in agent.messages if m["role"] == "tool"]
     assert all(len(m["content"]) < 1500 and "kısaltıldı" in m["content"] for m in tools[:2])
-    assert all(len(m["content"]) == 5000 for m in tools[2:])  # son altı olduğu gibi
-    assert tools[0]["tool_call_id"] == "0"  # araç çağrısıyla bağı kopmaz
+    assert all(len(m["content"]) == 5000 for m in tools[2:])  # the last six are left as they are
+    assert tools[0]["tool_call_id"] == "0"  # the link to the tool call is preserved
     agent._shrink_old_outputs()
-    assert len(tools[0]["content"]) == len(agent.messages[1]["content"])  # tekrar kısaltılmaz
+    assert len(tools[0]["content"]) == len(agent.messages[1]["content"])  # not shortened again

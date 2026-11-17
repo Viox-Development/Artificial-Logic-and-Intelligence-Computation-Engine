@@ -1,4 +1,4 @@
-"""API anahtarı gerektirmeyen web arama ve sayfa okuma."""
+"""Web search and page reading that need no API key."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from alice.tools.base import NETWORK, Tool, ToolContext, ToolError, ToolResult, 
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 
-# Aynı sayfayı/aramayı bir oturumda defalarca çekmek yaygın (ajan adım adım ilerlerken aynı dokümana dönüyor).
-# Kısa ömürlü bellek içi önbellek bunu saniyelerden milisaniyelere indirir; TTL kısa olduğu için içerik bayatlamaz.
+# Fetching the same page/search repeatedly in a session is common (the agent keeps revisiting the same doc).
+# A short-lived in-memory cache cuts this from seconds to ms; the TTL is short, so content never goes stale.
 CACHE_TTL = 180.0
 CACHE_MAX = 48
 _cache: "OrderedDict[tuple, tuple[float, Any]]" = OrderedDict()
@@ -62,7 +62,7 @@ class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self.main_parts: list[str] = []  # <main>/<article> içi: menü ve kenar çubuğu olmadan asıl içerik
+        self.main_parts: list[str] = []  # Inside <main>/<article>: the actual content, without menus and sidebars
         self._skip = 0
         self._main = 0
         self._href: str | None = None
@@ -109,7 +109,7 @@ def _clean(text: str) -> str:
 
 
 def html_to_text(raw: str, main_only: bool = False) -> str:
-    """HTML'i okunur metne çevir. main_only: sayfada yeterince uzun bir <main>/<article> varsa sadece onu döndür."""
+    """Convert HTML to readable text. main_only: if the page has a long enough <main>/<article>, return only that."""
     p = _TextExtractor()
     p.feed(raw)
     if main_only:
@@ -131,7 +131,7 @@ def _paginate(body: str, start: int, limit: int) -> str:
 
 
 def _extract(ctx: ToolContext, url: str, text: str, prompt: str) -> str | None:
-    """Claude Code'un WebFetch'i gibi: sayfayı küçük bir modele verip sadece sorulan bilgiyi çıkar. Model yoksa None."""
+    """Like Claude Code's WebFetch: pass the page to a small model and extract only the requested info. None if no model."""
     if ctx.router is None:
         return None
     msgs = [{"role": "system", "content": "You extract information from a web page. Answer only from the page content "
@@ -140,7 +140,7 @@ def _extract(ctx: ToolContext, url: str, text: str, prompt: str) -> str | None:
             {"role": "user", "content": f"Request: {prompt}\n\nURL: {url}\n\nPage content:\n{text[:60000]}"}]
     try:
         return ctx.router.chat("fast", msgs, temperature=0, max_tokens=1500).text.strip() or None
-    except Exception:  # noqa: BLE001 - model yoksa/çökerse ham metne düş
+    except Exception:  # noqa: BLE001 - if there is no model or it crashes, fall back to the raw text
         return None
 
 
@@ -184,7 +184,7 @@ class WebFetch(Tool):
             if "pdf" in ctype or (not ctype and str(r.url).lower().endswith(".pdf")):
                 body = _pdf_text(r.content)
             elif not _looks_textual(ctype, r.content):
-                # Resim, zip, exe...: r.text anlamsız karakter yığını döndürüp bağlamı dolduruyordu.
+                # Images, zip, exe...: r.text used to return a pile of meaningless characters and flood the context.
                 body = (f"[ikili içerik: {ctype or 'türü belirtilmemiş'}, {len(r.content)} bayt - metin olarak "
                         "gösterilemez. İndirmek için run_command (ör. Invoke-WebRequest -OutFile) kullan.]")
             else:
@@ -198,7 +198,7 @@ class WebFetch(Tool):
                         pass
             hit = (r.status_code, str(r.url), body)
             if r.status_code < 400:
-                cache_put(key, hit)  # sadece başarılı indirmeler; hatalı sayfa tekrar denensin
+                cache_put(key, hit)  # only successful downloads; failed pages may be retried
         status, final_url, body = hit
         head = f"HTTP {status} {final_url}\n\n"
         if prompt and status < 400:
@@ -214,8 +214,8 @@ _TEXT_CTYPE = ("text/", "json", "xml", "javascript", "ecmascript", "html", "yaml
 
 
 def _looks_textual(ctype: str, data: bytes) -> bool:
-    """Metin türü bildirilmişse metin; değilse (octet-stream, boş tür) ilk baytlara bak: NUL yoksa ve UTF-8
-    olarak çözülüyorsa metin say."""
+    """If a text type is declared it is text. Otherwise (octet-stream, empty type) check the first bytes:
+    if there is no NUL and they decode as UTF-8, call it text."""
     if any(t in ctype for t in _TEXT_CTYPE):
         return True
     head = data[:4096]
@@ -253,7 +253,7 @@ def ddg_search(query: str, max_results: int = 8) -> list[dict[str, str]]:
         if "uddg=" in href:
             href = unquote(parse_qs(urlparse(href).query).get("uddg", [href])[0])
         if "duckduckgo.com/y.js" in href:
-            continue  # reklam
+            continue  # ad
         snip = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', rest, re.S)
         results.append({"title": _strip_tags(title), "url": href, "snippet": _strip_tags(snip.group(1)) if snip else ""})
         if len(results) >= max_results:
@@ -266,7 +266,7 @@ def _strip_tags(s: str) -> str:
 
 
 def bing_search(query: str, max_results: int = 8) -> list[dict[str, str]]:
-    """DuckDuckGo bot sayfası gösterir ya da düşerse yedek: Bing'in HTML sonuç sayfası."""
+    """Fallback when DuckDuckGo shows a bot page or fails: Bing's HTML results page."""
     r = httpx.get("https://www.bing.com/search", params={"q": query, "setlang": "tr"}, headers={"User-Agent": UA},
                   timeout=20, follow_redirects=True)
     r.raise_for_status()
@@ -335,7 +335,7 @@ class WebSearch(Tool):
                     cache_put(ckey, res_g)
                 return ToolResult(format_grounded(res_g))
             except ValueError:
-                pass  # kota/hata: klasik motorlar
+                pass  # quota/error: classic engines
         q = query + (f" site:{allowed[0]}" if len(allowed) == 1 and "site:" not in query else "")
         want = max_results * 3 if allowed or blocked else max_results
         key = os.environ.get("BRAVE_SEARCH_API_KEY") or ctx.config.agent.get("brave_api_key")
@@ -344,7 +344,7 @@ class WebSearch(Tool):
         res: list[dict[str, str]] = []
         errors = []
         for name, fn in engines:
-            ckey = ("search", name, q, want)  # dikkat: `key` yukarıda Brave anahtarı
+            ckey = ("search", name, q, want)  # note: `key` above is the Brave key
             try:
                 raw_res = cache_get(ckey)
                 if raw_res is None:
@@ -363,9 +363,9 @@ class WebSearch(Tool):
         return ToolResult("\n\n".join(f"{i}. {r['title']}\n{r['url']}\n{r['snippet']}" for i, r in enumerate(res, 1)))
 
 
-# Google araması (Gemini grounding): model aramayı Google'da yapar, sonuçları okuyup kaynaklı özet yazar.
-# DuckDuckGo/Bing sayfası kazımaktan çok daha güncel ve dolu; kota dolarsa ya da hata verirse bir süre denenmez,
-# klasik motorlara düşülür.
+# Google search (Gemini grounding): the model searches Google, reads the results and writes a sourced summary.
+# It is much more current and complete than scraping DuckDuckGo/Bing pages. If the quota runs out or it errors,
+# it is not tried for a while and classic engines are used instead.
 GROUNDING_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GROUNDING_PROMPT = ("Bu soruyu Google'da ara ve bulduklarını kısa, olgusal bir özet olarak yaz: Türkçe, en fazla 8 madde, "
                     "tarihleri, sayıları, sürümleri ve adları aynen koru; emin olmadığını belirt; yorum ekleme.\n"
@@ -378,7 +378,7 @@ def grounding_model(ctx: ToolContext) -> str:
 
 
 def gemini_search(query: str, key: str, model: str, timeout: float = 25.0) -> dict[str, Any]:
-    """{'text': özet, 'sources': [{'title', 'url'}], 'queries': [...]}; kota/hata ValueError."""
+    """{'text': summary, 'sources': [{'title', 'url'}], 'queries': [...]}; quota/error raises ValueError."""
     if time.monotonic() < _grounding["down_until"]:
         raise ValueError("Google araması geçici olarak kapalı (kota/hata)")
     try:
@@ -414,7 +414,7 @@ _ENV_RX = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _expand_env(s: str) -> str:
-    """'${env:GITHUB_TOKEN}' -> ortam değişkeni; anahtar modele hiç görünmeden başlığa konur."""
+    """'${env:GITHUB_TOKEN}' -> environment variable; the key goes into the header without the model ever seeing it."""
     def sub(m: re.Match) -> str:
         if m.group(1) not in os.environ:
             raise ToolError(f"ortam değişkeni yok: {m.group(1)}")
@@ -423,8 +423,8 @@ def _expand_env(s: str) -> str:
 
 
 def _json_arg(name: str, v: Any) -> Any:
-    """Nesne parametreleri şemada JSON metni (Gemini ve bazı sağlayıcılar serbest nesne kabul etmiyor); model
-    yine de nesne gönderirse onu da kabul et."""
+    """Object parameters are JSON text in the schema (Gemini and some providers reject free-form objects); if
+    the model still sends an object, accept it too."""
     if v is None or v == "" or not isinstance(v, str):
         return v if v != "" else None
     try:
@@ -469,7 +469,7 @@ class HttpRequest(Tool):
             except (OSError, ValueError):
                 return DANGER
             return WRITE
-        # Veri gönderen istekler dışarıda iz bırakır: ask modunda sorulur, plan modunda kapalı.
+        # Requests that send data leave a trace outside: they are asked about in ask mode and disabled in plan mode.
         return NETWORK if str(args.get("method") or "GET").upper() in ("GET", "HEAD") else EXEC
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -492,7 +492,7 @@ class HttpRequest(Tool):
         elif body is not None:
             kw["content"] = body.encode("utf-8")
         method = method.upper()
-        # Adreste ${env:..} varsa sonuçta açılmış adres (r.url) değil şablon gösterilir: anahtar modele sızmasın.
+        # If the URL has ${env:..}, show the template, not the expanded r.url, so the key does not reach the model.
         where = (lambda r: url) if _ENV_RX.search(url) else (lambda r: r.url)
         try:
             if save_to:
@@ -503,8 +503,8 @@ class HttpRequest(Tool):
                     if r.status_code >= 400:
                         r.read()
                         return ToolResult(f"HTTP {r.status_code} {where(r)}\n\n{truncate(r.text, 2000)}", is_error=True)
-                    # Önce yan dosyaya: eskiden hedef baştan "wb" ile açılıyordu, indirme yarıda kesilince (ağ hatası,
-                    # Durdur) var olan dosya silinmiş, yerinde yarım bir dosya kalıyordu.
+                    # Write to a side file first. Opening the target with "wb" up front deleted the existing file
+                    # if a download was cut off (network error, Durdur/Stop) it left a half-written file behind.
                     tmp = dest.with_name(dest.name + ".part")
                     try:
                         with open(tmp, "wb") as f:

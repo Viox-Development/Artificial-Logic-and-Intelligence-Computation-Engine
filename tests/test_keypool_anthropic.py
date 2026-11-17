@@ -1,4 +1,4 @@
-"""Anahtar havuzu (birden çok anahtar, sırayla kullanma, 429/kota/auth) ve resmi Claude API istemcisi."""
+"""Key pool (multiple keys used in turn; 429/quota/auth) and the official Claude API client."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from alice.providers.openai_compat import ChatResult, ProviderError
 
 
 class FakeClient:
-    """Anahtarına göre davranan sahte sağlayıcı istemcisi."""
+    """Fake provider client that behaves according to its key."""
     plan: dict[str, list] = {}
     calls: list[str] = []
 
@@ -48,7 +48,7 @@ def pc(monkeypatch):
 
 def test_api_keys_are_read_in_order_and_deduplicated(pc, monkeypatch):
     monkeypatch.setenv("TEST_API_KEY_10", "key-ten")
-    monkeypatch.setenv("TEST_API_KEY_4", "key-one-1111")  # aynısı iki kez yazılmış
+    monkeypatch.setenv("TEST_API_KEY_4", "key-one-1111")  # same key written twice
     assert pc.api_keys == ["key-one-1111", "key-two-2222", "key-three-3333", "key-ten"]
 
 
@@ -63,7 +63,7 @@ def test_rate_limited_key_waits_and_next_key_answers(pc):
     FakeClient.plan = {"key-one-1111": [ProviderError("rate_limit", "429", 429, retry_after=30)]}
     pool = KeyPool(pc, FakeClient, strategy="fill-first")
     assert pool.chat("m", []).text == "key-two-2222 cevapladı"
-    # İlk anahtar bu modelde beklemede, başka modelde değil.
+    # The first key is waiting on this model, not on another model.
     assert [k.key for k in pool.order("m")] == ["key-two-2222", "key-three-3333"]
     assert [k.key for k in pool.order("other")][0] == "key-one-1111"
     rows = pool.status()
@@ -71,12 +71,12 @@ def test_rate_limited_key_waits_and_next_key_answers(pc):
 
 
 def test_daily_quota_is_remembered_across_restarts(pc, monkeypatch):
-    # Sıfırlanmaya 10 dakikadan az kalmışsa (Pasifik gece yarısından hemen önce) kayıt bilerek yazılmıyor; test günün
-    # saatine bağlı kalmasın (CI 07:58 UTC'de düştü).
+    # If less than 10 minutes are left before the reset (right before Pacific midnight), the record is deliberately
+    # not written; the test must not depend on the time of day (CI failed at 07:58 UTC).
     monkeypatch.setattr("alice.providers.router.seconds_until_reset", lambda *a, **k: 5 * 3600.0)
     FakeClient.plan = {"key-one-1111": [ProviderError("quota", "per day", 429, daily=True)]}
     KeyPool(pc, FakeClient, strategy="fill-first").chat("m", [])
-    again = KeyPool(pc, FakeClient, strategy="fill-first")  # yeniden başladı
+    again = KeyPool(pc, FakeClient, strategy="fill-first")  # restarted
     assert [k.key for k in again.order("m")] == ["key-two-2222", "key-three-3333"]
 
 
@@ -84,7 +84,7 @@ def test_bad_key_is_dropped_and_others_keep_working(pc):
     FakeClient.plan = {"key-two-2222": [ProviderError("auth", "invalid key", 401)]}
     pool = KeyPool(pc, FakeClient)
     pool.chat("m", [])  # key-one
-    assert pool.chat("m", []).text == "key-three-3333 cevapladı"  # key-two auth -> sıradaki
+    assert pool.chat("m", []).text == "key-three-3333 cevapladı"  # key-two auth -> next one
     assert pool.status()[1]["state"] == "kapalı"
 
 
@@ -121,7 +121,7 @@ def test_router_uses_pool_and_shows_key_status(pc, tmp_path):
     assert r.chat("brain", [{"role": "user", "content": "selam"}]).text == "key-two-2222 cevapladı"
     st = r.key_status()["gemini"]
     assert [x["state"] for x in st] == ["beklemede", "hazır", "hazır"] and st[1]["uses"] == 1
-    assert r.available("gemini:m")[0]  # model soğumaya girmedi: anahtar değişti
+    assert r.available("gemini:m")[0]  # model did not enter cooldown: the key changed
 
 
 # ------------------------------------------------------------------------------------------------ Claude API
@@ -145,7 +145,7 @@ def test_messages_are_converted_to_claude_format():
     assert msgs[1] == {"role": "assistant", "content": [
         {"type": "tool_use", "id": "c1", "name": "screen", "input": {"x": 1}},
         {"type": "tool_use", "id": "c2", "name": "time", "input": {}}]}
-    # İki araç sonucu ve sonraki sistem notu tek kullanıcı turunda.
+    # Two tool results and the following system note are in one user turn.
     assert msgs[2]["role"] == "user" and [b["type"] for b in msgs[2]["content"]] == ["tool_result", "tool_result", "text"]
     assert len(msgs) == 3
     tools = to_tools([{"type": "function", "function": {"name": "screen", "description": "d",
@@ -154,7 +154,7 @@ def test_messages_are_converted_to_claude_format():
 
 
 def test_tool_ids_from_other_providers_are_made_claude_safe():
-    """Konuşmanın önceki adımını Kimi yapmışsa kimlik "functions.read_file:0": Claude bunu 400 ile reddediyordu."""
+    """If an earlier step of the conversation was made by Kimi, the id is "functions.read_file:0": Claude rejected it with a 400."""
     import re
 
     from alice.providers.anthropic_api import to_messages
@@ -248,7 +248,7 @@ def test_chat_sends_adaptive_thinking_effort_and_fallback():
 
 
 def test_non_streaming_call_gets_a_long_read_timeout():
-    """Akışsız cevap ancak bitince gelir: 300 sn'lik akış okuma süresi uzun düşünen cevabı kesiyordu."""
+    """A non-streaming reply only arrives when it is finished: the 300 s stream read timeout was cutting off long thinking replies."""
     sent: dict = {}
     p = _provider(sent, _final())
     p.chat("claude-opus-5-5", [{"role": "user", "content": "selam"}])
@@ -257,14 +257,14 @@ def test_non_streaming_call_gets_a_long_read_timeout():
     assert secs >= 900 > p.STREAM_READ
     p.chat("claude-opus-5-5", [{"role": "user", "content": "selam"}], max_tokens=64000)
     t = sent["timeout"]
-    assert (t if isinstance(t, (int, float)) else t.read) == 1800  # max_tokens ile ölçeklenir
+    assert (t if isinstance(t, (int, float)) else t.read) == 1800  # scales with max_tokens
     sent.clear()
     p.chat_stream("claude-opus-5-5", [{"role": "user", "content": "selam"}], lambda d: None)
-    assert "timeout" not in sent  # akış istemcinin okuma süresini kullanır
+    assert "timeout" not in sent  # the stream uses the client's read timeout
 
 
 def test_error_event_mid_stream_is_classified_by_its_type(monkeypatch):
-    """Akış 200 ile açıldıktan sonra gelen overloaded_error geçici sunucu hatasıdır, "bad_request" değil."""
+    """An overloaded_error arriving after the stream opened with 200 is a temporary server error, not "bad_request"."""
     import sys
     import types
 
@@ -326,7 +326,7 @@ def test_stream_emits_text_reasoning_and_tool_progress():
           NS(type="content_block_delta", delta=NS(type="text_delta", text="haba")),
           NS(type="content_block_start", content_block=NS(type="tool_use", name="search")),
           NS(type="content_block_delta", delta=NS(type="input_json_delta", partial_json='{"q":')),
-          NS(type="text", text="Mer")]  # yardımcı olay: iki kez yazılmamalı
+          NS(type="text", text="Mer")]  # helper event: must not be written twice
     p = _provider(sent, _final(tool="search"), ev)
     out, why, tools, first = [], [], [], []
     res = p.chat_stream("claude-sonnet-5-5", [{"role": "user", "content": "x"}], out.append,
@@ -379,10 +379,10 @@ def test_default_config_has_claude_models_in_menu(monkeypatch, tmp_path):
     r = Router(cfg, provider_factory=FakeClient, usage_path=tmp_path / "u.json", auto_cache={})
     rows = next(x for x in r.catalog_view() if x["name"] == "anthropic")["models"]
     assert {x["ref"] for x in rows} >= {"anthropic:claude-opus-5-5", "anthropic:claude-sonnet-5-5"}
-    assert "anthropic:claude-opus-5-5" not in r.chain("brain")  # ücretli: otomatik zincire girmez
+    assert "anthropic:claude-opus-5-5" not in r.chain("brain")  # paid: does not enter the automatic chain
 
 
-# ------------------------------------------------------------------------------ Anahtarlar sayfası (sunucu)
+# ------------------------------------------------------------------------------ Keys page (server)
 @pytest.fixture
 def state(tmp_path, monkeypatch):
     from alice.app.server import AppState
@@ -404,8 +404,8 @@ def test_add_extra_keys_and_see_pool(state):
     row = next(x for x in state.keys()["keys"] if x["key"] == "GROQ_API_KEY")
     assert [x["key"] for x in row["extra"]] == ["GROQ_API_KEY_2", "GROQ_API_KEY_3"]
     assert [x["preview"] for x in row["pool"]] == ["••••0001", "••••0002", "••••0003"]
-    assert "gsk-second" not in json.dumps(state.keys())  # anahtarın kendisi tarayıcıya gitmez
-    assert state.set_key("GROQ_API_KEY_2", "")["ok"]  # sil
+    assert "gsk-second" not in json.dumps(state.keys())  # the key itself does not go to the browser
+    assert state.set_key("GROQ_API_KEY_2", "")["ok"]  # delete
     assert state.router.providers_cfg["groq"].api_keys == ["gsk-first-0001", "gsk-third-0003"]
     assert not state.set_key("RANDOM_THING_2", "x")["ok"] and not state.set_key("GROQ_API_KEY_99", "x")["ok"]
 
@@ -429,17 +429,17 @@ def test_add_and_remove_openai_compatible_server(state, monkeypatch):
         return [{"id": "qwen3-32b"}, {"id": "llama-4"}]
 
     monkeypatch.setattr(openai_compat.OpenAICompatProvider, "list_models", list_models)
-    assert not state.add_provider({"name": "gemini", "base_url": "http://x/v1"})["ok"]  # hazır sağlayıcı
+    assert not state.add_provider({"name": "gemini", "base_url": "http://x/v1"})["ok"]  # ready-made provider
     assert not state.add_provider({"name": "Bad Name", "base_url": "http://x/v1"})["ok"]
     r = state.add_provider({"name": "lmstudio", "base_url": "http://192.168.1.5:1234/v1/", "key": "lm-secret-key"})
     assert r["ok"] and r["models"] == ["qwen3-32b", "llama-4"]
     assert seen == {"url": "http://192.168.1.5:1234/v1", "key": "lm-secret-key"}
     pc = state.router.providers_cfg["lmstudio"]
     assert pc.custom and pc.enabled and pc.api_key_env == "LMSTUDIO_API_KEY"
-    assert load_config().providers()["lmstudio"].base_url == "http://192.168.1.5:1234/v1"  # kalıcı
+    assert load_config().providers()["lmstudio"].base_url == "http://192.168.1.5:1234/v1"  # persisted
     row = next(x for x in state.keys()["keys"] if x["key"] == "LMSTUDIO_API_KEY")
     assert row["custom"] and row["provider"] == "lmstudio"
-    assert state.add_key("LMSTUDIO_API_KEY", "lm-second")["ok"]  # ona da havuz
+    assert state.add_key("LMSTUDIO_API_KEY", "lm-second")["ok"]  # pool for it too
     assert state.remove_provider("lmstudio")["ok"] and "lmstudio" not in state.router.providers_cfg
     assert "lmstudio" not in (alice_home() / "config.toml").read_text(encoding="utf-8")
     assert not state.remove_provider("gemini")["ok"]

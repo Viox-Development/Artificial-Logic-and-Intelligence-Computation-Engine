@@ -1,4 +1,4 @@
-"""Çekirdek HUD sürecini başlatır, çökerse yeniden başlatır. HUD çökse de ALICE konuşmaya devam eder."""
+"""Starts the core HUD process and restarts it if it crashes. Even if the HUD crashes, ALICE keeps talking."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
-CHECK_EVERY = 1.0       # çöken HUD en geç bu kadar + yeniden başlama süresinde döner (hedef 5 sn)
-BURST, BURST_WINDOW, BURST_WAIT = 5, 60.0, 30.0   # dakikada 5 çökmeden sonra 30 sn bekle (döngüye girmesin)
+CHECK_EVERY = 1.0       # a crashed HUD comes back at the latest after this long + the restart time (target: 5 sec)
+BURST, BURST_WINDOW, BURST_WAIT = 5, 60.0, 30.0   # after 5 crashes within a minute, wait 30 sec (so it doesn't loop)
 CREATE_NO_WINDOW = 0x08000000
 
 
 def python_exe() -> str:
-    """Konsol penceresi açmayan Python (pythonw.exe), yoksa çalışan Python."""
+    """Python that opens no console window (pythonw.exe); otherwise the running Python."""
     exe = Path(sys.executable)
     if sys.platform == "win32" and exe.name.lower() == "python.exe":
         w = exe.with_name("pythonw.exe")
@@ -43,7 +43,7 @@ class HudSupervisor:
 
     @staticmethod
     def _spawn(argv: list[str]):
-        root = Path(__file__).resolve().parent.parent.parent  # `-m alice` çekirdeğin kodunu bulsun
+        root = Path(__file__).resolve().parent.parent.parent  # so `-m alice` finds the core's code
         flags = CREATE_NO_WINDOW if sys.platform == "win32" else 0
         return subprocess.Popen(argv, cwd=str(root), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, creationflags=flags)
@@ -54,7 +54,7 @@ class HudSupervisor:
         return self
 
     def check(self, now: float | None = None) -> None:
-        """HUD çalışmıyorsa başlat (çökme seline girdiyse biraz bekleyerek)."""
+        """Start the HUD if it is not running (waiting a little if it is in a crash flood)."""
         now = time.monotonic() if now is None else now
         if self.proc is not None and self.proc.poll() is None:
             return
@@ -88,5 +88,5 @@ class HudSupervisor:
             try:
                 p.terminate()
                 p.wait(3)
-            except Exception:  # noqa: BLE001 - kapanırken HUD'un inadı çekirdeği bekletmesin
+            except Exception:  # noqa: BLE001 - while shutting down, a stubborn HUD must not make the core wait
                 pass

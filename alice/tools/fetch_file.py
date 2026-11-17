@@ -1,9 +1,9 @@
-"""Dosyayı tarayıcısız, doğrudan İndirilenler'e indir.
+"""Download a file directly into Downloads, without the browser.
 
-Opera'da "her indirmede nereye kaydedileceğini sor" açıkken tarayıcı üzerinden yapılan her indirme (adres çubuğu da,
-eklentinin downloads.download'u da, saveAs=false ve dosya adı verilse bile) Farklı Kaydet penceresinde bekliyordu;
-ALICE o pencereyle boğuşup takıldı. Kurulum dosyaları gibi herkese açık bağlantılar burada doğrudan indirilir.
-Giriş isteyen (sayfa ya da 401/403 dönen) bağlantılar için çağıran tarayıcı yoluna düşer.
+When Opera's "her indirmede nereye kaydedileceğini sor" (ask where to save each download) is on, every browser download
+(the address bar too, the extension's downloads.download even with saveAs=false and a filename) waited in the
+"Farklı Kaydet" (Save As) window, and ALICE got stuck fighting that window. Public links such as installers are
+downloaded directly here. Links that need login (a page, or a 401/403 response) fall back to the caller's browser path.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ from urllib.parse import unquote, urlparse
 
 CHUNK = 256 * 1024
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36"
-_JOBS: list[dict[str, Any]] = []  # son indirmeler (browser action=downloads gösterir)
+_JOBS: list[dict[str, Any]] = []  # recent downloads (shown by browser action=downloads)
 _LOCK = threading.Lock()
 
 
 class NeedsBrowser(Exception):
-    """Bağlantı giriş/oturum istiyor ya da dosya değil (HTML sayfa): tarayıcıyla indirilmeli."""
+    """The link asks for login/session, or is not a file (an HTML page): it must be downloaded with the browser."""
 
 
 def downloads_dir() -> Path:
-    """Windows'ta kullanıcının İndirilenler klasörü (taşınmış olabilir), yoksa ~/Downloads."""
+    """The user's Downloads folder on Windows (it may have been moved), otherwise ~/Downloads."""
     try:
         import ctypes
         import uuid
@@ -41,7 +41,7 @@ def downloads_dir() -> Path:
             out = Path(path.value)
             ctypes.windll.ole32.CoTaskMemFree(path)
             return out
-    except Exception:  # noqa: BLE001 - Windows dışı ya da API yok
+    except Exception:  # noqa: BLE001 - not Windows, or the API is missing
         pass
     return Path.home() / "Downloads"
 
@@ -74,8 +74,8 @@ def _unique(folder: Path, name: str) -> Path:
 
 
 def fetch(url: str, folder: Path | None = None, wait: float = 240.0, opener=None) -> dict[str, Any]:
-    """İndirmeyi başlat; `wait` sn içinde biterse son durumu, bitmezse sürmekte olan durumu döner (arka planda
-    devam eder). Giriş/oturum isteyen bağlantıda NeedsBrowser."""
+    """Start the download. If it finishes within `wait` seconds, return its final state; if not, return the state
+    still in progress (it continues in the background). Raises NeedsBrowser for links that ask for login/session."""
     folder = folder or downloads_dir()
     folder.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
@@ -125,7 +125,7 @@ def jobs() -> list[dict[str, Any]]:
 
 
 def download(url: str, wait: float = 240.0) -> dict[str, Any]:
-    """Önce doğrudan; bağlantı giriş istiyorsa ALICE tarayıcı eklentisiyle (oturum çerezleri tarayıcıda)."""
+    """Try a direct download first; if login is needed, use the ALICE browser extension (cookies are in the browser)."""
     from alice.tools.base import ToolError
 
     if "://" not in url:
@@ -144,7 +144,7 @@ def download(url: str, wait: float = 240.0) -> dict[str, Any]:
 
 
 def describe(d: dict[str, Any], opened: bool = False) -> str:
-    """İndirme sonucunu modele anlatan tek satır."""
+    """One-line description of the download result for the model."""
     from alice.tools.base import ToolError
 
     if d.get("state") == "complete":
@@ -160,7 +160,7 @@ def describe(d: dict[str, Any], opened: bool = False) -> str:
 
 
 def source_name(url: str) -> str:
-    """Bağlantının kastettiği dosya adı (GitHub gibi imzalı bağlantılarda "filename=" parametresinden)."""
+    """The file name the link refers to (for signed links such as GitHub's, from the "filename=" parameter)."""
     from urllib.parse import parse_qs
 
     q = parse_qs(urlparse(url).query)

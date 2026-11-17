@@ -1,10 +1,11 @@
-"""Eylem sonrası gözlem: ekranı etkileyen bir araçtan sonra gerçekte ne oldu?
+"""Post-action observation: after an action that affects the screen, what actually happened?
 
-ALICE eyleminin sonucunu varsayıyordu: "başlatma komutu gönderildi"yi "açıldı" sandı, ekrana çıkan Windows hata
-kutusunu ("... bulunamadı") ya da Farklı Kaydet penceresini fark etmeden körlemesine Enter'a bastı. Bu her uygulamada
-olabilir; bu yüzden araca özel değil, genel: eylemden önce ve sonra üst düzey pencereler karşılaştırılır, yeni açılan
-pencereler (özellikle iletişim kutuları, içlerindeki yazıyla) ve Windows izin ekranı (UAC) araç sonucuna eklenir.
-"Aç" denip hiçbir pencere görünmediyse bu da söylenir. Model kararını varsayıma değil, ekranda olana göre verir.
+ALICE assumed the outcome of its action: it took "launch command sent" to mean "opened", and pressed Enter
+blindly on the Windows error box that appeared ("... not found") or on the Save As window without noticing it.
+This can happen in any app, so it is generic rather than tool-specific: top-level windows are compared before and
+after the action, and newly opened windows (especially dialogs, with their text) and the Windows permission screen
+(UAC) are added to the tool result. If "aç" (open) was pressed and no window appeared, that is said too. The model
+decides based on what is on screen, not on assumptions.
 """
 
 from __future__ import annotations
@@ -15,12 +16,12 @@ import time
 from typing import Any
 
 IS_WIN = sys.platform == "win32"
-DIALOG_CLASS = "#32770"  # Windows iletişim kutusu (hata/uyarı kutuları, Farklı Kaydet, Aç...)
-SETTLE = (0.2, 0.25)  # sn: yeni pencere için en fazla ~0,45 sn bakılır, çıkınca beklemez (geç açılan kutu bir
-                      # sonraki eylemde "önde açık bir iletişim kutusu var" diye yakalanır)
-OPEN_WAIT = 1.6  # sn: "aç" eyleminde pencere çıkmadıysa bu kadar beklenip söylenir
+DIALOG_CLASS = "#32770"  # Windows dialog box (error/warning boxes, Save As, Open...)
+SETTLE = (0.2, 0.25)  # sec: waits at most ~0.45 sec for a new window; does not wait once it shows (a late
+                      # dialog is caught at the next action as "önde açık bir iletişim kutusu var" = dialog open in front)
+OPEN_WAIT = 1.6  # sec: if an "aç" (open) action shows no window, wait this long, then say so
 TEXT_MAX = 300
-# Bunlar pencere değil (araç çubuğu ipuçları, gölgeler, Windows'un kendi katmanları)
+# Not windows: toolbar tooltips, shadows, Windows' own layers
 IGNORE_CLASSES = {"tooltips_class32", "SysShadow", "Shell_TrayWnd", "Progman", "WorkerW", "IME", "MSCTFIME UI",
                   "ForegroundStaging", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow"}
 
@@ -46,7 +47,7 @@ def _class(user32, ctypes, hwnd: int) -> str:
 
 
 def windows() -> dict[int, dict[str, Any]]:
-    """Görünür üst düzey pencereler: hwnd -> {title, cls, pid}. ALICE'in kendi pencereleri (HUD) hariç."""
+    """Visible top-level windows: hwnd -> {title, cls, pid}. ALICE's own windows (HUD) are excluded."""
     if not IS_WIN:
         return {}
     ctypes, wintypes, user32 = _win32()
@@ -73,7 +74,7 @@ def windows() -> dict[int, dict[str, Any]]:
 
 
 def dialog_text(hwnd: int) -> str:
-    """İletişim kutusunun içindeki yazılar (mesaj ve düğmeler)."""
+    """Texts inside a dialog box (messages and buttons)."""
     if not IS_WIN:
         return ""
     ctypes, wintypes, user32 = _win32()
@@ -98,7 +99,7 @@ def foreground() -> int:
 
 
 def uac_open() -> bool:
-    """Windows izin ekranı (Kullanıcı Hesabı Denetimi) açık mı? Güvenli masaüstünde: hiçbir program tıklayamaz."""
+    """Is the Windows permission screen (User Account Control) open? On the secure desktop no program can click it."""
     try:
         import psutil
 
@@ -108,14 +109,14 @@ def uac_open() -> bool:
 
 
 class Watch:
-    """Eylemden önce `Watch()`, sonra `note()`: yeni pencereler, iletişim kutuları, UAC."""
+    """Call `Watch()` before the action and `note()` after: new windows, dialog boxes, UAC."""
 
     def __init__(self, opening: bool = False):
         self.opening = opening
         try:
             self.before = windows()
             self.uac = uac_open()
-        except Exception:  # noqa: BLE001 - gözlem bozuksa eylem yine sürer, sadece not olmaz
+        except Exception:  # noqa: BLE001 - if observation is broken, the action still runs, there's just no note
             self.before, self.uac = {}, False
 
     def note(self, sleep=time.sleep) -> str:

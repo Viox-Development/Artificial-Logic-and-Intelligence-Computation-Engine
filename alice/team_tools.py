@@ -1,5 +1,5 @@
-"""Proje araçları: ajanların (team_send, team_wait, design_check, site_study) ve yöneticinin (plan, assign, review,
-diff, ask_user, finish, project_status) kullandığı Tool sınıfları."""
+"""Project tools: the Tool classes used by the agents (team_send, team_wait, design_check, site_study) and by the lead
+(plan, assign, review, diff, ask_user, finish, project_status)."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class DesignCheck(Tool):
                    "önce çalıştır, çıkan sorunları düzelt.")
     parameters = obj({"focus": {"type": "string", "description": "İsteğe bağlı: özellikle neye bakılsın (sayfa, bölüm)."}})
     risk = READ
-    MAX_CRITIQUES = 4  # ajan başına; sonrasında sadece kalıp sayımı ve görüntü
+    MAX_CRITIQUES = 4  # per agent; after that, only pattern counting and the image
 
     def __init__(self, team: Team, me: str):
         self.team, self.me = team, me
@@ -100,7 +100,7 @@ class SiteStudy(Tool):
     parameters = obj({"url": {"type": "string", "description": "İncelenecek sitenin adresi (https://...)."},
                       "focus": {"type": "string", "description": "İsteğe bağlı: özellikle neye bakılsın."}}, ["url"])
     risk = READ
-    MAX_STUDIES = 8  # ajan başına
+    MAX_STUDIES = 8  # per agent
 
     def __init__(self, team: Team, me: str):
         self.team, self.me = team, me
@@ -181,7 +181,7 @@ class TeamWait(Tool):
 
 
 def _tree(root: Path, limit: int = 80) -> str:
-    """Kurulun ve yöneticinin göreceği kısa klasör özeti (iki seviye, gizli ve büyük klasörler hariç)."""
+    """Short folder summary the council and the lead will see (two levels; hidden and large folders excluded)."""
     from alice.site import SKIP_DIRS
 
     rows: list[str] = []
@@ -212,7 +212,7 @@ def _tree(root: Path, limit: int = 80) -> str:
 
 
 def route_plan_notes(snap: dict[str, Any], specs: list[dict[str, Any]]) -> list[str]:
-    """Plan kurulunun notlarını ilgili ajanın görevine 'kurul notu' olarak ekler; hiçbir ajana ait olmayanları döndürür."""
+    """Adds the plan council's notes to the agent's task as 'kurul notu'; returns the notes no agent owns."""
     from alice.council import dedupe
 
     by_name = {str(a.get("name") or "").strip().lower(): a for a in specs}
@@ -256,7 +256,7 @@ class LeadPlan(Tool):
         from alice.council import report
 
         t = self.team
-        specs = [dict(a) for a in agents or [] if isinstance(a, dict)]  # kopya: kurul notları yöneticinin geçmişine sızmasın
+        specs = [dict(a) for a in agents or [] if isinstance(a, dict)]  # copy: keep council notes out of the lead's history
         if not specs:
             raise ToolError("en az bir ajan gerekli")
         if len(specs) + len(t.members) > MAX_MEMBERS:
@@ -265,7 +265,7 @@ class LeadPlan(Tool):
         bad = [n for n in names if not NAME_RX.match(n) or n in (LEAD, "all", USER, SYSTEM, COUNCIL) or n in t.members]
         if bad or len(set(names)) != len(names):
             raise ToolError(f"geçersiz ya da tekrarlanan ajan adı: {', '.join(bad) or 'tekrar var'}")
-        _check_specs(t, specs, names)  # kurul boşuna toplanmasın: tanım hataları önce
+        _check_specs(t, specs, names)  # don't convene the council for nothing: definition errors first
         cond_note = ""
         if t.council and t.plan_council and not skip_council:
             lines = [f"- {a.get('name')}: {a.get('task')} | model={a.get('model') or 'auto'} "
@@ -278,10 +278,10 @@ class LeadPlan(Tool):
                 context += (f"\n\n# Not\nBu bir tasarım işi: plan kod yazılmadan önce özgün bir tasarım yönü "
                             f"({DESIGN_FILE}) belirleyen bir adımla başlamalı ve sayfa ajanları ona bağlı (after) olmalı. "
                             f"Bu adım yoksa 'tasarım' alanında önemli bulgu yaz.")
-            # Düzeltilmiş plan, reddeden kurulun kendisine göre incelenir (kimliğiyle bulunur).
+            # A revised plan is reviewed by the council that rejected it (found by its id).
             prev = next((c for c in reversed(t.councils) if c.get("id") == t.plan_prev_id), None) \
                 if t.plan_rejects and t.plan_prev_id else None
-            with t.cond:  # kurul thread'leri sayacı kilit altında azaltıyor: kilitsiz artış kaybolup sayaç takılmasın
+            with t.cond:  # council threads decrement under the lock; lost unlocked increments would stick the counter
                 t.council_busy += 1
             try:
                 snap = t._council("plan", f"Proje planı: {t.goal}", context, t.councils, previous=prev)
@@ -291,7 +291,7 @@ class LeadPlan(Tool):
             if snap.get("state") == "stopped":
                 return ToolResult("Proje durduruldu; plan kurulu yarıda kaldı. Sürdürülünce planı tekrar sun.",
                                   is_error=True)
-            failed = snap.get("state") == "failed"  # kurul çöktüyse plan reddedilmiş sayılmaz
+            failed = snap.get("state") == "failed"  # if the council crashed, the plan does not count as rejected
             dec = (snap.get("result") or {}).get("decision")
             if not failed and dec not in ("approve", "approve_conditions") and t.plan_rejects < 1:
                 t.plan_rejects += 1
@@ -308,7 +308,7 @@ class LeadPlan(Tool):
                 general.insert(0, note)
             cond_note = "\n\n" + report(snap) + (("\n\nGenel notlar (ajanlara dağıtılmadı, sen göz önünde tut):\n" +
                                                    "\n".join(f"- {x}" for x in general)) if general else "")
-        t.plan_rejects, t.plan_prev_id = 0, ""  # plan başlıyor: sonraki plan yeni plandır
+        t.plan_rejects, t.plan_prev_id = 0, ""  # the plan is starting: the next plan is a new plan
         added = []
         for spec in specs:
             added.append(t.add_member(spec, announce=False).name)
@@ -316,7 +316,7 @@ class LeadPlan(Tool):
 
 
 def _check_specs(t: Team, specs: list[dict[str, Any]], names: list[str]) -> None:
-    """Ajan tanımlarını kurul toplanmadan önce doğrula (görev, çalışma yeri, düşünme, model, sıra)."""
+    """Validate agent definitions before the council convenes (task, workplace, thinking, model, order)."""
     known = set(names) | set(t.members)
     for a, name in zip(specs, names):
         if not str(a.get("task") or "").strip():

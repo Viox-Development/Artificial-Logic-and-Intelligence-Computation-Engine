@@ -1,4 +1,4 @@
-"""Bilgisayarın dışındaki şeyler: PC'nin güç/ekran ayarları, Wi-Fi ve ev ağı, ADB ile Android TV ve telefon."""
+"""Things outside the computer: PC power/display settings, Wi-Fi and home network, Android TV and phone via ADB."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ class Wifi(Tool):
             logged_in = True
             if action == "modem_restart":
                 router.restart()
-                logged_in = False  # modem kapanıyor, çıkış isteği boşuna beklemesin
+                logged_in = False  # the modem is shutting down, so don't wait for the logout request in vain
                 return "modem yeniden başlıyor; internet 2-3 dakika gidip gelecek"
             rows = router.devices()
             return "\n".join(f"{r['name'] or '(adsız)'}  {r['ip']}  {r['mac']}  {r['link']}" for r in rows) \
@@ -159,8 +159,8 @@ class Wifi(Tool):
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             raise zte.ModemError(f"modeme ulaşılamadı ({host}): {e.__class__.__name__}; [modem] host doğru mu?") from e
         finally:
-            # ZTE modemler aynı anda tek yönetici oturumuna izin veriyor: hata olsa da çıkış yap ki tarayıcıdan
-            # girmek isteyen kullanıcı "başka kullanıcı bağlı" uyarısına takılmasın.
+            # ZTE modems allow only one admin session at a time: log out even if there was an error, so that a
+            # user who wants to log in from the browser does not get stuck on the "başka kullanıcı bağlı" warning.
             if logged_in:
                 router.logout()
             router.close()
@@ -231,7 +231,7 @@ class Android(Tool):
                 try:
                     msg = d.connect()
                 except adb.AdbError:
-                    # Telefonda verilen port eşleme portu ya da eski port olabilir: aynı IP'nin güncel portunu bul.
+                    # The phone's port may be the pairing port or an old one: find the current port for this IP.
                     ip, _, port = d.serial.partition(":")
                     new = adb.find_connect_address(ip, exe, skip=int(port) if port.isdigit() else None) \
                         if device == "phone" else None
@@ -311,7 +311,7 @@ class Android(Tool):
         try:
             d.ensure()
         except adb.AdbError:
-            # Telefonun kablosuz hata ayıklama portu her seferinde değişir: aynı IP'nin yeni portunu mDNS'ten bul.
+            # The phone's wireless debugging port changes every time: find the new port for the same IP via mDNS.
             new = adb.mdns_connect_address(d.serial.split(":")[0], exe) if device == "phone" else None
             if not new or new == d.serial:
                 raise
@@ -373,7 +373,7 @@ class SamsungTV(Tool):
                 target = host or conf.get("host", "")
                 with samsung.Remote(target, conf.get("token", "") if not host or host == conf.get("host") else "") as r:
                     token = r.token
-                # Kullanıcı TV'de izni verdi: REST bilgisi okunamasa da adres ve token kaybolmasın.
+                # The user approved on the TV, so keep the address and token even if REST info can't be read.
                 self._save(ctx, conf, host=target, token=token)
                 try:
                     mac = (samsung.info(target).get("device") or {}).get("wifiMac") or ""
@@ -436,7 +436,7 @@ class SamsungTV(Tool):
                     return ToolResult("tv: yazıldı")
         except samsung.TVError as e:
             raise ToolError(str(e)) from e
-        except (OSError, ValueError) as e:  # Wake-on-LAN: geçersiz MAC ya da ağ yok
+        except (OSError, ValueError) as e:  # Wake-on-LAN: invalid MAC or no network
             raise ToolError(f"tv komutu çalışmadı: {e}") from e
         raise ToolError(f"bilinmeyen action: {action}")
 
@@ -461,7 +461,7 @@ class SamsungTV(Tool):
             return "TV zaten açık"
         if state == "off" and cur != "on":
             return "TV zaten kapalı"
-        if cur == "off":  # ağ kartı uykuda: tuş gönderilemez, Wake-on-LAN
+        if cur == "off":  # NIC is asleep: keys can't be sent, so use Wake-on-LAN
             if not conf.get("mac"):
                 raise ToolError("TV kapalı ve MAC adresi bilinmiyor: TV açıkken bir kere connect yap")
             net.wake_on_lan(conf["mac"], (host.rsplit(".", 1)[0] + ".255") if host else "255.255.255.255")

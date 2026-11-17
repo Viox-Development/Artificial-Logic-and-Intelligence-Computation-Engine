@@ -1,16 +1,17 @@
-"""Seçici uyanma: kullanıcı başkalarıyla konuşurken ya da oyundayken ALICE daha az kulak kabartsın.
+"""Selective wake-up: ALICE listens less closely while the user is talking with others or playing a game.
 
-voice.log'da yanlış uyanmaların çoğu kullanıcının Discord'da arkadaşlarıyla konuşurken ALICE'ten bahsetmesinden
-("Şuan Alice ya") ya da oyun sesinden geliyordu. Discord/TeamSpeak/Zoom/Teams mikrofonu o an kullanıyorsa ya da
-DCS/War Thunder açıksa:
+Most false wake-ups in voice.log came from the user mentioning ALICE while talking with friends on Discord
+("Şuan Alice ya", roughly "right now, Alice, you know") or from game sound. When Discord/TeamSpeak/Zoom/Teams
+is using the microphone right now, or DCS/War Thunder is open:
 
-* "Alice" cümlenin başında olmalı ("Alice, haritayı aç" uyandırır; "bak şimdi Alice ..." uyandırmaz),
-* "Alice" demeden devam etme penceresi kapanır (arkadaşına söylenen cümle ALICE'e gitmesin).
+* "Alice" must be at the start of the sentence ("Alice, haritayı aç" = "Alice, open the map", wakes it;
+  "bak şimdi Alice ..." = "look, now Alice ...", does not),
+* the follow-up window without "Alice" closes (a sentence said to a friend must not go to ALICE).
 
-Mikrofonu kimin kullandığını Windows'un gizlilik kaydından okur (Ayarlar > Gizlilik > Mikrofon'daki "şu an
-kullanıyor" bilgisi): uygulamanın LastUsedTimeStop değeri 0 ise mikrofon o an açık demektir. Discord'un sadece açık
-olması yetmez, sesli kanalda olması gerekir. Config: [voice] social_mode = false ile kapanır; social_apps ile
-liste genişletilir.
+Who is using the microphone is read from the Windows privacy log (the "currently in use" info under Settings >
+Privacy > Microphone): if an app's LastUsedTimeStop value is 0, the microphone is open right now. Discord being
+open is not enough; it must be in a voice channel. Config: [voice] social_mode = false turns it off; social_apps
+extends the list.
 """
 
 from __future__ import annotations
@@ -20,16 +21,16 @@ import threading
 import time
 from typing import Any, Callable
 
-# exe adı (küçük harf, uzantısız parça) -> görünen ad. Mikrofonu o an kullanıyorsa seçici moda geçilir.
+# exe name (lowercase, without extension) -> display name. Selective mode kicks in if it is using the microphone.
 VOICE_APPS = {"discord": "Discord", "teamspeak": "TeamSpeak", "ts3client": "TeamSpeak", "zoom": "Zoom",
               "teams": "Teams", "skype": "Skype", "whatsapp": "WhatsApp", "telegram": "Telegram"}
-# Açık olması yeter: oyun sesi ve oyun içi konuşma.
+# Being open is enough: game sound and in-game voice chat.
 GAMES = {"dcs.exe": "DCS", "aces.exe": "War Thunder"}
 MIC_KEY = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
 
 
 def mic_users() -> list[str]:
-    """Mikrofonu şu an kullanan uygulamalar (kayıttaki adlarıyla). Windows dışında boş."""
+    """Apps currently using the microphone (by their registry names). Empty outside Windows."""
     if sys.platform != "win32":
         return []
     import winreg
@@ -60,8 +61,8 @@ def mic_users() -> list[str]:
                 if start and not stop:
                     out.append(name)
 
-    scan(MIC_KEY + r"\NonPackaged")  # masaüstü uygulamaları: "C:#Users#...#Discord.exe"
-    scan(MIC_KEY)  # mağaza uygulamaları: "5319275A.WhatsAppDesktop_..."
+    scan(MIC_KEY + r"\NonPackaged")  # desktop apps: "C:#Users#...#Discord.exe"
+    scan(MIC_KEY)  # Store apps: "5319275A.WhatsAppDesktop_..."
     return out
 
 
@@ -75,8 +76,9 @@ def running_names() -> set[str]:
 
 
 class SocialWatch:
-    """reason(): seçici mod açıksa nedeni ("Discord sesli konuşmada"), değilse "". Sonuç birkaç saniye saklanır;
-    her konuşmada kayıt ve süreç listesi taranmasın."""
+    """reason(): if selective mode is on, the reason (e.g. "Discord sesli konuşmada", "in a Discord voice call"),
+    otherwise "". The result is cached for a few seconds so the registry and process list are not scanned on every
+    utterance."""
 
     def __init__(self, cfg: Any = None, mics: Callable[[], list[str]] = mic_users,
                  procs: Callable[[], set[str]] = running_names, every: float = 10.0,

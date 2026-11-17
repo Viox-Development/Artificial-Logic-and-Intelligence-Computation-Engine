@@ -33,14 +33,14 @@ class Store:
 
 def test_sessions_and_prediction_from_habit():
     times = []
-    for day in range(1, 8):  # her gün 21:00-22:00 arası, 15 sn'de bir örnek
+    for day in range(1, 8):  # every day between 21:00-22:00, one sample every 15 s
         times += [ts(day, 21) + i * 15 for i in range(240)]
     starts = session_starts(times)
     assert len(starts) == 7 and all(datetime.fromtimestamp(s).hour == 21 for s in starts)
     at = predict_next(starts, ts(9, 18))
     assert datetime.fromtimestamp(at).strftime("%d %H:%M") == "09 21:00"
     assert datetime.fromtimestamp(predict_next(starts, ts(9, 23))).strftime("%d %H:%M") == "10 21:00"
-    assert predict_next(starts[:2], ts(9, 18)) is None  # az geçmiş: tahmin yok
+    assert predict_next(starts[:2], ts(9, 18)) is None  # little history: no prediction
 
 
 def test_snapshot_collects_state_and_shot_from_six():
@@ -81,11 +81,11 @@ def test_anticipator_prepares_once_before_usual_session():
     st = Store(series={nowmod.GAME_KEY: [(t, 3.0) for t in times]})
     ran = []
     a = Anticipator(st, hooks=[lambda: ran.append(1)])
-    assert not a.check(ts(9, 20, 0))      # 1 saat var: erken
-    assert a.check(ts(9, 20, 45))         # 15 dk kala: hazırlık
-    assert not a.check(ts(9, 20, 50))     # günde bir kez
+    assert not a.check(ts(9, 20, 0))      # 1 hour left: too early
+    assert a.check(ts(9, 20, 45))         # 15 min left: prepare
+    assert not a.check(ts(9, 20, 50))     # once per day
     assert ran == [1] and st.added[0][1] == "Önsezi: uçuşa hazırlık"
-    assert not Anticipator(st, hooks=[]).check(ts(10, 20, 45))  # kanca yok: bir şey yapmaz
+    assert not Anticipator(st, hooks=[]).check(ts(10, 20, 45))  # no hooks: does nothing
 
 
 def test_anticipator_skips_when_already_playing():
@@ -101,7 +101,7 @@ def test_voice_line_never_blocks(monkeypatch):
     monkeypatch.setattr(nowmod, "_refresh", lambda now: calls.append(now) or nowmod._cache.update(
         at=now, line="mod uçuş", busy=False))
     assert nowmod.voice_line(now=100.0, wait=True) == "mod uçuş"
-    assert nowmod.voice_line(now=110.0) == "mod uçuş" and calls == [100.0]  # 30 sn içinde yeniden hesaplanmaz
+    assert nowmod.voice_line(now=110.0) == "mod uçuş" and calls == [100.0]  # not recomputed within 30 s
 
 
 def test_with_clock_adds_state(monkeypatch):

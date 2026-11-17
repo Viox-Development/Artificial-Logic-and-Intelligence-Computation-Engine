@@ -1,4 +1,4 @@
-"""Ayarlar → Kurulum: doctor, modelleri ölç, Google, telefon, DCS, eklentiler, kısayol uygulamadan."""
+"""Settings → Setup: doctor, measure models, Google, phone, DCS, plugins, shortcut from the app."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def test_google_client_from_paste_and_download(tmp_path, monkeypatch):
 
     p = panel()
     assert not p.action("google_client", {"text": "rastgele"})["ok"]
-    assert not p.action("google_client", {"text": "123.apps.googleusercontent.com"})["ok"]  # secret eksik
+    assert not p.action("google_client", {"text": "123.apps.googleusercontent.com"})["ok"]  # secret missing
     assert p.action("google_client", {"text": "123.apps.googleusercontent.com", "secret": "s3"})["ok"]
     assert os.environ["GOOGLE_CLIENT_ID"] == "123.apps.googleusercontent.com" and p.view()["google"]["client"]
     dl = tmp_path / "client_secret_abc.json"
@@ -104,8 +104,8 @@ def test_phone_toggle_restarts_core_and_shows_qr(monkeypatch):
     monkeypatch.setattr(service, "read_state", lambda: {"running": True})
     assert p.action("phone_enable", {"on": True})["ok"] and p.system.calls == ["restart"]
     ph = p.view()["phone"]
-    assert ph["enabled"] and "/m?t=" in ph["url"]  # telefon uygulamasının adresi (Android uygulaması bunu tanır)
-    assert ph["app"] == {"available": False}  # APK henüz bilgisayara inmedi
+    assert ph["enabled"] and "/m?t=" in ph["url"]  # the phone app's address (the Android app recognizes this)
+    assert ph["app"] == {"available": False}  # APK not downloaded to the computer yet
     tok = ph["url"].split("t=")[1]
     assert p.action("phone_new_token", {})["ok"] and p.view()["phone"]["url"].split("t=")[1] != tok
     assert p.system.calls == ["restart", "restart"]
@@ -149,7 +149,7 @@ def test_plugin_template_and_shortcut(monkeypatch):
     r = p.action("plugin_new", {"name": "hava-durumu"})
     assert r["ok"] and r["path"].endswith("hava_durumu.py") and opened
     assert "hava_durumu" in (plugins.plugin_dir() / "hava_durumu.py").read_text(encoding="utf-8")
-    assert not p.action("plugin_new", {"name": "hava-durumu"})["ok"]  # zaten var
+    assert not p.action("plugin_new", {"name": "hava-durumu"})["ok"]  # already exists
     from alice.app import window
 
     monkeypatch.setattr(window, "create_shortcut", lambda: (_ for _ in ()).throw(RuntimeError("sadece Windows")))
@@ -180,7 +180,7 @@ def test_doctor_runs_in_background(workdir):
 
 
 def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
-    # Kullanıcının ekranı: Z.ai "max_tokens'a takıldı", Ollama kırmızı ✗, NVIDIA 180 sn sonra zaman aşımı.
+    # User's screen: Z.ai "max_tokens'a takıldı" (stuck on max_tokens), Ollama red ✗, NVIDIA timed out 180 s later.
     from alice.doctor import PROBE_TOKENS, probe_providers
     from alice.providers.openai_compat import ProviderError
     from tests.conftest import FakeProvider
@@ -192,9 +192,9 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
         "zai": {"base_url": "http://z", "api_key_env": "ZK", "models": ["glm-4.7-flash"]},
         "nvidia": {"base_url": "http://n", "api_key_env": "NK", "models": ["glm-5.3"]},
         "ollama": {"base_url": "http://localhost:11434/v1", "api_key_env": "", "models": ["qwen3:8b"]},
-        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # anahtar var, model bilinmiyor
+        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # key present, model unknown
         "busy": {"base_url": "http://y", "api_key_env": "", "models": ["m"]},
-        "mistral": {"base_url": "http://m", "api_key_env": "MK", "models": ["x"]},  # anahtar yok
+        "mistral": {"base_url": "http://m", "api_key_env": "MK", "models": ["x"]},  # no key
     }
     seen = {}
 
@@ -215,7 +215,7 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
     monkeypatch.setattr(ranking, "load_cache", lambda path=None: {})
     rows = {r["name"]: r for r in probe_providers(make_config({"brain": ["auto"]}, prov),
                                                     factory=lambda pc: FakeProvider(pc.name, script(pc.name)))}
-    assert rows["zai"]["status"] == "ok" and seen["zai"] == PROBE_TOKENS >= 400  # düşünen model cevaba ulaşsın
+    assert rows["zai"]["status"] == "ok" and seen["zai"] == PROBE_TOKENS >= 400  # let a thinking model answer
     assert rows["nvidia"]["status"] == "fail" and "cevap vermedi" in rows["nvidia"]["detail"]
     assert rows["ollama"]["status"] == "off" and "kurmadıysan sorun değil" in rows["ollama"]["detail"]
     assert rows["samba"]["status"] == "off" and "model listesi alınamadı" in rows["samba"]["detail"]
@@ -243,13 +243,13 @@ def test_timed_out_model_is_skipped_for_ten_minutes():
     import time
 
     left = rt.cooldown_until["a:m"] - time.monotonic()
-    assert left > router_mod.TIMEOUT_COOLDOWN - 5  # 30 sn değil: her istekte zaman aşımını baştan beklemesin
+    assert left > router_mod.TIMEOUT_COOLDOWN - 5  # not 30 s: don't wait out the timeout again on every request
     rt.chat("brain", [{"role": "user", "content": "y"}])
     assert calls == ["a", "b", "b"]
 
 
 def test_probe_uses_catalog_tries_siblings_and_cheapest_credit_model(monkeypatch):
-    # Kullanıcı: "SambaNova'yı, Z.ai'yi, Vercel'i neden kullanamıyorum, neden istek atmıyor?"
+    # User: "Why can't I use SambaNova, Z.ai, Vercel? Why aren't they sending requests?"
     from alice.doctor import probe_providers
     from alice.providers import ranking
     from alice.providers.openai_compat import ProviderError
@@ -259,7 +259,7 @@ def test_probe_uses_catalog_tries_siblings_and_cheapest_credit_model(monkeypatch
     for k in ("SK", "ZK", "VK"):
         monkeypatch.setenv(k, "k")
     prov = {
-        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # hiç ölçülmemiş, sabit listesi yok
+        "samba": {"base_url": "http://s", "api_key_env": "SK"},  # never measured, no fixed list
         "zai": {"base_url": "http://z", "api_key_env": "ZK", "models": ["glm-4.7-flash", "glm-4.5-flash"]},
         "vercel": {"base_url": "http://v", "api_key_env": "VK", "auto": False},
     }
@@ -281,10 +281,10 @@ def test_probe_uses_catalog_tries_siblings_and_cheapest_credit_model(monkeypatch
 
     rows = {r["name"]: r for r in probe_providers(make_config({"brain": ["auto"]}, prov),
                                                     factory=lambda pc: P(pc.name, reply(pc.name)))}
-    assert rows["samba"]["status"] == "ok" and rows["samba"]["model"] == "samba:DeepSeek-V3.1"  # katalogdan
-    assert rows["zai"]["status"] == "ok" and rows["zai"]["model"] == "zai:glm-4.5-flash"  # yoğun olanın kardeşi
+    assert rows["samba"]["status"] == "ok" and rows["samba"]["model"] == "samba:DeepSeek-V3.1"  # from the catalog
+    assert rows["zai"]["status"] == "ok" and rows["zai"]["model"] == "zai:glm-4.5-flash"  # sibling of the busy one
     assert "ilk denenen olmadı" in rows["zai"]["detail"]
-    assert rows["vercel"]["status"] == "ok" and rows["vercel"]["model"] == "vercel:openai/gpt-5-nano"  # en ucuz
+    assert rows["vercel"]["status"] == "ok" and rows["vercel"]["model"] == "vercel:openai/gpt-5-nano"  # cheapest
     assert "kredi" in rows["vercel"]["detail"] and not any("claude" in a for a in asked)
 
 
@@ -314,21 +314,21 @@ def test_score_table_and_weights_reorder_chains_without_reprobing():
     assert rows["b:yeni-model"]["known"] is False and rows["a:glm-5"]["known"]
     assert rows["a:dead"]["scores"] == {} and set(rows["a:glm-5"]["scores"]) == set(ranking.DEFAULT_WEIGHTS)
     r = p.action("weights_set", {"role": "brain", "weights": {"zeka": 100, "hiz": 0, "tepki": 0, "akis": 0}})
-    assert r["ok"] and r["chains"]["brain"][0] == "a:glm-5" and p.router.reloaded  # sadece zekâ
+    assert r["ok"] and r["chains"]["brain"][0] == "a:glm-5" and p.router.reloaded  # intelligence only
     r = p.action("weights_set", {"role": "brain", "weights": {"zeka": 10, "hiz": 90, "tepki": 0, "akis": 0}})
-    assert r["chains"]["brain"][0] == "b:qwen3.8-27b"  # hız önde
-    assert ranking.load_weights()["brain"]["hiz"] == 90  # kaydedildi
-    assert "b:yeni-model" not in r["chains"]["brain"]  # zekâsı bilinmeyen model ana sıraya girmez
+    assert r["chains"]["brain"][0] == "b:qwen3.8-27b"  # speed first
+    assert ranking.load_weights()["brain"]["hiz"] == 90  # saved
+    assert "b:yeni-model" not in r["chains"]["brain"]  # a model with unknown intelligence doesn't enter the main chain
     assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": 0, "hiz": 0, "tepki": 0, "akis": 0, "baglam": 0,
                                                                        "guven": 0}})["ok"]
     assert not p.action("weights_set", {"role": "uzay", "weights": {}})["ok"]
-    # Bilinmeyen rolü sıfırlamak ve sözlük olmayan/sayı olmayan ağırlıklar 500 değil hata yanıtı.
+    # Resetting an unknown role and non-dict / non-numeric weights return an error response, not a 500.
     assert not p.action("weights_set", {"role": "uzay", "reset": True})["ok"]
     assert not p.action("weights_set", {"role": "brain", "weights": [1, 2]})["ok"]
     assert not p.action("weights_set", {"role": "brain", "weights": "zeka=100"})["ok"]
     assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": [1]}})["ok"]
     assert not p.action("weights_set", {"role": "brain", "weights": {"zeka": "çok"}})["ok"]
-    assert ranking.load_weights()["brain"]["hiz"] == 90  # reddedilenler kaydı bozmadı
+    assert ranking.load_weights()["brain"]["hiz"] == 90  # rejected requests didn't corrupt the saved data
     p.action("weights_set", {"role": "brain", "reset": True})
     assert ranking.load_weights()["brain"] == ranking.DEFAULT_WEIGHTS["brain"]
 
@@ -349,19 +349,19 @@ def test_score_table_says_why_a_model_is_not_in_the_chain():
 
 
 def test_context_counts_in_score():
-    # Kullanıcı: "değerlendirmede context de katılmalı".
+    # User: "context should count in the evaluation too".
     from alice.providers import ranking
 
     pcs = make_config({"brain": []}, {"big": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 128000},
                                       "small": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 8000}}).providers()
     assert ranking.context_of("big:m", pcs, 32000) == 32000 and ranking.context_of("big:m", pcs) == 128000
-    assert ranking.context_of("small:m", pcs, 200000) == 8000  # ALICE o sağlayıcıya 8K'dan fazlasını göndermez
+    assert ranking.context_of("small:m", pcs, 200000) == 8000  # ALICE never sends that provider more than 8K
     same = {"quality": 85, "latency": 2, "ttft": 0.5, "tps": 100}
     big = ranking.with_context(same, "big:m", pcs)
     small = ranking.with_context(same, "small:m", pcs)
     assert ranking.metric_scores(big)["baglam"] == 100 and ranking.metric_scores(small)["baglam"] == 20
     assert ranking.role_score(big, "brain") > ranking.role_score(small, "brain")
-    assert ranking.role_score(big, "voice") == ranking.role_score(small, "voice")  # seste bağlamın ağırlığı 0
+    assert ranking.role_score(big, "voice") == ranking.role_score(small, "voice")  # context has zero weight for voice
     rows = {r["ref"]: r for r in ranking.score_table({"results": {"small:m": {**same, "ok": True}}}, None, pcs)}
     assert rows["small:m"]["context"] == 8000
 
@@ -398,13 +398,13 @@ def test_payment_required_stops_trying_other_models(monkeypatch):
 
 
 def test_scores_view_shows_current_order_not_the_one_from_measurement_time():
-    # Kullanıcının ekranı: numaralar puanla uyuşmuyordu (sıra ölçüm anında eski formülle kurulmuştu).
+    # User's screen: numbers didn't match scores (the order was built with the old formula at measurement time).
     from alice.providers import ranking
     from alice.providers.router import Router
 
     _seed_cache()
     cache = ranking.load_cache()
-    cache["chains"] = {"brain": ["b:qwen3.8-27b", "a:glm-5"]}  # eski, yanlış sıra
+    cache["chains"] = {"brain": ["b:qwen3.8-27b", "a:glm-5"]}  # old, wrong order
     ranking.cache_path().write_text(json.dumps(cache), encoding="utf-8")
     cfg = make_config({"brain": ["auto"]}, {"a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 128000},
                                             "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 128000}})
@@ -413,5 +413,5 @@ def test_scores_view_shows_current_order_not_the_one_from_measurement_time():
     rows = {r["ref"]: r for r in v["rows"]}
     brain = v["chains"]["brain"]
     in_chain = [r for r in brain if r in rows]
-    assert in_chain == sorted(in_chain, key=lambda r: -rows[r]["scores"]["brain"])  # numaralar puan sırasında
+    assert in_chain == sorted(in_chain, key=lambda r: -rows[r]["scores"]["brain"])  # numbers are in score order
     assert ranking.load_cache()["chains"]["brain"] != ["b:qwen3.8-27b", "a:glm-5"] or in_chain[0] == "b:qwen3.8-27b"

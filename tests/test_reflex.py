@@ -99,7 +99,7 @@ def test_low_confidence_click_on_element_named_in_goal_proceeds():
     dec = ScriptedDecider([("click_3", 0.45, 0.0), ("click_4", 0.95, 0.0), ("done", 0.9, 0.95)])
     res = ReflexLoop(obs, dec, settle=0).run("ekrandaki Ayarlar düğmesine tıkla, sonra Gizlilik")
     assert obs.actions[0] == ("click", 3) and res.status == "done"
-    # adı hedefte geçmeyen öğe: yine beyne döner
+    # element whose name is not in the goal: still falls back to the brain
     res = ReflexLoop(FakeObserver(), ScriptedDecider([("click_1", 0.45, 0.0)]), settle=0).run("ayarları aç")
     assert res.status == "needs_help"
 
@@ -128,14 +128,14 @@ def test_login_controls_are_left_to_the_user():
         obs = LoginObserver()
         res = ReflexLoop(obs, ScriptedDecider([(pick, 0.9, 0.0)]), settle=0).run("Que Mal'a selam yaz")
         assert res.status == "needs_login" and obs.actions == []
-    obs = LoginObserver()  # hedef giriş yapmaksa dokunulur
+    obs = LoginObserver()  # touched only if the goal is to log in
     ReflexLoop(obs, ScriptedDecider([("click_1", 0.9, 0.0), ("done", 0.9, 0.95)]), settle=0).run(
         "telefon numarasıyla giriş yap")
     assert obs.actions == [("click", 1)]
 
 
 def test_desktop_reflex_frames_click_on_hud(monkeypatch):
-    """Reflex artık ekran işlerinin ilk aracı: tıklamadan önce HUD'da halka göstermeli (beklemeden)."""
+    """Reflex is now the first tool for screen work: draw a ring on the HUD before clicking (without waiting)."""
     from alice.hud import views
     from alice.reflex.observers import DesktopObserver
     from alice.reflex.perceive import Item
@@ -150,13 +150,13 @@ def test_desktop_reflex_frames_click_on_hud(monkeypatch):
     item = Item("k", "ocr", "text", "Görünüm", rect=(0.4, 0.4, 0.6, 0.5))
     obs.act("right_click", item)
     assert seen == [(600, 410, "right_click", False)] and clicks == [(600, 410)]
-    with pytest.raises(ValueError, match="yeri bilinmiyor"):  # HUD değil, eylemin kendi hatası
+    with pytest.raises(ValueError, match="yeri bilinmiyor"):  # not a HUD error, the action's own error
         obs.act("right_click", Item("n", "ocr", "text", "yeri yok"))
     assert len(seen) == 1
 
 
 def test_desktop_reflex_survives_uia_com_error(monkeypatch):
-    """Canlı kayıt: UIA COM hatası (0x80040201) bütün refleksi "ekran okunamadı" ile düşürdü; OCR ile devam etmeli."""
+    """Live: UIA COM error (0x80040201) dropped the whole reflex with "ekran okunamadı"; it should continue with OCR."""
     import alice.reflex.observers as ob
     from alice.tools import desktop
 

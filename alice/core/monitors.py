@@ -1,11 +1,11 @@
-"""Veri toplayan gözlemciler.
+"""Data-collecting observers.
 
-Her gözlemci `collect()` ile (anahtar, sayı, metin) satırları döndürür; servis bunları
-depoya yazar. Şimdilik bilgisayar gözlemcisi var; DCS, War Thunder ve saat aynı arayüzle
-eklenecek.
+Each observer returns (key, number, text) rows via `collect()`; the service writes them to the
+store. Currently, there is a computer observer; DCS, War Thunder, and watch will be added
+using the same interface.
 
-Sıcaklıklar: Linux'ta psutil, NVIDIA kartlarda nvidia-smi. Windows'ta CPU sıcaklığı için
-LibreHardwareMonitor açıksa onun WMI kaydı okunur (psutil Windows'ta sıcaklık vermiyor).
+Temperatures: psutil on Linux, nvidia-smi on NVIDIA cards. For CPU temperature on Windows,
+if LibreHardwareMonitor is running, its WMI record is read (psutil does not provide temperatures on Windows).
 """
 
 from __future__ import annotations
@@ -30,15 +30,15 @@ class Monitor(Protocol):
 
 
 def _key_part(s: str) -> str:
-    """Anahtar içinde güvenli parça: 'C:\\' -> 'C', 'Unity Hub.exe' -> 'unity_hub.exe'."""
+    """Safe segment within a key: 'C:\\' -> 'C', 'Unity Hub.exe' -> 'unity_hub.exe'."""
     return re.sub(r"[^\w.-]+", "_", s.strip().rstrip(":\\/")).strip("_").lower() or "root"
 
 
 def _run(cmd: list[str], timeout: float = 5) -> str | None:
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        # Türkçe Windows'ta PowerShell hata metni cp857/cp1254: yerel kod sayfasıyla çözmek UnicodeDecodeError atıp
-        # gözlemciyi her turda düşürüyordu.
+        # On Turkish Windows, PowerShell error text is cp857/cp1254: decoding with the native code page threw
+        # UnicodeDecodeError and crashed the observer on every cycle.
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            creationflags=flags)
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -47,7 +47,7 @@ def _run(cmd: list[str], timeout: float = 5) -> str | None:
 
 
 def foreground_process() -> str | None:
-    """Öndeki pencerenin program adı (sadece Windows)."""
+    """Program name of the foreground window (Windows only)."""
     if sys.platform != "win32":
         return None
     try:
@@ -63,11 +63,11 @@ def foreground_process() -> str | None:
         return None
 
 
-_PRIVATE_READER: Any = False  # False: henüz denenmedi, None: kullanılamıyor
+_PRIVATE_READER: Any = False  # False: not attempted yet, None: unavailable
 
 
 def _private_ws_reader() -> Callable[[int], int | None] | None:
-    """Windows: süreç -> özel çalışma kümesi (Görev Yöneticisi'nin "Bellek" sütunu). Kullanılamıyorsa None."""
+    """Windows: process -> private working set (Task Manager's "Memory" column). None if unavailable."""
     global _PRIVATE_READER
     if _PRIVATE_READER is not False:
         return _PRIVATE_READER
@@ -103,7 +103,7 @@ def _private_ws_reader() -> Callable[[int], int | None] | None:
             finally:
                 k32.CloseHandle(h)
 
-        if read(os.getpid()):  # eski Windows yapıyı tanımazsa sıfır/başarısız döner: rss'e düş
+        if read(os.getpid()):  # unsupported on older Windows (returns zero/failure): fall back to rss
             _PRIVATE_READER = read
     except (OSError, AttributeError, ImportError):
         pass
@@ -111,8 +111,8 @@ def _private_ws_reader() -> Callable[[int], int | None] | None:
 
 
 def _win_proc_stats() -> list[tuple[int, str, int, float]] | None:
-    """Windows: (pid, ad, rss bayt, kullanıcı+çekirdek işlemci sn); erişilemeyen süreçler atlanır. Başka
-    platformda ya da psutil'in iç yapısı değişmişse None (yavaş genel yol kullanılır)."""
+    """Windows: (pid, name, rss bytes, user+system cpu sec); inaccessible processes are skipped. None on another
+    platform or if psutil internal structure changed (slow generic path is used)."""
     if sys.platform != "win32":
         return None
     try:
@@ -123,16 +123,16 @@ def _win_proc_stats() -> list[tuple[int, str, int, float]] | None:
         return None
     out = []
     private = _private_ws_reader()
-    for p in psutil.process_iter(["name"]):  # adlar tek anlık görüntüden gelir: hızlı
+    for p in psutil.process_iter(["name"]):  # names come from a single snapshot: fast
         name = p.info.get("name") or ""
         if not name:
             continue
         try:
-            # Çok süreçli tarayıcılarda (Opera GX: 61 süreç) WorkingSet ortak sayfaları her süreçte tekrar sayar: toplam
-            # 9,6 GB çıkıp "Opera 10 GB kullanıyor" deniyordu, Görev Yöneticisi 2,4 GB gösterirken. Ona özel kısım sayılır.
+            # In multi-process browsers (Opera GX: 61 procs), WorkingSet counts shared pages repeatedly in each process:
+            # totaling 9.6 GB ("Opera uses 10 GB"), while Task Manager showed 2.4 GB. Only private portion is counted.
             rss = (private(p.pid) if private else None) or mem_info(p.pid)[2]  # psutil rss = WorkingSetSize
             user, system, _created = times(p.pid)
-        except Exception:  # noqa: BLE001 - korumalı süreç (erişim yok) ya da süreç kapandı: atla
+        except Exception:  # noqa: BLE001 - protected process (no access) or process exited: skip
             continue
         out.append((p.pid, name, int(rss), float(user) + float(system)))
     return out
@@ -143,14 +143,14 @@ class PCMonitor:
 
     def __init__(self, top_n: int = 5):
         self.top_n = top_n
-        self.processes: set[str] = set()  # son toplamadaki süreç adları (mod tespiti için)
+        self.processes: set[str] = set()  # process names in the last collection (for mode detection)
         self._nvidia = shutil.which("nvidia-smi")
-        self._lhm = sys.platform == "win32"  # ilk başarısızlıkta kapanır
-        # -inf: ilk ölçüm hemen yapılır (monotonic() açılıştan sonraki ilk 60 sn'de < 60 olabilir)
+        self._lhm = sys.platform == "win32"  # disabled on first failure
+        # -inf: first measurement is taken immediately (monotonic() can be < 60 in the first 60s after boot)
         self._disk_at = float("-inf")
         self._temps_at = float("-inf")
         self._temps_last: list[Row] = []
-        psutil.cpu_percent(interval=None)  # ilk çağrı hep 0 döner, ısındır
+        psutil.cpu_percent(interval=None)  # first call always returns 0, warm it up
 
     def collect(self) -> list[Row]:
         rows: list[Row] = [("pc.cpu.percent", psutil.cpu_percent(interval=None), None)]
@@ -167,14 +167,14 @@ class PCMonitor:
         return rows
 
     def _disks(self) -> list[Row]:
-        # Disk doluluğu yavaş değişir, dakikada bir yeter.
+        # Disk usage changes slowly, once a minute is sufficient.
         if time.monotonic() - self._disk_at < 60:
             return []
         self._disk_at = time.monotonic()
         out: list[Row] = []
         for part in psutil.disk_partitions(all=False):
             opts = part.opts.split(",")
-            # CD-ROM ve salt okunur bağlamalar (squashfs vb.) hep "%100 dolu" görünür, atla.
+            # CD-ROM and read-only mounts (squashfs, etc.) always appear "100% full", skip.
             if "cdrom" in opts or "ro" in opts or not part.fstype:
                 continue
             try:
@@ -182,7 +182,7 @@ class PCMonitor:
             except (PermissionError, OSError):
                 continue
             out.append((f"pc.disk.{_key_part(part.mountpoint)}.percent", u.percent, None))
-            # Yüzde büyük veri diskinde (F: hep %98) gürültü, küçük sistem diskinde geç kalır: boş GB de yazılsın.
+            # Percentage is noisy on large data disks (F: always 98%), too late on small system disks: also write free GB.
             out.append((f"pc.disk.{_key_part(part.mountpoint)}.free_gb", round(u.free / 1024 ** 3, 2), None))
         return out
 
@@ -199,7 +199,7 @@ class PCMonitor:
             if cpu:
                 out.append(("pc.cpu.temp", max(cpu), None))
         if self._lhm and not out:
-            # Her sorgu bir PowerShell açıyor (~0,5 sn işlemci): 15 sn'de bir değil dakikada bir yeter.
+            # Each query spawns a PowerShell (~0.5s CPU): once a minute is sufficient rather than every 15s.
             if time.monotonic() - self._temps_at >= 60:
                 self._temps_at = time.monotonic()
                 self._temps_last = self._lhm_temps()
@@ -218,7 +218,7 @@ class PCMonitor:
             if "cpu" not in ident.lower():
                 continue
             try:
-                cpu.append(float(v.strip().replace(",", ".")))  # Türkçe yerel ayarda ondalık virgül
+                cpu.append(float(v.strip().replace(",", ".")))  # Decimal comma in Turkish locale
             except ValueError:
                 continue
         return [("pc.cpu.temp", max(cpu), None)] if cpu else []
@@ -243,10 +243,10 @@ class PCMonitor:
         names: set[str] = set()
         fast = _win_proc_stats()
         if fast is not None:
-            # Windows: psutil erişilemeyen (korumalı) süreçte bütün sistemin anlık görüntüsünü alıp yeniden deniyor
-            # ve bunu GIL'i bırakmadan yapıyor. 465 süreçte tarama 17 sn sürüyordu (15 sn'de bir): sesli asistanın
-            # dinleme döngüsü GIL bekleyip mikrofon sesini kaybediyor, "Alice naber" hiç duyulmuyordu (30 Ekim,
-            # py-spy ile görüldü). Korumalı süreçleri atlayan yol 0,02 sn.
+            # Windows: psutil snapshots the whole system and retries on inaccessible (protected) processes,
+            # without releasing the GIL. Across 465 processes, scan took 17s (every 15s): the voice assistant's
+            # listening loop starved on GIL and dropped mic audio, "Alice naber" was never heard (Oct 30,
+            # observed with py-spy). The path skipping protected processes takes 0.02s.
             now = time.monotonic()
             prev, self._cpu_prev = getattr(self, "_cpu_prev", {}), {}
             for pid, name, rss, busy in fast:

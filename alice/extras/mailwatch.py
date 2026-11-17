@@ -1,11 +1,13 @@
-"""E-postadan tarih çıkarma: fatura son ödemeleri ve okul/staj tarihleri hatırlatmaya dönüşür.
+"""Date extraction from e-mail: invoice due dates and school/internship dates become reminders.
 
-İki saatte bir bağlı Gmail hesaplarında son 3 günün fatura, ekstre, ödev, sınav, staj maillerine bakılır (reklam
-sekmesi hariç). Her yeni mail hızlı modele bir kez okutulur, sadece mailde AÇIKÇA yazan tarih alınır:
-  * fatura/abonelik/ekstre -> son ödemeden 2 gün önce sabah 10'da hatırlatma ("Turkcell faturası 2 gün sonra, 349 TL")
-  * ödev teslimi, sınav, staj görüşmesi, başvuru son günü -> bir gün önce sabah 10'da hatırlatma
-Hatırlatmalar hafızanın "remind" takipleri: günü gelince bildirim olur, sohbette de görünür. Bulunan her şey ayrıca
-bir kez bildirilir; takvime eklemek dış hesaba yazmak olduğu için kendiliğinden yapılmaz, istenirse söylenir.
+Every two hours, the last 3 days of invoice, statement, homework, exam and internship mails in all connected Gmail
+accounts are checked (promotions tab excluded). Each new mail is read once by the fast model, and only a date that
+is EXPLICITLY written in the mail is taken:
+  * invoice/subscription/statement -> reminder at 10:00, 2 days before due ("Turkcell faturası 2 gün sonra, 349 TL")
+  * homework submission, exam, internship interview, application deadline -> reminder at 10:00, 1 day before
+Reminders are the "remind" follow-ups of memory: when the day comes there is a notification, and they also show in
+chat. Everything found is also announced once; adding it to the calendar would write to an external account, so it is
+not done automatically, only offered if asked.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ def extract(router, sender: str, subject: str, body: str, today: datetime) -> di
         due = datetime.fromisoformat(str(data["due"]).strip())
     except ValueError:
         return None
-    horizon = 60 if data["kind"] == "bill" else 200  # faturalar aylık: iki aydan uzak "son ödeme" yanlış okunmuştur
+    horizon = 60 if data["kind"] == "bill" else 200  # bills are monthly: a "son ödeme" over 2 months away is misread
     if due.date() < today.date() or due > today + timedelta(days=horizon):
         return None
     amount = data.get("amount")
@@ -67,7 +69,7 @@ def extract(router, sender: str, subject: str, body: str, today: datetime) -> di
 def remind_at(item: dict[str, Any], now: datetime) -> float:
     days = 2 if item["kind"] == "bill" else 1
     at = (item["due"] - timedelta(days=days)).replace(hour=10, minute=0, second=0, microsecond=0)
-    return max(at, now + timedelta(minutes=5)).timestamp()  # vakti geçtiyse hemen
+    return max(at, now + timedelta(minutes=5)).timestamp()  # if the time has already passed, remind right away
 
 
 def reminder_text(item: dict[str, Any]) -> str:
@@ -78,7 +80,7 @@ def reminder_text(item: dict[str, Any]) -> str:
 
 
 def messages(cfg, query: str = QUERY, client: Any = None) -> list[tuple[str, str, str, str, str]]:
-    """(hesap, id, gönderen, konu, metin) — bağlı bütün Gmail hesaplarından."""
+    """(account, id, sender, subject, body) — from all connected Gmail accounts."""
     from alice.tools import gmail
 
     out = []
@@ -89,14 +91,14 @@ def messages(cfg, query: str = QUERY, client: Any = None) -> list[tuple[str, str
                 h = gmail._headers(full)
                 out.append((acc, m["id"], gmail._short_from(h.get("from", "")), h.get("subject", ""),
                             gmail.body_text(full.get("payload") or {}) or full.get("snippet", "")))
-        except Exception:  # noqa: BLE001 - bir hesap düşse de diğerleri
+        except Exception:  # noqa: BLE001 - keep going with the other accounts if one fails
             continue
     return out
 
 
 def scan(cfg, router, mem, notify: Callable[[str, str], bool], now: float | None = None, force: bool = False,
          path: Path | None = None, fetch: Callable[[], list] | None = None) -> list[str]:
-    """Vakti geldiyse yeni mailleri tara; eklenen hatırlatmaların metinlerini döndür."""
+    """If it is time, scan for new mails; return the texts of the reminders added."""
     now = time.time() if now is None else now
     path = path or state_path()
     try:
@@ -108,14 +110,14 @@ def scan(cfg, router, mem, notify: Callable[[str, str], bool], now: float | None
     seen = set(st.get("seen") or [])
     today = datetime.fromtimestamp(now)
     added = []
-    query = QUERY if st.get("last") else QUERY.replace("newer_than:3d", "newer_than:30d")  # ilk tarama: son ay
+    query = QUERY if st.get("last") else QUERY.replace("newer_than:3d", "newer_than:30d")  # first scan: last month
     for _acc, mid, sender, subject, body in (fetch or (lambda: messages(cfg, query)))():
         if mid in seen:
             continue
         seen.add(mid)
         try:
             item = extract(router, sender, subject, body, today)
-        except Exception:  # noqa: BLE001 - model düşerse bu mail bir dahaki taramaya kalmasın, atla
+        except Exception:  # noqa: BLE001 - if the model fails, don't leave this mail for the next scan; skip it
             continue
         if item is None:
             continue

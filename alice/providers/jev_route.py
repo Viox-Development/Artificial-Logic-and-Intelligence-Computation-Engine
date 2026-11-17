@@ -1,16 +1,16 @@
-"""Jev ile otomatik model yönlendirme: her mesajda hangi model katmanı?
+"""Automatic model routing with Jev: which model tier for each message?
 
-Ölçüm sıralaması tek bir "en iyi model" listesi çıkarıyor; ağır işte de "naber"de de aynı modeller deneniyordu ve
-abonelikle gelen güçlü modeller (Claude Code proxy'sindeki Opus 5.5) kota harcamasın diye hiç sıraya girmiyordu.
-Burada Jev (TypeSafe System One) mesaj hakkında birkaç küçük yargı veriyor; hangi katmana gidileceğine kod karar
-veriyor (aşağıdaki doğruluk tablosu):
+The measured ranking produced a single "best model" list; both heavy work and "naber" (Turkish for "what's up")
+messages tried the same models, and strong models that come with the subscription (Opus 5.5 on the Claude Code proxy)
+were never queued, so their quota would not be spent. Here Jev (TypeSafe System One) gives a few small judgments about
+the message; the code decides which tier to use (truth table below):
 
-  strong  kod yazma/düzeltme, derin düşünme ya da çok adımlı bilgisayar işi -> [routing] strong + beyin zinciri
-  light   sohbet ya da kısa soru, bilgisayarda en fazla tek iş             -> hızlı (fast) zincir + beyin zinciri
-  normal  geri kalan her şey ve Jev'e ulaşılamayan her durum                -> beyin zinciri (bugünkü davranış)
+  strong  writing/fixing code, deep thinking or multi-step computer work -> [routing] strong + brain chain
+  light   chat or a short question, at most one task on the computer      -> fast chain + brain chain
+  normal  everything else, and every case where Jev cannot be reached      -> brain chain (today's behavior)
 
-Sorular, ölçütler ve eşikler sadece bu dosyada. Jev çağrısı başarısız olursa bu bir cevap sayılmaz: "normal"e
-düşülür ve olay günlüğüne yazılır.
+The questions, criteria and thresholds are only in this file. If the Jev call fails, that does not count as an answer:
+it falls back to "normal" and is written to the event log.
 """
 
 from __future__ import annotations
@@ -50,16 +50,18 @@ QUESTIONS: dict[str, Any] = {
          "false": "The user asks for information or for something to be done."}),
 }
 
-# Doğruluk tablosunun eşikleri (Noul: 0.7 üstü evet, 0.3 altı hayır; Score: beklenen seviye 1-4).
+# Thresholds of the truth table (Noul: above 0.7 is yes, below 0.3 is no; Score: expected level 1-4).
 YES, NO = 0.7, 0.3
-STRONG_THINKING = 3.2   # bundan çok düşünme isterse güçlü model
-STRONG_STEPS = 3.2      # bundan çok adımlıysa güçlü model
-# Seviye 2 ("kısa bilgi / gündelik cevap") ve 2 ("tek basit iş") hafif modele yeter: eşikler 2 ile 3'ün ortası.
-# (İlk denemede 1.8/2.3 idi; "Spotify'ı aç", "sesi kıs" gibi tek adımlık işler gereksiz yere beyne gidiyordu.)
-LIGHT_THINKING = 2.5    # bundan az düşünme isterse hafif model yeter
-LIGHT_STEPS = 2.5       # en fazla tek basit iş
+STRONG_THINKING = 3.2   # strong model if it needs more thinking than this
+STRONG_STEPS = 3.2      # strong model if it has more steps than this
+# Level 2 ("short fact / everyday answer") and 2 ("one simple task") fit the light model:
+# thresholds sit between 2 and 3.
+# (The first try used 1.8/2.3; single-step tasks such as "Spotify'ı aç" and "sesi kıs" were
+# needlessly sent to the brain.)
+LIGHT_THINKING = 2.5    # light model if it needs less thinking than this
+LIGHT_STEPS = 2.5       # at most one simple task
 
-TIMEOUT = 4.0  # sn: yönlendirme cevabı geciktirmesin; aşılırsa "normal"
+TIMEOUT = 4.0  # sec: routing must not delay the reply; if exceeded, "normal"
 
 
 @dataclass
@@ -73,13 +75,13 @@ class Route:
 def build_state(request: str, previous_reply: str = "") -> dict[str, Any]:
     state: dict[str, Any] = {"assistant": ASSISTANT, "request": request[:4000]}
     if previous_reply.strip():
-        # "Evet, yap" gibi kısa cevaplar ancak bir önceki cevapla anlaşılır.
+        # Short replies like "Evet, yap" (Yes, do it) only make sense together with the previous reply.
         state["previous_reply"] = previous_reply.strip()[:800]
     return state
 
 
 def decide_tier(code: float, thinking: float, steps: float, chat: float) -> Route:
-    """Jev'in yargılarından katman. Her birleşimin bir sonucu var; arada kalanlar "normal"."""
+    """Tier from Jev's judgments. Every combination has a result; anything in between is "normal"."""
     signals = {"code": round(code, 2), "thinking": round(thinking, 2), "steps": round(steps, 2),
                "chat": round(chat, 2)}
     if code >= YES:
@@ -118,7 +120,7 @@ def _get_engine(config) -> JevEngine | None:
 
 def route(config, request: str, previous_reply: str = "", engine: Any = None,
           log: Callable[[str], None] = lambda s: None) -> Route:
-    """Mesajın katmanı. Jev yoksa ya da hata verirse "normal" (bugünkü beyin zinciri)."""
+    """The message's tier. If Jev is missing or fails, "normal" (today's brain chain)."""
     global _broken_until
     if not request.strip():
         return Route("normal", "boş mesaj")
@@ -131,7 +133,7 @@ def route(config, request: str, previous_reply: str = "", engine: Any = None,
     try:
         d = eng.decide(build_state(request, previous_reply), QUESTIONS)
         r = decide_tier(*_signals(d))
-    except Exception as e:  # noqa: BLE001 - hata bir cevap değildir: bugünkü davranışa dön, izini bırak
+    except Exception as e:  # noqa: BLE001 - an error is not an answer: fall back to today's behavior and leave a trace
         if engine is None:
             _broken_until = time.monotonic() + float(getattr(e, "cooldown", 60.0) or 60.0)
         log(f"yönlendirme: jev başarısız ({str(e)[:160]}), normal zincir")
@@ -150,9 +152,9 @@ def _dedupe(refs: list[str]) -> list[str]:
 
 def voice_chain(router, config, request: str, fast: list[str],
                 log: Callable[[str], None] = lambda s: None) -> tuple[list[str], Route]:
-    """Sesli konuşmada think'in model sırası. Sesde hız önce: sadece "strong" katmanı değişir ve orada da
-    [routing] voice_strong (varsayılan Sonnet 5.5) hızlı modellerin önüne geçer. Diğer her şey `fast` sırası.
-    Yönlendirme kapalıysa ya da Jev'e ulaşılamazsa `fast` olduğu gibi döner."""
+    """Model order for think in voice conversations. In voice, speed comes first: only the "strong" tier changes,
+    and there [routing] voice_strong (default Sonnet 5.5) goes ahead of the fast models. Everything else uses the
+    `fast` order. If routing is off or Jev cannot be reached, `fast` is returned as is."""
     rc = config.data.get("routing", {}) or {}
     if not rc.get("enabled") or not rc.get("voice", True):
         return fast, Route("normal", "yönlendirme kapalı")
@@ -164,7 +166,7 @@ def voice_chain(router, config, request: str, fast: list[str],
 
 
 def tier_chain(router, config, tier: str) -> list[str]:
-    """Katmanın model sırası: katmanın modelleri önce, sonra beyin zinciri (hiçbir iş yedeksiz kalmasın)."""
+    """Model order for a tier: its own models first, then the brain chain (no task is left without a fallback)."""
     rc = config.data.get("routing", {}) or {}
     brain = router.chain("brain")
     if tier == "strong":
@@ -173,7 +175,7 @@ def tier_chain(router, config, tier: str) -> list[str]:
         head = [str(r) for r in rc.get("light") or []] or router.chain("fast")
     else:
         return brain
-    # Arayüzden gizlenen model ya da grup (ör. "cliproxy:claude-*") yönlendirmede de kullanılmaz.
+    # Models or groups hidden from the UI (e.g. "cliproxy:claude-*") are not used for routing either.
     return [r for r in _dedupe(head + brain) if not _hidden(router, r)]
 
 

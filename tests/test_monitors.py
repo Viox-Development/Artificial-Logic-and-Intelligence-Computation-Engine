@@ -12,7 +12,7 @@ from alice.core import monitors
 from alice.core.monitors import PCMonitor, _key_part, _run, foreground_process
 
 
-# ---------------------------------------------------------------- yardımcı
+# ---------------------------------------------------------------- helpers
 @pytest.mark.parametrize("raw, want", [
     ("C:\\", "c"),
     ("/", "root"),
@@ -74,7 +74,7 @@ def Part(mount, fstype="ext4", opts="rw"):
 
 @pytest.fixture
 def fake_ps(monkeypatch):
-    """psutil'i sahte değerlerle değiştir; testler alanları değiştirebilir."""
+    """Replace psutil with fake values; tests may modify the fields."""
     state = SimpleNamespace(
         cpu=12.5,
         vm=SimpleNamespace(percent=40.0, used=8 * 2**30),
@@ -85,8 +85,8 @@ def fake_ps(monkeypatch):
         run_out={},
         run_calls=[],
     )
-    # Yeni açılmış CI makinesinde time.monotonic() < 60 olabiliyor; o zaman ilk disk/sıcaklık okuması
-    # "dakikada bir" kısıtına takılır. Sabit, büyük bir saat kullan.
+    # On a freshly started CI machine, time.monotonic() can be < 60; then the first disk/temperature read
+    # hits the "once a minute" limit. Use a fixed, large clock.
     monkeypatch.setattr(monitors.time, "monotonic", lambda: 1_000_000.0)
     monkeypatch.setattr(monitors.psutil, "cpu_percent", lambda interval=None: state.cpu)
     monkeypatch.setattr(monitors.psutil, "virtual_memory", lambda: state.vm)
@@ -107,7 +107,7 @@ def fake_ps(monkeypatch):
 
     monkeypatch.setattr(monitors.psutil, "sensors_temperatures", temps, raising=False)
     monkeypatch.setattr(monitors.psutil, "process_iter", lambda attrs=None: list(state.procs))
-    monkeypatch.setattr(monitors, "_win_proc_stats", lambda: None)  # Windows hızlı yolu ayrı testte
+    monkeypatch.setattr(monitors, "_win_proc_stats", lambda: None)  # The Windows fast path is tested separately
     monkeypatch.setattr(monitors.shutil, "which", lambda name: None)
     monkeypatch.setattr(monitors, "foreground_process", lambda: None)
 
@@ -141,7 +141,7 @@ def test_collect_basic_rows(fake_ps):
 
 
 def test_first_disk_reading_right_after_boot(fake_ps, monkeypatch):
-    monkeypatch.setattr(monitors.time, "monotonic", lambda: 5.0)  # açılıştan 5 sn sonra
+    monkeypatch.setattr(monitors.time, "monotonic", lambda: 5.0)  # 5 s after boot
     assert "pc.disk.root.percent" in keys(make_mon().collect())
 
 
@@ -159,7 +159,7 @@ def test_disks_skip_readonly_cdrom_and_errors_and_throttle(fake_ps):
     rows = mon._disks()
     assert rows == [("pc.disk.root.percent", 10.0, None), ("pc.disk.root.free_gb", 90.0, None),
                     ("pc.disk.c.percent", 70.0, None), ("pc.disk.c.free_gb", 30.0, None)]
-    # Dakikada bir: hemen ardından boş döner
+    # Once a minute: the immediate next call returns empty
     assert mon._disks() == []
     mon._disk_at -= 61
     assert len(mon._disks()) == 4
@@ -193,7 +193,7 @@ def test_lhm_disables_itself_when_unavailable(fake_ps):
     assert mon._lhm is False
     n = len(fake_ps.run_calls)
     mon._temps()
-    assert len(fake_ps.run_calls) == n  # bir daha powershell çağrılmaz
+    assert len(fake_ps.run_calls) == n  # powershell is not called again
 
 
 def test_lhm_no_cpu_lines(fake_ps):
@@ -201,7 +201,7 @@ def test_lhm_no_cpu_lines(fake_ps):
     mon = make_mon()
     mon._lhm = True
     assert mon._lhm_temps() == []
-    assert mon._lhm is True  # komut çalıştı, sadece CPU yoktu
+    assert mon._lhm is True  # the command ran, there were just no CPU lines
 
 
 def test_lhm_not_used_when_psutil_has_temp(fake_ps):
@@ -250,8 +250,8 @@ def test_procs_aggregates_by_name_and_limits_top_n(fake_ps):
         Proc("chrome.exe", 100, 5.0), Proc("chrome.exe", 300, 2.5),
         Proc("Unity Hub.exe", 250, 0.0),
         Proc("idle", 10, None),
-        Proc("", 999, 99.0),        # adsız atlanır
-        Proc("ghost", None, 1.0),   # bellek bilgisi yok
+        Proc("", 999, 99.0),        # unnamed, skipped
+        Proc("ghost", None, 1.0),   # no memory info
     ]
     mon = make_mon(top_n=2)
     rows = mon._procs()
@@ -281,8 +281,8 @@ def test_procs_updates_process_set_each_collect(fake_ps):
 
 
 def test_procs_windows_fast_path_cpu_from_deltas(fake_ps, monkeypatch):
-    # psutil'in genel yolu Windows'ta 465 süreçte 17 sn GIL tutuyordu; hızlı yol işlemci yüzdesini iki tur
-    # arasındaki işlemci süresi farkından hesaplar
+    # psutil's generic path held the GIL for 17 s across 465 processes on Windows; the fast path computes
+    # the CPU percent from the difference in processor time between two rounds
     clock = [1000.0]
     monkeypatch.setattr(monitors.time, "monotonic", lambda: clock[0])
     stats = [[(1, "aces.exe", 2 * 2**30, 10.0), (2, "chrome.exe", 2**29, 1.0), (3, "chrome.exe", 2**29, 1.0)]]
@@ -294,7 +294,7 @@ def test_procs_windows_fast_path_cpu_from_deltas(fake_ps, monkeypatch):
     rows = mon._procs()
     assert ("pc.proc.aces.exe.cpu", pytest.approx(150.0), None) in rows
     assert ("pc.proc.chrome.exe.cpu", pytest.approx(25.0), None) in rows
-    assert "pc.proc.new.exe.cpu" not in keys(rows)  # ilk görülen süreç: fark yok
+    assert "pc.proc.new.exe.cpu" not in keys(rows)  # first-seen process: no delta
     assert mon.processes == {"aces.exe", "chrome.exe", "new.exe"}
 
 
@@ -307,7 +307,7 @@ def test_windows_proc_stats_is_fast():
 
 
 def test_real_psutil_smoke():
-    """Gerçek psutil ile bir toplama hata vermeden satır döndürmeli (dış komut yok)."""
+    """With real psutil, one collection must return rows without errors (no external commands)."""
     mon = PCMonitor(top_n=1)
     mon._nvidia = None
     mon._lhm = False

@@ -14,14 +14,14 @@ def builtin_tools() -> list[Tool]:
 
 
 def all_tools(config=None, emit=lambda s: None) -> list[Tool]:
-    """Yerleşik araçlar + eklentilerin araçları (bkz. alice/plugins.py)."""
+    """Built-in tools + plugin tools (see alice/plugins.py)."""
     from alice import plugins
 
     from alice.connect import connector_tools
 
     tools = builtin_tools()
     reserved = {t.name for t in tools} | set(groups.GROUPS) | {"all"}
-    # Bağlantılar (TOML tanımlı servisler) eklentilerden önce: adları eklentiler için de ayrılsın.
+    # Connections (TOML-defined services) before plugins: reserve their names for plugins too.
     conns = connector_tools(config, emit, reserved=reserved)
     reserved |= {t.name for t in conns}
     plugins.load_plugins(config, emit, reserved=reserved)
@@ -29,7 +29,7 @@ def all_tools(config=None, emit=lambda s: None) -> list[Tool]:
 
 
 def attach_mcp(agent, ctx: ToolContext, emit=lambda s: None) -> int:
-    """config'teki MCP sunucularını başlat ve araçlarını ajana ekle."""
+    """Start MCP servers in config and add their tools to the agent."""
     from alice.mcp import load_mcp
 
     servers, tools = load_mcp(ctx.config, emit)

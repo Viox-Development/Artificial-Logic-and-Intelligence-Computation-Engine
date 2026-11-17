@@ -1,14 +1,15 @@
-"""Uzaktan erişim: telefon evin dışındayken bilgisayara ALICE'in kendi aktarma sunucusu üzerinden ulaşır.
+"""Remote access: the phone reaches the PC via ALICE's own relay server when outside the home.
 
-Ev interneti CGNAT arkasında olabilir, modemde port açmak da gerekmesin: bilgisayar dışarıya bağlanır. Aktarma
-sunucusu kullanıcının kendi Cloudflare hesabında, ücretsiz planda çalışır (relay/, `alice relay deploy`). Bilgisayar
-oraya bir WebSocket açar ve açık tutar; telefonun aktarma adresine yaptığı her istek bu bağlantıyla gelir, burada
-yerel telefon sunucusuna (127.0.0.1:8765) sorulur ve cevap parça parça geri gider (olay akışı ve arama sesi dahil).
+Home internet might be behind CGNAT, and port forwarding on the modem should not be required: the PC connects
+outbound. The relay server runs on the user's own Cloudflare account on the free tier (relay/, `alice relay deploy`).
+The PC opens and keeps open a WebSocket to it; every request made by the phone to the relay address arrives over this
+connection, is queried here against the local phone server (127.0.0.1:8765), and the response is streamed back in
+chunks (including event streams and call audio).
 
-Kimlik doğrulama aynıdır: telefonun anahtarını yerel sunucu kontrol eder. Aktarma sunucusuna yalnızca bu
-bilgisayar bağlanabilir (relay.json'daki anahtar, Worker'da PC_KEY sırrı).
+Authentication is identical: the local server verifies the phone's key. Only this PC can connect to the relay
+server (the key in relay.json, PC_KEY secret in the Worker).
 
-Ayar ~/.alice/relay.json: {"url": "https://alice-relay.<hesap>.workers.dev", "key": "..."}
+Config ~/.alice/relay.json: {"url": "https://alice-relay.<account>.workers.dev", "key": "..."}
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from alice.config import alice_home
 
 CHUNK = 192 * 1024
 PING_EVERY = 25.0
-STREAM_PATHS = ("/api/events",)  # uzun süren cevaplar: zaman aşımı yok
+STREAM_PATHS = ("/api/events",)  # long-running responses: no timeout
 
 
 def settings_path() -> Path:
@@ -60,8 +61,8 @@ def save_settings(url: str, key: str) -> None:
 
 
 def _hide(p: Path) -> None:
-    """Sandbox'taki komutlar aktarma anahtarını okuyamasın: okusa bilgisayarın yerine aktarma sunucusuna bağlanıp
-    telefonun isteklerini (ve anahtarını) alabilirdi."""
+    """Commands in the sandbox should not be able to read the relay key: if they did, they could connect to the relay
+    server instead of the PC and obtain the phone's requests (and key)."""
     try:
         from alice.sandbox import hide_from_sandbox
 
@@ -84,7 +85,7 @@ class _Req:
 
 
 class RelayClient:
-    """Aktarma sunucusuna bağlı kalır, gelen istekleri yerel sunucuya iletir. Bağlantı koparsa yeniden bağlanır."""
+    """Stays connected to the relay server, forwards incoming requests to the local server. Reconnects on drop."""
 
     def __init__(self, url: str, key: str, port: int, log: Callable[[str], None] = lambda s: None,
                  connect: Callable[..., Any] | None = None):
@@ -97,7 +98,7 @@ class RelayClient:
         self.connected = False
         self.thread = threading.Thread(target=self._loop, daemon=True, name="alice-relay")
 
-    # ------------------------------------------------------------------ bağlantı
+    # ------------------------------------------------------------------ connection
     def start(self) -> "RelayClient":
         self.thread.start()
         return self
@@ -127,7 +128,7 @@ class RelayClient:
         while not self._stop.is_set():
             try:
                 ws = self._open()
-            except Exception as e:  # noqa: BLE001 - internet yok, sunucu yok: biraz sonra yeniden
+            except Exception as e:  # noqa: BLE001 - no internet, no server: retry after a bit
                 self.log(f"aktarma bağlanamadı: {e}")
                 self._stop.wait(wait)
                 wait = min(wait * 2, 120.0)
@@ -142,12 +143,12 @@ class RelayClient:
                     except TimeoutError:
                         raw = None
                     if time.monotonic() - last_ping > PING_EVERY:
-                        self._send_raw("ping")  # Cloudflare boşta bağlantıyı kapatmasın
+                        self._send_raw("ping")  # keep Cloudflare from closing idle connection
                         last_ping = time.monotonic()
                     if raw is None or raw == "pong":
                         continue
                     self._on_message(raw)
-            except Exception as e:  # noqa: BLE001 - bağlantı koptu
+            except Exception as e:  # noqa: BLE001 - connection dropped
                 if not self._stop.is_set():
                     self.log(f"aktarma bağlantısı koptu: {e}")
             finally:
@@ -175,7 +176,7 @@ class RelayClient:
     def _send(self, obj: dict[str, Any]) -> bool:
         return self._send_raw(json.dumps(obj, ensure_ascii=False))
 
-    # ------------------------------------------------------------------ istekler
+    # ------------------------------------------------------------------ requests
     def _on_message(self, raw: str | bytes) -> None:
         try:
             m = json.loads(raw)
@@ -223,7 +224,7 @@ class RelayClient:
                     break
                 if not self._send({"t": "data", "rid": r.rid, "b": base64.b64encode(data).decode()}):
                     break
-        except Exception as e:  # noqa: BLE001 - yerel sunucu cevap vermedi
+        except Exception as e:  # noqa: BLE001 - local server did not respond
             if not r.cancelled:
                 self._send({"t": "head", "rid": r.rid, "s": 502, "h": {"Content-Type": "application/json"}})
                 self._send({"t": "data", "rid": r.rid, "b": base64.b64encode(
@@ -242,11 +243,11 @@ def start_for(port: int, log: Callable[[str], None] = lambda s: None) -> RelayCl
     s = settings()
     if s is None:
         return None
-    _hide(settings_path())  # eski sürümün yazdığı dosya da etiketlensin
+    _hide(settings_path())  # tag files written by older versions as well
     return RelayClient(s["url"], s["key"], port, log).start()
 
 
-# ---------------------------------------------------------------------- kurulum
+# ---------------------------------------------------------------------- installation
 def relay_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "relay"
 
@@ -259,8 +260,8 @@ def _npx() -> str:
 
 
 def deploy(out: Callable[[str], None] = print) -> dict[str, str]:
-    """Aktarma sunucusunu kullanıcının Cloudflare hesabına kur (ya da güncelle), anahtarı ayarla, adresi kaydet.
-    Önce bir kez `npx wrangler login` ile tarayıcıdan Cloudflare'e giriş yapılmış olmalı."""
+    """Deploy (or update) the relay server to the user's Cloudflare account, set the key, save the address.
+    Must have logged into Cloudflare once beforehand from the browser via `npx wrangler login`."""
     import re
 
     d = relay_dir()

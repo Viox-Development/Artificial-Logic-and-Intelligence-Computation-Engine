@@ -1,15 +1,15 @@
-"""Çok adımlı görev yürütme: tek bir istekten plan çıkar, adımları sırayla yap, her adımı doğrula.
+"""Multi-step task execution: derive a plan from one request, do the steps in order, verify each step.
 
-  1. plan     -> beyin modeli isteği 2-8 adıma böler (JSON). Her adımın hedefi, nasıl doğrulanacağı ve geri
-                 alınamaz olup olmadığı (mesaj göndermek, silmek, ödemek...) yazılır. İstek belirsizse tek soru döner.
-  2. yürüt    -> her adım için temiz bağlamlı bir alt ajan sadece o adımı yapar; önceki adımların sonuçlarını görür.
-                 Riskli adımdan önce kullanıcıdan onay alınır (sesli konuşmada sesle).
-  3. doğrula  -> adımın sonucu ayrı, sadece okuyabilen bir alt ajanla kontrol edilir (ekran/sayfa/dosya). Olmadıysa
-                 adım bir kez farklı yoldan tekrar denenir; yine olmazsa görev durur ve ne olduğu raporlanır.
+  1. plan     -> the brain model splits the request into 2-8 steps (JSON). Each step gets a goal, a way to verify it,
+                 and an irreversible flag (sending, deleting, paying...). An unclear request returns a single question.
+  2. execute  -> for each step a clean-context child agent does only that step; it sees the results of earlier steps.
+                 Before a risky step the user's approval is requested (by voice in voice conversation).
+  3. verify   -> the step's result is checked by a separate, read-only child agent (screen/page/file). If it failed,
+                 the step is retried once another way; if it still fails, the task stops and the failure is reported.
 
-Sesli konuşmada (Live) görev arka planda sürer; ilerleme ve onay soruları konuşmaya yazılır, kullanıcının cevabı
-task_control aracıyla gelir. Araçlar, tarayıcı gibi iş parçacığına bağlı nesneler yüzünden Live'ın araç iş
-parçacığında çalıştırılır (ctx.state["task_hooks"]["run_tool"]).
+In voice conversation (Live) the task runs in the background; progress and approval questions go to the chat, and
+the user's answer arrives via the task_control tool. Thread-bound tools (like the browser) run on Live's tool thread
+(ctx.state["task_hooks"]["run_tool"]).
 """
 
 from __future__ import annotations
@@ -59,14 +59,14 @@ Beklenen: {check}
 Yürütücünün raporu: {report}
 Son satıra tek satır yaz: "DOĞRULAMA: EVET - <ne gördün>" ya da "DOĞRULAMA: HAYIR - <ne eksik>"."""
 
-# Planlayıcı riskli adımı işaretlemeyi unutsa bile bu kelimeler geçen adım için onay sorulur.
+# Even if the planner forgets to flag a risky step, approval is asked for any step containing these words.
 RISKY_RX = re.compile(
     r"\bgönder(\b|in\b|ip\b|eyim)|\byolla(\b|yıp)|\bpaylaş(\b|ıp)|\byayınla(\b|yıp)|\bsil(\b|in\b|ip\b)|"
     r"\bkaldır(\b|ın\b|ıp\b)|üzerine yaz|satın al|sipariş ver|\böde(\b|me yap|yip)|\bkur(\b|ulum)|"
     r"\bkaldır|biçimlendir|\bformatla|kaydetmeden kapat|"
     r"\b(send|delete|remove|uninstall|install|purchase|buy|pay|publish)\b", re.I)
 
-# Görevin içindeki alt ajanların göremeyeceği araçlar: iç içe görev ve görev kontrolü anlamsız.
+# Tools the child agents inside a task cannot see: a nested task and task control would make no sense.
 HIDDEN = {"run_plan", "task_control", "task"}
 
 
@@ -103,7 +103,7 @@ def parse_plan(goal: str, text: str, max_steps: int = 8) -> Plan:
     data = _first_json(text)
     steps = []
     raw = data.get("steps") or []
-    for s in raw if isinstance(raw, list) else [raw]:  # tek adım metin olarak gelebilir: harf harf adım olmasın
+    for s in raw if isinstance(raw, list) else [raw]:  # a single step may come as text: not one step per letter
         if isinstance(s, str):
             s = {"goal": s}
         if not isinstance(s, dict):
@@ -121,7 +121,7 @@ def parse_plan(goal: str, text: str, max_steps: int = 8) -> Plan:
 
 
 def outcome(text: str, key: str, yes: str) -> tuple[bool | None, str]:
-    """Ajan cevabının son "<key>: <yes|...> - açıklama" satırını oku. Satır yoksa (None, metin)."""
+    """Read the last "<key>: <yes|...> - explanation" line of the agent's reply. Without one, return (None, text)."""
     for line in reversed((text or "").strip().splitlines()):
         m = re.match(rf"\s*\**{key}\**\s*:\s*\**\s*(\w+)\s*\**\s*[-–—:]?\s*(.*)", line, re.I)
         if m:
@@ -130,7 +130,7 @@ def outcome(text: str, key: str, yes: str) -> tuple[bool | None, str]:
 
 
 class _TaskUI:
-    """Alt ajanların arayüzü: araç olaylarını görev günlüğüne yazar, izin sorularını görevin onay yoluna yollar."""
+    """Child agents' UI: writes tool events to the task log, sends permission questions to the task's approval path."""
 
     def __init__(self, runner: "TaskRunner"):
         self.runner = runner
@@ -162,14 +162,14 @@ class TaskRunner:
         self.plan: Plan | None = None
         self.stopped = threading.Event()
         self.step_approved = False
-        self.waiting: str = ""  # kullanıcıdan beklenen onayın sorusu
+        self.waiting: str = ""  # the approval question we are waiting on from the user
         self._answer: bool | None = None
         self._answered = threading.Event()
         self._child: Any = None
         self._log = log or (lambda s: None)
         self.lines: list[str] = []
 
-    # ------------------------------------------------------------- kancalar
+    # ------------------------------------------------------------- hooks
     @property
     def hooks(self) -> dict[str, Any]:
         return self.ctx.state.get("task_hooks") or {}
@@ -183,14 +183,14 @@ class TaskRunner:
             pass
 
     def say(self, text: str) -> None:
-        """Kullanıcıya duyur: sesli konuşmada Live'a yazılır (Alice söyler), yoksa arayüze bilgi olarak gider."""
+        """Announce to the user: in voice chat it goes to Live (Alice speaks it), otherwise to the UI as info."""
         self.log(f"duyuru: {text}")
         fn = self.hooks.get("say")
         if fn is not None:
             try:
                 fn(text)
                 return
-            except Exception:  # noqa: BLE001 - konuşma kapanmış
+            except Exception:  # noqa: BLE001 - conversation already closed
                 pass
         agent = self.ctx.state.get("agent")
         info = getattr(getattr(agent, "ui", None), "info", None)
@@ -198,7 +198,7 @@ class TaskRunner:
             info(text)
 
     def confirm(self, question: str) -> bool:
-        """Riskli bir adımdan önce kullanıcıya sor. Sesli konuşmada cevap task_control ile gelir; gelmezse hayır."""
+        """Ask the user before a risky step. Voice chat answers come via task_control; no answer means no."""
         if self.stopped.is_set():
             return False
         self.log(f"onay soruluyor: {question}")
@@ -242,7 +242,7 @@ class TaskRunner:
             except Exception:  # noqa: BLE001
                 pass
 
-    # -------------------------------------------------------------- alt ajan
+    # -------------------------------------------------------------- sub-agent
     def _agent(self, verify: bool = False):
         from alice.agent import Agent
         from alice.permissions import Permissions
@@ -257,7 +257,7 @@ class TaskRunner:
         child.stream = False
         child.role = "brain"
         run_tool = self.hooks.get("run_tool")
-        if run_tool is not None:  # tarayıcı/UIA nesneleri Live'ın araç iş parçacığına bağlı: araçlar orada çalışsın
+        if run_tool is not None:  # browser/UIA objects are bound to Live's tool thread, so tools run there
             def on_tool_thread(tool: Tool, args: dict[str, Any], _child=child) -> ToolResult:
                 return run_tool(lambda: Agent._run_tool(_child, tool, args))
 
@@ -293,7 +293,7 @@ class TaskRunner:
         return "\n".join(f"{mark.get(s.status, '[ ]')} {i}. {s.goal}" + ("  <- ŞİMDİKİ" if i == current else "")
                          for i, s in enumerate(self.plan.steps, 1))
 
-    # ------------------------------------------------------------- yürütme
+    # ------------------------------------------------------------- execution
     def _do_step(self, n: int, step: Step, retry: str = "") -> tuple[bool, str]:
         assert self.plan is not None
         done = "\n".join(f"{i}. {s.result}" for i, s in enumerate(self.plan.steps, 1)
@@ -345,12 +345,12 @@ class TaskRunner:
                 step.tries += 1
                 try:
                     ok, reason = self._do_step(n, step, retry=reason if step.tries > 1 else "")
-                except Exception as e:  # noqa: BLE001 - model/araç çöktü: adımı tekrar dene
+                except Exception as e:  # noqa: BLE001 - model/tool crashed: retry the step
                     ok, reason = False, f"{type(e).__name__}: {e}"
                 if ok:
                     break
                 self.log(f"{n}. adım olmadı ({step.tries}. deneme): {reason[:200]}")
-                if step.risky:  # geri alınamaz adımı kendiliğinden tekrarlama: iki kez göndermesin
+                if step.risky:  # do not retry an irreversible step on our own, so it is not sent twice
                     break
             step.result = reason[:500]
             step.status = "done" if ok else "failed"

@@ -1,4 +1,4 @@
-"""Claude Code'dan eksik kalan araçlar: notify, enter_plan_mode, mcp_resources, code_intel."""
+"""Tools missing from Claude Code: notify, enter_plan_mode, mcp_resources, code_intel."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def test_code_intel_symbols_definition_references(ctx, workdir):
     assert "4: class Loader" in syms and "5: def Loader.load(self, path)" in syms and "9: def read_config(path)" in syms
     assert "1: function readConfig" in syms and "2: interface Settings" in syms
     d = tool.run(ctx, "definition", symbol="read_config").text
-    assert "core.py:9:" in d and "core.py:6:" not in d  # kullanım değil tanım
+    assert "core.py:9:" in d and "core.py:6:" not in d  # a definition, not a usage
     r = tool.run(ctx, "references", symbol="read_config").text
     assert "core.py:6:" in r and "core.py:9:" in r
     with pytest.raises(ToolError):
@@ -130,5 +130,5 @@ def test_advisor_sees_conversation_and_uses_configured_model(tmp_path):
     out = Advisor().run(ctx, "hangisi?").text
     assert "B seçeneği" in out and calls[-1][0] == "a:big"
     sent = calls[-1][1]
-    assert sent[1]["content"] == "A mı B mi?" and not sent[-2].get("tool_calls")  # yarım çağrı adımı gönderilmez
+    assert sent[1]["content"] == "A mı B mi?" and not sent[-2].get("tool_calls")  # half-finished call step is not sent
     assert "Soru: hangisi?" in sent[-1]["content"]

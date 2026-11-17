@@ -28,7 +28,7 @@ class Resp:
 
 
 class FakeGmail:
-    """İki hesap: kişisel ve okul; her birinin kendi kutusu."""
+    """Two accounts: personal and school, each with its own mailbox."""
 
     def __init__(self):
         self.calls = []
@@ -115,7 +115,7 @@ def test_not_connected_account(two_accounts, workdir):
 def test_important_unread_and_new_mail_notifications(two_accounts):
     lines = gmail.important_unread(limit=5)
     assert "okul: Hoca — Proje teslimi" in lines and any(x.startswith("kisisel:") for x in lines)
-    assert gmail.new_important(make_config({"brain": ["a:m"]})) == []  # ilk kontrol: sadece hatırla
+    assert gmail.new_important(make_config({"brain": ["a:m"]})) == []  # first check: only remember
     two_accounts.boxes["tok-o"].append({"id": "o2", "from": "Müdür <m@okul.edu>", "subject": "Toplantı", "unread": True})
     assert gmail.new_important(make_config({"brain": ["a:m"]})) == ["okul: Müdür — Toplantı"]
     assert gmail.new_important(make_config({"brain": ["a:m"]})) == []

@@ -1,9 +1,9 @@
-"""Kullanıcının sık kullandığı uygulama ve site adları: konuşma tanımaya ve Live'a ipucu.
+"""Frequently used app and site names for the user: hints for speech recognition and Live.
 
-Türkçe cümle içindeki İngilizce ürün adları ("GitHub", "YouTube Music") konuşma tanımada bozuluyor ("kitabım",
-"Yusuf müziği"). Adları önceden bilmek hem Whisper'ın doğru yazmasına (initial_prompt) hem de modelin yanlış
-duyduğu bir kelimeyi doğru ada eşlemesine yardım eder. Kaynaklar: genel bir liste, [voice] vocab ayarı, Başlat
-menüsündeki kurulu programlar ve tarayıcı yer imleri. Hepsi yerel okunur; siteye/uygulamaya özel kod yok.
+English product names ("GitHub", "YouTube Music") inside Turkish sentences get corrupted in speech recognition ("kitabım",
+"Yusuf müziği"). Knowing the names in advance helps Whisper spell them correctly (initial_prompt) and helps the model
+map a misheard word to the correct name. Sources: a general list, [voice] vocab setting, installed programs in the
+Start Menu, and browser bookmarks. Everything is read locally; no site/app-specific code.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ COMMON = ["YouTube", "YouTube Music", "GitHub", "Gmail", "Google", "Google Drive
           "Instagram", "Twitter", "Netflix", "Twitch", "Steam", "Reddit", "ChatGPT", "Claude", "Gemini", "Opera",
           "Chrome", "Visual Studio Code", "Notepad"]
 
-# Başlat menüsünde ad olarak işe yaramayan kısayollar
+# Shortcuts in the Start Menu that are not useful as names
 _SKIP = re.compile(r"uninstall|kaldır|readme|help|yardım|website|documentation|release notes|license|\.url$|"
                    r"manual|settings$|^\W|setup|update|^windows |powershell|command prompt|odbc|iscsi|recovery", re.I)
 
@@ -44,7 +44,7 @@ def _profiles() -> list[Path]:
 def _clean(name: str) -> str:
     name = re.sub(r"\s*[\(\[].*?[\)\]]", "", name)  # "(x64)", "[Beta]"
     name = re.split(r"\s+[-|–:•]\s+", name)[0]  # "GitHub - Where the world builds" -> "GitHub"
-    name = re.sub(r"[^\w\s.+&'-]", "", name)  # emoji vb.
+    name = re.sub(r"[^\w\s.+&'-]", "", name)  # emoji etc.
     return re.sub(r"\s+", " ", name).strip(" .")
 
 
@@ -110,14 +110,14 @@ _lock = threading.Lock()
 
 
 def project_names(cfg=None) -> list[str]:
-    """Kullanıcının projelerinin adları ("ALICE reposu", "FPS-Game"): sesli komutta en çok bozulan adlar bunlar."""
+    """Names of the user's projects ("ALICE repo", "FPS-Game"): these are the most corrupted names in voice commands."""
     from alice import projects
 
     return [n for n in projects.names(cfg, 15) if 2 < len(n) <= 40]
 
 
 def memory_names(limit: int = 25) -> list[str]:
-    """Hafızadaki özel adlar (kişiler, oyunlar, uygulamalar): cümle başı olmayan büyük harfli kelimeler."""
+    """Proper names in memory (people, games, applications): capitalized words that are not at the start of a sentence."""
     from alice.config import alice_home
 
     if not (alice_home() / "memory.db").is_file():
@@ -140,7 +140,7 @@ def memory_names(limit: int = 25) -> list[str]:
 
 
 def known_names(cfg=None, refresh: bool = False) -> list[str]:
-    """Adlar listesi (ilk çağrıda hesaplanır, sonra önbellekten)."""
+    """List of names (calculated on first call, then cached)."""
     global _cache
     with _lock:
         if _cache is not None and not refresh:
@@ -152,14 +152,14 @@ def known_names(cfg=None, refresh: bool = False) -> list[str]:
             for source in (lambda: memory_names(), lambda: project_names(cfg), bookmark_names, start_menu_apps):
                 try:
                     groups.append(source())
-                except Exception:  # noqa: BLE001 - ipucu; okunamazsa genel listeyle devam
+                except Exception:  # noqa: BLE001 - hint; if unreadable, continue with general list
                     pass
         _cache = merge(groups, int(v.get("vocab_limit", 80)))
         return _cache
 
 
 def whisper_prompt(names: list[str], base: str = "Hey Alice.", max_chars: int = 600) -> str:
-    """Whisper initial_prompt: ~224 jeton sınırı, uzun olursa baştakiler (en önemlileri) kalsın."""
+    """Whisper initial_prompt: ~224 token limit; if too long, keep the beginning (most important ones)."""
     text = base
     for n in names:
         if len(text) + len(n) + 2 > max_chars:

@@ -1,9 +1,9 @@
-"""monitor: arka planda bir şeyi izle, olay olunca sohbete dön (Claude Code'daki Monitor karşılığı).
+"""monitor: watch something in the background; when an event happens, return to the chat (Claude Code's Monitor).
 
-process_wait turu bekletir: kullanıcı o sırada yazamaz. Burada izleme ayrı bir iş parçacığında sürer; aranan desen
-görülünce (ya da süreç bitince, süre dolunca) sohbete "[İzleme]" mesajı düşer. Sohbet o an çalışıyorsa mesaj
-çalışan işe iletilir, boştaysa yeni bir tur başlatır. Mesajı ileten kanca uygulamadaki sohbet tarafından
-ctx.state["deliver"] olarak verilir; yoksa (terminal) yalnız bilgi satırı yazılır.
+process_wait blocks the turn: the user cannot type meanwhile. Here the watch runs in a separate thread; when the
+wanted pattern is seen (or the process ends, or time runs out), an "[İzleme]" message lands in the chat. If the
+chat is busy, the message goes to the running task; if idle, it starts a new turn. The delivery hook is
+supplied by the chat side of the app as ctx.state["deliver"]; without it (terminal) only an info line is written.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class Monitor(Tool):
 
     @staticmethod
     def _source(ctx: ToolContext, w: Watcher) -> Callable[[], tuple[str, bool]]:
-        """(yeni metin, kaynak bitti mi) döndüren okuyucu."""
+        """Reader that returns (new text, whether the source has ended)."""
         if w.kind == "process":
             try:
                 proc = ctx.state.get("bg_procs", {})[int(w.target)]
@@ -136,7 +136,7 @@ class Monitor(Tool):
             path = ctx.resolve(w.target)
             if not path.parent.exists():
                 raise ToolError(f"klasör yok: {path.parent}")
-            pos = [path.stat().st_size if path.exists() else 0]  # yalnız bundan sonra yazılanlar
+            pos = [path.stat().st_size if path.exists() else 0]  # only what is written from now on
 
             def read_file() -> tuple[str, bool]:
                 return _tail(path, pos), False
@@ -166,7 +166,7 @@ def _tail(path: Path, pos: list[int]) -> str:
         size = path.stat().st_size
     except OSError:
         return ""
-    if size < pos[0]:  # dosya baştan yazıldı
+    if size < pos[0]:  # file was rewritten from the beginning
         pos[0] = 0
     if size == pos[0]:
         return ""
@@ -194,7 +194,7 @@ def _loop(w: Watcher, read: Callable[[], tuple[str, bool]], rx: re.Pattern[str] 
                     w.hits += len(lines)
                     pending += lines[-10:]
                     buffer = ""
-        if pending and (w.once or time.monotonic() - last_sent > 30):  # sık eşleşmeler birleştirilir
+        if pending and (w.once or time.monotonic() - last_sent > 30):  # frequent matches are batched together
             deliver(f"{head}: /{w.pattern}/ görüldü.\n" + "\n".join(pending[-10:]) + tail)
             pending, last_sent = [], time.monotonic()
             if w.once:

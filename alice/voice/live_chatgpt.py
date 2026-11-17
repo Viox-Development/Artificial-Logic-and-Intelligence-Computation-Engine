@@ -1,11 +1,11 @@
-"""ALICE Live (ChatGPT Realtime): CLIProxyAPI üzerinden sesten sese canlı konuşma.
+"""ALICE Live (ChatGPT Realtime): speech-to-speech live conversation over CLIProxyAPI.
 
-CLIProxyAPI, ChatGPT (Codex) hesabıyla OpenAI Realtime uyumlu bir uç sunar (`/v1/realtime`). Bu modül o ucu
-kullanır: mikrofon sesi 24 kHz PCM olarak akıtılır, modelin sesi aynı hızda çalınır, sunucu tarafı VAD ile
-kullanıcı susunca cevap üretilir; kullanıcı araya girerse ses kesilir. ALICE'in araçları function calling ile
-çağrılır (aynı izin/onay yolundan geçer).
+CLIProxyAPI serves an OpenAI Realtime-compatible endpoint (`/v1/realtime`) backed by a ChatGPT (Codex) account.
+This module uses that endpoint: microphone audio is streamed as 24 kHz PCM, the model's voice is played back at
+the same speed, a reply is generated once the user goes quiet (server-side VAD), and playback stops if the user
+interrupts. ALICE's tools are called via function calling (through the same permission/approval path).
 
-Gemini Live (alice/voice/live.py) ile aynı arayüzü verir: VoiceAssistant `make_live` ile seçer.
+Provides the same interface as Gemini Live (alice/voice/live.py): VoiceAssistant selects it with `make_live`.
 """
 
 from __future__ import annotations
@@ -58,23 +58,23 @@ THINK_TOOL = {
         "required": ["request"]},
 }
 
-# Canlı modelin doğrudan çağırdığı hızlı araçlar (config: [voice] live_realtime_tools, "*" = hepsi).
+# Fast tools the live model calls directly (config: [voice] live_realtime_tools, "*" = all).
 REALTIME_TOOLS = ("youtube", "media", "windows", "weather", "notes", "now", "spotify", "memory")
 
-# Codex Realtime'ın kabul ettiği sesler (2026-11-06, sunucunun "Supported values" hatasından).
+# Voices accepted by Codex Realtime (2026-11-06, from the server's "Supported values" error).
 REALTIME_VOICES = ("alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar")
 
-HUSH_WORDS = ("sus", "sussana", "susun", "şşt", "boşver")  # cümlenin herhangi bir yerinde geçse de susturur
+HUSH_WORDS = ("sus", "sussana", "susun", "şşt", "boşver")  # silences ALICE even if the word is anywhere in the sentence
 
 _OPENAI_TYPES = {"OBJECT": "object", "STRING": "string", "INTEGER": "integer", "NUMBER": "number",
                  "BOOLEAN": "boolean", "ARRAY": "array", "NULL": "null"}
 
 
 def openai_schema(schema: Any) -> Any:
-    """ALICE araç şemasını OpenAI Realtime'ın istediği küçük harfli JSON Schema'ya çevir.
+    """Convert an ALICE tool schema to the lowercase JSON Schema that OpenAI Realtime expects.
 
-    ALICE'in iç şemaları Gemini için büyük harf (`STRING`, `INTEGER`, `OBJECT`) kullanıyor; Realtime API
-    bunları reddedip `invalid_function_parameters` veriyor ve oturum güncellemesi tümden düşüyordu.
+    ALICE's internal schemas use uppercase types for Gemini (`STRING`, `INTEGER`, `OBJECT`); the Realtime API
+    rejects them with `invalid_function_parameters` and the whole session update was being dropped.
     """
     if isinstance(schema, dict):
         out: dict[str, Any] = {}
@@ -85,7 +85,7 @@ def openai_schema(schema: Any) -> Any:
                 types = [_OPENAI_TYPES.get(str(t).upper(), str(t).lower()) for t in value if t != "null"]
                 out["type"] = types[0] if len(types) == 1 else types
             elif key == "nullable":
-                continue  # OpenAI şeması "nullable" bilmiyor; alan zaten zorunlu değil
+                continue  # The OpenAI schema doesn't know "nullable"; the field isn't required anyway
             else:
                 out[key] = openai_schema(value)
         return out
@@ -95,7 +95,7 @@ def openai_schema(schema: Any) -> Any:
 
 
 def _close(pre: dict[str, Any]) -> None:
-    """Önceden hazırlanmış (kullanılmayan) bağlantıyı kapat; hazırlık hâlâ sürüyorsa bitmesini bekle."""
+    """Close a prepared (unused) connection; if it is still being prepared, wait for that to finish."""
     t = pre.get("thread")
     if t is not None and t.is_alive():
         t.join(RealtimeSession.PREFETCH_WAIT)
@@ -108,15 +108,15 @@ def _close(pre: dict[str, Any]) -> None:
 
 
 def _is_open(ws: Any) -> bool:
-    """Isıtılmış bağlantı sunucu tarafından kapatılmış olabilir (zaman aşımı, proxy yeniden başladı)."""
+    """The pre-warmed connection may have been closed by the server (timeout, proxy restarted)."""
     try:
         return getattr(ws.protocol.state, "name", "OPEN") == "OPEN"
-    except Exception:  # noqa: BLE001 - durum okunamıyorsa dene; olmazsa converse hata verir
+    except Exception:  # noqa: BLE001 - if the state can't be read, try anyway; converse will raise if it fails
         return True
 
 
 def resample_16_to_24(pcm: bytes) -> bytes:
-    """16 kHz PCM16 -> 24 kHz PCM16 (doğrusal aradeğerleme). Küçük kareler için yeterli ve hızlı."""
+    """16 kHz PCM16 -> 24 kHz PCM16 (linear interpolation). Good enough and fast for small frames."""
     if not pcm:
         return b""
     a = array.array("h")
@@ -135,7 +135,7 @@ def resample_16_to_24(pcm: bytes) -> bytes:
 
 
 class RealtimeSession:
-    """ChatGPT Realtime oturumu (CLIProxyAPI üzerinden). `available` False ise Gemini/eski yol kullanılır."""
+    """ChatGPT Realtime session (via CLIProxyAPI). If `available` is False, the Gemini/legacy path is used."""
 
     TOOL_TIMEOUT = 300.0
     PREFETCH_WAIT = 10.0
@@ -149,47 +149,47 @@ class RealtimeSession:
         self.model = str(v.get("live_realtime_model") or "gpt-realtime-2.1")
         self.voice = str(v.get("live_realtime_voice") or "marin").strip().lower()
         if self.voice not in REALTIME_VOICES:
-            # Geçersiz ses adı (ör. ChatGPT uygulamasındaki "quip") session.update'in tamamını düşürüyor:
-            # talimatlar ve araçlar da uygulanmıyordu.
+            # An invalid voice name (e.g. "quip" from the ChatGPT app) made the server drop the whole session.update:
+            # the instructions and tools weren't applied either.
             log(f"realtime: '{self.voice}' sesi desteklenmiyor, marin kullanılıyor")
             self.voice = "marin"
         self.idle = min(float(v.get("live_idle", 5)), 5)
         self.silence_ms = int(v.get("live_silence_ms", 600))
-        # Hoparlör kullanılırken ALICE'in kendi sesi mikrofona geri dönebiliyor. Realtime VAD bunu yeni
-        # kullanıcı turu sanıp devam eden cevabı iptal eder; bu yüzden varsayılan olarak cevap sırasında
-        # mikrofonu sunucuya göndermiyoruz. Kulaklık kullananlar eski "araya girerek kes" davranışını açabilir.
+        # When using speakers, ALICE's own voice can leak back into the mic. Realtime VAD mistakes it for a new user
+        # turn and cancels the reply in progress, so by default we don't send the mic to the server during a reply.
+        # Headphone users can turn on the old "interrupt by talking over it" behavior.
         self.echo_guard = bool(v.get("live_realtime_echo_guard", True))
         self.tools_on = bool(v.get("live_tools", True))
-        # Hızlı ses modeli zayıf: bilgi/plan/kod/araç işlerini güçlü modele devreden think aracı.
+        # The fast voice model is weak: the think tool hands knowledge/plan/code/tool work to the stronger model.
         self.think = bool(v.get("live_think", True))
-        # think'in model sırası (Gemini yoluyla aynı ayar). Eskiden ses ajanının kendi zinciri kullanılıyordu:
-        # başındaki model takılınca (6 Kasım: gemini-flash-latest ReadTimeout) tek bir "video aç" ~95 sn sürdü.
+        # think's model order (same setting as the Gemini path). It used to use the voice agent's own chain:
+        # when the first model stalled (Nov 6: gemini-flash-latest ReadTimeout), a single "open video" took ~95 s.
         self.think_models = [str(r) for r in v.get("live_think_models") or []]
-        # Canlı modele sadece hızlı tek adımlık işlerin araçları gider; gerisi think ile güçlü modele. 69 aracın
-        # şeması (~112 KB) her oturumda session.update'i ~1 sn, ilk sesi ~1 sn geciktiriyordu (6 Kasım ölçümü).
+        # Only the fast single-step tools go to the live model; the rest go to the strong model via think. The
+        # 69 tool schemas (~112 KB) added ~1 s to each session.update and to first audio (Nov 6 measurement).
         tools = v.get("live_realtime_tools", REALTIME_TOOLS)
         self.allowed_tools: set[str] | None = None if tools == "*" or tools == ["*"] else {str(t) for t in tools}
-        # ChatGPT sesi kendisi duyar: yerel Whisper'ın dökümünü beklemek (≤1,5 sn) ve ses yerine yanlış yazılmış
-        # metni göndermek yerine ses gider. Eski davranış: live_realtime_text_hint = true.
+        # ChatGPT hears the audio itself: we send audio rather than waiting (≤1.5 s) for the local Whisper transcript
+        # and sending text that may be mis-transcribed. Old behavior: live_realtime_text_hint = true.
         self.prefers_audio = not bool(v.get("live_realtime_text_hint", False))
-        # ChatGPT'nin kendi döküm modeli: duyduğu loglara ve geçmişe yazılır, "Alice sus" sesli yolda da çalışır.
+        # ChatGPT's own transcription: heard speech goes to logs and history; "Alice sus" works on voice too.
         self.transcribe = str(v.get("live_realtime_transcribe", "gpt-4o-mini-transcribe") or "")
         self.language = str(v.get("language", "tr") or "tr")
-        # Cevap bitince bir sonraki oturum arka planda hazırlanır (bağlantı + ayar ≈ 2 sn konuşmaya binmesin).
+        # After a reply, prepare the next session in the background so connect + setup (≈2 s) doesn't delay speech.
         self.prewarm = bool(v.get("live_realtime_prewarm", True))
         self._think_lock = threading.Lock()
         self.gated = False
         self.hushed = False
         self.last_active = 0.0
         self.single_turn = False
-        self.declined = False  # son devam cümlesi ALICE'e söylenmemişti (Jev): takip penceresi açılmaz
-        # Araya girme: ALICE konuşurken gelen kare kullanıcının sesi olarak doğrulandıysa (ses izi, VoiceAssistant
-        # ayarlar) cevap kesilir. Doğrulama yoksa yankı yüzünden kapalı (echo_guard).
+        self.declined = False  # last follow-up wasn't addressed to ALICE (Jev): no follow-up window opens
+        # Barge-in: if a frame arriving while ALICE speaks is verified as the user's voice (voiceprint, VoiceAssistant
+        # settings), the reply is cut off. Without verification it stays off because of echo (echo_guard).
         self.barge_ok: Callable[[], bool] = lambda: False
-        # Telefon araması (alice/app/call.py): duyulan ve söylenen metin ekranda gösterilsin.
+        # Phone call (alice/app/call.py): show the heard and spoken text on screen.
         self.on_heard: Callable[[str], None] | None = None
         self.on_said: Callable[[str], None] | None = None
-        self.hud_on = True  # telefon araması bilgisayardaki HUD'u oynatmasın
+        self.hud_on = True  # a phone call must not play the computer's HUD
         self.announce: Callable[[str], None] | None = None
         self.on_correction: Callable[[str], None] | None = None
         self._out_factory = out_factory
@@ -202,15 +202,15 @@ class RealtimeSession:
         self._pre: dict[str, Any] = {}
         self._pre_lock = threading.Lock()
         self._proxy = self._read_proxy()
-        # Her "Alice"te (Discord/oyunda her cümlede) yeni oturum açılıyor; önceki konuşma talimata eklenmezse model
-        # her cümleyi bağlamsız duyuyordu ("herhangi bir şey açarsan olur" -> neyi?).
+        # Each "Alice" (every sentence on Discord/in games) opens a new session; unless the previous conversation is
+        # added to the instructions, each one was heard with no context ("herhangi bir şey açarsan olur" -> what?).
         self.history_minutes = float(v.get("live_history_minutes", 30))
         self._history: list[tuple[float, str, str]] = []
 
-    # ------------------------------------------------------------------ hazırlık
+    # ------------------------------------------------------------------ setup (preparation)
     @staticmethod
     def _read_proxy() -> dict[str, str] | None:
-        """Yerel CLIProxyAPI ayarı: taban adres ve istemci anahtarı (yoksa None)."""
+        """Local CLIProxyAPI settings: base address and client key (None if absent)."""
         try:
             from alice.app import cliproxy
 
@@ -224,7 +224,7 @@ class RealtimeSession:
             if not key:
                 return None
             return {"base": f"http://127.0.0.1:{s['port']}", "key": key}
-        except Exception:  # noqa: BLE001 - proxy kurulu değilse sessizce yok say
+        except Exception:  # noqa: BLE001 - silently ignore it if the proxy isn't installed
             return None
 
     @property
@@ -260,14 +260,15 @@ class RealtimeSession:
         tail = ("\n\n# Az önceki konuşma (aynı sohbetin devamı; kısa cevaplar buna göre anlaşılır)\n" + history
                 if history else "")
         try:
-            # Sistem istemindeki tarih saatlerce açık kalan süreçte eskiyor: telefon araması "bugün 6 Kasım Cuma"
-            # dedi (7 Kasım Cumartesi'ydi). Yazılı yol bunu her cümleye ekliyor (with_clock), canlı yol da eklesin.
+            # The system prompt's date goes stale in a long-running process: a phone call said "bugün 6 Kasım Cuma"
+            # (it was actually Saturday, 7 November). The text path adds the clock (with_clock) to every sentence;
+            # the live path should too.
             from alice.voice.assistant import with_clock
 
             tail = "\n\n# Şu an\n" + with_clock("").strip() + tail
         except Exception:  # noqa: BLE001
             pass
-        # Geçmiş ve canlı konuşma kuralları kesilmesin: kırpma sistem talimatından yapılır.
+        # Don't let trimming cut the history and live-conversation rules: trim the base system instructions instead.
         room = 12000 - len(REALTIME_PROMPT) - len(tail) - 2
         return base[:max(0, room)] + "\n\n" + REALTIME_PROMPT + tail
 
@@ -344,10 +345,10 @@ class RealtimeSession:
     def _secret(self) -> str:
         if not self._proxy:
             raise LiveError("yerel Claude Code proxy'si (CLIProxyAPI) ayarlı değil")
-        # CLIProxyAPI'nin /v1/realtime/client_secrets ucu 64 KiB gövde kabul ediyor; ALICE'in talimatı ve
-        # araç şemaları bunu aşınca 413 dönüyor ve canlı oturum hiç açılmıyordu (uzun/robotik yedek yol).
-        # Bunun yerine proxy API anahtarıyla bağlanıp oturumu WebSocket üzerinden güncelle: aynı oturum,
-        # boyut sınırı yok.
+        # CLIProxyAPI's /v1/realtime/client_secrets endpoint accepts a 64 KiB body; when ALICE's instructions and
+        # tool schemas exceed it, it returns 413 and the live session never opened (the long, robotic fallback path).
+        # Instead, connect with the proxy API key and update the session over the WebSocket: same session,
+        # no size limit.
         self._send_update = True
         return str(self._proxy["key"])
 
@@ -699,15 +700,15 @@ class RealtimeSession:
             self._ws, self._out = None, None
             self._hud("idle", "")
             if self.prewarm and self._connect is None and not self.hushed and not stop.is_set():
-                # Takip cümlesi ("Alice" demeden devam) bağlantı + ayar beklemesin: bir sonraki oturum hazır dursun.
+                # Follow-up (no "Alice" needed) must not wait for connection + settings: keep the next session ready.
                 try:
                     self.prefetch()
                 except Exception:  # noqa: BLE001
                     pass
 
-    # ------------------------------------------------------------------ dışarıdan (telefon araması)
+    # ------------------------------------------------------------------ from outside (phone call)
     def inject(self, text: str) -> bool:
-        """Açık oturuma yazılı mesaj ver (aramada \"Yaz\"). Oturum yoksa False."""
+        """Send a written message to the open session (\"Yaz\" in a call). False if there is no session."""
         ws = self._ws
         if ws is None or not text.strip():
             return False
@@ -720,19 +721,19 @@ class RealtimeSession:
             return False
 
     def interrupt(self) -> None:
-        """ALICE'i sustur (aramada küreye dokunma): çalan ses kesilir, süren cevap iptal edilir."""
+        """Silence ALICE (don't touch the orb during a call): playing audio is cut, the ongoing reply is cancelled."""
         out, ws = self._out, self._ws
         if out is not None:
             out.clear()
         if ws is not None:
             try:
                 ws.send(json.dumps({"type": "response.cancel"}))
-            except Exception:  # noqa: BLE001 - sürmekte olan cevap yoksa sunucu hata döner, önemsiz
+            except Exception:  # noqa: BLE001 - if no reply is in progress the server returns an error; harmless
                 pass
 
-    # ------------------------------------------------------------------ yardımcılar
+    # ------------------------------------------------------------------ helpers
     def _addressed(self, text: str) -> bool:
-        """Devam cümlesi ALICE'e mi söylendi (Jev). Ulaşılamazsa evet: konuşma kilitlenmesin."""
+        """Was the follow-up sentence addressed to ALICE (Jev)? If it can't be checked, yes: don't lock the conversation."""
         from alice.voice.addressed import is_addressed
 
         last = self._history[-1][2] if self._history else ""
@@ -754,9 +755,9 @@ class RealtimeSession:
 
     @staticmethod
     def _is_hush(text: str) -> bool:
-        """Döküm susturma mı? "Sus ya, sus ya." gibi noktalamalı ve tekrarlı cümleler, "... Alice yeter" gibi sonda
-        söylenenler ve "sana demedim / sana demiyorum" da sayılır. Eskiden sözcükler noktalamasıyla karşılaştırılıyordu:
-        "Sus!" ya da "Sus." tek başına susturmuyordu; "sana demedim" hiç tanınmıyordu."""
+        """Is this a transcript hush? Sentences like "Sus ya, sus ya." (punctuated and repeated), ones ending with
+        "... Alice yeter" (said at the end), and "sana demedim / sana demiyorum" (not said to me) also count.
+        Before, words were compared with punctuation: "Sus!"/"Sus." alone did not hush; "sana demedim" was missed."""
         from alice.voice.lang import not_for_me
         from alice.voice.listen import ends_with_hush, is_hush
 
@@ -778,11 +779,11 @@ class RealtimeSession:
             from alice.hud import views
 
             views.voice_state(state, detail)
-        except Exception:  # noqa: BLE001 - HUD yoksa konuşma bozulmasın
+        except Exception:  # noqa: BLE001 - don't break the conversation if there is no HUD
             pass
 
     def _handle_calls(self, calls: list[dict[str, Any]], send: Callable[[dict[str, Any]], None]) -> None:
-        """Araçları çalıştır, sonuçları modele geri yaz, cevabı yeniden üret."""
+        """Run the tools, write the results back to the model, and regenerate the reply."""
         outputs = []
         thought = ""
         for call in calls:
@@ -799,7 +800,7 @@ class RealtimeSession:
             send({"type": "response.create", "response": {"output_modalities": ["audio"]}})
         except Exception as e:  # noqa: BLE001
             self.log(f"realtime: araç sonucu gönderilemedi: {e}")
-            # Oturum bu arada kapandı (bağlantı koptu, kullanıcı sustu): think'in cevabı kaybolmasın.
+            # The session closed in the meantime (connection dropped, user hushed): don't lose think's reply.
             if thought and callable(self.announce):
                 try:
                     self.announce(thought[:600])
@@ -821,10 +822,10 @@ class RealtimeSession:
         return job["res"]
 
     def _think(self, raw: str) -> ToolResult:
-        """Hızlı ses modelinin işi güçlü modele devretmesi: ALICE ajanı isteği kendi araçlarıyla yürütür.
+        """The fast voice model hands the job to the strong model: the ALICE agent runs the request with its tools.
 
-        Ajanın cevabı (bir soru da olabilir) modele döner; canlı model onu kullanıcıya söyler. Aynı ajan
-        nesnesi kullanıldığı için sonraki `think` çağrıları konuşmayı kaldığı yerden sürdürür."""
+        The agent's reply (it may be a question too) goes back to the model; the live model tells it to the user.
+        Since the same agent object is reused, later `think` calls continue the conversation where it left off."""
         try:
             args = json.loads(raw or "{}")
             request = str(args.get("request") or "").strip()
@@ -840,7 +841,7 @@ class RealtimeSession:
                 from alice.voice.assistant import with_clock
 
                 text = with_clock(request)
-            except Exception:  # noqa: BLE001 - saat eklenemezse istek olduğu gibi gider
+            except Exception:  # noqa: BLE001 - if the clock can't be added, the request goes out as is
                 pass
             old_role = getattr(self.agent, "role", None)
             role = self._think_role(request)
@@ -849,7 +850,7 @@ class RealtimeSession:
                 if role:
                     self.agent.role = role
                 reply = str(self.agent.run_turn(text) or "").strip()
-            except Exception as e:  # noqa: BLE001 - canlı konuşma düşmesin
+            except Exception as e:  # noqa: BLE001 - don't let the live conversation crash
                 return ToolResult(f"think hatası: {type(e).__name__}: {e}", is_error=True)
             finally:
                 if role:
@@ -862,14 +863,14 @@ class RealtimeSession:
     THINK_ROLE = "live-think"
 
     def _think_role(self, request: str = "") -> str | None:
-        """think için geçici rol: live_think_models, boşsa ses için ölçülmüş hızlı modeller + beyin zinciri.
-        Jev yönlendirmesi açıksa ağır işler ([routing] voice_strong, ör. Sonnet 5.5) öne alınır."""
+        """Temporary role for think: live_think_models, or if empty, the measured fast voice models + brain chain.
+        If Jev routing is on, heavy jobs ([routing] voice_strong, e.g. Sonnet 5.5) are moved to the front."""
         router = getattr(self.agent, "router", None)
         if router is None or not hasattr(router, "role_overrides"):
             return None
         try:
             refs = list(self.think_models) or (router.auto_chain("voice")[:3] + router.chain("brain"))
-        except Exception:  # noqa: BLE001 - ölçüm/rol bilgisi yok: ajanın kendi zinciri
+        except Exception:  # noqa: BLE001 - no measurement/role info: the agent's own chain
             return None
         chain = [r for i, r in enumerate(refs) if r not in refs[:i]]
         if not chain:
@@ -880,14 +881,14 @@ class RealtimeSession:
 
                 chain, r = jev_route.voice_chain(router, self.cfg, request, chain, log=self.log)
                 self.log(f"realtime think yönlendirme: {r.tier} ({r.reason}) -> {chain[0]}")
-            except Exception as e:  # noqa: BLE001 - yönlendirme düşerse hızlı sıra
+            except Exception as e:  # noqa: BLE001 - if routing fails: the fast chain
                 self.log(f"realtime think yönlendirme hatası: {e}")
         router.role_overrides[self.THINK_ROLE] = chain
         return self.THINK_ROLE
 
     def _tool_worker(self, q: "queue.Queue[dict[str, Any]]") -> None:
         try:
-            import comtypes  # UI Automation bu iş parçacığında da çalışsın
+            import comtypes  # so UI Automation also works on this thread
 
             comtypes.CoInitialize()
         except Exception:  # noqa: BLE001

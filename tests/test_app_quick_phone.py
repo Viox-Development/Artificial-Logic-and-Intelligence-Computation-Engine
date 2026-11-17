@@ -1,4 +1,4 @@
-"""alice/app/quick.py ve alice/app/phone.py: gerçek sunucu, tarayıcı, pano ya da ağ olmadan."""
+"""alice/app/quick.py and alice/app/phone.py: without a real server, browser, clipboard or network."""
 
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def test_open_idle_does_not_reset_busy_or_queued(fake_server, monkeypatch):
     qb.open()
     assert qb.state.new_sessions == 0
     qb.state._queued = []
-    t[0] += quick.IDLE_NEW - 1  # süre dolmadı
+    t[0] += quick.IDLE_NEW - 1  # time has not run out yet
     qb.open()
     assert qb.state.new_sessions == 0
     t[0] += quick.IDLE_NEW + 1
@@ -217,7 +217,7 @@ def test_launch_small_screen_and_webbrowser_fallback(monkeypatch):
 
 def test_start_hotkeys_without_pynput(fake_server, monkeypatch):
     qb, _ = make_qb(fake_server)
-    monkeypatch.setattr("alice.hotkeys.IS_WIN", False)  # pynput yolu; Windows'ta gerçek kısayol kaydedilmesin
+    monkeypatch.setattr("alice.hotkeys.IS_WIN", False)  # pynput path; a real shortcut must not be registered on Windows
     monkeypatch.setitem(sys.modules, "pynput", None)
     assert qb.start_hotkeys() is False and qb._listener is None
 
@@ -365,7 +365,7 @@ def test_phone_server_config_port_hosts_and_urls(fake_server, monkeypatch):
     ps.stop()
     assert ps.server.stopped
     ps2 = phone.PhoneServer(Config(data), store="S", port=0, state=fake_state(), new_token=True)
-    assert ps2.port == 0 and ps2.state.token != st.token  # port=0 açıkça verilirse config'e düşmez
+    assert ps2.port == 0 and ps2.state.token != st.token  # an explicitly given port=0 does not fall back to the config
 
 
 def test_phone_server_default_port(fake_server, monkeypatch):
@@ -396,7 +396,7 @@ def test_print_qr(monkeypatch):
     phone.print_qr(console, "http://x")
     assert lines == ["██  ", "  ██"]
     monkeypatch.setitem(sys.modules, "qrcode", None)
-    phone.print_qr(console, "http://x")  # sessizce geçer
+    phone.print_qr(console, "http://x")  # silently passes
     assert len(lines) == 2
 
 
@@ -484,17 +484,17 @@ def test_start_hotkeys_windows_uses_registerhotkey(fake_server, monkeypatch):
 
     monkeypatch.setattr("alice.hotkeys.IS_WIN", True)
     monkeypatch.setattr("alice.hotkeys.WinHotkeys", FakeWin)
-    monkeypatch.setitem(sys.modules, "pynput", None)  # Windows yolu pynput'a hiç dokunmaz
+    monkeypatch.setitem(sys.modules, "pynput", None)  # the Windows path never touches pynput
     assert qb.start_hotkeys() is True and qb._listener is made[0]
-    assert set(made[0].mapping) - {""} == {"<ctrl>+<alt>+a", "<ctrl>+<alt>+c"}  # boşları WinHotkeys atar
+    assert set(made[0].mapping) - {""} == {"<ctrl>+<alt>+a", "<ctrl>+<alt>+c"}  # WinHotkeys drops the empty ones
     FakeWin.start = lambda self: False
     qb._listener = None
     assert qb.start_hotkeys() is False and qb._listener is None
 
 
 def test_phone_token_leaves_url_after_pairing(monkeypatch):
-    """QR adresindeki ?t= çereze çevrilip anahtarsız adrese yönlendirilir; sonra çerez (GET) ya da Bearer/X-Alice-Token
-    başlığı yeter. Çerez tek başına POST'a yetmez; yanlış anahtar hep reddedilir."""
+    """The ?t= in the QR address becomes a cookie and redirects to the keyless address; then a cookie (GET) or
+    a Bearer/X-Alice-Token header is enough. A cookie alone is not enough for POST; a wrong key is always denied."""
     import http.client
     import threading
 
@@ -521,15 +521,15 @@ def test_phone_token_leaves_url_after_pairing(monkeypatch):
         assert r.status == 303 and r.getheader("Location") == "/m?r=https%3A%2F%2Fx"
         cookie = r.getheader("Set-Cookie")
         assert f"{phone.COOKIE}={tok}" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie
-        assert "Secure" not in cookie  # yerel ağ düz HTTP
-        assert req("GET", "/m?t=yanlis").status == 403  # yanlış anahtar yönlendirilmez
+        assert "Secure" not in cookie  # local network, plain HTTP
+        assert req("GET", "/m?t=yanlis").status == 403  # a wrong key is not redirected
         assert req("GET", "/m").status == 403
         jar = {"Cookie": f"{phone.COOKIE}={tok}"}
         assert req("GET", "/m", jar).status == 200
         assert req("GET", "/m", {"Cookie": f"{phone.COOKIE}=yanlis"}).status == 403
         assert req("GET", "/m", {"Authorization": f"Bearer {tok}"}).status == 200
-        assert req("GET", f"/m?t={tok}", {"Host": "evil.example"}).status == 403  # Host kontrolü önce
-        assert req("POST", "/api/yok", jar).status == 403  # çerez yazan isteğe yetmez
+        assert req("GET", f"/m?t={tok}", {"Host": "evil.example"}).status == 403  # the Host check comes first
+        assert req("POST", "/api/yok", jar).status == 403  # a cookie is not enough for a request that writes
         assert req("POST", "/api/yok", {"Authorization": f"Bearer {tok}"}).status != 403
         assert req("POST", "/api/yok", {"X-Alice-Token": tok}).status != 403
     finally:
@@ -538,7 +538,7 @@ def test_phone_token_leaves_url_after_pairing(monkeypatch):
 
 
 def test_phone_server_installs_phone_handler(monkeypatch):
-    """PhoneServer gerçek sunucunun işleyicisini telefon işleyicisiyle değiştirir (başlatmadan önce)."""
+    """PhoneServer replaces the real server's handler with the phone handler (before starting it)."""
     calls = []
 
     class Srv(FakeServer):

@@ -1,14 +1,17 @@
-"""Konuşmacı doğrulama: ALICE sadece kullanıcının sesine cevap versin.
+"""Speaker verification: ALICE only answers the user's voice.
 
-Discord'daki arkadaşların, odadakiler ya da videodaki biri "Alice" deyince ALICE uyanıyordu. Sistem → Ses → Sesimi
-tanıt (ya da `alice voice enroll`) kullanıcıdan birkaç cümle okur, sesinden bir "ses izi" (konuşmacı gömmesi) çıkarıp ~/.alice/voice/speaker.json'a
-yazar. Sonra her uyanmada ve "Alice" demeden devam edilen takip penceresinde söylenen cümlenin sesi bu izle
-karşılaştırılır; benzemiyorsa cevap verilmez. Bas-konuş (kullanıcı tuşa bastı) hep kabul edilir.
+Friends on Discord, people in the room, or someone in a video used to wake ALICE by saying "Alice".
+The user enrolls their voice with Sistem → Ses → Sesimi tanıt (or `alice voice enroll`): they read a few sentences,
+a "voice fingerprint" (speaker embedding) is extracted from them and saved to ~/.alice/voice/speaker.json.
+Then, on every wake-up and in the follow-up window where the user keeps talking without saying "Alice", the voice of
+the sentence is compared with this fingerprint. If it does not match, no answer is given. Push-to-talk (the user
+pressed the key) is always accepted.
 
-Model: NVIDIA TitaNet-small (sherpa-onnx, ~40 MB, kayıt başına ~20 ms, çevrimdışı). 14 farklı sesle yapılan
-denemede, 4 cümleyle tanıtılan sesi hiç reddetmedi; başka sesleri eşik 0,6'da %3 kabul etti. Eşik kişiye göre
-tanıtım kayıtlarının birbirine benzerliğinden ayarlanır ve 0,45-0,6 arasında kalır (yanlış red, yanlış kabulden
-daha can sıkıcı: kullanıcıya cevap vermeyen asistan işe yaramaz). Her karşılaştırmanın skoru voice.log'a yazılır.
+Model: NVIDIA TitaNet-small (sherpa-onnx, ~40 MB, ~20 ms per recording, offline). In a test with 14 different voices,
+it never rejected the voice enrolled with 4 sentences; at threshold 0.6 it accepted 3% of the other voices.
+The threshold is adjusted per person from how similar their enrollment recordings are, and stays between 0.45-0.6
+(a wrong rejection is more annoying than a wrong acceptance: an assistant that does not answer the user is useless).
+The score of every comparison is written to voice.log.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from alice.config import alice_home
 
 MODEL_NAME = "nemo_en_titanet_small.onnx"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/" + MODEL_NAME)
-MIN_SECONDS = 0.6  # bundan kısa seste ses izi güvenilmez: karar verilmez, kabul edilir
+MIN_SECONDS = 0.6  # voice fingerprints are unreliable on shorter audio: no decision is made, it is accepted
 THRESHOLD_RANGE = (0.45, 0.6)
 ENROLL_SENTENCES = [
     "Hey Alice, saat kaç?",
@@ -54,8 +57,9 @@ def enrolling_path() -> Path:
 
 
 def enrolling() -> bool:
-    """Uygulamada ses tanıtılıyor mu? Okunan cümleler ("Hey Alice, saat kaç?") çalışan ALICE'i uyandırmasın.
-    Sihirbaz dosyaya birkaç saniyede bir dokunur; yarıda çökerse iki dakika sonra kendiliğinden geçersiz olur."""
+    """Is a voice being enrolled in the app? The sentences read out ("Hey Alice, saat kaç?") must not wake
+    the running ALICE. The wizard touches the file every few seconds; if it crashes midway, it becomes
+    invalid on its own after two minutes."""
     try:
         return time.time() - enrolling_path().stat().st_mtime < 120
     except OSError:
@@ -72,8 +76,8 @@ def available() -> bool:
 
 def download_model(emit: Callable[[str], None] = lambda s: None,
                    progress: Callable[[int, int], None] = lambda done, total: None) -> Path:
-    """Modeli bir kez indir (~40 MB). Yarım kalan indirme bir sonrakini bozmasın diye önce .part'a yazılır.
-    progress(indirilen, toplam bayt) her parçada çağrılır (toplam bilinmiyorsa 0)."""
+    """Download the model once (~40 MB). It is first written to .part so that an unfinished download does not
+    break the next one. progress(downloaded, total bytes) is called for each chunk (0 if the total is unknown)."""
     path = model_path()
     if path.is_file() and path.stat().st_size > 1_000_000:
         return path
@@ -105,8 +109,9 @@ def mean_vector(vectors: list[list[float]]) -> list[float]:
 
 
 def calibrate(embeddings: list[list[float]]) -> tuple[float, float]:
-    """(eşik, tutarlılık). Tutarlılık: her kayıt, diğerlerinden çıkarılan ize ne kadar benziyor (en kötüsü).
-    Kendi kayıtları birbirine az benzeyen (gürültülü oda, uzak mikrofon) kullanıcıda eşik de aşağı iner."""
+    """(threshold, consistency). Consistency: how similar each recording is to the fingerprint made from the others
+    (the worst one). If the user's own recordings are not very similar to each other (noisy room, distant mic),
+    the threshold goes down too."""
     if len(embeddings) < 2:
         return THRESHOLD_RANGE[0], 0.0
     loo = [cosine(mean_vector([e for j, e in enumerate(embeddings) if j != i]), embeddings[i])
@@ -117,7 +122,7 @@ def calibrate(embeddings: list[list[float]]) -> tuple[float, float]:
 
 
 class Embedder:
-    """sherpa-onnx TitaNet: 16 kHz int16 PCM -> ses izi vektörü."""
+    """sherpa-onnx TitaNet: 16 kHz int16 PCM -> voice fingerprint vector."""
 
     def __init__(self, path: Path | None = None):
         import sherpa_onnx
@@ -125,7 +130,7 @@ class Embedder:
         self._so = sherpa_onnx
         cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(path or model_path()), num_threads=1)
         self._ex = sherpa_onnx.SpeakerEmbeddingExtractor(cfg)
-        self._lock = threading.Lock()  # extractor iş parçacığı güvenli değil
+        self._lock = threading.Lock()  # the extractor is not thread-safe
 
     def embed(self, pcm: bytes, rate: int = 16000) -> list[float]:
         import array
@@ -158,10 +163,11 @@ def load_profile(path: Path | None = None) -> dict[str, Any] | None:
 
 
 class SpeakerGate:
-    """Uyanmada "bu ses kullanıcının mı?" sorusu. Profil, model ya da paket yoksa her şeyi kabul eder.
+    """On wake-up, the question: "is this voice the user's?". If there is no profile, model or package, everything
+    is accepted.
 
-    path verilirse profil dosyası izlenir: uygulamadan sesini tanıtınca ya da kapatınca çalışan çekirdek yeniden
-    başlamadan yeni profili kullanır. Model (Embedder) ilk gerektiğinde yüklenir."""
+    If path is given, the profile file is watched: when the voice is enrolled or removed in the app, the running core
+    uses the new profile without restarting. The model (Embedder) is loaded when first needed."""
 
     def __init__(self, profile: dict[str, Any] | None = None, embedder: Any = None, threshold: float | None = None,
                  path: Path | None = None, make_embedder: Callable[[], Any] | None = None,
@@ -177,7 +183,7 @@ class SpeakerGate:
         self.log = log
         self._warned = ""
         self.last_score = 0.0
-        self.last_note = ""  # karar verilemediyse nedeni (kısa ses, hata): voice.log'a yazılır
+        self.last_note = ""  # if no decision was made, the reason (short audio, error): written to voice.log
         if path is not None:
             self.refresh()
 
@@ -191,7 +197,7 @@ class SpeakerGate:
         return self.vector is not None
 
     def refresh(self) -> None:
-        """Profil dosyası değiştiyse yeniden oku (silindiyse kontrol kapanır)."""
+        """Re-read the profile file if it changed (if it was deleted, the check is turned off)."""
         if self.path is None:
             return
         try:
@@ -208,7 +214,8 @@ class SpeakerGate:
 
     @classmethod
     def load(cls, cfg: Any = None, log: Callable[[str], None] = lambda s: None) -> "SpeakerGate | None":
-        """Sesli asistan açılırken: profil henüz yoksa da kapı kurulur, profil gelince kendiliğinden devreye girer."""
+        """When the voice assistant starts: the gate is set up even without a profile yet; it switches on by itself
+        once a profile arrives."""
         v = (getattr(cfg, "data", None) or {}).get("voice", {}) if cfg is not None else {}
         if v.get("speaker_check") is False:
             return None
@@ -230,7 +237,7 @@ class SpeakerGate:
             try:
                 self.embedder = self.make_embedder()
                 return True
-            except Exception as e:  # noqa: BLE001 - bozuk model ya da uyumsuz paket: asistan yine çalışsın
+            except Exception as e:  # noqa: BLE001 - broken model or incompatible package: the assistant still runs
                 why = f"ses tanıma açılamadı: {e}"
         self.last_note = why + ", kontrol edilmedi"
         if why != self._warned:
@@ -239,12 +246,12 @@ class SpeakerGate:
         return False
 
     def usable(self) -> bool:
-        """Profil var ve model açılabiliyor: ses gerçekten karşılaştırılabilir."""
+        """A profile exists and the model can be opened: the voice can really be compared."""
         self.refresh()
         return self.active and self._ensure_embedder()
 
     def check(self, pcm: bytes, rate: int = 16000) -> bool:
-        """True: kullanıcının sesi (ya da profil yok / karar verilemeyecek kadar kısa)."""
+        """True: the user's voice (or there is no profile / the audio is too short to decide)."""
         self.refresh()
         self.last_note = ""
         if not self.active:
@@ -259,7 +266,7 @@ class SpeakerGate:
             return True
         try:
             self.last_score = cosine(self.vector or [], self.embedder.embed(pcm, rate))
-        except Exception as e:  # noqa: BLE001 - ses tanıma hata verirse kullanıcıyı cezalandırma
+        except Exception as e:  # noqa: BLE001 - if voice recognition fails, do not penalize the user
             self.last_score = 1.0
             self.last_note = f"ses tanıma hatası, kontrol edilmedi: {type(e).__name__}: {str(e)[:120]}"
             return True

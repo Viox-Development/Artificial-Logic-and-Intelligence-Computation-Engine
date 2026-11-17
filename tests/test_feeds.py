@@ -1,4 +1,4 @@
-"""Akışlar: bağlı servisi yoklayıp yeni öğeyi bildirme. Ağa çıkılmaz, bağlantı çağrısı sahte."""
+"""Feeds: poll a connected service and notify about new items. No network access; the connector call is faked."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def msg(i: str, who: str = "ahmet", text: str = "selam"):
 
 
 def monitor(items, **kw):
-    """Sahte bağlantıyla gözlemci: items bir liste ya da her çağrıda bir sonrakini veren liste listesi."""
+    """Monitor with a fake connector: items is either a list or a list of lists that yields the next one on each call."""
     seq = list(items)
 
     def fetch(_feed):
@@ -64,14 +64,14 @@ def test_tanim_okunur_ve_bozuk_olan_atlanir(tmp_path, monkeypatch):
 
 
 def test_doldurulmamis_sablon_akisi_calismaz(tmp_path, monkeypatch):
-    # "ornek" akışı her 5 dakikada "DISCORD_BOT_TOKEN yok" diyordu: KANAL_ID hiç doldurulmamıştı.
+    # The "ornek" feed kept logging "DISCORD_BOT_TOKEN yok" (missing) every 5 minutes: KANAL_ID had never been filled in.
     p = tmp_path / "feeds.toml"
     p.write_text('[[feed]]\nname = "ornek"\nconnector = "discord"\naction = "messages"\n'
                  'args = { channel_id = "KANAL_ID" }\n[[feed]]\nname = "bolge"\nconnector = "x"\naction = "y"\n'
                  'args = { region = "EU" }\n', encoding="utf-8")
     monkeypatch.setattr(F, "feeds_path", lambda: p)
     fs, errors = F.load_feeds()
-    assert [(f.name, f.enabled) for f in fs] == [("ornek", False), ("bolge", True)]  # görünür ama yoklanmaz
+    assert [(f.name, f.enabled) for f in fs] == [("ornek", False), ("bolge", True)]  # visible but not polled
     assert any("doldurulmamış" in e for e in errors)
 
 
@@ -84,22 +84,22 @@ def test_ilk_tur_bildirim_yapmaz(feeds_file):
     sent: list[Notification] = []
     m = monitor([[msg("1"), msg("2")]], notify=sent.append)
     rows = m.collect()
-    assert sent == []                                  # ilk turda sessiz: eski mesajlar bildirim olmaz
-    # Metrik yazılır ama 0: ilk turdaki öğeler "yeni" değil (yoksa `yeni > 0` kuralı akış kurulur kurulmaz öterdi)
+    assert sent == []                                  # silent on the first pass: old messages are not notified
+    # Metric is 0: first-pass items aren't "new" (else a `yeni > 0` rule fires as soon as the feed is set up)
     assert ("feed.discord.yeni", 0.0, None) in rows
 
 
 def test_yeni_oge_bildirilir_eskisi_tekrar_etmez(feeds_file):
     sent: list[Notification] = []
     m = monitor([[msg("1")], [msg("1"), msg("2", "ayse", "geliyorum")], [msg("1"), msg("2")]], notify=sent.append)
-    m.collect()                       # ilk tur: sessiz
-    m.state["discord_genel"]["last"] = 0   # süreyi doldur
+    m.collect()                       # first pass: silent
+    m.state["discord_genel"]["last"] = 0   # let the interval elapse
     m.collect()
     assert len(sent) == 1
     assert sent[0].title == "Discord · ayse" and sent[0].body == "geliyorum" and sent[0].topic == "discord"
     m.state["discord_genel"]["last"] = 0
     m.collect()
-    assert len(sent) == 1             # aynı mesaj ikinci kez bildirilmez
+    assert len(sent) == 1             # the same message is not notified twice
 
 
 def test_suresi_gelmeyen_akis_yoklanmaz(feeds_file):
@@ -111,7 +111,7 @@ def test_suresi_gelmeyen_akis_yoklanmaz(feeds_file):
 
     m = F.FeedMonitor(fetch=fetch)
     m.collect()
-    m.collect()  # 5 dakika dolmadı
+    m.collect()  # 5 minutes have not passed
     assert calls == ["discord_genel"]
 
 
@@ -129,7 +129,7 @@ def test_cok_yeni_oge_varsa_bildirim_toplanir(feeds_file):
     m.collect()
     m.state["discord_genel"]["last"] = 0
     m.collect()
-    assert len(sent) == F.MAX_PER_TICK + 1            # son satır: "N yeni öğe daha"
+    assert len(sent) == F.MAX_PER_TICK + 1            # last line: "N yeni öğe daha" (N more new items)
     assert "yeni öğe daha" in sent[-1].title
 
 
@@ -145,7 +145,7 @@ def test_hata_akisi_oldurmez_ve_kaydedilir(feeds_file):
     assert notes and "401" in notes[0]
     m.state["discord_genel"]["last"] = 0
     m.collect()
-    assert len(notes) == 1  # aynı hata her turda yeniden yazılmaz
+    assert len(notes) == 1  # the same error is not rewritten on every pass
 
 
 def test_ajan_yeni_ogede_uyanir(feeds_file, tmp_path, monkeypatch):
@@ -178,11 +178,11 @@ def test_durum_diske_yazilir_ve_okunur(feeds_file):
     sent: list[Notification] = []
     m = monitor([[msg("1")]], notify=sent.append)
     m.collect()
-    yeni = monitor([[msg("1"), msg("2")]], notify=sent.append)   # yeni süreç gibi: durumu diskten okur
+    yeni = monitor([[msg("1"), msg("2")]], notify=sent.append)   # like a new process: reads the state from disk
     assert "discord_genel" in yeni.state
     yeni.state["discord_genel"]["last"] = 0
     yeni.collect()
-    assert len(sent) == 1 and sent[0].title.endswith("ahmet")   # 1 numaralı mesaj tekrar bildirilmedi
+    assert len(sent) == 1 and sent[0].title.endswith("ahmet")   # message 1 was not notified again
 
 
 def test_hatirlanan_kimlik_sayisi_sinirli(feeds_file):
@@ -217,7 +217,7 @@ def test_cekirdek_akislari_gozlemci_olarak_ekler(feeds_file, monkeypatch, tmp_pa
 
 
 def test_akis_yoksa_gozlemci_bos_durur_sonradan_eklenen_devreye_girer(tmp_path, monkeypatch):
-    """Sohbetten eklenen akış çekirdek yeniden başlamadan çalışmalı: gözlemci boşken de takılı."""
+    """A feed added from chat must run without restarting the core: the monitor is attached even while empty."""
     from alice.core.service import Core
     from alice.core.store import Store
     from tests.conftest import make_config
@@ -227,16 +227,16 @@ def test_akis_yoksa_gozlemci_bos_durur_sonradan_eklenen_devreye_girer(tmp_path, 
     monkeypatch.setattr(F, "state_path", lambda: tmp_path / "st.json")
     core = Core(make_config({"brain": ["a:m"]}), store=Store(tmp_path / "s.db"))
     mon = next(m for m in core.monitors if getattr(m, "name", "") == "feeds")
-    assert mon.feeds == [] and mon.collect() == []     # boşken hiçbir şey yapmaz
+    assert mon.feeds == [] and mon.collect() == []     # does nothing while empty
     p.write_text(TOML, encoding="utf-8")
     calls = []
     mon._fetch = lambda f: calls.append(f.name) or []
     mon.collect()
-    assert calls == ["discord_genel"]                  # dosya değişince kendini yeniden yükledi
+    assert calls == ["discord_genel"]                  # reloaded itself when the file changed
     core.store.close()
 
 
 def test_interval_en_az_bir_dakika():
     assert F.Feed(name="a", connector="b", action="c", every_minutes=0.1).interval == 60.0
     assert F.Feed(name="a", connector="b", action="c", every_minutes=30).interval == 1800.0
-    assert time.time() > 0  # akış zamanı gerçek saate bakar
+    assert time.time() > 0  # feed time follows the real clock

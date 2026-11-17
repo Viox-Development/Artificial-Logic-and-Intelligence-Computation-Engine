@@ -1,9 +1,8 @@
-"""Canlı ücretsiz model keşfi.
+"""Live free model discovery.
 
-Ücretsiz katalog aylık değişiyor (OpenRouter'da modeller birkaç ayda bir tamamen
-değişiyor, Groq Llama ve Kimi'yi kaldırdı). Sabit listeye güvenmek yerine
-`alice models --refresh` sağlayıcıların /models uçlarını sorgulayıp neyin gerçekten
-açık olduğunu gösterir ve istenirse config'e yazar.
+The free catalog changes monthly (OpenRouter's models are fully replaced every few months, and Groq removed Llama
+and Kimi). Instead of relying on a fixed list, `alice models --refresh` queries the providers' /models endpoints,
+shows what is really open, and writes it to the config if asked.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 from alice.providers.openai_compat import ProviderError
 from alice.providers.router import Router
 
-# Kodlama/ajan işi için güçlü bildiğimiz aileler, sıralamada öne alınır.
+# Model families we know are strong for coding/agent work; they are moved to the front of the ranking.
 PREFERRED = (
     "laguna", "qwen3-coder", "qwen3.", "gpt-oss-120b", "deepseek", "kimi", "glm", "devstral",
     "north", "nemotron", "gemini", "gpt-oss-20b", "llama-4", "gemma",
@@ -87,7 +86,7 @@ def discover(router: Router) -> tuple[list[FoundModel], dict[str, str]]:
             from alice.providers.ranking import catalog_models
 
             models = catalog_models(router, name)
-        except (ProviderError, Exception) as e:  # noqa: BLE001 - keşifte hiçbir hata ölümcül değil
+        except (ProviderError, Exception) as e:  # noqa: BLE001 - no error is fatal during discovery
             errors[name] = str(e)[:160]
             continue
         found.extend(_openrouter(models) if name == "openrouter" else _generic(name, models))
@@ -96,8 +95,8 @@ def discover(router: Router) -> tuple[list[FoundModel], dict[str, str]]:
 
 
 def suggest_chains(found: list[FoundModel]) -> dict[str, list[str]]:
-    """Bulunan modellerden rol zincirleri öner. Her sağlayıcıdan en iyi 2 model alınır,
-    böylece tek bir sağlayıcının kotası bitince zincir kopmaz."""
+    """Suggest role chains from the models found. The best 2 models from each provider are taken,
+    so the chain does not break when one provider's quota runs out."""
 
     def pick(pred, per_provider=2, limit=8):
         seen: dict[str, int] = {}

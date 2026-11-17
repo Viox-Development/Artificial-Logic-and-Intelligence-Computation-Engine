@@ -1,4 +1,4 @@
-"""Oyun oturumu: değişen bölgeler, OCR önbelleği, yeni öğeler, notlar, tur özetleri ve game aracı."""
+"""Game session: changed regions, OCR cache, new items, notes, turn summaries, and the game tool."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from alice.reflex.perceive import Item, changed_regions, mark_fresh, ocr_changed
 
 
 def frame(*blocks):
-    """1600x900 siyah kare, verilen (x0, y0, x1, y1) bloklar beyaz."""
+    """1600x900 black frame; the given (x0, y0, x1, y1) blocks are white."""
     img = Image.new("RGB", (1600, 900))
     d = ImageDraw.Draw(img)
     for b in blocks:
@@ -21,17 +21,17 @@ def frame(*blocks):
     return img
 
 
-# ------------------------------------------------------------------------------------------- algı
+# ------------------------------------------------------------------------------------------- perception
 def test_changed_regions_finds_only_what_changed():
     a = frame((10, 10, 300, 60))
     assert changed_regions(a, a.copy()) == []
     assert changed_regions(None, a) is None and changed_regions(a, a.resize((800, 450))) is None
-    b = frame((10, 10, 300, 60), (1400, 820, 1500, 860))  # sağ altta yeni bir düğme
+    b = frame((10, 10, 300, 60), (1400, 820, 1500, 860))  # new button at the bottom-right
     (reg,) = changed_regions(a, b)
     assert reg[0] <= 1400 / 1600 and reg[2] >= 1500 / 1600 and reg[1] <= 820 / 900 and reg[3] == 1.0
-    assert reg[0] > 0.8  # sol üst aynı kaldı: bölgeye girmez
+    assert reg[0] > 0.8  # top-left unchanged: not in the region
     c = frame((10, 10, 300, 60), (1400, 820, 1500, 860), (700, 400, 760, 420))
-    assert len(changed_regions(b, c)) == 1 and changed_regions(a, c)[0][1] < 0.5  # iki ayrı bölge, yukarıdaki önce
+    assert len(changed_regions(b, c)) == 1 and changed_regions(a, c)[0][1] < 0.5  # two regions; the upper one first
 
 
 def test_ocr_changed_rereads_only_changed_regions():
@@ -44,15 +44,15 @@ def test_ocr_changed_rereads_only_changed_regions():
 
     prev = [("Gold: 10", (0.0, 0.0, 0.1, 0.03)), ("Pick a tech", (0.85, 0.9, 0.95, 0.95))]
     out = ocr_changed(img, prev, [(0.875, 0.888, 1.0, 1.0)], recognize)
-    assert ("Gold: 10", (0.0, 0.0, 0.1, 0.03)) in out  # değişmeyen satır önbellekten
-    assert all(t != "Pick a tech" for t, _ in out)  # bölgeye değen eski satır atıldı, yeniden okundu
-    assert len(seen) == 1 and seen[0][0] < 400  # sadece küçük bir parça okundu (bölge eski satırı da kapsıyor)
+    assert ("Gold: 10", (0.0, 0.0, 0.1, 0.03)) in out  # unchanged line comes from the cache
+    assert all(t != "Pick a tech" for t, _ in out)  # old line touching the region was dropped and read again
+    assert len(seen) == 1 and seen[0][0] < 400  # only a small piece was read (the region also covers the old line)
     new = next(r for t, r in out if t == "Next turn")
     assert new[0] >= 0.85 and new[1] >= 0.88
-    assert ocr_changed(img, prev, [], recognize) == prev and len(seen) == 1  # hiçbir şey değişmedi: OCR yok
-    ocr_changed(img, prev, [(0.0, 0.0, 0.8, 0.8)], recognize)  # yarıdan fazlası değişti: hepsi baştan
+    assert ocr_changed(img, prev, [], recognize) == prev and len(seen) == 1  # nothing changed: no OCR
+    ocr_changed(img, prev, [(0.0, 0.0, 0.8, 0.8)], recognize)  # more than half changed: everything from scratch
     assert seen[-1] == (1600, 900)
-    ocr_changed(img, prev, None, recognize)  # ilk kare
+    ocr_changed(img, prev, None, recognize)  # first frame
     assert seen[-1] == (1600, 900)
 
 
@@ -65,7 +65,7 @@ def test_mark_fresh_and_describe():
     mark_fresh(b, seen)
     assert [i.fresh for i in b] == [False, True]
     assert b[1].describe() == "text 'Pick a tech' (bottom-right; new)"
-    assert b[1].describe(False) == "text 'Pick a tech' (bottom-right)"  # geçmiş satırlarında işaret yok
+    assert b[1].describe(False) == "text 'Pick a tech' (bottom-right)"  # no marker on the history lines
 
 
 def test_desktop_observer_diff_mode_reads_changes_only(monkeypatch):
@@ -95,22 +95,22 @@ def test_desktop_observer_diff_mode_reads_changes_only(monkeypatch):
     second = obs.screen("end the turn")
     assert [i.label for i in second.items] == ["Gold: 10"] and len(calls) == 1 and obs.changed == []
     third = obs.screen("end the turn")
-    assert len(calls) == 2 and calls[-1][0] < 1600  # sadece değişen köşe okundu
+    assert len(calls) == 2 and calls[-1][0] < 1600  # only the changed corner was read
     labels = {i.label: i.fresh for i in third.items}
     assert labels == {"Gold: 10": False, "Next turn": True}
 
 
 def test_image_change_counts_when_text_stays_the_same():
-    """Solitaire: desteye tıklayınca kart açılıyor ama OCR kart yüzünü okumuyor; yazı imzası aynı kalınca "ekran
-    değişmedi" denip tekrar koruması durduruyordu."""
+    """Solitaire: clicking the stock opens a card, but OCR does not read the card face. While the text signature
+    stayed the same, "ekran değişmedi" (screen unchanged) was reported and the repeat guard kept stopping the run."""
     from alice.decider import Answer, Decision
     from alice.reflex.agent import ScreenAgent
     from alice.reflex.perceive import Screen, image_changed
 
     base = frame((100, 100, 210, 250))
-    card = frame((100, 100, 210, 250), (250, 100, 360, 250))  # yanda yeni bir kart
+    card = frame((100, 100, 210, 250), (250, 100, 360, 250))  # a new card to the side
     caret = base.copy()
-    caret.paste((255, 255, 255), (800, 400, 802, 420))  # yanıp sönen imleç
+    caret.paste((255, 255, 255), (800, 400, 802, 420))  # blinking caret
     assert image_changed(base, card) and not image_changed(base, caret) and not image_changed(None, base)
 
     class Table:
@@ -135,9 +135,9 @@ def test_image_change_counts_when_text_stays_the_same():
     agent = ScreenAgent(Table(), Brain(), settle=0)
     agent.track_changes = True
     res = agent.run("draw cards", max_steps=3)
-    assert res.status == "max_steps"  # durdurulmadı: her tıklama kart açtı
+    assert res.status == "max_steps"  # not stopped: every click opened a card
     assert all(e["changed"] for e in agent.evidence) and agent.evidence[0]["action"].endswith("screen changed")
-    # Yazısız değişimin yeri kanıtta: yansıtma 'menülerde kayboldun' diye uydurmasın.
+    # Textless change's place is in the evidence; reflection must not invent 'menülerde kayboldun' (got lost in menus).
     assert agent.evidence[0]["changed_places"] == ["top-left"]
     from alice.reflex.game import evidence_lines
 
@@ -159,7 +159,7 @@ def test_image_change_counts_when_text_stays_the_same():
     agent.track_changes = True
     agent.run("draw cards", max_steps=2)
     first, second = Seeing.seen[0], Seeing.seen[1]
-    assert "screen_at_start" not in first[0] and second[0]["screen_at_start"] in second[1]  # önce/sonra görüntüsü
+    assert "screen_at_start" not in first[0] and second[0]["screen_at_start"] in second[1]  # before/after images
 
     class Compares(Brain):
         supports_images = True
@@ -168,15 +168,15 @@ def test_image_change_counts_when_text_stays_the_same():
         def decide(self, state, questions, images=None):
             self.asked.append("changed_as_asked" in questions)
             d = super().decide(state, questions, images)
-            if "changed_as_asked" in questions:  # "tamamen bitti mi" düşük, görsel kıyas yüksek
-                d.answers["changed_as_asked"] = Answer("noul", 0.8, 0.9)  # canlıda kart çekilince görülen
+            if "changed_as_asked" in questions:  # "tamamen bitti mi" (fully done?) low, visual match high
+                d.answers["changed_as_asked"] = Answer("noul", 0.8, 0.9)  # what is seen when a card is drawn live
             return d
 
     agent = ScreenAgent(TableWithClick(), Compares(), settle=0)
     agent.track_changes = True
     res = agent.run("draw one card", max_steps=5)
     assert Compares.asked == [False, True] and res.status == "done" and res.steps == 1
-    # Değişen bölge küçükse Jev'e o bölgenin önce/sonra kırpıntısı gider, soru da onlara bakar.
+    # If the changed region is small, Jev gets before/after crops of that region, and the question looks at them.
     state, images = Seeing.seen[1]
     assert images[state["changed_part_now"]] and images[state["changed_part_at_start"]]
     from alice.reflex.perceive import changed_crops
@@ -184,14 +184,14 @@ def test_image_change_counts_when_text_stays_the_same():
     before, after = changed_crops(base, card)
     assert before.size == after.size and before.width < base.width // 3
     assert changed_crops(base, base.copy()) is None and changed_crops(base, frame((0, 0, 1599, 899))) is None
-    clock = frame((100, 100, 210, 250), (250, 100, 360, 250), (1540, 10, 1590, 30))  # kart + sağ üstte saat
+    clock = frame((100, 100, 210, 250), (250, 100, 360, 250), (1540, 10, 1590, 30))  # card + clock at the top-right
     before, after = changed_crops(base, clock)
-    assert after.width < 600  # saate kadar uzanmadı, kartın etrafı
+    assert after.width < 600  # did not extend to the clock; the area around the card
 
 
 def test_back_and_forth_loop_is_stopped():
-    """Unciv: 'Pick a tech!' tech ekranını açıyor, 'Close' kapatıyor; her tıklama ekranı değiştirdiği için eski koruma
-    15 adım boyunca durmadı."""
+    """Unciv: 'Pick a tech!' opens the tech screen and 'Close' closes it; since every click changed the screen, the old
+    guard did not stop it for 15 steps."""
     from alice.decider import Answer, Decision
     from alice.reflex.agent import ScreenAgent
     from alice.reflex.perceive import Screen
@@ -223,7 +223,7 @@ def test_back_and_forth_loop_is_stopped():
 
 
 def test_agent_gives_jev_changes_since_start_and_keeps_evidence():
-    """Oyundan bağımsız 'bitti mi?': tur sayacı gibi değerler 'kaybolan/çıkan' olarak görünür."""
+    """Game-independent 'is it done?' (bitti mi?): values like a turn counter are reported as disappeared/appeared."""
     from alice.decider import Answer, Decision
     from alice.reflex.agent import ScreenAgent
     from alice.reflex.perceive import Screen
@@ -254,28 +254,28 @@ def test_agent_gives_jev_changes_since_start_and_keeps_evidence():
     res = agent.run("end the turn", notes=lambda scr: f"seen {len(scr.items)} items")
     assert res.status == "done"
     first, second = Brain.states[0][0], Brain.states[1][0]
-    assert "changes_since_start" not in first and first["notes"] == "seen 2 items"  # notlar ekrana göre seçiliyor
+    assert "changes_since_start" not in first and first["notes"] == "seen 2 items"  # notes picked from the screen
     assert second["changes_since_start"] == {"appeared": ["Turn 2"], "disappeared": ["Turn 1"]}
     assert "changes_since_start" in Brain.states[0][1]["done"].criteria["true"]
     assert agent.evidence == [{"action": "clicked text 'End turn' (bottom-right) -> screen changed", "changed": True,
                                "appeared": ["Turn 2"], "disappeared": ["Turn 1"], "changed_places": []}]
-    plain = ScreenAgent(Board(), Brain(), settle=0)  # oyun dışında reflex eskisi gibi
+    plain = ScreenAgent(Board(), Brain(), settle=0)  # outside a game, reflex works as before
     plain.run("end the turn", max_steps=2)
     assert "changes_since_start" not in Brain.states[-1][0] and plain.evidence == []
 
 
-# ------------------------------------------------------------------------------------------- oturum
+# ------------------------------------------------------------------------------------------- session
 def test_session_notes_turns_and_context(tmp_path):
     assert game_key(" Unciv ") == "unciv" and game_key("Slay the Spire!") == "slay-the-spire"
     s = GameSession.open(tmp_path, "Kart Oyunu")
-    assert s.notes() == [] and s.lessons() == [] and s.turn == 0  # koda yazılı hazır not yok
+    assert s.notes() == [] and s.lessons() == [] and s.turn == 0  # no ready-made notes are written in the code
     assert s.add_note("The user wants an aggressive strategy.")
-    assert not s.add_note("the user wants an aggressive strategy.")  # aynısı
+    assert not s.add_note("the user wants an aggressive strategy.")  # the same one
     for n in range(5):
         s.record(f"goal {n}", "done", 2, f"summary {n}")
     ctx = s.context()
     assert ctx.startswith("Game: Kart Oyunu.") and "aggressive strategy" in ctx
-    assert "turn 5: summary 4" in ctx and "summary 1" not in ctx  # son üç tur
+    assert "turn 5: summary 4" in ctx and "summary 1" not in ctx  # last three turns
     again = GameSession.open(tmp_path, "kart oyunu", "Kart")
     assert again.turn == 5 and again.title == "Kart"
 
@@ -288,28 +288,28 @@ def test_lessons_add_confirm_contradict_and_relevance(tmp_path):
     assert out["add"] == 2 and all(r["source"] == "prior" and r["score"] == 0 for r in s.lessons())
     a, b = s.lessons()
     assert s.apply({"add": [{"trigger": "Exit City", "do": "leave the city screen before ending the turn."}]})["add"] == 0
-    s.apply({"confirm": [b["id"]], "contradict": [a["id"]]})  # yanlış çıkan prior ders düşer
+    s.apply({"confirm": [b["id"]], "contradict": [a["id"]]})  # the prior lesson that turned out wrong is dropped
     (left,) = s.lessons()
     assert left["id"] == b["id"] and left["score"] == 1 and left["source"] == "seen"
     s.apply({"edit": [{"id": b["id"], "do": "Click 'Exit City' first."}],
              "add": [{"do": f"lesson {n}", "kind": "nonsense"} for n in range(6)]})
-    assert len(s.lessons()) == 4 and s.lessons()[0]["do"] == "Click 'Exit City' first."  # turda en fazla 3 yeni
-    # Keşif bir keresinde "istenirse hesabınla giriş yap" yazmıştı: oyun oturumu kullanıcı adına onay/giriş yapmaz.
+    assert len(s.lessons()) == 4 and s.lessons()[0]["do"] == "Click 'Exit City' first."  # at most 3 new per turn
+    # Discovery once wrote "istenirse hesabınla giriş yap" (log in if asked); sessions never accept/log in as the user.
     assert s.apply({"add": [{"do": "Log in with your Microsoft account if prompted."},
                             {"do": "Accept the privacy terms to continue."},
                             {"do": "Avoid clicking ads or the Buy button."}]})["add"] == 1
     assert s.lessons()[1]["kind"] == "ui"
-    # Tetik ekranda görülen bir yazı olmalı: modelin kendi cümlesi ("clicked something ...") hiçbir ekrana uymaz.
+    # A trigger must be text seen on screen: the model's own phrase ("clicked something ...") matches no screen.
     out = s.apply({"add": [{"trigger": "clicked something visible on screen at left-top", "do": "Aim better."},
                            {"trigger": "Gold: 10", "do": "Gold is shown at the top."}]},
                   seen_texts=["Gold: 10", "Exit City"])
     assert out["add"] == 1 and s.lessons()[-1]["trigger"] == "Gold: 10"
     rel = s.relevant(["Gold: 10", "Exit City"])
-    assert {r["trigger"] for r in rel[:2]} == {"Gold: 10", "Exit City"}  # ekrana uyanlar tetiksizlerden önce
-    assert all(r["trigger"] != "Exit City" for r in s.relevant(["Gold: 10"]))  # ekranda yoksa gelmez
+    assert {r["trigger"] for r in rel[:2]} == {"Gold: 10", "Exit City"}  # screen matches come before trigger-less
+    assert all(r["trigger"] != "Exit City" for r in s.relevant(["Gold: 10"]))  # not returned if it is not on screen
     ctx = s.context(["Exit City"])
     assert "When 'Exit City' is on screen: Click 'Exit City' first." in ctx
-    # Kurallar Jev'e her adımda ilk sırada gider (ekrana uyan arayüz derslerinden de önce).
+    # Rules go to Jev first at every step (before even the UI lessons that match the screen).
     s.apply({"add": [{"do": "A black card goes on a red card one rank higher.", "kind": "rule"}]})
     assert s.relevant(["Gold: 10", "Exit City"])[0]["kind"] == "rule"
 
@@ -343,7 +343,7 @@ def test_reflect_uses_evidence_and_falls_back():
     assert summary == "Ended the turn; the counter moved to Turn 2." and ops["confirm"] == ["l1"]
     sent = got["msgs"][1]["content"]
     assert "appeared: Turn 2 | disappeared: Turn 1" in sent and "l1: Turns end with 'End turn'. (unverified)" in sent
-    assert reflect(lambda m: "The", "G", "g", "done", "", [], [])[0] == "g -> done"  # yarım cevap
+    assert reflect(lambda m: "The", "G", "g", "done", "", [], [])[0] == "g -> done"  # half-finished answer
 
     def broken(messages):
         raise RuntimeError("kota")
@@ -363,14 +363,14 @@ def test_discover_writes_prior_lessons_from_first_screen():
 
     ops = discover(chat, "Some Game", ["Start new game", "Options"])
     assert ops["add"][0]["trigger"] == "Start new game" and "- Options" in got["msgs"][1]["content"]
-    # Ana model ekranın okunmuş halini de görüp hangi oyun olduğunu kendisi çıkarıyor.
+    # The main model also sees the read screen and works out which game it is itself.
     discover(chat, "Microsoft Solitaire Collection", ["Yeni"], board="Seven tableau columns; stock at top-left.")
     assert "Seven tableau columns" in got["msgs"][1]["content"]
     assert "work out exactly which game" in got["msgs"][0]["content"] and "identified" in got["msgs"][0]["content"]
     assert discover(lambda m: "bilmiyorum", "G", []) == {} and discover(None, "G", []) == {}
 
 
-# ------------------------------------------------------------------------------------------- araç
+# ------------------------------------------------------------------------------------------- tool
 def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     import alice.config as config
     import alice.reflex.agent as agent_mod
@@ -411,7 +411,7 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     monkeypatch.setattr(agent_mod, "make_translator", lambda router: None)
 
     def chat(role, msgs, **k):
-        if "never played" in msgs[0]["content"]:  # keşif
+        if "never played" in msgs[0]["content"]:  # discovery
             return SimpleNamespace(text='{"identified": "Klondike in a solitaire collection", '
                                         '"add": [{"trigger": "Start new game", "do": "Begin here."}]}')
         return SimpleNamespace(text='{"summary": "Tried Exit twice; nothing happened.", "confirm": ["l1"]}')
@@ -421,12 +421,12 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     assert tool.risk_for({"action": "status"}) == "read" and tool.risk_for({"action": "turn"}) == tool.risk
     out = tool.run(ctx, "start", game="Hiç Görülmemiş Oyun").text
     assert "oyunu tanıdı: Klondike in a solitaire collection; 1 başlangıç dersi" in out
-    assert "Begin here. (unverified)" in out and "Identified game: Klondike" in out  # Jev de görüyor
+    assert "Begin here. (unverified)" in out and "Identified game: Klondike" in out  # Jev sees it too
     r = tool.run(ctx, "turn", goal="start a game")
-    assert made == [("Hiç Görülmemiş Oyun", True)]  # keşifteki gözlemci turda da kullanılıyor
+    assert made == [("Hiç Görülmemiş Oyun", True)]  # the discovery observer is also used in the turn
     observer, goal, notes, tracked = runs[0]
     assert tracked and "When 'Start new game' is on screen: Begin here." in notes
-    assert "özet: Tried Exit twice" in r.text and "+1 yeni, 1 doğrulandı" in r.text  # kodun dersi + modelin onayı
+    assert "özet: Tried Exit twice" in r.text and "+1 yeni, 1 doğrulandı" in r.text  # code's lesson + model confirm
     lessons = {x["do"]: x for x in GameSession.open(tmp_path, "Hiç Görülmemiş Oyun").lessons()}
     assert lessons["Begin here."]["source"] == "seen"
     assert any(d.startswith("Clicking 'Exit' changes nothing") for d in lessons)
@@ -434,7 +434,7 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     assert "toplam 1 tur" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
 
 
-# ------------------------------------------------------------------------------------------- kurallar
+# ------------------------------------------------------------------------------------------- rules
 RULES = [{"id": "l1", "trigger": "", "do": "A card goes on a card one rank higher of the opposite colour.",
           "kind": "rule", "score": 0, "source": "prior"},
          {"id": "l2", "trigger": "", "do": "Click the stock to draw.", "kind": "ui", "score": 1, "source": "seen"}]
@@ -451,7 +451,7 @@ def test_look_board_sends_window_image_and_rules():
     assert board.startswith("Column 3")
     text, image = got["parts"][0]["text"], got["parts"][1]
     assert "rank and suit" in text and "l1: A card goes on a card one rank higher" in text and "(unverified)" in text
-    assert "Click the stock" not in text  # sadece kurallar, arayüz dersleri değil
+    assert "Click the stock" not in text  # only the rules, not the UI lessons
     assert image["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert look_board(None, "G", frame(), []) == "" and look_board(ask, "G", None, []) == ""
 
@@ -474,9 +474,9 @@ def test_plan_move_uses_board_rules_and_checks_answer():
     assert plan["move"].startswith("Click the 4 of clubs") and plan["rules_used"] == ["l1"]
     sent = got["msgs"][1]["content"]
     assert "Column 3: 4 of clubs" in sent and "l1: A card goes on" in sent and "turn 3: drew a card" in sent
-    assert "Click the stock to draw." in sent  # diğer dersler de bağlamda
-    assert plan_move(lambda m: '{"why": "x"}', "G", "g", "board", [], []) == {}  # hamlesiz cevap
-    assert plan_move(chat, "G", "g", "", [], []) == {}  # tahta yoksa plan yok
+    assert "Click the stock to draw." in sent  # other lessons are in context too
+    assert plan_move(lambda m: '{"why": "x"}', "G", "g", "board", [], []) == {}  # answer without a move
+    assert plan_move(chat, "G", "g", "", [], []) == {}  # no board, no plan
 
 
 def test_reflect_compares_expected_move_with_what_happened():
@@ -554,17 +554,17 @@ def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path)
     assert tool.risk_for({"action": "play"}) == tool.risk and tool.risk_for({"action": "look"}) == "read"
     r = tool.run(ctx, "play").text
     goal, notes = runs[0]
-    assert goal == "Click the 4 of clubs" and "Expected: 4 moves onto 5" in notes  # Jev planlanan hamleyi yapıyor
-    assert calls == ["vision", "vision", "brain", "vision", "fast"]  # iki okuma, planla, (oyna), tekrar bak, kıyasla
+    assert goal == "Click the 4 of clubs" and "Expected: 4 moves onto 5" in notes  # Jev makes the planned move
+    assert calls == ["vision", "vision", "brain", "vision", "fast"]  # two reads, plan, (play), look again, compare
     assert "Second, independent reading of the same board:\nColumn 3: 4 of spades" in planned[0]
     assert "hamle: Click the 4 of clubs" in r and "tahta şimdi:\nColumn 6: 5 of diamonds, 4 of clubs." in r
     assert "1 doğrulandı" in r
     (rule,) = [x for x in GameSession.open(tmp_path, "Solitaire").lessons() if x["kind"] == "rule"]
-    assert rule["source"] == "seen" and rule["score"] == 1  # oynayarak doğrulanan kural
+    assert rule["source"] == "seen" and rule["score"] == 1  # rule confirmed by playing
 
 
 def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_path):
-    """Kurallar oyunun adından değil tahtadan çıkar; hamle olup olmadığına tıklama sayısı değil tahta karar verir."""
+    """Rules come from the board, not the game's name; the board decides if a move happened, not the click count."""
     import alice.config as config
     import alice.reflex.agent as agent_mod
     import alice.reflex.observers as obs_mod
@@ -584,7 +584,7 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
             made.append(self)
 
         def run(self, goal, max_steps, notes):
-            # Jev "bitti" demedi ama tıklama işe yaramıştı; tersi de olabilir: karar tahtanın.
+            # Jev did not say "bitti" (done), but the click had worked; the reverse can happen too: the board decides.
             return ReflexResult("acted", 1, "eylem ekranı değiştirdi", ["1. tıklandı (ekran değişti)"], "S", "desktop")
 
     monkeypatch.setattr(agent_mod, "ScreenAgent", FakeAgent)
@@ -594,7 +594,7 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
     def chat(role, msgs, **k):
         if role == "vision":
             return SimpleNamespace(text="Column 3: 4 of clubs. Column 6: 5 of diamonds.")
-        if "never played" in msgs[0]["content"]:  # keşif: oyun adından kural çıkmadı
+        if "never played" in msgs[0]["content"]:  # discovery: no rule came from the game's name
             return SimpleNamespace(text="{}")
         if "choose the next single move" in msgs[0]["content"]:
             return SimpleNamespace(text='{"move": "Click the 4 of clubs", "why": "black on red", "expect": "4 on 5", '
@@ -607,14 +607,14 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
     tool = Game()
     tool.run(ctx, "start", game="Kart")
     first = tool.run(ctx, "play").text
-    assert made[0].stop_after_change and made[0].track_changes  # hamle: ilk değişimde dur
+    assert made[0].stop_after_change and made[0].track_changes  # move: stop at the first change
     assert "SONUÇ: hedef yapıldı." in first
     second = tool.run(ctx, "play").text
     assert "OLMADI (tahtaya göre)" in second
     rows = GameSession.open(tmp_path, "Kart")
     assert [t["status"] for t in rows.turns()] == ["done", "failed"]
     rules = [r for r in rows.lessons() if r["kind"] == "rule"]
-    assert len(rules) == 1 and rules[0]["source"] == "prior" and "opposite colour" in rules[0]["do"]  # bir kez
+    assert len(rules) == 1 and rules[0]["source"] == "prior" and "opposite colour" in rules[0]["do"]  # once
 
 
 def test_agent_stops_after_first_change_and_drags_what_it_sees():
@@ -649,7 +649,7 @@ def test_agent_stops_after_first_change_and_drags_what_it_sees():
             self.kinds, self.zoomed = [], []
 
         def decide(self, state, questions, images=None):
-            if "action" not in questions:  # yakından bakış: tutulacak (üstü açık) kısım
+            if "action" not in questions:  # close-up: the part to grab (the uncovered part)
                 self.zoomed.append(questions["target"].instructions)
                 return Decision({"target_visible": Answer("noul", self.visible, 0.9),
                                  "target": Answer("box", {"left": 0.0, "top": 0.0, "right": 0.1, "bottom": 0.1}, 0.9)},
@@ -668,10 +668,10 @@ def test_agent_stops_after_first_change_and_drags_what_it_sees():
     agent = ScreenAgent(board, brain, settle=0)
     agent.track_changes = agent.stop_after_change = True
     res = agent.run("Drag the 4 of clubs onto the 5 of diamonds", max_steps=5)
-    assert res.status == "acted" and len(board.drags) == 1  # sürüklendi, ekran değişti, durdu
+    assert res.status == "acted" and len(board.drags) == 1  # dragged, screen changed, stopped
     assert "drag_unlisted" in brain.kinds[0]
-    assert "uncovered part" in brain.zoomed[0] and "grabbed" in brain.zoomed[0]  # tutulacak yere yakından bakıldı
-    assert board.drags[0][:2] != (0.15, 0.15)  # kaba kutunun ortası değil, yakından bulunan tutma noktası
+    assert "uncovered part" in brain.zoomed[0] and "grabbed" in brain.zoomed[0]  # grab spot checked up close
+    assert board.drags[0][:2] != (0.15, 0.15)  # not the rough box middle; the grab point found up close
     assert agent.evidence[0]["action"].startswith("dragged something visible on screen from")
 
     board = Board()

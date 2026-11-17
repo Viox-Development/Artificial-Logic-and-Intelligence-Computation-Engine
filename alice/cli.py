@@ -1,32 +1,32 @@
-"""ALICE komut satırı.
+"""ALICE command line.
 
-  alice                      etkileşimli oturum (REPL)
-  alice "görev"              REPL'i bu mesajla başlat
-  alice -p "görev"           tek seferlik çalıştır, sonucu yaz, çık (--output-format json|stream-json: betikler için)
-  alice init [--force]       ~/.alice altında config.toml, .env ve personality.md oluştur
-  alice eval [--add|--from-log N]   gerçek konuşmalardan test seti: düzeldi mi bozuldu mu
-  alice setup google         Google Takvim + Gmail kurulum sihirbazı (adım adım, sayfaları kendisi açar)
-  alice doctor               anahtarları, modelleri ve opsiyonel bağımlılıkları test et
-  alice models [--refresh] [--write]  ücretsiz modelleri canlı ölç/sırala; --write rolleri auto yapar
-  alice reflex "hedef"       Jev/System One reflex döngüsünü tek başına çalıştır
-  alice app                  masaüstü uygulamasını aç
-  alice update [--check]     GitHub'daki son sürüme güncelle (main'e merge olanı çeker)
-  alice connect [ad]         servis bağlantıları (Spotify, Steam, Discord, YouTube, kendi API'ların)
-  alice feeds                bağlı servisleri izleyip yeni bir şey olunca haber veren akışlar
-  alice log [n]              ALICE'in senin adına gönderdikleri (mesaj, DM, e-posta) ve reddettiklerin
-  alice shortcut             masaüstüne ve Başlat menüsüne ALICE kısayolu koy (Windows)
-  alice core run|install|uninstall|status|mode|stats   arka plan çekirdeği (izleme, modlar, görevler)
-  alice rules [add "cümle"]  uyarı kuralları ("GPU uzun süre ısınırsa söyle")
-  alice tasks [add "cümle"]  zamanlanmış görevler ("her pazar gece projelerimi yedekle")
-  alice voice [audition|use|library|say|test|status|models|install-local|on|off]   sesli asistan ve ses seçimi
-  alice quick [--open]       hızlı bar kısayolları (Ctrl+Alt+A / S / C)
-  alice dcs install|uninstall|status|kneeboard   DCS bağlantısı
-  alice watch [status|import <db>]     akıllı saat verisi ve ne sıklıkla geldiği
-  alice phone [--new-token]  telefon köprüsü (telefondan ALICE, canlı nabız)
-  alice notes | brief | report         notlar, sabah özeti, haftalık bilgisayar raporu
-  alice plugins [new <ad>]   eklentileri listele / yeni eklenti şablonu oluştur
+  alice                      interactive session (REPL)
+  alice "task"               start REPL with this message
+  alice -p "task"            run once, print result, exit (--output-format json|stream-json: for scripts)
+  alice init [--force]       create config.toml, .env, and personality.md under ~/.alice
+  alice eval [--add|--from-log N]   test set from real conversations: fixed or broken
+  alice setup google         Google Calendar + Gmail setup wizard (step-by-step, opens pages on its own)
+  alice doctor               test keys, models, and optional dependencies
+  alice models [--refresh] [--write]  benchmark/rank free models live; --write sets roles to auto
+  alice reflex "goal"        run Jev/System One reflex loop standalone
+  alice app                  open desktop application
+  alice update [--check]     update to latest release on GitHub (pulls what is merged into main)
+  alice connect [name]       service connections (Spotify, Steam, Discord, YouTube, custom APIs)
+  alice feeds                feeds that watch connected services and notify when something new happens
+  alice log [n]              what ALICE sent on your behalf (message, DM, email) and rejections
+  alice shortcut             place ALICE shortcut on Desktop and Start menu (Windows)
+  alice core run|install|uninstall|status|mode|stats   background core (monitoring, modes, tasks)
+  alice rules [add "phrase"] alert rules ("tell me if GPU overheats for a long time")
+  alice tasks [add "phrase"] scheduled tasks ("back up my projects every Sunday night")
+  alice voice [audition|use|library|say|test|status|models|install-local|on|off]   voice assistant and voice selection
+  alice quick [--open]       quick bar shortcuts (Ctrl+Alt+A / S / C)
+  alice dcs install|uninstall|status|kneeboard   DCS connection
+  alice watch [status|import <db>]     smartwatch data and sync frequency
+  alice phone [--new-token]  phone bridge (ALICE from phone, live pulse)
+  alice notes | brief | report         notes, morning brief, weekly computer report
+  alice plugins [new <name>] list plugins / create new plugin template
 
-Her komutun ayrıntısı için: alice <komut> --help
+For details on each command: alice <command> --help
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ COMPACT_TOOLS = {"read_file", "list_dir", "glob", "grep", "web_search", "web_fet
 
 
 class _Tail:
-    """Uzun cevap akarken ekrana sığan son kısmı göster (Live taşınca satırlar kopyalanmasın)."""
+    """Show the last part that fits the screen while long responses stream (avoid line duplication when Live overflows)."""
 
     def __init__(self, text: str):
         self.text = text
@@ -108,7 +108,7 @@ class RichUI:
         self._spin = None
         self._buf = ""
 
-    # ------------------------------------------------------------ yardımcılar
+    # ---------------------------------------------------------------- helpers
     def _spin_start(self, label: str) -> None:
         self._spin_stop()
         self._spin = console.status(f"[dim]{label}[/]", spinner="dots")
@@ -124,7 +124,7 @@ class RichUI:
             self._live.stop()
             self._live = None
 
-    # ------------------------------------------------------------------ akış
+    # ----------------------------------------------------------------- stream
     def stream_start(self) -> None:
         self._buf = ""
         self._think = ""
@@ -162,11 +162,11 @@ class RichUI:
             if self.verbose and source:
                 console.print(f"[dim]  ({source})[/]")
 
-    # ----------------------------------------------------------------- araçlar
+    # ------------------------------------------------------------------ tools
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
         self._spin_stop()
         if name in COMPACT_TOOLS:
-            # Salt okuma araçları (paralel de çalışabilir) bitince tek satır olarak yazılır.
+            # Read-only tools (which can also run in parallel) are printed as a single line when done.
             self._pending_summary = getattr(self, "_pending_summary", {})
             self._pending_summary[call_id] = summary
         else:
@@ -233,8 +233,8 @@ class RichUI:
 
 
 class JsonUI:
-    """`alice -p --output-format json|stream-json`: betik ve otomasyonlar için makinece okunur çıktı. stdout'a sadece
-    JSON gider (stream-json: her olay bir satır); izin gereken araç sorulmadan reddedilir (yolo hariç)."""
+    """`alice -p --output-format json|stream-json`: machine-readable output for scripts and automations. Only JSON
+    goes to stdout (stream-json: one per line); tools requiring permission are rejected without asking (except yolo)."""
 
     def __init__(self, out, stream: bool = False):
         self.out = out
@@ -315,7 +315,7 @@ def build(cfg: Config, cwd: Path, mode: str, verbose: bool = False) -> tuple[Age
 def _check_ready(router: Router) -> bool:
     if router.first_available("brain"):
         if not any(pc.needs_key and pc.api_key for pc in router.providers_cfg.values()):
-            # Anahtarsız tek seçenek yerel Ollama; çoğu zaman kurulu değil, hata listesi yerine ne yapılacağını söyle.
+            # The only keyless option is local Ollama; often not installed, tell what to do instead of an error list.
             console.print(f"[yellow]Hiç API anahtarı yok, sadece yerel Ollama denenecek.[/] {alice_home() / '.env'} "
                           "dosyasına en az bir anahtar ekle (en kolayı GEMINI_API_KEY), sonra [bold]alice doctor[/].")
         return True
@@ -352,14 +352,14 @@ def make_prompt_session(agent: Agent, router: Router, ctx: ToolContext):
     @kb.add("enter")
     def _(event):
         buf = event.current_buffer
-        # Satır sonu "\" ile bitiyorsa alt satıra geç (her terminalde çalışan yöntem).
+        # If line ends with "\", move to next line (method that works across all terminals).
         if buf.document.text_before_cursor.endswith("\\"):
             buf.delete_before_cursor(1)
             buf.insert_text("\n")
         else:
             buf.validate_and_handle()
 
-    @kb.add("s-tab")  # izin modunu döndür
+    @kb.add("s-tab")  # cycle permission mode
     def _(event):
         order = list(MODES)
         agent.permissions.mode = order[(order.index(agent.permissions.mode) + 1) % len(order)]
@@ -429,7 +429,7 @@ def repl(agent: Agent, router: Router, ctx: ToolContext, cfg: Config, resume: st
 
 
 def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg: Config):
-    """None, "exit", ("run", mesaj) ya da ("prefill", metin) döndürür."""
+    """Returns None, "exit", ("run", message), or ("prefill", text)."""
     from alice import session as sess
     from alice.commands import builtin_prompt, expand_custom
 
@@ -580,7 +580,7 @@ def print_usage(router: Router) -> None:
 
 # ------------------------------------------------------------------- doctor
 def _doctor_connect(cfg: Config) -> None:
-    """Bağlantılar tek satırda: hangileri hazır, hangileri anahtar/izin bekliyor."""
+    """Connections in a single line: which are ready, which are waiting for keys/permissions."""
     from alice.connect.manifest import discover
     from alice.connect.runner import ready
 
@@ -596,13 +596,13 @@ def _doctor_connect(cfg: Config) -> None:
 
 
 def _doctor_update(cfg: Config) -> None:
-    """Sürüm satırı: hangi commit'tesin, yeni sürüm var mı, otomatik güncelleme hangi modda."""
+    """Version line: which commit you are on, whether a new version is available, auto-update mode."""
     from alice import updater
 
     mode = updater.settings(cfg).get("mode", "auto")
     try:
         info = updater.check(cfg, timeout=10, details=False)
-    except Exception as e:  # noqa: BLE001 - doctor hiçbir adımda düşmemeli
+    except Exception as e:  # noqa: BLE001 - doctor should never crash at any step
         console.print(f"[dim]sürüm kontrolü yapılamadı: {e}[/]")
         return
     if info.error and not info.available:
@@ -668,7 +668,7 @@ def doctor(cfg: Config) -> int:
 
 # ------------------------------------------------------------------- models
 def models_cmd(cfg: Config, refresh: bool, write: bool) -> int:
-    """Ücretsiz modelleri canlı ölç ve sırala (sonuç ~/.alice/models.json, "auto" zincirleri bunu kullanır)."""
+    """Benchmark and rank free models live (result in ~/.alice/models.json, "auto" chains use this)."""
     from alice.providers import ranking
 
     router = Router(cfg)
@@ -703,9 +703,9 @@ def models_cmd(cfg: Config, refresh: bool, write: bool) -> int:
 
 
 def write_roles(chains: dict[str, list[str]]) -> Path:
-    """config.toml'daki ilgili rol satırlarını değiştir (boş öneri olan rollere dokunma)."""
-    # Yalnız [roles] bölümüne yazar (başka bölümdeki aynı adlı anahtara dokunmaz); "[roles]  # yorum" başlığında ve
-    # eksik rolde de çalışır. Önceden düz metin aranıyordu: yorumlu başlıkta yeni rol sessizce eklenmiyordu.
+    """Update corresponding role lines in config.toml (do not touch roles with empty recommendations)."""
+    # Writes only to the [roles] section (does not touch keys with same name in other sections); works with
+    # "[roles]  # comment" headers and missing roles. Previously searched plain text: new role was silently omitted.
     from alice.config import set_config_value
 
     init_home()
@@ -741,7 +741,7 @@ def reflex_cmd(cfg: Config, a: argparse.Namespace) -> int:
         if a.target == "browser" and not a.close:
             console.input("[dim]tarayıcıyı kapatmak için Enter[/]")
     except ToolError as e:
-        if str(e) == NO_SEPARATE:  # modele yazılmış metin; komut satırında ne yapılacağını söyle
+        if str(e) == NO_SEPARATE:  # text written for the model; tell what to do on the command line
             console.print("[red]Açık tarayıcına bağlanılamadı ve ayrı pencere açmak kapalı.[/] Tarayıcını "
                           "--remote-debugging-port=9222 ile aç ya da config.toml " + escape("[agent]")
                           + " bölümüne browser_allow_separate = true yaz.")
@@ -792,8 +792,8 @@ def update_cmd(argv: list[str]) -> int:
 
 # ---------------------------------------------------------------------- app
 def default_workspace() -> Path:
-    """Uygulamanın başlangıç klasörü. Ev klasörü çok büyük ("bu proje" deyince her yeri tarıyordu), bu yüzden:
-    config'teki [app] workspace > son kullanılan klasör > Belgeler\\ALICE (yoksa oluşturulur)."""
+    """Application starting directory. Home folder is too large (scanned everywhere when saying "this project"), so:
+    [app] workspace in config > last used directory > Documents\\ALICE (created if missing)."""
     try:
         ws = (load_config().data.get("app", {}) or {}).get("workspace", "")
     except Exception:  # noqa: BLE001
@@ -816,8 +816,8 @@ def default_workspace() -> Path:
 
 
 def _attach_to_core() -> int | None:
-    """Uygulama çekirdeğin içinde açıksa (gerekirse çekirdeği başlatıp) pencereyi ona aç. Olmazsa None: uygulama
-    eskisi gibi kendi sürecinde kurulur. Pencereyi kapatmak çekirdeği kapatmaz; çekirdek kapanınca pencere kapanır."""
+    """If app is open in core, open window to it (starting core if needed). Returns None if unavailable: app is set up
+    in its own process as before. Closing window does not stop core; window closes when core stops."""
     from alice.app import host
     from alice.app.window import open_window
 
@@ -826,7 +826,7 @@ def _attach_to_core() -> int | None:
         if not (cfg.data.get("app", {}) or {}).get("in_core", True):
             return None
         url = host.attach()
-    except Exception:  # noqa: BLE001 - bağlanamazsak eski yoldan açılsın
+    except Exception:  # noqa: BLE001 - if connection fails, open using the legacy path
         return None
     if not url:
         return None
@@ -858,20 +858,20 @@ def app_cmd(argv: list[str]) -> int:
             return attached
     cwd = (a.cwd or default_workspace()).resolve()
     cfg = load_config(cwd=cwd)
-    # Açılışta güncelleme: [update] mode="auto" ise yeni commit çekilir ve ALICE kendini yeniden başlatır
-    # (bu çağrı o durumda geri dönmez). mode="notify" ise sadece bilgi döner, arayüzde duyurulur.
+    # Update on startup: if [update] mode="auto", new commit is pulled and ALICE restarts itself
+    # (this call does not return in that case). If mode="notify", only info is returned, announced in UI.
     from alice import updater
 
-    if updater.boot_check() == "rolled":  # yeni sürüm üst üste çöktü: önceki sürüme dönüldü, onunla aç
+    if updater.boot_check() == "rolled":  # new version crashed repeatedly: reverted to previous version, open with it
         console.print("[yellow]yeni sürüm açılamadı, önceki sürüme dönüldü; yeniden başlatılıyor[/]")
         updater.restart(env={"ALICE_RESTARTED": "1"})
     pending = updater.startup_update(cfg, emit=lambda s: console.print(f"[dim]güncelleme: {s}[/]"))
-    updater.mark_running()  # bundan sonra diske yeni kod gelirse "yeniden başlat" deriz
-    updater.watch_health()  # 90 sn ayakta kalırsak yeni sürüm sağlam
-    updater.mark_app()      # çekirdek, uygulama açıkken kendi başına çekmesin
+    updater.mark_running()  # if new code hits the disk after this, we suggest "restart"
+    updater.watch_health()  # if we stay up for 90s, the new version is healthy
+    updater.mark_app()      # prevent core from pulling on its own while app is open
     state = AppState(cfg, cwd, a.mode or cfg.agent.get("permission_mode", "auto"))
     state.watch_updates(pending)
-    added = refresh_home()  # güncellemeyle gelen yeni sağlayıcıların anahtar satırları .env'e eklenir
+    added = refresh_home()  # key lines for new providers from the update are added to .env
     if added:
         state.ui.info(f"Yeni anahtar alanları geldi: {', '.join(added)}. Bağlantılar → Anahtarlar'dan girebilirsin.")
     rb = updater.consume_rollback("app")
@@ -887,13 +887,13 @@ def app_cmd(argv: list[str]) -> int:
                       + (f"\n… ve {more} değişiklik daha" if more > 0 else ""))
     server = AppServer(state, a.port).start()
     if cfg.data.get("voice", {}).get("enabled"):
-        # "Hey Alice" çekirdekte dinlenir; uygulama açılınca çekirdek kapalıysa onu da başlat.
+        # "Hey Alice" is listened for in core; if core is stopped when app opens, start it too.
         try:
             from alice.core.service import start_detached
 
             if start_detached():
                 state.ui.info("Sesli asistan için arka plandaki ALICE çekirdeği başlatıldı.")
-        except Exception:  # noqa: BLE001 - ses başlamazsa uygulama yine açılsın
+        except Exception:  # noqa: BLE001 - if voice fails to start, app should still open
             pass
     console.print(f"[bold magenta]ALICE[/] uygulaması: {server.url}")
     if not state.router.first_available("brain"):
@@ -923,7 +923,7 @@ def shortcut_cmd() -> int:
     return 0
 
 
-# ------------------------------------------------------------ argparse (Türkçe)
+# ------------------------------------------------------------ argparse (Turkish)
 _ARGPARSE_TR = (
     ("unrecognized arguments", "tanınmayan argüman"),
     ("the following arguments are required", "şu argümanlar gerekli"),
@@ -944,7 +944,7 @@ class _TrHelpFormatter(argparse.RawDescriptionHelpFormatter):
 
 
 class TrArgumentParser(argparse.ArgumentParser):
-    """Yardım başlıkları ve hata mesajları Türkçe olan argparse (komut satırının dili tek olsun)."""
+    """Argparse with Turkish help headings and error messages (keep CLI language consistent)."""
 
     def __init__(self, *args, **kw):
         kw.setdefault("formatter_class", _TrHelpFormatter)
@@ -962,22 +962,22 @@ class TrArgumentParser(argparse.ArgumentParser):
 
 
 def package_version() -> str:
-    """Kurulu paketin sürümü; paket kurulu değilse (repo klasöründen çalışırken) koddaki sürüm."""
+    """Installed package version; if not installed (running from repo folder), version in code."""
     try:
         from importlib.metadata import version
 
         return version("alice-harness")
-    except Exception:  # noqa: BLE001 - PackageNotFoundError ya da bozuk metadata
+    except Exception:  # noqa: BLE001 - PackageNotFoundError or corrupted metadata
         return __version__
 
 
-# ------------------------------------------------------------- alt komutlar
+# -------------------------------------------------------------- subcommands
 SUBCOMMANDS = ("init", "doctor", "models", "reflex", "app", "shortcut", "core", "rules", "tasks", "voice", "quick",
                "dcs", "watch", "phone", "notes", "brief", "report", "plugins", "update", "connect", "feeds",
                "log", "setup", "eval", "hud", "vision", "night", "timeline", "relay")
 
-# Kendi argparse'ı olmayan alt komutlar: `alice <komut> --help` çalıştırmak yerine bu metni gösterir
-# (ör. `alice phone --help` köprüyü açıp beklemesin, `alice notes --help` notları listelemesin).
+# Subcommands without own argparse: shows this text instead of running `alice <command> --help`
+# (e.g. prevent `alice phone --help` from opening bridge and waiting, `alice notes --help` listing notes).
 _SUB_DOCS: dict[str, tuple[str, str | None]] = {
     "core": ("alice.core.cli", None), "rules": ("alice.core.cli", None), "tasks": ("alice.core.cli", None),
     "feeds": ("alice.core.cli", None), "log": ("", None), "voice": ("alice.voice.cli", None),
@@ -989,7 +989,7 @@ _SUB_DOCS: dict[str, tuple[str, str | None]] = {
 
 _HELP_ARGS = ("-h", "--help", "help")
 
-# Opsiyonel paket -> pyproject.toml'daki extra. Eksikse traceback yerine ne kurulacağı yazılır.
+# Optional package -> extra in pyproject.toml. If missing, prints what to install instead of traceback.
 OPTIONAL_EXTRAS: dict[str, str] = {
     "mss": "computer", "pyautogui": "computer", "pyperclip": "computer", "pygetwindow": "computer",
     "pywinauto": "computer", "playwright": "browser", "webview": "app", "pystray": "core",
@@ -999,7 +999,7 @@ OPTIONAL_EXTRAS: dict[str, str] = {
 
 
 def install_hint(module: str) -> str:
-    """Eksik modül için tek satırlık kurulum önerisi."""
+    """Single-line installation suggestion for a missing module."""
     root = module.split(".", 1)[0]
     extra = OPTIONAL_EXTRAS.get(root)
     if extra:
@@ -1008,7 +1008,7 @@ def install_hint(module: str) -> str:
 
 
 def subcommand_help(name: str) -> str:
-    """`alice <komut> --help` metni: modülün kendi kullanım metni, yoksa ana yardımdaki satırı."""
+    """`alice <command> --help` text: module's own usage text, otherwise its line in the main help."""
     import importlib
 
     mod, attr = _SUB_DOCS.get(name, ("", None))
@@ -1022,9 +1022,9 @@ def subcommand_help(name: str) -> str:
 
 
 def unknown_command_hint(argv: list[str]) -> str | None:
-    """Tek kelimelik argüman bir alt komutun yazım hatasına benziyorsa ne denmek istendiğini söyle.
+    """If a single-word argument looks like a typo for a subcommand, suggest what was meant.
 
-    `alice doctr` REPL'i "doctr" mesajıyla açıp modele gitmesin. Gerçek tek kelimelik mesajlar için `alice -p`."""
+    Prevents `alice doctr` from opening REPL with a "doctr" message and querying model. For real single words, use `alice -p`."""
     import difflib
 
     if len(argv) != 1 or not re.fullmatch(r"[a-z][a-z-]{2,}", argv[0]) or argv[0] in SUBCOMMANDS:
@@ -1078,11 +1078,11 @@ def _reflex_parser() -> TrArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if sys.stdout is None or sys.stderr is None:
-        # pythonw.exe (konsolsuz kısayol) altında stdout yok; çıktıyı yut.
+        # No stdout under pythonw.exe (console-less shortcut); swallow output.
         import os
 
         devnull = open(os.devnull, "w", encoding="utf-8")
-        try:  # hatalar kaybolmasın: ~/.alice/core.log (2 MB'ı geçince baştan)
+        try:  # keep errors from being lost: ~/.alice/core.log (rotate when > 2 MB)
             log = alice_home() / "core.log"
             if log.exists() and log.stat().st_size > 2_000_000:
                 log.replace(log.with_suffix(".log.1"))
@@ -1100,7 +1100,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dispatch(argv)
     except ModuleNotFoundError as e:
-        # Opsiyonel bir paket eksik (ör. ses için sounddevice): traceback yerine ne kurulacağını söyle.
+        # Optional package missing (e.g. sounddevice for voice): tell what to install instead of traceback.
         name = e.name or ""
         if name.split(".", 1)[0] not in OPTIONAL_EXTRAS:
             raise
@@ -1166,7 +1166,7 @@ def _dispatch(argv: list[str]) -> int:
         try:
             return app_cmd(argv[1:])
         except Exception:
-            # Kısayoldan (konsolsuz) açılınca hata görünmez; dosyaya yaz.
+            # Error not visible when launched from shortcut (no console); write to file.
             from alice.app.server import log_error
 
             log_error()
@@ -1242,13 +1242,13 @@ def _dispatch(argv: list[str]) -> int:
 
     json_out = None
     if a.oneshot and a.output_format != "text":
-        json_out = sys.stdout  # stdout'a sadece JSON; diğer her şey stderr'e
+        json_out = sys.stdout  # only JSON to stdout; everything else to stderr
         console.file = sys.stderr
     cwd = (a.cwd or Path.cwd()).resolve()
     if not cwd.is_dir():
         console.print(f"[red]klasör yok:[/] {escape(str(cwd))}")
         return 2
-    refresh_home()  # yeni sağlayıcıların anahtar satırları .env'e (var olanlara dokunmaz)
+    refresh_home()  # key lines of new providers to .env (does not touch existing ones)
     cfg = load_config(cwd=cwd)
     mode = "yolo" if a.yolo else (a.mode or cfg.agent.get("permission_mode", "auto"))
     prompt = " ".join(a.prompt).strip()

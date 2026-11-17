@@ -1,7 +1,7 @@
-"""Uygulama penceresini aç.
+"""Open the application window.
 
-Sıra: pywebview (Windows'ta Edge WebView2 ile gerçek uygulama penceresi) ->
-Edge/Chrome --app modu (adres çubuğu olmayan ayrı pencere) -> varsayılan tarayıcı.
+Order: pywebview (native app window via Edge WebView2 on Windows) ->
+Edge/Chrome --app mode (standalone window without an address bar) -> default browser.
 """
 
 from __future__ import annotations
@@ -38,13 +38,13 @@ def _browser_candidates() -> list[str]:
 
 
 def _watch(watch: Callable[[], str | None], close: Callable[[], None], load: Callable[[str], None]) -> None:
-    """watch() saniyede bir: "" = devam, yeni adres = ona geç, None = kapat (bkz. alice/app/host.py follow)."""
+    """watch() every second: "" = continue, new address = go to it, None = close (see alice/app/host.py follow)."""
     def loop() -> None:
         while True:
             time.sleep(1.0)
             try:
                 r = watch()
-            except Exception:  # noqa: BLE001 - izleyici hatası pencereyi kapatmasın
+            except Exception:  # noqa: BLE001 - watcher error should not close the window
                 continue
             try:
                 if r is None:
@@ -52,14 +52,14 @@ def _watch(watch: Callable[[], str | None], close: Callable[[], None], load: Cal
                     return
                 if r:
                     load(r)
-            except Exception:  # noqa: BLE001 - pencere zaten kapanmış olabilir
+            except Exception:  # noqa: BLE001 - window might already be closed
                 return
 
     threading.Thread(target=loop, daemon=True, name="alice-window-watch").start()
 
 
 def gaming() -> bool:
-    """Oyun/uçuş modu açık mı (çekirdeğin durum dosyasından)? Açıksa pencere öne geçip odağı almamalı."""
+    """Is game/flight mode active (from core state file)? If so, the window must not come to front and steal focus."""
     try:
         from alice.core.service import read_state
 
@@ -71,20 +71,20 @@ def gaming() -> bool:
 
 def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
                 watch: Callable[[], str | None] | None = None, quiet: bool | None = None) -> str:
-    """Pencereyi açar ve kapanana kadar bekler. Hangi yöntemin kullanıldığını döndürür.
+    """Opens the window and waits until it closes. Returns which method was used.
 
-    watch verilirse (çekirdekteki uygulamaya bağlı pencere) çekirdek kapanınca pencere de kapanır, çekirdek yeniden
-    başlayınca yeni adrese geçer.
+    If watch is given (window bound to the app in core), the window closes when core shuts down, and switches to the
+    new address when core restarts.
 
-    Oyun açıkken (quiet) pencere görev çubuğunda simge durumunda ve odaksız açılır: öne geçip oyunu
-    arkaya atınca kullanıcı oyunda ölüyordu."""
+    While a game is active (quiet), the window opens minimized to the taskbar and unfocused: popping in front
+    and backgrounding the game caused the user to die in-game."""
     quiet = gaming() if quiet is None else quiet
     if prefer in ("auto", "webview"):
         try:
             import webview  # pywebview
 
-            # Windows'taki pywebview (WinForms) simgeyi System.Drawing.Icon ile açar ve .png verilince
-            # yakalanamayan bir .NET hatasıyla çöker; orada .ico kullan.
+            # pywebview on Windows (WinForms) opens the icon with System.Drawing.Icon and crashes with
+            # an uncatchable .NET error when given a .png; use .ico there.
             icon = Path(__file__).parent / "static" / ("alice.ico" if sys.platform == "win32" else "icon.png")
             win = webview.create_window(title, url, width=1320, height=880, min_size=(820, 560),
                                         background_color="#16161a", minimized=quiet, focus=not quiet)
@@ -103,8 +103,8 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
         for exe in _browser_candidates():
             profile = alice_home() / "app-window"
             profile.mkdir(parents=True, exist_ok=True)
-            # Uygulama modundaki pencerenin adresi dışarıdan değiştirilemiyor: çekirdek yeniden başlayınca pencere
-            # kapatılıp yeni adresle yeniden açılır.
+            # The address of an app-mode window cannot be changed externally: when the core restarts, the window
+            # is closed and reopened with the new address.
             box: dict[str, Any] = {"url": url, "next": None, "proc": None}
 
             def relaunch(u: str, box: dict[str, Any] = box) -> None:
@@ -131,10 +131,10 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
 
 
 def create_shortcut() -> list[Path]:
-    """Masaüstüne ve Başlat menüsüne konsolsuz açılan ALICE kısayolu koy (Windows).
+    """Place an ALICE shortcut on the Desktop and Start menu that opens without a console (Windows).
 
-    OneDrive'a taşınmış masaüstünü de bulur. Başlat menüsündeki kısayol sayesinde Windows tuşuna
-    basıp "ALICE" yazarak da açılır."""
+    Also finds a Desktop moved to OneDrive. Thanks to the shortcut in the Start menu, it can also be
+    opened by pressing the Windows key and typing "ALICE"."""
     if sys.platform != "win32":
         raise RuntimeError("kısayol oluşturma şimdilik sadece Windows'ta")
     pyw = Path(sys.executable).with_name("pythonw.exe")
@@ -148,7 +148,7 @@ def create_shortcut() -> list[Path]:
         f"$s.IconLocation='{icon}';$s.Description='ALICE';$s.Save();Write-Output $p}}"
     )
     r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True, text=True)
-    # Windows simgeleri önbelleğe alır; yenilemezsek Başlat menüsü eski simgeyi göstermeye devam eder.
+    # Windows caches icons; if we do not refresh, the Start menu keeps showing the old icon.
     try:
         subprocess.run(["ie4uinit.exe", "-show"], capture_output=True, check=False, timeout=15)
     except (OSError, subprocess.SubprocessError):

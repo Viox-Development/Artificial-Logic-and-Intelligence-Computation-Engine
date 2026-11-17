@@ -1,0 +1,38 @@
+name: Triage
+
+# Labels pull requests by the files they touch and welcomes first-time contributors.
+# pull_request_target is needed to label and comment on PRs from forks; nothing from the PR is checked out or run.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          sync-labels: true
+
+  welcome:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue in ALICE! A maintainer will triage it soon.
+            If you would like to work on it yourself, say so here and we will assign it to you.
+          pr-message: |
+            Thanks for your first pull request to ALICE! 🎉
+            A few things will happen automatically: CI runs the tests, the CLA check asks you to sign once,
+            and the PR gets labels for the areas it touches. See CONTRIBUTING.md if anything is unclear.

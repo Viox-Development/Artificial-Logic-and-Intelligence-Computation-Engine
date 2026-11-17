@@ -1,5 +1,5 @@
-"""Jev'e görsel ve Box (TypeSafe "Danger Zone"): istek biçimi dokümandaki gibi mi, reflex ekranda görüneni
-tıklayabiliyor mu, pencere çerçevesi seçeneklerden çıktı mı."""
+"""Images and Box for Jev (TypeSafe "Danger Zone"): is the request shape as in the docs, can reflex click
+what it sees on screen, and was window chrome filtered out of the options."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def test_image_request_matches_docs_and_box_is_parsed():
     assert asset["type"] == "image" and asset["format"] == "jpg" and base64.b64decode(asset["data_base64"]) == img
     assert d["there"].value == 0.93
     assert d["where"].value == {"left": 0.44, "top": 0.25, "right": 0.84, "bottom": 0.82}
-    assert d["where"].confidence == 0.0  # dokümandaki örnekte confidence null gelebiliyor
+    assert d["where"].confidence == 0.0  # in the docs' example, confidence can come back as null
 
 
 def test_text_request_sends_no_image_header():
@@ -90,31 +90,31 @@ def test_rejected_image_request_only_disables_images_not_text():
     assert dec.supports_images
     with pytest.raises(DeciderError):
         dec.decide({"s": "r"}, {"q": Noul("?")}, images={"r": jpeg()})
-    assert not dec.supports_images  # görsel bir süre kapalı
-    assert dec.decide("text", {"q": Noul("?")})["q"].value == 0.8  # metin soruları yine Jev'e
+    assert not dec.supports_images  # images are off for a while
+    assert dec.decide("text", {"q": Noul("?")})["q"].value == 0.8  # text questions still go to Jev
 
 
 def test_prepare_image_fits_jev_limits():
     big = Image.open(__import__("io").BytesIO(prepare_image(Image.new("RGB", (3440, 1440)))))
     assert max(big.size) == 1568 and big.format == "JPEG"
     small = Image.open(__import__("io").BytesIO(prepare_image(Image.new("RGB", (200, 100)))))
-    assert min(small.size) >= 280  # kısa kenarı 280'den küçük görüntüyü API reddediyor
+    assert min(small.size) >= 280  # the API rejects images whose short side is under 280
     sx, sy = padded_fraction((200, 100))
     assert sx == pytest.approx(280 / 200) and sy == pytest.approx(280 / 100)
     assert padded_fraction((3440, 1440)) == (1.0, 1.0)
 
 
 def test_window_chrome_is_not_offered():
-    # Kullanıcının ekranı: ALICE penceresinde reflex "System" menüsüne tıkladı, seçeneklerde "Close" da vardı.
+    # User's screen: in the ALICE window reflex clicked the "System" menu, and "Close" was among the options.
     assert is_window_chrome("MenuBar", "System") and is_window_chrome("MenuItem", "Restore")
     assert is_window_chrome("MenuItem", "Kapat") and is_window_chrome("TitleBar", "ALICE")
     assert is_window_chrome("Button", "Close") and not is_window_chrome("Button", "Close", goal="pencereyi kapat")
     assert not is_window_chrome("Button", "Ayarlar") and not is_window_chrome("MenuItem", "Save")
-    # "Ayarlar katmanını X ile kapat" pencerenin kendisi değil: Unciv'de Kapat düğmesine basılıp oyun kapanmıştı.
+    # "Ayarlar katmanını X ile kapat" (close settings overlay) is not the window: Unciv's Kapat button closed the game.
     assert is_window_chrome("Button", "Close", goal="close the settings overlay with the large X", title="Unciv")
     assert not is_window_chrome("Button", "Close", goal="Not Defteri'ni kapat", title="*merhaba, Not Defteri")
     assert not is_window_chrome("Button", "Close", goal="close the app", title="Unciv")
-    # UWP: adın sonuna pencere başlığı ekleniyor.
+    # UWP: the window title gets appended to the name.
     assert is_window_chrome("Button", "Close Solitaire & Casual Games", title="Solitaire & Casual Games")
     assert is_window_chrome("Button", "Minimize Solitaire & Casual Games", title="Solitaire & Casual Games")
     assert not is_window_chrome("Button", "Close Tab", title="Solitaire & Casual Games")
@@ -130,7 +130,7 @@ def test_phantom_tabs_any_language():
 
 
 class WebViewObserver:
-    """İçi okunamayan pencere (WebView): UIA sadece 'Document' veriyor, ekranda ise 'Ayarlar' düğmesi var."""
+    """Unreadable window (WebView): UIA only reports 'Document', but the screen shows an 'Ayarlar' button."""
 
     kind = "fake"
 
@@ -164,7 +164,7 @@ class VisualDecider:
         self.zooms = []
 
     def decide(self, state, questions, images=None):
-        if "next" not in questions:  # yakından bakış: sadece "var mı?" + Box
+        if "next" not in questions:  # close-up look: only "var mı?" (is it there?) + Box
             self.zooms.append((state, images[state["screen"]]))
             return Decision({"target_visible": Answer("noul", self.zoom_visible, 0.9),
                              "target": Answer("box", self.zoom_box, 0.8)}, "f", 0)
@@ -182,16 +182,16 @@ def test_reflex_clicks_what_it_sees_when_the_window_has_no_readable_items():
     obs = WebViewObserver()
     dec = VisualDecider(obs)
     res = ReflexLoop(obs, dec, settle=0).run("Ayarlar'ı aç")
-    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]  # kutunun ortası
+    assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]  # middle of the box
     state, questions, images = dec.calls[0]
     assert isinstance(questions["target"], Box) and isinstance(questions["target_visible"], Noul)
     assert VISUAL_KEY in questions["next"].criteria and state["screen"] in images
     assert Image.open(__import__("io").BytesIO(images[state["screen"]])).format == "JPEG"
-    assert obs.goal == "Ayarlar'ı aç"  # çerçeve süzgeci hedefi bilsin
+    assert obs.goal == "Ayarlar'ı aç"  # the frame filter should know the goal
 
 
 def test_reflex_zooms_in_when_unsure_and_clicks_the_close_up_box():
-    """Kullanıcının ekranı: 3440x1440 küçülünce Jev 'var mı? 0.68' dedi. Kutunun çevresine yakından bakınca emin."""
+    """User's screen: at 3440x1440 downscaled, Jev said 'var mı? 0.68'. A close look around the box made it sure."""
     obs = WebViewObserver()
     dec = VisualDecider(obs, visible=0.68, zoom_visible=0.92,
                         zoom_box={"left": 0.4, "top": 0.275, "right": 0.6, "bottom": 0.475})
@@ -199,7 +199,7 @@ def test_reflex_zooms_in_when_unsure_and_clicks_the_close_up_box():
     res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
     assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
     crop = Image.open(__import__("io").BytesIO(dec.zooms[0][1]))
-    assert crop.size == (360, 320)  # pencerenin %30 x %40'ı, asıl çözünürlükte (küçültülmeden)
+    assert crop.size == (360, 320)  # 30% x 40% of the window, at full resolution (not downscaled)
     assert any("yakından: var mı? 0.92" in ln for ln in lines)
 
 
@@ -237,7 +237,7 @@ def test_reflex_falls_back_to_text_when_image_request_fails():
 
 
 def test_reflex_clicks_seen_target_even_when_jev_picks_stuck():
-    """Kullanıcının gördüğü hata: ağaçta sadece 'Document' var, Jev 'stuck' dedi ama hedef ekranda görünüyordu."""
+    """Error the user saw: the tree only had 'Document', Jev said 'stuck', but the target was visible on screen."""
     obs = WebViewObserver()
     dec = VisualDecider(obs)
     first = dec.decide
@@ -295,7 +295,7 @@ def test_image_check_reports_box_position():
 
 
 def test_reflex_tool_states_failure_plainly(monkeypatch):
-    # Kullanıcının ekranı: reflex needs_help döndü ama model "JEV çalışıyor, başardı" dedi.
+    # User's screen: reflex returned needs_help, but the model said "JEV çalışıyor, başardı" (it worked).
     from types import SimpleNamespace
 
     from alice.reflex import loop as loop_mod
@@ -316,8 +316,9 @@ def test_reflex_tool_states_failure_plainly(monkeypatch):
 
 
 def test_single_click_goal_finishes_after_the_click():
-    """Kullanıcının gördüğü: doğru projeye tıkladı (var mı? 0.96) ama 'bitti mi?' düşük kaldığı için aynı yere üç kez
-    tıklayıp 'yapılamadı' dedi. Tek tıklamalık hedefte tıklayınca biter (sonucu beyin doğrular)."""
+    """What the user saw: it clicked the right project (var mı? 0.96), but 'bitti mi?' (is it done?) stayed low,
+    so it clicked the same spot 3 times and said 'yapılamadı'. One-click goals end after the click
+    (the brain verifies)."""
     from alice.reflex.loop import single_click_goal
 
     assert single_click_goal("Projeler kısmındaki ilk projeye tıkla")
@@ -330,7 +331,7 @@ def test_single_click_goal_finishes_after_the_click():
     def never_done(state, questions, images=None):
         d = first(state, questions, images)
         if "next" in questions:
-            obs.page = "home"  # ekran değişmiş gibi görünmese de
+            obs.page = "home"  # even if the screen does not look changed
             d = Decision({**d.answers, "next": Answer("choice", VISUAL_KEY, 0.8), "done": Answer("noul", 0.05, 0.9)},
                          "f", 0)
         return d

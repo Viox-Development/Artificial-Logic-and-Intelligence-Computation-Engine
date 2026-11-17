@@ -84,7 +84,7 @@ def test_gemini_tts_request_and_decode():
     cfg = seen["body"]["generationConfig"]
     assert cfg["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Kore"
     prompt = seen["body"]["contents"][0]["parts"][0]["text"]
-    # Yönerge ayrı başlıkta, konuşulacak metin sadece TRANSCRIPT altında
+    # The directive goes under its own heading; the spoken text is only under TRANSCRIPT
     assert prompt.endswith("#### TRANSCRIPT\nYakıt az.") and "DIRECTOR'S NOTES\nStyle: Clear, firm and urgent" in prompt
     assert prompt.index("Do NOT speak them") < prompt.index("#### TRANSCRIPT")
 
@@ -114,7 +114,7 @@ def test_tts_router_fallback_and_flight_policy():
     r.synth("a")
     assert r.last == "local"
     r.synth("b")
-    assert len(cloud.calls) == 1  # bulut bekletiliyor
+    assert len(cloud.calls) == 1  # cloud is being held back
 
     cloud2, local2 = FakeTTS("cloud"), FakeTTS("local")
     r2 = TTSRouter(cloud2, local2, prefer="local", policy=lambda: {"local_gpu": False})
@@ -177,7 +177,7 @@ def test_strip_wake():
 
 
 def frames_of(*parts):
-    """(saniye, ses var mı) parçalarından 30 ms kareler."""
+    """30 ms frames built from (seconds, sound present?) pieces."""
     for sec, loud in parts:
         a = tone(sec) if loud else Audio.silence(sec, 16000)
         for i in range(0, len(a.pcm) - 959, 960):
@@ -186,13 +186,13 @@ def frames_of(*parts):
 
 def test_utterances_split_and_barge_in_callback():
     vad = VAD()
-    vad._vad = None  # enerji tabanlı, deterministik
+    vad._vad = None  # energy-based, deterministic
     starts = []
     outs = list(utterances(frames_of((0.5, False), (0.6, True), (1.0, False), (0.4, True), (1.0, False)), vad,
                            on_start=lambda: starts.append(1)))
     assert len(outs) == 2 and len(starts) == 2
     assert 0.5 < outs[0].seconds < 1.2
-    # kısa bir tık konuşma sayılmaz
+    # a short click doesn't count as speech
     assert list(utterances(frames_of((0.06, True), (1.0, False)), vad)) == []
 
 
@@ -219,7 +219,7 @@ def test_speaker_keeps_order_and_stops():
     for s in ("bir", "iki", "üç"):
         sp.say(s)
     assert sp.wait(5)
-    assert " ".join(player.played) == "bir iki üç"  # sırada bekleyenler tek seferde üretilir, sıra korunur
+    assert " ".join(player.played) == "bir iki üç"  # queued items are synthesized in one batch, order is preserved
     assert tts.calls[0][1] == "calm"
 
     slow = FakePlayer(dur=5)
@@ -229,7 +229,7 @@ def test_speaker_keeps_order_and_stops():
         if slow.played:
             break
         time.sleep(0.01)
-    sp2.say("ikinci")  # ilki çalarken gelen: kesilince söylenmez
+    sp2.say("ikinci")  # arrived while the first was playing: not spoken once it is cut off
     sp2.stop()
     assert sp2.wait(2) and slow.played == ["uzun cümle"]
 
@@ -273,7 +273,7 @@ class FakeAgent:
         self.stopped = 0
 
     def run_turn(self, text):
-        assert "[şu an: " in text  # saat her cümleye eklenir
+        assert "[şu an: " in text  # the time is added to every sentence
         self.turns.append(text.split("\n\n[şu an: ")[0])
         self.ui.stream_delta("Tamam, hallettim.")
         self.ui.stream_end("Tamam, hallettim.", "x")
@@ -295,13 +295,13 @@ def wait_for(cond, t=3):
 def test_assistant_wake_gating_and_follow_up():
     agent, sp = FakeAgent(), FakeSpeaker()
     va = VoiceAssistant(agent, sp, stt=None, follow_up=0.5)
-    va.handle_text("bugün hava nasıl", direct=False)          # uyandırma yok -> yok sayılır
+    va.handle_text("bugün hava nasıl", direct=False)          # no wake word -> ignored
     time.sleep(0.1)
     assert agent.turns == []
     va.handle_text("Hey Alice, GPU kaç derece?", direct=False)
     assert wait_for(lambda: agent.turns == ["GPU kaç derece?"])
     assert wait_for(lambda: "Tamam, hallettim." in sp.said)
-    # cevaptan hemen sonra uyandırma gerekmez
+    # no wake word needed right after a reply
     assert wait_for(lambda: va.armed_until > time.monotonic())
     va.handle_text("peki ya dün?", direct=False)
     assert wait_for(lambda: agent.turns[-1] == "peki ya dün?")
@@ -330,7 +330,7 @@ def test_audition_page(tmp_path):
     assert "alice voice use gemini:Aoede" in html and "audio" in html and "yok" in html
     n = len(engines[0].calls)
     run_audition(engines[:1], ["calm", "urgent"], out=tmp_path)
-    assert len(engines[0].calls) == n  # var olanlar yeniden üretilmez
+    assert len(engines[0].calls) == n  # existing ones are not regenerated
 
 
 GEMINI_429 = json.dumps({"error": {"code": 429, "message": "Quota exceeded... Please retry in 41.9s.", "details": [
@@ -372,7 +372,7 @@ def test_audition_waits_on_minute_quota_and_stops_on_daily(tmp_path):
     a = Flaky("gemini:Leda", [QuotaError("gün", None, True)])
     b = FakeTTS("gemini:Aoede")
     run_audition([a, b], ["calm", "happy"], out=tmp_path / "2", sleep=waits.append)
-    assert len(a.calls) == 0 and b.calls == []  # günlük kota: gemini'nin kalanına hiç istek gitmez
+    assert len(a.calls) == 0 and b.calls == []  # daily quota: no request is sent to gemini's remaining models
     assert len(waits) == 1
 
 
@@ -398,9 +398,9 @@ def test_gemini_rotates_models_on_quota():
     eng = GeminiTTS("k", "Aoede", ["m1", "m2", "m3"], client=httpx.Client(transport=httpx.MockTransport(handler)))
     assert eng.synth("a").rate == 24000 and eng.last_model == "m3" and hits == ["m1", "m2", "m3"]
     eng.synth("b")
-    assert hits[3:] == ["m3"]  # dolan ve olmayan modeller atlanıyor
+    assert hits[3:] == ["m3"]  # exhausted and missing models are skipped
 
-    plan["m3"] = GEMINI_429  # dakikalık
+    plan["m3"] = GEMINI_429  # per-minute
     with pytest.raises(QuotaError) as ei:
         eng.synth("c")
     assert not ei.value.daily and ei.value.retry_after
@@ -422,7 +422,7 @@ def test_speech_cache(tmp_path):
     r.synth("Hemen bakıyorum.", "urgent")
     r.synth("uzun " * 40, "calm")
     r.synth("uzun " * 40, "calm")
-    assert len(cloud.calls) == 4  # farklı ton ve uzun cümle önbelleğe alınmaz
+    assert len(cloud.calls) == 4  # a different tone and a long sentence are not cached
 
 
 def test_polish_removes_click_and_noisy_tail():
@@ -430,16 +430,16 @@ def test_polish_removes_click_and_noisy_tail():
 
     rate = 24000
     body = tone(0.4, rate, amp=0.5)
-    # sonda hafif ama sessiz olmayan cızırtı (~%2) ve aniden biten sinyal
+    # light but non-silent crackle at the end (~2%), and a signal that cuts off abruptly
     noise = arr.array("h", [((i * 7919) % 1300) - 650 for i in range(int(0.3 * rate))]).tobytes()
     out = Audio(body.pcm + noise, rate).polish()
     a = arr.array("h", out.pcm)
     speech_end = int(0.4 * rate)
-    assert abs(a[0]) <= 1                                         # başta tık yok
+    assert abs(a[0]) <= 1                                         # no click at the start
     nz = max(i for i, x in enumerate(a) if x != 0)
-    assert nz < speech_end + int(0.08 * rate)                     # cızırtılı kuyruğun çoğu kesildi
-    assert all(abs(x) < 400 for x in a[nz - 10:nz + 1])           # sona doğru sıfıra iniyor (tık yok)
-    assert len(a) - nz >= int(0.14 * rate)                        # sonda sessizlik var
+    assert nz < speech_end + int(0.08 * rate)                     # most of the crackling tail is cut
+    assert all(abs(x) < 400 for x in a[nz - 10:nz + 1])           # ramps down to zero toward the end (no click)
+    assert len(a) - nz >= int(0.14 * rate)                        # there is silence at the end
 
 
 def test_leak_detection_and_format_fallback(tmp_path):
@@ -448,7 +448,7 @@ def test_leak_detection_and_format_fallback(tmp_path):
     assert leaked("Style: serious, composed. Yedekleme yarıda kaldı.", "Yedekleme yarıda kaldı.")
     assert leaked("Ciddi bir sesle söyle yedekleme yarıda kaldı hedef diskte yer yok", "Yedekleme yarıda kaldı.")
     assert not leaked("Yedekleme yarıda kaldı.", "Yedekleme yarıda kaldı.")
-    assert not leaked("yedeklemeler yarıda kaldı", "Yedekleme yarıda kaldı.")  # küçük Whisper farkı
+    assert not leaked("yedeklemeler yarıda kaldı", "Yedekleme yarıda kaldı.")  # minor Whisper difference
 
     pcm = tone(0.2, 24000).pcm
     prompts = []
@@ -468,11 +468,11 @@ def test_leak_detection_and_format_fallback(tmp_path):
     assert json.loads(f.read_text(encoding="utf-8")) == {"m1": ["notes"]}
     eng2 = GeminiTTS("k", "Kore", ["m1"], client=httpx.Client(transport=httpx.MockTransport(handler)), formats_file=f)
     eng2.synth("Merhaba.", "calm")
-    assert eng2.last_format == "tag" and prompts[-1].startswith("[calm")  # kayıtlı iyi biçim, tek istek
+    assert eng2.last_format == "tag" and prompts[-1].startswith("[calm")  # saved good format, single request
 
 
 def test_gemini_too_long_audio_counts_as_leak(tmp_path):
-    """Doğrulayıcı olmadan da: talimatı okuyan (metne göre çok uzun) ses kullanılmaz, sıradaki biçim denenir."""
+    """Even without a verifier: audio too long for the text (it read the instruction) is dropped; try next format."""
     prompts = []
 
     def handler(req):
@@ -549,7 +549,7 @@ class ChatterboxMultilingualTTS:
 
 
 def test_chatterbox_local_server_end_to_end(tmp_path, monkeypatch):
-    """Gerçek tts_server.py sürecini sahte chatterbox/torch modülleriyle başlatıp konuş."""
+    """Start the real tts_server.py process with fake chatterbox/torch modules and talk to it."""
     import socket
     import sys
 
@@ -572,7 +572,7 @@ def test_chatterbox_local_server_end_to_end(tmp_path, monkeypatch):
         a = eng.synth("Merhaba, ben ALICE.", "urgent")
         assert a.rate == 24000 and a.seconds > 0.5
         assert eng.healthy()
-        b = eng.synth("Tekrar.", "calm")  # aynı sunucu, yeniden başlatma yok
+        b = eng.synth("Tekrar.", "calm")  # same server, no restart
         assert b.seconds > 0.2 and eng._proc.poll() is None
     finally:
         if eng._proc is not None:
@@ -632,7 +632,7 @@ def test_trim_by_words_cuts_hallucinated_tail():
     words = [("Merhaba,", 0.0, 0.5), ("ben", 0.6, 0.8), ("ALICE.", 0.9, 1.4), ("ve", 2.0, 2.2), ("şey", 2.3, 2.6)]
     out = by_words(audio, words, "Merhaba, ben ALICE.")
     assert abs(out.seconds - 1.55) < 0.01
-    # son kelime uydurma kuyrukta tekrar etse de ilk gerçek bitişte kesilir
+    # even if the last word repeats in the hallucinated tail, it is cut at the first real end
     words2 = [("Yakıt", 0.0, 0.4), ("az.", 0.5, 0.9), ("az", 1.5, 1.8), ("az", 2.0, 2.3)]
     assert abs(by_words(audio, words2, "Yakıt az.").seconds - 1.05) < 0.01
     assert by_words(audio, [("alakasız", 0, 1)], "Merhaba ben ALICE") is None
@@ -641,9 +641,9 @@ def test_trim_by_words_cuts_hallucinated_tail():
 def test_trim_by_length_drops_late_segments():
     from alice.voice.trim import by_length
 
-    speech = tone(1.0, 16000) + Audio.silence(0.6, 16000) + tone(1.5, 16000)  # ikinci parça uydurma
-    out = by_length(speech, "Merhaba, ben ALICE.")  # ~1.7 + 0.8 sn bekleniyor -> ikinci parça 1.6'da başlıyor
-    assert abs(out.seconds - speech.seconds) < 0.01  # beklenen süre içinde başladığı için korunur
+    speech = tone(1.0, 16000) + Audio.silence(0.6, 16000) + tone(1.5, 16000)  # the second segment is hallucinated
+    out = by_length(speech, "Merhaba, ben ALICE.")  # ~1.7 + 0.8 s expected -> second segment starts at 1.6
+    assert abs(out.seconds - speech.seconds) < 0.01  # kept because it starts within the expected duration
     late = tone(1.0, 16000) + Audio.silence(2.0, 16000) + tone(1.0, 16000)
     out2 = by_length(late, "Merhaba, ben ALICE.")
     assert out2.seconds < 1.2
@@ -716,10 +716,10 @@ def test_local_server_whisper_trims_and_retries(tmp_path, monkeypatch):
     eng = Chatterbox(sys.executable, port, library=EmotionLibrary(lib), start_timeout=30,
                      trim=lambda a, t: (_ for _ in ()).throw(AssertionError("sunucu kesti, istemci kesmemeli")))
     try:
-        # sahte model karakter başına 0.15 sn üretir (~2.7 sn); Whisper "dön"ü 1.5 sn'de duyuyor
+        # the fake model produces 0.15 s per character (~2.7 s); Whisper hears "dön" at 1.5 s
         a = eng.synth("Yakıt az, eve dön.", "urgent")
-        assert float(eng.last_quality) >= 0.85                 # ikinci deneme seçildi
-        assert a.seconds < 1.5 + 0.15 + 0.06 + 0.15 + 0.05      # "dön"den sonrası kesildi (+fade/boşluk)
+        assert float(eng.last_quality) >= 0.85                 # the second attempt was selected
+        assert a.seconds < 1.5 + 0.15 + 0.06 + 0.15 + 0.05      # everything after "dön" was cut (+fade/gap)
     finally:
         if eng._proc is not None:
             eng._proc.kill()
@@ -761,9 +761,9 @@ def test_library_resumes_after_quota(tmp_path):
     assert missing == ["playful"] and len(list(lib.glob("*.wav"))) == 4
     e = Limited("gemini:Kore", 5)
     _, missing = build_library(e, lib)
-    assert missing == [] and e.calls == [(e.calls[0][0], "playful")]   # sadece eksik olan
+    assert missing == [] and e.calls == [(e.calls[0][0], "playful")]   # only the missing one
     e2 = Limited("gemini:Aoede", 10)
-    build_library(e2, lib)                                               # ses değişti: hepsi yeniden
+    build_library(e2, lib)                                               # voice changed: regenerate everything
     assert len(e2.calls) == 5 and EmotionLibrary(lib).source == "gemini:Aoede"
 
 
@@ -806,7 +806,7 @@ def test_local_wake_gate_keeps_non_wake_audio_off_the_cloud():
     assert stt.calls == 1
     assert wait_for(lambda: agent.turns == ["saat kaç?"])
     stt.wake_gate = Gate(None)
-    va.handle_audio(audio, direct=False)  # yerel model yoksa eskisi gibi buluta gider
+    va.handle_audio(audio, direct=False)  # if there is no local model, it goes to the cloud as before
     assert stt.calls == 2
 
 
@@ -955,14 +955,14 @@ def test_assistant_uses_live_and_falls_back():
     va = VoiceAssistant(agent, sp, stt=None, live=live)
     va.handle_text("Hey Alice, YouTube'u aç", direct=False)
     assert wait_for(lambda: live.texts == ["YouTube'u aç"])
-    va.handle_text("Hey Alice", direct=False)                  # sadece çağırma: canlı konuşma boş açılır
+    va.handle_text("Hey Alice", direct=False)                  # wake word only: the live conversation opens empty
     assert wait_for(lambda: live.texts == ["YouTube'u aç", ""])
     assert agent.turns == []
 
     agent2, live2 = FakeAgent(), FakeLive(fail=True)
     va2 = VoiceAssistant(agent2, FakeSpeaker(), stt=None, live=live2)
     va2.handle_text("Hey Alice, saat kaç?", direct=False)
-    assert wait_for(lambda: agent2.turns == ["saat kaç?"])   # Live açılamadı -> eski yol
+    assert wait_for(lambda: agent2.turns == ["saat kaç?"])   # Live could not be opened -> old path
     assert not va2._live_ready()
 
 
@@ -980,7 +980,7 @@ def test_live_rate_limit_backs_off_for_an_hour_with_one_turkish_message():
     assert va._converse_live("merhaba") is False
     assert va._live_down - time.monotonic() > 3000
     assert any("kotası doldu" in e for e in events)
-    assert not any("rate limit" in e for e in events)  # ham İngilizce hata gösterilmez
+    assert not any("rate limit" in e for e in events)  # the raw English error is not shown
 
 
 def test_strip_wake_split_ali_spelling():
@@ -1062,7 +1062,7 @@ def test_mic_auto_gain_boosts_quiet_speech():
 
     mic = Microphone.__new__(Microphone)
     mic.gain, mic._peak, mic.auto_gain = 1.0, 0.0, True
-    quiet = array.array("h", [600, -600] * 240).tobytes()  # tepe ~0,018
+    quiet = array.array("h", [600, -600] * 240).tobytes()  # peak ~0.018
     for _ in range(200):
         out = mic._apply_gain(quiet)
     peak = max(array.array("h", out)) / 32768
@@ -1179,8 +1179,8 @@ def test_live_follow_up_without_wake_word_after_conversation():
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=STT(), live=live)
     va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)
     time.sleep(0.2)
-    assert live.texts == []  # konuşma yokken "Alice" olmadan uyanmaz
-    va.armed_until = time.monotonic() + 5  # canlı konuşma az önce bitti
+    assert live.texts == []  # no wake without "Alice" when there is no conversation
+    va.armed_until = time.monotonic() + 5  # live conversation just ended
     va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)
     assert wait_for(lambda: live.texts == ["Masaüstü simgelerini göster."])
 
@@ -1199,13 +1199,13 @@ def test_speech_gate_sends_silence_for_noise_and_preroll_for_speech():
     g = SpeechGate(vad, preroll=3, hangover=2, start_frames=2)
     noise = [bytes([i]) * 960 for i in range(1, 6)]
     out = [f for n in noise for f in g.feed(n)]
-    assert out == [b"\x00" * 960] * 5  # gürültü: Live'a sessizlik
+    assert out == [b"\x00" * 960] * 5  # noise: silence to Live
     vad.speech = True
-    assert g.feed(b"a" * 960) == [b"\x00" * 960]  # tek kare yetmez
+    assert g.feed(b"a" * 960) == [b"\x00" * 960]  # a single frame is not enough
     sent = g.feed(b"b" * 960)
-    assert sent[-1] == b"b" * 960 and b"a" * 960 in sent and noise[-1] in sent  # öncesiyle birlikte
+    assert sent[-1] == b"b" * 960 and b"a" * 960 in sent and noise[-1] in sent  # together with the pre-roll
     vad.speech = False
-    assert g.feed(b"c" * 960) == [b"c" * 960]  # konuşma bitince kısa süre açık kalır
+    assert g.feed(b"c" * 960) == [b"c" * 960]  # stays open briefly after speech ends
     g.feed(b"d" * 960)
     assert g.feed(b"e" * 960) == [b"\x00" * 960]
 
@@ -1235,7 +1235,7 @@ def test_wake_gate_moves_off_gpu_in_flight_and_back(monkeypatch):
     gpu = [True]
     gate = stt.WakeGate("base", "tr", gpu_model="small", allow_gpu=lambda: gpu[0])
     gate._model = gate._load()
-    assert loaded[-1] == ("small", "cuda", "int8_float16")  # ekran kartında yarı bellek
+    assert loaded[-1] == ("small", "cuda", "int8_float16")  # half-precision memory on the GPU
 
     def wait_moves():
         for t in threading.enumerate():
@@ -1246,7 +1246,7 @@ def test_wake_gate_moves_off_gpu_in_flight_and_back(monkeypatch):
     gate.sync(False)
     wait_moves()
     assert gate.device == "cpu" and gate._model.device == "cpu" and gate._model.name == "base"
-    gate.sync(False)  # zaten işlemcide: yeniden yükleme yok
+    gate.sync(False)  # already on CPU: no reload
     wait_moves()
     assert len(loaded) == 2
     gpu[0] = True
@@ -1282,10 +1282,10 @@ def test_tts_router_release_gpu_reaches_local_engine():
 
     local = Local()
     TTSRouter(None, local, policy=lambda: {}).release_gpu()
-    TTSRouter(None, None, policy=lambda: {}).release_gpu()  # yerel motor yoksa sorun yok
+    TTSRouter(None, None, policy=lambda: {}).release_gpu()  # no problem if there is no local engine
     assert local.released == 1
 
-# --------------------------------------------------- uyandırma doğruluğu
+# --------------------------------------------------- wake accuracy
 def test_speech_segments_drop_prompt_echo_noise_and_loops():
     from types import SimpleNamespace as S
 
@@ -1314,9 +1314,9 @@ def test_vad_ignores_steady_noise_that_webrtcvad_calls_speech():
     def frame(amp):
         return arr.array("h", [int(amp * 32767 * math.sin(i / 3)) for i in range(480)]).tobytes()
 
-    hum = [vad.is_speech(frame(0.02)) for _ in range(200)]  # 6 sn oyun/fan sesi
+    hum = [vad.is_speech(frame(0.02)) for _ in range(200)]  # 6 s of game/fan noise
     assert sum(hum[-100:]) == 0
-    assert vad.is_speech(frame(0.15))  # üstünde konuşma
+    assert vad.is_speech(frame(0.15))  # speech on top of it
 
 
 def test_strip_wake_ali_only_after_real_hey():
@@ -1350,7 +1350,7 @@ def test_wake_found_later_in_noisy_recording():
     agent, sp = FakeAgent(), FakeSpeaker()
     stt = STT()
     va = VoiceAssistant(agent, sp, stt=stt)
-    va.handle_audio(Audio(b"\1\0" * 16000 * 10, 16000), direct=False)  # 10 sn: baştaki 4 sn gürültü
+    va.handle_audio(Audio(b"\1\0" * 16000 * 10, 16000), direct=False)  # 10 s: first 4 s are noise
     assert stt.heard_audio and stt.heard_audio[0] == pytest.approx(6.0)
 
 
@@ -1396,7 +1396,7 @@ def test_wake_gate_adds_flight_words_in_flight_mode():
     audio = Audio(b"\1\0" * 16000, 16000)
     gate.transcribe(audio, "Hey Alice.")
     assert gate._model.prompt == "Hey Alice."
-    gpu[0] = False  # DCS açık: uçuş modu
+    gpu[0] = False  # DCS is open: flight mode
     gate.transcribe(audio, "Hey Alice.")
     assert "Bingo" in gate._model.prompt
 
@@ -1411,7 +1411,7 @@ def test_speech_segments_drop_echo_of_custom_prompt():
     assert speech_segments([echo, real], "Hey Alice. Bingo, cannon, waypoint, tanker.") == [real]
 
 
-# ------------------------------------------------------------------ "Alice sus" ve takip penceresi
+# ------------------------------------------------------------------ "Alice sus" and follow-up window
 @pytest.mark.parametrize("text, hush", [
     ("Alice sus", True), ("Alice, sus artık.", True), ("sus", True), ("Tamam Alice sessiz ol lütfen", True),
     ("Hey Alice, kapa çeneni!", True), ("sus Alice", True),
@@ -1423,15 +1423,15 @@ def test_is_hush(text, hush):
     assert is_hush(text) is hush
 
 
-# Eskiden tam eşleşen bir listeye bakılıyordu ve bunların çoğu kaçıyordu: ALICE susmayıp her söylenene cevap veriyordu.
+# It used to check an exact-match list and most of these slipped through: ALICE kept answering everything said.
 @pytest.mark.parametrize("text", [
     "Alice sus be", "sus dedim", "Alice susar mısın", "sussana", "Alice sussana", "susun", "Susss", "sus sus",
     "Alice sus sus", "alice susmanı istiyorum", "Alice sus artık be", "aşkım sus",
     "yeter", "Alice yeter", "yeter artık", "tamam yeter", "kes", "kes artık", "sesini kes", "Alice sesini kes",
     "şşt", "Şşşt", "konuşma", "Alice konuşma", "artık konuşma", "dur", "Alice dur", "tamam dur",
-    "SESSİZ OL",            # büyük İ: str.lower bunu 'i̇' yapıp eşleşmeyi bozuyordu
+    "SESSİZ OL",            # capital İ: str.lower turns it into 'i̇' and breaks the match
     "sessiz olur musun", "çeneni kapat", "kapat çeneni",
-    "Ali sus",              # Whisper 'Alice'i sık sık 'Ali' diye yazıyor; eskiden komut sanılıp cevaplanıyordu
+    "Ali sus",              # Whisper often writes 'Alice' as 'Ali'; it used to be taken for a command and answered
     "tamam Alice teşekkürler", "Alice teşekkür ederim", "bu kadar", "sağ ol", "iyi geceler Alice",
 ])
 def test_hush_turkce_halleri(text):
@@ -1456,15 +1456,15 @@ def test_ends_with_hush_on_streamed_transcript():
 
     assert ends_with_hush("YouTube aç bakalım Alice sus")
     assert not ends_with_hush("olsun bakalım")
-    # Turun tamamıysa zayıf sözcük de susturur; uzun cümlenin sonundaysa ancak isimle
+    # If it is the whole turn, a weak word also hushes; at the end of a longer sentence, only with the name
     assert ends_with_hush("yeter") and ends_with_hush("tamam anladım Alice yeter")
     assert not ends_with_hush("bence yeter") and not ends_with_hush("pastayı ikiye kes")
-    assert ends_with_hush("bir şey diyeceğim sus")  # güçlü sözcük sonda da susturur
+    assert ends_with_hush("bir şey diyeceğim sus")  # a strong word hushes at the end too
     assert not ends_with_hush("bu kadar yeter mi")
 
 
 def test_follow_up_window_her_kelimeye_cevap_vermez():
-    """Kullanıcının şikâyeti: 'sus' deyince susmayıp takip penceresinde her söylenene cevap veriyordu."""
+    """User complaint: after 'sus' it did not go quiet and kept answering everything said in the follow-up window."""
     for hush in ("Alice sus be", "Ali sus", "yeter", "sussana", "SESSİZ OL", "tamam teşekkürler"):
         agent, sp = FakeAgent(), FakeSpeaker()
         va = VoiceAssistant(agent, sp, stt=None, follow_up=5)
@@ -1472,7 +1472,7 @@ def test_follow_up_window_her_kelimeye_cevap_vermez():
         assert wait_for(lambda va=va: va.armed_until > time.monotonic())
         va.handle_text(hush, direct=False)
         assert va.muted and va.armed_until == 0, hush
-        for said in ("peki", "ya dün", "hmm bilmem", "sonra bakarız"):  # odadaki konuşma artık komut değil
+        for said in ("peki", "ya dün", "hmm bilmem", "sonra bakarız"):  # room chatter is no longer a command
             va.handle_text(said, direct=False)
         time.sleep(0.1)
         assert agent.turns == ["GPU kaç derece?"], (hush, agent.turns)
@@ -1491,7 +1491,7 @@ def test_hush_mutes_until_alice_is_said_again():
     assert wait_for(lambda: va.armed_until > time.monotonic())
     va.handle_text("Alice sus", direct=False)
     assert va.muted and va.armed_until == 0 and agent.turns == ["GPU kaç derece?"]
-    # susturulmuşken pencere yok, "Alice" cümlenin ortasında da uyandırmaz
+    # while muted there is no window, and "Alice" mid-sentence doesn't wake it either
     va.handle_text("peki ya dün?", direct=False)
     va.handle_text("bak şimdi Alice ne diyecek", direct=False)
     time.sleep(0.1)
@@ -1504,7 +1504,7 @@ def test_hush_mutes_until_alice_is_said_again():
 def test_hush_from_a_friend_while_idle_is_ignored():
     agent, sp = FakeAgent(), FakeSpeaker()
     va = VoiceAssistant(agent, sp, stt=None)
-    va.handle_text("sus", direct=False)  # pencere yok, Alice konuşmuyor: başkasına söylenmiş
+    va.handle_text("sus", direct=False)  # no window, Alice is not speaking: said to someone else
     assert not va.muted
 
 
@@ -1524,9 +1524,9 @@ def test_follow_up_is_capped_at_five_seconds():
 def test_follow_window_counts_from_speech_start():
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=None)
     now = time.monotonic()
-    va.armed_until = now - 1  # pencere az önce kapandı
-    assert va._armed(now - 2)  # cümle pencere içinde başladı: sayılır
-    assert not va._armed(now - 0.5)  # pencere kapandıktan sonra başladı: sayılmaz
+    va.armed_until = now - 1  # the window just closed
+    assert va._armed(now - 2)  # the sentence started inside the window: counts
+    assert not va._armed(now - 0.5)  # started after the window closed: doesn't count
     va._hush()
     assert not va._armed(now - 2)
 
@@ -1538,7 +1538,7 @@ def test_live_window_does_not_extend_after_idle_close():
         last_active = 0.0
 
         def converse(self, text, frames, stop, first_audio=b"", hint=None, **kw):
-            self.last_active = time.monotonic() - 5  # 5 sn sessizlikten sonra kapandı
+            self.last_active = time.monotonic() - 5  # closed after 5 s of silence
 
     live = FakeLive()
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=None, live=live)
@@ -1558,7 +1558,7 @@ def test_old_girlfriend_personality_is_upgraded_to_assistant(tmp_path, monkeypat
     assert "kişisel asistanı" in body and "JARVIS" in body and "Mommy öyle dedi" not in body
     assert "JARVIS" in (tmp_path / "personality.md").read_text(encoding="utf-8")
     (tmp_path / "personality.md").write_text("# kendi kişiliğim", encoding="utf-8")
-    assert config.personality_text() == "# kendi kişiliğim"  # kullanıcının yazdığına dokunulmaz
+    assert config.personality_text() == "# kendi kişiliğim"  # user-written content is left untouched
 
 
 def test_speaking_over_alice_counts_as_follow_up():
@@ -1573,7 +1573,7 @@ def test_speaking_over_alice_counts_as_follow_up():
     assert not va._armed(va._speech_at)
 
 
-# ---- voice.log'dan gerçek örnekler: yanlış uyanma ve tekrar eden kalıp cevaplar
+# ---- real examples from voice.log: false wakes and repeated stock replies
 def test_whisper_echoing_its_prompt_is_noise_not_a_wake():
     from alice.voice.stt import is_hallucination
 
@@ -1586,7 +1586,7 @@ def test_whisper_echoing_its_prompt_is_noise_not_a_wake():
 
 
 def test_name_mid_sentence_needs_a_real_request_to_wake():
-    # Arkadaşlarına ALICE'ten bahsederken söylenenler (voice.log): uyandırıp boş "Buradayım" cevabı aldırıyordu.
+    # Friends talking about ALICE (voice.log): it woke up and answered with an empty "Buradayım" (I'm here).
     assert strip_wake("Şuan Alice ya") is None
     assert strip_wake("Gideyse iyi Alice.") is None
     assert strip_wake("Bak şimdi Alice müziği aç") == "müziği aç"
@@ -1601,31 +1601,31 @@ def test_bare_wake_ack_varies_and_never_repeats_back_to_back():
 
 
 def test_short_prompt_echo_with_caps_alice_is_noise():
-    # 24 Ekim gecesi voice.log: "ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK." Live'ı açıyordu.
+    # Night of 24 October, voice.log: "ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK." were opening Live.
     from alice.voice.stt import PROMPT, is_hallucination
 
     for t in ("ALICE, DIGITI.", "ALICE, D'AMO.", "ALICE, DELİK.", "ALICE, D'UNCAN.", "Hey Alice. ALICE, DCS, F-16"):
         assert is_hallucination(t), t
     for t in ("Alice, dur.", "Hey Alice.", "Alice, müziği aç", "Hey Alice, saat kaç?"):
         assert not is_hallucination(t), t
-    assert "alice" not in PROMPT.lower()  # ipucunda ad yok: yankısı uyandıramaz
+    assert "alice" not in PROMPT.lower()  # no name in the hint: its echo cannot wake it
 
 
 def test_flight_callouts_go_stale_and_urgent_jumps_queue(monkeypatch):
     slow = FakePlayer(dur=0.3)
     sp = Speaker(FakeTTS("t"), slow)
-    sp.alert_volume = 1.0  # sahte TTS'in "sesi" metin taşıyor: kısılırsa okunamaz
+    sp.alert_volume = 1.0  # the fake TTS's "sound" carries text: if it is turned down it cannot be read
     monkeypatch.setattr(Speaker, "STALE", {"critical": 5.0, "warn": 5.0, "info": 0.2})
-    sp.say("ilk cümle")  # konu yok: bayatlamaz
+    sp.say("ilk cümle")  # no topic: never goes stale
     for _ in range(100):
         if slow.played:
             break
         time.sleep(0.01)
-    sp.say("Düşman saat 2", severity="info", topic="flight")  # 0.2 sn içinde çalamaz: atılır
+    sp.say("Düşman saat 2", severity="info", topic="flight")  # cannot play within 0.2 s: dropped
     sp.say("Waypoint 3", severity="info", topic="flight")
-    sp.say("Füze! Saat 3", severity="critical", topic="flight")  # sıradaki önemsizleri atar
+    sp.say("Füze! Saat 3", severity="critical", topic="flight")  # drops the unimportant ones queued next
     assert sp.wait(5)
-    assert len(slow.played) == 2 and slow.played[1].startswith("Füze")  # düşman/waypoint atıldı
+    assert len(slow.played) == 2 and slow.played[1].startswith("Füze")  # enemy/waypoint dropped
 
 
 def test_no_barge_in_while_gaming_or_on_discord():
@@ -1635,7 +1635,7 @@ def test_no_barge_in_while_gaming_or_on_discord():
     va._interrupt = lambda: stopped.append(1)
     sp.speaking = True
     va._on_speech_start()
-    assert stopped == []  # arkadaşın/oyun sesi ALICE'i kesmez
+    assert stopped == []  # a friend's/game's voice does not interrupt ALICE
     va.social = lambda: ""
     va._on_speech_start()
     assert stopped == [1]
@@ -1645,13 +1645,13 @@ def test_mic_closed_to_alice_while_on_discord_unless_ptt():
     agent, sp = FakeAgent(), FakeSpeaker()
     reason = ["Discord sesli konuşmada"]
     va = VoiceAssistant(agent, sp, stt=None, ptt_key="<scroll_lock>", social=lambda: reason[0], social_ptt=True)
-    assert va._social_skip()  # social_mode = "ptt": hiçbir cümle gitmez
+    assert va._social_skip()  # social_mode = "ptt": no sentence goes through
     reason[0] = ""
     assert not va._social_skip()
     no_ptt = VoiceAssistant(agent, sp, stt=None, social=lambda: "War Thunder")
-    assert not no_ptt._social_skip()  # tuş yoksa eski davranış: "Alice" başta olmalı
+    assert not no_ptt._social_skip()  # no key: old behavior: "Alice" must come first
     wake = VoiceAssistant(agent, sp, stt=None, ptt_key="<f13>", social=lambda: "DCS")
-    assert not wake._social_skip()  # varsayılan: "Alice naber" dinlenir (ses izi süzer)
+    assert not wake._social_skip()  # default: "Alice naber" is heard (the audio trace filters it)
 
 
 def test_tts_stays_on_one_voice():
@@ -1660,15 +1660,15 @@ def test_tts_stays_on_one_voice():
     cloud, local = FakeTTS("cloud"), FakeTTS("local")
     cache = SpeechCache(path=Path(tempfile.mkdtemp()))
     r = TTSRouter(cloud, local, "cloud", policy=lambda: {}, cache=cache)
-    cache.put("local", "calm", "merhaba", Audio(b"x" * 20, 16000))  # başka motorun eski kaydı
+    cache.put("local", "calm", "merhaba", Audio(b"x" * 20, 16000))  # an old entry from another engine
     r.synth("merhaba")
-    assert cloud.calls and r.last == "cloud"  # yerelin kaydı kullanılmaz: ses değişirdi
+    assert cloud.calls and r.last == "cloud"  # the local entry is not used: the voice would change
     cloud.fail = True
     r.synth("bir")
     cloud.fail = False
     r.down.clear()
     r.synth("iki")
-    assert r.last == "local"  # yedeğe geçince bir süre onda kalır, cümle cümle gidip gelmez
+    assert r.last == "local"  # after falling back, it stays there for a while, no sentence-by-sentence ping-pong
 
 
 def test_elevenlabs_engine_picks_model_sends_turkish_and_falls_back_on_credits():
@@ -1693,14 +1693,14 @@ def test_elevenlabs_engine_picks_model_sends_turkish_and_falls_back_on_credits()
     body = json.loads(post.content)
     assert post.url.path == "/v1/text-to-speech/YxrwjAKoUKULGd0g8K9Y" and post.url.params["output_format"] == "pcm_24000"
     assert body["model_id"] == "eleven_v4_turbo" and body["language_code"] == "tr"
-    assert post.headers["xi-api-key"] == "k" and body["voice_settings"]["stability"] < 0.5  # acil: daha canlı
+    assert post.headers["xi-api-key"] == "k" and body["voice_settings"]["stability"] < 0.5  # urgent: livelier
     with pytest.raises(QuotaError):
         el.synth("kredi yok")
     gem = FakeTTS("gemini")
     r = TTSRouter(gem, None, "cloud", policy=lambda: {"local_gpu": False}, premium=el)
-    assert r.order()[0] is el  # uçuşta da önce ElevenLabs
+    assert r.order()[0] is el  # in flight too, ElevenLabs first
     r.synth("kredi yok")
-    assert r.last == "gemini"  # kredi bitince susmaz
+    assert r.last == "gemini"  # credits run out: it does not go silent
 
 
 def test_eleven_scribe_first_with_alice_keyterm_and_groq_fallback():
@@ -1728,19 +1728,19 @@ def test_eleven_scribe_first_with_alice_keyterm_and_groq_fallback():
         def transcribe(self, a):
             return "yedek"
 
-    assert STTRouter([broke, Groq()]).transcribe(audio) == "yedek"  # kredi bitince Groq
+    assert STTRouter([broke, Groq()]).transcribe(audio) == "yedek"  # credits run out: Groq
 
 
 def test_merged_alice_spellings_from_small_wake_model():
-    # sesli testte küçük model "Alice naber"i böyle yazdı
+    # in the voice test the small model wrote "Alice naber" like this
     for t in ("Ali Cennaber", "Alisine ber.", "Alisneber", "Alisa naber"):
         assert strip_wake(t, strict=True) is not None, t
-    for t in ("Ali Selim nerede", "Ali Cenk geldi", "Alişan geldi", "Ali Can geldi"):  # gerçek adlar
+    for t in ("Ali Selim nerede", "Ali Cenk geldi", "Alişan geldi", "Ali Can geldi"):  # real names
         assert strip_wake(t, strict=True) is None, t
 
 
 def test_ali_call_wakes_but_not_talk_to_real_ali():
-    # Kullanıcının "Alice"i motorlara "Ali" diye geliyor (Scribe: "Ali? Ne haber?", gerçek kayıt)
+    # The user's "Alice" reaches the engines as "Ali" (Scribe: "Ali? Ne haber?", real recording)
     assert strip_wake("Ali? Ne haber?", strict=True) == "Ne haber?"
     assert strip_wake("Ali.", strict=True) == ""
     assert strip_wake("Ali, nasılsın?", strict=True) == "nasılsın?"
@@ -1749,14 +1749,14 @@ def test_ali_call_wakes_but_not_talk_to_real_ali():
 
 
 def test_strip_wake_repeated_hey_in_strict_mode():
-    """Canlı kayıt: Discord'da (seçici mod) "Hey Hey Alice." yok sayıldı; tekrarlanan seslenme ismi baştan itmesin."""
+    """Live: "Hey Hey Alice." was ignored in Discord (selective mode); a repeated wake word must not push the name aside."""
     assert strip_wake("Hey Hey Alice.", strict=True) == ""
     assert strip_wake("Hey hey Alice, saat kaç?", strict=True) == "saat kaç?"
     assert strip_wake("Hey hey.", strict=True) is None
 
 
 def test_follow_up_goes_to_realtime_as_audio_without_stt():
-    """Takip cümlesi ("Alice" demeden devam) canlı modele sesle gider: STT yanlış yazıp metni göndermesin."""
+    """Follow-up (no "Alice") goes to the realtime model as audio, so STT does not mis-transcribe and send text."""
     class CloudSTT:
         def __init__(self):
             self.calls = 0
@@ -1787,7 +1787,7 @@ def test_realtime_first_sentence_does_not_wait_for_local_text():
 
         calls = 0
 
-        def transcribe(self, audio, prompt=""):  # "Alice" dendi mi kontrolü (uyandırma) ve döküm ipucu
+        def transcribe(self, audio, prompt=""):  # check whether "Alice" was said (wake check) and the transcript hint
             Gate.calls += 1
             return "Hey Alice", 0.0
 
@@ -1806,8 +1806,8 @@ def test_realtime_first_sentence_does_not_wait_for_local_text():
     live = AudioLive()
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=STT(), live=live)
     va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)
-    assert wait_for(lambda: live.texts == [(False, 32000)])  # ses gitti, metin ipucu (hint) yok
-    assert Gate.calls <= 1  # sadece uyandırma kontrolü; ipucu için ikinci döküm yapılmadı
+    assert wait_for(lambda: live.texts == [(False, 32000)])  # audio was sent, no text hint
+    assert Gate.calls <= 1  # wake check only; no second transcription was made for the hint
 
 
 def test_alert_volume_scales_only_alerts():

@@ -1,4 +1,4 @@
-"""Sesli modun her turu ölçülür; haftalık özet çıkar."""
+"""Every turn of voice mode is measured; a weekly summary is produced."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ def test_kayit_ve_ozet():
     assert "canlı: 4 tur, ortanca 1.8 sn" in text and "en uzun 9.0 sn" in text
     assert "araçlı turlar ortanca 9.0" in text and "klasik: 1 tur" in text
     row = json.loads(latency.log_path().read_text(encoding="utf-8").splitlines()[0])
-    assert row["kind"] == "canlı" and "tools" not in row  # boş alanlar yazılmaz
+    assert row["kind"] == "canlı" and "tools" not in row  # empty fields are not written
 
 
 def test_haftalik_rapor_haftada_bir():
     latency.record("canlı", 2.0)
     now = time.time()
-    assert latency.weekly_report(now) == ""  # ilk açılış: bir hafta biriksin
+    assert latency.weekly_report(now) == ""  # first start: let a week accumulate
     assert latency.weekly_report(now + 86400) == ""
     assert "canlı: 1 tur" in latency.weekly_report(now + 8 * 86400)
     assert latency.weekly_report(now + 9 * 86400) == ""
@@ -54,7 +54,7 @@ def test_klasik_yolda_ilk_ses_olculur():
     assert len(got) == 1 and 1.0 <= got[0] < 5
     sp.say("İkinci cümle burada.")
     sp.wait(5)
-    assert len(got) == 1  # sadece ilk ses
+    assert len(got) == 1  # only the first audio
 
 
 def test_canli_turun_gecikmesi_kaydedilir():

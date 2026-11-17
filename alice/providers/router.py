@@ -1,24 +1,24 @@
-"""Rol tabanlı model router.
+"""Role-based model router.
 
-Her rol (brain, fast, vision) sıralı bir "provider:model" listesine sahip. İstek
-listedeki ilk uygun modele gider; hata türüne göre:
+Each role (brain, fast, vision) has an ordered list of "provider:model" entries. A request goes to the first
+suitable model in the list; depending on the error type:
 
-  rate_limit -> o model kısa süre soğumaya alınır (retry-after ya da 20 sn)
-  quota      -> günlük kota: sağlayıcının kotası sıfırlanana kadar (Gemini: Pasifik gece yarısı) kapanır ve
-                bu süre ~/.alice/cooldowns.json'a yazılır, ALICE yeniden başlasa da aynı modele boşuna gidilmez;
-                günlük olduğu anlaşılmayan kota hatası 1 saat soğuma
-  dakikalık kota (Gemini "PerMinute") -> rate_limit gibi, Gemini'nin söylediği kadar bekler
-  auth       -> sağlayıcı oturum boyunca kapatılır (key yanlış/eksik)
-  not_found  -> model oturum boyunca kapatılır (katalogdan kalkmış)
-  too_large  -> sadece bu istek için atlanır (context o sağlayıcıya sığmıyor)
-  bad_request + tools -> model bu oturumda tool'suz işlerde kullanılır
-  server/network -> 30 sn soğuma (zaman aşımı 10 dk)
-  üst üste hata -> soğuma her seferinde ikiye katlanır (en çok 6 saat), ilk başarıda sıfırlanır
-  cevap max_tokens'a takıldı, içerik yok -> aynı model hemen daha geniş çıktı payıyla bir kez daha denenir
-  unreachable -> 10 dk soğuma (sunucu yok, ör. Ollama kapalı)
+  rate_limit -> that model is cooled down briefly (retry-after or 20 s)
+  quota      -> daily quota: closed until the provider's quota resets (Gemini: Pacific midnight), and
+                written to ~/.alice/cooldowns.json, so the same model is not retried in vain after a restart;
+                a quota error not identified as daily gets a 1 hour cooldown
+  per-minute quota (Gemini "PerMinute") -> like rate_limit, waits as long as Gemini says
+  auth       -> provider is closed for the session (key wrong/missing)
+  not_found  -> model is closed for the session (removed from the catalog)
+  too_large  -> skipped for this request only (context doesn't fit that provider)
+  bad_request + tools -> model is used for tool-less work in this session
+  server/network -> 30 s cooldown (timeout 10 min)
+  consecutive errors -> cooldown doubles each time (max 6 hours), reset on the first success
+  reply hit max_tokens with no content -> the same model is retried once right away with a larger output budget
+  unreachable -> 10 min cooldown (no server, e.g. Ollama not running)
 
-Ücretsiz katmanlar sürekli değiştiği için tek bir sağlayıcıya güvenmek yerine
-zinciri bu şekilde dolaşmak sistemin ayakta kalmasını sağlıyor.
+Free tiers change constantly, so instead of relying on a single provider, walking the chain this way keeps
+the system running.
 """
 
 from __future__ import annotations
@@ -38,20 +38,21 @@ from alice.providers.chatgpt import make_client
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
                                             redact)
 
-TIMEOUT_COOLDOWN = 600.0  # sn: zaman aşımına uğrayan model bu kadar atlanır
+TIMEOUT_COOLDOWN = 600.0  # seconds: a model that timed out is skipped for this long
 COOLDOWNS = {"rate_limit": 20.0, "quota": 3600.0, "server": 30.0, "network": 30.0, "unreachable": 600.0,
              "garbled": 1800.0}
-# Harf aralıkları: cevapta bunlardan üçü birden yeterince geçiyorsa model çökmüş, anlamsız metin üretiyor demektir
-# (ör. glm-4.7-flash uzun bağlamda Türkçe, Çince ve Yunanca kelimeleri karıştırıp uydurmaya başladı).
+# Letter ranges: if three of these are well represented in a reply, the model has collapsed and is producing
+# nonsense text (e.g. glm-4.7-flash, in long contexts, started mixing up and inventing Turkish, Chinese and
+# Greek words).
 SCRIPTS = (("latin", 0x0041, 0x024F), ("latin", 0x1E00, 0x1EFF), ("greek", 0x0370, 0x03FF),
            ("cyrillic", 0x0400, 0x04FF), ("hebrew", 0x0590, 0x05FF), ("arabic", 0x0600, 0x06FF),
            ("devanagari", 0x0900, 0x097F), ("thai", 0x0E00, 0x0E7F), ("cjk", 0x3040, 0x30FF),
            ("cjk", 0x4E00, 0x9FFF), ("hangul", 0xAC00, 0xD7AF))
-SCRIPT_MIN = 8  # bir alfabenin "var" sayılması için gereken harf sayısı (tek tük sembol, isim sayılmasın)
+SCRIPT_MIN = 8  # letters needed for an alphabet to count as "present" (so stray symbols or names don't count)
 
 
 def looks_garbled(text: str) -> bool:
-    """Cevap birbirine karışmış üç ya da daha fazla alfabeden oluşuyorsa True (kod blokları sayılmaz)."""
+    """Returns True if the reply mixes three or more alphabets (code blocks are not counted)."""
     plain = re.sub(r"```.*?(```|$)|`[^`]*`|https?://\S+", " ", text, flags=re.S)
     counts: dict[str, int] = {}
     for ch in plain:
@@ -66,9 +67,9 @@ def looks_garbled(text: str) -> bool:
 
 
 def seconds_until_reset(provider: str, base_url: str = "", now: datetime | None = None) -> float:
-    """Günlük ücretsiz kotanın sıfırlanmasına kalan süre. Gemini kotaları Pasifik saatiyle gece yarısı,
-    OpenRouter ve diğerleri UTC gece yarısı sıfırlanıyor. Bilinmeyen saat dilimi verisinde (Windows'ta tzdata
-    yoksa) Pasifik için UTC-8 alınır: en fazla bir saat fazla beklenir."""
+    """Seconds left until the daily free quota resets. Gemini quotas reset at midnight Pacific time,
+    OpenRouter and others at midnight UTC. If timezone data is unavailable (no tzdata on Windows), UTC-8 is used
+    for Pacific: at most one extra hour is waited."""
     now = now or datetime.now(timezone.utc)
     tz: Any = timezone.utc
     if provider == "gemini" or "generativelanguage.googleapis.com" in base_url:
@@ -84,12 +85,12 @@ def seconds_until_reset(provider: str, base_url: str = "", now: datetime | None 
 
 
 def account_key(provider: str) -> str:
-    """Hesap genelindeki günlük kotanın soğuma anahtarı (ör. OpenRouter'ın tüm :free modelleri tek kotada)."""
+    """Cooldown key for the account-wide daily quota (e.g. all of OpenRouter's :free models share one quota)."""
     return f"{provider}:*:free"
 
 
 def _hidden_match(ref: str, hidden: set[str]) -> bool:
-    """Gizli mi: tam ad, sağlayıcı adı ya da desen ("cliproxy:kimi-*": proxy'deki bütün Kimi modelleri)."""
+    """Whether it is hidden: full name, provider name, or pattern ("cliproxy:kimi-*": all Kimi models on the proxy)."""
     if ref in hidden or ref.partition(":")[0] in hidden:
         return True
     from fnmatch import fnmatchcase
@@ -98,8 +99,8 @@ def _hidden_match(ref: str, hidden: set[str]) -> bool:
 
 
 def _short_error(err: str) -> str:
-    """Ölçüm hatasından okunur kısım: '[quota] {"error":{"message":"…"}}' -> mesaj."""
-    m = re.search(r'\\?"message\\?"\s*:\s*\\?"((?:[^"\\]|\\[^"])*)', err)  # ölçüm kaydı kırpılmış olabilir
+    """Readable part of a measurement error: '[quota] {"error":{"message":"…"}}' -> the message."""
+    m = re.search(r'\\?"message\\?"\s*:\s*\\?"((?:[^"\\]|\\[^"])*)', err)  # the record may be truncated
     if m:
         try:
             return json.loads(f'"{m.group(1)}"')[:300]
@@ -151,7 +152,7 @@ def strip_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-# Gemini'nin belgelediği yer tutucu imza: başka bir modelin yaptığı ya da imzası kaybolmuş çağrılar için.
+# Gemini's documented placeholder signature: for calls made by another model or whose signature was lost.
 GEMINI_DUMMY_SIGNATURE = "skip_thought_signature_validator"
 
 
@@ -163,8 +164,8 @@ _ACCEPTS: dict[tuple[Any, str], bool] = {}
 
 
 def _accepts(fn: Any, name: str) -> bool:
-    """fn bu anahtar kelime argümanını alıyor mu (ya da **kw ile her şeyi). Sahte/eski istemcilere bilmediği argüman
-    gönderilmesin."""
+    """Does fn accept this keyword argument (or everything via **kw)? Don't send an argument unknown to
+    fake/old clients."""
     key = (getattr(fn, "__func__", fn), name)
     if key not in _ACCEPTS:
         import inspect
@@ -178,8 +179,9 @@ def _accepts(fn: Any, name: str) -> bool:
 
 
 def clean_messages(messages: list[dict[str, Any]], gemini: bool = False) -> list[dict[str, Any]]:
-    """ALICE'in iç işaretlerini ("_" ile başlayan anahtarlar) sağlayıcıya göndermeden önce temizle.
-    Gemini'ye giderken her tool_call'a thought_signature eklenir (yoksa Gemini 3 isteği 400 ile reddediyor)."""
+    """Strip ALICE's internal markers (keys starting with "_") before sending to the provider.
+    When sending to Gemini, a thought_signature is added to each tool_call
+    (otherwise Gemini 3 rejects the request with 400)."""
     out = []
     for m in messages:
         m2 = {k: v for k, v in m.items() if not k.startswith("_")}
@@ -217,7 +219,7 @@ class AllProvidersFailed(Exception):
 
 
 def cached_tokens(usage: dict[str, Any]) -> int:
-    """Önbellekten okunan girdi token'ı; sağlayıcılar farklı adlarla veriyor."""
+    """Input tokens read from the cache; providers report them under different names."""
     for path in (("prompt_tokens_details", "cached_tokens"), ("input_tokens_details", "cached_tokens"),
                  ("cached_tokens",), ("cache_read_input_tokens",), ("prompt_cache_hit_tokens",)):
         v: Any = usage
@@ -229,7 +231,7 @@ def cached_tokens(usage: dict[str, Any]) -> int:
 
 
 def cache_write_tokens(usage: dict[str, Any]) -> int:
-    """Önbelleğe yazılan girdi token'ı (Anthropic: cache_creation_input_tokens; cliproxy: cache_write_tokens)."""
+    """Input tokens written to the cache (Anthropic: cache_creation_input_tokens; cliproxy: cache_write_tokens)."""
     d = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
     for v in (usage.get("cache_creation_input_tokens"), d.get("cache_write_tokens"), d.get("cached_creation_tokens")):
         if isinstance(v, (int, float)) and v:
@@ -257,12 +259,12 @@ class UsageTracker:
                 row["requests"] += 1
                 row["prompt_tokens"] += int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
                 row["completion_tokens"] += int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-                # Önbellek isabeti günlük kullanımda da görünsün (hangi model ne kadar önbellekten okuyor).
+                # Show cache hits in daily usage too (which model reads how much from the cache).
                 row["cached_tokens"] = row.get("cached_tokens", 0) + cached_tokens(usage)
                 row["cache_write_tokens"] = row.get("cache_write_tokens", 0) + cache_write_tokens(usage)
             else:
                 row["errors"] += 1
-            # Sadece son 14 günü tut.
+            # Keep only the last 14 days.
             for k in sorted(self.data)[:-14]:
                 del self.data[k]
             try:
@@ -290,7 +292,7 @@ class Router:
         self.providers_cfg = config.providers()
         self._factory = provider_factory or make_client
         self._real_clients = provider_factory is None
-        self._subscription_models: list[str] | None = None  # testlerde proxy'nin model listesi yerine
+        self._subscription_models: list[str] | None = None  # used in tests instead of the proxy's model list
         self._probe_checked = False
         self._clients: dict[str, Any] = {}
         self.cooldown_until: dict[str, float] = {}
@@ -298,11 +300,11 @@ class Router:
         self.dead_models: set[str] = set()
         self.dead_providers: set[str] = set()
         self.no_tools: set[str] = set()
-        self.no_thinking: set[str] = set()  # düşünme parametresini reddeden modeller
-        self.thinking_overrides: dict[str, str] = {}  # /think ile oturumluk seviye
+        self.no_thinking: set[str] = set()  # models that reject the thinking parameter
+        self.thinking_overrides: dict[str, str] = {}  # per-session level set with /think
         self.size_limit: dict[str, int] = {}
-        self.strikes: dict[str, int] = {}  # üst üste hata sayısı: aynı modele boşuna gidip beklememek için
-        self.out_floor: dict[str, int] = {}  # düşünürken max_tokens'ı bitiren modele en az bu kadar çıktı payı
+        self.strikes: dict[str, int] = {}  # consecutive errors: so we don't wait on the same model in vain
+        self.out_floor: dict[str, int] = {}  # minimum output budget for a model that exhausts max_tokens while thinking
         self.usage = UsageTracker(usage_path or alice_home() / "usage.json")
         self.sleep = sleep
         self.max_wait = max_wait
@@ -311,12 +313,13 @@ class Router:
         self.role_overrides: dict[str, list[str]] = {}
         self.log_path: Path | None = (usage_path.parent if usage_path else alice_home()) / "logs" / "providers.log"
         self.auto_cache: dict[str, Any] = ranking.load_cache() if auto_cache is None else auto_cache
-        self.no_vision: set[str] = set()  # görsel desteklediği sanılıp görseli reddeden modeller
+        self.no_vision: set[str] = set()  # models assumed to support vision that rejected an image
         self.cooldown_path: Path = (usage_path.parent if usage_path else alice_home()) / "cooldowns.json"
         self._load_cooldowns()
 
     def _load_cooldowns(self) -> None:
-        """Önceki oturumda günlük kotası dolan modeller: süre dolmadıysa yine kapalı başlar."""
+        """Models whose daily quota ran out in a previous session: if the time has not passed,
+        they start closed again."""
         try:
             saved = json.loads(self.cooldown_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -347,28 +350,29 @@ class Router:
 
     # ------------------------------------------------------------------ helpers
     def chain(self, role: str) -> list[str]:
-        """Rolün model sırası. "auto" ölçülmüş en iyi ücretsiz modellere açılır; ölçümde kalıcı hata veren
-        (kalkmış, bu anahtarla kapalı) modeller atlanır; rastgele model seçen router'lar en sona itilir."""
+        """The model order for a role. "auto" expands to the best measured free models; models that failed
+        permanently in measurement (retired, or closed for this key) are skipped; routers that pick a random
+        model are pushed to the very end."""
         if role in self.role_overrides:
             pinned = self.role_overrides[role]
             if role not in self.config.roles or not self.config.agent.get("pinned_fallback", False):
-                # Elle seçilen model cevap veremezse ALICE durur ve nedenini söyler. Önceden sessizce rolün
-                # zincirine geçiliyordu: Opus seçiliyken iş flash-lite gibi çok zayıf bir modelle sürüyordu.
+                # If the manually chosen model cannot answer, ALICE stops and says why. It used to silently fall
+                # back to the role's chain: with Opus selected, the work went on with a very weak model like flash-lite.
                 return pinned
-            # [agent] pinned_fallback = true: seçilen model önce denenir, cevap veremezse rolün zinciriyle devam edilir.
+            # [agent] pinned_fallback = true: try the chosen model first; if it fails, continue with the role's chain.
             return pinned + [r for r in self._role_chain(role) if r not in pinned]
         return self._role_chain(role)
 
     def brain_floor(self) -> int:
-        """Ana modelin otomatik sırasına girebilmek için gereken en düşük zekâ puanı ([agent] min_brain_quality)."""
+        """Minimum intelligence score to enter the main model's auto order ([agent] min_brain_quality)."""
         try:
             return int(self.config.agent.get("min_brain_quality", ranking.BRAIN_MIN_QUALITY))
         except (TypeError, ValueError):
             return ranking.BRAIN_MIN_QUALITY
 
     def strong_enough(self, refs: list[str]) -> list[str]:
-        """Otomatik gelen modellerden ana iş için yeterince güçlü olanlar. Hiçbiri eşiği geçmiyorsa (sadece küçük
-        modellere erişimi olan kurulum) liste olduğu gibi kalır: ALICE tamamen çalışamaz hale gelmesin."""
+        """Those of the automatically found models that are strong enough for main work. If none passes the threshold
+        (a setup with only small models), the list is kept as is, so ALICE does not become completely unusable."""
         floor = self.brain_floor()
         if floor <= 0:
             return refs
@@ -379,12 +383,12 @@ class Router:
 
     def _role_chain(self, role: str) -> list[str]:
         if ":" in role and role.split(":", 1)[0] in self.providers_cfg:
-            return [role]  # doğrudan model referansı
+            return [role]  # direct model reference
         raw = self.config.roles.get(role)
         if raw is None:
             raise KeyError(f"tanımsız rol: {role}")
         if "auto" not in raw and self.config.agent.get("auto_models", True):
-            # Elle yazılmış zincirler de ölçülen modellerle desteklenir: elle yazılanlar önce, sonra ölçülenler.
+            # Hand-written chains are also backed by measured models: hand-written ones first, then the measured ones.
             raw = list(raw) + ["auto"]
         expanded: list[str] = []
         for ref in raw:
@@ -395,21 +399,21 @@ class Router:
             if ref not in out and ref not in dead:
                 out.append(ref)
         shown = [r for r in out if not self.is_hidden(r)]
-        out = shown or out  # hepsi gizlendiyse rol tamamen çalışamaz hale gelmesin
+        out = shown or out  # if all are hidden, the role must not become completely unusable
         return [r for r in out if r not in ranking.RANDOM_ROUTERS] + [r for r in out if r in ranking.RANDOM_ROUTERS]
 
     def auto_chain(self, role: str) -> list[str]:
         chains = self.auto_cache.get("chains") or {}
         refs = chains.get(role) or (role == "voice" and chains.get("brain")) or ranking.DEFAULT_AUTO.get(role, [])
         res = self.auto_cache.get("results") or {}
-        if role == "brain" and res:  # önceki ölçümle kurulmuş zinciri güncel puan ağırlıklarına göre yeniden diz
+        if role == "brain" and res:  # re-sort the last measured chain by current score weights
             w = ranking.load_weights()
-            # Sadece ölçümde çalışanlar puana göre dizilir; geçici hatalı yedekler (süresi 0 kaydedilmiş, "çok hızlı"
-            # görünür) sonda kalır. Önceden yedek model çalışanların önüne geçiyordu.
+            # Only models that worked in measurement are sorted by score; temporarily failing backups (saved with
+            # a time of 0, so they look "çok hızlı" (too fast)) stay last. A backup used to come before working models.
             refs = sorted(refs, key=lambda r: (int(ranking.unreliable(r)), -ranking.role_score(
                 ranking.with_context(res[r], r, self.providers_cfg), "brain", w)) if r in res and res[r].get("ok", True)
                           else (2, 0))
-        if role == "voice" and not chains.get("voice"):  # eski ölçüm: beyin zincirini ses puanına göre diz
+        if role == "voice" and not chains.get("voice"):  # old measurement: sort the brain chain by the voice score
             w = ranking.load_weights()
             refs = sorted(refs or ranking.DEFAULT_AUTO["brain"],
                           key=lambda r: (int(ranking.unreliable(r)), -ranking.role_score(
@@ -419,13 +423,14 @@ class Router:
             refs = list(refs) + ranking.vision_backups(res, self.providers_cfg, list(refs))
         refs = [r for r in refs if r.partition(":")[0] in self.providers_cfg]
         if role == "brain":
-            # Güçlü modellerin kotası dolunca iş flash-lite, gemma, step-5 gibi küçük modellere düşüyor, onlar da
-            # uzun ajan işini beceremiyordu. Zayıf modelle saçmalamaktansa durup "uygun model kalmadı" demek doğru.
+            # When the strong models' quota runs out, the work falls to small models like flash-lite, gemma and step-5,
+            # and they could not handle long agent work either. Rather than talk nonsense with a weak model, it is
+            # right to stop and say "uygun model kalmadı" (no suitable model left).
             refs = self.strong_enough(refs)
             subs = self.subscription_chain()
             if subs:
                 if any(r.startswith("cliproxy:gpt-") for r in subs):
-                    # ChatGPT hesabı proxy'de bağlı: aynı hesabın doğrudan girişi ikinci kez sıraya girmesin.
+                    # A ChatGPT account is linked to the proxy: its direct login must not enter the order twice.
                     refs = [r for r in refs if not r.startswith("chatgpt:")]
                 refs = subs + [r for r in refs if r not in subs]
         return refs
@@ -434,10 +439,10 @@ class Router:
     SUBSCRIPTION_PER_GROUP = 2
 
     def subscription_chain(self) -> list[str]:
-        """Abonelik proxy'sindeki (CLIProxyAPI) modeller, ana modelin otomatik sırasının başı: önce Claude, sonra
-        ChatGPT, sonra Antigravity ([agent] subscription_order). Aynı servisteki hesaplar arasında geçişi proxy
-        kendisi yapar; bir servisin bütün hesapları dolu ya da hatalıysa sıradaki servise geçilir. Her serviste en
-        güçlü birkaç model alınır; hiç kullanılabilir hesabı olmayan servis atlanır."""
+        """Models from the subscription proxy (CLIProxyAPI) head the main model's automatic order: Claude first,
+        then ChatGPT, then Antigravity ([agent] subscription_order). The proxy itself switches between accounts of
+        the same service; if all of a service's accounts are full or failing, the next service is used. The few
+        strongest models of each service are taken; a service with no usable account is skipped."""
         cp = self.providers_cfg.get("cliproxy")
         if cp is None or not cp.enabled or not (self._real_clients or self._subscription_models is not None):
             return []
@@ -449,19 +454,20 @@ class Router:
             models = (self._subscription_models if self._subscription_models is not None
                       else cliproxy.tidy_models(cliproxy.live_models()))
             ready = {} if self._subscription_models is not None else cliproxy.groups_ready()
-        except Exception:  # noqa: BLE001 - proxy kapalı: abonelik sırası yok
+        except Exception:  # noqa: BLE001 - proxy is off: no subscription order
             return []
         order = [str(x) for x in self.config.agent.get("subscription_order") or self.SUBSCRIPTION_ORDER]
         floor = self.brain_floor()
         out: list[str] = []
         for gid in order:
             if ready.get(gid) is False:
-                continue  # bu servisin bütün hesapları kapalı / kotada / yeniden giriş istiyor
+                continue  # all accounts of this service are off / over quota / asking for a new login
             refs = [f"cliproxy:{m}" for m in models if cliproxy.model_group(m)[0] == gid]
             refs = [r for r in refs if not self.is_hidden(r) and not ranking.excluded(r)]
-            # Eşit puanda yeni sürüm önce (gpt-6.1-terra, gpt-5.6-terra'dan önce).
+            # With equal scores, the newer version goes first (gpt-6.1-terra before gpt-5.6-terra).
             refs.sort(key=lambda r: (-picker.quality(r), [-int(x) for x in re.findall(r"\d+", r)]))
-            # Eşiği geçenler önce; servis sırada hiç temsil edilmeden kalmasın diye eksik kalan yer en iyilerle dolar.
+            # Those above the threshold come first. So the service is not left out of the order entirely,
+            # the remaining slots are filled with its best models.
             good = [r for r in refs if picker.quality(r) >= floor]
             out += (good + [r for r in refs if r not in good])[:self.SUBSCRIPTION_PER_GROUP]
         return out
@@ -471,7 +477,7 @@ class Router:
             return set()
         dead = {ref for ref, r in (self.auto_cache.get("results") or {}).items()
                 if r.get("error_kind") in ("not_found", "auth")}
-        # Sağlayıcının kataloğunda artık olmayan (kalkmış, adı değişmiş) elle yazılmış modeller.
+        # Manually written models that are no longer in the provider's catalog (retired or renamed).
         catalog = self.auto_cache.get("catalog") or {}
         for chain in self.config.roles.values():
             for ref in chain or []:
@@ -481,7 +487,7 @@ class Router:
         return dead
 
     def hidden(self) -> set[str]:
-        """Arayüzden gizlenen modeller ve sağlayıcılar ([agent] hidden_models): otomatik zincirlerde kullanılmaz."""
+        """Models and providers hidden from the UI ([agent] hidden_models): not used in automatic chains."""
         return {str(x) for x in self.config.agent.get("hidden_models") or []}
 
     def is_hidden(self, ref: str) -> bool:
@@ -494,17 +500,17 @@ class Router:
         return cur
 
     def catalog_view(self) -> list[dict[str, Any]]:  # noqa: C901
-        """Sağlayıcıya göre gruplanmış bütün bilinen modeller: ölçümde çalışanlar ve zincirlerde yazılı olanlar."""
+        """All known models grouped by provider: those that worked in measurement and those written in the chains."""
         res = self.auto_cache.get("results") or {}
         dead = self._cached_dead()
         refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
-        refs.update(r for chain in self.role_overrides.values() for r in chain)  # seçilen model menüde işaretli görünsün
+        refs.update(r for chain in self.role_overrides.values() for r in chain)  # mark chosen model
         for name, pc in self.providers_cfg.items():
-            if not pc.auto and pc.enabled and pc.models:  # ücretli, elle seçilen (Claude API): menüde görünsün
+            if not pc.auto and pc.enabled and pc.models:  # paid, manually chosen (Claude API): shown in the menu
                 refs.update(f"{name}:{m}" for m in pc.models)
         cp = self.providers_cfg.get("cliproxy")
         if cp is not None and cp.enabled and getattr(self, "_real_clients", False):
-            try:  # proxy'ye bağlı hesapların gerçek model listesi (Kimi, Antigravity, yeni hesaplar)
+            try:  # real model list of the accounts connected to the proxy (Kimi, Antigravity, new accounts)
                 from alice.app.cliproxy import live_models, tidy_models
 
                 refs.update(f"cliproxy:{m}" for m in tidy_models(live_models()))
@@ -514,8 +520,8 @@ class Router:
         if cg is not None and cg.auth == "chatgpt" and cg.enabled:
             from alice.providers.chatgpt import cached_models, ensure_models
 
-            ensure_models(cg)  # liste yoksa arka planda okunur, menü bir sonraki açılışta gösterir
-            refs.update(f"chatgpt:{m}" for m in cached_models())  # girişten sonra ölçülmeden de seçilebilsin
+            ensure_models(cg)  # read in background if missing; menu shows it on next open
+            refs.update(f"chatgpt:{m}" for m in cached_models())  # selectable after login, even before measurement
         for role in self.config.roles:
             try:
                 refs.update(self.chain(role))
@@ -537,16 +543,17 @@ class Router:
             entry = {"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
                      "key": pc.api_key_env, "models": rows}
             if not rows and pc.enabled:
-                # Hiç çalışan modeli yok ama denendi: sağlayıcının hatasını göster. Eskiden arayüzden eklenen sunucu
-                # (ör. ücretsiz modelleri hesaba kapalı OrcaRouter) "eklendi" deyip listede hiç görünmüyordu.
+                # No model works, but it was tried: show the provider's error. Before, a server added from the UI
+                # (e.g. OrcaRouter, whose free models are closed for this account) said "eklendi" (added),
+                # yet never appeared in the list.
                 failed = [v for r, v in res.items() if r.partition(":")[0] == name and not v.get("ok")]
                 if failed:
                     entry["error"] = _short_error(str(failed[-1].get("error") or ""))
             if pc.auth == "chatgpt":
                 from alice.providers.chatgpt import limit_note, models_error, models_state
 
-                # Önce durum, sonra hata okunur: arka plandaki liste isteği iki okuma arasında biterse (önceden hata
-                # önce okunuyordu) ikisi de boş görünüp menü ne yüklendiğini ne de hatayı gösteriyordu.
+                # State is read first, then the error. If the background list request finished between the two reads
+                # (used to read the error first), both looked empty: the menu showed neither models nor error.
                 state = models_state() if pc.enabled and not rows else ""
                 entry.update(key="ChatGPT girişi", note=limit_note() if pc.enabled else "",
                              error=models_error() if pc.enabled and not rows else "",
@@ -556,9 +563,10 @@ class Router:
 
     @staticmethod
     def _split_proxy(out: list[dict[str, Any]], hidden: set[str] | None = None) -> list[dict[str, Any]]:
-        """Claude Code proxy'sinin modelleri tek bir "cliproxy" yığını yerine sağlayıcı sağlayıcı (Claude, ChatGPT,
-        Kimi, Gemini...). Proxy'de ChatGPT hesabı varsa doğrudan ChatGPT girişinin grubu menüde gösterilmez: aynı
-        hesap iki ayrı "ChatGPT" başlığı altında, yarısı birinde yarısı ötekinde görünüyordu."""
+        """Split the Claude Code proxy's models by provider (Claude, ChatGPT, Kimi, Gemini...) instead of one single
+        "cliproxy" pile. If the proxy has a ChatGPT account, the group of the direct ChatGPT login is not shown in the
+        menu: the same account used to appear under two separate "ChatGPT" headings,
+        half under one and half under the other."""
         idx = next((i for i, e in enumerate(out) if e["name"] == "cliproxy"), None)
         if idx is None or not out[idx]["models"]:
             return out
@@ -584,7 +592,7 @@ class Router:
         self.auto_cache = ranking.load_cache() if cache is None else cache
 
     def _log(self, line: str) -> None:
-        """Sağlayıcı hatalarını ~/.alice/providers.log'a yaz (1 MB'ı geçince bir eskisi saklanır)."""
+        """Write provider errors to ~/.alice/providers.log (once it passes 1 MB, one old copy is kept)."""
         if self.log_path is None:
             return
         try:
@@ -592,7 +600,7 @@ class Router:
             if self.log_path.exists() and self.log_path.stat().st_size > 1_000_000:
                 self.log_path.replace(self.log_path.with_suffix(".log.1"))
             with open(self.log_path, "a", encoding="utf-8") as f:
-                # Sağlayıcıların anahtarları log dosyasına asla düşmesin (hata metni yankılamış olabilir).
+                # Provider keys must never end up in the log file (the error text may have echoed them).
                 keys = [k for pc in self.providers_cfg.values() for k in getattr(pc, "api_keys", None) or []]
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(redact(line, *keys).split())}\n")
         except OSError:
@@ -607,7 +615,7 @@ class Router:
         return self._clients[provider]
 
     def key_status(self) -> dict[str, list[dict[str, Any]]]:
-        """Birden çok anahtarı olan sağlayıcıların anahtar durumu (arayüzdeki Anahtarlar sayfası için)."""
+        """Key status of providers with more than one key (for the Anahtarlar (Keys) page in the UI)."""
         from alice.config import mask_secret
         from alice.providers.keypool import is_pool
 
@@ -625,7 +633,7 @@ class Router:
         return out
 
     def reload_providers(self, name: str | None = None) -> None:
-        """Anahtar ya da sağlayıcı eklenip silinince: ayarları yeniden oku, ilgili istemciyi baştan kur."""
+        """When a key or provider is added or removed: re-read the settings and rebuild the client from scratch."""
         self.providers_cfg = self.config.providers()
         for n in [name] if name else list(self._clients):
             c = self._clients.pop(n, None) if n else None
@@ -639,14 +647,14 @@ class Router:
                 self.dead_providers.discard(n)
 
     def close(self) -> None:
-        """Açılan sağlayıcı istemcilerini (HTTP bağlantı havuzlarını) kapat. Sonra kullanılırsa yeniden açılır."""
+        """Close the opened provider clients (their HTTP connection pools). They are reopened if used later."""
         while self._clients:
             _, c = self._clients.popitem()
             close = getattr(c, "close", None)
             if callable(close):
                 try:
                     close()
-                except Exception:  # noqa: BLE001 - kapanışta hata önemsiz
+                except Exception:  # noqa: BLE001 - errors on close do not matter
                     pass
 
     def supports_vision(self, ref: str) -> bool:
@@ -655,8 +663,8 @@ class Router:
         return bool(pc and pc.supports_vision(m)) and ref not in self.no_vision
 
     def available(self, ref: str, now: float | None = None, pinned: bool = False) -> tuple[bool, str]:
-        """pinned: kullanıcı bu modeli elle seçti. Soğuma ve oturumluk kapatma yalnız otomatik sırayı ilgilendirir;
-        elle seçilen model her istekte yine denenir (bir zaman aşımı yüzünden dakikalarca istek atılamıyordu)."""
+        """pinned: the user picked this model by hand. Cooldown and per-session disabling only affect the automatic
+        order; a manually chosen model is still tried on every request (timeouts used to block it for minutes)."""
         now = time.monotonic() if now is None else now
         try:
             p, _ = parse_ref(ref)
@@ -681,7 +689,7 @@ class Router:
         return True, "hazır"
 
     def context_limit(self, ref: str) -> int:
-        """Modelin bağlam penceresi: bilinen modelde modelin kendisi, değilse sağlayıcı ayarı (bkz. context.py)."""
+        """The model's context window: its own value if known, else the provider setting (see context.py)."""
         p, model = parse_ref(ref)
         pc = self.providers_cfg.get(p)
         return context.context_limit(pc.max_input_tokens if pc else 32000, model, self.size_limit.get(ref))
@@ -704,15 +712,15 @@ class Router:
         stream: "StreamSink | None" = None,
         gemini_extra: dict[str, Any] | None = None,
     ) -> ChatResult:
-        """stream verilirse cevap parça parça stream.on_delta'ya akar. Bir model akışın ortasında
-        düşerse stream.on_reset() çağrılır ve sıradaki model baştan dener."""
+        """If stream is given, the reply flows piece by piece into stream.on_delta. If a model fails mid-stream,
+        stream.on_reset() is called and the next model starts over."""
         if not self._probe_checked:
-            # Gerçek sağlayıcılarla çalışırken model ölçümü bir günden eskiyse arka planda yenilenir.
+            # With real providers, model measurements older than a day are refreshed in the background.
             self._probe_checked = True
             if self._real_clients:
                 ranking.refresh_in_background(self, emit=self.on_event)
         chain = self.chain(role)
-        chosen = set(self.role_overrides.get(role) or [])  # elle seçilenler soğumada olsa da denenir
+        chosen = set(self.role_overrides.get(role) or [])  # hand-picked ones are tried even in cooldown
         est = estimate_tokens(messages, tools)
         attempts = 0
         failed: list[str] = []
@@ -742,17 +750,17 @@ class Router:
                 msgs = clean_messages(messages if vision else strip_images(messages),
                                       gemini=is_gemini(pc))
                 client = self.client(p)
-                # Seçili seviye bu modelde yoksa en yakın desteklenen seviye (model değişince ayar boşa gitmesin).
+                # If the model lacks the selected level, use the nearest supported one (survives a model switch).
                 level = thinking.fit(self.thinking_level(role), thinking.levels_for(p, model)[0])
                 think = {} if ref in self.no_thinking else thinking.params(p, model, level)
-                extra = {**think, **(self.config.model_extra(ref) or {})}  # elle yazılan model ayarı önce gelir
-                if gemini_extra and is_gemini(pc):  # ör. reasoning_effort: sadece Gemini'nin anladığı ayarlar
+                extra = {**think, **(self.config.model_extra(ref) or {})}  # hand-written model settings come first
+                if gemini_extra and is_gemini(pc):  # e.g. reasoning_effort: only settings Gemini understands
                     extra.update(gemini_extra)
                 out = max(max_tokens, self.out_floor.get(ref, 0)) if max_tokens else None
                 kw = dict(tools=tools, temperature=temperature, max_tokens=out,
                           response_format=response_format, extra=extra or None)
                 emitted = [False]
-                first = [0.0]  # ilk kelime anı (gerçek kullanımdaki hız ölçümü için)
+                first = [0.0]  # first-word time (for measuring speed in real use)
                 t_start = time.monotonic()
 
                 def call(kw=kw, client=client, model=model, msgs=msgs, emitted=emitted, first=first):
@@ -768,7 +776,7 @@ class Router:
                         if isinstance(client, OpenAICompatProvider):
                             extra_kw["on_first"] = on_first
                         if hasattr(stream, "on_call") and _accepts(client.chat_stream, "on_call"):
-                            extra_kw["on_call"] = stream.on_call  # tamamlanan araç çağrısı cevap bitmeden bildirilir
+                            extra_kw["on_call"] = stream.on_call  # finished tool call reported before the reply ends
                         r = client.chat_stream(model, msgs, on_delta, cancel=stream.cancelled,
                                                on_reasoning=getattr(stream, "on_reasoning", None), **extra_kw, **kw)
                         if not r.usage:
@@ -786,14 +794,14 @@ class Router:
                         if emitted[0]:
                             raise
                         if think and e.kind == "bad_request":
-                            # Sağlayıcı düşünme parametresini tanımadı: bir daha gönderme, ayarsız tekrar dene.
+                            # Provider rejected the thinking parameter: don't send it again, retry without it.
                             self.no_thinking.add(ref)
                             self._log(f"{ref} düşünme ayarını kabul etmedi ({e}); ayarsız deneniyor")
                             kw["extra"] = {k: v for k, v in extra.items() if k not in think} or None
                         elif (e.kind == "too_large" and "max_tokens" in str(e) and out
                               and min(8192, max(out * 4, 1024)) > out):
-                            # Düşünen model (Cerebras qwen) küçük çıktı payını düşünmeye harcayıp boş dönüyordu:
-                            # girdi büyük değil, payı genişletip aynı modelde bir kez daha dene ve bunu hatırla.
+                            # Cerebras qwen (thinking model) used up the small output budget and came back empty;
+                            # the input isn't large, so widen the budget, retry this model once more, and remember it.
                             self.out_floor[ref] = min(8192, max(out * 4, 1024))
                             kw["max_tokens"] = self.out_floor[ref]
                             self._log(f"{ref} cevabı max_tokens={out} içinde bitiremedi; {kw['max_tokens']} ile "
@@ -823,19 +831,19 @@ class Router:
                     out_tokens = float((res.usage or {}).get("completion_tokens") or 0)
                     ranking.record_outcome(ref, True, ttft=ttft,
                                            tps=out_tokens / gen if first[0] and gen > 0.2 and out_tokens >= 20 else 0.0)
-                # Beklenip yeniden denenen aynı model "X hata verdi, X modeline geçildi" diye yazılıyordu.
+                # A retried same model used to be logged as "X hata verdi, X modeline geçildi" (X failed, moved to X).
                 others = [f for f in failed if f.rpartition(" (")[0] != ref]
                 if others:
-                    # Arayüz bunu not olarak gösterir: hangi model düştü, kim devraldı.
+                    # The UI shows this as a note: which model failed, and who took over.
                     msg = f"{role}: {', '.join(others[-3:])} hata verdi, {ref} modeline geçildi"
                     self.on_event(msg)
                     self._log(msg)
-                if self.last_ref.get(role) != ref and not role.startswith(("team:", "council:")):  # panel gösterir
+                if self.last_ref.get(role) != ref and not role.startswith(("team:", "council:")):  # the panel shows this
                     self.on_event(f"{role} -> {ref}")
                 self.last_ref[role] = ref
                 return res
 
-            # Hepsi başarısız. Sadece rate limit yüzünden kısa süre kapalı bir model varsa bekle.
+            # All failed. Wait only if a model is paused briefly by a rate limit.
             waits = [u - time.monotonic() for r, u in self.cooldown_until.items()
                      if r in chain and self.cooldown_kind.get(r) == "rate_limit"]
             waits = [w for w in waits if w > 0]
@@ -857,9 +865,9 @@ class Router:
             daily = getattr(e, "daily", False)
             wait = seconds_until_reset(provider, pc.base_url if pc else "") if daily else COOLDOWNS["quota"]
             if e.retry_after and not daily:
-                # Sağlayıcı ne zaman açılacağını söyledi (ChatGPT: resets_in_seconds). Önceden yok sayılıyordu.
-                # Süre kısaltılmaz: 15 gün sonra açılacak hesaba 6 saatte bir boşuna gidilirdi. (Bütün hesaplar
-                # doluyken sağlayıcı zaten kısa bir süre verir; hesap eklenince/değişince soğuma temizlenir.)
+                # The provider said when it reopens (ChatGPT: resets_in_seconds). It used to be ignored.
+                # Never shorten the wait: retrying an account that opens in 15 days every 6 hours was pointless.
+                # (All accounts full: the provider already gives a short wait; cooldown clears when an account changes.)
                 wait = min(max(float(e.retry_after), 60.0), 30 * 86400)
             self.cooldown_until[ref] = now + wait
             self.cooldown_kind[ref] = "quota"
@@ -870,12 +878,12 @@ class Router:
                 self._save_cooldowns()
             return
         if e.kind == "bad_request" and images and any(w in low for w in ("image", "vision", "multimodal", "modality")):
-            # Görsel destekliyor sanılan model görseli reddetti: bu oturumda ona görsel gönderme, sıradakine geç.
+            # A model believed to support images rejected one: don't send it images this session, move to the next.
             self.no_vision.add(ref)
             return
         if e.kind == "auth" and provider == "cliproxy":
-            # Proxy'nin arkasında birçok servis ve hesap var: Claude hesabının girişi düştü diye ChatGPT ve
-            # Antigravity modelleri de oturum boyunca kapanıyordu. Sadece bu model bir süre atlanır.
+            # The proxy fronts many services and accounts: when the Claude login dropped, ChatGPT and
+            # Antigravity models were also shut off for the whole session. Now only this one is skipped for a while.
             self.cooldown_until[ref] = now + 900
             self.cooldown_kind[ref] = "auth"
         elif e.kind == "auth":
@@ -883,13 +891,13 @@ class Router:
         elif e.kind == "not_found":
             self.dead_models.add(ref)
         elif e.kind == "too_large" and "max_tokens" in low:
-            # Geniş payla da bitiremedi: girdi değil model sorunlu. Sabit 5 dk'lık ceza, 20 dk'da bir çalışan işte
-            # Cerebras qwen'i her seferinde yeniden denetip 8192 token düşünmeye harcatıyordu (1 Kasım): katlanarak.
+            # Even the wide budget failed: the model is the problem, not the input. A flat 5-min penalty, in a job
+            # running every 20 min kept re-testing Cerebras qwen, burning 8192 thinking tokens (Nov 1). Now exponential.
             n = self.strikes[ref] = self.strikes.get(ref, 0) + 1
             self.cooldown_until[ref] = now + min(300 * 2 ** min(n - 1, 6), 6 * 3600)
             self.cooldown_kind[ref] = "server"
         elif e.kind == "too_large":
-            # Ör. Groq ücretsiz katmanı dakikada 8K token: bu büyüklükteki istekleri bir daha bu modele yollama.
+            # e.g. Groq's free tier allows 8K tokens per minute: don't send requests this size to this model again.
             if est:
                 self.size_limit[ref] = min(self.size_limit.get(ref, 10**9), int(est * 0.9))
         elif e.kind == "bad_request":
@@ -900,17 +908,17 @@ class Router:
         else:
             base = COOLDOWNS.get(e.kind, 30.0)
             if e.kind == "network" and "zaman aşımı" in str(e):
-                # Cevap vermeden takılan model (NVIDIA'da GLM-5.3 gibi) 30 sn sonra yine denenince her istek
-                # zaman aşımını (180 sn) baştan bekliyordu: bir süre sıradakiyle devam et.
+                # A model that hangs without replying (GLM-5.3 on NVIDIA), retried after 30 s, made every request
+                # kept waiting out the full timeout (180 s) each time: for a while, carry on with the next one.
                 base = TIMEOUT_COOLDOWN
             n = self.strikes[ref] = self.strikes.get(ref, 0) + 1
-            wait = base * 2 ** min(n - 1, 5)  # GLM-5.3 her 10 dk'da bir yine denenip 3 dk bekletiyordu
+            wait = base * 2 ** min(n - 1, 5)  # GLM-5.3 was retried every 10 min, each time costing a 3 min wait
             if e.retry_after and e.kind == "rate_limit":
-                # Sağlayıcının söylediği süre esas; ama o süre dolunca yine 429 geliyorsa (Gemini kotası bitmişken
-                # "23 sn sonra dene" diyor) her seferinde aynı modele boşuna gidiliyordu: üst üste hatada katlanır.
+                # The provider's time is the basis; but if 429 still comes once it passes (Gemini quota gone,
+                # it says "23 sn sonra dene", i.e. retry in 23 s): we kept hitting the same model; it now escalates on repeats.
                 wait = max(e.retry_after, base * 2 ** min(n - 2, 5)) if n > 1 else e.retry_after
             elif e.retry_after:
-                # 503 + Retry-After: sunucu ne zaman açılacağını söylüyor. Önceden yok sayılıp 30 sn sonra yine
+                # 503 + Retry-After: the server says when it reopens. It used to be ignored and retried after 30 s, again
                 # aynı modele gidiliyor, her seferinde boşuna bir istek ve bekleme harcanıyordu.
                 wait = max(wait, e.retry_after)
             self.cooldown_until[ref] = now + min(max(wait, 1.0), 6 * 3600)

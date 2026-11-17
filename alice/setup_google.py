@@ -1,10 +1,10 @@
-"""`alice setup google`: Google Takvim ve Gmail için adım adım kurulum sihirbazı.
+"""`alice setup google`: step-by-step setup wizard for Google Calendar and Gmail.
 
-Google Cloud'da proje açmak, API'leri etkinleştirmek, OAuth izin ekranı ve masaüstü istemcisi oluşturmak elle
-yapınca kafa karıştırıcı. Sihirbaz her adımda doğru sayfayı tarayıcıda açar, ne tıklanacağını söyler; sonra
-istemci bilgisini (indirilen JSON dosyası ya da elle yapıştırılan ID/secret) ~/.alice/.env'e yazar ve Takvim ile
-istediğin kadar Gmail hesabının girişini başlatır. Yarıda bırakırsan kaldığın adımdan devam edebilirsin: istemci
-zaten yazılıysa o adımlar atlanır.
+Creating a project in Google Cloud, enabling the APIs, the OAuth consent screen and a desktop client is confusing by
+hand. The wizard opens the right page in the browser at each step and says what to click; then it writes the client
+info (the downloaded JSON file, or the ID/secret pasted by hand) to ~/.alice/.env and starts sign-in for Calendar and
+as many Gmail accounts as you like. If you stop halfway, you can resume from the step you left off: if the client is
+already written, those steps are skipped.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ STEPS = [
 
 
 def set_env(path: Path, key: str, value: str) -> None:
-    """`.env` içinde KEY=... satırını değiştir ya da sona ekle; diğer satırlara dokunma."""
+    """Change the KEY=... line in `.env`, or append it at the end; don't touch other lines."""
     try:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
@@ -54,7 +54,7 @@ def set_env(path: Path, key: str, value: str) -> None:
 
 
 def read_client_json(text: str) -> tuple[str, str]:
-    """Google'ın indirdiği client_secret_*.json içeriğinden (client_id, client_secret)."""
+    """(client_id, client_secret) from the content of the client_secret_*.json that Google downloads."""
     data = json.loads(text)
     block = data.get("installed") or data.get("web") or data
     cid, secret = str(block.get("client_id") or ""), str(block.get("client_secret") or "")
@@ -64,7 +64,7 @@ def read_client_json(text: str) -> tuple[str, str]:
 
 
 def find_downloaded_json(folder: Path | None = None) -> Path | None:
-    """İndirilenler klasöründeki en yeni client_secret_*.json."""
+    """The newest client_secret_*.json in the Downloads folder."""
     folder = folder or Path.home() / "Downloads"
     try:
         files = sorted(folder.glob("client_secret_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)

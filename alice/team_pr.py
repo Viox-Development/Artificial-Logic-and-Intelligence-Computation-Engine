@@ -1,10 +1,10 @@
-"""Projenin sonucu PR olsun: proje kullanıcının kopyasında değil kendi dalında, ayrı bir worktree'de çalışır; bitince dal
-push'lanır, PR açılır ve PR takibine (alice/prwatch.py) alınır. Kırmızı CI ve inceleme yorumları da böylece projeyi
-başlatan sohbete gelir.
+"""The project's result is a PR: it runs on its own branch in a separate worktree, not in the user's copy.
+When it is done, the branch is pushed, a PR is opened and handed to PR tracking (alice/prwatch.py). Red CI and review
+comments reach the chat that started the project this way.
 
-Proje başında: ~/.alice/worktrees/proje-<id> klasöründe `alice/proje-<id>` dalı, kullanıcının o anki HEAD'inden açılır.
-Projenin bütün ajanları orada çalışır (worktree ajanları da dallarını oradan açar, onaylanınca oraya birleşir).
-Kullanıcının commit'lenmemiş değişiklikleri projeye girmez; çalışma klasörüne de dokunulmaz.
+At project start, branch `alice/proje-<id>` is created from the user's current HEAD, in ~/.alice/worktrees/proje-<id>.
+All of the project's agents work there (worktree agents also branch from there and are merged there once approved).
+The user's uncommitted changes do not enter the project; the working folder is not touched.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _git(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProces
 
 
 def prepare(team: Any) -> str:
-    """Projenin dalını ve worktree'sini aç, team.cwd'yi oraya taşı. Not satırı döndürür."""
+    """Open the project's branch and worktree, and move team.cwd there. Returns a note line."""
     from alice.tools.github import current_branch, origin_repo
 
     top = team._repo_top()
@@ -47,7 +47,7 @@ def prepare(team: Any) -> str:
     rel = Path(team.cwd).resolve().relative_to(top.resolve()) if Path(team.cwd).resolve() != top.resolve() else Path()
     team.pr_repo, team.pr_base, team.pr_branch, team.pr_top = repo, base, branch, str(top)
     team.pr_sha = _git(wt, "rev-parse", "HEAD").stdout.strip()
-    # Başlatan sohbet şimdi alınır: bitişte parent_ctx o an öndeki (başka) sohbeti gösterebilir.
+    # Capture the starting chat now: by the end, parent_ctx may point to a different chat.
     team.pr_session = str(team.parent_ctx.state.get("session_id") or "")
     team.cwd = wt / rel
     dirty = _git(top, "status", "--porcelain").stdout.strip()
@@ -56,22 +56,22 @@ def prepare(team: Any) -> str:
 
 
 def open_pr(team: Any) -> str:
-    """Projenin dalını commit'le, push'la, PR aç ve izlemeye al. Sonuç satırı döndürür (hata da metin olarak)."""
+    """Commit the project's branch, push it, open a PR and track it. Returns a result line (errors as text too)."""
     from alice import prwatch
     from alice.tools.github import GitHubAPI, diff_secrets, github_token, repo_root, run_git
 
     try:
         wt = repo_root(Path(team.cwd))
         if _git(wt, "status", "--porcelain").stdout.strip():
-            _git(wt, "add", "-A", "--", ".", ":(exclude).alice-team")  # ajanların worktree'leri PR'a girmesin
+            _git(wt, "add", "-A", "--", ".", ":(exclude).alice-team")  # keep agents' worktrees out of the PR
             r = _git(wt, *IDENT, "commit", "-q", "-m", f"ALICE projesi: {team.title[:60]}")
             if r.returncode != 0:
                 return f"PR açılamadı: commit başarısız ({(r.stderr or r.stdout).strip()[:200]})"
         ahead = _git(wt, "rev-list", "--count", f"{team.pr_sha}..HEAD").stdout.strip()
         if ahead in ("", "0"):
             return "PR açılmadı: projede değişiklik yok"
-        # Ajanlar `add -A` ile commit'liyor: projede eklenen bir anahtar/.env GitHub'a gitmeden durdurulur. Bütün
-        # aralık taranır (ajanların kendi dallarında önceden yaptığı commit'ler de push'a girer).
+        # Agents commit with `add -A`: a key or .env added to the project is stopped before it reaches GitHub.
+        # The whole range is scanned (commits the agents made earlier on their own branches also go into the push).
         leaks = diff_secrets(wt, [f"{team.pr_sha}..HEAD"])
         if leaks:
             return ("PR açılmadı: projede anahtar ya da gizli dosya var, GitHub'a gönderilmedi: " + ", ".join(leaks[:8])
@@ -88,7 +88,7 @@ def open_pr(team: Any) -> str:
             default = api.get(f"/repos/{team.pr_repo}").get("default_branch", "main")
             if default == team.pr_base:
                 raise
-            team.pr_base = default  # başlanan dal GitHub'da yok: ana dala aç
+            team.pr_base = default  # the starting branch is not on GitHub: open against the default branch
             p = api.post(f"/repos/{team.pr_repo}/pulls", {**data, "base": default})
         team.pr_url, team.pr_number = str(p.get("html_url") or ""), int(p.get("number") or 0)
         session = str(getattr(team, "pr_session", "") or team.parent_ctx.state.get("session_id") or "")

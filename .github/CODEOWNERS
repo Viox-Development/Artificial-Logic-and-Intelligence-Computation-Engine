@@ -1,0 +1,18 @@
+# Every change needs the maintainer's review; security-sensitive parts are listed explicitly so that
+# branch protection with "Require review from Code Owners" always covers them.
+*                               @hayatexe
+
+/alice/permissions.py           @hayatexe
+/alice/sandbox.py               @hayatexe
+/alice/sandbox_run.py           @hayatexe
+/alice/guard.py                 @hayatexe
+/alice/gitsafe.py               @hayatexe
+/alice/updater.py               @hayatexe
+/alice/tools/shell.py           @hayatexe
+/alice/tools/github.py          @hayatexe
+/alice/tools/browser_ext.py     @hayatexe
+/alice/extension/               @hayatexe
+/alice/connect/                 @hayatexe
+/.github/                       @hayatexe
+/CLA.md                         @hayatexe
+/LICENSE                        @hayatexe

@@ -1,4 +1,4 @@
-"""now: "Nasılım?", "ne durumdayım?" sorularına tek "şu an" durumuyla cevap (alice/now.py)."""
+"""now: answers "Nasılım?" and "ne durumdayım?" ("how am I?", "what's my status?") with one snapshot (alice/now.py)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class NowState(Tool):
     )
     parameters = obj({}, [])
     risk = READ
-    parallel_safe = False  # sqlite bağlantısı ctx.state'te paylaşılıyor
+    parallel_safe = False  # the sqlite connection is shared via ctx.state
 
     def run(self, ctx: ToolContext) -> ToolResult:
         from alice import now

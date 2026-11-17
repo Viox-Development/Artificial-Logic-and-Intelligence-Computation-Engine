@@ -1,4 +1,4 @@
-"""Telefon uygulamasının güncellemesi: bilgisayar android-apk dalını çeker, telefona verir."""
+"""Phone app update: the computer pulls the android-apk branch and hands it to the phone."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _git(cwd, *args):
 
 @pytest.fixture
 def remote(tmp_path):
-    """android-apk dalı olan sahte bir uzak depo ve onu origin bilen bir klon."""
+    """A fake remote repo with an android-apk branch, and a clone that knows it as origin."""
     if subprocess.run(["git", "--version"], capture_output=True).returncode != 0:
         pytest.skip("git yok")
     origin = tmp_path / "origin"
@@ -47,7 +47,7 @@ def test_refresh_downloads_newer_apk_and_serves_it(remote):
     publish(5, b"PK\x03\x04apk-5\x00\xff")
     got = phone_apk.refresh(force=True, repo=clone)
     assert got["version_code"] == 5 and got["version_name"] == "0.2.5"
-    assert phone_apk.apk_path().read_bytes() == b"PK\x03\x04apk-5\x00\xff"  # ikili içerik bozulmadan
+    assert phone_apk.apk_path().read_bytes() == b"PK\x03\x04apk-5\x00\xff"  # binary content stays intact
     publish(7, b"PK-apk-7")
     assert phone_apk.refresh(force=True, repo=clone)["version_code"] == 7
     assert phone_apk.view()["available"] is True
@@ -58,7 +58,7 @@ def test_refresh_rejects_corrupt_apk(remote):
     publish(3, b"PK-good")
     phone_apk.refresh(force=True, repo=clone)
     publish(4, b"PK-bad", sha="0" * 64)
-    assert phone_apk.refresh(force=True, repo=clone)["version_code"] == 3  # eskisi yerinde kalır
+    assert phone_apk.refresh(force=True, repo=clone)["version_code"] == 3  # the old one stays in place
     assert "bozuk" in phone_apk.view()["error"]
 
 
@@ -67,7 +67,7 @@ def test_refresh_is_throttled(remote, monkeypatch):
     publish(1, b"PK-1")
     phone_apk.refresh(force=True, repo=clone)
     publish(2, b"PK-2")
-    assert phone_apk.refresh(repo=clone)["version_code"] == 1  # 30 dakika dolmadan yeniden çekilmez
+    assert phone_apk.refresh(repo=clone)["version_code"] == 1  # not pulled again before 30 minutes pass
 
 
 def test_api_serves_version_and_apk(remote):
@@ -89,6 +89,6 @@ def test_api_serves_version_and_apk(remote):
             assert r.headers["Content-Type"] == "application/vnd.android.package-archive"
             assert r.read() == b"PK-apk-9"
         with pytest.raises(urllib.error.HTTPError):
-            urllib.request.urlopen(f"{base}/api/phone/app.apk")  # anahtarsız indirilemez
+            urllib.request.urlopen(f"{base}/api/phone/app.apk")  # cannot be downloaded without the key
     finally:
         srv.stop()

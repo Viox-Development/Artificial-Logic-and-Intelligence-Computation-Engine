@@ -1,15 +1,15 @@
-"""Ücretsiz modelleri canlı ölçüp sıralama ("auto" rol zinciri).
+"""Measures free models live and ranks them ("auto" role chain).
 
-Ücretsiz katalog sürekli değişiyor: modeller kalkıyor (404/410), "free" sürümü paralıya dönüyor,
-bazıları sadece belirli araçlarda açılıyor. Sabit liste çürüyor. Burada:
+The free catalog keeps changing: models get retired (404/410), the "free" version turns paid, and some only
+open for certain tools. A fixed list rots. Here:
 
-1. Sağlayıcıların /models kataloglarından, bildiğimiz iyi ailelere uyan adaylar seçilir.
-2. Her aday gerçek bir araç çağrısı isteğiyle denenir: geçti mi, toplam süre, ilk token süresi,
-   üretilen token ve token/sn ölçülür.
-3. Rol zincirleri kalite önce, hız sonra olacak şekilde kurulur ve ~/.alice/models.json'a yazılır.
+1. Candidates matching the good model families we know are picked from the providers' /models catalogs.
+2. Each candidate is tried with a real tool-call request: whether it passed, total time, time to first token,
+   generated tokens and tokens/sec are measured.
+3. Role chains are built with quality first, speed second, and written to ~/.alice/models.json.
 
-config'te rol listesine "auto" yazılınca router bu sırayı kullanır. Önbellek bir günden eskiyse
-uygulama açılışta arka planda yeniler.
+When "auto" is written in a role's list in config, the router uses this order. If the cache is older than a
+day, the app refreshes it in the background at startup.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from typing import Any, Callable
 from alice.config import alice_home
 from alice.providers import arena
 
-# Kalite puanı (0-100): model kimliğinde geçen ilk kalıp kazanır. Sıra önemli: özel kalıplar önce.
-# Puanlar ajan işi (araç kullanma, Türkçe, kod) için; yeni aileler çıktıkça buraya eklenir.
+# Quality score (0-100): the first pattern found in the model ID wins. Order matters: specific patterns come first.
+# Scores are for agent work (tool use, Turkish, code); new families are added here as they appear.
 QUALITY: list[tuple[str, int]] = [
     ("gemini-3.1-pro", 97), ("gemini-pro", 97), ("gemini-2.5-pro", 90),
     ("flash-lite", 66), ("gemini-3.8-flash", 93), ("gemini-flash-latest", 93), ("gemini-3.7-flash", 91),
@@ -44,35 +44,36 @@ QUALITY: list[tuple[str, int]] = [
     ("llama-4", 60), ("mistral-small", 58), ("qwen3:8b", 40),
     ("deepseek-v3", 84), ("qwen3-235b", 82), ("qwen3-32b", 70),
 ]
-# Tabloda olmayan model: yine ölçülür (SambaNova gibi sağlayıcıların modelleri hiç denenmiyordu), ama zekâsı
-# bilinmediği için bu puanla ana/ses zincirine girmez; ekranda "zekâ bilinmiyor" diye görünür.
+# A model not in the table is still measured (models from providers like SambaNova were never tried before), but
+# since its intelligence is unknown it does not enter the main/voice chain with this score; on screen it shows as
+# "zekâ bilinmiyor" (intelligence unknown).
 UNKNOWN_QUALITY = 35
-# Ana modelin (uzun ajan işi) otomatik sırasına girmek için en düşük zekâ puanı. Ölçekte (lider 100, 2 Elo = 1 puan)
+# Minimum intelligence score for the main model's auto order (long agent work). Scale: leader 100, 2 Elo = 1 point
 # Opus 5.5 ~86, gemini-3.8-flash ~76, 3.5-flash ~66, sonnet-5.5 ~64; flash-lite ~44, gemma-4-31b ~48, step-5 ~51:
-# bu sonuncular araç zincirini yürütemiyor.
+# these last ones cannot carry out the tool chain.
 BRAIN_MIN_QUALITY = 60
-VOICE_MIN_QUALITY = 45  # sesli asistan: kısa konuşma, hız önemli
-FAST_MIN_QUALITY = 40   # özet, sınıflandırma gibi hızlı işler
-# Sohbet/araç işi yapmayan ya da ajan için uygun olmayan modeller.
+VOICE_MIN_QUALITY = 45  # voice assistant: short conversations, speed matters
+FAST_MIN_QUALITY = 40   # quick jobs such as summaries and classification
+# Models that do not do chat/tool work, or are unsuitable for an agent.
 EXCLUDE = ("openrouter/free", "openrouter/auto", "tts", "image", "embed", "live", "audio", "guard", "safety",
            "reward", "parse", "translate", "transcribe", "robotics", "computer-use", "lyria", "veo", "banana",
            "customtools", "deep-research", "antigravity", "omni", "whisper", "orpheus", "aqa", "inkling",
            "content-safety", "vision-instruct", "kosmos", "fuyu", "deplot", "vila", "neva", "clip")
-# Rastgele modele yönlendiren "router" modeller: sadece zincirin en sonunda, son çare.
+# "Router" models that send requests to a random model: only at the very end of the chain, as a last resort.
 RANDOM_ROUTERS = ("openrouter:openrouter/free", "openrouter:openrouter/auto")
 
 CACHE_MAX_AGE = 24 * 3600
-PROBE_TIMEOUT = 20.0  # 20 sn içinde araç çağrısı yapamayan model zaten günlük kullanıma uygun değil
+PROBE_TIMEOUT = 20.0  # a model that cannot make a tool call within 20 s is not suited to daily use anyway
 PER_PROVIDER = 15
-# OpenRouter'ın ücretsiz modelleri hesap başına günlük ortak bir sınırı paylaşıyor (kredisiz hesapta ~50 istek):
-# günlük ölçüm bunun küçük bir kısmını harcasın.
-PROVIDER_CAP = {"openrouter": 6, "chatgpt": 3}  # ChatGPT: ücretsiz planın Codex limiti küçük
-# Kota hesap genelinde olan sağlayıcılar: bir modelde kota hatası gelince diğerleri denenmez (hepsi aynı kotada).
+# OpenRouter's free models share one daily limit per account (~50 requests on an account without credit):
+# the daily measurement should spend only a small part of it.
+PROVIDER_CAP = {"openrouter": 6, "chatgpt": 3}  # ChatGPT: the free plan's Codex limit is small
+# Account-wide quota providers: after one model hits a quota error, the others are not tried (same quota).
 ACCOUNT_QUOTA = ("openrouter",)
-SLOW = 3.0  # saniye: beyin rolünde bundan yavaş modeller geri itilir
+SLOW = 3.0  # seconds: in the brain role, models slower than this are pushed back
 
-# Önbellek yokken (ilk açılış, ölçüm henüz bitmemişken) kullanılan sıra: 9 Ekim 2026 ölçümü.
-# Ölçüm gelince yerini alır; anahtarı olmayan sağlayıcıların modelleri zaten atlanır.
+# Order used while there is no cache (first launch, measurement not finished yet): the 9 Oct 2026 measurement.
+# It is replaced when the measurement arrives; models from providers with no key are skipped anyway.
 DEFAULT_AUTO: dict[str, list[str]] = {
     "brain": [
         "gemini:gemini-flash-latest", "gemini:gemini-3.8-flash", "nvidia:z-ai/glm-5.3",
@@ -89,8 +90,8 @@ DEFAULT_AUTO: dict[str, list[str]] = {
 
 
 def excluded(ref: str) -> bool:
-    """Sohbet/ajan işine uygun olmayan model mi? Sadece model adına bakılır: "clip" kalıbı "cliproxy:" sağlayıcı
-    adına da uyuyor, proxy'deki bütün modeller (Opus dahil) 0 puan alıp "zekâ bilinmiyor" görünüyordu."""
+    """Is this model unsuitable for chat/agent work? Only the model name is checked: the "clip" pattern also matched
+    the "cliproxy:" provider name, so all proxy models (Opus included) got 0 and showed "zekâ bilinmiyor"."""
     low = ref.lower()
     if low in RANDOM_ROUTERS:
         return True
@@ -99,7 +100,7 @@ def excluded(ref: str) -> bool:
 
 
 def table_quality(ref: str) -> int:
-    """Elle yazılmış tablodan tahmin (LMArena'da bulunamayan modeller için)."""
+    """Estimate from the hand-written table (for models not found on LMArena)."""
     low = ref.lower()
     if excluded(ref):
         return 0
@@ -109,12 +110,12 @@ def table_quality(ref: str) -> int:
     return 0
 
 
-_offset: tuple[float, int] = (0.0, 0)  # (LMArena verisinin zamanı, tablo -> LMArena ölçek farkı)
+_offset: tuple[float, int] = (0.0, 0)  # (time of the LMArena data, table -> LMArena scale offset)
 
 
 def _table_offset() -> int:
-    """Tablo puanları LMArena ölçeğinden cömert (gemini-3.8-flash 93'e 88, glm-5.3 90'a 81). İkisinde de olan
-    modellerin farkının ortancası tablodaki tahminlere eklenir: iki kaynaktan gelen puanlar aynı ölçekte olsun."""
+    """Table scores are more generous than the LMArena scale (gemini-3.8-flash 93 -> 88, glm-5.3 90 -> 81). The median
+    difference for models in both sources is added to the table estimates, so both sources share one scale."""
     global _offset
     data = arena.load()
     ts = float(data.get("fetched_ts") or 0)
@@ -128,7 +129,7 @@ def _table_offset() -> int:
 
 
 def quality(ref: str) -> int:
-    """Zekâ puanı: LMArena'daki gerçek sıralama, bulunamazsa elle yazılmış tablo (aynı ölçeğe çekilmiş)."""
+    """Intelligence score: the real LMArena ranking; if not found, the hand-written table (same scale)."""
     if excluded(ref):
         return 0
     hit = arena.lookup(ref)
@@ -150,16 +151,16 @@ class Probe:
     tool: str = ""
     error_kind: str = ""
     error: str = ""
-    ever_ok: bool = False  # önceki ölçümlerde en az bir kez çalıştı mı
-    context: int = 0  # token: modelin bağlamı ile sağlayıcıya gönderilebilen sınırın küçüğü (0 = bilinmiyor)
+    ever_ok: bool = False  # whether it ran at least once in previous measurements
+    context: int = 0  # tokens: smaller of the model's context and the provider's sendable limit (0 = unknown)
 
     @property
     def dead(self) -> bool:
-        """Kalıcı hata: model yok/kalkmış ya da bu anahtarla açılmıyor (rate limit geçicidir)."""
+        """Permanent error: model missing or retired, or not opening with this key (rate limits are temporary)."""
         return self.error_kind in ("not_found", "auth")
 
 
-# ------------------------------------------------------------------ önbellek
+# ------------------------------------------------------------------ cache
 def cache_path() -> Path:
     return alice_home() / "models.json"
 
@@ -182,9 +183,9 @@ def uses_auto(roles: dict[str, list[str]]) -> bool:
     return any("auto" in (chain or []) for chain in roles.values())
 
 
-# ------------------------------------------------------------------- adaylar
+# ------------------------------------------------------------------- candidates
 def catalog_models(router, name: str) -> list[dict[str, Any]]:
-    """Sağlayıcının model listesi: config'te models yazılıysa o (sadece ücretsizler), yoksa /models."""
+    """The provider's model list: the models written in config if any (free ones only), otherwise /models."""
     pc = router.providers_cfg[name]
     fixed = getattr(pc, "models", None) or []
     if fixed:
@@ -194,8 +195,8 @@ def catalog_models(router, name: str) -> list[dict[str, Any]]:
 
 def candidates(router, per_provider: int = PER_PROVIDER,
                contexts: dict[str, int] | None = None) -> tuple[list[str], dict[str, str], dict[str, list[str]]]:
-    """Kataloglardan bildiğimiz iyi ailelere uyan adaylar (sağlayıcı başına en iyi per_provider tane),
-    katalog hataları ve her sağlayıcının tam model listesi (elle yazılmış ama kalkmış modelleri ayıklamak için)."""
+    """Candidates from the catalogs matching the good model families we know (the best per_provider per provider),
+    catalog errors, and each provider's full model list (to filter out hand-written models that have been retired)."""
     from alice.providers.discovery import _generic, _openrouter
 
     errors: dict[str, str] = {}
@@ -208,20 +209,20 @@ def candidates(router, per_provider: int = PER_PROVIDER,
             errors[name] = f"{pc.api_key_env} tanımlı değil"
             continue
         if not getattr(pc, "auto", True):
-            continue  # krediyle çalışan sağlayıcı: sadece elle seçilir, ölçümde bile kredi harcamasın
+            continue  # paid-credit provider: only chosen by hand, and the measurement must not spend credit either
         try:
             models = catalog_models(router, name)
-        except Exception as e:  # noqa: BLE001 - keşifte hiçbir hata ölümcül değil
+        except Exception as e:  # noqa: BLE001 - no error during discovery is fatal
             errors[name] = str(e)[:160]
             continue
         if not getattr(pc, "models", None):
-            # Sabit liste gerçek katalog değil: elle yazılmış ücretli bir model (zai:glm-5) "kalkmış" sayılmasın.
+            # A fixed list is not a real catalog: a hand-written paid model (zai:glm-5) must not count as "retired".
             catalog[name] = sorted({str(m.get("id") or m.get("name") or "").removeprefix("models/")
                                     for m in models} - {""})
         for f in (_openrouter(models) if name == "openrouter" else _generic(name, models)):
             q = quality(f.ref)
             if q == 0 and not excluded(f.ref) and name != "openrouter":
-                q = UNKNOWN_QUALITY  # OpenRouter'ın yüzlerce bilinmeyen modeli ölçümü boğmasın
+                q = UNKNOWN_QUALITY  # so OpenRouter's hundreds of unknown models do not clog the measurement
             if q > 0 and f.tools is not False:
                 by_provider.setdefault(name, []).append((q, f.ref))
                 if contexts is not None and f.context:
@@ -233,7 +234,7 @@ def candidates(router, per_provider: int = PER_PROVIDER,
     return out, errors, catalog
 
 
-# ---------------------------------------------------------------------- ölçüm
+# ---------------------------------------------------------------------- measurement
 PROBE_TOOLS = ("list_dir", "run_command", "read_file", "process_list")
 PROBE_PROMPT = "Masaüstümdeki (C:\\Users\\kullanici\\Desktop) dosyaları listele."
 
@@ -245,7 +246,7 @@ def _probe_specs() -> list[dict[str, Any]]:
 
 
 def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: float = PROBE_TIMEOUT) -> Probe:
-    """Tek bir modeli gerçek bir araç çağrısı isteğiyle dene. Router'ın ceza mekanizmasına dokunmaz."""
+    """Try a single model with a real tool-call request. Does not touch the router's penalty mechanism."""
     from alice.providers.openai_compat import ProviderError, redact
     from alice.providers.router import clean_messages, is_gemini, parse_ref
 
@@ -271,13 +272,13 @@ def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: 
         res.latency = round(time.monotonic() - t0, 2)
         res.error_kind, res.error = e.kind, str(e)[:300]
         return res
-    except Exception as e:  # noqa: BLE001 - ölçümde hiçbir hata ölümcül değil
+    except Exception as e:  # noqa: BLE001 - no error during measurement is fatal
         res.latency = round(time.monotonic() - t0, 2)
         res.error_kind, res.error = "network", redact(f"{type(e).__name__}: {e}", pc.api_key)[:300]
         return res
     finally:
-        # Her ölçüm kendi httpx istemcisini açıyor (günde ~50 model): önceden hiç kapatılmıyor, bağlantılar ve
-        # dosya tanıtıcıları arka plan iş parçacığında birikiyordu.
+        # Each measurement opens its own httpx client (~50 models a day). It was never closed before, so connections
+        # and file handles piled up in the background thread.
         client.close()
     total =time.monotonic() - t0
     calls = r.message.get("tool_calls") or []
@@ -301,7 +302,7 @@ def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: 
 
 def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: None,
               timeout: float = PROBE_TIMEOUT) -> list[Probe]:
-    """Sağlayıcı başına ayrı işçi; sağlayıcı içinde birkaç eşzamanlı istek (Gemini/Groq'ta 1-2)."""
+    """A separate worker per provider; several concurrent requests within a provider (1-2 for Gemini/Groq)."""
     specs = _probe_specs()
     groups: dict[str, list[str]] = {}
     for ref in refs:
@@ -312,7 +313,7 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
     def run_group(provider: str, items: list[str]) -> None:
         workers = {"gemini": 2, "groq": 1, "cerebras": 2}.get(provider, 4)
         if provider in ACCOUNT_QUOTA:
-            workers = 1  # sırayla: kota dolunca kalanlara istek gitmesin
+            workers = 1  # one at a time: once the quota runs out, the rest get no requests
         quota_hit: list[Probe] = []
 
         def one(ref: str) -> Probe:
@@ -339,34 +340,35 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
     return results
 
 
-# -------------------------------------------------------------------- sıralama
-# Her model beş ölçütte 0-100 puan alır; rolün ağırlıklarıyla genel puan çıkar. Ağırlıklar uygulamada
-# (Ayarlar → Modeller → Puanlama) değiştirilebilir, ~/.alice/model-weights.json'a yazılır.
+# -------------------------------------------------------------------- ranking
+# Each model scores 0-100 on five criteria; the overall score is weighted by role. Weights are editable in the app
+# (Settings → Models → Scoring) and saved to ~/.alice/model-weights.json.
 METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi bitirme süresi)",
            "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)",
            "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)",
            "guven": "güvenilirlik (gerçek kullanımda takılmadan, saçmalamadan cevap verme)"}
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
-    # Ajan bir işte 10-20 kez model çağırıyor: zekâ önde ama yavaşlık ve takılma da pahalı. Zekâ LMArena'dan
-    # geldiğinden beri modeller arası fark küçük (flash-lite 67, 3.5-flash 82): %45'te hızlı ama zayıf flash-lite
-    # ana modelin başına geçiyordu. Takılan model "güven"le, çok yavaş olan "hız"la yine geri düşer.
-    # Bağlam: ajan uzun dosya/sayfa okuyor, konuşma uzuyor; küçük bağlamlı model işin ortasında sığmaz olur.
+    # An agent calls the model 10-20 times: intelligence comes first, but slowness and stalling are costly too.
+    # Since LMArena gave intelligence, gaps are small (flash-lite 67, 3.5-flash 82): a fast but weak flash-lite
+    # at 45% was moving to the front as the main model. A stalling model still drops back via "güven"
+    # (reliability), and a very slow one via "hız" (speed). Context: the agent reads long files and pages and
+    # conversations grow; a small-context model stops fitting in the middle of a job.
     "brain": {"zeka": 65, "hiz": 15, "tepki": 5, "akis": 0, "baglam": 5, "guven": 10},
-    # Sesli asistan: ilk kelimeye kadar geçen süre neredeyse zekâ kadar önemli; konuşmalar kısa.
+    # Voice assistant: time to the first word matters almost as much as intelligence; conversations are short.
     "voice": {"zeka": 40, "hiz": 10, "tepki": 35, "akis": 5, "baglam": 0, "guven": 10},
-    # Hızlı işler (özet, sınıflandırma): yeterince iyi olsun, çabuk bitsin; özet için biraz bağlam.
+    # Quick jobs (summaries, classification): good enough, and finish fast; a bit of context for summaries.
     "fast": {"zeka": 30, "hiz": 45, "tepki": 10, "akis": 5, "baglam": 5, "guven": 5},
-    # Görsel: ekran okuma işinde doğruluk önde; bir saniyelik fark daha az önemli.
+    # Vision: accuracy comes first in screen reading; a one-second difference matters less.
     "vision": {"zeka": 60, "hiz": 15, "tepki": 5, "akis": 5, "baglam": 10, "guven": 5},
 }
 
-# ------------------------------------------------------------------ gerçek kullanımda güvenilirlik
-# Ölçüm tek bir kısa istek: bir modelin uzun konuşmada takılıp takılmadığını göstermiyor. Router her gerçek
-# çağrının sonucunu buraya yazar; takılan (zaman aşımı), saçmalayan, 5xx veren model puanda geriye düşer.
-# Sayılar haftada yarıya iner: düzelen model zamanla eski yerine döner.
+# ------------------------------------------------------------------ reliability in real use
+# The measurement is one short request, so it does not show whether a model stalls in a long conversation. The router
+# writes every real call's result here; a model that stalls (timeout), talks nonsense or returns 5xx drops in score.
+# The numbers halve every week: a model that gets better returns to its old place over time.
 HEALTH_HALF_LIFE = 7 * 24 * 3600
-BAD_KINDS = ("network", "garbled", "server")  # modelin kendi sorunu; kota/hız sınırı/istek hatası sayılmaz
-UNRELIABLE = (3.0, 0.4)  # en az bu kadar hata ve güvenilirlik bunun altındaysa zincirin sonuna
+BAD_KINDS = ("network", "garbled", "server")  # the model's own fault; quota, rate limit and request errors do not count
+UNRELIABLE = (3.0, 0.4)  # at least this many errors and reliability below this value puts it at the end of the chain
 _health: dict[str, dict[str, float]] | None = None
 _health_lock = threading.Lock()
 _health_dirty = 0
@@ -393,14 +395,14 @@ def _decayed(h: dict[str, float], now: float) -> tuple[float, float]:
     return float(h.get("ok", 0)) * f, float(h.get("bad", 0)) * f
 
 
-SPEED_ALPHA = 0.3  # gerçek hız ölçümünde yeni çağrının ağırlığı (üstel ortalama)
-SPEED_MIN = 3  # en az bu kadar gerçek çağrı olunca ölçüm yerine gerçek kullanımın hızı sayılır
+SPEED_ALPHA = 0.3  # weight of a new call in the real speed measurement (exponential average)
+SPEED_MIN = 3  # once there are at least this many real calls, real-use speed is counted instead of the measurement
 
 
 def record_outcome(ref: str, ok: bool, kind: str = "", now: float | None = None, ttft: float = 0.0,
                    tps: float = 0.0) -> None:
-    """Gerçek bir çağrının sonucu (başarılıysa ilk kelime süresi ve saniyede token). Hatalar hemen, başarılar
-    ara ara diske yazılır."""
+    """The result of a real call (if successful, time to first token and tokens per second). Errors are written to disk
+    immediately, successes from time to time."""
     global _health_dirty
     if not ok and kind not in BAD_KINDS:
         return
@@ -422,8 +424,8 @@ def record_outcome(ref: str, ok: bool, kind: str = "", now: float | None = None,
         if ok and _health_dirty < 20:
             return
         _health_dirty = 0
-        # Kilit içinde ve benzersiz geçici dosya + os.replace ile: kilit dışında yazınca iki iş parçacığının yazımı
-        # iç içe geçip dosyayı yarım bırakabiliyor ya da eski anlık görüntü yenisinin üstüne yazılabiliyordu.
+        # Written inside the lock, with a unique temp file + os.replace: writing outside the lock let two threads'
+        # writes interleave and leave the file half-written, or let an old snapshot overwrite a newer one.
         _write_health(json.dumps(health, ensure_ascii=False))
 
 
@@ -448,7 +450,7 @@ def _write_health(text: str) -> None:
 
 
 def reliability(ref: str, now: float | None = None) -> tuple[float, float]:
-    """(0-1 güvenilirlik, hata sayısı). Veri yoksa 1: ölçümde çalışan model suçsuz sayılır."""
+    """(0-1 reliability, error count). No data means 1: a model that worked in the measurement counts as blameless."""
     h = load_health().get(ref)
     if not h:
         return 1.0, 0.0
@@ -457,8 +459,8 @@ def reliability(ref: str, now: float | None = None) -> tuple[float, float]:
 
 
 def live_speed(ref: str) -> dict[str, float]:
-    """Gerçek kullanımda ölçülen ilk kelime süresi ve saniyede token (yeterince çağrı varsa). Günlük ölçüm tek bir
-    kısa istek: şansa bağlı ve uzun konuşmadaki hızı göstermiyor."""
+    """Time to first token and tokens per second measured in real use (if there are enough calls). The daily measurement
+    is one short request: it depends on luck and does not show the speed in a long conversation."""
     h = load_health().get(ref) or {}
     out: dict[str, float] = {}
     for key in ("ttft", "tps"):
@@ -507,7 +509,7 @@ def _get(r: Any, key: str) -> float:
 
 
 def context_of(ref: str, providers_cfg: dict[str, Any] | None, catalog: int | None = None) -> int:
-    """Modelin kullanılabilir bağlamı: katalogdaki değer ile ALICE'in o sağlayıcıya gönderdiği sınırın küçüğü."""
+    """The model's usable context: the smaller of the catalog value and the limit ALICE sends to that provider."""
     pc = (providers_cfg or {}).get(ref.partition(":")[0])
     limit = int(getattr(pc, "max_input_tokens", 0) or 0)
     vals = [v for v in (catalog, limit) if v]
@@ -515,28 +517,28 @@ def context_of(ref: str, providers_cfg: dict[str, Any] | None, catalog: int | No
 
 
 def with_context(r: dict[str, Any], ref: str, providers_cfg: dict[str, Any] | None) -> dict[str, Any]:
-    """Eski ölçümde bağlam yok: sağlayıcının sınırıyla doldur. Gerçek kullanımdaki güvenilirlik de eklenir."""
+    """If the old measurement has no context, fill it with the provider's limit. Real-use reliability is added too."""
     out = r if r.get("context") else {**r, "context": context_of(ref, providers_cfg)}
     out = {**out, "reliability": reliability(ref)[0]}
-    q = quality(ref)  # LMArena güncellendiyse ölçüm anındaki eski puan yerine güncel olan
+    q = quality(ref)  # if LMArena was updated, use the current score instead of the one from measurement time
     if q:
         out["quality"] = q
     return {**out, **live_speed(ref)}
 
 
 def metric_scores(r: Any) -> dict[str, float]:
-    """Ölçüm sonucundan (Probe ya da önbellekteki sözlük) 0-100 alt puanlar. Eğriler yumuşak: 1 sn -> 2 sn farkı
-    8 sn -> 9 sn farkından çok daha önemli."""
+    """0-100 sub-scores from a measurement (a Probe or cache dict). Curves are smooth: 1 s -> 2 s
+    difference matters much more than an 8 s -> 9 s difference."""
     lat, ttft, tps = _get(r, "latency"), _get(r, "ttft"), _get(r, "tps")
     return {
         "zeka": max(0.0, min(100.0, _get(r, "quality"))),
-        "hiz": round(100 / (1 + max(0.0, lat - 1) / 4), 1),        # 1 sn 100, 3 sn 67, 5 sn 50, 13 sn 25
-        "tepki": round(100 / (1 + max(0.0, ttft - 0.3) / 1.0), 1),  # 0,3 sn 100, 0,8 sn 67, 1,3 sn 50, 5 sn 18
-        # 150 token/sn ve üstü 100. 0 = ölçülemedi (cevap tek parçada geldi): ceza değil, orta puan.
+        "hiz": round(100 / (1 + max(0.0, lat - 1) / 4), 1),        # 1 s 100, 3 s 67, 5 s 50, 13 s 25
+        "tepki": round(100 / (1 + max(0.0, ttft - 0.3) / 1.0), 1),  # 0.3 s 100, 0.8 s 67, 1.3 s 50, 5 s 18
+        # 150 tokens/s and above = 100. 0 = not measured (answer came in one piece): no penalty, middle score.
         "akis": round(min(100.0, tps / 1.5), 1) if tps > 0 else 50.0,
-        # 8K 20, 16K 40, 32K 60, 64K 80, 128K ve üstü 100; bilinmiyorsa orta
+        # 8K 20, 16K 40, 32K 60, 64K 80, 128K and above 100; unknown = middle
         "baglam": (round(max(0.0, min(100.0, 20 * math.log2(ctx / 4000))), 1) if (ctx := _get(r, "context")) else 50.0),
-        # Karesi: 2 başarı 2 takılma (%67) 44, hep takılan (%29) 8. Takılan model zekâsına rağmen geriye düşsün.
+        # Squared: 2 successes, 2 stalls (67%) give 44; always stalling (29%) gives 8. Stalling drops it regardless of IQ.
         "guven": round(100 * _rel(r) ** 2, 1),
     }
 
@@ -571,8 +573,8 @@ def voice_score(pr: Probe, weights: dict[str, dict[str, float]] | None = None) -
 
 
 def _diversify(ranked: list[Probe], score: Callable[[Probe], float], gap: float = 12.0) -> list[Probe]:
-    """Aynı sağlayıcıdan art arda ikiden fazla model koyma (puan farkı gap'ten azsa): bir sağlayıcı
-    yoğunluktan 503 verince ya da kotası dolunca zincirin geri kalanı da onunla birlikte düşmesin."""
+    """Do not put more than two models from the same provider in a row (if the score gap is smaller than gap), so that
+    when one provider returns 503 under load or runs out of quota, the rest of the chain does not fall with it."""
     left = list(ranked)
     out: list[Probe] = []
     while left:
@@ -589,9 +591,9 @@ def _diversify(ranked: list[Probe], score: Callable[[Probe], float], gap: float 
 
 def vision_backups(results: dict[str, Any], providers_cfg: dict[str, Any], have: list[str],
                    limit: int = 2) -> list[str]:
-    """Görme zincirinin başı genelde hep Gemini: hepsi aynı günlük kotada tükeniyor, ekran görevi de "görme modeli
-    yok" diye düşüyordu. Zincirde olmayan sağlayıcılardan ölçümde çalışmış en iyi görsel modeller (sağlayıcı başına
-    bir) yedek olarak sona eklenir."""
+    """The head of the vision chain is usually Gemini: they all share one daily quota, so screen tasks were failing with
+    "görme modeli yok" (no vision model). The best vision models that worked in the measurement, from providers not in
+    the chain (one per provider), are appended at the end as backups."""
     used = {r.split(":", 1)[0] for r in have}
     out: list[str] = []
     for ref, r in sorted(results.items(),
@@ -612,7 +614,7 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
     def live(r: Probe) -> dict[str, Any]:
         return {**asdict(r), "reliability": reliability(r.ref)[0], **live_speed(r.ref)}
 
-    # Gerçek kullanımda sık takılan model puanı ne olursa olsun çalışanların arkasına (yedek olarak kalır).
+    # A model that often stalls in real use goes behind the working ones, whatever its score (it stays as a backup).
     def brain_score(r: Probe) -> float:
         return role_score(live(r), "brain", weights) - 1000 * unreliable(r.ref)
 
@@ -630,25 +632,25 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
     def provider_cfg(ref: str):
         return providers_cfg.get(ref.split(":", 1)[0])
 
-    # Beyin istekleri sistem istemi + araçlarla ~8-12K token: küçük TPM'li sağlayıcılar (Groq) beyne uymaz.
+    # Brain requests (system prompt + tools) are ~8-12K tokens: providers with a small TPM (Groq) do not fit the brain.
     def roomy(ref: str) -> bool:
         pc = provider_cfg(ref)
         return bool(pc and pc.max_input_tokens >= 16000)
 
     brain = [r for r in ok if r.quality >= BRAIN_MIN_QUALITY and roomy(r.ref)]
-    if not brain:  # sadece küçük modellere erişim var: hiç model kalmamasındansa eldekiler
+    if not brain:  # only small models are available: better to use those than no model at all
         brain = [r for r in ok if r.quality >= VOICE_MIN_QUALITY and roomy(r.ref)]
     brain = _diversify(sorted(brain, key=lambda r: -brain_score(r)), brain_score)
-    # Ölçüm anında geçici hata veren (rate limit, 5xx) iyi modeller de sona yedek olarak girer.
-    # Zaman aşımına uğrayanlar girmez: o kadar yavaş bir model beyin için işe yaramaz.
-    # Günlük kotası dolmuş ama daha önce çalıştığı görülmüş modeller de (kota ertesi gün döner); hiç
-    # çalışmamış kota hatalıları (ör. ücretsiz katmanda kotası 0 olan pro modeller) girmez.
+    # Good models with a temporary error during measurement (rate limit, 5xx) also go at the end as backups.
+    # Those that timed out do not: a model that slow is useless for the brain.
+    # Models whose daily quota is used up but that were seen working before also go in (the quota resets the next day);
+    # quota errors from models that never worked (e.g. pro models with a 0 quota on the free tier) do not.
     transient = [r for r in results if not r.ok and r.quality >= BRAIN_MIN_QUALITY
                  and (r.error_kind in ("rate_limit", "server") or (r.error_kind == "quota" and r.ever_ok))
                  and roomy(r.ref)]
     transient = sorted(transient, key=lambda r: -r.quality)[:3]
     brain = brain[:limit - len(transient)] + transient
-    # Küçük bağlamlı hızlı sağlayıcılar (Groq) da girer: istek sığmazsa router onları atlayıp sonrakine geçer.
+    # Fast small-context providers (Groq) also get in: if a request does not fit, the router skips to the next.
     voice = [r for r in ok if r.quality >= VOICE_MIN_QUALITY]
     voice = _diversify(sorted(voice, key=lambda r: -voice_score(r)), voice_score)
     fast = [r for r in ok if r.quality >= FAST_MIN_QUALITY and r.latency <= 15]
@@ -666,7 +668,7 @@ def build_chains(results: list[Probe], providers_cfg: dict[str, Any], limit: int
 def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | None = None,
             per_provider: int = PER_PROVIDER, timeout: float = PROBE_TIMEOUT) -> dict[str, Any]:
     if getattr(router, "_real_clients", False) and arena.age() > arena.MAX_AGE:
-        arena.refresh(emit)  # zekâ puanları: gerçek benchmark (üç günde bir, birkaç saniye)
+        arena.refresh(emit)  # intelligence scores: real benchmark (every three days, a few seconds)
     contexts: dict[str, int] = {}
     refs, errors, catalog = candidates(router, per_provider, contexts=contexts)
     emit(f"{len(refs)} aday ölçülüyor ({', '.join(sorted({r.split(':', 1)[0] for r in refs}))})")
@@ -695,7 +697,7 @@ def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | N
 
 
 def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Path | None = None) -> dict[str, Any]:
-    """Son ölçümün sonuçlarıyla zincirleri yeniden kur (yeni ağırlıklar): modelleri tekrar ölçmeden."""
+    """Rebuild the chains from the last measurement's results (new weights), without measuring the models again."""
     cache = load_cache(path)
     results = []
     for d in (cache.get("results") or {}).values():
@@ -717,7 +719,7 @@ def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Pa
 
 
 def left_out(r: dict[str, Any], role: str, providers_cfg: dict[str, Any] | None) -> str:
-    """Puanı yüksek olsa da model bu rolün sırasına neden girmiyor (build_chains'in koşulları)."""
+    """Why a model is not in this role's order even though its score is high (the build_chains conditions)."""
     q, lat = float(r.get("quality") or 0), float(r.get("latency") or 0)
     prov, _, model = str(r.get("ref", "")).partition(":")
     pc = (providers_cfg or {}).get(prov)
@@ -737,7 +739,7 @@ def left_out(r: dict[str, Any], role: str, providers_cfg: dict[str, Any] | None)
 
 def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str, float]] | None = None,
                 providers_cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Ekrandaki puan tablosu: her model için alt puanlar, rol başına genel puan ve sıraya girmediyse nedeni."""
+    """The on-screen score table: sub-scores per model, overall score per role, and the reason if not in the order."""
     cache = load_cache() if cache is None else cache
     weights = weights or load_weights()
     chains = cache.get("chains") or {}
@@ -763,7 +765,7 @@ _refreshing = threading.Lock()
 
 def refresh_in_background(router, emit: Callable[[str], None] = lambda s: None,
                           max_age: float = CACHE_MAX_AGE) -> bool:
-    """Önbellek eskiyse (ve config "auto" kullanıyorsa) arka planda yenile, bitince router'ı güncelle."""
+    """If the cache is old (and config uses "auto"), refresh it in the background and update the router when done."""
     wanted = uses_auto(router.config.roles) or router.config.agent.get("auto_models", True)
     if not wanted or cache_age(load_cache()) < max_age:
         return False
@@ -776,7 +778,7 @@ def refresh_in_background(router, emit: Callable[[str], None] = lambda s: None,
             cache = refresh(router)
             router.reload_auto(cache)
             emit("model sırası güncellendi: " + ", ".join(cache["chains"].get("brain", [])[:3]))
-        except Exception as e:  # noqa: BLE001 - arka plan işi uygulamayı düşürmesin
+        except Exception as e:  # noqa: BLE001 - a background job must not crash the app
             emit(f"model ölçümü başarısız: {e}")
         finally:
             _refreshing.release()

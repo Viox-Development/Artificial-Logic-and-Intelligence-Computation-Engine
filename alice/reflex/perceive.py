@@ -1,19 +1,19 @@
-"""Ekranı Jev'in seçebileceği numaralı öğe listesine çevir: erişilebilirlik ağacı + OCR, konum ve bağlamla.
+"""Convert screen into a numbered list of selectable elements for Jev: accessibility tree + OCR, with position and context.
 
-Jev ekranı kendisi yorumlamakta (görsel, Box) henüz zayıf; en iyi çalışan Jev bilgisayar-kullanım projeleri
-(typesafe-computer-use, otto, CUA-JEV) ekranı deterministik okuyup her öğeyi tek satırla anlatıyor:
-`button 'Kaydet' (top-right)`, `text 'Uydurma bir savunma' (left-top; in the row of '14 Eki')`. Burada:
+Jev is still weak at interpreting the screen by itself (images, Box); the best-working Jev computer-use projects
+(typesafe-computer-use, otto, CUA-JEV) read the screen deterministically and describe each element in a single line:
+`button 'Save' (top-right)`, `text 'Fake defense' (left-top; in the row of '14 Oct')`. Here:
 
-- erişilebilirlik ağacından (UIA / DOM) gelen kontroller ve ekrandaki yazılar (OCR) birleştirilir; ikisi aynı şeyse
-  tek öğe olur (`ax+ocr`), iki seçenek oyu bölmesin;
-- konum, pencerenin üçte birlik bölgeleriyle yazılır (sayı değil: Jev sayıları karşılaştıramaz);
-- aynı adı taşıyan öğelere satır bağlamı eklenir (hangisi olduğu ancak satırdan anlaşılır);
-- hedefi tekrarlayan yazılar atılır: kullanıcının "projelerdeki ilk projeye tıkla" mesajı ekranda göründüğü için
-  Jev o yazıya tıklıyordu;
-- liste hedefle ilgili olanlar önde olacak şekilde sınırlanır.
+- controls from the accessibility tree (UIA / DOM) and on-screen text (OCR) are merged; if both are the same,
+  it becomes a single item (`ax+ocr`), so two choices don't split votes;
+- position is written using one-third screen regions (not numbers: Jev cannot compare numbers);
+- row context is added to items with the same name (which one it is can only be understood from the row);
+- texts repeating the goal are dropped: since the user's message "click the first project in projects" appears on screen,
+  Jev was clicking that text;
+- the list is limited so that items related to the goal come first.
 
-OCR Windows'un yerleşik motoruyla yapılır (winrt-Windows.Media.Ocr; Türkçe dahil kullanıcının dilleri). Paket
-yoksa sadece erişilebilirlik ağacıyla çalışılır.
+OCR is done using Windows' built-in engine (winrt-Windows.Media.Ocr; user's languages including Turkish). If the package
+is not available, it works with the accessibility tree only.
 """
 
 from __future__ import annotations
@@ -25,22 +25,22 @@ from typing import Any, Callable
 
 _WORD = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]{2,}", re.U)
 MAX_ITEMS = 60
-ECHO_SHARE = 0.6  # yazının kelimelerinin bu kadarı hedefte geçiyorsa hedefin yankısıdır (kullanıcının mesajı)
-ECHO_MIN_WORDS = 4  # daha kısası düğme adıdır: "Start new game" hedefi "start a new game" iken atılıyordu
-# Çift tırnak (düz, kıvrık, açılı) arası. Tek tırnak değil: Türkçede ek ayırır ("WhatsApp'ta").
+ECHO_SHARE = 0.6  # if this fraction of words in the text appears in the goal, it's an echo of the goal (user's message)
+ECHO_MIN_WORDS = 4  # shorter ones are button names: goal "Start new game" while "start a new game" was being dropped
+# Between double quotes (straight, curly, angled). Not single quotes: Turkish uses them for suffixes ("WhatsApp'ta").
 QUOTED_RX = re.compile(r'"[^"]*"|“[^”]*”|«[^»]*»|„[^“”]*[“”]')
 
 
 def place(x: float, y: float) -> str:
-    """Kesirli nokta -> 'top-left' / 'center' (Jev sayıları karşılaştıramaz; üçte birlik bölgeler)."""
+    """Fractional point -> 'top-left' / 'center' (Jev cannot compare numbers; one-third regions)."""
     col = "left" if x < 1 / 3 else "right" if x > 2 / 3 else "middle"
     row = "top" if y < 1 / 3 else "bottom" if y > 2 / 3 else "middle"
     return "center" if col == row == "middle" else f"{row}-{col}"
 
 
 def changed_places(prev: Any, cur: Any) -> list[str]:
-    """Değişen bölgelerin yerleri, okunur: yazısız değişimi (kart açıldı, birim yürüdü) yansıtma da görsün. Solitaire'de
-    kanıtta sadece 'görülen yere tıklandı' yazınca model 'menülerde kayboldun' diye yanlış ders uydurmuştu."""
+    """Locations of changed regions, readable: let the model also see un-texted changes (card opened, unit walked).
+    In Solitaire, when the evidence only said 'clicked seen location', the model hallucinated wrong lessons like 'you got lost in menus'."""
     regions = changed_regions(prev, cur) or []
     out: list[str] = []
     for l, t, r, b in regions:
@@ -51,13 +51,13 @@ def changed_places(prev: Any, cur: Any) -> list[str]:
 
 
 def words(s: str) -> list[str]:
-    # İ önce: "ALİCE".lower() "ali̇ce" olur (birleşik nokta) ve "alice" ile eşleşmezdi.
+    # I first: "ALİCE".lower() becomes "ali̇ce" (combined dot) and wouldn't match "alice".
     return [w.replace("İ", "i").replace("I", "i").lower().replace("ı", "i") for w in _WORD.findall(s or "")]
 
 
 @dataclass
 class Item:
-    """Ekrandaki tek bir seçilebilir şey. rect: pencere içinde 0-1 kesirli (sol, üst, sağ, alt)."""
+    """A single selectable item on screen. rect: 0-1 fractional within window (left, top, right, bottom)."""
 
     key: str
     source: str  # ax | ocr | ax+ocr | dom
@@ -67,8 +67,8 @@ class Item:
     value: str = ""
     editable: bool = False
     context: str = ""
-    ref: Any = None  # gözlemcinin eylem için kullandığı tutamak (UIA öğe numarası, DOM numarası)
-    fresh: bool = False  # önceki gözlemde yoktu (oyunda: bu adımda/turda yeni çıkan)
+    ref: Any = None  # handle used by observer for action (UIA element number, DOM number)
+    fresh: bool = False  # was not in previous observation (in games: newly appeared in this step/turn)
 
     @property
     def center(self) -> tuple[float, float] | None:
@@ -82,7 +82,7 @@ class Item:
         return "" if c is None else place(*c)
 
     def describe(self, mark_new: bool = True) -> str:
-        """mark_new=False: geçmiş satırları için (aynı eylem 'new' işareti yüzünden farklı görünmesin)."""
+        """mark_new=False: for past rows (so the same action doesn't look different due to 'new' flag)."""
         kind = "text" if self.source == "ocr" else (self.role or "control")
         s = f"{kind} '{self.label[:80]}'"
         if self.value:
@@ -93,29 +93,30 @@ class Item:
 
 @dataclass
 class Screen:
-    """Bir gözlemin sonucu: pencere, öğeler ve değişimi anlamak için imza."""
+    """Result of an observation: window, items, and signature to understand changes."""
 
     title: str
     location: str
     items: list[Item] = field(default_factory=list)
     focused: str = ""
-    image: Any = None  # PIL görüntü (görsel yedek için), yoksa None
+    image: Any = None  # PIL image (for visual fallback), otherwise None
 
     def signature(self) -> str:
-        """Ekranın içeriği değişti mi? (öğe adları ve kabaca yerleri)"""
+        """Did the screen contents change? (item names and rough locations)"""
         parts = [self.title] + [f"{i.label}|{i.where()}|{i.value}" for i in self.items]
         return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def is_goal_echo(text: str, goal: str, echoes: tuple[str, ...] = ()) -> bool:
-    """Ekrandaki yazı hedefin kendisi mi (sohbet penceresinde görünen kullanıcı mesajı)? echoes: kullanıcının asıl
-    mesajı gibi başka kaynaklar; beyin modeli hedefi yeniden yazınca ekrandaki mesaj hedefle yarı yarıya örtüşüyordu."""
+    """Is the on-screen text the goal itself (user message appearing in chat window)? echoes: other sources like user's
+    original message; when the brain model rewrote the goal, the message on screen overlapped halfway with the goal."""
     tw = words(text)
     if len(tw) < ECHO_MIN_WORDS:
         return False
     for src in (goal, *echoes):
-        # Tırnak içi, ekranda tıklanacak/yazılacak şeyin adıdır, yankı değil: danışman 'Click the "Search or start a
-        # new Chat" box' deyince WhatsApp'ın arama kutusu yankı sayılıp listeden atılmış, refleks 'Chats'e tıklamıştı.
+        # Inside quotes, it's the name of the thing to click/type on screen, not an echo: when the advisor said
+        # 'Click the "Search or start a new Chat" box', WhatsApp's search box was counted as an echo and dropped,
+        # and the reflex clicked 'Chats'.
         gw = set(words(QUOTED_RX.sub(" ", src or "")))
         if gw and sum(w in gw for w in tw) / len(tw) >= ECHO_SHARE:
             return True
@@ -123,7 +124,7 @@ def is_goal_echo(text: str, goal: str, echoes: tuple[str, ...] = ()) -> bool:
 
 
 def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
-    """a'nın ne kadarı b'nin içinde (0-1)."""
+    """What fraction of a is inside b (0-1)."""
     l, t = max(a[0], b[0]), max(a[1], b[1])
     r, bt = min(a[2], b[2]), min(a[3], b[3])
     if r <= l or bt <= t:
@@ -134,12 +135,12 @@ def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float,
 
 def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, float]]], goal: str,
                 limit: int = MAX_ITEMS, echoes: tuple[str, ...] = (), drop_echo: bool = True) -> list[Item]:
-    """Erişilebilirlik öğeleri + OCR satırları -> numaralı, tekrarsız, hedefe göre sıralı liste."""
+    """Accessibility items + OCR lines -> numbered, de-duplicated, goal-ordered list."""
     items: list[Item] = []
     for i in ax:
         if not (i.label or i.editable):
             continue
-        # Aynı kontrol ağaçta iç içe iki kez görünebiliyor (Gezgin'in iki 'Address Bar'ı): iki seçenek oyu bölüyordu.
+        # The same control can appear twice nested in the tree (Explorer's two 'Address Bar's): two options split the votes.
         if i.rect and any(o.role == i.role and o.label.strip().lower() == i.label.strip().lower() and o.rect
                           and _overlap(i.rect, o.rect) > 0.8 and _overlap(o.rect, i.rect) > 0.8 for o in items):
             continue
@@ -148,7 +149,7 @@ def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, 
         text = " ".join(text.split())
         if not text or (drop_echo and is_goal_echo(text, goal, echoes)):
             continue
-        # OCR satırı bir kontrolün içinde ve aynı yazıysa ayrı seçenek olmasın: kontrol "ax+ocr" olur.
+        # If the OCR line is inside a control and has the same text, don't make it a separate option: control becomes "ax+ocr".
         host = next((i for i in items if i.rect and i.source != "ocr" and _overlap(rect, i.rect) > 0.6
                      and (not i.label or set(words(text)) & set(words(i.label)))), None)
         if host is not None:
@@ -157,7 +158,7 @@ def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, 
             host.source = "ax+ocr" if host.source == "ax" else host.source
             continue
         items.append(Item("", "ocr", "text", text, rect))
-    # Aynı ad birden çok yerdeyse hangisi olduğu satırından anlaşılsın.
+    # If the same name is in multiple places, make its row understandable.
     by_label: dict[str, list[Item]] = {}
     for i in items:
         by_label.setdefault(i.label.strip().lower(), []).append(i)
@@ -167,13 +168,13 @@ def build_items(ax: list[Item], ocr: list[tuple[str, tuple[float, float, float, 
         for i in same:
             if i.rect is None:
                 continue
-            # Pencereyi kaplayan öğe (WebView'in Document'ı) her satırın "komşusu" olurdu.
+            # The element covering the window (WebView's Document) would become the "neighbor" of every row.
             row = [o.label for o in items if o is not i and o.rect and o.rect[3] - o.rect[1] < 0.1
                    and o.label.strip().lower() != i.label.strip().lower()
                    and abs(((o.rect[1] + o.rect[3]) / 2) - ((i.rect[1] + i.rect[3]) / 2)) < 0.02][:2]
             if row:
                 i.context = "in the row of " + ", ".join(f"'{r[:30]}'" for r in row)
-    # Hedefle ilgili olanlar önde, sonra okuma sırası (yukarıdan aşağı, soldan sağa).
+    # Items related to the goal first, then reading order (top to bottom, left to right).
     gw = set(words(goal))
 
     def order(i: Item) -> tuple:
@@ -194,7 +195,7 @@ _ocr_error = ""
 
 
 def ocr_available() -> tuple[bool, str]:
-    """(kullanılabilir mi, neden değilse)"""
+    """(whether it is usable, and if not, why)"""
     try:
         _engine()
         return True, ""
@@ -230,7 +231,7 @@ def _engine() -> Any:
 
 def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, int, int, int]]]] | None = None
               ) -> list[tuple[str, tuple[float, float, float, float]]]:
-    """Görüntüdeki yazı satırları, kesirli kutularıyla. recognize testte yerine konur."""
+    """Text lines in the image with their fractional boxes. recognize is substituted in tests."""
     w, h = img.size
     lines = (recognize or _recognize_windows)(img)
     out = []
@@ -240,8 +241,8 @@ def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, in
 
 
 def ocr_words(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
-    """Görüntüdeki tek tek kelimeler ve piksel kutuları (x, y, en, boy). RWR'daki "M29 F15 MSL" gibi aynı satıra
-    düşen işaretlerin her birinin yeri ayrı gerekir (füzenin yönü MSL'nin konumundan çıkar)."""
+    """Individual words in the image and their pixel boxes (x, y, width, height). Each marker on the same line, such as
+    "M29 F15 MSL" on the RWR, needs its own position (the missile's direction comes from the position of MSL)."""
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.storage.streams import DataWriter
 
@@ -257,8 +258,8 @@ def ocr_words(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
 
 
 def _wait(op: Any) -> Any:
-    """WinRT IAsyncOperation'ı bekle. Coroutine değil, sadece await edilebilir; asyncio.run onu kabul etmez. Çağıran
-    zaten bir olay döngüsünün içindeyse (çekirdek) asyncio.run patlar: o zaman ayrı bir iş parçacığında beklenir."""
+    """Wait for WinRT IAsyncOperation. Not a coroutine, just awaitable; asyncio.run doesn't accept it. If the caller
+    is already inside an event loop (core), asyncio.run crashes: then it is awaited in a separate thread."""
     import asyncio
 
     async def go() -> Any:
@@ -275,15 +276,15 @@ def _wait(op: Any) -> Any:
 
 
 def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
-    """Windows.Media.Ocr: satır metni ve piksel kutusu (x, y, en, boy). Motor en fazla max_image_dimension piksel
-    kenar okuyor: daha büyük (3440 genişlik) pencere küçültülür, kutular geri ölçeklenir."""
+    """Windows.Media.Ocr: line text and pixel box (x, y, width, height). The engine reads at most max_image_dimension pixel
+    edge: larger (3440 width) window is scaled down, boxes are rescaled back."""
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.storage.streams import DataWriter
 
     from winrt.windows.media.ocr import OcrEngine
 
     eng = _engine()
-    limit = int(getattr(OcrEngine, "max_image_dimension", 0) or 0) or 4000  # statik: örnekte yok
+    limit = int(getattr(OcrEngine, "max_image_dimension", 0) or 0) or 4000  # static: not on the instance
     scale = min(1.0, limit / max(img.size))
     src = img if scale >= 1.0 else img.resize((int(img.width * scale), int(img.height * scale)))
     rgba = src.convert("RGBA")
@@ -305,19 +306,19 @@ def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     return out
 
 
-# ------------------------------------------------------------------------------- sadece değişen kısımlar (oyunlar)
+# ------------------------------------------------------------------------------- only the changed parts (games)
 Rect = tuple[float, float, float, float]
-DIFF_GRID = (16, 9)  # ekran bu kadar hücreye bölünür
-DIFF_PIXEL = 30  # gri tonda bu kadar farklı piksel "değişmiş" sayılır
-DIFF_CELL = 0.004  # hücrenin bu kadarı değiştiyse hücre değişmiş (tek bir sayının değişmesini de yakalar)
-FULL_OCR_SHARE = 0.5  # ekranın yarısından fazlası değiştiyse hepsi baştan okunur
+DIFF_GRID = (16, 9)  # the screen is split into this many cells
+DIFF_PIXEL = 30  # a pixel that differs by this much in gray tone counts as "changed"
+DIFF_CELL = 0.004  # the cell counts as changed if this fraction of it changed (also catches a single number changing)
+FULL_OCR_SHARE = 0.5  # if more than half the screen changed, everything is read again from the start
 
 
 def changed_regions(prev: Any, cur: Any, grid: tuple[int, int] = DIFF_GRID) -> list[Rect] | None:
-    """İki kare arasında değişen bölgeler (kesirli kutular). None: karşılaştırılamaz, her yer yeni sayılır.
+    """Regions that changed between two frames (fractional boxes). None: incomparable, everywhere considered new.
 
-    Ekran ızgaraya bölünür; değişen komşu hücreler tek kutuda birleşir. Oyunda bir tur sonra haritanın çoğu aynı
-    kalıyor: yalnızca yeni çıkan pencere, değişen kaynak sayısı ya da hareket eden birim yeniden okunur."""
+    The screen is divided into a grid; changing neighbor cells merge into a single box. In games, after a turn, most of the map
+    remains the same: only the newly popped-up window, changing resource counts, or moving units are re-read."""
     from PIL import Image, ImageChops
 
     if prev is None or cur is None or prev.size != cur.size:
@@ -341,12 +342,12 @@ def changed_regions(prev: Any, cur: Any, grid: tuple[int, int] = DIFF_GRID) -> l
     return sorted(out, key=lambda r: (r[1], r[0]))
 
 
-IMAGE_CHANGE = 0.001  # karenin bu kadarı değiştiyse ekran değişmiş sayılır (yanıp sönen imleç ~%0,003, bir kart ~%0,3)
+IMAGE_CHANGE = 0.001  # screen counts as changed if this fraction of the frame changed (blinking cursor ~0.3%, card ~30%)
 
 
 def image_changed(prev: Any, cur: Any) -> bool:
-    """Görüntü anlamlı ölçüde değişti mi? Yazı imzası yazısız değişimi görmüyor: Solitaire'de desteye tıklayınca kart
-    açılıyordu ama OCR kart yüzünü okuyamadığı için "ekran değişmedi" deniyor, tekrar koruması durduruyordu."""
+    """Did the image change significantly? Text signature doesn't see un-texted changes: in Solitaire, clicking the deck
+    opened a card, but because OCR couldn't read the card face, it said "screen did not change", stopping repeat protection."""
     if prev is None or cur is None:
         return False
     if prev.size != cur.size:
@@ -357,18 +358,18 @@ def image_changed(prev: Any, cur: Any) -> bool:
     return diff.histogram()[255] / (cur.width * cur.height) >= IMAGE_CHANGE
 
 
-CROP_MAX_SHARE = 0.5  # değişen bölge ekranın yarısından büyükse kırpmanın anlamı yok, tam ekran kıyaslanır
+CROP_MAX_SHARE = 0.5  # if the changed region is over half the screen, cropping is pointless; compare the full screen
 
 
 def changed_crops(prev: Any, cur: Any) -> tuple[Any, Any] | None:
-    """Değişen bölgelerin (bir hücre payla) önce/sonra kırpıntıları. Tam ekran Jev'e küçültülerek gidiyor; 3440
-    piksellik pencerede kartın rakamı birkaç piksele iniyordu. Evidence-First Reflection gibi: önce nerede değiştiğini
-    bul, oraya yakından bak. Değişim yoksa ya da çok büyükse None."""
+    """Before/after crops of changed regions (with cell share). Full screen goes downscaled to Jev; in a 3440-pixel
+    window, the card number shrank to a few pixels. Like Evidence-First Reflection: first find where it changed,
+    look closely there. None if no change or too large."""
     regions = changed_regions(prev, cur)
     if not regions:
         return None
-    # Birleşim değil en büyük bölge: Solitaire'de sağ üstteki saat her dakika değişiyor; birleşim desteden saate kadar
-    # uzayıp yarım ekranı aşıyor, kırpma iptal oluyordu.
+    # Not union but largest region: in Solitaire the clock in the top right changes every minute; union stretched
+    # from the deck to the clock and exceeded half the screen, canceling cropping.
     big = max(regions, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
     gw, gh = DIFF_GRID
     l, t = max(0.0, big[0] - 1 / gw), max(0.0, big[1] - 1 / gh)
@@ -381,8 +382,8 @@ def changed_crops(prev: Any, cur: Any) -> tuple[Any, Any] | None:
 
 
 def image_key(img: Any) -> str:
-    """Görüntünün kaba parmak izi (64x36 gri, 8 ton). Döngü koruması aynı ekrana geri dönülmesini bununla da tanır:
-    yazısı aynı kalıp görüntüsü değişen ekranda (desteden art arda kart çekmek) döngü sanılmasın."""
+    """Rough fingerprint of the image (64x36 gray, 8 tones). Loop protection also recognizes returning to the same screen with this:
+    don't consider it a loop on a screen where the text stays the same but the image changes (drawing cards from deck successively)."""
     if img is None:
         return ""
     small = img.convert("L").resize((64, 36)).point(lambda v: v // 32)
@@ -396,8 +397,8 @@ def _touches(a: Rect, b: Rect) -> bool:
 def ocr_changed(img: Any, prev_lines: list[tuple[str, Rect]], regions: list[Rect] | None,
                 recognize: Callable[[Any], list[tuple[str, tuple[int, int, int, int]]]] | None = None
                 ) -> list[tuple[str, Rect]]:
-    """Önceki satırların değişmeyenleri + değişen bölgelerin yeniden okunması. Bölgeye değen eski satırlar da
-    bölgeye katılır (yarısı değişen bir satır yarım okunmasın)."""
+    """Unchanged items of previous lines + re-reading of changed regions. Old lines touching the region also join
+    the region (so a half-changed line isn't half-read)."""
     if regions is None or sum((r[2] - r[0]) * (r[3] - r[1]) for r in regions) > FULL_OCR_SHARE:
         return ocr_image(img, recognize)
     keep, grown = list(prev_lines), []
@@ -418,12 +419,12 @@ def ocr_changed(img: Any, prev_lines: list[tuple[str, Rect]], regions: list[Rect
     return out
 
 
-CHANGES_MAX = 12  # her yönde en fazla bu kadar yazı
+CHANGES_MAX = 12  # at most this many texts per direction
 
 
 def screen_changes(before: list[Item], after: list[Item]) -> dict[str, list[str]]:
-    """İki ekran arasında çıkan ve kaybolan yazılar (kodun kesin bildiği kanıt). Tur sayacı, yıl, altın gibi değerler
-    hangi oyunda olursa olsun burada görünür: 'Turn 3' kaybolur, 'Turn 4' çıkar."""
+    """Appeared and disappeared texts between two screens (proof known for sure by code). Values like turn counter, year, gold
+    appear here no matter what game it is: 'Turn 3' disappears, 'Turn 4' appears."""
     def labels(items: list[Item]) -> dict[str, str]:
         out: dict[str, str] = {}
         for i in items:
@@ -438,7 +439,7 @@ def screen_changes(before: list[Item], after: list[Item]) -> dict[str, list[str]
 
 
 def mark_fresh(items: list[Item], before: set[str] | None) -> set[str]:
-    """Önceki gözlemde olmayan öğeleri 'new' işaretle; bu gözlemin öğe kümesini döndür. before None: ilk gözlem."""
+    """Mark items not in previous observation as 'new'; return the item set of this observation. before None: first observation."""
     now = {f"{i.role}|{i.label.strip().lower()}" for i in items}
     if before is not None:
         for i in items:

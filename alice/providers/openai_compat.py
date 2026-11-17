@@ -1,9 +1,8 @@
-"""OpenAI uyumlu /chat/completions istemcisi.
+"""OpenAI-compatible /chat/completions client.
 
-Gemini, OpenRouter, Groq, NVIDIA NIM, Cerebras ve Ollama hepsi bu formatı konuşuyor,
-o yüzden tek bir istemci yeterli. Asıl iş hataları doğru sınıflandırmak: router
-hangi hatada bekleyeceğine, hangisinde modeli/sağlayıcıyı tamamen atlayacağına
-buna göre karar veriyor.
+Gemini, OpenRouter, Groq, NVIDIA NIM, Cerebras, and Ollama all speak this format,
+so a single client is enough. The main task is properly classifying errors: the router
+decides based on this whether to wait on an error or completely skip the model/provider.
 """
 
 from __future__ import annotations
@@ -22,8 +21,8 @@ import httpx
 from alice.config import ProviderConfig
 
 
-# Hata metinlerinde (sağlayıcının yankıladığı gövde, httpx istisnası) görünebilecek anahtar kalıpları. Bunlar
-# kullanıcıya gösterilen hataya ve ~/.alice/logs/providers.log'a gitmeden önce maskelenir.
+# Key patterns that may appear in error texts (provider-echoed body, httpx exception). These are
+# masked before going to the user-facing error and ~/.alice/logs/providers.log.
 _SECRET_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"(?i)([?&](?:key|api_key|apikey|access_token|token)=)[^&\s\"']+"),
@@ -33,7 +32,7 @@ _SECRET_PATTERNS = [
 
 
 def redact(text: str, *secrets: str | None) -> str:
-    """Metindeki API anahtarlarını maskele: verilen gerçek anahtarlar ve bilinen anahtar biçimleri."""
+    """Mask API keys in text: given actual keys and known key formats."""
     if not text:
         return text
     for sec in secrets:
@@ -45,7 +44,7 @@ def redact(text: str, *secrets: str | None) -> str:
 
 
 def redact_binary(content: Any) -> str:
-    """Tanınmayan araç sonucu JSON metni olarak gider; içindeki görüntü/ikili veri yer tutucuyla değiştirilir."""
+    """Unknown tool results go as JSON text; images/binary data inside are replaced with a placeholder."""
     def scrub(v: Any) -> Any:
         if isinstance(v, dict):
             return {k: scrub(x) for k, x in v.items()}
@@ -68,11 +67,11 @@ class ProviderError(Exception):
         self.kind = kind
         self.status = status
         self.retry_after = retry_after
-        self.daily = daily  # günlük kota: ertesi gün sıfırlanana kadar bu modele istek gitmesin
+        self.daily = daily  # daily quota: no requests to this model until it resets the next day
 
 
 class StreamCancelled(Exception):
-    """Kullanıcı akışı durdurdu."""
+    """User cancelled the stream."""
 
 
 @dataclass
@@ -82,7 +81,7 @@ class ChatResult:
     model: str
     usage: dict[str, Any] = field(default_factory=dict)
     latency: float = 0.0
-    finish: str = ""  # "length": cevap çıktı sınırına takılıp yarıda kesildi
+    finish: str = ""  # "length": the response hit the output limit and was cut short
 
     @property
     def text(self) -> str:
@@ -96,14 +95,14 @@ class ChatResult:
         return self.message.get("tool_calls") or []
 
 
-# "set up billing": Gemini ücretsiz katmanı dolunca bu metinle 429 döner; 20 sn sonra tekrar denemek boşuna.
+# "set up billing": Gemini returns 429 with this text when the free tier is exhausted; retrying after 20s is pointless.
 _QUOTA_HINTS = ("per day", "daily", "quota", "rpd", "tokens per day", "free-models-per-day", "exhausted",
                 "billing", "insufficient credits", "insufficient_quota", "credit balance")
 _DAILY_HINTS = ("per day", "daily", "rpd", "tokens per day", "free-models-per-day")
 _TOO_LARGE_HINTS = ("context length", "context_length", "maximum context", "too long", "too large",
                     "reduce the length", "request_too_large", "tokens per minute", "max_tokens")
-# 401/403 ama sorun anahtarda değil, o modelde: "Model ... is not available on the Workers Free plan" (Cloudflare),
-# "you do not have access to model ..." gibi. "auth" sayılınca sağlayıcının BÜTÜN modelleri kapanıyordu.
+# 401/403 but the issue is not the key, it's the model: e.g. "Model ... is not available on the Workers Free plan" (Cloudflare),
+# "you do not have access to model ...", etc. Counting it as "auth" used to disable ALL models of the provider.
 _MODEL_DENIED_HINTS = ("not available on the workers", "requires a paid plan", "not available on your plan",
                        "not available on the free", "do not have access to model", "does not have access to model",
                        "not have access to the model", "model is not available")
@@ -112,17 +111,17 @@ _NOT_FOUND_HINTS = ("model not found", "does not exist", "no endpoints found", "
 
 
 def _quota_window(low: str) -> tuple[str, float | None]:
-    """Gemini 429 gövdesindeki kota kimliğinden pencereyi ("day", "minute" ya da "") ve bekleme süresini çıkar.
-    Gemini dakikalık sınırda da "exceeded your current quota" yazıyor: kimliğe bakmadan hepsi günlük sanılıyordu
-    ve 40 sn sonra açılacak model bir saat kapanıyordu."""
+    """Extract the window ("day", "minute", or "") and retry delay from the quota ID in the Gemini 429 body.
+    Gemini also writes "exceeded your current quota" for minute limits: previously all were assumed daily
+    regardless of the ID, and a model that would open in 40s was locked for an hour."""
     window = "day" if "perday" in low else "minute" if "perminute" in low else ""
     m = re.search(r'"retrydelay":\s*"([\d.]+)s"', low) or re.search(r"retry in ([\d.]+)\s*s", low)
     return window, (float(m.group(1)) if m else None)
 
 
 def parse_retry_after(value: str | None, now: datetime | None = None) -> float | None:
-    """Retry-After başlığı: saniye ("7") ya da HTTP tarihi ("Wed, 21 Oct 2026 07:28:00 GMT"). Tarih biçimi
-    önceden sessizce yok sayılıyor, sunucunun istediği bekleme yerine varsayılan süre kullanılıyordu."""
+    """Retry-After header: seconds ("7") or HTTP date ("Wed, 21 Oct 2026 07:28:00 GMT"). The date format
+    was previously ignored silently, using the default duration instead of the server's requested wait time."""
     if not value:
         return None
     value = value.strip()
@@ -145,8 +144,8 @@ _HTML_RX = re.compile(r"^\s*(<!doctype|<html|<head|<body|<\?xml)", re.I)
 
 
 def summarize_body(body: str, limit: int = 400) -> str:
-    """Hata gövdesini kullanıcıya gösterilebilir kısa metne çevir. Cloudflare/nginx gibi ara katmanların HTML
-    hata sayfaları önceden olduğu gibi (etiketler, stil, betik) hata mesajına dökülüyordu."""
+    """Convert an error body into short text that can be shown to the user. Previously the HTML error pages of
+    intermediate layers such as Cloudflare/nginx were dumped into the error message as-is (tags, styles, scripts)."""
     body = body or ""
     if _HTML_RX.match(body) or "<html" in body[:500].lower():
         title = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
@@ -172,17 +171,17 @@ def classify_error(status: int, body: str, headers: dict[str, str] | None = None
         retry_after = parse_retry_after(headers.get("retry-after") or headers.get("Retry-After"))
     short = summarize_body(body)
     if status in (401, 403):
-        # OpenRouter bazı moderasyon/quota hatalarında da 403 döner.
+        # OpenRouter also returns 403 for some moderation/quota errors.
         if any(h in low for h in _MODEL_DENIED_HINTS):
-            return ProviderError("not_found", short, status)  # sadece bu model kapanır
+            return ProviderError("not_found", short, status)  # only this model is turned off
         if any(h in low for h in _QUOTA_HINTS):
             return ProviderError("quota", short, status, retry_after)
         return ProviderError("auth", short, status)
-    if status in (404, 410):  # 410: model kullanımdan kaldırıldı
+    if status in (404, 410):  # 410: model has been removed
         return ProviderError("not_found", short, status)
-    if status == 402:  # OpenRouter: kredi yetersiz. Önceden bad_request sayılıp 60 sn sonra yine deneniyordu.
+    if status == 402:  # OpenRouter: insufficient credits. Previously counted as bad_request and retried after 60 s.
         return ProviderError("quota", short, status, retry_after)
-    if status == 408:  # sunucu tarafı istek zaman aşımı: geçici
+    if status == 408:  # server-side request timeout: transient
         return ProviderError("network", short, status, retry_after)
     if status == 413:
         return ProviderError("too_large", short, status)
@@ -213,8 +212,8 @@ def classify_error(status: int, body: str, headers: dict[str, str] | None = None
 
 
 def _inline_error(err: Any) -> ProviderError:
-    """200 cevabın (ya da SSE parçasının) içindeki {"error": ...} nesnesini sınıflandır. code bazen "429" gibi
-    metin geliyor; önceden bu durumda hata 500 (server) sayılıp günlük kota 30 sn sonra yeniden deneniyordu."""
+    """Classify the {"error": ...} object inside a 200 response (or an SSE chunk). Sometimes code arrives as text
+    such as "429"; previously the error was then counted as 500 (server) and the daily quota was retried after 30 s."""
     code = err.get("code") if isinstance(err, dict) else None
     if isinstance(code, str) and code.strip().isdigit():
         code = int(code.strip())
@@ -227,8 +226,8 @@ def _inline_error(err: Any) -> ProviderError:
 
 
 def _transport_error(e: Exception) -> ProviderError:
-    """httpx istisnasını sınıflandır. ReadTimeout gibi istisnaların metni çoğu zaman boş: önceden kullanıcı
-    sadece "timeout: " görüyordu."""
+    """Classify an httpx exception. The text of exceptions like ReadTimeout is often empty: previously the user
+    only saw "timeout: "."""
     detail = str(e).strip()
     label = type(e).__name__ + (f": {detail}" if detail else "")
     if isinstance(e, httpx.ConnectTimeout):
@@ -244,35 +243,35 @@ def _transport_error(e: Exception) -> ProviderError:
     return ProviderError("network", label)
 
 
-# httpx.InvalidURL ve StreamError HTTPError'dan türemiyor: önceden router'ı ProviderError dışı istisnayla düşürüyordu.
+# httpx.InvalidURL and StreamError don't subclass HTTPError; they used to escape the router as non-ProviderError.
 _TRANSPORT_ERRORS = (httpx.HTTPError, httpx.InvalidURL, httpx.StreamError)
 
 
 class OpenAICompatProvider:
-    # Akış bu kadar saniye gerçek veri (metin, düşünme, araç parçası) göndermezse kesilir. Bazı sağlayıcılar
-    # beklerken ": PROCESSING" gibi canlı tutma satırları yollar; bunlar okuma zaman aşımını sıfırladığı için
-    # yoksa çağrı saatlerce asılı kalabiliyor.
+    # The stream is cut off if it sends no real data (text, thinking, tool fragments) for this many seconds. Some
+    # providers send keep-alive lines like ": PROCESSING" while waiting; these reset the read timeout, so without
+    # this limit a call can hang for hours.
     STREAM_IDLE = 300.0
-    # İlk gerçek veri (metin, düşünme, araç) bu kadar saniyede gelmezse model takılmış sayılır, sıradakine geçilir.
-    # NVIDIA'daki glm-5.3 bağlantıyı açık tutup hiç cevap vermeden 5 dakikadan fazla bekletiyordu.
+    # If no first real data (text, thinking, tool) arrives within this many seconds, the model is considered stuck
+    # and the next one is tried. glm-5.3 on NVIDIA kept the connection open without answering for over 5 minutes.
     FIRST_DATA = 90.0
 
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
         self.cfg = cfg
         self.name = cfg.name
-        # Akışta kullanım bilgisini (stream_options.include_usage) kabul etmeyen sağlayıcı bir kez 400 verince
-        # bir daha istenmez.
+        # A provider that rejects usage reporting in streams (stream_options.include_usage) with a 400 once
+        # is not asked again.
         self._stream_usage = True
         self._client = client or httpx.Client(timeout=httpx.Timeout(timeout, connect=15.0))
 
     def close(self) -> None:
         try:
             self._client.close()
-        except Exception:  # noqa: BLE001 - kapanışta hata önemsiz
+        except Exception:  # noqa: BLE001 - errors on close don't matter
             pass
 
     def _scrub(self, e: ProviderError) -> ProviderError:
-        """Hata metninde bu sağlayıcının gerçek anahtarı geçiyorsa (sağlayıcı yankılamış) maskele."""
+        """Mask this provider's real key if it appears in the error text (the provider echoed it back)."""
         e.args = tuple(redact(a, self.cfg.api_key) if isinstance(a, str) else a for a in e.args)
         return e
 
@@ -321,7 +320,7 @@ class OpenAICompatProvider:
         try:
             r = self._client.post(f"{self.cfg.base_url}/chat/completions", headers=self._headers(), json=body)
         except _TRANSPORT_ERRORS as e:
-            # ConnectError: sunucu hiç yok (ör. Ollama kapalı), uzun süre tekrar deneme.
+            # ConnectError: no server at all (e.g. Ollama is off), so don't retry for a long time.
             raise _transport_error(e) from e
         latency = time.monotonic() - t0
 
@@ -329,10 +328,10 @@ class OpenAICompatProvider:
             raise classify_error(r.status_code, r.text, dict(r.headers))
         try:
             data = r.json()
-        except ValueError as e:  # JSONDecodeError ya da bozuk kodlama
+        except ValueError as e:  # JSONDecodeError or broken encoding
             raise ProviderError("server", f"geçersiz JSON: {summarize_body(r.text, 200)}", 200) from e
 
-        # Bazı sağlayıcılar (OpenRouter) hatayı 200 içinde döndürür.
+        # Some providers (OpenRouter) return errors inside a 200 response.
         if isinstance(data, dict) and data.get("error") and not data.get("choices"):
             raise _inline_error(data["error"])
         if not isinstance(data, dict):
@@ -372,9 +371,9 @@ class OpenAICompatProvider:
         on_tool: Callable[[str, int], None] | None = None,
         on_call: Callable[[dict[str, Any]], None] | None = None,
     ) -> ChatResult:
-        """SSE ile akışlı cevap. on_call: bir araç çağrısı tamamlanınca (sonraki çağrı başlayınca) hemen bildirilir;
-        ajan güvenli araçları cevap bitmeden çalıştırmaya başlar. Metin parçaları on_delta'ya gider, tool_call parçaları birleştirilir (yazıldıkça
-        on_tool'a araç adı ve argümanların o ana kadarki uzunluğu bildirilir)."""
+        """Streamed response over SSE. on_call: a tool call is reported right away once it completes (when the next call
+        starts), so the agent can run safe tools before the response ends. Text pieces go to on_delta; tool_call pieces
+        are merged (as they are written, on_tool gets the tool name and the length of the arguments so far)."""
         try:
             return self._chat_stream(model, messages, on_delta, tools, temperature, max_tokens, response_format,
                                      extra, cancel, on_reasoning, on_first, on_tool, on_call)
@@ -385,24 +384,24 @@ class OpenAICompatProvider:
                      cancel, on_reasoning, on_first, on_tool, on_call=None) -> ChatResult:
         body = self._body(model, messages, tools, temperature, max_tokens, response_format, extra)
         body["stream"] = True
-        # Akışın sonunda tam kullanım gelsin (önbellekten okunan/yazılan token dahil). İstenmeyince bazı sağlayıcılar
-        # (cliproxy) yalnız ilk parçadaki eksik kullanımı yolluyordu: çıktı 0, önbellek bilgisi yok, ALICE'in önbellek
-        # isabeti hep %0 görünüyordu.
+        # Get full usage at the end of the stream (including cached tokens). Without it, some providers (cliproxy)
+        # sent only the incomplete usage from the first chunk: output 0, no cache info, and ALICE's cache hit rate
+        # always showed 0%.
         if self._stream_usage and "stream_options" not in body:
             body["stream_options"] = {"include_usage": True}
-        if "openrouter.ai" in self.cfg.base_url:  # kullanım ve ücret son parçada gelsin (proje maliyet takibi)
+        if "openrouter.ai" in self.cfg.base_url:  # usage and cost arrive in the last chunk (project cost tracking)
             body.setdefault("usage", {"include": True})
         t0 = time.monotonic()
         text_parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
-        announced: set[int] = set()  # on_call ile bildirilen (tamamlanmış) çağrılar
+        announced: set[int] = set()  # calls (completed) already reported via on_call
         usage: dict[str, Any] = {}
         served_model = model
         finish = None
         think = ThinkFilter()
         last_data = time.monotonic()
         got_data = False
-        chunks = 0  # çözülebilen SSE parçası sayısı
+        chunks = 0  # number of decodable SSE chunks
         done = False
         retry = False
         try:
@@ -434,7 +433,7 @@ class OpenAICompatProvider:
                         chunk = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
-                    if not isinstance(chunk, dict):  # "data: null" gibi: oturumu AttributeError ile düşürmesin
+                    if not isinstance(chunk, dict):  # e.g. "data: null": don't crash the session with AttributeError
                         continue
                     chunks += 1
                     if chunk.get("error"):
@@ -445,7 +444,7 @@ class OpenAICompatProvider:
                         usage = merge_usage(usage, chunk["usage"])
                     choices = chunk.get("choices")
                     for ch in choices if isinstance(choices, list) else []:
-                        if not isinstance(ch, dict):  # bozuk parça: AttributeError ile oturumu düşürmesin
+                        if not isinstance(ch, dict):  # malformed chunk: don't crash the session with AttributeError
                             continue
                         delta = ch.get("delta")
                         if not isinstance(delta, dict):
@@ -456,13 +455,13 @@ class OpenAICompatProvider:
                             got_data = True
                         if on_first is not None and (delta.get("content") or delta.get("tool_calls")
                                                      or delta.get("reasoning_content") or delta.get("reasoning")):
-                            on_first()  # ilk token süresi (model sıralaması için)
+                            on_first()  # time to first token (for model ranking)
                             on_first = None
                         thought = delta.get("reasoning_content") or delta.get("reasoning")
                         if thought and on_reasoning and isinstance(thought, str):
                             on_reasoning(thought)
                         piece = delta.get("content")
-                        if not isinstance(piece, str):  # bazı sağlayıcılar liste biçiminde yolluyor
+                        if not isinstance(piece, str):  # some providers send it as a list
                             piece = _text_of(piece)
                         if piece:
                             piece, thought = think.feed(piece)
@@ -488,8 +487,8 @@ class OpenAICompatProvider:
             return self._chat_stream(model, messages, on_delta, tools, temperature, max_tokens, response_format,
                                      extra, cancel, on_reasoning, on_first, on_tool, on_call)
         if not chunks and not done:
-            # 200 geldi ama tek bir SSE parçası yok (HTML ara sayfa, boş gövde, akış açılır açılmaz kapandı):
-            # önceden boş cevap başarılı sayılıp kullanıcıya hiçbir şey gösterilmiyordu.
+            # A 200 arrived but not a single SSE chunk (HTML interstitial page, empty body, or the stream closed
+            # right after opening). Previously an empty reply was counted as success and nothing was shown.
             raise ProviderError("server", "akış veri göndermeden kapandı (geçerli SSE parçası yok)", 200)
 
         text = "".join(text_parts)
@@ -515,14 +514,15 @@ class OpenAICompatProvider:
                 raise ProviderError("server", f"geçersiz JSON: {summarize_body(r.text, 200)}", 200) from e
         except ProviderError as e:
             raise self._scrub(e) from e.__cause__
-        # Bazı sağlayıcılar listeyi doğrudan döndürüyor: önceden list.get AttributeError ile düşüyordu.
+        # Some providers return the list directly: previously list.get raised AttributeError.
         items = data if isinstance(data, list) else (data.get("data") if isinstance(data, dict) else None)
         return [m for m in items if isinstance(m, dict)] if isinstance(items, list) else []
 
 
 def merge_usage(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
-    """Akışta birden çok parçada gelen kullanımı birleştir: sonraki parçanın dolu alanları öncekinin üstüne yazılır,
-    boş/sıfır alanlar öncekini silmez (ilk parça girdi token'ını, son parça çıktıyı ve önbelleği getirebiliyor)."""
+    """Merge usage split across several chunks of a stream: filled fields of a later chunk overwrite earlier ones,
+    while empty/zero fields never erase earlier values (the first chunk may carry input tokens; the last, output
+    and cache)."""
     out = dict(old)
     for k, v in new.items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -533,7 +533,7 @@ def merge_usage(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
 
 
 def _text_of(content: Any) -> str:
-    """Akışta liste biçiminde gelen içerik parçalarından metni çıkar ([{"type": "text", "text": "..."}])."""
+    """Extract text from content parts that arrive as a list in a stream ([{"type": "text", "text": "..."}])."""
     if isinstance(content, list):
         return "".join(p.get("text", "") for p in content
                        if isinstance(p, dict) and isinstance(p.get("text"), str))
@@ -542,8 +542,8 @@ def _text_of(content: Any) -> str:
 
 def _announce_done(calls: dict[int, dict[str, Any]], announced: set[int],
                    on_call: Callable[[dict[str, Any]], None]) -> None:
-    """Son çağrıdan öncekiler tamamlanmıştır (model sıradakine geçti): kimliği ve geçerli JSON argümanı olanları bir
-    kez bildir. Bildirim hatası akışı bozmaz."""
+    """Calls before the last one are complete (the model has moved on): report once each for those that have an id
+    and valid JSON arguments. A notification error does not break the stream."""
     last = max(calls)
     for i in sorted(calls):
         if i >= last or i in announced:
@@ -565,7 +565,7 @@ def _announce_done(calls: dict[int, dict[str, Any]], announced: set[int],
 
 
 def _merge_tool_delta(calls: dict[int, dict[str, Any]], tc: dict[str, Any]) -> None:
-    """Akışta parça parça gelen tool_call'ları birleştir. Gemini index göndermeyebiliyor."""
+    """Merge tool_call pieces arriving piece by piece in a stream. Gemini may not send an index."""
     idx = tc.get("index")
     if idx is None:
         tid = tc.get("id")
@@ -574,7 +574,7 @@ def _merge_tool_delta(calls: dict[int, dict[str, Any]], tc: dict[str, Any]) -> N
     cur = calls.setdefault(idx, {"id": None, "type": "function", "function": {"name": "", "arguments": ""}})
     if tc.get("id"):
         cur["id"] = tc["id"]
-    if tc.get("extra_content"):  # Gemini: thought_signature geri gönderilmezse sonraki istek 400 alıyor
+    if tc.get("extra_content"):  # Gemini: if thought_signature is not sent back, the next request gets a 400
         cur["extra_content"] = tc["extra_content"]
     fn = tc.get("function")
     if not isinstance(fn, dict):
@@ -589,16 +589,16 @@ def _merge_tool_delta(calls: dict[int, dict[str, Any]], tc: dict[str, Any]) -> N
 
 
 class ThinkFilter:
-    """Bazı modeller (Qwen, GLM, Nemotron, DeepSeek...) düşünmesini içeriğin içinde <think>...</think> olarak
-    gönderir. Bu metin ekrana yazılmasın, sesli asistan da okumasın: akıştan ayıklanıp düşünce olarak döner.
-    Etiket parçalar arasında bölünebilir; emin olunana kadar şüpheli kuyruk bekletilir."""
+    """Some models (Qwen, GLM, Nemotron, DeepSeek...) send their thinking inside the content as <think>...</think>.
+    This text should not be printed on screen or read by the voice assistant: it is extracted from the stream
+    and returned as thought. The tag can be split across chunks; the suspicious tail is held until sure."""
 
     OPEN, CLOSE = "<think>", "</think>"
 
     def __init__(self) -> None:
         self.buf = ""
         self.inside = False
-        self.started = False  # görünür metin başladı mı (etiket sadece başta beklenir)
+        self.started = False  # whether visible text has started (the tag is only expected at the start)
 
     def feed(self, piece: str) -> tuple[str, str]:
         self.buf += piece
@@ -624,7 +624,7 @@ class ThinkFilter:
                 self.buf = stripped[len(self.OPEN):]
                 self.inside = True
                 continue
-            if self.OPEN.startswith(stripped):  # "<thi" gibi: devamı gelsin
+            if self.OPEN.startswith(stripped):  # like "<thi": wait for more to come
                 break
             self.started = True
         return "".join(shown), "".join(thought)
@@ -639,13 +639,13 @@ def _partial_suffix(text: str, tag: str) -> int:
 
 def strip_think(text: str) -> str:
     text = re.sub(r"<think>.*?(</think>|$)", "", text or "", flags=re.S)
-    if "</think>" in text:  # açılış etiketi olmadan gelen düşünce
+    if "</think>" in text:  # thought coming without an opening tag
         text = text.split("</think>", 1)[1]
     return text.strip()
 
 
 def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
-    """Sağlayıcıya özel alanları atıp geçmişte güvenle tutulabilecek bir assistant mesajı üret."""
+    """Drop provider-specific fields and produce an assistant message that can be safely kept in history."""
     content = msg.get("content") or ""
     if isinstance(content, str) and "think>" in content:
         content = strip_think(content)
@@ -662,7 +662,7 @@ def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
             "function": {"name": fn.get("name", ""), "arguments": args or "{}"},
         }
         if tc.get("extra_content"):
-            call["_extra_content"] = tc["extra_content"]  # sadece Gemini'ye geri gönderilir
+            call["_extra_content"] = tc["extra_content"]  # only sent back to Gemini
         calls.append(call)
     if calls:
         out["tool_calls"] = calls

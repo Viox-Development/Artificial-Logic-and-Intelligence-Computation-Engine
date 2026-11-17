@@ -1,29 +1,32 @@
-"""Projeler: büyük bir işi paralel çalışan ajanlarla, kendi yöneticisi olan otonom bir proje olarak yürütmek.
+"""Projects: running a large job as an autonomous project, with parallel agents and its own lead.
 
-Her projenin bir yöneticisi (lead, adı "alice") ve işçi ajanları (üyeler) vardır. Hepsi kendi thread'inde, kendi
-bağlamıyla çalışan alt ajanlardır.
+Each project has a lead (named "alice") and worker agents (members). All of them are sub-agents, each running in its
+own thread with its own context.
 
-Yönetici sohbetten bağımsız çalışır ve olay geldikçe uyanır:
-- Plan: ajan verilmemişse kodu inceleyip işi parçalara böler, `assign` ile ajanları kurar.
-- İzleme: ajanların sorularını `message` ile cevaplar; kullanıcıya bağlı kararları `ask_user` ile sorar.
-- İnceleme: biten her ajan "review" durumuna geçer; yönetici raporu ve farkı (`diff`) okur, gerekirse test çalıştırır,
-  `review` ile onaylar (worktree dalı birleştirilir) ya da geri bildirimle geri gönderir.
-- Bitiş: herkes onaylanınca bütünü doğrular ve `finish` ile kullanıcıya özet yazar.
+The lead works independently of the chat and wakes up when events arrive:
+- Plan: if there are no agents yet, it reads the code, splits the work into parts, and sets up agents with `assign`.
+- Monitor: it answers agents' questions with `message`; it asks the user about decisions that need them with `ask_user`.
+- Review: each finished agent moves to the "review" state; the lead reads the report and the diff (`diff`), runs tests
+  if needed, and approves with `review` (the worktree branch is merged) or sends the work back with feedback.
+- Finish: once everyone is approved, it checks the whole and writes a summary for the user with `finish`.
 
-İnceleme kurulu (alice/council.py) açıksa: plan `plan` aracıyla kurula sunulur (reddedilirse yönetici düzeltip
-tekrar sunar, ikinci retten sonra kullanıcıya sorulur); biten her iş kurulda tartışılıp oylanır ve karar uygulanır
-(onay ya da doğrulanmış bulgularla düzeltme; düzeltmeden sonra kısa kontrol turu, en çok 2 kez); proje sonunda final
-kurulu toplanır (en çok 2 kez). Çekişmeli kararlar yöneticiye, kullanıcı da oy verebilir ya da kararı bozabilir.
+If the review council (alice/council.py) is on: the plan is submitted to the council with the `plan` tool (if rejected,
+the lead fixes it and resubmits; after the second rejection the user is asked); each finished piece of work is debated
+and voted on by the council, and the decision is applied (approval, or fixes for verified findings; after fixes, a short
+check round, at most 2 times); at the end of the project the final council meets (at most 2 times). Contested decisions
+go to the lead, and the user can also vote or overturn a decision.
 
-Üyeler `team_send` ile birbirine, yöneticiye ("alice") ya da herkese yazar, `team_wait` ile cevap bekler; gelen mesajlar
-her araç adımından sonra konuşmalarına eklenir. `after` ile bir üye başkalarının işi onaylanınca başlar.
+Members write to each other, the lead ("alice") or everyone with `team_send`, and wait with `team_wait`;
+incoming messages are added to their conversation after each tool step. With `after`, a member starts once the work of
+others is approved.
 
-Her proje ~/.alice/projects/<id>.json'a kaydedilir; uygulama kapanıp açılsa da yüklenir, kullanıcı yazınca kaldığı
-yerden devam eder. Uygulamanın Projeler sayfası durumları, konuşmaları, farkları ve soruları gösterir.
+Each project is saved to ~/.alice/projects/<id>.json; it is loaded again even if the app is closed and reopened, and
+when the user writes, it continues where it left off. The app's Projects page shows statuses, conversations, diffs
+and questions.
 
-Güvenlik: ajanlar sadece kod işi araçlarını kullanır (dosya, kabuk, web, git); ekran/tarayıcı araçları kullanıcının
-tek ekranını paylaştığı için kapalı. Yazma kapsamı verilen ajan kapsam dışına dosya araçlarıyla yazamaz; "readonly"
-ajan hiç yazamaz. İzin soruları ajanın adıyla kullanıcıya gider.
+Security: agents only use code tools (files, shell, web, git); screen/browser tools are off, since they would
+share the user's single screen. An agent with a write scope cannot write outside it with file tools; a "readonly"
+agent cannot write at all. Permission questions go to the user under the agent's name.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from typing import Any, Callable
 
 from alice.tools.base import Tool, ToolContext, ToolError, ToolResult, make_diff
 
-# Proje deposu team_store.py'de; buradan da içe aktarılabilsin diye yeniden dışa veriliyor.
+# The project store lives in team_store.py; it is re-exported here so it can also be imported from this module.
 from alice.team_store import (  # noqa: F401
     _read_saved,
     _slim,
@@ -55,12 +58,12 @@ from alice.team_store import (  # noqa: F401
     templates_dir,
 )
 
-LEAD = "alice"  # projenin yöneticisi
-ORCHESTRATOR = LEAD  # eski ad
-USER = "kullanıcı"  # Projeler sayfasından yazan kullanıcı
+LEAD = "alice"  # the project's lead
+ORCHESTRATOR = LEAD  # old name
+USER = "kullanıcı"  # the user, writing from the Projects page
 SYSTEM = "sistem"
 COUNCIL = "kurul"
-# Ajanların kullanabildiği araçlar: kod işi. Ekran, tarayıcı, masaüstü araçları kullanıcının tek ekranını paylaşır.
+# Tools agents may use: code work. Screen, browser and desktop tools share the user's single screen.
 MEMBER_TOOLS = {"read_file", "write_file", "edit_file", "multi_edit", "apply_patch", "file_ops", "list_dir", "glob",
                 "grep", "run_command", "process_output", "process_stop", "web_fetch", "web_search", "http_request",
                 "todo_write", "git"}
@@ -70,13 +73,13 @@ THINKING = ("off", "low", "medium", "high", "default")
 NAME_RX = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
 ACTIVE = ("running", "waiting", "asking")
 FINAL = ("done", "failed", "stopped")
-SAVE_EVERY = 1.5  # saniye: canlı güncellemelerde diske en sık bu aralıkla yazılır
+SAVE_EVERY = 1.5  # seconds: during live updates, the disk is written at most this often
 DESIGN_FILE = "DESIGN.md"
-RESEARCH_DIR = "research"  # referans sitelerin ekran görüntüleri ve çözümlemeleri (site_study yazar)
+RESEARCH_DIR = "research"  # screenshots and analyses of reference sites (written by site_study)
 
 
 def research_refs(root: Path, limit: int = 2) -> dict[str, str]:
-    """Araştırılmış referans sitelerin masaüstü görüntüleri (ad -> base64), karşılaştırma için."""
+    """Desktop screenshots of researched reference sites (name -> base64), for comparison."""
     import base64
 
     d = Path(root) / RESEARCH_DIR
@@ -94,14 +97,15 @@ def research_refs(root: Path, limit: int = 2) -> dict[str, str]:
 
 
 def team_compact_cap(config) -> int:
-    """Proje ajanlarının konuşması bu kadar token'ı geçince özetlenir ([agent] team_compact_at, 0 = sınırsız).
-    Her adım bütün konuşmayı yeniden gönderir; 1M bağlamlı modelde sınır olmayınca bir proje ~100M token yakıyordu."""
+    """Project agents' conversations are summarized once they pass this many tokens ([agent] team_compact_at,
+    0 = unlimited). Every step resends the whole conversation; with no limit, a project on a 1M-context model
+    burned ~100M tokens."""
     try:
         return max(0, int(config.agent.get("team_compact_at", 128000)))
     except (TypeError, ValueError):
         return 128000
 MAX_MEMBERS = 8
-ORIGINAL_LIMIT = 400_000  # geri alma/fark için saklanan dosya ilk hali (bayt); daha büyükleri saklanmaz
+ORIGINAL_LIMIT = 400_000  # original file contents kept for revert/diff (bytes); larger files are not kept
 
 
 @dataclass
@@ -120,42 +124,42 @@ class Member:
     name: str
     task: str
     constraints: str = ""
-    scope: list[str] = field(default_factory=list)  # yazılabilecek yollar (boş: tüm çalışma klasörü)
-    model: str = "auto"  # auto (işe göre akıllı seçim), rol adı (brain, fast...) ya da sağlayıcı:model
+    scope: list[str] = field(default_factory=list)  # paths it may write to (empty: the whole working folder)
+    model: str = "auto"  # auto (smart pick by task), a role name (brain, fast...) or provider:model
     thinking: str = "default"
     isolation: str = "shared"
     max_steps: int = 60
-    after: list[str] = field(default_factory=list)  # bunlar onaylanınca başlar
+    after: list[str] = field(default_factory=list)  # starts once these are approved
     cwd: Path = Path(".")
     branch: str = ""
-    base_sha: str = ""  # worktree açıldığı commit
+    base_sha: str = ""  # commit the worktree was opened at
     status: str = "queued"  # queued | running | waiting | asking | review | done | failed | stopped
     result: str = ""
-    question: str = ""  # yöneticiye/kullanıcıya sorup cevap beklediği soru
+    question: str = ""  # question asked to the lead/user, awaiting an answer
     steps: int = 0
-    reviews: int = 0  # kaç kez düzeltmeye gönderildi
+    reviews: int = 0  # how many times it was sent back for fixes
     limit_hit: bool = False
     last: str = ""
     started: float = 0.0
     ended: float = 0.0
-    files: list[str] = field(default_factory=list)  # dosya araçlarıyla değiştirdiği yollar (proje klasörüne göre)
-    originals: dict[str, str | None] = field(default_factory=dict)  # mutlak yol -> ilk hali (None: yoktu)
+    files: list[str] = field(default_factory=list)  # paths changed with file tools (relative to the project folder)
+    originals: dict[str, str | None] = field(default_factory=dict)  # absolute path -> original contents (None: did not exist)
     agent: Any = None
     thread: threading.Thread | None = None
-    saved_messages: list[dict[str, Any]] = field(default_factory=list)  # diskten yüklenmiş konuşma (sistem hariç)
-    resume_wanted: bool = False  # bitmişken iş geldi ama paralel sınırı dolu: yer açılınca devam edecek
-    councils: list[dict[str, Any]] = field(default_factory=list)  # bu işin kurul sonuçları (eskiden yeniye)
-    council_cycles: int = 0  # kurulun düzeltmeye gönderdiği tur sayısı
+    saved_messages: list[dict[str, Any]] = field(default_factory=list)  # loaded from disk (no system prompt)
+    resume_wanted: bool = False  # got work after finishing, parallel limit full: resumes when a slot frees
+    councils: list[dict[str, Any]] = field(default_factory=list)  # council results for this job (oldest first)
+    council_cycles: int = 0  # number of rounds the council sent back for fixes
     council_running: bool = False
-    last_at: float = 0.0  # son araç adımı (takılma tespiti)
+    last_at: float = 0.0  # last tool step (stall detection)
     stall_warned: bool = False
     merge_attempts: int = 0
-    provider_failed: str = ""  # bütün modeller düştüyse nedeni
-    recovering: bool = False  # takıldığı için durduruldu; bitince başka modelle kaldığı yerden devam edecek
-    recoveries: int = 0  # kaç kez otomatik kurtarıldı
-    resume_note: str = ""  # bir sonraki devamda ajana söylenecek not
-    picked: str = ""  # auto seçimde: "tasarım · glm-5.3"
-    stop_requested: bool = False  # ajanı daha kurulmadan durdurulmak istendi: başlarken bakar ve durur
+    provider_failed: str = ""  # reason, if all models failed
+    recovering: bool = False  # stalled and stopped; resumes with another model when it ends
+    recoveries: int = 0  # how many times it was recovered automatically
+    resume_note: str = ""  # note to give the agent on its next resume
+    picked: str = ""  # with auto selection: "tasarım · glm-5.3"
+    stop_requested: bool = False  # the agent was asked to stop before it was set up: it checks this on start and stops
 
     def snapshot(self) -> dict[str, Any]:
         now = self.ended or time.time()
@@ -168,14 +172,14 @@ class Member:
                 "councils_n": len(self.councils), "secs": int(now - self.started) if self.started else 0}
 
     def messages(self) -> list[dict[str, Any]]:
-        """Sistem istemi hariç konuşma: canlı ajandan ya da diskten."""
+        """Conversation without the system prompt: from the live agent or from disk."""
         if self.agent is not None:
             return self.agent.messages[1:]
         return self.saved_messages
 
 
 def _add_usage(row: dict[str, float], usage: dict[str, Any]) -> None:
-    """Token ve (sağlayıcı bildiriyorsa) ücret sayacı."""
+    """Token and (if the provider reports it) cost counter."""
     row["in"] = row.get("in", 0) + int(usage.get("prompt_tokens") or 0)
     row["out"] = row.get("out", 0) + int(usage.get("completion_tokens") or 0)
     cost = usage.get("cost")
@@ -184,11 +188,11 @@ def _add_usage(row: dict[str, float], usage: dict[str, Any]) -> None:
 
 
 class _Stopped(Exception):
-    """Ajan başlarken proje durduruldu."""
+    """The project was stopped while the agent was starting."""
 
 
 def human_failure(reasons: list[str]) -> str:
-    """Router'ın ham hata satırlarını ("ref: neden") kısa, okunur bir açıklamaya çevirir."""
+    """Turns the router's raw error lines ("ref: reason") into a short, readable explanation."""
     out: list[str] = []
     for line in reasons:
         ref, _, why = line.partition(": ")
@@ -246,7 +250,7 @@ def patch_paths(patch: str) -> list[str]:
 
 
 def write_targets(tool: str, args: dict[str, Any]) -> list[str]:
-    """Dosya aracının yazacağı yollar (kapsam kontrolü ve fark için)."""
+    """Paths a file tool will write to (for scope checks and diffs)."""
     if tool == "apply_patch":
         return patch_paths(str(args.get("patch") or ""))
     out = [str(args[k]) for k in ("path", "destination") if args.get(k)]
@@ -269,9 +273,9 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def _git(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    # git çıktısı UTF-8: kodlama verilmezse Windows'ta yerel kod sayfasıyla (cp1254) çözülür ve "Ğ", "Ş" ya da emoji
-    # içeren fark/dosya içeriği UnicodeDecodeError ile ajanın adımını düşürür. Konsol penceresi de açılmasın.
-    from alice.gitsafe import harden  # sandbox'ın .git'e bıraktığı hook/fsmonitor ALICE'in git'iyle çalışmasın
+    # git output is UTF-8: without an explicit encoding, Windows decodes it with the local code page (cp1254), and a
+    # a diff or file with "Ğ", "Ş" or emoji raises UnicodeDecodeError and drops the step. No console window either.
+    from alice.gitsafe import harden  # so the hook/fsmonitor the sandbox left in .git does not run with ALICE's git
 
     return subprocess.run(["git", "-C", str(cwd), *harden(args, cwd)], capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
@@ -281,8 +285,8 @@ log = logging.getLogger(__name__)
 
 
 def _replace(src: Path, dst: Path, tries: int = 6) -> None:
-    """Atomik yer değiştirme. Windows'ta virüs tarayıcı/dizinleyici yeni yazılan dosyayı bir an kilitliyor ve
-    replace PermissionError veriyor; bir anlık beklemeyle tekrar dene (yoksa kayıt sessizce düşüyordu)."""
+    """Atomic replace. On Windows, the antivirus/indexer briefly locks a newly written file and replace raises
+    PermissionError; retry after a short wait (otherwise the save was silently lost)."""
     for i in range(tries):
         try:
             src.replace(dst)
@@ -294,7 +298,7 @@ def _replace(src: Path, dst: Path, tries: int = 6) -> None:
 
 
 class Team:
-    """Bir proje: hedef, yönetici ve ajanlar."""
+    """A project: goal, lead and agents."""
 
     def __init__(self, parent_ctx: ToolContext, goal: str, max_parallel: int = 5,
                  publish: Callable[[dict[str, Any]], None] | None = None, origin: str = "alice",
@@ -305,35 +309,35 @@ class Team:
         self.goal = goal
         self.id = project_id or time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
         self.title = title or (goal.strip().splitlines()[0][:70] if goal.strip() else "Proje")
-        self.origin = origin  # alice: sohbetteki ALICE kurdu | user: kullanıcı Projeler sayfasından kurdu
+        self.origin = origin  # alice: created by ALICE in the chat | user: created by the user from the Projects page
         self.cwd = Path(cwd) if cwd else parent_ctx.cwd
         self.created = time.time()
         self.max_parallel = max(1, max_parallel)
-        self.review = review  # biten işi yönetici incelesin mi
-        self.council = council and review  # inceleme kurulu: plan, her iş ve final
-        self.councils: list[dict[str, Any]] = []  # proje düzeyi kurullar: plan, final, kurula sor
+        self.review = review  # whether the lead reviews finished work
+        self.council = council and review  # review council: plan, each piece of work, and final
+        self.councils: list[dict[str, Any]] = []  # project-level councils: plan, final, ask the council
         self.council_busy = 0
         self.final_runs = 0
         self.plan_rejects = 0
         self._final_pending = False
-        self.check = (check or "").strip()  # kontrol komutu (testler): kurul öncesi otomatik çalışır
-        self.lessons: list[str] = []  # kurulların bu projede yakaladığı sorunlar (sonraki işlere ders)
-        self.timeline: list[dict[str, Any]] = []  # zaman çizelgesi: {at, who, kind, text}
-        self.usage: dict[str, dict[str, float]] = {}  # kim -> {in, out, cost}: token ve ücret takibi
-        self._live_councils: set[Any] = set()  # süren kurullar (proje durunca onlar da durur)
-        self.picks: dict[str, str] = {}  # auto model seçimleri (ad -> "alan · model")
+        self.check = (check or "").strip()  # check command (tests): runs automatically before the council
+        self.lessons: list[str] = []  # problems the councils caught in this project (lessons for later work)
+        self.timeline: list[dict[str, Any]] = []  # timeline: {at, who, kind, text}
+        self.usage: dict[str, dict[str, float]] = {}  # who -> {in, out, cost}: token and cost tracking
+        self._live_councils: set[Any] = set()  # councils in progress (they stop when the project stops)
+        self.picks: dict[str, str] = {}  # auto model picks (name -> "domain · model")
         self._screens_warned = False
-        self.plan_council = True  # kurul açıkken plan da kurula gider (yeni proje penceresinden kapatılabilir)
-        self.plan_prev_id = ""  # planı reddeden son kurulun kimliği (düzeltilmiş plan ona göre incelenir)
+        self.plan_council = True  # plan also goes to the council when it's on (new-project window can turn it off)
+        self.plan_prev_id = ""  # ID of the council that rejected the plan; the revised plan is judged against it
         self._lead_turns = 0
         self._plan_nudges = 0
-        self._dirty0: set[str] | None = None  # proje başında zaten değişmiş dosyalar (komut takibi bunlara dokunmaz)
+        self._dirty0: set[str] | None = None  # files already changed at start (command tracking skips them)
         self.lead_model = lead_model
         self.lead_thinking = lead_thinking if lead_thinking in THINKING else "default"
         self.members: dict[str, Member] = {}
         self.log: list[Message] = []
         self.inbox: dict[str, list[Message]] = {LEAD: []}
-        self.questions: list[dict[str, Any]] = []  # yöneticinin kullanıcıya soruları
+        self.questions: list[dict[str, Any]] = []  # the lead's questions to the user
         self.summary = ""
         self.finished = False
         self.stopped = False
@@ -344,31 +348,31 @@ class Team:
         self.lead_saved: list[dict[str, Any]] = []
         self._nudges = 0
         self.cond = threading.Condition()
-        self.perm_lock = threading.Lock()  # izin pencereleri tek tek açılsın
+        self.perm_lock = threading.Lock()  # permission windows open one at a time
         self.publish = publish or (lambda ev: None)
-        self._live_ui = publish is not None  # uygulamada: bildirimler tıklanabilir proje kartı olarak gider
+        self._live_ui = publish is not None  # in the app: notifications go out as clickable project cards
         self.roles: list[str] = []
         self._saved_at = 0.0
-        # Silinmiş proje: geriden gelen bir kayıt dosyayı geri getirmesin (ajan thread'i kapanırken
-        # _changed -> save çağırabiliyor; silinen proje böyle geri geliyordu).
+        # Deleted project: a late save must not bring the file back (an agent thread can call
+        # _changed -> save while it shuts down; a deleted project used to come back this way).
         self.deleted = False
         self._save_lock = threading.RLock()
         self._pub_lock = threading.RLock()
-        self._dir = projects_dir()  # kayıt klasörü proje kurulurken sabitlenir
-        # Sonuç PR olsun (alice/team_pr.py): proje kendi dalında çalışır, bitince PR açılıp takibe alınır.
+        self._dir = projects_dir()  # the save folder is fixed when the project is created
+        # Result is a PR (alice/team_pr.py): the project works on its own branch; a PR is opened when it ends.
         self.pr = pr
         self.pr_repo = self.pr_base = self.pr_branch = self.pr_top = self.pr_sha = self.pr_url = ""
-        self.pr_session = ""  # projeyi başlatan sohbet: PR takibinin düzeltmeleri oraya gider
+        self.pr_session = ""  # the chat that started the project: PR follow-up fixes go there
         self.pr_number = 0
 
-    # ---------------------------------------------------------- zaman çizelgesi
+    # ---------------------------------------------------------- timeline
     def mark(self, who: str, kind: str, text: str) -> None:
         with self.cond:
             self.timeline.append({"at": time.time(), "who": who, "kind": kind, "text": text[:300]})
             if len(self.timeline) > 600:
                 del self.timeline[:100]
 
-    # --------------------------------------------------------------- durum
+    # --------------------------------------------------------------- status
     def status(self) -> str:
         if self.finished:
             return "done"
@@ -387,10 +391,10 @@ class Team:
         return not self.finished and not self.stopped
 
     def all_done(self) -> bool:
-        """Ajanların hepsi son durumda (yönetici bitirmemiş olabilir)."""
+        """All agents are in a final state (the lead may not have finished)."""
         return bool(self.members) and all(m.status in FINAL and not m.resume_wanted for m in list(self.members.values()))
 
-    # ------------------------------------------------------------- mesajlar
+    # ------------------------------------------------------------- messages
     def send(self, sender: str, to: str, text: str) -> str:
         text = (text or "").strip()
         if not text:
@@ -404,11 +408,11 @@ class Team:
         if unknown:
             raise ToolError(f"projede böyle biri yok: {', '.join(unknown)}. Ajanlar: {', '.join(self.members) or '-'}, "
                             f"yönetici: {LEAD}")
-        boss = sender in (LEAD, USER, COUNCIL)  # yönetici, kullanıcı ve kurul incelemedeki ajanı yeniden çalıştırır
+        boss = sender in (LEAD, USER, COUNCIL)  # the lead, the user and the council re-run the agent under review
         if sender == USER:
             self.stopped = False
             if LEAD in targets:
-                self.finished = False  # bitmiş projeye kullanıcı yeni iş verdi
+                self.finished = False  # the user gave new work to a finished project
         resume = []
         with self.cond:
             msg = Message(sender, to, text)
@@ -419,16 +423,16 @@ class Team:
                 if m is None:
                     continue
                 if boss:
-                    m.question = ""  # yönetici/kullanıcı cevap verdi
+                    m.question = ""  # the lead/user answered
                 if self.stopped:
                     continue
                 if m.status in ("done", "failed") or (m.status == "review" and boss) or \
                         (m.status == "stopped" and sender == USER):
                     resume.append(m)
             if sender in self.members and to in (LEAD, USER):
-                self.members[sender].question = text  # cevap beklenen soru
+                self.members[sender].question = text  # question awaiting an answer
             self.cond.notify_all()
-        for m in resume:  # bitmiş ajana iş geldi: konuşmasına kaldığı yerden devam etsin
+        for m in resume:  # work arrived for a finished agent: it continues its conversation where it left off
             self._launch(m, resume=True)
         if LEAD in targets and sender != LEAD:
             self._ensure_lead()
@@ -436,7 +440,7 @@ class Team:
         return f"gönderildi: {', '.join(targets)}"
 
     def event(self, text: str) -> None:
-        """Yöneticiye sistem olayı (ajan bitti, hata verdi...)."""
+        """System event for the lead (agent finished, error...)."""
         with self.cond:
             self.inbox[LEAD].append(Message(SYSTEM, LEAD, text))
             self.cond.notify_all()
@@ -488,7 +492,7 @@ class Team:
         self.mark(USER, "answer", text.strip())
         self.send(USER, LEAD, f"Sorduğun soruya cevap ({q['text'][:200]}): {text.strip()}")
 
-    # --------------------------------------------------------------- üyeler
+    # --------------------------------------------------------------- members
     def add(self, spec: dict[str, Any]) -> Member:
         self.prepare_pr()
         name = str(spec.get("name") or "").strip().lower()
@@ -535,8 +539,9 @@ class Team:
             raise ToolError(f"{who}: '{model}' için model yok. auto, rol adı (brain, fast...) ya da sağlayıcı:model yaz.")
 
     def prepare_pr(self) -> None:
-        """Sonucu PR olan projede projenin dalını ve worktree'sini aç (bir kez). Ajanlar eklenmeden önce olmalı:
-        ajanın klasörü eklenirken belirlenir; sonra açılırsa ajanlar kullanıcının kopyasında çalışırdı."""
+        """In a project whose result is a PR, open the project's branch and worktree (once). This must happen before
+        agents are added: an agent's folder is decided when it is added; if this came later, agents would run in the
+        user's copy."""
         if self.pr and not self.pr_branch:
             from alice import team_pr
 
@@ -562,7 +567,7 @@ class Team:
         r = _git(top, "worktree", "add", "-b", m.branch, str(path), "HEAD")
         if r.returncode != 0:
             raise ToolError(f"{m.name}: worktree açılamadı: {(r.stderr or r.stdout).strip()[:300]}")
-        try:  # .alice-team git status'u kirletmesin (worktree'de .git bir dosya: yolu git'e sor)
+        try:  # keep .alice-team out of git status (in a worktree .git is a file: ask git for the path)
             gp = _git(top, "rev-parse", "--git-path", "info/exclude").stdout.strip()
             excl = (top / gp) if gp and not Path(gp).is_absolute() else Path(gp or top / ".git" / "info" / "exclude")
             old = excl.read_text(encoding="utf-8", errors="replace") if excl.exists() else ""
@@ -575,7 +580,7 @@ class Team:
         return path / rel
 
     def start(self, plan: bool = False) -> None:
-        """Projeyi başlat: ajanlar başlar, yönetici izlemeye (ya da ajan yoksa planlamaya) başlar."""
+        """Start the project: agents start, and the lead starts monitoring (or planning, if there are no agents)."""
         self.mark(USER if self.origin == "user" else LEAD, "start", f"proje başladı: {self.title}")
         self.prepare_pr()
         self._dirty0 = self._git_dirty()
@@ -645,24 +650,24 @@ class Team:
             else:
                 prompt = "Görevine başla."
             m.limit_hit, m.provider_failed = False, ""
-            if self.stopped or m.stop_requested:  # tam başlarken proje ya da bu ajan durduruldu
+            if self.stopped or m.stop_requested:  # the project or this agent was stopped just as it was starting
                 raise _Stopped()
-            m.agent.stop_check = lambda m=m: self.stopped or m.stop_requested  # bu satırla tur arası da kapansın
+            m.agent.stop_check = lambda m=m: self.stopped or m.stop_requested  # also stops between turns
             text = m.agent.run_turn(prompt, max_steps=m.max_steps) or ""
             if self.stopped or m.stop_requested or m.agent.cancel.is_set():
                 final = "stopped"
             elif m.provider_failed and not text.strip():
-                final = "failed"  # hiçbir model cevap vermedi (kota/erişim): incelemeye değil hataya düşsün
+                final = "failed"  # no model answered (quota/access): it goes to error, not to review
                 text = "Modellere ulaşılamadı: " + m.provider_failed
             else:
                 final = "review" if self.review and m.isolation != "readonly" else "done"
             m.result = text.strip() or m.result or "(rapor yazmadı)"
         except _Stopped:
             final = "stopped"
-        except Exception as e:  # noqa: BLE001 - bir ajanın çökmesi projeyi durdurmasın
+        except Exception as e:  # noqa: BLE001 - one agent's crash must not stop the project
             m.result = f"hata: {type(e).__name__}: {e}"
         finally:
-            # Bitiş, kayıt diske yazıldıktan sonra görünsün: bekleyenler ve Projeler listesi tutarlı olsun.
+            # The end shows only after the record is saved to disk, so waiting items and the list stay consistent.
             with self.cond:
                 m.status, m.ended, m.question = final, time.time(), ""
                 self.save()
@@ -670,7 +675,7 @@ class Team:
         if final == "stopped" and m.recovering and not self.stopped:
             self._recover(m)
             return
-        m.recovering = False  # kurtarma sürerken proje durdurulduysa bayrak kalmasın
+        m.recovering = False  # if the project was stopped during recovery, the flag must not stay set
         self.mark(m.name, final, {"review": "bitirdi, incelemede", "done": "bitirdi", "failed": "hata verdi",
                                   "stopped": "durdu"}.get(final, final) + (f": {m.result[:160]}" if final != "stopped" else ""))
         if final == "failed":
@@ -689,14 +694,14 @@ class Team:
         self._changed()
 
     def slop_report(self, cwd: Path | None = None) -> str:
-        """Tasarım projesinde sitedeki yapay zekâ kalıpları (koddan sayılır). Tasarım projesi değilse ya da temizse boş."""
+        """AI-style patterns on the site (counted from the code). Empty if not a design project or if it is clean."""
         if not self.is_design():
             return ""
         from alice.design_check import lint, report
 
         try:
             return report(lint(cwd or self.cwd))
-        except Exception:  # noqa: BLE001 - denetim projeyi durdurmasın
+        except Exception:  # noqa: BLE001 - the check must not stop the project
             return ""
 
     def _review_note(self, m: Member) -> str:
@@ -713,7 +718,7 @@ class Team:
                 "düzeltme iste.")
 
     def _after_done(self, m: Member) -> None:
-        self._next()  # bu ajanı bekleyenler başlasın
+        self._next()  # let those waiting on this agent start
         if not self.all_done() or self.finished:
             return
         if self.council and self.final_runs < 2:
@@ -723,12 +728,12 @@ class Team:
         self.event("Bütün ajanlar bitti. Bütünü doğrula (testler, derleme), gerekirse küçük entegrasyon "
                    "düzeltmesini yap, sonra finish ile kullanıcıya özet yaz.")
 
-    # ----------------------------------------------------------------- kurul
+    # ----------------------------------------------------------------- council
     def _maybe_final(self) -> None:
-        """Final kurulu, sürmekte olan kurullar (ör. son ajanın iş kurulu) bitince toplanır."""
+        """The final council convenes when the councils still running (e.g. the last agent's work council) finish."""
         with self.cond:
             if not self._final_pending or self.council_busy or not self.all_done() or self.finished or self.stopped:
-                return  # durmuş projede final kurulu toplanmaz; Sürdür'de yeniden denenir
+                return  # a stopped project does not convene the final council; it is retried on Resume
             self._final_pending = False
             self.final_runs += 1
         self._spawn(self._final_council)
@@ -740,7 +745,7 @@ class Team:
         def run() -> None:
             try:
                 fn(*args)
-            except Exception as e:  # noqa: BLE001 - kurul hatası projeyi durdurmasın
+            except Exception as e:  # noqa: BLE001 - a council error must not stop the project
                 self.event(f"Kurul çalışamadı ({type(e).__name__}: {e}); incelemeyi kendin yap.")
             finally:
                 with self.cond:
@@ -784,7 +789,7 @@ class Team:
             if self.stopped:
                 c.stop()
         except Exception as e:
-            # Kurul kurulamadıysa (kontrol komutu, ekran görüntüsü, Council) kayıt arayüzde "running" kalmasın.
+            # If the council could not be set up (check command, screenshot), the UI record must not stay "running".
             store[slot] = {**store[slot], "state": "failed", "result": {
                 "decision": "contested", "score": 0.0, "veto": [], "conditions": [], "error": f"{type(e).__name__}: {e}"}}
             self._changed(save=True)
@@ -801,7 +806,7 @@ class Team:
         return snap
 
     def _screens(self, kind: str, text: str, cwd: Path | None) -> dict[str, str]:
-        """Proje bir web sitesiyse ve iş görünüşe dokunuyorsa kurul için masaüstü ve telefon ekran görüntüleri."""
+        """If the project is a website and the work touches its look, desktop and phone screenshots for the council."""
         if kind not in ("work", "recheck", "final", "adhoc"):
             return {}
         if kind != "final" and not re.search(r"\.(html?|css|scss|sass|less|jsx|tsx|vue|svelte|astro)\b", text):
@@ -816,7 +821,7 @@ class Team:
             return {}
         shots = screenshots(root, entry)
         if shots and kind == "final":
-            shots.update(research_refs(self.cwd))  # kurul bizim siteyi örnek alınan sitelerle yan yana görsün
+            shots.update(research_refs(self.cwd))  # the council sees our site side by side with the reference sites
         if not shots and not self._screens_warned:
             self._screens_warned = True
             note = ("Kurul siteyi göremedi (ekran görüntüsü alınamadı); sadece koda bakıyor. Görsel inceleme için "
@@ -827,9 +832,9 @@ class Team:
 
     @staticmethod
     def _critical(text: str) -> bool:
-        """İş kritik mi (kurul tüm uzmanlarla ve 3 turla toplanır)? Sadece görev metnine bakılır: fark/kod her yerde
-        "token", "delete" içeriyor. Sözcük sınırı şart: "para" eskiden "paragraf"ı yakalayıp bir web sitesi projesinde
-        16 kurulun hepsini kritik yapmıştı (kurul ~40M token)."""
+        """Is the work critical (full council: all experts, 3 rounds)? Only the task text is checked; the diff
+        and code everywhere contain "token" and "delete". A word boundary is required: "para" used to match "paragraf"
+        and made all 16 councils critical in a website project (the council used ~40M tokens)."""
         return bool(re.search(r"\b(?:güvenlik|security|şifre\w*|parola\w*|password|secret|kimlik doğrulama|auth\w*|"
                               r"veri kaybı|migration|göç\w*|ödeme\w*|payment|para(?:sı|yı|nın)?|kredi kartı|"
                               r"veritabanı silme|drop table)\b", text[:4000], re.I))
@@ -847,26 +852,26 @@ class Team:
         self._changed()
         try:
             subject, context = self._member_material(m)
-            done = [c for c in m.councils if c.get("state") != "stopped"]  # yarıda kesilen kurul önceki sayılmaz
+            done = [c for c in m.councils if c.get("state") != "stopped"]  # an interrupted council is not counted
             prev = done[-1] if done and m.council_cycles and not adhoc else None
             kind = "adhoc" if adhoc else ("recheck" if prev else "work")
             snap = self._council(kind, subject, context, m.councils, cwd=m.cwd, previous=prev)
         finally:
             m.council_running = False
         if snap.get("state") == "stopped":
-            return  # proje durduruldu; sürdürülünce kurul yeniden toplanır
+            return  # project stopped; the council reconvenes when it is resumed
         with self.cond:
             self.log.append(Message(COUNCIL, m.name, report(snap).splitlines()[0]))
         self._apply_council(m, snap, report(snap), fix_list(snap))
 
     def _apply_council(self, m: Member, snap: dict[str, Any], rep_text: str, fixes: str) -> None:
         if m.status != "review":
-            return  # bu arada kullanıcı/yönetici karar verdi
+            return  # the user/lead decided in the meantime
         decision = (snap.get("result") or {}).get("decision")
         from alice.council import blocking
 
         if decision == "approve_conditions" and not blocking(snap):
-            # Şartlar sadece küçük ayrıntı: iş onaylanır, şartlar yöneticiye not olarak gider (yeni tur açılmaz).
+            # The conditions are minor: the work is approved and they go to the lead as a note (no new round).
             self.review_member(m.name, True, by=COUNCIL)
             self.event(f"Kurul {m.name} işini onayladı; küçük iyileştirme önerileri (zorunlu değil):\n{fixes}")
             return
@@ -893,7 +898,7 @@ class Team:
                          f"Dosyalar: {', '.join(m.files) or '-'}\nFark:\n{self.diff(m.name, limit=6000) or '-'}")
         snap = self._council("final", f"Projenin tamamı: {self.goal}", "\n\n".join(parts)[:40_000], self.councils,
                              critical=True)
-        if snap.get("state") == "stopped":  # sürdürülünce yeniden toplanır
+        if snap.get("state") == "stopped":  # reconvenes when resumed
             self.final_runs -= 1
             self._final_pending = True
             return
@@ -911,7 +916,7 @@ class Team:
         self.event(f"{report(snap)}\n\n{note}")
 
     def ask_council(self, name: str = "") -> None:
-        """Kullanıcının 'Kurula sor' düğmesi: bir ajanın işini ya da (ad yoksa) projenin tamamını kurula sorar."""
+        """The user's 'Ask the council' button: asks about one agent's work, or the whole project if no name."""
         if self.council_busy and not name:
             raise ToolError("kurul zaten toplanıyor")
         if name:
@@ -936,7 +941,7 @@ class Team:
             self._spawn(run)
 
     def user_vote(self, name: str, vote: str, note: str = "") -> str:
-        """Kullanıcının oyu (3 kat ağırlık): son kurul yeniden sayılır, karar değişirse uygulanır."""
+        """The user's vote (3x weight): the last council is recounted, and if the decision changes, it is applied."""
         from alice.council import VOTES, fix_list, report, retally
 
         if vote not in VOTES:
@@ -964,7 +969,7 @@ class Team:
         self._changed(save=True)
         return (snap.get("result") or {}).get("decision") or "?"
 
-    # -------------------------------------------------------------- inceleme
+    # -------------------------------------------------------------- review
     def review_member(self, name: str, approve: bool, feedback: str = "", by: str = LEAD) -> str:
         m = self.members.get(name)
         if m is None:
@@ -1001,7 +1006,7 @@ class Team:
         return f"{name} düzeltmeye gönderildi"
 
     def _conflict(self, m: Member, error: str, by: str) -> str:
-        """Worktree dalı birleşmedi: ajan ana dalı kendi dalına alıp çakışmayı çözsün, sonra yeniden incelensin."""
+        """The worktree branch did not merge: the agent fixes the conflict on its own branch and is reviewed again."""
         m.merge_attempts += 1
         base = _git(self._repo_top(), "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "HEAD"
         self.mark(SYSTEM, "conflict", f"{m.name} dalı birleşmedi, ajan çakışmayı çözüyor")
@@ -1012,7 +1017,7 @@ class Team:
         return f"{m.name} dalı birleşmedi; ajan çakışmayı çözüyor (deneme {m.merge_attempts}/2)"
 
     def _merge(self, m: Member) -> str:
-        """Worktree ajanının dalını ana çalışma klasörüne birleştir (önce kalan değişiklikleri commit eder)."""
+        """Merge the worktree agent's branch into the main working folder (first commits any remaining changes)."""
         top = self._repo_top()
         wt = m.cwd
         ident = ["-c", "user.name=ALICE", "-c", "user.email=alice@localhost"]
@@ -1034,13 +1039,13 @@ class Team:
         return f"{m.branch} birleştirildi"
 
     def diff(self, name: str, limit: int = 60_000) -> str:
-        """Ajanın dosya araçlarıyla yaptığı değişikliklerin farkı."""
+        """Diff of the changes the agent made with file tools."""
         m = self.members.get(name)
         if m is None:
             raise ToolError(f"projede '{name}' yok")
         parts = []
-        # Kopya üzerinde: ajan çalışırken (kurula sor, final kurulu) yeni dosyaya dokunursa sözlük büyüyor ve fark
-        # "dictionary changed size during iteration" ile kurulu düşürüyordu.
+        # On a copy: if an agent touches a new file while running (council, final council), the dict grows and the
+        # diff used to crash the council with "dictionary changed size during iteration".
         for path, before in list(m.originals.items()):
             p = Path(path)
             rel = _rel(p, m.cwd)
@@ -1058,7 +1063,7 @@ class Team:
         return text[:limit] + ("\n... (kısaltıldı)" if len(text) > limit else "")
 
     def revert(self, name: str) -> list[str]:
-        """Ajanın dosya araçlarıyla yaptığı değişiklikleri geri al."""
+        """Revert the changes the agent made with file tools."""
         m = self.members.get(name)
         if m is None:
             raise ToolError(f"projede '{name}' yok")
@@ -1087,7 +1092,7 @@ class Team:
         return done
 
     def restart(self, name: str) -> None:
-        """Ajanı temiz bir konuşmayla baştan başlat."""
+        """Restart the agent from scratch with a clean conversation."""
         m = self.members.get(name)
         if m is None:
             raise ToolError(f"projede '{name}' yok")
@@ -1109,7 +1114,7 @@ class Team:
             self.mark(LEAD, "pr", note)
             self.summary += "\n\n" + note
         self.lead_state = "done"
-        with self._save_lock:  # "bitti" ancak kayıt yazılınca görünsün (liste ve yeniden açılış tutarlı)
+        with self._save_lock:  # "bitti" (finished) shows only once saved (list and reopen stay consistent)
             self.finished = True
             self.save()
         with self.cond:
@@ -1119,9 +1124,9 @@ class Team:
                    kind="done")
         self._changed(save=True)
 
-    # --------------------------------------------------------------- ajanlar
+    # --------------------------------------------------------------- agents
     def _role(self, name: str, model: str, thinking: str, text: str = "", domain: str = "") -> str:
-        """Ajanın router rolü. model=auto: işin alanına göre (tasarım, kod, inceleme...) en uygun model sırası."""
+        """The agent's router role. model=auto: the best model order for the task's domain (design, code, review...)."""
         from alice.providers import picker
 
         role = f"team:{self.id}:{name}"
@@ -1160,13 +1165,13 @@ class Team:
         agent = Agent(parent.config, parent.router, tools, ctx, perms, MemberUI(self, m), parent.decider,
                       system_prompt=build_system_prompt(m.cwd, personality=False) + "\n\n" + self.brief(m),
                       is_child=True)
-        agent.stream = bool(parent.config.agent.get("stream", True))  # cevap yazılırken canlı aksın
+        agent.stream = bool(parent.config.agent.get("stream", True))  # the answer streams live while it is written
         agent.compact_cap = team_compact_cap(parent.config)
         agent.role = self._role(m.name, m.model, m.thinking, text=f"{m.task}\n{m.constraints}")
         m.picked = self.picks.get(m.name, "")
         agent.on_usage = lambda u, _n=m.name: self._use(_n, u)
-        agent.tool_specs = lambda _a=agent: [t.spec() for t in _a.tools.values()]  # gruplar yok: hepsi açık
-        ctx.state["agent"] = agent  # uzun araçlar Durdur'u görsün
+        agent.tool_specs = lambda _a=agent: [t.spec() for t in _a.tools.values()]  # no groups: all are open
+        ctx.state["agent"] = agent  # long-running tools see Stop
         scope = [ctx.resolve(s) for s in m.scope]
         base_run = agent._run_tool
 
@@ -1179,7 +1184,7 @@ class Team:
                                       f"{', '.join(m.scope)}. Başka bir yerin değişmesi gerekiyorsa sahibine ya da "
                                       f"{LEAD}'e team_send ile yaz. Kabuk komutuyla (Set-Content, Out-File, echo >) yazarak "
                                       "kapsamı aşma: dosya kodlamasını bozar (Türkçe harfler) ve iş reddedilir.", is_error=True)
-            for p in targets:  # fark ve geri alma için ilk hali sakla
+            for p in targets:  # keep the original for diff and revert
                 m.originals.setdefault(str(p), _read_original(p))
             m.steps += 1
             m.last_at, m.stall_warned = time.time(), False
@@ -1197,27 +1202,27 @@ class Team:
 
         agent._run_tool = guarded
 
-        def deliver() -> None:  # her araç adımından sonra gelen mesajları konuşmaya ekle
+        def deliver() -> None:  # add messages that arrive after each tool step to the conversation
             msgs = self.take(m.name)
             if msgs:
                 agent.messages.append({"role": "user", "content": "[takım mesajı]\n" +
                                        "\n".join(x.line() for x in msgs)})
 
         agent.on_step = deliver
-        if m.saved_messages:  # diskten yüklenmiş proje: konuşmaya kaldığı yerden devam
+        if m.saved_messages:  # project loaded from disk: continue the conversation where it left off
             agent.messages = agent.messages[:1] + m.saved_messages
             m.saved_messages = []
         return agent
 
     def _git_dirty(self, cwd: Path | None = None) -> set[str] | None:
-        """git deposundaysa değişmiş/yeni dosyalar (mutlak yol); değilse None."""
+        """Changed/new files (absolute paths) if this is a git repo; otherwise None."""
         cwd = cwd or self.cwd
         try:
             top = _git(cwd, "rev-parse", "--show-toplevel", timeout=10)
             if top.returncode != 0:
                 return None
-            # -z: yollar tırnaksız ve kaçışsız gelir. Düz çıktıda git Türkçe harfli yolları "d\303\274.py" diye
-            # kaçışlıyordu; o yol hiç var olmadığından komutla değişen dosya ajanın farkına girmiyordu.
+            # -z: paths come unquoted and unescaped. In plain output git escaped non-ASCII paths as "d\303\274.py";
+            # that path never existed, so a file changed by a command was missing from the agent's diff.
             r = _git(cwd, "status", "--porcelain", "-uall", "-z", timeout=20)
         except (OSError, subprocess.SubprocessError):
             return None
@@ -1231,15 +1236,15 @@ class Team:
             if len(rec) < 4:
                 continue
             if rec[0] in "RC":
-                i += 1  # yeniden adlandırma: ardından gelen kayıt eski yol
+                i += 1  # rename: the record that follows is the old path
             path = rec[3:]
             if path and not path.startswith(".alice-team/"):
                 out.add(str((root / path).resolve()))
         return out
 
     def _track_command(self, m: Member) -> None:
-        """run_command ile değişen dosyaları da ajanın değişikliklerine say (git deposunda): ilk hali HEAD'den alınır,
-        proje başında zaten değişmiş ya da başka ajanın dokunduğu dosyalar atlanır."""
+        """Count files changed by run_command as the agent's changes too (git repo): the original comes from HEAD,
+        and files already changed at project start or touched by another agent are skipped."""
         base0 = self._dirty0 if m.isolation != "worktree" else set()
         if base0 is None:
             return
@@ -1257,7 +1262,7 @@ class Team:
                 m.files.append(relp)
 
     def run_check(self, cwd: Path | None = None) -> dict[str, Any] | None:
-        """Projenin kontrol komutu (testler/lint): kurul öncesi çalışır, çıktısı kurula kanıt olarak gider."""
+        """The project's check command (tests/lint): runs before the council; its output is evidence for it."""
         if not self.check:
             return None
         t0 = time.time()
@@ -1269,8 +1274,8 @@ class Team:
                 so, se = pop.communicate(timeout=int(self.parent_ctx.config.agent.get("team_check_timeout", 600)))
                 out, code = (so or "") + (se or ""), pop.returncode
             except subprocess.TimeoutExpired:
-                # subprocess.run burada yalnız kabuğu öldürüp boruların kapanmasını süresiz bekliyordu: kabuğun
-                # açtığı test süreci boruyu tuttuğu için kurul thread'i (ve proje) sonsuza dek takılıyordu.
+                # Here subprocess.run only killed the shell and waited forever for the pipes to close: the test process
+                # the shell started kept the pipe open, so the council thread (and the project) hung forever.
                 from alice.tools.shell import kill_tree
 
                 kill_tree(pop.pid)
@@ -1295,8 +1300,8 @@ class Team:
         return ""
 
     def learn(self, snap: dict[str, Any]) -> None:
-        """Kurulun doğruladığı ciddi bulgular projenin derslerine eklenir (sonraki ajanlara ve kurullara gider).
-        Aynı dersi başka sözcüklerle tekrar eklemez."""
+        """Confirmed serious findings are added to the project's lessons (later agents and councils get them).
+        The same lesson is not added again in other words."""
         from alice.council import dedupe
 
         new = [f"{f['title']}" + (f" → {f['fix']}" if f.get("fix") else "") for f in snap.get("findings", [])
@@ -1352,14 +1357,14 @@ Kurallar:
                 "kalıplarını sayar ve bir sanat yönetmenine eleştirtir. Çıkan sorunları düzelt, sonra bir kez daha "
                 "çalıştır. Kalıp listesi boş değilse işin reddedilir.\n")
 
-    # ------------------------------------------------------------- yönetici
+    # ------------------------------------------------------------- lead
     def _ensure_lead(self) -> None:
-        """Yönetici döngüsü çalışmıyorsa başlat (gelen kutusundaki olayları işler)."""
+        """Start the lead loop if it is not running (it handles the events in the inbox)."""
         with self.cond:
             if self.lead_thread is not None and self.lead_thread.is_alive():
-                return  # döngü çalışıyor; olay gelen kutusundan alınacak
+                return  # the loop is running; the event will be taken from the inbox
             if self.stopped:
-                return  # durmuş projede yönetici çalışmaz; olaylar bekler, sürdürülünce işlenir
+                return  # the lead does not run in a stopped project; events wait and are handled on resume
             if self.parent_ctx.state.get("agent") is None or self.parent_ctx.router is None:
                 return
             self.lead_thread = threading.Thread(target=self._lead_loop, daemon=True, name=f"lead-{self.id}")
@@ -1392,7 +1397,7 @@ Kurallar:
                       parent.decider,
                       system_prompt=build_system_prompt(self.cwd, personality=False) + "\n\n" + self.lead_brief(),
                       is_child=True)
-        agent.stream = bool(parent.config.agent.get("stream", True))  # cevap yazılırken canlı aksın
+        agent.stream = bool(parent.config.agent.get("stream", True))  # the answer streams live while it is written
         agent.compact_cap = team_compact_cap(parent.config)
         agent.role = self._role(LEAD, self.lead_model, self.lead_thinking, domain="review")
         agent.on_usage = lambda u: self._use(LEAD, u)
@@ -1409,12 +1414,12 @@ Kurallar:
                 self.lead_agent = self._make_lead()
             while True:
                 if self.stopped and not self.finished:
-                    with self.cond:  # olaylar gelen kutusunda kalır; Sürdür ya da kullanıcının mesajı yeniden başlatır
-                        exiting = self.stopped  # kilit altında yeniden bak: tam bu arada sürdürüldüyse çıkma
+                    with self.cond:  # events stay in the inbox; Resume or a message from the user restarts it
+                        exiting = self.stopped  # check again under the lock: if it was resumed just now, do not exit
                         if exiting:
                             self.lead_thread = None
-                    # Karar kilit altında verilir: kilitten sonra lead_thread'e yeniden bakmak, bu arada Sürdür'ün
-                    # başlattığı yeni döngüyü görüp bu döngüyü de sürdürüyordu (aynı yönetici ajanında iki döngü).
+                    # Decided under the lock: re-reading lead_thread after unlocking could see the new loop Resume
+                    # started, and keep this one running too (two loops on one lead agent).
                     if exiting:
                         self.lead_state = "idle"
                         self._changed()
@@ -1449,8 +1454,8 @@ Kurallar:
             self._changed(save=True)
 
     def _lead_exit(self) -> bool:
-        """Yöneticinin bekleyeceği bir şey kalmadıysa döngüden çık (yeni olay gelince _ensure_lead yeniden başlatır).
-        Gelen kutusu kilit altında son kez kontrol edilir: çıkarken gelen olay kaybolmasın."""
+        """If the lead has nothing left to wait for, leave the loop (_ensure_lead restarts it when a new event arrives).
+        The inbox is checked one last time under the lock: an event that arrives while leaving must not be lost."""
         idle = all(m.status in FINAL + ("review",) and not m.resume_wanted for m in list(self.members.values())) and \
             not self.council_busy
         if not (self.stopped or self.finished or (self.members and idle and self._nudges >= 2)):
@@ -1462,8 +1467,8 @@ Kurallar:
             return True
 
     def _watch_stalls(self) -> None:
-        """Uzun süredir ilerlemeyen ajan: önce yöneticiye ve kullanıcıya haber verilir; bir o kadar daha beklerse
-        durdurulup sıradaki modelle kaldığı yerden sürdürülür (en fazla iki kez, sonra kullanıcıya bırakılır)."""
+        """An agent making no progress for long: the lead and user are told first; if it stalls as long again,
+        it is stopped and resumed with the next model (at most twice, then left to the user)."""
         limit = float(self.parent_ctx.config.agent.get("team_stall_minutes", 10)) * 60
         now = time.time()
         for m in list(self.members.values()):
@@ -1479,7 +1484,7 @@ Kurallar:
                 self._emit(f"{self.title} / {m.name} {mins} dakikadır ilerlemiyor", kind="stall")
             elif m.stall_warned and idle > 2 * limit and m.agent is not None:
                 if m.recoveries >= 2:
-                    if m.recoveries == 2:  # bir kez haber ver
+                    if m.recoveries == 2:  # tell the user once
                         m.recoveries += 1
                         self.event(f"{m.name} iki otomatik yeniden başlatmadan sonra yine takıldı. Görevi böl, "
                                    "başka ajana ver ya da kullanıcıya sor.")
@@ -1490,7 +1495,7 @@ Kurallar:
                 m.agent.stop()
 
     def _recover(self, m: Member) -> None:
-        """Takıldığı için durdurulan ajanı sıradaki modelle kaldığı yerden sürdür."""
+        """Resume an agent that was stopped because it stalled, from where it left off, with the next model."""
         m.recovering = False
         m.recoveries += 1
         model = self._rotate_model(m)
@@ -1504,7 +1509,7 @@ Kurallar:
         self._changed(save=True)
 
     def _rotate_model(self, m: Member) -> str:
-        """Ajanın model zincirinde bir sonrakine geç (takılan model sona gider). Yeni ilk modeli döndürür."""
+        """Move the agent to the next model in its chain; the stalled one goes last. Returns the new first model."""
         router = self.parent_ctx.router
         chain = router.role_overrides.get(f"team:{self.id}:{m.name}") if router is not None else None
         if not chain or len(chain) < 2:
@@ -1525,7 +1530,7 @@ Kurallar:
         return tot
 
     def _nudge(self) -> str:
-        """Yönetici turunu bitirdi ama iş ortada kaldıysa hatırlat; iki kez olmazsa projeyi kendisi kapat."""
+        """If the lead ended its turn with work hanging, remind it; after two reminders the project closes itself."""
         if self.finished or self.stopped:
             return ""
         if not self.members:
@@ -1549,7 +1554,7 @@ Kurallar:
         return ""
 
     def _plan_nudge(self) -> str:
-        """Yönetici planlamadan turunu bitirdiyse hatırlat; iki kez olmazsa işi tek ajana ver (proje asılı kalmasın)."""
+        """If the lead ended its turn without planning, remind it; after two reminders, give the work to one agent."""
         if self._lead_turns == 0 or self.council_busy or self.lead_state == "running" or \
                 any(not q.get("answer") for q in self.questions):
             return ""
@@ -1603,7 +1608,7 @@ Görevlerin:
 """
 
     def design_brief(self, m: Member) -> str:
-        """Tasarım yönü belgesi varsa her ajana gösterilir (renk, yazı tipi, düzen kararları tek yerden)."""
+        """If a design direction document exists, every agent sees it (colors, typefaces, layout from one place)."""
         f = (m.cwd if m.cwd else self.cwd) / DESIGN_FILE
         if not f.is_file():
             f = self.cwd / DESIGN_FILE
@@ -1614,7 +1619,7 @@ Görevlerin:
         return f"\n# Tasarım yönü ({DESIGN_FILE}) — buna uy, kendi renk/yazı tipi uydurma\n{text}\n" if text.strip() else ""
 
     def is_design(self) -> bool:
-        """Proje görünüşü önemli bir iş mi (web sitesi, arayüz)?"""
+        """Is the project's look an important part of the work (website, interface)?"""
         from alice.providers import picker
 
         return picker.classify(self.goal) == "design" or bool(re.search(r"web ?site|internet sitesi|arayüz|landing",
@@ -1655,7 +1660,7 @@ Nasıl yapılır:
 
 """
 
-    # ----------------------------------------------------------------- durum
+    # ----------------------------------------------------------------- status
     def status_text(self) -> str:
         icon = {"queued": "…", "running": "▶", "waiting": "⏸", "asking": "?", "review": "◎", "done": "✓",
                 "failed": "✗", "stopped": "■"}
@@ -1689,8 +1694,8 @@ Nasıl yapılır:
                 "active": self.active()}
 
     def _changed(self, save: bool = False) -> None:
-        # Durumu alma ve yayınlama tek kilitte: iki iş parçacığı aynı anda yayınlarken eski durum yenisinin
-        # ardından ekrana düşüp (ör. bitmiş projeyi "çalışıyor" gösterip) orada kalmasın.
+        # Reading the state and publishing it happen under one lock: when two threads publish at the same time, an old
+        # state must not land after the new one on screen and stay there (e.g. showing a finished project as "running").
         with self._pub_lock:
             try:
                 self.publish(self.snapshot())
@@ -1699,18 +1704,18 @@ Nasıl yapılır:
         if save or time.monotonic() - self._saved_at > SAVE_EVERY:
             self.save()
 
-    # ---------------------------------------------------------------- kayıt
+    # ---------------------------------------------------------------- saving
     def path(self) -> Path:
         return self._dir / f"{self.id}.json"
 
     def save(self) -> None:
-        # İçerik de kilit altında hazırlanır: yoksa eski içerik ("çalışıyor") yeni içeriğin ("bitti") üstüne
-        # yazılabiliyor ve yeniden açılan proje yanlış durumda görünüyordu.
+        # The content is also prepared under the lock: otherwise old content ("running") could be written over the new
+        # content ("finished"), and a reopened project showed the wrong state.
         if self.deleted:
             return
         try:
-            with self._save_lock:  # ajanlar aynı anda kaydetmeye çalışabilir
-                if self.deleted:  # kilit beklenirken silinmiş olabilir
+            with self._save_lock:  # agents may try to save at the same time
+                if self.deleted:  # it may have been deleted while waiting for the lock
                     return
                 self._saved_at = time.monotonic()
                 body = self._body()
@@ -1786,18 +1791,18 @@ Nasıl yapılır:
                        saved_messages=list(d.get("messages") or []),
                        councils=[c for c in d.get("councils") or [] if c.get("state") != "running"],
                        council_cycles=int(d.get("council_cycles") or 0))
-            # Kapanırken yarıda kalanlar durmuş sayılır; bitmiş, incelemedeki ve hatalılar olduğu gibi kalır.
+            # Work cut off during shutdown counts as stopped; finished, under-review and failed ones stay as they are.
             m.status = d.get("status") if d.get("status") in ("done", "failed", "review") else "stopped"
             m.ended = m.ended or team.created
             team.members[m.name] = m
             team.inbox[m.name] = []
-        team.stopped = not team.finished  # yüklenen yarım proje kullanıcı sürdürene kadar durur
+        team.stopped = not team.finished  # a loaded unfinished project stays stopped until the user resumes it
         team.log = [Message(x.get("from", "?"), x.get("to", "?"), x.get("text", ""), float(x.get("at") or 0))
                     for x in data.get("log") or []]
         return team
 
     def thread_view(self, name: str) -> dict[str, Any]:
-        """Bir ajanın (ya da yöneticinin) konuşması ve bilgileri."""
+        """An agent's (or the lead's) conversation and details."""
         if name == LEAD:
             msgs = self.lead_agent.messages[1:] if self.lead_agent is not None else self.lead_saved
             return {"name": LEAD, "status": self.lead_state, "model": self.lead_model, "thinking": self.lead_thinking,
@@ -1813,7 +1818,7 @@ Nasıl yapılır:
     member_view = thread_view
 
     def add_member(self, spec: dict[str, Any], announce: bool = True) -> Member:
-        """Çalışan ya da bitmiş projeye yeni ajan ekle ve başlat; diğerlerine haber ver."""
+        """Add a new agent to a running or finished project, start it, and tell the others."""
         m = self.add(spec)
         self.stopped = self.finished = False
         self._nudges = 0
@@ -1823,7 +1828,7 @@ Nasıl yapılır:
             with self.cond:
                 msg = Message(SYSTEM, "all", note)
                 self.log.append(msg)
-                for n in others:  # bitmiş ajanları uyandırmadan sadece haber ver
+                for n in others:  # tell finished agents without waking them
                     self.inbox[n].append(msg)
         self._launch(m)
         self._changed(save=True)
@@ -1842,7 +1847,7 @@ Nasıl yapılır:
             pass
 
     def _notify(self, text: str, kind: str) -> None:
-        """Masaüstü bildirimi ve (ayarlıysa) telefona ntfy bildirimi; arka planda, hata projeyi etkilemez."""
+        """Desktop notification, plus ntfy to the phone if configured. In the background; errors are ignored."""
         cfg = self.parent_ctx.config
         a = cfg.agent
         if not a.get("team_notify", True):
@@ -1864,7 +1869,7 @@ Nasıl yapılır:
                 try:
                     import httpx
 
-                    # Başlık sorgu parametresiyle: HTTP başlıkları Türkçe karakter taşıyamaz.
+                    # The title goes as a query parameter: HTTP headers cannot carry Turkish characters.
                     httpx.post(url, content=text[:1000].encode("utf-8"), timeout=10,
                                params={"title": title, "tags": "robot"})
                 except Exception:  # noqa: BLE001
@@ -1889,9 +1894,9 @@ Nasıl yapılır:
                 m.status = "stopped"
             m.resume_wanted = False
             if m.status in ACTIVE:
-                # Ajanı henüz kurulmamış (model seçimi/worktree sürüyor) üye de dursun: başlarken bu bayrağa bakar.
+                # Also stop a member not set up yet (model choice/worktree in progress); it checks this flag on start.
                 m.stop_requested = True
-                m.recovering = False  # kullanıcının durdurması takılma kurtarmasıyla yeniden başlatılmasın
+                m.recovering = False  # a stop by the user must not be restarted by stall recovery
                 if m.agent is not None:
                     m.agent.stop()
         with self.cond:
@@ -1899,7 +1904,7 @@ Nasıl yapılır:
         self._changed(save=True)
 
     def resume(self) -> None:
-        """Durdurulmuş projeyi sürdür: durmuş ajanlar kaldığı yerden devam eder, yönetici uyanır."""
+        """Resume a stopped project: stopped agents continue where they left off, and the lead wakes up."""
         self.mark(USER, "resume", "proje sürdürüldü")
         self.stopped = False
         self._nudges = 0
@@ -1910,7 +1915,7 @@ Nasıl yapılır:
                     self._launch(m)
                 else:
                     self._launch(m, resume=True)
-        for m in list(self.members.values()):  # durdurulurken yarıda kalan iş kurulları yeniden toplanır
+        for m in list(self.members.values()):  # councils cut off during the stop are convened again
             if m.status == "review" and self.council and m.councils and m.councils[-1].get("state") == "stopped" \
                     and not m.council_running:
                 self._spawn(self._member_council, m)
@@ -1919,7 +1924,7 @@ Nasıl yapılır:
         self._changed(save=True)
 
     def save_template(self, name: str) -> dict[str, Any]:
-        """Projeyi şablon olarak kaydet: hedef, ayarlar ve ajan tanımları (konuşmalar değil)."""
+        """Save the project as a template: goal, settings and agent definitions (not conversations)."""
         tpl = {"name": name.strip()[:60], "goal": self.goal, "review": self.review, "council": self.council,
                "plan_council": self.plan_council,
                "lead_model": self.lead_model, "lead_thinking": self.lead_thinking, "check": self.check,
@@ -1931,7 +1936,7 @@ Nasıl yapılır:
         return tpl
 
     def timeline_view(self) -> list[dict[str, Any]]:
-        """Zaman çizelgesi: olaylar ve mesajlar tek akışta, eskiden yeniye."""
+        """Timeline: events and messages in one stream, oldest first."""
         items = list(self.timeline) + [{"at": x.at, "who": x.sender, "kind": "msg", "text": f"→ {x.to}: {x.text[:300]}"}
                                        for x in self.log]
         return sorted(items, key=lambda x: x.get("at") or 0)[-400:]
@@ -1945,8 +1950,8 @@ Nasıl yapılır:
 
 
 class MemberUI:
-    """Ajanın arayüzü: olayları proje durumuna yansıtır, izin sorularını ajanın adıyla kullanıcıya iletir. Model cevabı
-    yazılırken metni ve düşünmesini canlı yayınlar (en sık 0,25 sn'de bir; kayda girmez)."""
+    """The agent's UI: reflects events in the project state and passes permission questions to the user by agent name.
+    While the model writes, it streams the text and thinking live (at most every 0.25 s; not saved to the record)."""
 
     LIVE_EVERY = 0.25
 
@@ -1970,7 +1975,7 @@ class MemberUI:
             pass
 
     def tool_delta(self, name: str, size: int) -> None:
-        """Model bir aracı (ör. büyük bir dosya) yazarken: ilerleme sayılır, ekranda ne yazdığı görünür."""
+        """While the model writes a tool call (e.g. a big file): counts as progress; the screen shows the writing."""
         self.member.last_at, self.member.stall_warned = time.time(), False
         self.tool = f"{name} hazırlıyor · {size // 1000} KB" if size >= 1000 else f"{name} hazırlıyor"
         self._live()
@@ -1979,7 +1984,7 @@ class MemberUI:
         self.tool = ""
         self.text, self.think = "", ""
         self._live(force=True)
-        self._last = 0.0  # ilk parça beklemeden görünsün
+        self._last = 0.0  # show the first chunk without waiting
 
     def stream_delta(self, text: str) -> None:
         self.text += text
@@ -1994,14 +1999,14 @@ class MemberUI:
         self._live(force=True)
 
     def stream_end(self, text: str, source: str) -> None:
-        self.text, self.think, self.tool = "", "", ""  # cevap artık konuşmada; canlı kutu kapanır
+        self.text, self.think, self.tool = "", "", ""  # the answer is now in the conversation; the live box closes
         self._live(force=True)
 
     def info(self, msg: str) -> None:
         if "adım limiti" in msg:
             self.member.limit_hit = True
         elif "hiçbir model cevap veremedi" in msg:
-            reasons = [x.strip() for x in msg.splitlines()[1:] if x.strip()]  # ilk satır iç rol adını taşır
+            reasons = [x.strip() for x in msg.splitlines()[1:] if x.strip()]  # first line holds the internal role name
             self.member.provider_failed = human_failure(reasons)
 
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None:
@@ -2026,11 +2031,11 @@ class MemberUI:
             if real and self.member.status == "waiting":
                 self.member.status = prev
                 self.team._changed()
-        return "y" if ans == "a" else ans  # "her zaman" tek ajana değil, ana oturuma ait kalsın
+        return "y" if ans == "a" else ans  # "always" belongs to the main session, not to this one agent
 
 
-# Araç sınıfları team_tools.py'de; o modül buradaki sabitleri kullandığı için döngüye girmemek üzere tembel yüklenir
-# (from alice.team import TeamSend gibi eski içe aktarmalar çalışmaya devam eder).
+# Tool classes live in team_tools.py; it uses the constants here, so it is loaded lazily (no circular import).
+# (old imports such as `from alice.team import TeamSend` keep working).
 _TOOL_EXPORTS = frozenset({
     "TeamSend", "DesignCheck", "SiteStudy", "TeamWait", "LeadPlan", "LeadAssign", "LeadReview", "LeadDiff",
     "LeadAskUser", "LeadFinish", "LeadStatus", "_tree", "route_plan_notes", "_check_specs",

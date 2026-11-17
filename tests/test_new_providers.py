@@ -20,7 +20,7 @@ class Client:
 
 
 def router(spec):
-    """spec: {isim: (models, auto, katalog)}"""
+    """spec: {name: (models, auto, catalog)}"""
     cfgs = {n: SimpleNamespace(enabled=True, api_key_env=f"{n.upper()}_KEY", models=m, auto=a)
             for n, (m, a, _) in spec.items()}
     clients = {n: Client(c) for n, (_, _, c) in spec.items()}
@@ -48,7 +48,7 @@ def test_fixed_model_list_skips_catalog_request_and_manual_filter():
     refs, errors, catalog = ranking.candidates(r)
     assert refs == ["zai:glm-4.7-flash", "zai:glm-4.5-flash"]
     assert r.clients["zai"].calls == 0
-    assert "zai" not in catalog and not errors  # elle yazılan zai:glm-5 "kalkmış" sayılmaz
+    assert "zai" not in catalog and not errors  # a hand-written zai:glm-5 is not counted as "kalkmış" (removed)
 
 
 def test_credit_providers_are_not_ranked_or_discovered():

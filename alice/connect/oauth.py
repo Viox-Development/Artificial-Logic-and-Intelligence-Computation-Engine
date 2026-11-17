@@ -1,11 +1,11 @@
-"""OAuth2 yetkilendirme (Authorization Code + PKCE), tarayıcı ve yerel geri dönüş adresiyle.
+"""OAuth2 authorization (Authorization Code + PKCE), with browser and local callback redirect URL.
 
-Akış: ALICE 127.0.0.1'de rastgele bir porta tek seferlik sunucu açar, tarayıcıda servisin izin sayfasını
-açar, servis kullanıcıyı `http://127.0.0.1:<port>/callback?code=...` adresine döndürür, kod token'la
-takas edilir ve token ~/.alice/connect.json'a yazılır.
+Flow: ALICE starts a one-off server on a random port on 127.0.0.1, opens the service's authorization page
+in the browser, the service redirects the user to `http://127.0.0.1:<port>/callback?code=...`, the code
+is exchanged for a token, and the token is saved to ~/.alice/connect.json.
 
-PKCE sayesinde client secret gerekmiyor (masaüstü uygulaması için doğru olan da bu: secret kullanıcının
-diskinde duracaksa zaten sır değildir). Secret isteyen servisler için `client_secret_env` verilebilir.
+PKCE eliminates the need for a client secret (the right approach for a desktop app: a secret stored on the
+user's disk is no secret anyway). For services requiring a secret, `client_secret_env` can be provided.
 """
 
 from __future__ import annotations
@@ -42,14 +42,14 @@ class _Catcher(http.server.BaseHTTPRequestHandler):
     result: dict[str, str] = {}
     want_state = ""
     done = threading.Event()
-    timeout = 15  # sn: istek göndermeyen boş bağlantı (tarayıcının ön bağlantısı) sonsuza dek beklenmesin
+    timeout = 15  # sec: avoid waiting indefinitely for idle connections (browser pre-connects) that send no request
 
-    def log_message(self, *a: Any) -> None:  # sessiz
+    def log_message(self, *a: Any) -> None:  # silent
         pass
 
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
-        if u.path != "/callback":  # favicon vb.: sonucu etkilemez
+        if u.path != "/callback":  # favicon etc.: does not affect the result
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -59,7 +59,7 @@ class _Catcher(http.server.BaseHTTPRequestHandler):
         state = (q.get("state") or [""])[0]
         err = (q.get("error") or [""])[0]
         ok = bool(code) and secrets.compare_digest(state, type(self).want_state)
-        if "code" in type(self).result:  # aynı adres ikinci kez açıldı (yenileme): ilk sonuç geçerli
+        if "code" in type(self).result:  # same URL opened a second time (refresh): keep initial result
             title, text = "Bağlandı", "Bu sekmeyi kapatabilirsin, ALICE'e dön."
         elif ok:
             type(self).result = {"code": code}
@@ -79,13 +79,13 @@ class _Catcher(http.server.BaseHTTPRequestHandler):
 def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", timeout: float = 240.0,
               open_browser: Callable[[str], Any] = webbrowser.open,
               emit: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """Tarayıcıda izin al, token'ı sakla ve döndür. Hata olursa OAuthError."""
+    """Obtain authorization in browser, store and return token. Raises OAuthError on failure."""
     import httpx
 
     say = emit or (lambda _s: None)
     try:
-        # Her bağlantı ayrı thread'de: tarayıcı önce boş bir ön bağlantı açınca tek bağlantılık sunucu ona takılıyor,
-        # Google'ın asıl yönlendirmesi cevapsız kalıp izin sayfası "Devam Et"ten sonra donuyordu.
+        # Each connection in a separate thread: if the browser opens an idle pre-connection first, a single-thread
+        # server hangs on it, leaving Google's redirect unanswered and freezing the consent page after "Devam Et".
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", auth.redirect_port), _Catcher)
         srv.daemon_threads = True
     except OSError as e:
@@ -139,7 +139,7 @@ def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", ti
 
 
 def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> dict[str, Any]:
-    """Yenileme token'ıyla erişim token'ını tazele. Yenileme yoksa/çalışmazsa OAuthError."""
+    """Refresh access token using refresh token. Raises OAuthError if missing or unsuccessful."""
     import httpx
 
     row = store.get(name)
@@ -147,8 +147,8 @@ def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> d
     if not rt:
         raise OAuthError(f"{name}: yenileme token'ı yok, tekrar bağlan: alice connect {name}")
     if row.get("refresh_dead") == _fingerprint(rt):
-        # Sağlayıcı bu jetonu zaten reddetti: her arka plan işinde ve sağlık kontrolünde aynı ölü jetonla yeniden
-        # istek atıp aynı hatayı üretmenin anlamı yok. Kullanıcı yeniden bağlanınca jeton değişir, kilit kalkar.
+        # Provider already rejected this token: no point in retrying with the same dead token on every background
+        # task and health check to produce the same error. When user reconnects, token changes and lock clears.
         raise OAuthError(dead_message(name, str(row.get("refresh_error") or "")))
     data = {"grant_type": "refresh_token", "refresh_token": rt, "client_id": client_id}
     if client_secret:
@@ -158,8 +158,8 @@ def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> d
     except Exception as e:  # noqa: BLE001
         raise OAuthError(f"token yenilenemedi: {e}") from e
     if r.status_code >= 400:
-        # Yalnız invalid_grant jetonun öldüğünü söyler. unauthorized_client gibi hatalar istemci kimliği/ayar hatasıdır:
-        # kalıcı kilit konmaz, her seferinde gerçek hata gösterilir (ayar düzelince kendiliğinden geçer).
+        # Only invalid_grant indicates token death. Errors like unauthorized_client are client ID/config issues:
+        # no permanent lock is placed, the real error is shown each time (resolves once config is fixed).
         if r.status_code in (400, 401) and "invalid_grant" in r.text:
             why = "süresi dolmuş ya da iptal edilmiş" if "expired or revoked" in r.text else "geçersiz"
             store.save(name, refresh_dead=_fingerprint(rt), refresh_error=why, refresh_dead_at=time.time())
@@ -170,20 +170,20 @@ def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> d
 
 
 def _fingerprint(token: str) -> str:
-    """Jetonun kendisi değil, kısa özeti: ölü işaretinin hangi jetona ait olduğunu bilmek için."""
+    """Short digest rather than the token itself: identifies which token the dead marker belongs to."""
     import hashlib
 
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
 def needs_sign_in(name: str) -> bool:
-    """Yenileme jetonu sağlayıcı tarafından reddedildi mi (yeniden giriş yapılana kadar)."""
+    """Whether refresh token was rejected by provider (until re-authenticated)."""
     row = store.get(name)
     rt = str(row.get("refresh_token") or "")
     return bool(rt) and row.get("refresh_dead") == _fingerprint(rt)
 
 
-GOOGLE_CONNECTIONS = ("google_", "gmail:")  # Google'ın OAuth istemcisini kullanan bağlantılar
+GOOGLE_CONNECTIONS = ("google_", "gmail:")  # Connections using Google's OAuth client
 
 
 def dead_message(name: str, why: str = "") -> str:

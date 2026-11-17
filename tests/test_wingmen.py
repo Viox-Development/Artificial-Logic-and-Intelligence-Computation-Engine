@@ -1,5 +1,5 @@
-"""DCS kanat adamları: Türkçe söz -> komut, UDP gönderimi, hook kurulumu ve hook'un güvenlik sınırları.
-Lua tarafı DCS olmadan çalıştırılamaz; burada sadece statik kontroller var (luac varsa sözdizimi de)."""
+"""DCS wingmen: Turkish utterance -> command, UDP sending, hook installation and the hook's security boundaries.
+The Lua side cannot run without DCS; only static checks live here (syntax too, if luac is available)."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def test_parse_returns_none_without_verb(text):
 
 
 def test_eve_don_is_not_front_direction():
-    # "dön" içindeki "ön" yön sayılmasın
+    # the "ön" inside "dön" must not count as a direction
     assert parse("ikinci eve dön").direction == "any"
 
 
@@ -89,7 +89,7 @@ def test_send_delivers_line_to_udp():
 def test_send_never_blocks_when_nobody_listens():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(("127.0.0.1", 0))
-        free = s.getsockname()[1]  # kapandıktan sonra kimse dinlemiyor
+        free = s.getsockname()[1]  # nobody is listening after it was closed
     t = time.monotonic()
     for _ in range(20):
         wm.send(Command("hold"), port=free)
@@ -123,7 +123,7 @@ def test_settings_from_config():
     assert wm.settings({"dcs_wingmen": "Uzi 2"}) == (wm.PORT, ["Uzi 2"])
 
 
-# ------------------------------------------------------------------ araç
+# ------------------------------------------------------------------ tool
 def test_tool_sends_parsed_command(monkeypatch, workdir):
     sent = []
     monkeypatch.setattr(wm, "send", lambda cmd, port=wm.PORT: sent.append((cmd.line(), port)) or True)
@@ -146,7 +146,7 @@ def test_tool_is_in_flight_group():
     assert "flight" in groups_for_text("İkinci, sağdaki SAM'i bastır")
 
 
-# ------------------------------------------------------------------ kurulum
+# ------------------------------------------------------------------ installation
 def test_install_writes_hook_and_uninstall_removes(tmp_path):
     d = tmp_path / "DCS"
     d.mkdir()
@@ -156,11 +156,11 @@ def test_install_writes_hook_and_uninstall_removes(tmp_path):
     assert "local ALICE_PORT = 45001" in text
     assert 'local ALICE_NAMES = {"Uzi \\"2\\"", "Kılıç 3"}' in text
     assert dcs.ensure_installed([d], wingmen_port=45001, wingmen=['Uzi "2"', "Kılıç 3"]) == []
-    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # port değişti
+    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # port changed
     hook.write_text("eski", encoding="utf-8")
-    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # içerik değişti
+    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # content changed
     hook.unlink()
-    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # silinmiş
+    assert dcs.ensure_installed([d], wingmen_port=45002, wingmen=['Uzi "2"', "Kılıç 3"]) == [d]  # deleted
     assert hook.exists()
     assert dcs.uninstall([d]) == [d]
     assert not hook.exists() and not (d / "Scripts" / "alice_export.lua").exists()
@@ -201,7 +201,7 @@ def test_hub_passes_wingmen_settings(monkeypatch):
     assert got["wingmen_port"] == 5001 and got["wingmen"] == ["Uzi 2"]
 
 
-# ------------------------------------------------------------------ hook güvenliği (statik)
+# ------------------------------------------------------------------ hook security (static)
 HOOK_TEXT = dcs.HOOK.read_text(encoding="utf-8")
 
 
@@ -215,7 +215,7 @@ def test_hook_does_not_touch_mission_scripting_sanitize():
 
 
 def test_hook_never_evaluates_network_text():
-    # Hook hiçbir yerde metni Lua olarak derlemez/çalıştırmaz; görev koduna sadece doğrulanmış alanlar %q/%d ile girer.
+    # The hook never compiles or runs network text as Lua; only validated fields reach the mission code via %q/%d.
     for bad in ("loadstring", "load(", "dofile", "loadfile", "require(\"lfs\")", "os.execute", "io.open"):
         assert bad not in HOOK_TEXT, bad
     assert HOOK_TEXT.count("net.dostring_in") == 1

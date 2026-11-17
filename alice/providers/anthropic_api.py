@@ -1,15 +1,15 @@
-"""Resmi Claude API (console.anthropic.com anahtarı) — resmi `anthropic` paketiyle.
+"""Official Claude API (console.anthropic.com key) — via the official `anthropic` package.
 
-ALICE'in geri kalanı OpenAI biçiminde mesajlarla çalışıyor (role/content/tool_calls/tool). Bu istemci o mesajları
-Claude'un Messages biçimine çevirir, cevabı geri çevirir; router için diğer sağlayıcılarla aynı arayüzü verir
-(chat, chat_stream, list_models). Tekrar deneme, soğuma ve anahtar değiştirme router'da ve anahtar havuzunda
-yapıldığı için paketin kendi tekrar denemesi kapalı.
+The rest of ALICE works with messages in OpenAI format (role/content/tool_calls/tool). This client converts those
+messages to Claude's Messages format and converts the answer back; it gives the router the same interface as the
+other providers (chat, chat_stream, list_models). Retries, cooldowns and key switching are done in the router and the
+key pool, so the package's own retry is turned off.
 
-Notlar:
-- Düşünme her zaman uyarlamalı (adaptive); özeti on_reasoning'e akar. Düşünme blokları sonraki turlara geri
-  gönderilmez: ALICE geçmişi kısaltıp düzenlediği için düzenlenmiş geçmişteki blok isteği reddettirebilirdi.
-- Güvenlik sınıflandırıcısı isteği geri çevirirse API aynı isteği başka bir Claude modeliyle sürdürür
-  (fallbacks="default"); o da reddederse hata router'a gider, sıradaki modele geçilir.
+Notes:
+- Thinking is always adaptive; its summary flows to on_reasoning. Thinking blocks are not sent back on later turns:
+  ALICE shortens and rewrites the history, so a thinking block in the edited history could get the request rejected.
+- If the safety classifier refuses the request, the API continues the same request with another Claude model
+  (fallbacks="default"); if that one refuses too, the error goes to the router, which moves on to the next model.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ from alice.providers.openai_compat import (ChatResult, ProviderError, StreamCanc
                                            redact_binary)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-# Sunucu tarafı yedeği destekleyen modeller (Haiku'da yok).
+# Models that support server-side fallback (not Haiku).
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-# Akış içi "error" olayının türü -> HTTP karşılığı (sınıflandırma için).
+# Type of an in-stream "error" event -> its HTTP equivalent (for classification).
 _STREAM_ERROR_STATUS = {"overloaded_error": 529, "rate_limit_error": 429, "request_too_large": 413,
                         "authentication_error": 401, "permission_error": 403, "not_found_error": 404,
                         "billing_error": 402, "invalid_request_error": 400, "api_error": 500}
@@ -42,7 +42,7 @@ def _sdk() -> Any:
     return anthropic
 
 
-# ------------------------------------------------------------------------------------------- mesaj çevirisi
+# ------------------------------------------------------------------------------------------- message conversion
 def _image_block(url: str) -> dict[str, Any] | None:
     if url.startswith("data:"):
         head, _, data = url.partition(",")
@@ -73,8 +73,8 @@ def _user_content(content: Any) -> list[dict[str, Any]]:
 
 
 def _tool_result_content(content: Any) -> str | list[dict[str, Any]]:
-    """Araç sonucu: metin olduğu gibi; parça listesi (ör. ekran görüntüsü) metin ve görüntü bloklarına çevrilir.
-    Önceden liste JSON metnine dökülüyordu: görüntünün base64'ü modele binlerce token metin olarak gidiyordu."""
+    """Tool result: text is passed as is; a list of parts (e.g. a screenshot) is converted to text and image blocks.
+    It used to be dumped as JSON text: the base64 of an image went to the model as thousands of text tokens."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -82,7 +82,7 @@ def _tool_result_content(content: Any) -> str | list[dict[str, Any]]:
         for p in content:
             if not isinstance(p, dict):
                 continue
-            if p.get("type") == "image" and isinstance(p.get("data"), str):  # MCP biçimi
+            if p.get("type") == "image" and isinstance(p.get("data"), str):  # MCP format
                 blocks.append({"type": "image", "source": {"type": "base64", "data": p["data"],
                                                            "media_type": p.get("mimeType") or "image/png"}})
             else:
@@ -99,15 +99,15 @@ def _text(content: Any) -> str:
 
 
 def _tool_id(raw: Any) -> str:
-    """Claude araç kimliğinde yalnız harf, rakam, _ ve - kabul ediyor. Konuşmanın önceki adımlarını başka bir model
-    yapmış olabilir: Kimi gibi sağlayıcıların "functions.read_file:0" kimliği bütün isteği 400 ile reddettiriyordu.
-    Aynı kimlik hem tool_use'ta hem tool_result'ta aynı biçimde çevrildiği için eşleşme bozulmaz."""
+    """Claude accepts only letters, digits, _ and - in a tool call id. Earlier steps of the conversation may have been
+    made by another model: ids like "functions.read_file:0" from providers such as Kimi made the whole request fail
+    with 400. The same id is converted the same way in both tool_use and tool_result, so the match is not broken."""
     return re.sub(r"[^A-Za-z0-9_-]", "_", str(raw or "")) or "call"
 
 
 def to_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    """OpenAI biçimi → (system, Claude mesajları). Baştaki sistem mesajları system'e, aradakiler kullanıcı turuna
-    işaretli metin olarak gider. Arka arkaya gelen araç sonuçları tek kullanıcı turunda toplanır."""
+    """OpenAI format → (system, Claude messages). Leading system messages go to system; those in the middle go to
+    the user turn as marked text. Consecutive tool results are collected into a single user turn."""
     system: list[str] = []
     out: list[dict[str, Any]] = []
 
@@ -146,7 +146,7 @@ def to_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any
         elif role == "tool":
             push("user", [{"type": "tool_result", "tool_use_id": _tool_id(m.get("tool_call_id")),
                            "content": _tool_result_content(m.get("content"))}])
-    if out and out[0]["role"] != "user":  # ilk tur kullanıcıdan olmalı
+    if out and out[0]["role"] != "user":  # the first turn must come from the user
         out.insert(0, {"role": "user", "content": [{"type": "text", "text": "(devam)"}]})
     return "\n\n".join(s for s in system if s), out
 
@@ -166,8 +166,9 @@ _CACHEABLE = {"text", "tool_result", "image", "document"}
 
 
 def mark_cache(kw: dict[str, Any]) -> None:
-    """Prompt önbelleği için iki işaret: sistem metni (araç tanımlarıyla birlikte önek) ve son mesajın son bloğu.
-    Böylece her adımda yalnız yeni eklenen kısım işlenir; geçmiş önbellekten okunur (çok daha ucuz ve hızlı)."""
+    """Two markers for the prompt cache: the system text (a prefix together with the tool definitions) and the last
+    block of the last message. So each step only processes what was newly added; the history is read from the cache
+    (much cheaper and faster)."""
     eph = {"type": "ephemeral"}
     system = kw.get("system")
     if isinstance(system, str) and system.strip():
@@ -188,7 +189,7 @@ def mark_cache(kw: dict[str, Any]) -> None:
 
 
 def from_message(msg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Claude cevabı → (OpenAI biçiminde mesaj, kullanım)."""
+    """Claude answer → (message in OpenAI format, usage)."""
     texts, calls = [], []
     for b in msg.content or []:
         if b.type == "text":
@@ -202,17 +203,18 @@ def from_message(msg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     u = msg.usage
     written = getattr(u, "cache_creation_input_tokens", 0) or 0
     prompt = (u.input_tokens or 0) + (getattr(u, "cache_read_input_tokens", 0) or 0) + written
-    # Önbelleğe yazılan token ayrıca verilir: router'ın kullanım sayacı (cache_write_tokens) bu adı okuyor; önceden
-    # düşürülüyordu ve Claude API'de önbellek yazımı (normal girdiden pahalı) hep 0 görünüyordu.
+    # Tokens written to the cache are reported separately: the router's usage counter (cache_write_tokens) reads this
+    # name. They used to be dropped, so cache writes (more expensive than normal input) always showed 0 on the Claude API.
     return out, {"prompt_tokens": prompt, "completion_tokens": u.output_tokens or 0,
                  "cached_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
                  "cache_creation_input_tokens": written}
 
 
 class AnthropicProvider:
-    STREAM_READ = 300.0  # sn: akış bu kadar veri göndermezse kesilir (uzun düşünmede bile özet ve ping gelir)
-    # Akışsız çağrıda cevap tek parça, ancak bitince gelir: uzun düşünen bir cevap 300 sn'yi rahatça aşıyor ve
-    # okuma zaman aşımı onu kesiyordu. Paketin kendi önerisi gibi süre max_tokens ile ölçeklenir (128k token ~ 1 sa).
+    STREAM_READ = 300.0  # sec: the stream is cut if no data arrives for this long (even long thinking sends summaries and pings)
+    # In a non-streaming call the answer arrives in one piece, only when it is finished: a long thinking answer easily
+    # exceeds 300 sec and the read timeout cut it. Like the package's own suggestion, the time scales with max_tokens
+    # (128k tokens ~ 1 hr).
     NONSTREAM_MIN = 900.0
     NONSTREAM_MAX = 3600.0
 
@@ -241,10 +243,10 @@ class AnthropicProvider:
         if self._client is not None:
             try:
                 self._client.close()
-            except Exception:  # noqa: BLE001 - kapanışta hata önemsiz
+            except Exception:  # noqa: BLE001 - errors on close are unimportant
                 pass
 
-    # ------------------------------------------------------------------------------------ istek gövdesi
+    # ------------------------------------------------------------------------------------ request body
     def _params(self, model, messages, tools, max_tokens, response_format, extra, stream: bool) -> dict[str, Any]:
         system, msgs = to_messages(messages)
         kw: dict[str, Any] = {"model": model, "messages": msgs,
@@ -288,9 +290,9 @@ class AnthropicProvider:
                 body = str(e)
             status = e.status_code
             if status < 400:
-                # Akış 200 ile açıldıktan sonra gelen "error" olayı (overloaded_error, api_error...): paket bunu
-                # 200 durumlu APIStatusError yapıyor ve classify_error 200'ü "bad_request" sayıyordu; geçici
-                # yoğunluk hatası kalıcı istek hatası gibi işleniyordu. Durum kodu hata türünden çıkarılır.
+                # An "error" event after the stream opened with 200 (overloaded_error, api_error...): the package
+                # makes it a 200 APIStatusError, and classify_error called 200 "bad_request", so a temporary overload
+                # was handled as a permanent request error. The status code is now taken from the error type.
                 raw = getattr(e, "body", None)
                 etype = ((raw.get("error") or {}).get("type") if isinstance(raw, dict)
                          and isinstance(raw.get("error"), dict) else None) or ""
@@ -313,7 +315,7 @@ class AnthropicProvider:
                                                        (b.type == "tool_use" or b.text) for b in msg.content):
             raise ProviderError("too_large", "cevap max_tokens'a takıldı, içerik yok")
 
-    # ---------------------------------------------------------------------------------------- çağrılar
+    # ---------------------------------------------------------------------------------------- calls
     def chat(self, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
              temperature: float | None = None, max_tokens: int | None = None,
              response_format: dict[str, Any] | None = None, extra: dict[str, Any] | None = None) -> ChatResult:
@@ -323,12 +325,12 @@ class AnthropicProvider:
         try:
             timeout: Any = _sdk().Timeout(secs, connect=15.0)
         except ProviderError:
-            timeout = secs  # paket yoksa (sahte istemci) düz süre
+            timeout = secs  # if the package is missing (fake client), a plain timeout
         try:
             msg = self.client.beta.messages.create(**kw, timeout=timeout)
         except ProviderError:
             raise
-        except Exception as e:  # noqa: BLE001 - paket hatası sağlayıcı hatasına çevrilir
+        except Exception as e:  # noqa: BLE001 - package errors are turned into provider errors
             raise self._error(e) from e
         self._check(msg)
         out, usage = from_message(msg)
@@ -368,7 +370,7 @@ class AnthropicProvider:
                     elif ev.type == "content_block_stop" and on_call is not None:
                         block = getattr(ev, "content_block", None)
                         if getattr(block, "type", "") == "tool_use":
-                            try:  # araç bloğu bitti: ajan güvenli aracı cevap bitmeden başlatabilir
+                            try:  # tool block finished: the agent can start a safe tool before the answer is complete
                                 on_call({"id": block.id, "type": "function", "function": {
                                     "name": block.name, "arguments": json.dumps(block.input or {}, ensure_ascii=False)}})
                             except Exception:  # noqa: BLE001

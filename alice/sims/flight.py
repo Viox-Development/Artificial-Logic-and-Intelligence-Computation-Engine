@@ -1,16 +1,16 @@
-"""Uçuş arkadaşı.
+"""Flight companion.
 
-F-16'nın kendi sesli uyarıları zaten var; ALICE onları tekrarlamaz. Onun yerine bir
-uçuş arkadaşı gibi bakar:
-  - Yakıt: üs biliniyorsa joker/bingo (miktara göre), bilinmiyorsa son dakikaların ortalamasıyla kalan süre
-  - Yaklaşma: teker açık, alçakta, yavaşken AoA ve alçalma hızına kısa geri bildirim
-  - Uzun süre yüksek G, chaff/flare azalması
-  - İnişten sonra kısa değerlendirme (+ saat verisi varsa nabız)
-  - Pilotun kurduğu hatırlatmalar: "10 bin feet'e gelince söyle", "yakıt 1500 kiloya inince söyle"
-  - Kendi yer yaklaşma uyarısı olmayan uçaklarda yere hızla yaklaşma, açık unutulan flap, boşalan dış tank
+The F-16's own voice warnings already exist; ALICE does not repeat them. Instead it watches like a flight buddy:
+  - Fuel: if the base is known, joker/bingo (by amount); if not, the remaining time from the average of the last minutes
+  - Approach: short feedback on AoA and sink rate when gear is down, low and slow
+  - Long periods of high G, chaff/flare running low
+  - Short review after landing (+ heart rate if watch data is available)
+  - Reminders set by the pilot: "10 bin feet'e gelince söyle" (tell me at 10,000 feet),
+    "yakıt 1500 kiloya inince söyle" (tell me when fuel drops to 1500 kg)
+  - On aircraft without a ground proximity warning: fast approach to the ground, flaps left open, empty external tanks
 
-Kaynaktan (DCS, War Thunder) bağımsızdır: hepsi FlightState üretir, FlightCompanion tüketir.
-Birimler SI: m, m/s, kg, derece.
+Independent of the source (DCS, War Thunder): all of them produce FlightState, FlightCompanion consumes it.
+Units are SI: m, m/s, kg, degrees.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ FT = 0.3048
 NM = 1852.0
 
 
-# Saatin Türkçe bulunma eki: 1'deki, 2'deki, 3'teki, 4'teki, 5'teki, 6'daki, 7'deki, 8'deki, 9'daki, 10'daki, 11'deki,
-# 12'deki (sayının okunuşundaki son ünlü ve sert ünsüze göre). "Saat 3'deki" yanlıştı.
+# Turkish locative suffix for clock hours: 1'deki, 2'deki, 3'teki, 4'teki, 5'teki, 6'daki, 7'deki, 8'deki, 9'daki,
+# 10'daki, 11'deki, 12'deki (set by last vowel and hard consonant of the number). "Saat 3'deki" (at clock 3) was wrong.
 _CLOCK_EK = {1: "'deki", 2: "'deki", 3: "'teki", 4: "'teki", 5: "'teki", 6: "'daki", 7: "'deki", 8: "'deki",
              9: "'daki", 10: "'daki", 11: "'deki", 12: "'deki"}
 
@@ -42,7 +42,7 @@ _CLOCK_DEN = {1: "'den", 2: "'den", 3: "'ten", 4: "'ten", 5: "'ten", 6: "'dan", 
 
 
 def clock_from(clock: object) -> str:
-    """"Saat 3'ten kilit" (ayrılma eki; "3'den" yanlıştı)."""
+    """"Saat 3'ten kilit" (Turkish ablative suffix; "3'den" was wrong)."""
     try:
         c = int(clock)
     except (TypeError, ValueError):
@@ -60,25 +60,25 @@ def clock_loc(clock: object) -> str:
 
 @dataclass
 class FlightState:
-    t: float                         # simülasyon zamanı (sn)
+    t: float                         # simulation time (s)
     source: str = "dcs"
     aircraft: str = ""
     ias: float | None = None         # m/s
     tas: float | None = None
-    alt: float | None = None         # deniz seviyesinden m
-    agl: float | None = None         # yerden m (bilinmiyorsa None)
-    vv: float | None = None          # dikey hız m/s
+    alt: float | None = None         # meters above sea level
+    agl: float | None = None         # meters above ground (None if unknown)
+    vv: float | None = None          # vertical speed m/s
     aoa: float | None = None
     g: float | None = None
     fuel_kg: float | None = None
-    burn_kgs: float | None = None    # anlık tüketim kg/s (biliniyorsa)
+    burn_kgs: float | None = None    # instantaneous fuel burn kg/s (if known)
     chaff: int | None = None
     flare: int | None = None
-    gear: float | None = None        # 0 = yukarı, 1 = aşağı
-    x: float | None = None           # harita koordinatı m (DCS: x kuzey, z doğu)
+    gear: float | None = None        # 0 = up, 1 = down
+    x: float | None = None           # map coordinate m (DCS: x north, z east)
     z: float | None = None
-    heading: float | None = None     # burnun yönü, derece (gerçek kuzey)
-    extra: dict[str, Any] = field(default_factory=dict)  # oyunun verdiği ek göstergeler (bkz. describe_extra)
+    heading: float | None = None     # nose direction, degrees (true north)
+    extra: dict[str, Any] = field(default_factory=dict)  # extra indicators from the game (see describe_extra)
     wall: float = field(default_factory=time.time)
 
 
@@ -86,16 +86,16 @@ class FlightState:
 class Profile:
     name: str
     internal_fuel_kg: float = 3000
-    reserve_kg: float = 450          # inişte kalması istenen yakıt
-    cruise_kg_nm: float = 5.0        # eve dönüş seyrinde mil başına yakıt (bingo hesabı)
+    reserve_kg: float = 450          # fuel to be left at landing
+    cruise_kg_nm: float = 5.0        # fuel per nautical mile on the way home (bingo calculation)
     aoa_on_speed: tuple[float, float] = (11.0, 15.0)
-    approach_ias_max: float = 100.0  # m/s, bunun altında ve teker açıksa yaklaşma sayılır
+    approach_ias_max: float = 100.0  # m/s; below this with gear down it counts as an approach
     g_warn: float = 7.0
-    g_warn_seconds: float = 8.0      # dogfight'ta kısa çekişler normal: sadece uzun süren yüksek G
+    g_warn_seconds: float = 8.0      # short hard turns are normal in a dogfight: only sustained high G counts
     chaff_low: int = 20
     flare_low: int = 10
-    has_gpws: bool = False           # uçağın kendi yer yaklaşma uyarısı var: ALICE tekrarlamaz
-    auto_flaps: bool = False         # flaplar otomatik: "flap açık kaldı" hatırlatması anlamsız
+    has_gpws: bool = False           # the aircraft has its own ground proximity warning: ALICE does not repeat it
+    auto_flaps: bool = False         # automatic flaps: a "flap açık kaldı" (flaps left open) reminder is pointless
 
 
 PROFILES = {
@@ -115,21 +115,21 @@ def profile_for(aircraft: str) -> Profile:
         return base
     from dataclasses import replace
 
-    # tek tük bozuk parça yüzünden bingo saçmalamasın: elle verilen değerin yarısı ile iki katı arası
+    # so a few bad samples don't make bingo nonsense: clamp between half and double the manually entered value
     return replace(base, cruise_kg_nm=min(max(learned, base.cruise_kg_nm / 2), base.cruise_kg_nm * 2))
 
 
-# --------------------------------------------------------------- uçuşlardan öğrenilen seyir yakıtı
-# Mil başına yakıt elle tahmin ediliyordu (F-16 4, F/A-18 6, diğerleri 5). Kayıtlı uçuşların düz, sakin
-# bölümlerinden (G ~1, irtifa sabite yakın, yakıt sıçramasız) gerçek değer çıkarılır ve bingo bunu kullanır.
-CRUISE_MIN_S = 60      # bir seyir parçası en az bu kadar sürmeli
+# --------------------------------------------------------------- cruise fuel learned from flights
+# Fuel per mile used to be estimated by hand (F-16 4, F/A-18 6, others 5). The real value is extracted from the
+# level, calm sections of recorded flights (G ~1, altitude near constant, no fuel jumps), and bingo uses it.
+CRUISE_MIN_S = 60      # a cruise segment must last at least this long
 CRUISE_MAX_S = 300
-CRUISE_MIN_PARTS = 3   # bundan azsa elle verilen değer kalır
+CRUISE_MIN_PARTS = 3   # with fewer than this, the manually entered value is kept
 _learned_cache: dict[str, Any] = {}
 
 
 def cruise_parts(series: dict[str, list]) -> list[float]:
-    """Bir uçuşun seyir parçalarında mil başına yakıt (kg/nm). Hız IAS'tan kaba TAS'a çevrilir (%2 / 1000 ft)."""
+    """Fuel per nautical mile (kg/nm) over a flight's cruise segments; IAS is roughly converted to TAS (+2% per 1000 ft)."""
     t, alt, g, ias, fuel = (series.get(k) or [] for k in ("t", "alt_ft", "g", "ias_kt", "fuel_kg"))
     out: list[float] = []
     start = 0
@@ -143,7 +143,7 @@ def cruise_parts(series: dict[str, list]) -> list[float]:
     for i in range(1, n):
         dt = t[i] - t[i - 1]
         ok = (fuel[i] is not None and fuel[i - 1] is not None and 0 < dt <= 10 and 0.6 <= (g[i] or 0) <= 1.6
-              and (ias[i] or 0) > 150 and 0 <= fuel[i - 1] - fuel[i] <= 5 * dt  # üstü tank atma ya da AB
+              and (ias[i] or 0) > 150 and 0 <= fuel[i - 1] - fuel[i] <= 5 * dt  # excludes tank jettison or AB
               and abs(alt[i] - alt[start]) < 2000)
         if not ok:
             close(i - 1)
@@ -153,13 +153,13 @@ def cruise_parts(series: dict[str, list]) -> list[float]:
         if t[i] - t[start] >= CRUISE_MAX_S:
             close(i)
             start, nm = i, 0.0
-    if n > 1 and start < n - 1:  # uçuş seyirdeyken bitti
+    if n > 1 and start < n - 1:  # flight ended while cruising
         close(n - 1)
     return out
 
 
 def learn_cruise(folder: Path | None = None) -> dict[str, dict[str, float]]:
-    """Kayıtlı bütün uçuşlardan uçak başına seyir yakıtı; ~/.alice/flights/cruise.json'a yazılır."""
+    """Cruise fuel per aircraft from all recorded flights; written to ~/.alice/flights/cruise.json."""
     folder = folder or flights_dir()
     parts: dict[str, list[float]] = {}
     for f in sorted(folder.glob("*.json")):
@@ -173,9 +173,9 @@ def learn_cruise(folder: Path | None = None) -> dict[str, dict[str, float]]:
             parts.setdefault(d["aircraft"], []).extend(cruise_parts(d["series"]))
     result = {}
     for ac, xs in parts.items():
-        xs = sorted(x for x in xs[-200:] if 0.5 <= x <= 40)  # son uçuşlar
+        xs = sorted(x for x in xs[-200:] if 0.5 <= x <= 40)  # recent flights
         if len(xs) >= CRUISE_MIN_PARTS:
-            # Çatışma ve art yakıcılı parçalar yukarı çeker; eve dönüş ekonomik uçulur: alt üçte bir
+            # Dogfights and afterburner segments push the value up; the trip home is flown economically: the lower third
             result[ac] = {"kg_nm": round(xs[len(xs) // 3], 2), "parts": len(xs)}
     try:
         folder.mkdir(parents=True, exist_ok=True)
@@ -229,7 +229,7 @@ class Debrief:
     def summary(self) -> str:
         parts = [f"Uçuş {fmt_min(self.duration_s / 60)} sürdü."]
         parts.append(f"En yüksek {self.max_g:.1f} G, en yüksek hız {self.max_ias_kt:.0f} knot.")
-        if self.fuel_used_kg:  # 0: havada doğdu ya da yakıt ikmali, söylemenin anlamı yok
+        if self.fuel_used_kg:  # 0: born in the air or after a refuel, not worth mentioning
             parts.append(f"{self.fuel_used_kg:.0f} kilo yakıt kullandın, en az {self.min_fuel_kg:.0f} kiloya düştün.")
         if self.approach_on_speed_pct is not None:
             q = "iyiydi" if self.approach_on_speed_pct >= 70 else "biraz dalgalıydı" if self.approach_on_speed_pct >= 40 \
@@ -244,9 +244,9 @@ class Debrief:
         return " ".join(parts)
 
 
-# ------------------------------------------------------------------------------- uçuş koçluğu
+# ------------------------------------------------------------------------------- flight coaching
 def load_history(folder: Path | None = None, exclude: float | None = None, limit: int = 80) -> list[dict[str, Any]]:
-    """Kayıtlı uçuşlar, eskiden yeniye (seri verisi olmadan). `exclude`: az önce kaydedilen bu uçuşun başlangıcı."""
+    """Recorded flights, oldest to newest (without series data). `exclude`: start time of the flight just saved."""
     out = []
     for f in sorted((folder or flights_dir()).glob("2*.json"))[-limit:]:
         try:
@@ -265,9 +265,10 @@ def _avg(xs: list[float]) -> float:
 
 
 def coach(d: Debrief, history: list[dict[str, Any]]) -> str:
-    """Önceki uçuşlarla karşılaştırıp en fazla iki cümle: gelişme/gerileme ve bir sonraki uçuş için tek hedef.
+    """Compares with previous flights in at most two sentences: progress/regression and one target for the next flight.
 
-    İniş ve yaklaşma bütün uçuşlarla, yakıt ve kişisel rekorlar aynı uçakla karşılaştırılır. Az geçmiş varsa susar."""
+    Landings and approaches are compared with all flights; fuel and personal records only with the same aircraft.
+    Stays silent if there is little history."""
     out: list[str] = []
     lands = [abs(h["touchdown_vv_ms"]) for h in history if h.get("touchdown_vv_ms") is not None][-5:]
     if d.touchdown_vv_ms is not None and len(lands) >= 3:
@@ -302,10 +303,10 @@ def coach(d: Debrief, history: list[dict[str, Any]]) -> str:
 
 
 class FlightCompanion:
-    """FlightState akışını izler, söylenecekleri say(text, severity, emotion) ile iletir.
+    """Watches the FlightState stream and passes what to say via say(text, severity, emotion).
 
-    show(kind, **alanlar) verilirse tehditler ekran üstü HUD'a da ok/kenar parlaması olarak gider; uçuş kodu HUD'u
-    bilmez (bkz. alice.hud.client.show)."""
+    If show(kind, **fields) is given, threats also go to the on-screen HUD as arrows and edge glows; the flight code
+    does not know the HUD (see alice.hud.client.show)."""
 
     def __init__(self, say: Callable[[str, str, str], None], hr_stats: Callable[[float, float], dict | None] | None = None,
                  hr_now: Callable[[], float | None] | None = None,
@@ -317,11 +318,11 @@ class FlightCompanion:
         self.hr_now = hr_now or (lambda: None)
         self.on_debrief = on_debrief or (lambda d: None)
         self.approach_every = approach_every
-        # Tehdit seslerinin son zamanları ölünce/yeniden doğunca sıfırlanmaz: War Thunder'da her doğuşta aynı
-        # gemiler, aynı uçaksavarlar yeniden "menzilindesin" diye sayılıyordu.
+        # Threat sound times are not reset when the enemy dies or respawns: in War Thunder, the same ships and the same
+        # anti-aircraft guns were counted again as "menzilindesin" on every spawn.
         self.threat_mem: dict[str, float] = {}
-        self.coach_flags: set[str] = set()  # ölüm desenleri (alice/sims/coach.py): maç içinde bir kez öğüt
-        self.calm = False                   # tilt (alice/mood.py): daha az konuş
+        self.coach_flags: set[str] = set()  # death patterns (alice/sims/coach.py): one tip per match
+        self.calm = False                   # tilt (alice/mood.py): talk less
         self.reset()
 
     def reset(self) -> None:
@@ -341,9 +342,9 @@ class FlightCompanion:
         self.gun_start: float | None = None
         self.gun_flag = False
         self.fuel_flags: set[str] = set()
-        self.fuel_cand: dict[str, float] = {}     # uyarı koşulunun ilk görüldüğü an (kısa sıçramalar susar)
-        self.endurance0: float | None = None      # ilk ölçümde toplam dayanım (dk): az yakıtla çıkıldı mı
-        self.said_at: dict[str, float] = {}       # anahtar -> son söylendiği sim zamanı
+        self.fuel_cand: dict[str, float] = {}     # when the warning condition was first seen (short spikes are ignored)
+        self.endurance0: float | None = None      # total endurance at first measurement (min): took off low?
+        self.said_at: dict[str, float] = {}       # key -> sim time it was last said
         self.info_last = -1e9
         self.g_since: float | None = None
         self.g_last_warn = -1e9
@@ -363,27 +364,27 @@ class FlightCompanion:
         self._series_t = -1e9
         self.restricted_said = False
         self._touchdown_vv: float | None = None
-        self.alt_alert_ft: float | None = None   # pilotun kurduğu tek seferlik irtifa hatırlatması
-        self.alt_alert_above: bool | None = None  # kurulduğunda hedefin üstünde miydik
+        self.alt_alert_ft: float | None = None   # one-time altitude reminder set by the pilot
+        self.alt_alert_above: bool | None = None  # whether we were above the target when it was set
         self.fuel_alert_kg: float | None = None
         self.ground_last_warn = -1e9
-        self.ground_armed = True                 # yer uyarısı kurulu mu (söyleyince güvenli dönüşe kadar susar)
+        self.ground_armed = True                 # is the ground warning armed (silent until a safe return)
         self.ground_safe_since: float | None = None
         self.flaps_since: float | None = None
         self.flaps_said = False
         self.ext_last: float | None = None
         self.ext_said = False
-        self.threat_seen: dict[str, float] = {}   # RWR yayıcı/kilit/füze anahtarı -> son görüldüğü an
+        self.threat_seen: dict[str, float] = {}   # RWR emitter/lock/missile key -> last time it was seen
         self.threat_said: dict[str, float] = {}
-        self.bandit_close = False                 # en yakın düşman 5 km içinde (7 km'de yeniden kurulur)
-        self.nose_since: float | None = None      # War Thunder: düşmanın burnu bize dönük (füze atabilir) başlangıcı
-        self.sam_inside: set[str] = set()         # menzilinde olduğumuz hava savunması türleri
-        self.coached: set[str] = set()            # bu oturumda verilen öğütler
-        self.hud_on: dict[str, float] = {}        # HUD oku kimliği -> bu görülmenin başladığı an
-        self.hud_seen: dict[str, float] = {}      # tehdidin son görüldüğü an (ara verip dönerse yeni görülme)
+        self.bandit_close = False                 # closest enemy within 5 km (re-armed at 7 km)
+        self.nose_since: float | None = None      # War Thunder: start of enemy nose-on (can fire missiles)
+        self.sam_inside: set[str] = set()         # air defense types we are within range of
+        self.coached: set[str] = set()            # tips given in this session
+        self.hud_on: dict[str, float] = {}        # HUD arrow id -> when this sighting started
+        self.hud_seen: dict[str, float] = {}      # last seen (if it drops out and returns it is a new sighting)
         self.hud_sent: dict[str, float] = {}
 
-    # ---------------------------------------------------------------- girişler
+    # ---------------------------------------------------------------- inputs
     def restricted(self) -> None:
         if not self.restricted_said:
             self.restricted_said = True
@@ -391,7 +392,7 @@ class FlightCompanion:
                      "kontrol listeleri, kneeboard ve sesli komutlar çalışıyor.", "info", "calm")
 
     def session_end(self) -> None:
-        """Veri kesildi (görevden çıkıldı). Havadaysa uçuşu yine de değerlendir."""
+        """Data cut off (mission ended). If still airborne, review the flight anyway."""
         if self.phase == "air" and self.last_state is not None:
             self._finish(self.last_state, landed=False)
         self.reset()
@@ -401,7 +402,7 @@ class FlightCompanion:
             self.aircraft = s.aircraft
             self.profile = profile_for(s.aircraft)
         prev = self.last_state
-        if prev is not None and s.t + 5 < prev.t:  # görev yeniden başladı
+        if prev is not None and s.t + 5 < prev.t:  # mission restarted
             self.reset()
             prev = None
         self.last_state = s
@@ -426,22 +427,22 @@ class FlightCompanion:
         self._contacts(s)
         self._hud(s)
 
-    # ------------------------------------------------------------------- tehditler
-    SIX_REPEAT = 45.0       # arkadaki düşman uyarısı en sık (20 sn'de bir it dalaşında hiç susmuyordu)
+    # ------------------------------------------------------------------- threats
+    SIX_REPEAT = 45.0       # enemy-behind warning at most this often (in a turn fight it never stopped at 20 s intervals)
     SIX_RANGE = 2000.0
     MERGE_RANGE = 5000.0
-    LOST_AFTER = 10.0       # bu kadar görünmeyen kilit/füze bitmiş sayılır
-    NOSE_ASPECT = 12.0      # War Thunder: düşmanın burnu bize bu açıdan dar dönükse "füze atabilir"
+    LOST_AFTER = 10.0       # a lock/missile not seen for this long counts as over
+    NOSE_ASPECT = 12.0      # War Thunder: enemy nose narrowly on us at this angle, "can fire a missile"
     NOSE_RANGE = (2500.0, 14000.0)
-    NOSE_HOLD = 2.0         # bu kadar sürmeli (harita saniyede bir yenilenir, tek okuma yanıltabilir)
+    NOSE_HOLD = 2.0         # must last this long (the map refreshes once a second; a single reading can mislead)
     NOSE_REPEAT = 60.0
-    SAM_REPEAT = 300.0      # aynı tür hava savunması (aynı maçta yeniden doğunca da)
-    SAM_ANY = 45.0          # herhangi bir hava savunması (gemi grubundaki muhrip + fırkateyn tek anons)
-    MERGE_REPEAT = 90.0     # "Düşman saat 2, 3 kilometre"
-    THREAT_GAP = 12.0       # arkadaki / burnu dönük / yaklaşan düşman ve SAM sesleri arasında en az (füze, kilit hariç)
-    HUD_FOLLOW = 20.0       # tehdit görüldükten sonra ok (ses susturulsa da) en fazla bu kadar yönünü izler
-    HUD_EVERY = 0.5         # izlerken HUD'a en sık bu aralıkla yeni yön gider
-    HUD_GAP = 5.0           # bu kadar görünmeyen tehdit dönerse yeni görülme sayılır
+    SAM_REPEAT = 300.0      # same type of air defense (also when it respawns in the same match)
+    SAM_ANY = 45.0          # any air defense (destroyer + frigate in a naval group are a single announcement)
+    MERGE_REPEAT = 90.0     # "Düşman saat 2, 3 kilometre" (Enemy at 2 o'clock, 3 km)
+    THREAT_GAP = 12.0       # min gap between enemy-behind, nose-on, closing and SAM sounds (not missiles/locks)
+    HUD_FOLLOW = 20.0       # after a threat is seen, the arrow follows it for at most this long (even if muted)
+    HUD_EVERY = 0.5         # while following, a new direction goes to the HUD at most this often
+    HUD_GAP = 5.0           # if a threat is out of view this long and returns, it counts as a new sighting
 
     @staticmethod
     def _km(m: float) -> str:
@@ -453,14 +454,14 @@ class FlightCompanion:
 
     def _point(self, t: float, clock: Any, text: str, severity: str, key: str, edge: bool = False,
                ttl: float = 4.0) -> None:
-        """Anonsu yapılan tehdidi HUD'a da göster: saat yönünde ok, acilse ekran kenarında parlama."""
+        """Also show the announced threat on the HUD: an arrow in clock direction, and an edge glow if urgent."""
         self.hud_on[key] = self.hud_seen[key] = self.hud_sent[key] = t
         self._draw(clock, text, severity, key, edge, ttl)
 
     def _follow(self, t: float, clock: Any, text: str, severity: str, key: str, edge: bool = False) -> None:
-        """Tehdit sürüyor ama ses susuyor (yeni söylendi ya da başka tehdit konuştu): ok yine yönünü göstersin
-        (dönerken saat 6'daki düşman saat 4'e geçer). Görülme başından en fazla HUD_FOLLOW sn; kısa ömürlü ok
-        tehdit kaybolunca kendiliğinden söner."""
+        """The threat continues but the sound is silent (just said, or another threat is talking): the arrow still
+        shows its direction (when turning, an enemy at 6 o'clock moves to 4 o'clock). For at most HUD_FOLLOW s from
+        the start of the sighting; the short-lived arrow goes out on its own once the threat disappears."""
         if t - self.hud_seen.get(key, -1e9) > self.HUD_GAP:
             self.hud_on[key] = t
         self.hud_seen[key] = t
@@ -470,7 +471,7 @@ class FlightCompanion:
         self._draw(clock, text, severity, key, edge, 2.5)
 
     def _draw(self, clock: Any, text: str, severity: str, key: str, edge: bool, ttl: float) -> None:
-        try:  # HUD hatası anonsu bozmasın
+        try:  # a HUD error must not break the announcement
             self.show("arrow", clock=clock, text=text, severity=severity, id=key, ttl=ttl)
             if edge:
                 self.show("edge", clock=clock, severity=severity, id=f"{key}.edge", ttl=ttl)
@@ -478,14 +479,14 @@ class FlightCompanion:
             pass
 
     def _label(self, text: str, severity: str, key: str, ttl: float) -> None:
-        """HUD'a kısa yazı (yakıt gibi); konum verilmez, HUD üst-ortaya çizer."""
-        try:  # HUD hatası anonsu bozmasın
+        """Short text on the HUD (such as fuel); no position is given, the HUD draws it at the top center."""
+        try:  # a HUD error must not break the announcement
             self.show("label", text=text, severity=severity, id=key, ttl=ttl)
         except Exception:  # noqa: BLE001
             pass
 
     def _hint(self, *keys: str) -> str:
-        """Ölüm desenine uyan kısa öğüt, oturumda bir kez (anons değil koçluk)."""
+        """Short tip matching a death pattern, once per session (coaching, not an announcement)."""
         from alice.sims.coach import HINTS
 
         for k in keys:
@@ -494,13 +495,13 @@ class FlightCompanion:
                 return " " + HINTS[k]
         return ""
 
-    MISSILE_REPEAT = 8.0    # sn: füze uyarısı en sık (aynı füze kesilip görününce tekrar bağırıyordu)
-    LOCK_REPEAT = 30.0      # sn: kilit uyarısı en sık
+    MISSILE_REPEAT = 8.0    # s: missile warning at most this often (re-shouted when the same missile reappeared)
+    LOCK_REPEAT = 30.0      # s: lock warning at most this often
 
     def _alert_ok(self, t: float, kind: str) -> bool:
-        """Füze/kilit sesi için ayrı sınır (THREAT_GAP'e girmez: füze her zaman öncelikli). İzin verirse zamanı yazar."""
+        """Separate limit for missile/lock sounds (outside THREAT_GAP; missiles always win). Records time if allowed."""
         mem = self.__dict__.setdefault("alert_mem", {})
-        if any(v > t + 5 for v in mem.values()):  # yeni görev: sim zamanı başa döndü
+        if any(v > t + 5 for v in mem.values()):  # new mission: sim time went back to the start
             mem.clear()
         every = self.MISSILE_REPEAT if kind == "missile" else self.LOCK_REPEAT
         if t - mem.get(kind, -1e9) < every:
@@ -509,21 +510,21 @@ class FlightCompanion:
         return True
 
     def _may_say(self, t: float, key: str, every: float) -> bool:
-        """Tehdit sesine izin: bu anahtar en sık 'every' sn'de bir, bütün tehdit sesleri arasında en az THREAT_GAP.
-        İzin verirse zamanı yazar. Füze ve kilit bundan geçmez, her zaman söylenir."""
+        """Threat sound permission: this key at most once per 'every' s, and at least THREAT_GAP from any other threat sound.
+        If allowed, records the time. Missiles and locks do not go through this; they are always said."""
         m = self.threat_mem
-        if any(v > t + 5 for v in m.values()):  # yeni görev: sim zamanı başa döndü
+        if any(v > t + 5 for v in m.values()):  # new mission: sim time went back to the start
             m.clear()
-        gap = self.THREAT_GAP * (2 if self.calm else 1)  # sinirliyken daha az konuş
+        gap = self.THREAT_GAP * (2 if self.calm else 1)  # talk less when tilted
         if t - m.get(key, -1e9) < every or t - m.get("threat", -1e9) < gap:
             return False
         m[key] = m["threat"] = t
         return True
 
     def _contacts(self, s: FlightState) -> None:
-        """RWR (DCS) ve mini harita (War Thunder) temasları: füze, kilit, yeni radar, arkadaki ve yaklaşan düşman.
+        """RWR (DCS) and mini-map (War Thunder) contacts: missile, lock, new radar, enemy behind and closing in.
 
-        F-16'nın RWR'ı zaten öter; ALICE onun söylemediğini söyler: yönü saat olarak ve radarın adı."""
+        The F-16's RWR already beeps; ALICE says what it doesn't: the clock direction and the radar's name."""
         cs = s.extra.get("contacts")
         if not isinstance(cs, list):
             return
@@ -545,13 +546,13 @@ class FlightCompanion:
                         self._follow(t, clock, f"KİLİT · {name}", "warn", "lock")
                     continue
                 if key[0] in "ml" and not self._alert_ok(t, "missile" if key[0] == "m" else "lock"):
-                    # War Thunder'da tehdit ekrandan okunuyor, kesilip geri gelince "yeni" sayılıyordu: 30 dakikada
-                    # 16 "Füze atıldı", 13 "Kilitlendin" (7 Kasım). Ses sınırlı, ok ve kenar parlaması sürer.
+                    # War Thunder threats are read off the screen; when they cut out and came back they counted as "new":
+                    # 30 min: 16 "Füze atıldı", 13 "Kilitlendin" (7 Nov). Sound is limited; arrow and glow continue.
                     if key[0] == "m":
                         self._point(t, clock, f"FÜZE · {name}", "critical", "missile", edge=True)
                     else:
                         self._point(t, clock, f"KİLİT · {name}", "warn", "lock")
-                elif key[0] == "m" and c.get("vision"):  # ekrandan görüldü: türü (ve bazen yönü) bilinmiyor
+                elif key[0] == "m" and c.get("vision"):  # seen on screen: type (and sometimes direction) unknown
                     self.say(f"Füze! Saat {clock}. Chaff at, dön!" if clock else "Füze atıldı! Chaff at, dön!",
                              "critical", "urgent")
                     self._point(t, clock, "FÜZE", "critical", "missile", edge=True)
@@ -565,13 +566,13 @@ class FlightCompanion:
                     self._point(t, clock, f"KİLİT · {name}", "warn", "lock")
                 elif name != "?" and t - self.threat_said.get(name, -1e9) > 120:
                     self.threat_said[name] = t
-                    # Ekrandan görülen radarın türü ve bazen yönü yok: "Yeni radar: radar, saat None" diyordu.
+                    # A radar seen on screen has no type, sometimes no direction: it said "Yeni radar: radar, saat None".
                     text = (f"Yeni radar: {name}, saat {clock}." if name != "radar" and clock else
                             f"Yeni radar: {name}." if name != "radar" else
                             f"Yeni radar, saat {clock}." if clock else "")
                     if text:
                         self._info(s, text)
-                break  # füze varsa kilit/yeni radar ayrıca söylenmez
+                break  # if there is a missile, the lock/new radar is not said separately
         self._ground_threats(s, [c for c in cs if c.get("kind") == "sam" and c.get("dist_m") is not None])
         planes = [c for c in cs if c.get("kind") == "aircraft" and c.get("dist_m") is not None]
         if not planes:
@@ -598,7 +599,7 @@ class FlightCompanion:
             self.bandit_close = False
 
     def _nose_on(self, s: FlightState, planes: list[dict]) -> bool:
-        """War Thunder RWR vermiyor: burnu bize dönük, füze menzilindeki düşman en yakın şey. Söylediyse True."""
+        """War Thunder has no RWR: an enemy with its nose on us inside missile range is the closest cue. True if said."""
         lo, hi = self.NOSE_RANGE
         hot = [c for c in planes if c.get("aspect") is not None and c["aspect"] <= self.NOSE_ASPECT
                and lo <= c["dist_m"] <= hi]
@@ -620,7 +621,7 @@ class FlightCompanion:
         return True
 
     def _ground_threats(self, s: FlightState, sams: list[dict]) -> None:
-        """Düşman SAM / uçaksavar / füzeli gemi menziline girince bir kez; çıkıp 3 km uzaklaşınca yeniden kurulur."""
+        """Once when an enemy SAM, AA gun or missile ship enters range; re-armed after moving 3 km away."""
         near: dict[str, dict] = {}
         for c in sams:
             if c["name"] not in near or c["dist_m"] < near[c["name"]]["dist_m"]:
@@ -640,7 +641,7 @@ class FlightCompanion:
             if s.t - self.threat_mem.get(f"sam:{name}", -1e9) >= self.SAM_REPEAT:
                 fresh.append(c)
         if fresh and self._may_say(s.t, "sam", self.SAM_ANY):
-            for f in fresh:  # aynı anda menziline girilenler (gemi grubu) ayrıca söylenmez
+            for f in fresh:  # ships entering range at the same time (naval group) are not announced separately
                 self.threat_mem[f"sam:{f['name']}"] = s.t
             c = min(fresh, key=lambda f: f["dist_m"])
             name = c["name"]
@@ -650,11 +651,11 @@ class FlightCompanion:
             self._point(s.t, c["clock"], f"{name} · {self._km_short(c['dist_m'])}", "warn", f"sam:{name}")
 
     def _hud(self, s: FlightState) -> None:
-        """War Thunder savaş kayıtları: düşürdüğün, seni vuran."""
+        """War Thunder combat log: kills you made, and hits on you."""
         for kind, who in s.extra.get("hud") or []:
             if kind == "kill":
                 self.say(f"Düşürdün: {who}.", "info", "cheerful")
-                try:  # HUD hatası anonsu bozmasın
+                try:  # a HUD error must not break the announcement
                     self.show("card", title="Düşürdün", text=str(who), severity="info", ttl=4.0, id="kill")
                 except Exception:  # noqa: BLE001
                     pass
@@ -665,7 +666,7 @@ class FlightCompanion:
             elif kind == "killed":
                 self.say(f"Seni {who} düşürdü.", "info", "serious")
 
-    # ------------------------------------------------------------------- evre
+    # ------------------------------------------------------------------- phase
     def _airborne(self, s: FlightState) -> bool:
         if s.agl is not None:
             return s.agl > 15 and (s.ias or 0) > 40
@@ -683,8 +684,8 @@ class FlightCompanion:
         if stopped:
             self.slow_since = self.slow_since if self.slow_since is not None else s.t
             if s.t - self.slow_since >= 5:
-                # Teker kapalıyken durmak iniş değil düşüş: War Thunder'da ölünce enkaz yerde durup her ölümden
-                # sonra "Uçuş 2 dakika sürdü..." söyletiyordu (1 Kasım, 21 kez)
+                # Stopping with the gear up is a crash, not a landing: in War Thunder the wreck stopped after each death
+                # and made it say "Uçuş 2 dakika sürdü..." (1 Nov, 21 times)
                 self._finish(s, landed=s.gear is None or s.gear >= 0.9)
                 home = self.home
                 self.reset()
@@ -695,7 +696,7 @@ class FlightCompanion:
     def _record(self, s: FlightState) -> None:
         st = self.stats
         g = s.g or 0
-        st["max_g"] = max(st["max_g"], min(g, self._g_prev))  # tek ölçümlük sıçrama (çarpma, ölüm) sayılmaz
+        st["max_g"] = max(st["max_g"], min(g, self._g_prev))  # a single-sample spike (crash, death) is not counted
         self._g_prev = g
         st["max_ias"] = max(st["max_ias"], s.ias or 0)
         st["max_alt"] = max(st["max_alt"], s.alt or 0)
@@ -711,25 +712,25 @@ class FlightCompanion:
             ser["ias_kt"].append(round((s.ias or 0) / KT))
             ser["fuel_kg"].append(None if s.fuel_kg is None else round(s.fuel_kg))
 
-    # ------------------------------------------------------------------- yakıt
-    FUEL_WINDOW = 240.0   # sn: tüketim bu sürenin gerçek yakıt düşüşünden ölçülür
-    FUEL_MIN_SPAN = 60.0  # sn: bundan kısa ölçüm tahmin sayılmaz
+    # ------------------------------------------------------------------- fuel
+    FUEL_WINDOW = 240.0   # s: consumption is measured from the actual fuel drop over this window
+    FUEL_MIN_SPAN = 60.0  # s: measurements shorter than this are not treated as estimates
     MAX_BURN = 40.0       # kg/s
 
     def burn_rate(self) -> float | None:
-        """Son ~4 dakikanın ortalama tüketimi (kg/s), yakıt göstergesinin düşüşünden.
+        """Average consumption over the last ~4 minutes (kg/s), from the drop in the fuel gauge.
 
-        Oyunun verdiği anlık tüketim art yakıcıda birkaç kat zıplıyor (bazı modüllerde tek motoru iki kez
-        sayıyor); ona göre "X dakika kaldı" demek her manevrada uyarı demekti. Sadece düşüşler toplanır:
-        dış tanktan iç tanka aktarma göstergede küçük sıçrama yapıyor, tüketimi bozmasın."""
+        The game's instantaneous consumption jumps several times on afterburner (some modules count one engine twice);
+        going by it, saying "X dakika kaldı" meant a warning on every maneuver. Only drops are summed:
+        moving fuel from an external to an internal tank makes a small jump on the gauge; it must not skew consumption."""
         h = self.fuel_hist
         if len(h) >= 2 and h[-1][0] - h[0][0] >= self.FUEL_MIN_SPAN:
-            # Hiçbir motor saniyede 40 kilodan fazla yakmaz: öyle bir düşüş tank atmaktır, tüketim değil.
+            # No engine burns more than 40 kg per second: such a drop is a tank jettison, not consumption.
             used = sum(d for a, b in zip(h, list(h)[1:])
                        if 0 < (d := a[1] - b[1]) <= self.MAX_BURN * max(b[0] - a[0], 0.2))
             if used > 0:
                 return used / (h[-1][0] - h[0][0])
-        if len(self.burn_hist) >= 5:  # ölçüm birikene kadar oyunun değeri (sadece durum satırı için)
+        if len(self.burn_hist) >= 5:  # the game's value until enough measurements build up (only for the status line)
             return sum(b for _, b in self.burn_hist) / len(self.burn_hist)
         return None
 
@@ -743,10 +744,10 @@ class FlightCompanion:
         return math.hypot(s.x - self.home[0], s.z - self.home[1])
 
     def home_nav(self, s: FlightState) -> dict[str, float] | None:
-        """Üsse yön (gerçek kuzeye göre derece), mesafe (nm) ve dönülecek açı (+ sağa, - sola)."""
+        """Bearing to home (degrees from true north), distance (nm) and the turn needed (+ right, - left)."""
         if self.home is None or s.x is None or s.z is None:
             return None
-        dx, dz = self.home[0] - s.x, self.home[1] - s.z  # DCS: x kuzey, z doğu
+        dx, dz = self.home[0] - s.x, self.home[1] - s.z  # DCS: x north, z east
         out = {"bearing": math.degrees(math.atan2(dz, dx)) % 360, "nm": math.hypot(dx, dz) / NM}
         if s.heading is not None:
             out["turn"] = (out["bearing"] - s.heading + 540) % 360 - 180
@@ -766,9 +767,9 @@ class FlightCompanion:
         return out
 
     def bingo_kg(self, s: FlightState) -> float | None:
-        """Eve seyirle dönüp rezervle inmek için gereken yakıt. Gerçek bingo gibi miktara bakar, anlık tüketime
-        değil: art yakıcı açınca "eve dönme vakti" demesin. Yakıt kilosu tahminse (bilinmeyen uçak, oran
-        veren modül) hesaplanmaz."""
+        """Fuel needed to fly home at cruise and land with reserve. Like real bingo, it looks at the amount, not the
+        instantaneous rate, so that going to afterburner does not say "eve dönme vakti". Not calculated if the
+        fuel figure is an estimate (unknown aircraft, rate giving module)."""
         dist = self.home_distance(s)
         if dist is None or s.fuel_kg is None or s.extra.get("fuel_guess"):
             return None
@@ -778,7 +779,7 @@ class FlightCompanion:
         return max(300.0, 0.15 * self.profile.internal_fuel_kg)
 
     def _home_alert(self, s: FlightState) -> None:
-        """'Üsse 10 mil kalınca söyle' (flight alert_home): mesafe altına inince bir kez söyle."""
+        """'Tell me when 10 miles from home' (flight alert_home): say it once when the distance drops below."""
         if self.home_alert_nm is None:
             return
         nav = self.home_nav(s)
@@ -790,8 +791,8 @@ class FlightCompanion:
         if s.fuel_kg is None:
             return
         if self.fuel_hist and s.fuel_kg > self.fuel_hist[-1][1] + 150:
-            # Havada ikmal / yakıt eklendi: tüketimi yeniden ölç. Uyarılar silinmez; koşul gerçekten
-            # kalkınca (aşağıdaki geri kurma payları) kendiliğinden yeniden kurulur.
+            # Refueled or fuel added in the air: re-measure consumption. Warnings are kept; they re-arm on their own.
+            # once it truly clears (the re-arm margins below).
             self.fuel_hist.clear()
             self.burn_hist.clear()
         self.fuel_hist.append((s.t, s.fuel_kg))
@@ -813,19 +814,19 @@ class FlightCompanion:
             self.endurance0 = (s.t - self.takeoff.t) / 60 + left
         pct = s.extra.get("fuel_pct")
         if isinstance(pct, (int, float)) and pct > 35:
-            return  # 3000 kilo yakıtla art yakıcıdayken "4 dakika yeter" diyordu: depo azalmadan dakika uyarısı yok
+            return  # afterburner at 3000 kg said "4 dakika yeter": no minute warning until the tank drops
         for limit, flag, sev in ((10, "low10", "warn"), (5, "low5", "critical")):
             if left > limit + 8:
-                self.fuel_flags.discard(flag)  # ikmal yapıldı ya da gaz azaldı: yeniden kur
+                self.fuel_flags.discard(flag)  # refueled or fuel dropped back: re-arm
             if limit == 10 and (self.endurance0 or 99) < 25:
-                continue  # zaten az yakıtla çıkmış (War Thunder'da sık): 10 dakika uyarısı gürültü
+                continue  # already took off low on fuel (common in War Thunder): the 10-minute warning is just noise
             if self._held(flag, left <= limit, s.t, 20) and flag not in self.fuel_flags:
                 self.fuel_flags.update({flag} | ({"low10"} if flag == "low5" else set()))
                 self.say(f"Yakıt yaklaşık {fmt_min(left)} yeter.", sev, self._urgent())
                 self._label(f"YAKIT ~{max(0, round(left))} dk", sev, "fuel", 6.0)
 
     def _bingo(self, s: FlightState, bingo: float) -> None:
-        """Bingo: eve dönüş + rezerv kadar yakıt kaldı. Joker: bingo'dan bir pay önce, bir kez haber."""
+        """Bingo: fuel left equals the way home plus reserve. Joker: a margin before bingo, reported once."""
         fuel, joker = s.fuel_kg, self.joker_kg()
         if fuel > bingo + joker * 1.5:
             self.fuel_flags -= {"joker", "bingo"}
@@ -841,28 +842,28 @@ class FlightCompanion:
             self.say(f"Joker. Bingo'ya {max(0.0, fuel - bingo):.0f} kilo var, {where}.", "warn", self._urgent())
 
     def _held(self, key: str, cond: bool, t: float, secs: float) -> bool:
-        """Koşul en az secs saniyedir kesintisiz doğru mu (tank aktarması, anlık sıçramalar susar)."""
+        """Has the condition held continuously for at least secs seconds (tank transfers and spikes are ignored)."""
         if not cond:
             self.fuel_cand.pop(key, None)
             return False
         return t - self.fuel_cand.setdefault(key, t) >= secs
 
     def _urgent(self) -> str:
-        """Nabız yüksekse ALICE acil değil sakin ama net konuşur."""
+        """If the heart rate is high, ALICE speaks calmly but clearly, not urgently."""
         hr = self.hr_now()
         return "calm" if hr is not None and hr >= 120 else "urgent"
 
-    # ------------------------------------------------------- kendiliğinden uyarılar
-    OIL_MAX, WATER_MAX = 105.0, 115.0  # War Thunder: bunların üstü motoru yakar (uçağa göre değişir)
+    # ------------------------------------------------------- automatic warnings
+    OIL_MAX, WATER_MAX = 105.0, 115.0  # War Thunder: above these the engine burns (varies by aircraft)
 
-    # Uyarı sayılmayan ışıklar: otopilot her açılışta "Uyarı: otopilot açık" diyordu.
+    # Lights not counted as warnings: the autopilot kept saying "Uyarı: otopilot açık" every time it was switched on.
     LIGHTS_IGNORED = {"AutopilotOn"}
-    # Dogfight'ta saniyede bir yanıp sönen ışıklar: kendi uyarısı olan uçakta hiç, yoksa dakikada bir.
+    # Lights that flash once a second in a dogfight: never on an aircraft with its own warning, otherwise once a minute.
     LIGHTS_FLICKER = {"StallSignalization"}
-    WARN_REPEAT = 120.0  # sn: sönüp yeniden yanan ışık bu süre dolmadan tekrar söylenmez
+    WARN_REPEAT = 120.0  # s: a light that goes out and lights up again is not announced again before this time passes
 
     def _warnings(self, s: FlightState) -> None:
-        """DCS uyarı/arıza ışıkları: yeni yanan ışığı söyle; yanıp sönen ışığı her seferinde değil."""
+        """DCS warning/failure lights: announce a newly lit light; not every time a flashing light flashes."""
         raw = s.extra.get("warnings")
         if raw is None:
             return
@@ -874,7 +875,7 @@ class FlightCompanion:
         new = [w for w in new if s.t - self.said_at.get("light:" + w, -1e9) >= (
             60.0 if w in self.LIGHTS_FLICKER else self.WARN_REPEAT)]
         if len(new) > 1 and "MasterWarning" in new:
-            new.remove("MasterWarning")  # asıl arıza adı zaten söyleniyor
+            new.remove("MasterWarning")  # the actual failure name is already being announced
         if new:
             for w in new:
                 self.said_at["light:" + w] = s.t
@@ -888,8 +889,8 @@ class FlightCompanion:
             v = s.extra.get(key)
             if v is None:
                 continue
-            # Sınırın çevresinde gidip gelen sıcaklık her seferinde söylenmesin: iyice soğuyunca ve
-            # 3 dakika geçince yeniden kur.
+            # A temperature oscillating around the limit must not be announced each time: re-arm once it has cooled and
+            # 3 minutes have passed.
             if v >= limit and key not in self.heat_flags and s.t - self.said_at.get(key, -1e9) >= self.HEAT_REPEAT:
                 self.heat_flags.add(key)
                 self.said_at[key] = s.t
@@ -898,17 +899,17 @@ class FlightCompanion:
             elif v < limit - 15:
                 self.heat_flags.discard(key)
 
-    INFO_GAP = 15.0  # sn: bilgi niteliğindeki iki anons arası en az (waypoint, mühimmat, tank)
+    INFO_GAP = 15.0  # s: minimum gap between two informational announcements (waypoint, ammunition, tank)
 
     def _info(self, s: FlightState, text: str, emotion: str = "calm") -> None:
-        """Önemsiz anons: bir öncekinin üstüne binmesin, sıkışırsa söylenmeden geçilsin."""
-        if self.calm or s.t - self.info_last < self.INFO_GAP:  # tilt'te önemsiz anons yok
+        """Minor announcement: must not stack on the previous one; if it is crowded, skip it without saying it."""
+        if self.calm or s.t - self.info_last < self.INFO_GAP:  # no minor announcements while tilted
             return
         self.info_last = s.t
         self.say(text, "info", emotion)
 
     def _pilot_alerts(self, s: FlightState) -> None:
-        """'10 bin feet'e gelince söyle' / 'yakıt 1500 kiloya inince söyle': eşik geçilince bir kez."""
+        """'Tell me at 10,000 feet' / 'tell me when fuel drops to 1500 kg': once, when the threshold is crossed."""
         if self.alt_alert_ft is not None and s.alt is not None:
             ft = s.alt / FT
             if self.alt_alert_above is None:
@@ -920,16 +921,16 @@ class FlightCompanion:
             self.say(f"Yakıt {self.fuel_alert_kg:.0f} kiloya indi.", "warn", "calm")
             self.fuel_alert_kg = None
 
-    GROUND_TTI = 5.0     # sn: bu kadar sürede yere çarpacaksa uyar
-    GROUND_REPEAT = 8.0  # sn: iki uyarı arası en az (yeniden kurulmuş olsa bile)
-    GROUND_SAFE_AGL = 300.0  # m: bunun üstü ya da
-    GROUND_SAFE_VV = -2.0    # m/s: bundan yavaş alçalma güvenli sayılır
-    GROUND_REARM = 3.0       # sn: uyarı yeniden kurulsun diye güvenli durumda kalma süresi
+    GROUND_TTI = 5.0     # s: warn if we will hit the ground within this time
+    GROUND_REPEAT = 8.0  # s: minimum gap between two warnings (even if re-armed)
+    GROUND_SAFE_AGL = 300.0  # m: above this, or
+    GROUND_SAFE_VV = -2.0    # m/s: descending slower than this counts as safe
+    GROUND_REARM = 3.0       # s: time spent in the safe state before the warning is re-armed
 
     def _ground(self, s: FlightState) -> None:
-        """Yere hızla yaklaşma (kendi GPWS'i olmayan uçaklarda). İniş yaklaşmasında susar.
-        Alçakta dalaşırken art arda söylenmesin (War Thunder'da 10 dakikada 13 kez): söyledikten sonra uçak
-        en az GROUND_REARM sn güvenli duruma dönmeden tekrar etmez."""
+        """Fast approach to the ground (on aircraft without their own GPWS). Silent during the landing approach.
+        Must not repeat when low in a fight (13 times in 10 minutes in War Thunder): after saying it, the aircraft
+        does not repeat until it has been in a safe state for at least GROUND_REARM s."""
         if self.profile.has_gpws or s.agl is None or s.vv is None:
             return
         if s.agl > self.GROUND_SAFE_AGL or s.vv > self.GROUND_SAFE_VV:
@@ -941,14 +942,14 @@ class FlightCompanion:
         if s.vv >= -8 or s.agl > 600:
             return
         if (s.gear or 0) > 0.9 and (s.ias or 1e9) < self.profile.approach_ias_max * 1.2:
-            return  # teker açık, yaklaşma hızında: inişe geliyor
+            return  # gear down, at approach speed: coming in to land
         if s.agl / -s.vv < self.GROUND_TTI and self.ground_armed \
                 and s.t - self.ground_last_warn >= self.GROUND_REPEAT:
             self.ground_last_warn, self.ground_armed, self.ground_safe_since = s.t, False, None
             self.say("Yere yaklaşıyorsun, burnu kaldır!", "critical", "urgent")
 
     def _flaps(self, s: FlightState) -> None:
-        """Kalkıştan sonra açık unutulan flap: hızlı ve yüksekte 20 sn sürerse bir kez hatırlat."""
+        """Flaps left open after takeoff: if fast and high for 20 s, remind once."""
         flaps = s.extra.get("flaps")
         if self.profile.auto_flaps or flaps is None:
             return
@@ -966,7 +967,7 @@ class FlightCompanion:
             self.say("Flaplar hâlâ açık, toplamayı unutma.", "warn", "serious")
 
     def _ext_tanks(self, s: FlightState) -> None:
-        """Dış tanklar yavaş yavaş boşaldıysa (atılmadıysa) bir kez söyle."""
+        """If the external tanks drained slowly (not jettisoned), say so once."""
         ext = s.extra.get("fuel_ext_kg")
         if ext is None:
             return
@@ -988,7 +989,7 @@ class FlightCompanion:
             self.say("Teker kapalı! Alçak ve yavaşsın.", "critical", "urgent")
         elif s.gear > 0.9 and s.ias > 150 and not self.gear_fast_said:
             self.gear_last_warn = s.t
-            self.gear_fast_said = True  # teker kapanana ya da yavaşlayana kadar bir kez
+            self.gear_fast_said = True  # once, until the gear retracts or we slow down
             self.say(f"Teker açık ve hızın {s.ias / 0.514444:.0f} knot, tekeri kapat ya da yavaşla.", "warn", "serious")
 
     def _waypoint(self, s: FlightState) -> None:
@@ -1027,8 +1028,8 @@ class FlightCompanion:
     def _g(self, s: FlightState) -> None:
         p = self.profile
         if s.g is None or s.source == "warthunder":
-            # War Thunder'ın Ny değeri gürültülü (ölümde 48 G gördü) ve oyun bayılmayı kendisi gösteriyor: dogfight'ta
-            # her 3 dakikada "11 G üstündesin" demek sadece rahatsız ediyordu.
+            # War Thunder's Ny value is noisy (48 G at death) and the game shows blackouts itself: in a dogfight
+            # saying "11 G üstündesin" every 3 minutes was only annoying.
             return
         if s.g >= p.g_warn:
             self.g_since = s.t if self.g_since is None else self.g_since
@@ -1048,7 +1049,7 @@ class FlightCompanion:
             self.cm_last[kind] = n
             if last is None:
                 continue
-            if n > last:  # yeniden dolduruldu
+            if n > last:  # refilled
                 self.cm_flags.discard(f"{kind}_low")
                 self.cm_flags.discard(f"{kind}_out")
                 continue
@@ -1059,19 +1060,19 @@ class FlightCompanion:
                 self.cm_flags.add(f"{kind}_low")
                 self.say(f"{name} azaldı, {n} kaldı.", "warn", "serious")
 
-    # --------------------------------------------------------------- yaklaşma
+    # --------------------------------------------------------------- approach
     def in_approach(self, s: FlightState) -> bool:
-        low = s.agl is not None and 1.0 < s.agl < 600  # teker yere değdikten sonra yaklaşma bitti
+        low = s.agl is not None and 1.0 < s.agl < 600  # approach ends once the wheels touch the ground
         slow = 30 < (s.ias or 1e9) < self.profile.approach_ias_max
-        # Kalkışta teker henüz açıkken hızlanmak yaklaşma değil: radar irtifası olmayan uçakta (War Thunder) her
-        # kalkıştan sonra "Hızlısın." deniyordu (1 Kasım, 21 kez)
+        # Speeding up with gear still down just after takeoff is not an approach: aircraft without radar altitude (War Thunder)
+        # "Hızlısın." (You're fast) was said after every takeoff (1 Nov, 21 times)
         departing = (self.takeoff is not None and s.t - self.takeoff.t < 60) or (s.vv is not None and s.vv > 3)
         return (s.gear or 0) > 0.9 and slow and (low or s.agl is None) and not departing
 
-    APPR_MARGIN = 2.0   # derece: on speed bandının bu kadar dışına çıkmadan "hızlı/yavaş" deme
-    APPR_STABLE = 1.5   # sn: durum bu kadar sürmeden söyleme (anlık salınımlar susar)
-    APPR_REPEAT = 15.0  # sn: aynı uyarıyı en erken bu kadar sonra tekrarla
-    APPR_GAP = 3.0      # sn: iki anons arası en az
+    APPR_MARGIN = 2.0   # degrees: don't say "hızlı/yavaş" (fast/slow) until out of the on-speed band by this much
+    APPR_STABLE = 1.5   # s: don't say it until the state has lasted this long (momentary swings are ignored)
+    APPR_REPEAT = 15.0  # s: repeat the same call no sooner than this
+    APPR_GAP = 3.0      # s: minimum gap between two calls
 
     def _approach_kind(self, s: FlightState) -> str:
         lo, hi = self.profile.aoa_on_speed
@@ -1079,12 +1080,12 @@ class FlightCompanion:
         if final and s.vv is not None and s.vv < -7:
             return "sink"
         if s.aoa > hi + self.APPR_MARGIN:
-            return "slow"  # stall'a yaklaşıyor
+            return "slow"  # approaching stall
         if s.aoa < lo - self.APPR_MARGIN and (s.ias or 0) >= 0.85 * self.profile.approach_ias_max:
-            return "fast"  # yaklaşma hız sınırına geliyor
+            return "fast"  # approaching the approach speed limit
         if lo <= s.aoa <= hi:
             return "on"
-        return "band"  # bandın hemen dışında: söylenecek bir şey yok
+        return "band"  # just outside the band: nothing to say
 
     def _approach(self, s: FlightState) -> None:
         if not self.in_approach(s) or s.aoa is None:
@@ -1104,7 +1105,7 @@ class FlightCompanion:
             return
         last = self.appr_last_kind
         if kind == "on":
-            say_it = last in ("fast", "slow", "sink")  # sadece bir düzeltmeden sonra, bir kez
+            say_it = last in ("fast", "slow", "sink")  # only after a correction, once
         else:
             say_it = kind != last or s.t - self.appr_last_say >= self.APPR_REPEAT
         if not say_it:
@@ -1113,8 +1114,8 @@ class FlightCompanion:
         self.appr_last_say, self.appr_last_kind = s.t, kind
         self.say(text, "info", "calm" if kind == "on" else "serious")
 
-    # ------------------------------------------------------------ uçuş sonrası
-    SPEAK_DEBRIEF_S = 600  # inişle bitmeyen uçuş bundan kısaysa değerlendirme sesli söylenmez
+    # ------------------------------------------------------------ post-flight
+    SPEAK_DEBRIEF_S = 600  # a flight that did not end in a landing and is shorter than this is not reviewed aloud
 
     def _finish(self, s: FlightState, landed: bool) -> None:
         t0 = self.takeoff
@@ -1131,7 +1132,7 @@ class FlightCompanion:
         touchdown = self._touchdown_vv if landed else None
         d = Debrief(
             aircraft=self.profile.name if self.profile.name != "uçak" else (self.aircraft or "uçak"),
-            source=s.source, start_wall=t0.wall, end_wall=s.wall, duration_s=s.t - t0.t,  # oyun zamanı (duraklatma dahil değil)
+            source=s.source, start_wall=t0.wall, end_wall=s.wall, duration_s=s.t - t0.t,  # game time (excluding pauses)
             max_g=self.stats["max_g"], max_ias_kt=self.stats["max_ias"] / KT, max_alt_ft=self.stats["max_alt"] / FT,
             fuel_used_kg=fuel_used, min_fuel_kg=self.stats["min_fuel"], approach_on_speed_pct=pct,
             max_sink_final_ms=self.max_sink_final, touchdown_vv_ms=touchdown, chaff_used=cm_used["chaff"],
@@ -1140,20 +1141,20 @@ class FlightCompanion:
             return
         self.on_debrief(d)
         if not landed and d.duration_s < self.SPEAK_DEBRIEF_S:
-            return  # kayda ve sayfaya yazıldı; War Thunder'da her ölümden sonra konuşmasın
+            return  # saved to the log and page; don't talk after every death in War Thunder
         try:
             tip = coach(d, load_history(exclude=d.start_wall))
-        except Exception:  # noqa: BLE001 - karşılaştırma olmadan da değerlendirme söylensin
+        except Exception:  # noqa: BLE001 - still give the review even without a comparison
             tip = ""
         self.say(d.summary() + (" " + tip if tip else ""), "info", "calm")
 
     def note_touchdown(self, s: FlightState) -> None:
-        """Teker yere değdiği an (agl ~0) son dikey hızı sakla."""
+        """Save the last vertical speed at the moment the wheels touch down (agl ~0)."""
         self._touchdown_vv = s.vv
 
 
 class TouchdownTracker:
-    """agl'nin sıfıra indiği anı yakalar ve companion'a bildirir (update'ten önce çağrılır)."""
+    """Catches the moment agl drops to zero and reports it to the companion (called before update)."""
 
     def __init__(self, companion: FlightCompanion):
         self.c = companion
@@ -1168,7 +1169,7 @@ class TouchdownTracker:
         self.c.update(s)
 
 
-# ---------------------------------------------------------------- rapor
+# ---------------------------------------------------------------- report
 def _bearing_nm(s: FlightState, x: float, z: float) -> tuple[float, float] | None:
     if s.x is None or s.z is None:
         return None
@@ -1176,7 +1177,7 @@ def _bearing_nm(s: FlightState, x: float, z: float) -> tuple[float, float] | Non
     return math.degrees(math.atan2(dz, dx)) % 360, math.hypot(dx, dz) / NM
 
 
-# DCS MCP uyarı ışıklarının Türkçesi (bilinmeyen ad olduğu gibi okunur).
+# Turkish names for the DCS MCP warning lights (unknown names are read as they are).
 WARNING_NAMES = {
     "LeftEngineFailure": "sol motor arızası", "RightEngineFailure": "sağ motor arızası",
     "HydraulicsFailure": "hidrolik arızası", "ACSFailure": "otopilot arızası", "AutopilotFailure": "otopilot arızası",
@@ -1197,12 +1198,13 @@ APPROACH = {"sink": "Çok hızlı alçalıyorsun.", "slow": "Yavaşsın, stall'a
 
 
 def callouts() -> list[tuple[str, str]]:
-    """Uçuşta söylenen sabit cümleler ve tonları. Ses önceden üretilip diske konur: uçuşta ekran kartı oyuna
-    kaldığı için ses buluttan geliyor (her uyarı 1-2 sn gecikme, kota); önbellekteki ses anında çalar."""
+    """Fixed phrases spoken in flight, and their tones. Audio is generated in advance and stored on disk: in flight the
+    graphics card is busy with the game, so the voice would come from the cloud (1-2 s delay per warning, quota);
+    cached audio plays instantly."""
     fixed = [("Yere yaklaşıyorsun, burnu kaldır!", "urgent"), ("Teker kapalı! Alçak ve yavaşsın.", "urgent"),
              ("Flaplar hâlâ açık, toplamayı unutma.", "serious"), ("Dış tanklar boşaldı.", "calm")]
     fixed += [(text, "calm" if kind == "on" else "serious") for kind, text in APPROACH.items()]
-    # Tek ışıklı uyarılar (en sık durum); önce en kritikleri.
+    # Single-light warnings (the most common case); most critical first.
     names = sorted(WARNING_NAMES.values(), key=lambda n: ("yangın" not in n, "hasar" in n, n))
     return fixed + [(f"Uyarı: {n}.", "urgent") for n in names]
 
@@ -1233,7 +1235,7 @@ def parse_weapons(text: str | None) -> dict[str, int]:
 
 
 def describe_extra(s: FlightState) -> list[str]:
-    """Ek göstergeleri kısa Türkçe satırlara çevir (sadece oyunun o uçak için verdiği değerler)."""
+    """Turn the extra indicators into short Turkish lines (only the values the game gives for that aircraft)."""
     e = s.extra
     out: list[str] = []
     bits = []
@@ -1312,7 +1314,7 @@ def _svg_line(xs: list[float], ys: list, w: int = 720, h: int = 140, color: str 
         return ""
     x0, x1 = pts[0][0], pts[-1][0]
     lo, hi = min(y for _, y in pts), max(y for _, y in pts)
-    if hi - lo < 1e-9:  # sabit değer: çizgiyi ortala
+    if hi - lo < 1e-9:  # constant value: center the line
         lo, hi = lo - 1, hi + 1
     span_x, span_y = (x1 - x0) or 1, hi - lo
     path = " ".join(f"{'M' if i == 0 else 'L'}{(x - x0) / span_x * (w - 50) + 45:.1f},"
@@ -1333,7 +1335,7 @@ def save_debrief(d: Debrief, hr_series: list[tuple[float, float]] | None = None,
               _svg_line(ser["t"], ser["ias_kt"], label="Hız (knot)"),
               _svg_line(ser["t"], ser["fuel_kg"], label="Yakıt (kg)")]
     if hr_series and ser.get("wall"):
-        # Nabız duvar saatiyle gelir; uçuşun oyun zamanı eksenine taşı.
+        # Heart rate comes with wall-clock time; move it onto the flight's game-time axis.
         w0, t0 = ser["wall"][0], ser["t"][0]
         charts.append(_svg_line([t0 + (t - w0) for t, _ in hr_series], [v for _, v in hr_series], color="var(--hr)",
                                 label="Nabız"))

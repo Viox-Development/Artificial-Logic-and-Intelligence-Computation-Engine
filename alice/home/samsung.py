@@ -1,10 +1,10 @@
-"""Samsung (Tizen) akıllı TV: yerel uzaktan kumanda API'si.
+"""Samsung (Tizen) smart TV: local remote control API.
 
-* Bilgi ve güç durumu: http://<tv>:8001/api/v2/ (REST, şifresiz).
-* Tuşlar, uygulamalar: wss://<tv>:8002 WebSocket. İlk bağlanışta TV'de "ALICE'e izin ver" sorusu çıkar; onaylanınca
-  TV bir token verir, sonrakilerde soru çıkmaz. Token config'te [samsung_tv] token olarak saklanır.
-* Kapalıyken açma: TV kapanınca ağ kartı da uyur, bu yüzden Wake-on-LAN (TV ayarlarında "Mobil ile aç" /
-  "Ağ üzerinden aç" açık olmalı). MAC adresi REST'ten bir kere okunup kaydedilir.
+* Info and power state: http://<tv>:8001/api/v2/ (REST, no password).
+* Keys, apps: wss://<tv>:8002 WebSocket. On the first connection the TV shows an "ALICE'e izin ver" prompt;
+  once approved, the TV issues a token and later connections don't prompt. Stored in config as [samsung_tv] token.
+* Turning on from standby: the network card sleeps with the TV, so Wake-on-LAN is used (the TV's "Mobil ile aç" /
+  "Ağ üzerinden aç" must be enabled). The MAC address is read once via REST and saved.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import httpx
 
 CLIENT_NAME = base64.b64encode(b"ALICE").decode()
 
-# Yaygın uygulamaların Tizen kimlikleri; TV'de kurulu listeden ada göre de bulunur.
+# Tizen IDs of common apps; they are also found by name in the TV's installed-app list.
 APPS = {
     "youtube": "111299001912", "netflix": "3201907018807", "prime": "3201910019365",
     "disney": "3201901017640", "spotify": "3201606009684", "apple tv": "3201807016597",
@@ -39,7 +39,7 @@ class TVError(RuntimeError):
 
 
 def info(host: str, timeout: float = 3) -> dict:
-    """REST cihaz bilgisi. TV tamamen kapalıysa (ağ uykuda) TVError."""
+    """REST device info. Raises TVError if the TV is fully off (network asleep)."""
     if not host:
         raise TVError("Samsung TV adresi yok: önce find ya da host ile connect")
     try:
@@ -54,7 +54,7 @@ def info(host: str, timeout: float = 3) -> dict:
 
 
 def power_state(data: dict) -> str:
-    """'on' | 'standby'. Eski modeller PowerState vermez: cevap verdiyse açıktır."""
+    """'on' | 'standby'. Older models don't report PowerState: if it answered, it is on."""
     return str((data.get("device") or {}).get("PowerState") or "on").lower()
 
 
@@ -84,7 +84,7 @@ APPS_REQUEST = {"method": "ms.channel.emit", "params": {"event": "ed.installedAp
 
 
 def find_app(name: str, installed: list[dict]) -> str | None:
-    """Ad → appId: önce TV'de kurulu liste (ör. 'exxen'), sonra bilinen tablo. Sayısal kimlik olduğu gibi geçer."""
+    """Name -> appId: the TV's installed list first (e.g. 'exxen'), then the known table. Numeric IDs pass through."""
     n = name.strip().casefold()
     if n.isdigit() or (len(n) > 8 and n.replace(".", "").isalnum() and "." in n):
         return name.strip()
@@ -98,7 +98,7 @@ def find_app(name: str, installed: list[dict]) -> str | None:
 
 
 def _closed(e: BaseException) -> bool:
-    """websockets'in ConnectionClosed ailesi mi? (paket isteğe bağlı olduğu için sınıf adına bakılıyor)"""
+    """Is it in the websockets ConnectionClosed family? (The package is optional, so the class name is checked.)"""
     return any(c.__name__ == "ConnectionClosed" for c in type(e).__mro__)
 
 
@@ -122,14 +122,14 @@ class Remote:
         except ImportError as e:
             raise TVError("websockets kurulu değil: pip install websockets") from e
         ctx = ssl.create_default_context()
-        # TV kendi imzaladığı sertifikayı kullanıyor; bağlantı yalnız yerel ağda.
+        # The TV uses its own self-signed certificate; the connection is on the local network only.
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         try:
             self.ws = connect(self.url(), ssl=ctx, open_timeout=5, close_timeout=2)
-        except Exception as e:  # websockets'in bağlantı hataları farklı sınıflardan gelir
+        except Exception as e:  # websockets connection errors come from different exception classes
             raise TVError(f"TV'nin uzaktan kumanda bağlantısı açılamadı ({self.host}): {e.__class__.__name__}") from e
-        # Onay bekleniyorsa TV ekranında soru çıkar; kullanıcıya izin vermesi için süre tanı.
+        # If approval is pending, a prompt appears on the TV screen; give the user time to allow it.
         deadline = time.monotonic() + (self.timeout if not self.token else 8)
         while time.monotonic() < deadline:
             msg = self._recv(deadline - time.monotonic())
@@ -176,7 +176,7 @@ class Remote:
             if i:
                 time.sleep(0.15)
             self.send(key_message(key))
-        time.sleep(0.2)  # bağlantı hemen kapanırsa bazı TV'ler son tuşu düşürüyor
+        time.sleep(0.2)  # if the connection closes immediately, some TVs drop the last key
 
     def installed_apps(self) -> list[dict]:
         self.send(APPS_REQUEST)

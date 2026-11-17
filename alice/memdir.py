@@ -1,22 +1,26 @@
-"""Dosya tabanlı kalıcı hafıza: her not ayrı bir markdown dosyası, MEMORY.md de onların dizini.
+"""File-based persistent memory: each note is a separate markdown file, and MEMORY.md is the index of them.
 
-Claude Code'un bugünkü "auto memory" düzeninin ALICE'e uyarlanmış hâli:
+An adaptation of Claude Code's current "auto memory" layout for ALICE:
 
-- Bir not = bir dosya (`<ad>.md`): başta kısa bir başlık bölümü (name, description, type, created, modified,
-  source), altında notun kendisi. Dört tür var: user (kullanıcı kim, neyi bilir, neyi sever), feedback (ALICE'in
-  nasıl çalışmasını istediği; kural + **Neden:** + **Nasıl uygulanır:**), project (süren işler, kararlar, tarihler;
-  koddan/git'ten çıkarılamayanlar), reference (dış kaynakların yeri: pano, kanal, site).
-- MEMORY.md her sohbetin sistem istemine giren DİZİNDİR, not değil: her not için tek satır
-  `- [Başlık](ad.md) — kısa kanca`. 200 satır / 25 KB sınırı var; aşılırsa yeni kayıt reddedilir (sessizce kesilmez).
-- İki kapsam: genel (`~/.alice/memory`, kullanıcıya dair her şey) ve proje (`~/.alice/projects/<depo>/memory`,
-  yalnız o git deposunda geçerli olanlar; aynı deponun worktree'leri aynı klasörü paylaşır).
-- Hatırlama: dizin hep istemde; her mesajda ayrıca açıklamalarına bakılarak en ilgili (en fazla 5) notun tamamı
-  mesaja eklenir. Bir günden eski notlara "bu not N gün önce yazıldı, şimdiki durumu kontrol et" uyarısı eklenir.
-- Günlük kayıt (`logs/YYYY/MM/YYYY-MM-DD.md`): uzun süren oturumlarda not etmeye değer şeyler sadece eklenir
-  (ekle-sadece); Dream bunları sonra kalıcı notlara damıtır.
-- Dream (alice/memory.py dream()): arka planda hafızanın üstünden geçer; tekrarları birleştirir, eskiyeni düzeltir,
-  göreli tarihleri mutlak yapar, dizini toparlar. Kilit dosyasının değişme zamanı = son Dream zamanı. Her Dream'den
-  önce notların yedeği alınır (.backups), silinen notlar çöpe gider (.trash): hiçbir şey geri dönüşsüz kaybolmaz.
+- One note = one file (`<name>.md`): a short header section at the top (name, description, type, created, modified,
+  source), with the note itself below. There are four types: user (who the user is, what they know, what they like),
+  feedback (how ALICE is asked to work; rule + **Neden:** + **Nasıl uygulanır:**), project (ongoing work, decisions,
+  dates; things that cannot be derived from the code or git), reference (where external sources are: dashboard,
+  channel, site).
+- MEMORY.md is the INDEX that goes into the system prompt of every conversation, not a note: one line per note,
+  `- [Title](name.md) — short hook`. There is a 200 line / 25 KB limit; if it is exceeded, new records are rejected
+  (never silently cut).
+- Two scopes: general (`~/.alice/memory`, everything about the user) and project (`~/.alice/projects/<repo>/memory`,
+  only the notes valid in that git repo; worktrees of the same repo share the same folder).
+- Recall: the index is always in the prompt; for each message, the most relevant notes (at most 5), picked by looking
+  at their descriptions, are added in full to the message. Notes older than a day get a warning: "this note was
+  written N days ago, check its current state."
+- Daily log (`logs/YYYY/MM/YYYY-MM-DD.md`): things worth noting in long sessions are only appended (append-only);
+  Dream later distills them into permanent notes.
+- Dream (alice/memory.py dream()): runs in the background over the memory; merges duplicates, fixes outdated notes,
+  makes relative dates absolute, tidies the index. The modification time of the lock file = last Dream time. A backup
+  of the notes is taken before every Dream (.backups), and deleted notes go to the trash (.trash): nothing is lost
+  irreversibly.
 """
 
 from __future__ import annotations
@@ -51,19 +55,19 @@ KEEP_BACKUPS = 5
 KEEP_TRASH = 50
 
 _FOLD = str.maketrans({"ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u", "â": "a", "î": "i", "û": "u"})
-# İstem içinde ALICE'in kendi işaretlerini taklit eden etiketler: bir not "</memory>" ya da "<system-reminder>"
-# içerirse istemin yapısını bozamasın (dışarıdan gelmiş bir metin nota yazılmış olabilir).
+# Tags that imitate ALICE's own prompt markers: if a note contains "</memory>" or "<system-reminder>", it must not
+# break the prompt's structure (text from outside may have been written into a note).
 _TAG_RX = re.compile(r"<(/?)(system[\w-]*|memory|hafıza|hafiza|tool[\w-]*|function[\w-]*|assistant|user|human|"
                      r"instructions?|important)\b", re.I)
 
 
 class MemoryFull(Exception):
-    """Dizin sınırı aşılacaktı: kayıt yapılmadı."""
+    """The index limit would be exceeded: nothing was recorded."""
 
 
-# ---------------------------------------------------------------------------------------------------- yardımcılar
+# ---------------------------------------------------------------------------------------------------- helpers
 def sanitize(text: str) -> str:
-    """Görünmez karakterleri (sıfır genişlik, yön değiştirme) at, istem etiketlerini zararsız yap."""
+    """Remove invisible characters (zero-width, bidi overrides) and neutralize prompt tags."""
     out = "".join(ch for ch in str(text or "") if ch in "\n\t" or unicodedata.category(ch) not in ("Cf", "Cc", "Co"))
     return _TAG_RX.sub(lambda m: "‹" + m.group(1) + m.group(2), out)
 
@@ -86,8 +90,8 @@ def age_text(ts: float, now: float | None = None) -> str:
 
 
 def freshness(ts: float, now: float | None = None) -> str:
-    """Bir günden eski not için uyarı. Modeller tarih farkını iyi hesaplamıyor; "47 gün önce" tarih damgasından
-    daha çok dikkat çekiyor."""
+    """Warning for a note older than a day. Models do not compute date differences well; "47 gün önce" ("47 days ago")
+    draws more attention than a date stamp."""
     d = age_days(ts, now)
     if d <= 1:
         return ""
@@ -110,12 +114,13 @@ def _parse_iso(value: Any) -> float | None:
 
 def _fm_value(v: str) -> str:
     v = " ".join(str(v).split())
-    # Değerde ':' ya da '#' varsa ya da tırnakla başlıyorsa JSON dizesi olarak yaz: "#" sonrası kesilmesin.
+    # If the value contains ':' or '#', or starts with a quote, write it as a JSON string
+    # so nothing after "#" is cut off.
     return json.dumps(v, ensure_ascii=False) if (not v or re.search(r"[:#\"'\[\]{}]", v) or v != v.strip()) else v
 
 
 def parse_note_text(text: str) -> tuple[dict[str, str], str]:
-    """'---' arasındaki başlık bölümü (anahtar: değer) ve gövde."""
+    """The header section between the '---' lines (key: value) and the body."""
     text = text.lstrip("﻿")
     if not text.startswith("---"):
         return {}, text.strip()
@@ -160,7 +165,7 @@ def _pid_alive(pid: int) -> bool:
         return bool(psutil.pid_exists(pid))
     except ImportError:
         if os.name == "nt":
-            return True  # emin olamıyoruz: kilit bir saat sonra zaten bayatlar
+            return True  # We can't be sure: the lock goes stale after an hour anyway
         try:
             os.kill(pid, 0)
             return True
@@ -168,7 +173,7 @@ def _pid_alive(pid: int) -> bool:
             return False
 
 
-# ---------------------------------------------------------------------------------------------------- not
+# ---------------------------------------------------------------------------------------------------- note
 @dataclass
 class Note:
     name: str
@@ -191,7 +196,7 @@ class Note:
         return f"- {tag}{self.key} ({_iso(self.modified)[:10]}, {age_text(self.modified)}): {self.description}"
 
     def render(self, now: float | None = None, limit: int = 1800) -> str:
-        """Hatırlamada mesaja giren hâli: başlık, tazelik uyarısı ve gövde."""
+        """What goes into the message when recalled: title, freshness warning and body."""
         body = self.body if len(self.body) <= limit else self.body[:limit - 1] + "…"
         warn = freshness(self.modified, now)
         head = f"### {self.title or self.name} [{self.type or 'not'}, {self.scope}, {age_text(self.modified, now)}]"
@@ -208,7 +213,7 @@ class Note:
         return f"---\n{head}\n---\n\n{self.body.strip()}\n"
 
 
-# ---------------------------------------------------------------------------------------------------- defter
+# ---------------------------------------------------------------------------------------------------- notebook
 _root_locks: dict[str, threading.RLock] = {}
 _root_locks_guard = threading.Lock()
 
@@ -223,16 +228,16 @@ def _root_lock(root: Path) -> threading.RLock:
 
 
 class NoteBook:
-    """Bir hafıza klasörü (genel ya da bir projenin)."""
+    """A memory folder (general, or of one project)."""
 
     def __init__(self, root: Path | str, scope: str = "genel"):
         self.root = Path(root)
         self.scope = scope
-        # Aynı klasörün defteri her çağrıda yeniden kuruluyor (proje defteri, all_books): kilit klasöre bağlı olmalı,
-        # yoksa arka plan çıkarımı ile araç aynı anda yazınca MEMORY.md satırları kayboluyordu.
+        # The notebook for the same folder is rebuilt on every call (project notebook, all_books): the lock must be tied
+        # to the folder, otherwise MEMORY.md lines were lost when background extraction and the tool wrote at once.
         self._lock = _root_lock(self.root)
 
-    # -------------------------------------------------------------- dosyalar
+    # -------------------------------------------------------------- files
     def ensure(self) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root
@@ -245,7 +250,7 @@ class NoteBook:
         return self.root / f"{name}.md"
 
     def stamp(self) -> float:
-        """Klasördeki en son değişiklik zamanı (sistem istemini ne zaman yenileyeceğimizi bilmek için ucuz kontrol)."""
+        """Latest modification time in the folder (a cheap check to know when to refresh the system prompt)."""
         try:
             times = [self.root.stat().st_mtime] + [p.stat().st_mtime for p in self.root.glob("*.md")]
         except OSError:
@@ -261,7 +266,8 @@ class NoteBook:
         meta, body = parse_note_text(raw)
         name = path.stem
         modified = _parse_iso(meta.get("modified")) or st.st_mtime
-        # Elle (ya da write_file ile) düzenlenmiş dosyada modified eski kalabilir: dosyanın zamanı daha yeniyse o.
+        # A file edited by hand (or with write_file) may keep an old modified value:
+        # if the file's own time is newer, use that.
         modified = max(modified, st.st_mtime) if abs(st.st_mtime - modified) > 120 else modified
         typ = meta.get("type", "")
         desc = meta.get("description", "") or (body.splitlines()[0][:150] if body else "")
@@ -271,7 +277,7 @@ class NoteBook:
                     scope=self.scope, title=meta.get("title", "") or meta.get("name", "") or name)
 
     def scan(self) -> list[Note]:
-        """Bütün notlar, en yeni önce (en fazla MAX_NOTES)."""
+        """All notes, newest first (at most MAX_NOTES)."""
         if not self.root.is_dir():
             return []
         out = []
@@ -298,20 +304,21 @@ class NoteBook:
         if NAME_RX.match(name):
             out = name
         elif name not in ("", ".", "..") and not re.search(r"[\\/:*?\"<>|]", name) and self.path_for(name).is_file():
-            # Elle eklenmiş "Sunucu Notları.md" gibi bir dosya: listede bu adla görünüyor ama ad sadeleştirilince
-            # ("sunucu-notlari") bulunamıyor, okunamıyor/silinemiyordu. Klasörde birebir duran dosyanın adı geçerli.
+            # A hand-added file such as "Sunucu Notları.md": it shows up in the list under this name, but once
+            # the name is simplified ("sunucu-notlari") it could not be found, read or deleted.
+            # A file that sits in the folder under exactly this name is valid.
             out = name
         else:
             out = slugify(name)
-        # "memory.md" Windows'ta (büyük/küçük harf duyarsız) MEMORY.md'nin ta kendisi: böyle adlı not dizinin üstüne
-        # yazılıyor, ardından dizin yazımı da notu siliyordu.
+        # "memory.md" is the very same file as MEMORY.md on Windows (case-insensitive): a note with
+        # that name was written over the index, and then the index write deleted the note.
         return "memory-not" if out.lower() == INDEX[:-3].lower() else out
 
-    # -------------------------------------------------------------- yazma
+    # -------------------------------------------------------------- writing
     def save(self, name: str, description: str, type: str, body: str, title: str = "",
              source: str = "", when: float | None = None) -> tuple[Note, bool]:
-        """Notu yaz (varsa üstüne) ve dizindeki satırını güncelle. (not, yeni_mi) döner. Dizin sınırı aşılacaksa
-        MemoryFull: hiçbir şey yazılmaz."""
+        """Write the note (overwriting an existing one) and update its line in the index. Returns (note, is_new).
+        If the index limit would be exceeded, MemoryFull is raised and nothing is written."""
         name = self._resolve(name or title or description)
         typ = type if type in TYPES else "user"
         description = " ".join(sanitize(description).split())[:300]
@@ -335,20 +342,21 @@ class NoteBook:
             self._check_index(index)
             _atomic_write(note.path, note.dump())
             if when:
-                os.utime(note.path, (when, when))  # taşınan eski bilgi: yaşı doğru görünsün
+                os.utime(note.path, (when, when))  # an old note being moved: keep its age looking right
             _atomic_write(self.index_path, index)
         return note, old is None
 
     def delete(self, name: str) -> Note | None:
-        """Notu çöpe taşı (.trash, son 50 tutulur) ve dizinden çıkar."""
+        """Move the note to the trash (.trash, the last 50 are kept) and remove it from the index."""
         with self._lock:
             note = self.get(name)
             if note is None:
                 return None
             trash = self.root / ".trash"
             trash.mkdir(parents=True, exist_ok=True)
-            # Mikrosaniye + gerekirse sayaç: aynı not aynı saniyede iki kez silinince (yaz-sil-yaz-sil) saniye
-            # çözünürlüklü ad önceki çöp kopyasının üzerine yazıyordu. Ad zamana göre sıralı kalır.
+            # Microseconds + a counter if needed: when the same note was deleted twice in the same second
+            # (write-delete-write-delete), the second-resolution name overwrote the earlier trash copy.
+            # The name stays sorted by time.
             stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
             dest, i = trash / f"{stamp}-{note.name}.md", 1
             while dest.exists():
@@ -360,7 +368,7 @@ class NoteBook:
                 _atomic_write(self.index_path, self._index_without(note.name))
         return note
 
-    # -------------------------------------------------------------- dizin
+    # -------------------------------------------------------------- index
     def index_raw(self) -> str:
         try:
             return self.index_path.read_text(encoding="utf-8", errors="replace")
@@ -404,14 +412,14 @@ class NoteBook:
                              "birleştir, eskiyenleri sil ya da memory action=dream ile toparla; sonra tekrar kaydet.")
 
     def write_index(self, text: str) -> None:
-        """Dizini baştan yaz (Dream): yalnız var olan notları gösteren satırlar kalır, eksik notlar sona eklenir."""
+        """Rewrite the index from scratch (Dream): keep only lines for existing notes; append missing ones."""
         notes = {n.name: n for n in self.scan()}
         keep, seen = [], set()
         for line in sanitize(text).splitlines():
             m = re.search(r"\]\(([^)]+)\.md\)", line)
             if m is None:
                 if line.strip().startswith("#") or not line.strip():
-                    keep.append(line)  # bölüm başlıkları ve boş satırlar serbest
+                    keep.append(line)  # section headings and blank lines are allowed
                 continue
             if m.group(1) in notes and m.group(1) not in seen:
                 seen.add(m.group(1))
@@ -424,7 +432,7 @@ class NoteBook:
             _atomic_write(self.index_path, out)
 
     def repair_index(self) -> bool:
-        """Dizinde olmayan notları ekle, olmayan dosyaları gösteren satırları sil. Değişti mi?"""
+        """Add notes missing from the index and delete lines pointing to missing files. Did it change?"""
         before = self.index_raw()
         if not before.strip() and not self.scan():
             return False
@@ -432,8 +440,8 @@ class NoteBook:
         return self.index_raw() != before
 
     def index_for_prompt(self) -> str:
-        """İsteme giren dizin: sınırda kesilir ve neden kesildiği yazılır; dosyası olup dizinde olmayan notlar da
-        (elle eklenmiş olabilir) kısa satırla gösterilir."""
+        """The index as it goes into the prompt: cut at the limit with the reason written out; notes that have a file
+        but no index line (maybe added by hand) are shown as short lines too."""
         raw = sanitize(self.index_raw()).strip()
         names = {n.name: n for n in self.scan()}
         missing = [n for name, n in names.items() if f"]({name}.md)" not in raw]
@@ -455,7 +463,7 @@ class NoteBook:
         raw = self.index_raw()
         return len(raw.splitlines()) > MAX_INDEX_LINES * 0.85 or len(raw.encode("utf-8")) > MAX_INDEX_BYTES * 0.85
 
-    # -------------------------------------------------------------- günlük kayıt
+    # -------------------------------------------------------------- daily log
     def log_path(self, when: float | None = None) -> Path:
         d = datetime.fromtimestamp(when or time.time())
         return self.root / "logs" / f"{d:%Y}" / f"{d:%m}" / f"{d:%Y-%m-%d}.md"
@@ -478,7 +486,7 @@ class NoteBook:
         day0 = datetime.fromtimestamp(since).strftime("%Y-%m-%d") if since else ""
         files = sorted(p for p in root.rglob("*.md") if p.stem >= day0)
         out, used = [], 0
-        for p in reversed(files):  # yeniden eskiye: sınır dolarsa eskiler düşer
+        for p in reversed(files):  # newest to oldest: if the limit fills up, the oldest are dropped
             body = p.read_text(encoding="utf-8", errors="replace").strip()
             block = f"## {p.stem}\n{body}"
             if used + len(block) > limit_chars:
@@ -487,7 +495,7 @@ class NoteBook:
             used += len(block)
         return "\n\n".join(reversed(out))
 
-    # -------------------------------------------------------------- Dream kilidi ve yedek
+    # -------------------------------------------------------------- Dream lock and backups
     @property
     def lock_path(self) -> Path:
         return self.root / LOCK
@@ -499,7 +507,7 @@ class NoteBook:
             return 0.0
 
     def try_lock(self) -> float | None:
-        """Dream kilidini al: önceki zamanı döndürür (geri almak için), başkası tutuyorsa None."""
+        """Take the Dream lock: returns the previous time (to restore it), or None if someone else holds it."""
         p = self.lock_path
         prior = self.last_dream()
         if p.is_file() and time.time() - prior < LOCK_STALE:
@@ -522,7 +530,7 @@ class NoteBook:
         return prior
 
     def release(self, prior: float | None = None, ok: bool = True) -> None:
-        """Kilidi bırak. ok=False: zamanı eskiye çevir (zaman kapısı yine açılsın)."""
+        """Release the lock. ok=False: move the time back to the old value (so the time gate opens again)."""
         self._dreaming = False
         p = self.lock_path
         try:
@@ -541,7 +549,7 @@ class NoteBook:
             return None
         base = self.root / ".backups" / datetime.now().strftime("%Y%m%d-%H%M%S")
         dest, i = base, 2
-        while dest.exists():  # aynı saniyede ikinci yedek öncekinin üstüne yazmasın
+        while dest.exists():  # so a second backup in the same second does not overwrite the previous one
             dest, i = base.with_name(f"{base.name}-{i}"), i + 1
         dest.mkdir(parents=True)
         for p in notes:
@@ -555,13 +563,13 @@ class NoteBook:
         return sorted((p.name for p in d.iterdir() if p.is_dir()), reverse=True) if d.is_dir() else []
 
     def restore(self, stamp: str) -> int:
-        """Bir Dream yedeğine dön: o andaki notlar geri gelir, sonradan eklenenler çöpe gider."""
+        """Go back to a Dream backup: the notes from that moment come back; notes added later go to the trash."""
         src = self.root / ".backups" / stamp
         if not re.fullmatch(r"\d{8}-\d{6}(-\d+)?", stamp or "") or not src.is_dir():
             raise ValueError(f"yedek yok: {stamp}")
-        # Önce belleğe al: aşağıdaki yedek en eski yedekleri budarken dönülecek olanı da silebilir.
+        # Read into memory first: pruning the oldest backups below could also delete the one we are restoring.
         files = {p.name: p.read_bytes() for p in src.glob("*.md")}
-        self.backup()  # dönüşün kendisi de geri alınabilsin
+        self.backup()  # so the restore itself can be undone too
         for p in self.root.glob("*.md"):
             if p.name not in files and p.name != INDEX:
                 self.delete(p.stem)
@@ -570,12 +578,12 @@ class NoteBook:
         return len([n for n in files if n != INDEX])
 
 
-# ---------------------------------------------------------------------------------------------------- kapsamlar
+# ---------------------------------------------------------------------------------------------------- scopes
 _roots: dict[str, Path | None] = {}
 
 
 def project_root(cwd: Path | str | None) -> Path | None:
-    """cwd'nin bağlı olduğu git deposunun ana klasörü (worktree'de de ana depo: hafıza paylaşılsın)."""
+    """The main folder of the git repo cwd belongs to (in a worktree too, the main repo, so memory is shared)."""
     if not cwd:
         return None
     key = str(cwd)
@@ -594,7 +602,7 @@ def project_root(cwd: Path | str | None) -> Path | None:
     except (OSError, subprocess.SubprocessError):
         root = None
     if root is not None and root.resolve() == Path.home().resolve():
-        root = None  # ev klasörü depo olsa bile "proje" sayılmaz
+        root = None  # even if the home folder is a repo, it does not count as a "project"
     _roots[key] = root
     return root
 
@@ -615,11 +623,11 @@ def books_for(general: NoteBook, cwd: Path | str | None) -> list[NoteBook]:
     return [general] + ([proj] if proj is not None else [])
 
 
-# ---------------------------------------------------------------------------------------------------- hatırlama
+# ---------------------------------------------------------------------------------------------------- recall
 def select_relevant(query: str, notes: list[Note], chooser: Callable[[str], str] | None = None,
                     limit: int = 5, recent_tools: Iterable[str] = (), timeout: float = 6.0) -> list[Note]:
-    """Sorguya gerçekten yarayacak notlar. Önce hızlı modele açıklamaları gösterip seçtirir (en fazla limit);
-    model yoksa, hata verirse ya da zaman aşarsa kelime eşleşmesiyle seçer."""
+    """Notes that will really help with the query. First the descriptions are shown to the fast model, which picks
+    (at most limit); if there is no model, it errors, or it times out, it picks by keyword matching."""
     if not notes or not query.strip():
         return []
     by_key = {n.key: n for n in notes}
@@ -633,7 +641,7 @@ def select_relevant(query: str, notes: list[Note], chooser: Callable[[str], str]
         def run() -> None:
             try:
                 box["raw"] = chooser(prompt)
-            except Exception as e:  # noqa: BLE001 - model yoksa kelime eşleşmesi
+            except Exception as e:  # noqa: BLE001 - no model: fall back to keyword matching
                 box["err"] = e
 
         t = threading.Thread(target=run, daemon=True, name="alice-memory-select")
@@ -691,7 +699,7 @@ Saved notes:
 {manifest}{tools}"""
 
 
-# ---------------------------------------------------------------------------------------------------- istem metni
+# ---------------------------------------------------------------------------------------------------- prompt text
 MEMORY_RULES = """You have a persistent, file-based memory (your notes on the user and their work). Use the \
 `memory` tool to save, update, read and delete notes; it keeps the MEMORY.md index below in sync for you.
 
@@ -725,7 +733,7 @@ state prefer reading the files/git over an old note.
 Memory is for future conversations: for the current task use todo_write / plans, not memory."""
 
 
-# ---------------------------------------------------------------------------------------------------- çıkarım
+# ---------------------------------------------------------------------------------------------------- extraction
 EXTRACT_PROMPT = """You maintain the long-term memory notes of ALICE, a personal assistant on the user's computer. \
 Below are the newest turns of a conversation. Decide whether any of it deserves to be kept as a note for FUTURE \
 conversations, following these rules:

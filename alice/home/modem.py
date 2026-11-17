@@ -1,8 +1,8 @@
-"""Modem/router: modeli tanıma, dış IP, bağlantı durumu, açık kalma süresi, trafik.
+"""Modem/router: model detection, external IP, connection status, uptime, traffic.
 
-Model bilinmese de çalışsın diye üreticiden bağımsız UPnP IGD kullanılıyor (çoğu ev modeminde varsayılan açık):
-SSDP ile modem bulunur, açıklama XML'inden marka/model, SOAP ile WAN bilgileri okunur. UPnP kapalıysa ağ
-geçidinin yönetim sayfasının başlığından model tahmin edilir.
+Works even when the model is unknown, using the manufacturer-independent UPnP IGD (on by default on most home modems):
+SSDP finds the modem, the description XML gives brand/model, and SOAP reads the WAN info. If UPnP is off, the
+gateway's admin page title is used to guess the model.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _local(tag: str) -> str:
 
 
 def discover(timeout: float = 2.5) -> list[str]:
-    """SSDP M-SEARCH → İnternet ağ geçidi cihazlarının açıklama adresleri (LOCATION)."""
+    """SSDP M-SEARCH → description URLs (LOCATION) of internet gateway devices."""
     msg = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\n"
            f"MX: 2\r\nST: {IGD}\r\n\r\n").encode()
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -52,8 +52,8 @@ def discover(timeout: float = 2.5) -> list[str]:
 
 
 def parse_description(xml_text: str, base: str) -> dict:
-    """Açıklama XML'i → {name, manufacturer, model, model_number, wan: (serviceType, controlURL) | None,
-    common: controlURL | None}. Gömülü cihazlar (WANDevice > WANConnectionDevice) dahil aranır."""
+    """Description XML → {name, manufacturer, model, model_number, wan: (serviceType, controlURL) | None,
+    common: controlURL | None}. Embedded devices (WANDevice > WANConnectionDevice) are searched too."""
     root = ET.fromstring(xml_text)
     dev = next((e for e in root.iter() if _local(e.tag) == "device"), None)
 
@@ -119,14 +119,14 @@ def gateway_guess() -> str:
 
 
 def info() -> str:
-    """İnsan okunur modem raporu."""
+    """Human-readable modem report."""
     lines: list[str] = []
     with httpx.Client(timeout=4, follow_redirects=True) as c:
         for loc in discover():
             try:
                 d = parse_description(c.get(loc).text, loc)
             except (httpx.HTTPError, httpx.InvalidURL, ET.ParseError, ValueError):
-                # LOCATION ağdaki herhangi bir cihazdan gelir; bozuk adres ya da XML raporu düşürmesin.
+                # LOCATION comes from any device on the network; a bad address or XML must not drop the report.
                 continue
             host = urlparse(loc).hostname
             model = " ".join(x for x in (d["manufacturer"], d["model"], d["model_number"]) if x)

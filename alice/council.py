@@ -1,17 +1,19 @@
-"""İnceleme kurulu: bir işi, planı ya da fikri farklı bakış açılarıyla inceleyip gerekçeli oylamayla karar veren
-ajan heyeti.
+"""Review council: a panel of agents that examines a job, plan or idea from different angles and decides
+by a reasoned vote.
 
-Roller: eleştirmen (acımasız ama kanıtlı), savunucu, kontrolcü (tarafsız doğrulayıcı) ve gerekince uzmanlar
-(güvenlik, performans, kullanıcı gözü). Akış:
+Roles: critic (ruthless but evidence-based), advocate, verifier (impartial checker) and, when needed, experts
+(security, performance, user experience). Flow:
 
-1. Bağımsız inceleme: roller birbirini görmeden aynı anda inceler, bulgu ve oy yazar.
-2. Doğrulama: kontrolcü her bulguyu kendisi dener (dosya okur, test çalıştırır) ve doğrulandı/çürütüldü/belirsiz der.
-3. Tartışma (derinliğe göre 0-2 tur): herkes diğerlerinin oylarını ve kontrolcünün sonuçlarını görür, bulgulara
-   katılır/itiraz eder, oyunu güncelleyebilir. Tartışmada yeni bulgu eklenmez; görüş değişmezse tartışma erken biter.
-4. Karar: ağırlıklı oylama. Doğrulanmış kritik bulgu tek başına reddettirir (veto). Bir ret/şartlı oyun dayandığı
-   bulguların hepsi çürütüldüyse o oy sayılmaz. Kullanıcı da oy verebilir (3 kat ağırlık) ya da kararı bozabilir.
+1. Independent review: roles review at the same time without seeing each other, and write findings and votes.
+2. Verification: the verifier tries each finding itself (reads files, runs tests) and rules confirmed/refuted/unclear.
+3. Debate (0-2 rounds, depending on depth): everyone sees the others' votes and the verifier's results, agrees with
+   or objects to findings, and may update their vote. No new findings are added in the debate; if opinions do not
+   change, the debate ends early.
+4. Decision: weighted vote. A confirmed critical finding alone rejects (veto). If all the findings a reject or
+   conditional vote rests on are refuted, that vote is not counted. The user can also vote (3x weight) or overturn
+   the decision.
 
-Döngü yok: tur sayısı en çok 3, her rol bir turda tek ajan turu (adım sınırlı) çalışır.
+No loops: at most 3 rounds, and each role runs as one bounded agent turn (step-limited) per round.
 """
 
 from __future__ import annotations
@@ -36,14 +38,14 @@ APPROVE_AT, REJECT_BELOW = 0.6, 0.4
 USER_WEIGHT = 3.0
 MAX_ROUNDS = 3
 REVIEWER_STEPS = 14
-PLAN_STEPS = 5  # plan incelemesinde az dosya okumak yeter; kurul dakikalarca sürmesin
+PLAN_STEPS = 5  # reading a few files is enough for a plan review; the council should not take minutes
 SEVERITIES = ("critical", "major", "minor")
 SEV_TR = {"critical": "kritik", "major": "önemli", "minor": "küçük"}
 STATUS_TR = {"confirmed": "doğrulandı", "refuted": "çürütüldü", "unclear": "belirsiz", "pending": "bekliyor"}
 KIND_TR = {"plan": "Plan kurulu", "work": "İş kurulu", "recheck": "Kontrol turu", "final": "Final kurulu",
            "adhoc": "Kurula sor"}
 
-# Kurulun kullandığı araçlar: okuma ve araştırma. Kontrolcü ayrıca komut çalıştırabilir (testler için).
+# Tools the council uses: reading and research. The verifier can also run commands (for tests).
 READ_TOOLS = {"read_file", "list_dir", "glob", "grep", "web_fetch", "web_search", "git"}
 
 
@@ -85,12 +87,12 @@ ROLES: dict[str, Role] = {
         r"user|tasarım|design|form|dialog|pencere|menü"),
 }
 CORE = ("critic", "advocate", "verifier")
-# Akıllı model seçiminde rolün alanı
+# The role's domain, used for smart model selection
 ROLE_DOMAIN = {"critic": "review", "advocate": "review", "verifier": "review", "security": "review",
                "performance": "code", "ux": "design"}
 
 
-# Plan kurulu: kod yokken uygulama ayrıntısı avına çıkmadan, planın doğru adımları atıp atmadığına bakar.
+# Plan council: with no code yet, it does not hunt for implementation details; it checks the plan's steps.
 PLAN_AREAS = {"kapsam": "hedefin tamamı karşılanıyor mu, büyük bir parça eksik mi",
               "bölme": "iş anlamlı ve çakışmayan parçalara bölünmüş mü, yazma kapsamları çakışıyor mu",
               "sıra": "bağımlılıklar ve sıra doğru mu (önce temel, sonra üstüne kurulanlar)",
@@ -105,7 +107,7 @@ _AREA_ALIASES = {"kapsam": "kapsam", "scope": "kapsam", "coverage": "kapsam", "b
 
 
 def norm_area(value: Any) -> str:
-    """Modelin yazdığı alanı ("Kapsam", "SIRA", "scope", "kapsam|bölme") bilinen bir alana çevirir; bilinmiyorsa boş."""
+    """Maps the area the model wrote ("Kapsam", "SIRA", "scope", "kapsam|bölme") to a known area; empty if unknown."""
     raw = str(value or "").replace("İ", "i").replace("I", "ı").lower()
     for part in re.split(r"[|,/ ]+", raw):
         if part in _AREA_ALIASES:
@@ -114,7 +116,7 @@ def norm_area(value: Any) -> str:
 
 
 def norm_scores(raw: Any) -> dict[str, int]:
-    """Plan puanları: bilinen ölçütler, 1-5 arası tam sayı; NaN, sonsuz, mantıksal ve bozuk değerler atlanır."""
+    """Plan scores: known criteria, integers 1-5; NaN, infinite, boolean and malformed values are skipped."""
     out: dict[str, int] = {}
     if not isinstance(raw, dict):
         return out
@@ -132,7 +134,7 @@ def norm_scores(raw: Any) -> dict[str, int]:
 
 
 def plan_finding(fid: str, by: str, f: dict[str, Any], default: str = "minor", **kw: Any) -> "Finding":
-    """Plan kurulunda bulgu: kritik yok (en fazla önemli), alan ve ajan normalize."""
+    """Finding in the plan council: no critical (at most major); area and agent are normalized."""
     sev = str(f.get("severity") or default).lower()
     sev = "major" if sev == "critical" else sev if sev in SEVERITIES else default
     return Finding(fid, by, sev, str(f.get("title") or "")[:200], str(f.get("evidence") or "")[:800],
@@ -141,10 +143,11 @@ def plan_finding(fid: str, by: str, f: dict[str, Any], default: str = "minor", *
 
 
 def plan_decision(res: dict[str, Any], findings: list["Finding"]) -> dict[str, Any]:
-    """Plan kurulunun kararı: plan ancak doğrulanmış önemli bir plan sorunu (eksik parça, çakışma, yanlış sıra, işi
-    bozacak yaklaşım) varsa ya da kurul açıkça reddediyorsa düzeltilir; gerisi notlarla onaydır. Veto yoktur."""
+    """Plan council decision: a plan is revised only if a confirmed, significant plan problem (missing part, overlap,
+    wrong order, approach that would break the work) exists or the council clearly rejects it; the rest is approved
+    with notes. No veto."""
     blocking = [f.id for f in findings if f.status == "confirmed" and f.severity != "minor" and f.area != "doğrulama"]
-    # Oy puanı sadece sayılan oy varsa kullanılır: hiç oy sayılamadıysa (model hatası, gerekçesiz ret) plan reddedilmez.
+    # Score uses only counted votes; if none counted (model error, reasonless reject) the plan is not rejected.
     if blocking or (res.get("weight", 1) and res.get("score", 1) < REJECT_BELOW):
         decision = "revise"
     else:
@@ -154,7 +157,7 @@ def plan_decision(res: dict[str, Any], findings: list["Finding"]) -> dict[str, A
 
 
 def plan_override(res: dict[str, Any], findings: list["Finding"], user: dict[str, Any] | None) -> dict[str, Any]:
-    """Planda kullanıcının sözü geçer: onaylarsa plan başlar, reddederse düzeltilir."""
+    """In a plan, the user's word counts: if they approve, the plan starts; if they reject, it is revised."""
     vote = (user or {}).get("vote")
     if vote == "approve":
         res["decision"] = "approve_conditions" if any(f.status != "refuted" for f in findings) else "approve"
@@ -164,7 +167,7 @@ def plan_override(res: dict[str, Any], findings: list["Finding"], user: dict[str
 
 
 class CouncilStopped(Exception):
-    """Proje durduruldu; kurul yarıda bırakıldı."""
+    """Project was stopped; the council was abandoned midway."""
 
 
 @dataclass
@@ -176,10 +179,10 @@ class Finding:
     evidence: str = ""
     fix: str = ""
     status: str = "pending"  # pending | confirmed | refuted | unclear
-    check: str = ""  # kontrolcünün notu
-    notes: list[dict[str, str]] = field(default_factory=list)  # tartışma: {by, stance, note}
-    area: str = ""  # plan kurulunda: kapsam | bölme | sıra | doğrulama | risk | tasarım
-    agent: str = ""  # plan kurulunda: bulgunun ilgili olduğu ajan ("genel" ya da boş: bütün plan)
+    check: str = ""  # verifier's note
+    notes: list[dict[str, str]] = field(default_factory=list)  # debate: {by, stance, note}
+    area: str = ""  # plan council only: kapsam | bölme | sıra | doğrulama | risk | tasarım
+    agent: str = ""  # plan council only: the agent the finding concerns ("genel" = general, or empty: whole plan)
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -194,17 +197,17 @@ class Vote:
     last: str = ""
     reason: str = ""
     conditions: list[str] = field(default_factory=list)
-    basis: list[str] = field(default_factory=list)  # dayandığı bulgu kimlikleri
+    basis: list[str] = field(default_factory=list)  # IDs of the findings it rests on
     counted: bool = True
-    note: str = ""  # sayılmadıysa nedeni
-    scores: dict[str, int] = field(default_factory=dict)  # plan kurulunda ölçüt puanları (1-5)
+    note: str = ""  # reason, if not counted
+    scores: dict[str, int] = field(default_factory=dict)  # plan council only: criterion scores (1-5)
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
 
 def parse_block(text: str) -> dict[str, Any]:
-    """Cevabın içindeki son JSON nesnesini bul (```json bloğu ya da düz)."""
+    """Find the last JSON object in the reply (a ```json block or plain)."""
     text = text or ""
     blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
     cands = blocks[::-1] + [text[i:] for i in [m.start() for m in re.finditer(r"\{", text)][::-1][:6]]
@@ -219,8 +222,8 @@ def parse_block(text: str) -> dict[str, Any]:
 
 
 def as_list(value: Any) -> list[Any]:
-    """Modelin liste yerine tek değer yazdığı alanlar ("conditions": "şunu düzelt", "findings": {...}): tek
-    elemanlı listeye çevrilir. Önceden metin harf harf şart oluyor, sözlük de dilimlenirken kurulu çökertiyordu."""
+    """Fields where the model wrote one value, not a list ("conditions": "fix this", "findings": {...}): it is
+    wrapped in a one-item list. Text used to become one condition per letter; a dict crashed the council when sliced."""
     if isinstance(value, list):
         return value
     if value is None or value == "" or isinstance(value, bool):
@@ -232,7 +235,7 @@ _JSON_START = re.compile(r'\{\s*"(?:vote|checks|stances|findings|reason|conditio
 
 
 def prose(text: str, limit: int = 1500) -> str:
-    """Cevabın okunur kısmı: JSON blokları (kararlar zaten oy ve bulgu olarak ayrıca gösteriliyor) atılır."""
+    """Readable part of the reply: JSON blocks are dropped (decisions already appear as votes and findings)."""
     t = re.sub(r"```(?:json)?\s*\{.*?\}\s*```", "", text or "", flags=re.S)
     m = _JSON_START.search(t)
     if m:
@@ -256,7 +259,7 @@ def relevant_experts(text: str) -> list[str]:
 
 def plan_council(kind: str, subject: str, size: int, critical: bool, depth: int | str = "auto",
                  roles: list[str] | None = None) -> tuple[list[str], int]:
-    """Kurulun üyeleri ve tartışma derinliği (tur sayısı). Alice işe göre seçer: küçük iş hızlı, kritik iş derin."""
+    """Council members and debate depth (rounds). Alice picks per job: small work quick, critical work deep."""
     if roles:
         chosen = [r for r in roles if r in ROLES]
     elif critical or kind in ("final", "plan"):
@@ -284,7 +287,7 @@ def plan_council(kind: str, subject: str, size: int, critical: bool, depth: int 
 
 def tally(votes: list[Vote], findings: list[Finding], user: dict[str, Any] | None = None,
           relevant: list[str] | None = None) -> dict[str, Any]:
-    """Ağırlıklı oylama. Döner: score, decision (approve|approve_conditions|revise|contested), veto."""
+    """Weighted vote. Returns: score, decision (approve|approve_conditions|revise|contested), veto."""
     by_id = {f.id: f for f in findings}
     veto = [f.id for f in findings if f.severity == "critical" and f.status == "confirmed"]
     total = got = 0.0
@@ -336,16 +339,16 @@ class Council:
         self.context = context
         self.cwd = Path(cwd) if cwd else ctx.cwd
         self.critical = critical
-        self.previous = previous  # kontrol turu: önceki kurulun sonucu
-        self.rules = rules.strip()  # projenin inceleme kuralları (REVIEW.md)
-        self.lessons = lessons or []  # bu projede daha önce yakalanan sorunlar
-        self.check = check  # projenin kontrol komutu (kontrolcü bilir)
+        self.previous = previous  # recheck round: the previous council's result
+        self.rules = rules.strip()  # the project's review rules (REVIEW.md)
+        self.lessons = lessons or []  # problems already caught in this project
+        self.check = check  # the project's check command (the verifier knows it)
         self.title = title or self.subject.splitlines()[0][:80]
         self.id = secrets.token_hex(4)
-        self.on_usage: Callable[[dict[str, Any]], None] | None = None  # üyelerin token kullanımı (proje sayacı)
-        self._stop = threading.Event()  # proje durdurulunca kurul da durur
-        self.phase = ""  # ekranda: hangi aşamada (bağımsız inceleme, kontrolcü, tartışma turu)
-        self.activity: dict[str, dict[str, Any]] = {}  # rol -> {state, last, vote}: canlı ilerleme
+        self.on_usage: Callable[[dict[str, Any]], None] | None = None  # members' token usage (project counter)
+        self._stop = threading.Event()  # when the project is stopped, the council stops too
+        self.phase = ""  # on screen: which stage (independent review, verifier, debate round)
+        self.activity: dict[str, dict[str, Any]] = {}  # role -> {state, last, vote}: live progress
         self._tick_at = 0.0
         self._agents: list[Any] = []
         size = context.count("\n")
@@ -353,7 +356,7 @@ class Council:
         if previous and kind == "recheck":
             keep = [v["role"] for v in previous.get("votes", []) if v.get("last") != "approve"]
             self.roles = list(dict.fromkeys([r for r in keep if r in ROLES] + ["verifier"]))
-        # Sitenin ekran görüntüleri varsa kullanıcı gözü kesin katılır ve görsel kaliteye de bakar.
+        # If the site has screenshots, the user's eye always joins and also checks the visual quality.
         self.images = dict(images or {})
         if self.images and "ux" not in self.roles:
             self.roles.insert(max(0, len(self.roles) - 1), "ux")
@@ -372,16 +375,16 @@ class Council:
         self.on_change = on_change or (lambda: None)
         self._roles_router: list[str] = []
 
-    # ------------------------------------------------------------- modeller
+    # ------------------------------------------------------------- models
     def model_for(self, role: str) -> tuple[str, str]:
-        """Rolüne ve işin önemine göre model ve düşünme seviyesi."""
-        if role == "ux" and self.images:  # ekran görüntülerini görebilen model
+        """Model and thinking level, by the role and by how important the job is."""
+        if role == "ux" and self.images:  # a model that can see screenshots
             return "vision", "medium" if self.critical or self.kind == "final" else "low"
         if self.critical or self.kind == "final":
             return "brain", "high" if role in ("critic", "verifier") else "medium"
         if role in ("critic", "verifier"):
             return "brain", "medium"
-        if role == "ux" and "ux" in self.relevant:  # arayüz işinde tasarım değerlendirmesi zayıf modele kalmasın
+        if role == "ux" and "ux" in self.relevant:  # in UI work, design review should not be left to a weak model
             return "brain", "medium"
         return "fast", "low"
 
@@ -407,13 +410,13 @@ class Council:
         agent.stream = False
         from alice.team import team_compact_cap
 
-        agent.compact_cap = min(team_compact_cap(parent.config) or 48000, 48000)  # kurul üyesi kısa iş yapar
+        agent.compact_cap = min(team_compact_cap(parent.config) or 48000, 48000)  # council members do short work
         agent.ui = _QuietUI(ui, self, role)
         model, think = self.model_for(role)
         rname = f"council:{self.id}:{role}"
         if model in ("brain", "vision"):
-            # Güçlü model gereken rollerde işin alanına göre en uygun model (eleştiri/kontrol: inceleme,
-            # performans: kod, kullanıcı gözü: tasarım ya da ekran görüntüsü varsa görsel).
+            # For roles that need a strong model, the best model for the job's domain (critique/verification: review,
+            # performance: code, user's eye: design, or vision if there are screenshots).
             from alice.providers import picker
 
             domain = "vision" if model == "vision" else ROLE_DOMAIN.get(role, "review")
@@ -467,9 +470,9 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             f"\n\nProjenin kontrol komutu: `{self.check}` (çıktısı incelenen malzemede; gerekirse yeniden çalıştır)."
             if self.check and role == "verifier" else "") + (self.plan_brief() if self.kind == "plan" else "")
 
-    # --------------------------------------------------------------- akış
+    # --------------------------------------------------------------- flow
     def stop(self) -> None:
-        """Kurulu durdur: konuşan üyeler kesilir, sonuç "durduruldu" olur."""
+        """Stop the council: speaking members are cut off and the result becomes "durduruldu" (stopped)."""
         self._stop.set()
         for a in list(self._agents):
             a.stop()
@@ -488,7 +491,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             self.state = "stopped"
             self.result = {"decision": "stopped", "score": 0.0, "veto": [], "conditions": []}
             self.ended = time.time()
-        except Exception as e:  # noqa: BLE001 - kurul çökerse karar "çekişmeli" olsun, iş durmasın
+        except Exception as e:  # noqa: BLE001 - on a crash, decision = "çekişmeli" (contested); work goes on
             self.state = "failed"
             self.result = {"decision": "contested", "score": 0.0, "veto": [], "conditions": [],
                            "error": f"{type(e).__name__}: {e}"}
@@ -503,7 +506,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             raise CouncilStopped()
         agent = self._agent(role)
         self._agents.append(agent)
-        if self._stop.is_set():  # tam bu arada durduruldu
+        if self._stop.is_set():  # stopped just now
             raise CouncilStopped()
         images = list(self.images.values()) if role == "ux" else None
         if images:
@@ -525,7 +528,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             self._tick(force=True)
             raise
         if not parse_block(text) and text.strip():
-            # Zayıf modeller JSON'u unutabiliyor: bir kez, sadece biçimi iste.
+            # Weak models sometimes forget the JSON: ask once, for the format only.
             again = agent.run_turn("Cevabının sonunda istenen JSON bloğu yoktu. Kararını değiştirmeden şimdi sadece o "
                                    "JSON bloğunu ```json ... ``` içinde ver.", max_steps=1) or ""
             if parse_block(again):
@@ -538,7 +541,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
         return text
 
     def _tick(self, force: bool = False) -> None:
-        """Canlı ilerlemeyi ekrana yansıt (en sık saniyede bir)."""
+        """Show live progress on screen (at most once per second)."""
         now = time.monotonic()
         if force or now - self._tick_at > 1.0:
             self._tick_at = now
@@ -549,7 +552,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
 
     def _set_phase(self, text: str, everyone: bool = False) -> None:
         self.phase = text
-        if everyone:  # tartışma turunda herkes yeniden konuşacak
+        if everyone:  # in a debate round everyone speaks again
             for a in self.activity.values():
                 if a.get("state") == "done":
                     a["state"] = "waiting"
@@ -615,7 +618,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
                     continue
                 n += 1
                 if plan:
-                    fd = plan_finding(f"F{n}", role, f)  # planda kritik/veto yok
+                    fd = plan_finding(f"F{n}", role, f)  # no critical or veto in the plan
                 else:
                     sev = str(f.get("severity") or "minor").lower()
                     fd = Finding(f"F{n}", role, sev if sev in SEVERITIES else "minor", str(f["title"])[:200],
@@ -663,7 +666,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
         for f in as_list(data.get("findings"))[:6]:
             if isinstance(f, dict) and str(f.get("title") or "").strip():
                 n += 1
-                if self.kind == "plan":  # kontrolcünün kendi bulguları da plan kurallarına uyar
+                if self.kind == "plan":  # the verifier's own findings also follow the plan rules
                     self.findings.append(plan_finding(f"F{n}", "verifier", f, status="confirmed", check="kendi baktı"))
                 else:
                     sev = str(f.get("severity") or "major").lower()
@@ -672,7 +675,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
                                                  str(f.get("fix") or "")[:400], status="confirmed",
                                                  check="kendi denedi"))
                 v.basis.append(f"F{n}")
-        for f in self.findings:  # kontrolcünün bakmadığı bulgular belirsiz kalır
+        for f in self.findings:  # findings the verifier did not check stay unclear
             if f.status == "pending":
                 f.status = "unclear"
         self.on_change()
@@ -689,17 +692,17 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
                 sev = str(c.get("severity") or "").lower()
                 rank = {"critical": 0, "major": 1, "minor": 2}
                 if self.kind == "plan" and sev in rank and rank[sev] > rank.get(f.severity, 2):
-                    f.severity = sev  # planda kontrolcü abartılı dereceyi sadece düşürebilir
+                    f.severity = sev  # in the plan, the verifier can only lower an exaggerated severity
 
     def _contested(self) -> bool:
-        """Tartışmaya değer mi: oylar bölünmüş ya da tartışmalı (belirsiz) bulgu var."""
+        """Is it worth debating: votes are split, or there is a disputed (unclear) finding."""
         r = tally(list(self.votes.values()), self.findings, None, self.relevant)
         kinds = {v.last for v in self.votes.values() if v.last}
         return (r["decision"] == "contested" or len(kinds) > 1 or any(f.status == "unclear" for f in self.findings)) \
             and bool(self.findings)
 
     def _debate(self) -> bool:
-        """Bir tartışma turu. Görüş değişmediyse False (tartışma biter)."""
+        """One debate round. Returns False if nobody changed their view (the debate ends)."""
         self.round += 1
         self._set_phase(f"Tartışma turu {self.round}", everyone=True)
         positions = "\n".join(f"- {ROLES[v.role].title}: {VOTE_TR.get(v.last, 'oy yok')}. {v.reason}"
@@ -728,7 +731,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
                 f = by_id.get(str((s or {}).get("id") or "").strip().upper()) if isinstance(s, dict) else None
                 if f is not None and str(s.get("note") or "").strip():
                     note = {"by": role, "stance": str(s.get("stance") or ""), "note": str(s["note"])[:400]}
-                    if note not in f.notes:  # aynı görüşü her turda tekrar yazmasın
+                    if note not in f.notes:  # don't record the same view again every round
                         f.notes.append(note)
                     if str(s.get("stance")) == "agree" and f.id not in v.basis and role != "verifier":
                         v.basis.append(f.id)
@@ -754,7 +757,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             router.thinking_overrides.pop(r, None)
         self._roles_router.clear()
 
-    # --------------------------------------------------------------- sonuç
+    # --------------------------------------------------------------- result
     def snapshot(self) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "title": self.title, "state": self.state, "round": self.round,
                 "rounds": self.rounds, "roles": self.roles, "critical": self.critical, "relevant": self.relevant,
@@ -766,7 +769,7 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
 
 
 def rubric(votes: Any) -> dict[str, float]:
-    """Plan kurulunda ölçüt başına ortalama puan (1-5)."""
+    """Average score per criterion (1-5) in the plan council."""
     out: dict[str, list[int]] = {}
     for v in votes:
         for k, x in (v.scores if isinstance(v, Vote) else v.get("scores") or {}).items():
@@ -775,7 +778,7 @@ def rubric(votes: Any) -> dict[str, float]:
 
 
 def retally(snap: dict[str, Any], user_vote: dict[str, Any] | None) -> dict[str, Any]:
-    """Kaydedilmiş kurul sonucunu kullanıcının oyuyla yeniden say."""
+    """Recount a saved council result with the user's vote."""
     votes = [Vote(**{k: v for k, v in d.items() if k in Vote.__dataclass_fields__}) for d in snap.get("votes", [])]
     findings = [Finding(**{k: v for k, v in d.items() if k in Finding.__dataclass_fields__})
                 for d in snap.get("findings", [])]
@@ -786,7 +789,7 @@ def retally(snap: dict[str, Any], user_vote: dict[str, Any] | None) -> dict[str,
 
 
 def report(snap: dict[str, Any]) -> str:
-    """Kurul sonucunun düz metin özeti (yönetici, ajan ve sohbet için)."""
+    """Plain-text summary of the council result (for the manager, agents and chat)."""
     res = snap.get("result") or {}
     dec = {"approve": "ONAY", "approve_conditions": "ŞARTLI ONAY", "revise": "DÜZELTME GEREKLİ",
            "contested": "ÇEKİŞMELİ (karar senin)"}.get(res.get("decision", ""), "?")
@@ -820,7 +823,7 @@ def report(snap: dict[str, Any]) -> str:
 
 
 def fix_list(snap: dict[str, Any]) -> str:
-    """Ajana gidecek düzeltme listesi: doğrulanmış/belirsiz bulgular ve (bulgularla aynı olmayan) şartlar."""
+    """Fix list to send to the agent: confirmed/unclear findings and conditions (not the same as the findings)."""
     res = snap.get("result") or {}
     found = [f for f in snap.get("findings", []) if f.get("status") in ("confirmed", "unclear")]
     items = [f"- [{f['id']}] ({SEV_TR.get(f['severity'], f['severity'])}) {f['title']} — {f.get('fix', '')}"
@@ -831,8 +834,8 @@ def fix_list(snap: dict[str, Any]) -> str:
 
 
 def blocking(snap: dict[str, Any]) -> bool:
-    """Kurulun istediği düzeltme işi durdurmaya değer mi: doğrulanmış ya da belirsiz kritik/önemli bulgu var mı.
-    Şart yazılmış ama hiç bulgu yoksa şartın ağırlığı bilinemez: düzeltmeye değer sayılır."""
+    """Is the fix the council asks for worth stopping work for: is there a confirmed or unclear critical/major finding?
+    If conditions are written but there are no findings, their weight is unknown: it counts as worth fixing."""
     live = [f for f in snap.get("findings", []) if f.get("status") in ("confirmed", "unclear")]
     if not live and (snap.get("result") or {}).get("conditions"):
         return True
@@ -847,8 +850,8 @@ def _words(text: str) -> set[str]:
 
 
 def dedupe(items: list[str], against: list[str] | None = None, same: float = 0.55) -> list[str]:
-    """Aynı şeyi başka sözcüklerle söyleyen maddeleri ayıkla; `against` ile örtüşenler de atılır. Temkinli: en az dört
-    ortak sözcük ve yüksek benzerlik (Jaccard) gerekir, yoksa farklı şartları yutabilir."""
+    """Drops items that say the same thing in other words; those overlapping `against` go too. Cautious: needs four
+    shared words and high similarity (Jaccard), or it may swallow different conditions."""
     kept: list[str] = []
     pool = [_words(x) for x in (against or [])]
     for it in items:
@@ -863,7 +866,7 @@ def dedupe(items: list[str], against: list[str] | None = None, same: float = 0.5
 
 
 class _QuietUI:
-    """Kurul üyelerinin arayüzü: izin soruları (sadece kontrolcü) ana arayüze gider, gerisi sessiz."""
+    """Council members' UI: permission questions (verifier only) go to the main UI; the rest is silent."""
 
     def __init__(self, base: Any, council: Any = None, role: str = ""):
         self.base, self.council, self.role = base, council, role
@@ -872,7 +875,7 @@ class _QuietUI:
         return lambda *a, **k: None
 
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
-        """Üyenin o an ne yaptığı (dosya okuyor, arıyor...) ekranda görünsün."""
+        """Show what the member is doing right now (reading a file, searching...) on screen."""
         if self.council is not None:
             act = self.council.activity.setdefault(self.role, {})
             act["last"] = f"{name} {summary}".strip()[:120]

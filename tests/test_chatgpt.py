@@ -1,4 +1,4 @@
-"""ChatGPT hesabıyla giriş: OAuth akışı, anahtar yenileme, Codex arka ucuna istek biçimi ve akış çözümü."""
+"""ChatGPT account sign-in: OAuth flow, key refresh, request format for the Codex backend, stream parsing."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def tokens(exp_in=3600, email="a@b.c", acc="acc1", refresh="r1"):
 def pc():
     from alice.config import default_config_dict
 
-    data = default_config_dict()["providers"]["chatgpt"]  # varsayılan ayarda tanımlı
+    data = default_config_dict()["providers"]["chatgpt"]  # defined in the default settings
     cfg = make_config({"brain": ["chatgpt:gpt-5.5"]}, {"chatgpt": data})
     return cfg.providers()["chatgpt"]
 
@@ -63,7 +63,7 @@ def test_messages_become_responses_items():
     assert items[1]["content"] == [{"type": "output_text", "text": "bakıyorum"}]
     assert items[2] == {"type": "function_call", "call_id": "c1", "name": "read_file", "arguments": "{\"path\": \"a\"}"}
     assert items[3] == {"type": "function_call_output", "call_id": "c1", "output": "içerik"}
-    # Arka uç kendi istemini isterse: talimat Codex'inki, ALICE'inki geliştirici mesajı olarak başta
+    # If the backend wants its own prompt: the instructions are Codex's, and ALICE's go first as a developer message
     instr, items = to_responses(msgs, codex_prompt="CODEX")
     assert instr == "CODEX" and items[0]["role"] == "developer"
     assert to_tools([{"type": "function", "function": {"name": "x", "description": "d", "parameters": {}}}]) == [
@@ -97,11 +97,11 @@ def test_tool_result_images_go_as_input_image_not_base64_text():
     out1, out2, img, user = items[3:]
     assert out1["type"] == "function_call_output" and out1["output"].startswith("ekran") and b64 not in out1["output"]
     assert out2["type"] == "function_call_output" and b64 not in out2["output"] and '"name": "x"' in out2["output"]
-    # Görüntü, araç çıktıları bitince (aralarına girmeden) kullanıcı mesajı olarak gider.
+    # The image is sent as a user message after the tool outputs end (not between them).
     assert img == {"type": "message", "role": "user", "content": [
         {"type": "input_image", "image_url": f"data:image/png;base64,{b64}"}]}
     assert user["content"] == [{"type": "input_text", "text": "devam"}]
-    _, items = to_responses(msgs[:3])  # konuşma araç sonucuyla bitiyorsa da görüntü gönderilir
+    _, items = to_responses(msgs[:3])  # the image is also sent when the conversation ends with a tool result
     assert items[-1]["role"] == "user" and items[-1]["content"][0]["type"] == "input_image"
 
 
@@ -148,14 +148,14 @@ def test_chat_maps_response_format_and_does_not_send_max_tokens():
            response_format={"type": "json_schema", "json_schema": {"name": "cevap", "schema": schema, "strict": True}})
     b = bodies[-1]
     assert b["text"] == {"format": {"type": "json_schema", "name": "cevap", "schema": schema, "strict": True}}
-    # Codex arka ucu max_output_tokens/temperature'ı reddediyor: gönderilmez.
+    # The Codex backend rejects max_output_tokens/temperature, so they are not sent.
     assert "max_output_tokens" not in b and "temperature" not in b
     p.chat("gpt-5.5", [{"role": "user", "content": "x"}], response_format={"type": "json_object"})
     b = bodies[-1]
     assert b["text"] == {"format": {"type": "json_object"}}
     assert b["input"][-1]["role"] == "developer" and "JSON" in b["input"][-1]["content"][0]["text"]
     p.chat("gpt-5.5", [{"role": "user", "content": "JSON ver"}], response_format={"type": "json_object"})
-    assert len(bodies[-1]["input"]) == 1  # girdide JSON geçiyorsa ek mesaj yok
+    assert len(bodies[-1]["input"]) == 1  # no extra message if the input already mentions JSON
     p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
     assert "text" not in bodies[-1]
 
@@ -215,7 +215,7 @@ def test_browser_login_flow(monkeypatch):
         return chatgpt.save_auth(tokens())
 
     monkeypatch.setattr(chatgpt, "exchange", fake_exchange)
-    monkeypatch.setattr(chatgpt, "PORT", 0)  # testte boş bir port
+    monkeypatch.setattr(chatgpt, "PORT", 0)  # an empty port for the test
 
     real_server = chatgpt.HTTPServer
     ports = {}
@@ -241,12 +241,12 @@ def test_browser_login_flow(monkeypatch):
 
 def test_several_accounts_switched_by_hand(isolated_home):
     chatgpt.save_auth(tokens())
-    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # "Hesap ekle": yeni hesap seçili olur
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # "Add account": the new one becomes selected
     accs = chatgpt.accounts()
     assert [(a["email"], a["active"]) for a in accs] == [("a@b.c", False), ("x@y.z", True)]
     assert chatgpt.load_auth()["refresh_token"] == "r2"
     assert chatgpt.use("acc1") and chatgpt.load_auth()["email"] == "a@b.c"
-    # yenileme seçili hesabın üstüne yazar, diğerine dokunmaz
+    # refresh overwrites the selected account and leaves the others untouched
     chatgpt.save_auth({"access_token": tokens()["access_token"]}, key="acc1")
     assert chatgpt.load_auth()["refresh_token"] == "r1" and len(chatgpt.accounts()) == 2
     removed = chatgpt.remove("acc1")
@@ -305,7 +305,7 @@ def test_limits_from_headers_usage_endpoint_and_model_menu():
     cfg = make_config({"brain": ["a:m"]}, {"chatgpt": dict(__import__("alice.config", fromlist=["x"])
                                                           .default_config_dict()["providers"]["chatgpt"])})
     view = {p["name"]: p for p in Router(cfg, provider_factory=lambda p: None, auto_cache={}).catalog_view()}
-    assert [m["ref"] for m in view["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]  # ölçülmeden menüde
+    assert [m["ref"] for m in view["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]  # in the menu before being measured
     assert view["chatgpt"]["note"] == "5 sa: %75"
 
 
@@ -322,7 +322,7 @@ def test_stream_records_limit_headers():
 
 
 def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
-    """Eski sürümde giriş yapılmıştı: model listesi yoktu, menüde chatgpt hiç görünmüyordu."""
+    """Signed in on an older version: there was no model list, so chatgpt never showed up in the menu."""
     from alice.providers.router import Router
 
     chatgpt.save_auth(tokens())
@@ -338,8 +338,8 @@ def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
     cfg = make_config({"brain": ["a:m"]}, {"chatgpt": default_config_dict()["providers"]["chatgpt"]})
     router = Router(cfg, provider_factory=lambda p: None, auto_cache={})
     view = {p["name"]: p for p in router.catalog_view()}
-    # Liste arka planda okunur: hızlı makinede deneme bu satırdan önce bitip hatasını yazmış olabilir (CI'da arada
-    # bir öyle oluyordu); ikisi de doğru durum.
+    # The list is read in the background: on a fast machine the attempt may have finished and written its error
+    # before this line (it happened sometimes on CI); both are correct states.
     assert view["chatgpt"]["models"] == []
     assert view["chatgpt"]["loading"] or "404" in (view["chatgpt"].get("error") or "")
     for _ in range(50):
@@ -348,7 +348,7 @@ def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
         time.sleep(0.05)
     assert calls == [1] and "404" in chatgpt.models_error()
     view = {p["name"]: p for p in router.catalog_view()}
-    assert "404" in view["chatgpt"]["error"] and calls == [1]  # hemen tekrar denenmez
+    assert "404" in view["chatgpt"]["error"] and calls == [1]  # not retried right away
 
     def ok(self):
         chatgpt._update_active(models=["gpt-5.5"])
@@ -365,7 +365,7 @@ def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
 
 
 def test_empty_list_is_an_error_and_manual_add_works(monkeypatch):
-    """Kullanıcı: dakikalarca 'okunuyor' yazdı. Boş liste artık hata; model adı elle eklenebilir."""
+    """User: 'okunuyor' (reading) showed for minutes. Empty list is now an error; a model name can be typed in."""
     chatgpt.save_auth(tokens())
     asked = []
 
@@ -378,7 +378,7 @@ def test_empty_list_is_an_error_and_manual_add_works(monkeypatch):
         p.list_models()
     assert [a.get("client_version") for a in asked] == [chatgpt.CLIENT_VERSION, "9.99.0", None]
 
-    assert chatgpt.models_state() == "error"  # hiç denenmemiş, süresi geçmiş sayılır
+    assert chatgpt.models_state() == "error"  # never attempted, treated as expired
     chatgpt._update_active(models_tried=time.time())
     assert chatgpt.models_state() == "loading"
     chatgpt._update_active(models_tried=time.time() - chatgpt.LOADING_MAX - 1)
@@ -398,9 +398,10 @@ def _limit_429(secs=1348566):
 
 
 def test_limited_account_switches_to_a_free_one():
-    """Canlı kayıt (9 Kasım): seçili hesap limite takılınca kayıtlı boş hesap dururken hata verip Gemini'ye düşüyordu."""
+    """Live log (9 Nov): when the selected account hit its limit, it errored and fell back to Gemini
+    while a saved, unused account sat idle."""
     chatgpt.save_auth(tokens())
-    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # seçili: acc2
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # selected: acc2
     seen = []
 
     def handler(req):
@@ -412,7 +413,7 @@ def test_limited_account_switches_to_a_free_one():
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler)))
     assert p.chat("gpt-5.5", [{"role": "user", "content": "x"}]).text == "tamam"
     assert seen == ["acc2", "acc1"] and chatgpt.load_auth()["email"] == "a@b.c"
-    # dolu hesabın sıfırlanması sunucunun söylediği süreyle kaydedildi; bir sonraki istek ona hiç gitmez
+    # the used-up account's reset was saved with the time the server gave; the next request never goes to it
     accs = chatgpt._store()["accounts"]
     assert accs["acc2"]["limits"]["primary"]["reset_at"] > time.time() + 1_000_000
     assert chatgpt.use("acc2") and p.chat("gpt-5.5", [{"role": "user", "content": "x"}]).text == "tamam"
@@ -420,7 +421,8 @@ def test_limited_account_switches_to_a_free_one():
 
 
 def test_all_accounts_limited_is_quota_with_reset_time():
-    """Hepsi doluyken hata 20 sn'lik hız sınırı sayılıyor, aynı hesaplara yarım dakikada bir yeniden gidiliyordu."""
+    """When all were used up, the error was counted as a 20 s rate limit and the same accounts were
+    retried every half minute."""
     chatgpt.save_auth(tokens())
     chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(lambda req: _limit_429(600))))
@@ -438,10 +440,10 @@ def test_single_account_limit_keeps_server_reset_time():
 
 
 def test_temporary_rate_limit_does_not_mark_the_account_as_used_up():
-    """Geçici 429 hesabı bir saat "dolu" göstermez; istek yine de başka hesabı dener. Hepsi geçici sınırdaysa hata
-    kota değil hız sınırı olarak router'a gider."""
+    """A temporary 429 does not mark the account "used up" for an hour; the request still tries another one.
+    If all accounts are under a temporary limit, the error goes to the router as a rate limit, not a quota."""
     chatgpt.save_auth(tokens())
-    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # seçili: acc2
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # selected: acc2
     seen = []
 
     def handler(req):
@@ -452,7 +454,7 @@ def test_temporary_rate_limit_does_not_mark_the_account_as_used_up():
 
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler)))
     assert p.chat("gpt-5.5", [{"role": "user", "content": "x"}]).text == "tamam" and seen == ["acc2", "acc1"]
-    assert not (chatgpt._store()["accounts"]["acc2"].get("limits") or {}).get("primary")  # dolu işaretlenmedi
+    assert not (chatgpt._store()["accounts"]["acc2"].get("limits") or {}).get("primary")  # not marked as used up
 
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(
         lambda req: httpx.Response(429, json={"error": {"message": "Too many requests"}}))))
@@ -462,14 +464,15 @@ def test_temporary_rate_limit_does_not_mark_the_account_as_used_up():
 
 
 def test_request_keeps_its_own_account_when_another_chat_switches():
-    """İstek başladığı hesapla gider ve limit o hesaba yazılır; arada seçili hesap değişse de."""
+    """The request goes out with the account it started with, and the limit is written to that account,
+    even if the selected account changes in the meantime."""
     chatgpt.save_auth(tokens())
-    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # seçili: acc2
+    chatgpt.save_auth(tokens(email="x@y.z", acc="acc2", refresh="r2"))  # selected: acc2
     seen = []
 
     def handler(req):
         seen.append(req.headers.get("chatgpt-account-id"))
-        chatgpt.use("acc1")  # istek sürerken başka bir sohbet hesabı değiştirdi
+        chatgpt.use("acc1")  # another chat switched the account while the request was running
         return httpx.Response(200, headers={"x-codex-primary-used-percent": "40", "x-codex-primary-window-minutes": "300"},
                               content=sse({"type": "response.output_text.delta", "delta": "ok"}))
 
@@ -477,14 +480,14 @@ def test_request_keeps_its_own_account_when_another_chat_switches():
     p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
     accs = chatgpt._store()["accounts"]
     assert seen == ["acc2"] and accs["acc2"]["limits"]["primary"]["used_percent"] == 40
-    assert not accs["acc1"].get("limits")  # limit yanlış hesaba yazılmadı
-    # süresi dolmuş anahtar yenilenirken seçili hesap değişmez
+    assert not accs["acc1"].get("limits")  # the limit was not written to the wrong account
+    # the selected account does not change when an expired key is refreshed
     chatgpt.save_auth({"access_token": tokens()["access_token"]}, key="acc2")
     assert chatgpt._store()["active"] == "acc1"
 
 
 def test_stream_cut_mid_tool_call_is_an_error_not_an_empty_call():
-    """Bitiş olayı gelmeden kesilen akışta argümanları gelmemiş araç çağrısı boş argümanla çalıştırılmamalı."""
+    """A tool call whose arguments never arrived must not run with empty args if the stream is cut before its end."""
     chatgpt.save_auth(tokens())
 
     def handler(req):
@@ -501,12 +504,12 @@ def test_stream_cut_mid_tool_call_is_an_error_not_an_empty_call():
 
 
 def test_concurrent_limit_write_does_not_lose_refreshed_token(monkeypatch):
-    """Bir akışın save_limits'i ile anahtar yenilemenin kaydı aynı anda olunca biri diğerini ezmemeli."""
+    """If a stream's save_limits and a key refresh save at the same time, neither should overwrite the other."""
     chatgpt.save_auth(tokens())
     real_write = chatgpt._write
 
     def slow_write(store):
-        time.sleep(0.15)  # oku-değiştir-yaz arasındaki pencereyi büyüt
+        time.sleep(0.15)  # widen the read-modify-write window
         real_write(store)
 
     monkeypatch.setattr(chatgpt, "_write", slow_write)
@@ -520,7 +523,7 @@ def test_concurrent_limit_write_does_not_lose_refreshed_token(monkeypatch):
 
 
 def test_expired_token_is_refreshed_once_by_concurrent_requests():
-    """refresh_token tek kullanımlık: aynı anda süresi dolan iki istek tek yenileme yapmalı."""
+    """refresh_token is single-use: two requests whose token expires at the same time must do one refresh."""
     chatgpt.save_auth(tokens(exp_in=-10))
     posts = []
 
@@ -557,7 +560,7 @@ def test_token_refresh_keeps_models_and_used_up_mark():
     acc = chatgpt.load_auth("acc1")
     assert acc["refresh_token"] == "r2" and acc["models"] == ["gpt-5.5"]
     assert acc["limits"]["primary"]["used_percent"] == 100.0
-    assert chatgpt._next_account(set()) is None  # dolu hesap yenilemeden sonra da dolu
+    assert chatgpt._next_account(set()) is None  # the used-up account is still used up after the refresh
 
 
 def test_context_overflow_in_stream_is_too_large_not_server():
@@ -588,9 +591,9 @@ def test_added_without_call_id_and_done_with_it_gives_one_call():
     assert [(c["id"], c["function"]["arguments"]) for c in r.message["tool_calls"]] == [("c1", "{\"a\": 1}")]
 
 
-# ------------------------------------------------------------------- gerçek soketle akış süreleri (ilk veri / sessizlik)
+# ------------------------------------------------------------------- real-socket stream timing (first data / silence)
 class _SlowSSE:
-    """Yerel HTTP sunucusu: SSE'yi parça parça (chunked) gönderir; adımlar (gecikme, olay) listesi."""
+    """Local HTTP server: sends SSE in chunks; steps are (delay, event) pairs."""
 
     def __init__(self, steps):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -650,8 +653,8 @@ _DONE = {"type": "response.completed", "response": {"model": "gpt-5.5", "usage":
 
 
 def test_long_silence_after_first_data_is_not_cut(monkeypatch):
-    """İlk veri geldikten sonra uzun düşünme sessizliği ilk veri sınırıyla kesiliyordu: okuma süresi her aralığa
-    uygulanıyordu. Artık parça arası STREAM_READ."""
+    """After the first data arrived, a long thinking pause was cut off by the first-data limit: the read timeout
+    applied to every gap. Now it is STREAM_READ between chunks."""
     srv = _SlowSSE([(0, {"type": "response.created"}), (0.05, _delta("Mer")), (1.5, _delta("haba")), (0, _DONE)])
     try:
         p = _fast_provider(srv.url, monkeypatch)
@@ -668,7 +671,7 @@ def test_no_first_data_still_times_out_at_first_data_limit(monkeypatch):
         with pytest.raises(ProviderError) as ei:
             p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
         assert ei.value.kind == "network" and "ilk cevabı vermedi" in str(ei.value)
-        assert time.monotonic() - t < 3  # STREAM_READ (5 sn) beklenmedi
+        assert time.monotonic() - t < 3  # did not wait for STREAM_READ (5 s)
     finally:
         srv.close()
 

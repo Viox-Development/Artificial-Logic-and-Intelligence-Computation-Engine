@@ -1,26 +1,28 @@
-"""Komut sandbox'ı: run_command'ı izole çalıştır. Komut her yeri okuyabilir ama sadece çalıştığı klasöre (proje) ve
-geçici klasöre yazabilir; böylece yanlış ya da kötü niyetli bir komut (ör. bir web sayfasının kandırdığı) ev
-klasörünü, sistem dosyalarını ya da başka projeleri bozamaz.
+"""Command sandbox: runs run_command in isolation. The command can read everywhere but can only write to the folder
+it runs in (the project) and the temp folder; so a wrong or malicious command (e.g. one tricked by a web page) cannot
+break the home folder, system files or other projects.
 
-Altyapı:
-  * Windows: düşük bütünlük seviyesi (Low Integrity, Chrome/Edge sandbox'ının da kullandığı Windows mekanizması).
-    Komut, bütünlük seviyesini düşüren küçük bir yardımcıdan (alice.sandbox_run) başlar; düşük seviyeli süreç normal
-    dosyalara yazamaz. Proje klasörü bir kez "düşük seviye yazabilir" diye etiketlenir (icacls), geçici klasör
-    LocalLow altındadır. Ağ açık kalır.
-  * Linux: bubblewrap (bwrap): kök dizin salt okunur, proje klasörü yazılabilir, /tmp boş ve geçici; istenirse ağ kapalı.
-  * macOS: sandbox-exec: proje ve geçici klasör dışına yazma yasak; istenirse ağ kapalı.
+Infrastructure:
+  * Windows: Low Integrity level (the Windows mechanism that the Chrome/Edge sandbox also uses).
+    The command starts from a small helper (alice.sandbox_run) that lowers the integrity level; a low-level process
+    cannot write to normal files. The project folder is labeled once as "low can write" (icacls); the temp folder
+    is under LocalLow. Network stays open.
+  * Linux: bubblewrap (bwrap): root directory read-only, project folder writable, /tmp empty and temporary; network
+    can be turned off.
+  * macOS: sandbox-exec: writing outside the project and temp folder is forbidden; network can be turned off.
 
 config.toml [agent]:
   sandbox = "auto"          # off | auto | on
-  sandbox_network = true    # Linux/macOS: false = sandbox'ta ağ yok
+  sandbox_network = true    # Linux/macOS: false = no network in the sandbox
 
-  off : hiç kullanılmaz
-  auto: dış içerik (web, e-posta...) okunan turda komutlar sorulmak yerine sandbox'ta çalışır (varsayılan)
-  on  : her komut sandbox'ta çalışır
+  off : never used
+  auto: when a turn reads external content (web, e-mail...), commands run in the sandbox instead of asking (default)
+  on  : every command runs in the sandbox
 
-Model gerçekten sandbox dışı bir komut gerekiyorsa run_command'a unsandboxed=true verir; bu her zaman onay ister.
-Sandbox kurulamıyorsa (bwrap yok) komut sandbox'sız çalıştırılmaz: auto modda normal onay akışına dönülür, on modda
-hata verilir.
+If the model really needs a command outside the sandbox, it passes unsandboxed=true to run_command; this always
+asks for approval.
+If the sandbox cannot be set up (no bwrap), the command is not run without the sandbox: in auto mode it falls back to
+the normal approval flow, in on mode an error is raised.
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ from pathlib import Path
 from typing import Any
 
 IS_WIN = sys.platform == "win32"
+# Ev klasöründe sandbox'ın yazılabilir alanı olamayacak kişisel klasörler (alt klasörleri dahil).
+PERSONAL_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "OneDrive", ".ssh", ".config")
 MODES = ("off", "auto", "on")
 _probe: dict[str, Any] = {}
 
@@ -51,7 +55,7 @@ def network(ctx: Any) -> bool:
 
 
 def backend() -> tuple[str, str]:
-    """(altyapı adı, sorun). Sorun boşsa kullanılabilir. Sonuç süreç boyunca hatırlanır."""
+    """(infrastructure name, problem). Usable if the problem is empty. The result is remembered for the process lifetime."""
     if "result" in _probe:
         return _probe["result"]
     if IS_WIN:
@@ -74,8 +78,9 @@ def backend() -> tuple[str, str]:
 
 
 def boxable(folder: Path) -> str:
-    """Bu klasör sandbox'ın yazılabilir alanı olabilir mi? Sorun yoksa "". Ev klasörü, sürücü kökü ya da sistem
-    klasörü olamaz: bütün ev klasörünü yazılabilir yapmak sandbox'ı anlamsız kılar (Windows'ta da hepsini etiketlerdi)."""
+    """Can this folder be the sandbox's writable area? If there is no problem, "". A home folder, drive root or
+    system folder cannot be: making the whole home folder writable would defeat the sandbox (on Windows it would
+    label all of it too)."""
     from alice.permissions import is_system_path
 
     try:
@@ -86,6 +91,18 @@ def boxable(folder: Path) -> str:
     if p == Path(p.anchor) or p == home or p in home.parents or is_system_path(p):
         return (f"{p} sandbox alanı olamaz (ev klasörü, kök ya da sistem klasörü); bir proje klasöründe çalış "
                 "ya da cwd ver")
+    # Kişisel klasörler de olamaz: Windows'ta etiketlenen klasöre düşük seviyeli bir komut dosya bırakabilir.
+    # Downloads etiketlenince oradan açılan kurulum dosyaları da düşük yetkiyle çalışıyordu.
+    from alice.config import alice_home
+
+    personal = [home / n for n in PERSONAL_DIRS] + [alice_home()]
+    for d in personal:
+        try:
+            d = d.resolve()
+        except OSError:
+            continue
+        if p == d or d in p.parents:
+            return (f"{p} sandbox alanı olamaz (kişisel klasör: {d.name}); bir proje klasöründe çalış ya da cwd ver")
     return ""
 
 
@@ -98,7 +115,7 @@ def _target(ctx: Any, args: dict[str, Any]) -> Path:
 
 
 def applies(ctx: Any, args: dict[str, Any]) -> bool:
-    """Bu run_command çağrısı sandbox'ta mı çalışacak?"""
+    """Will this run_command call run in the sandbox?"""
     if args.get("unsandboxed"):
         return False
     m = mode(ctx)
@@ -110,17 +127,17 @@ def applies(ctx: Any, args: dict[str, Any]) -> bool:
         if not guard.tainted(ctx):
             return False
     ok = not backend()[1] and not boxable(_target(ctx, args))
-    return ok or m == "on"  # on modda kurulamıyorsa hata (run içinde), auto'da normal onay akışına düşer
+    return ok or m == "on"  # on: error if it cannot be set up (raised in run); auto: falls back to the normal approval flow
 
 
 def usable(ctx: Any, args: dict[str, Any]) -> bool:
-    """Sandbox gerçekten kurulabiliyor ve bu çağrıya uygulanacak mı (izin kararı için)."""
+    """Can the sandbox actually be set up, and does it apply to this call (for the permission decision)?"""
     return applies(ctx, args) and not backend()[1] and not boxable(_target(ctx, args))
 
 
-# ------------------------------------------------------------------------------------------- sarmalama
+# ------------------------------------------------------------------------------------------- wrapping
 def wrap(argv: list[str], cwd: Path, ctx: Any) -> tuple[list[str], dict[str, str]]:
-    """(yeni argv, ek ortam değişkenleri). Kurulamıyorsa RuntimeError."""
+    """(new argv, extra environment variables). RuntimeError if it cannot be set up."""
     name, problem = backend()
     problem = problem or boxable(cwd)
     if problem:
@@ -136,7 +153,7 @@ def wrap(argv: list[str], cwd: Path, ctx: Any) -> tuple[list[str], dict[str, str
     bw = shutil.which("bwrap") or "bwrap"
     out = [bw, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
            "--bind", str(cwd), str(cwd), "--chdir", str(cwd), "--die-with-parent", "--new-session"]
-    for p in secret_paths():  # gizli dosyaların yerine boş dosya/klasör: okunamasınlar
+    for p in secret_paths():  # empty file/folder in place of secret files: they cannot be read
         out += ["--tmpfs", str(p)] if p.is_dir() else ["--ro-bind", "/dev/null", str(p)]
     if not network(ctx):
         out.append("--unshare-net")
@@ -155,13 +172,13 @@ def mac_profile(cwd: Path, net: bool, secrets: list[Path] | None = None) -> str:
     return "".join(rules)
 
 
-# ------------------------------------------------------------------------------------------- gizli bilgiler
-# ~/.alice altındaki anahtar dosyaları. Sandbox her yeri okuyabilir ve (Windows'ta) ağı açık: kandırılmış bir komut
-# API anahtarlarını, abonelik oturumlarını ya da yerel servislerin anahtarlarını okuyup dışarı gönderebilirdi.
+# ------------------------------------------------------------------------------------------- secrets
+# Key files under ~/.alice. The sandbox can read everywhere and (on Windows) has the network open: a tricked command
+# could read API keys, subscription sessions or local service keys and send them out.
 SECRET_NAMES = (".env", ".env.bak", "chatgpt-auth.json", "connect.json", "phone-token", "relay.json",
                 "browser-bridge-token", "browser-ext-id", "cliproxy/keys.txt", "cliproxy/config.yaml", "cliproxy/auths",
                 "cliproxy/auths-disabled")
-# Ortamdan da gizli değer taşıyan değişkenler sandbox'taki sürece verilmez (ALICE .env'i kendi ortamına yükler).
+# Secret-valued environment variables are not given to the sandboxed process (ALICE loads .env into its env).
 _SECRET_ENV_RX = re.compile(r"(?i)(?:_API_?KEY|_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_PASS|_PAT|_CREDENTIALS?)$|"
                             r"^(?:CLIPROXY_|GH_TOKEN$|GITHUB_TOKEN$|ALICE_.*(?:TOKEN|KEY|SECRET))")
 
@@ -174,18 +191,18 @@ def secret_paths() -> list[Path]:
 
 
 def hide_secrets() -> None:
-    """Gizli dosyaları sandbox'tan sakla. Her sandbox komutunda yeniden yapılır: .env gibi dosyalar geçici dosya +
-    yeniden adlandırmayla yazılınca etiket kayboluyor."""
+    """Hide secret files from the sandbox. Redone on every sandbox command: files like .env are written as a temp
+    file + rename, which drops the label."""
     for p in secret_paths():
         try:
             hide_from_sandbox(p)
-        except Exception:  # noqa: BLE001 - etiket konamazsa komut yine çalışır
+        except Exception:  # noqa: BLE001 - if the label cannot be set, the command still runs
             pass
 
 
 def scrub_env(env: dict[str, str], ctx: Any = None) -> dict[str, str]:
-    """Sandbox'taki sürece gidecek ortamdan anahtarları çıkar: .env'den yüklenenler ve adı anahtar gibi olanlar.
-    [agent] sandbox_env_allow = ["AD", ...] ile açıkça gerekenler bırakılabilir."""
+    """Remove keys from the environment passed to the sandboxed process: those loaded from .env and those whose
+    names look like keys. Ones that are explicitly needed can be kept with [agent] sandbox_env_allow = ["AD", ...]."""
     from alice import config as cfg
 
     agent = getattr(getattr(ctx, "config", None), "agent", None)
@@ -202,8 +219,23 @@ def _labels_path() -> Path:
     return alice_home() / "sandbox_dirs.json"
 
 
+_EXE_FIXED: set[str] = set()
+
+
+def _restore_exes(folder: Path) -> None:
+    """Klasördeki .exe'leri normal (Medium) seviyeye döndür. Windows düşük etiketli bir exe'yi düşük bütünlükle
+    başlatır: proje klasörü etiketlenince .venv/Scripts/python.exe de etiketleniyor, ALICE'in kendisi düşük
+    yetkiyle açılıp ~/.alice'e ve Temp'e yazamıyordu ("attempt to write a readonly database"). Hata olursa sessiz
+    geçilir: etiket sandbox'ın çalışmasını engellemez."""
+    try:
+        subprocess.run(["icacls", str(Path(folder) / "*.exe"), "/setintegritylevel", "M", "/T", "/C", "/Q"],
+                       capture_output=True, text=True, timeout=300, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        pass  # icacls missing or timed out: the sandbox still works, only the executables keep the low label
+
+
 def label_low(folder: Path) -> None:
-    """Klasörü düşük bütünlüklü süreçlerin yazabileceği şekilde bir kez etiketle (alt klasörler dahil)."""
+    """Label the folder once so low-integrity processes can write to it (subfolders included)."""
     if not IS_WIN:
         return
     try:
@@ -212,11 +244,16 @@ def label_low(folder: Path) -> None:
         done = set()
     key = str(folder).lower()
     if key in done:
+        if key not in _EXE_FIXED:  # eski sürümün etiketlediği klasörde exe'ler hâlâ düşük olabilir
+            _restore_exes(folder)
+            _EXE_FIXED.add(key)
         return
     r = subprocess.run(["icacls", str(folder), "/setintegritylevel", "(OI)(CI)low", "/T", "/C", "/Q"],
                        capture_output=True, text=True, timeout=300, creationflags=0x08000000)
     if r.returncode != 0:
         raise RuntimeError(f"proje klasörü sandbox için hazırlanamadı (icacls): {(r.stderr or r.stdout)[:200]}")
+    _restore_exes(folder)
+    _EXE_FIXED.add(key)
     done.add(key)
     try:
         _labels_path().parent.mkdir(parents=True, exist_ok=True)
@@ -226,11 +263,11 @@ def label_low(folder: Path) -> None:
 
 
 def hide_from_sandbox(path: Path) -> bool:
-    """Gizli bir dosyayı (telefon anahtarı, aktarma anahtarı) düşük bütünlüklü süreçlerin OKUYAMAYACAĞI şekilde
-    etiketle. Low seviye varsayılan olarak her dosyayı okuyabilir: kandırılmış bir sandbox komutu telefon anahtarını
-    okuyup 127.0.0.1'deki telefon sunucusundan bilgisayarı tam yetkiyle yönetebilirdi (sandbox kaçışı). Etiket: Medium,
-    no-read-up + no-write-up. Klasörde etiket içindeki (ve sonradan oluşacak) dosyalara da geçer. Windows dışında ya
-    da başarısızsa False (dosya yine çalışır)."""
+    """Label a secret file (phone key, relay key) so low-integrity processes CANNOT read it. The Low level can read
+    every file by default: a tricked sandbox command could read the phone key and, through the phone server on
+    127.0.0.1, control the computer with full authority (sandbox escape). Label: Medium, no-read-up + no-write-up.
+    On a folder the label also covers the files inside it (and ones created later). Outside Windows, or on failure,
+    returns False (the file still works)."""
     if not IS_WIN:
         return False
     import ctypes
@@ -267,8 +304,8 @@ def low_temp() -> Path:
 
 
 def lower_integrity() -> None:
-    """Bu sürecin (ve bundan sonra başlatacağı çocukların) bütünlük seviyesini Low yap. Windows'ta bir süreç kendi
-    seviyesini düşürebilir, yükseltemez. Başarısızsa OSError (komut sandbox'sız çalıştırılmasın)."""
+    """Set this process's (and the children it starts from now on) integrity level to Low. On Windows a process can
+    lower its own level but cannot raise it. On failure, OSError (so the command is not run without the sandbox)."""
     import ctypes
     from ctypes import wintypes
 
@@ -280,7 +317,7 @@ def lower_integrity() -> None:
     advapi32.GetLengthSid.argtypes = [ctypes.c_void_p]
     advapi32.SetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
 
-    class SID_AND_ATTRIBUTES(ctypes.Structure):  # noqa: N801 - Windows yapı adı
+    class SID_AND_ATTRIBUTES(ctypes.Structure):  # noqa: N801 - Windows structure name
         _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
 
     class TOKEN_MANDATORY_LABEL(ctypes.Structure):  # noqa: N801

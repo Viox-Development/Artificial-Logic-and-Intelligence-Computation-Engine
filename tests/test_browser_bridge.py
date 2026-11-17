@@ -8,7 +8,7 @@ from alice.tools import browser_bridge as bb
 
 
 def test_bridge_keeps_one_browser_connection_across_clients():
-    pytest.importorskip("websockets")  # "voice" ekstrası; CI bunu kurar
+    pytest.importorskip("websockets")  # "voice" extra; CI installs it
     from websockets.asyncio.client import connect
     from websockets.asyncio.server import serve
 
@@ -30,7 +30,7 @@ def test_bridge_keeps_one_browser_connection_across_clients():
             async with serve(bridge.handle, "127.0.0.1", 0, process_request=bb._health) as srv:
                 url = f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}{bb.PATH}"
                 answers = []
-                for _ in range(2):  # çekirdek iki kez başladı
+                for _ in range(2):  # the core started twice
                     async with connect(url) as c:
                         await c.send(json.dumps({"id": 1, "method": "Target.attachToBrowserTarget"}))
                         answers.append(json.loads(await c.recv()))
@@ -38,10 +38,10 @@ def test_bridge_keeps_one_browser_connection_across_clients():
         return answers
 
     answers = asyncio.run(main())
-    assert len(upstream_conns) == 1  # tarayıcıya tek bağlantı: izin bir kez sorulur
-    assert [a["id"] for a in answers] == [1, 1]  # istemci kendi kimliğini geri alır
+    assert len(upstream_conns) == 1  # one connection to the browser: permission is asked once
+    assert [a["id"] for a in answers] == [1, 1]  # the client gets back its own id
     ids = [m["id"] for m in seen if m["method"] == "Target.attachToBrowserTarget"]
-    assert len(set(ids)) == 2  # tarayıcıya giden kimlikler çakışmaz
+    assert len(set(ids)) == 2  # ids sent to the browser don't collide
     assert {"method": "Target.detachFromTarget", "params": {"sessionId": "S1"}}.items() <= next(
         m for m in seen if m["method"] == "Target.detachFromTarget").items()
 
@@ -59,7 +59,7 @@ def test_bridge_drops_stale_answers_and_sessions():
         b.gen = 2
         b.pending = {10: (1, 5), 11: (2, 6)}
         b.sessions = {"NEW"}
-        await b._from_browser(json.dumps({"id": 10, "result": {}}))  # eski istemcinin cevabı
+        await b._from_browser(json.dumps({"id": 10, "result": {}}))  # answer from the old client
         await b._from_browser(json.dumps({"id": 11, "result": {}}))
         await b._from_browser(json.dumps({"method": "Page.loadEventFired", "sessionId": "OLD", "params": {}}))
         await b._from_browser(json.dumps({"method": "Page.loadEventFired", "sessionId": "NEW", "params": {}}))
@@ -80,7 +80,7 @@ def test_user_endpoint_prefers_bridge(monkeypatch):
 
 
 def test_bridge_keeps_reference_to_upstream_pump_task():
-    # Olay döngüsü görevleri zayıf referansla tutar: referanssız pompa görevi çöp toplayıcıya gidebilir.
+    # The event loop holds tasks only by weak reference: an unreferenced pump task can be garbage-collected.
     class FakeUp:
         def __init__(self):
             self.gate = asyncio.Event()
@@ -108,8 +108,8 @@ def test_bridge_keeps_reference_to_upstream_pump_task():
 
 
 def test_bridge_closes_when_browser_stops_answering():
-    # Soket açık ama tarayıcı cevap vermiyor (Opera uykudan döndü, bağlantı yarı açık): köprü bunu fark edip
-    # kapanmalı, yoksa istemci sonsuza dek bekler.
+    # The socket is open but the browser isn't answering (Opera woke from sleep, half-open connection): the bridge
+    # must notice and close, otherwise the client waits forever.
     class SilentUp:
         def __init__(self):
             self.sent: list[dict] = []
@@ -184,7 +184,7 @@ def test_bridge_stays_up_while_browser_answers_heartbeat():
                            heartbeat_timeout=0.2)
         ref.append(bridge)
         up = await bridge._upstream()
-        await asyncio.sleep(0.3)  # birkaç kalp atışı
+        await asyncio.sleep(0.3)  # a few heartbeats
         alive = not bridge.closed.is_set() and bridge.up is up
         await up.close()
         await asyncio.wait_for(bridge.closed.wait(), 2)
@@ -220,8 +220,8 @@ def test_closing_bridge_refuses_new_clients_and_reports_unhealthy():
 
 
 def test_neutralize_keeps_users_downloads_and_theme():
-    """Canlı kayıt: Opera'da ALICE bağlanınca indirmeler GUID adıyla Playwright'ın geçici klasörüne iniyordu ve bazı
-    siteler açık temaya dönüyordu. Bu komutlar kullanıcının tarayıcısına gitmemeli."""
+    """Live capture: in Opera, once ALICE connected, downloads landed in Playwright's temp folder under GUID names and
+    some sites switched to the light theme. These commands must not reach the user's browser."""
     assert bb.neutralize({"id": 3, "method": "Browser.setDownloadBehavior",
                           "params": {"behavior": "allowAndName", "downloadPath": "C:/tmp/pw"}}) is None
     assert bb.neutralize({"id": 4, "sessionId": "S", "method": "Emulation.setEmulatedMedia", "params": {
@@ -258,13 +258,14 @@ def test_bridge_answers_blocked_commands_itself_and_resets_downloads():
                     return json.loads(await asyncio.wait_for(c.recv(), 3))
 
     reply = asyncio.run(main())
-    assert reply == {"id": 7, "result": {}}  # Playwright beklemesin
+    assert reply == {"id": 7, "result": {}}  # so Playwright doesn't wait
     downloads = [m for m in seen if m["method"] == "Browser.setDownloadBehavior"]
-    assert downloads and all(m["params"] == {"behavior": "default"} for m in downloads)  # yalnız sıfırlama gitti
+    assert downloads and all(m["params"] == {"behavior": "default"} for m in downloads)  # only the reset was sent
 
 
 def test_bridge_survives_one_late_heartbeat():
-    """Meşgul tarayıcı bir kez geç cevap verdi diye bağlantı kopmasın: her kopuş Opera'da yeniden izin demek."""
+    """A busy browser answered late once; the connection must not drop, since every drop
+    means asking for permission again in Opera."""
 
     class FlakyUp:
         def __init__(self):
@@ -285,7 +286,7 @@ def test_bridge_survives_one_late_heartbeat():
             msg = json.loads(raw)
             if msg.get("id") == bb.HEARTBEAT_ID:
                 self.n += 1
-                if self.n != 1:  # ilki kaçırılır
+                if self.n != 1:  # the first one is missed
                     await self.queue.put(json.dumps({"id": msg["id"], "result": {}}))
 
         async def close(self):
@@ -310,8 +311,8 @@ def test_bridge_survives_one_late_heartbeat():
 
 
 def test_bridge_rejects_web_pages_and_rebinding():
-    """Herhangi bir web sayfası ws://127.0.0.1:9339'a bağlanıp kullanıcının tarayıcısını (çerezler, sekmeler)
-    sürememeli: tarayıcılar Origin gönderir, Playwright göndermez."""
+    """Any web page connecting to ws://127.0.0.1:9339 must not be able to drive the user's browser (cookies, tabs):
+    browsers send an Origin, Playwright doesn't."""
     class Conn:
         def respond(self, status, body):
             return (status, body)
@@ -344,8 +345,9 @@ def test_bridge_handshake_with_origin_is_refused():
 
 
 def test_bridge_requires_token_from_local_programs(monkeypatch):
-    """Sandbox'taki bir program Origin göndermeden ws://127.0.0.1:9339'a bağlanıp kullanıcının tarayıcısını
-    sürebiliyordu. Köprü artık her başlayışta anahtar üretir; anahtarsız el sıkışma reddedilir."""
+    """A program in the sandbox could connect to ws://127.0.0.1:9339 without sending an Origin
+    and drive the user's browser. The bridge now generates a key on every start; a handshake
+    without the key is refused."""
     pytest.importorskip("websockets")
     from websockets.asyncio.client import connect
     from websockets.exceptions import InvalidStatus
@@ -377,7 +379,7 @@ def test_bridge_requires_token_from_local_programs(monkeypatch):
         with socket.socket() as so:
             so.bind(("127.0.0.1", 0))
             port = so.getsockname()[1]
-        old = bb.write_token()  # önceki köprünün anahtarı
+        old = bb.write_token()  # the previous bridge's key
         bridge = bb.Bridge(find_upstream=lambda: "ws://x", connect=fake_connect, heartbeat=0)
         task = asyncio.create_task(bb.serve(port, log=lambda s: None, bridge=bridge))
         for _ in range(100):
@@ -385,7 +387,7 @@ def test_bridge_requires_token_from_local_programs(monkeypatch):
             if bb.read_token() != old:
                 break
         token = bb.read_token()
-        assert token and token != old  # her çalışmada yeni anahtar
+        assert token and token != old  # a new key on every run
         with pytest.raises(InvalidStatus):
             async with connect(bb.endpoint(port)):
                 pass

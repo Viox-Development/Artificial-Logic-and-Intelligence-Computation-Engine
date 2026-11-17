@@ -1,4 +1,4 @@
-"""ALICE teşhis ve test araçları: uygulama durumu, servis sağlığı ve test çalıştırma.
+"""ALICE diagnostic and test tools: app state, service health and test runs.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class ServiceDiagnose(Tool):
             else:
                 out.append("Durum: DURDURULDU veya çalışmıyor.")
             
-            # Hataları Store'dan çek (sadece uyarı/hata önem dereceleri)
+            # Fetch errors from the Store (only warning/error severities)
             own_store = False
             st = ctx.state.get("core_store")
             try:
@@ -127,7 +127,7 @@ class ServiceDiagnose(Tool):
                 if own_store:
                     try:
                         st.close()
-                    except Exception:  # noqa: BLE001 - kapanış hatası teşhisi engellemesin
+                    except Exception:  # noqa: BLE001 - a close error must not block the diagnosis
                         pass
 
         if service in ("all", "bg_procs") or service.isdigit():
@@ -177,12 +177,12 @@ class TestRun(Tool):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         
-        # Windows PowerShell / UTF-8 zorlaması (shell.py'deki mantığa benzer)
+        # Windows PowerShell / forced UTF-8 (similar to the logic in shell.py)
         argv = [sys.executable, "-m", "pytest"] if command == "pytest" else [command]
         if command == "pytest" and path:
             argv.append(path)
         elif command != "pytest":
-            # Özel komut ise shell üzerinden çalıştır (shell_argv benzeri)
+            # Custom command: run it through the shell (like shell_argv)
             if IS_WIN:
                 argv = ["powershell", "-NoProfile", "-Command", full_command]
             else:
@@ -208,11 +208,11 @@ class TestRun(Tool):
 
         duration = time.monotonic() - start_time
         
-        # Sonuçları işle
+        # Process the results
         body = out + ("\n[stderr]\n" + err if err.strip() else "")
         
         if filter_noise:
-            # Pytest çıktısını ayrıştır: hem "FAILED x::y - msg" kısa listesi hem "_____ FAIL: test _____" blokları.
+            # Parse pytest output: both the short "FAILED x::y - msg" list and the "_____ FAIL: test _____" blocks.
             summary_match = re.search(r"^=+ (.*?(?:passed|failed|error).*?) in [\d.]+s =+$", body, re.M)
             if not summary_match:
                 summary_match = re.search(r"^=+ (.*) in [\d.]+s =+$", body, re.M)

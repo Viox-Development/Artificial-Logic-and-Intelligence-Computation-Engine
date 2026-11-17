@@ -28,7 +28,7 @@ def test_import_incremental(tmp_path):
     make_db(db, [(now - 600, 12, 72), (now - 540, 0, 255), (now - 480, 30, 75)])
     st = Store(":memory:")
     assert import_gadgetbridge(db, st) == {"watch.hr": 2, "watch.steps": 2}
-    assert import_gadgetbridge(db, st) == {}                      # tekrar içe almaz
+    assert import_gadgetbridge(db, st) == {}                      # does not import again
     make_db(db, [(now - 60, 5, 80)])
     assert import_gadgetbridge(db, st) == {"watch.hr": 1, "watch.steps": 1}
     s = st.stats("watch.steps")
@@ -61,7 +61,7 @@ def test_watch_monitor_imports_folder(tmp_path, monkeypatch):
     make_db(folder / "Gadgetbridge.db", [(int(time.time()) - 100, 10, 70)])
     st = Store(":memory:")
     mon = WatchMonitor(st, str(folder))
-    monkeypatch.setattr("alice.health.watch.time.time", lambda: time.monotonic() + 1e10)  # dosya "eski"
+    monkeypatch.setattr("alice.health.watch.time.time", lambda: time.monotonic() + 1e10)  # the file is "eski" (old)
     mon.collect()
     assert st.last("watch.hr")[1] == 70
 
@@ -80,7 +80,7 @@ def test_phone_server_watch_and_hosts(workdir):
         assert r.json() == {"ok": True, "added": 1} and st.last("watch.hr")[1] == 90
         assert httpx.get(base + "/api/state", headers={"X-Alice-Token": state.token, "Host": "evil.com"}).status_code == 403
         assert httpx.get(f"{base}/quick?t={state.token}").status_code == 200
-        # anahtar kalıcı
+        # the key is persistent
         from alice.app.phone import token
         assert token() == state.token
     finally:

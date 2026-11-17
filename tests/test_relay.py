@@ -1,4 +1,4 @@
-"""Uzaktan erişim: aktarma sunucusundan gelen istekler yerel telefon sunucusuna iletilir, cevap parça parça döner."""
+"""Remote access: requests from the relay are forwarded to the local phone server; the reply comes back in chunks."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ RELAY_HOST = "alice-relay.ornek.workers.dev"
 
 
 class FakeWS:
-    """Worker tarafı: istekleri kuyruğa koyar, bilgisayarın gönderdiklerini toplar."""
+    """Worker side: puts requests into the queue and collects what the computer sends."""
 
     def __init__(self):
         self.inbox: queue.Queue = queue.Queue()
@@ -96,11 +96,11 @@ def test_requests_from_relay_reach_local_server(tunnel):
     send_req(ws, "1", "GET", f"/api/state?t={state.token}", {"Host": RELAY_HOST, "Origin": f"https://{RELAY_HOST}"})
     head, body, end = collect(ws, "1")
     assert head["s"] == 200 and end and "running" in json.loads(body)
-    # Anahtar yine yerel sunucuda kontrol edilir: aktarma sunucusu yetki vermez.
+    # The key is still checked on the local server: the relay server grants no permission.
     send_req(ws, "2", "GET", "/api/state", {"Host": RELAY_HOST})
     head, _, _ = collect(ws, "2")
     assert head["s"] == 403
-    # Gövdeli istek parça parça gelir ve birleşir.
+    # A request with a body arrives in chunks and is reassembled.
     send_req(ws, "3", "POST", "/api/stop", {"Host": RELAY_HOST, "X-Alice-Token": state.token,
                                              "Content-Type": "application/json"}, json.dumps({"sid": "x" * 150}).encode())
     head, body, _ = collect(ws, "3")
@@ -131,5 +131,5 @@ def test_pair_url_carries_relay_address(workdir):
     relay.save_settings("https://alice-relay.ornek.workers.dev/", "s" * 40)
     assert pair_url("192.168.1.5", 8765, "tok").endswith("&r=https%3A%2F%2Falice-relay.ornek.workers.dev")
     assert relay.host() == "alice-relay.ornek.workers.dev"
-    relay.save_settings("http://duz.example", "s" * 40)  # şifresiz aktarma kabul edilmez
+    relay.save_settings("http://duz.example", "s" * 40)  # an unencrypted relay is not accepted
     assert relay.settings() is None

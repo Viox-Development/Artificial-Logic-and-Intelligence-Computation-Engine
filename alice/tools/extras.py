@@ -1,4 +1,4 @@
-"""Eklemelerin araçları: notlar, sabah özeti, haftalık rapor, medya ve kapatma zamanlayıcısı."""
+"""Tools for the extras: notes, morning brief, weekly report, media and shutdown timer."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ class Media(Tool):
         if action == "now":
             return ToolResult(nowplaying.describe(nowplaying.now()))
         if action in nowplaying.CONTROL and nowplaying.control(action):
-            # Tam çalan uygulamaya gider (medya tuşu son odaklanana gidiyordu); sonucu söyle, varsayma
+            # Goes to the app actually playing (the media key used to hit the last-focused one); report, don't assume
             import time
 
             time.sleep(0.7)
@@ -154,8 +154,8 @@ _YT_CACHE: dict[str, tuple[float, list[tuple[str, str]]]] = {}
 
 
 def youtube_search(query: str, limit: int = 5, client: httpx.Client | None = None) -> list[tuple[str, str]]:
-    """YouTube araması: [(başlık, video_id)]. Sayfa HTML'indeki ytInitialData'dan okunur (API anahtarı gerekmez).
-    Sonuçlar 10 dk saklanır: YouTube sırayı her istekte değiştirebiliyor, "ilk video" hep aynı olsun."""
+    """YouTube search: [(title, video_id)]. Read from the ytInitialData in the page HTML (no API key needed).
+    Results are cached for 10 min: YouTube may reorder results on every request, so the "first video" stays the same."""
     import time
 
     key = query.strip().lower()
@@ -167,7 +167,7 @@ def youtube_search(query: str, limit: int = 5, client: httpx.Client | None = Non
         r = c.get("https://www.youtube.com/results", params={"search_query": query, "hl": "tr", "gl": "TR"},
                   headers=YT_HEADERS)
     finally:
-        if client is None:  # her aramada yeni istemci: soketi açık bırakma
+        if client is None:  # new client for every search: don't leave the socket open
             c.close()
     out: list[tuple[str, str]] = []
     for vid, title in YT_VIDEO.findall(r.text):
@@ -185,7 +185,7 @@ def youtube_search(query: str, limit: int = 5, client: httpx.Client | None = Non
 
 
 def with_time(url: str, seconds: int) -> str:
-    """YouTube adresine başlangıç saniyesi ekle/değiştir (&t=120)."""
+    """Add or replace the start time in seconds on a YouTube URL (&t=120)."""
     url = re.sub(r"([?&])t=\d+s?&?", r"\1", url).rstrip("?&")
     return f"{url}{'&' if '?' in url else '?'}t={max(0, int(seconds))}"
 

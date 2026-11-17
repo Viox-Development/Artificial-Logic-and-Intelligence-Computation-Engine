@@ -1,19 +1,19 @@
-"""Kendi aracını yazan ALICE: bir işi yapacak aracı yoksa aracı ve testini kendisi yazar.
+"""ALICE that writes its own tool: when there is no tool for a job, it writes the tool and its test itself.
 
-Akış (araç: make_tool, alice/tools/selftool.py):
-  1. test: model eklentiyi, testini ve bildirgesini (neye erişeceği) verir. Kod bildirgeye göre denetlenir
-     (bildirgede olmayan ağ, klasör ya da uygulama erişimi reddedilir), test kum havuzunda (Windows'ta düşük bütünlük
-     seviyesi: yalnız geçici klasöre yazabilir) süre sınırıyla çalışır.
-  2. install: kullanıcıya ne yaptığı ve neye erişeceği bir cümleyle gösterilir, onay HER ZAMAN istenir (izin
-     sisteminde DANGER). Onay yoksa eklenti klasörüne hiçbir dosya girmez.
-  3. Onaydan sonra araç ~/.alice/plugins/ altına düşer ve aynı konuşmada hemen kullanılır.
+Flow (tool: make_tool, alice/tools/selftool.py):
+  1. test: the model gives the plugin, its test and its manifest (what it will access). The code is checked against
+     the manifest (network, folder or app access not in the manifest is rejected); the test runs in the test sandbox
+     (on Windows low integrity level: it can only write to the temp folder) with a time limit.
+  2. install: the user is shown in one sentence what it does and what it will access; approval is ALWAYS asked
+     (DANGER in the permission system). Without approval no file goes into the plugin folder.
+  3. After approval the tool lands under ~/.alice/plugins/ and is used right away in the same conversation.
 
-Bütün yazılan araçlar ~/.alice/selftools.json'da: ne zaman yazıldı, neden, kaç kez kullanıldı, son hata. Üç kez hata
-veren araç kendiliğinden kapanır. Kod değiştiren, para harcayan, mesaj gönderen ya da silen araçlar (bildirgede
-asks_each_time) her kullanımda ayrıca onay ister.
+Every tool it writes is listed in ~/.alice/selftools.json: when it was written, why, how many times it was used, and
+the last error. A tool that errors three times switches itself off. Tools that change code, spend money, send messages
+or delete (asks_each_time in the manifest) ask for approval on every use.
 
-Sınır: bildirge denetimi koda bakarak yapılır (statik); çalışırken ağ/dosya erişimi işletim sistemi seviyesinde
-kısıtlanmaz. Bu yüzden onay ekranı kısa ve açık tutulur.
+Limit: the manifest check is static (done by reading the code); network and file access at runtime is not restricted
+at the OS level. That is why the approval screen is kept short and clear.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ WRITE_CALLS = {"os.remove", "os.unlink", "os.rmdir", "os.rename", "os.replace", 
                "shutil.rmtree", "shutil.move", "shutil.copy", "shutil.copyfile", "shutil.copytree"}
 
 _lock = threading.Lock()
-_PENDING: dict[str, dict[str, Any]] = {}  # testi geçmiş, onay bekleyen araçlar (süreç boyunca)
+_PENDING: dict[str, dict[str, Any]] = {}  # tools that passed the test and await approval (for the process lifetime)
 
 
-# ---------------------------------------------------------------------- kayıt
+# ---------------------------------------------------------------------- registry
 def registry_path() -> Path:
     return alice_home() / "selftools.json"
 
@@ -77,7 +77,7 @@ def _update(name: str, **kw: Any) -> dict[str, Any] | None:
         return reg[name]
 
 
-# ------------------------------------------------------------------- bildirge
+# ------------------------------------------------------------------- manifest
 def normalize_manifest(m: Any) -> dict[str, Any]:
     m = m if isinstance(m, dict) else {}
 
@@ -116,8 +116,9 @@ def _host(url: str) -> str:
 
 
 def _norm_path(path: str) -> str:
-    """Karşılaştırma için: ~ açılır, ters/düz ve çift eğik çizgiler tek "/" olur, büyük-küçük harf yok sayılır.
-    Kodda çift ters eğik çizgiyle yazılan klasör bildirgedeki aynı klasörle eşleşmiyordu (Steam aracı denemesi)."""
+    """For comparison: ~ is expanded, backslashes and forward slashes (including doubled ones) become a single "/",
+    and case is ignored. A folder written with doubled backslashes in the code did not match the same folder in the
+    manifest (Steam tool trial)."""
     return re.sub(r"[\\/]+", "/", os.path.expanduser(path)).rstrip("/").lower()
 
 
@@ -127,7 +128,7 @@ def _under(path: str, folders: list[str]) -> bool:
 
 
 def check_code(code: str, name: str, manifest: dict[str, Any]) -> list[str]:
-    """Kodu bildirgeye göre denetle. Sorunların listesi; boşsa geçti."""
+    """Check the code against the manifest. A list of problems; empty means it passed."""
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
@@ -181,7 +182,7 @@ def check_code(code: str, name: str, manifest: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(problems))
 
 
-# ---------------------------------------------------------------------- deneme
+# ---------------------------------------------------------------------- trial
 def staging_dir(name: str) -> Path:
     from alice import sandbox
 
@@ -192,8 +193,8 @@ def staging_dir(name: str) -> Path:
 
 
 def file_text(name: str, code: str, manifest: dict[str, Any], need: str) -> str:
-    # "from __future__" satırları dosyanın en başında (açıklamadan hemen sonra) olmalı: başlığın arkasında kalınca
-    # yazılan araç SyntaxError veriyordu (Steam aracı denemesi, 2026-11-03).
+    # The "from __future__" lines must be at the top of the file (right after the docstring): when they came after
+    # the header, the written tool raised SyntaxError (Steam tool trial, 2026-11-03).
     lines = code.strip().splitlines()
     future = [ln for ln in lines if ln.strip().startswith("from __future__ import")]
     body = "\n".join(ln for ln in lines if ln not in future)
@@ -205,7 +206,7 @@ def file_text(name: str, code: str, manifest: dict[str, Any], need: str) -> str:
 
 
 def run_tests(name: str, source: str, test: str, ctx: Any, timeout: float = TEST_TIMEOUT) -> tuple[bool, str]:
-    """Eklentiyi ve testini geçici klasöre yazıp testi kum havuzunda çalıştır. (geçti mi, çıktı)."""
+    """Write the plugin and its test to a temp folder and run the test in the test sandbox. (passed?, output)."""
     from alice import sandbox
 
     d = staging_dir(name)
@@ -214,7 +215,7 @@ def run_tests(name: str, source: str, test: str, ctx: Any, timeout: float = TEST
     (d / f"{name}.py").write_text(source, encoding="utf-8")
     (d / f"test_{name}.py").write_text(test, encoding="utf-8")
     # Geçici klasör testin kendi klasöründe ve gerçek yolu çözülmüş: kullanıcı klasörü iki adla göründüğünde
-    # (kresu -> Hayat) pytest'in tmp_path'i "normalized and relative path değil" diye çöküyordu.
+    # pytest'in tmp_path'i "normalized and relative path değil" diye çöküyordu.
     basetemp = (d / "tmp").resolve()
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--basetemp={basetemp}",
             f"test_{name}.py"]
@@ -237,7 +238,7 @@ def run_tests(name: str, source: str, test: str, ctx: Any, timeout: float = TEST
 
 def prepare(name: str, need: str, description: str, manifest: Any, code: str, test: str, ctx: Any,
             existing: set[str] | None = None) -> tuple[bool, str]:
-    """1. adım: denetle, kum havuzunda dene; geçerse onay bekleyenlere koy."""
+    """Step 1: check, try in the test sandbox; if it passes, put it in the awaiting-approval list."""
     name = (name or "").strip().lower()
     if not NAME.match(name):
         return False, "ad küçük harf, rakam ve _ olmalı, harfle başlamalı (ör. steam_recent)"
@@ -268,7 +269,7 @@ def approval_text(name: str) -> str:
 
 
 def install(name: str) -> tuple[Path, list[Any]]:
-    """2. adım (onaydan sonra): eklenti klasörüne yaz, kayda ekle, yükle. (dosya, araçlar)."""
+    """Step 2 (after approval): write to the plugin folder, add to the registry, load. (file, tools)."""
     from alice import plugins
 
     p = _PENDING.pop(name, None)
@@ -301,10 +302,10 @@ def install(name: str) -> tuple[Path, list[Any]]:
     return path, tools
 
 
-# ------------------------------------------------------------------ izleme
+# ------------------------------------------------------------------ monitoring
 def instrument(loaded: list[Any]) -> list[Any]:
-    """Kendi yazdığı eklentileri işaretle: kapatılmış olanları çıkar, kullanım/hata say, gerekirse her kullanımda
-    onay iste. plugins.load_plugins her yüklemede çağırır."""
+    """Mark the plugins it wrote: drop the disabled ones, count uses and errors, and ask for approval on every use
+    if needed. plugins.load_plugins calls this on every load."""
     reg = load_registry()
     out = []
     for pl in loaded:
@@ -331,15 +332,15 @@ def _wrap(plugin: str, tool: Any, ask: bool) -> None:
     orig = tool.run
 
     def run(ctx, **kw):
-        # Kapatma (3 hata) ve make_tool remove yalnız sonraki yüklemede etkiliydi: araç aynı oturumda listede kalıp
-        # çalışmaya devam ediyordu. Her çağrıda kayda bakılır.
+        # Disabling (3 errors) and make_tool remove only took effect on the next load: the tool stayed in the list
+        # and kept running in the same session. The registry is checked on every call.
         if (load_registry().get(plugin) or {}).get("disabled"):
             raise ToolError(f"{plugin} aracı kapatıldı ya da kaldırıldı (make_tool action=list); yeniden yazmadan "
                             "kullanılamaz")
         try:
             res = orig(ctx, **kw)
         except ToolError:
-            raise  # yanlış kullanım: aracın hatası sayılmaz
+            raise  # misuse: not counted as the tool's error
         except Exception as e:
             record(plugin, error=f"{type(e).__name__}: {e}")
             raise
@@ -354,7 +355,7 @@ def _wrap(plugin: str, tool: Any, ask: bool) -> None:
 
 
 def record(name: str, error: str = "") -> None:
-    """Kullanımı ya da hatayı yaz; MAX_ERRORS hatadan sonra araç kapanır (gece döngüsü düzeltmeyi önerir)."""
+    """Record a use or an error; after MAX_ERRORS errors the tool is switched off (the night loop suggests a fix)."""
     with _lock:
         reg = load_registry()
         info = reg.get(name)
@@ -386,7 +387,7 @@ def listing() -> str:
 
 
 def remove(name: str) -> str:
-    """Eklentiyi silmez: plugins/_kaldirilan/ altına taşır (istenirse geri alınır)."""
+    """Does not delete the plugin: moves it under plugins/_kaldirilan/ (it can be restored if wanted)."""
     from alice import plugins
 
     reg = load_registry()

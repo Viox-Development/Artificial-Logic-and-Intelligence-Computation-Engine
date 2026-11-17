@@ -11,8 +11,8 @@ def test_parse_combo_pynput_style():
     assert parse_combo("<ctrl>+<alt>+a") == (0x2 | 0x1, ord("A"))
     assert parse_combo("<ctrl>+<shift>+<f13>") == (0x2 | 0x4, 0x7C)
     assert parse_combo("<cmd>+space") == (0x8, 0x20)
-    assert parse_combo("<ctrl>+<alt>") is None  # ana tuş yok
-    assert parse_combo("<ctrl>+a+b") is None  # iki ana tuş
+    assert parse_combo("<ctrl>+<alt>") is None  # no main key
+    assert parse_combo("<ctrl>+a+b") is None  # two main keys
     assert parse_combo("<ctrl>+<bilinmeyen>") is None
 
 

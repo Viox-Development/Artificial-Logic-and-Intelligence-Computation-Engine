@@ -1,4 +1,4 @@
-"""alice/tools/web.py için birim testleri: httpx.get/post sahte fonksiyonlarla değiştirilir, ağa çıkılmaz."""
+"""Unit tests for alice/tools/web.py: httpx.get/post are replaced with fake functions, no network access."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def test_html_to_text_structure():
     assert "a & b" in out
     assert "* bir" in out and "* iki" in out
     assert "link (https://x.com)" in out
-    assert "(/rel)" not in out  # göreli linkler eklenmez
+    assert "(/rel)" not in out  # relative links are not added
     for hidden in ("T", "x{}", "alert", "menü", "alt bilgi"):
         assert hidden not in out.split()
 
@@ -47,7 +47,7 @@ def test_html_to_text_whitespace_collapse():
 
 
 def test_html_to_text_nested_skip_and_stray_end_tag():
-    # iç içe atlanan etiketler sayaçla takip edilir; eşleşmeyen kapanış sayaç negatife düşürmez
+    # nested skipped tags are tracked with a counter; an unmatched closing tag does not push the counter below zero
     assert web.html_to_text("<head><script>a</script>b</head>c") == "c"
     assert web.html_to_text("</script>görünür") == "görünür"
 
@@ -101,7 +101,7 @@ def test_web_fetch_missing_content_type(ctx, monkeypatch):
 
 
 def test_web_fetch_binary_content_returns_summary(ctx, monkeypatch):
-    # Resim/zip gibi ikili içerik eskiden r.text ile anlamsız karakter yığını olarak dönüyordu.
+    # Binary content such as images or zip files used to come back via r.text as a meaningless pile of characters.
     png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR" + bytes(range(256)) * 4
 
     def fake_get(url, **kw):
@@ -231,7 +231,7 @@ def test_web_search_errors_become_tool_error(ctx, ddg, monkeypatch):
         web.WebSearch().run(ctx, query="q")
 
 
-# ------------------------------------------------------------------ yeni: arama yedekleri, alan filtresi
+# ------------------------------------------------------------------ new: search fallbacks, domain filter
 
 BING_HTML = ('<ol><li class="b_algo"><h2><a href="https://bing.example/x?a=1&amp;b=2">Bing <b>Bir</b></a></h2>'
              '<div class="b_caption"><p>özet <b>bir</b></p></div></li>'
@@ -266,7 +266,7 @@ def test_web_search_falls_back_to_bing_when_ddg_blocks(ctx, ddg, monkeypatch):
 def test_web_search_domain_filters(ctx, ddg, monkeypatch):
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, "<html></html>"))
-    assert "sonuç yok" == web.WebSearch().run(ctx, query="q", allowed_domains=["eal.example"]).text  # parça değil
+    assert "sonuç yok" == web.WebSearch().run(ctx, query="q", allowed_domains=["eal.example"]).text  # not partial
     out = web.WebSearch().run(ctx, query="q", allowed_domains=["real.example"]).text
     assert ddg["data"] == {"q": "q site:real.example"}
     assert "real.example" in out and "direct.example" not in out
@@ -288,7 +288,7 @@ def test_web_search_uses_brave_when_key_set(ctx, ddg, monkeypatch):
     assert seen["headers"]["X-Subscription-Token"] == "k"
 
 
-# ------------------------------------------------------------------ yeni: web_fetch asıl içerik, sayfalama, prompt
+# ------------------------------------------------------------------ new: web_fetch main content, pagination, prompt
 
 
 def test_html_to_text_main_only_prefers_article():
@@ -301,7 +301,7 @@ def test_html_to_text_main_only_prefers_article():
 
 def test_web_fetch_paginates_with_start(workdir, monkeypatch):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}, tool_output_chars=100))
-    body = "".join(f"{i:03d}" for i in range(100))  # 300 karakter
+    body = "".join(f"{i:03d}" for i in range(100))  # 300 characters
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, body, ctype="text/plain"))
     first = web.WebFetch().run(ctx, url="https://a").text
     assert "start=100" in first and body[:100] in first
@@ -336,7 +336,7 @@ def test_web_fetch_prompt_falls_back_to_text(ctx, monkeypatch):
     assert web.WebFetch().run(ctx, url="https://a", prompt="fiyat").text.endswith("Fiyat 42 TL")
 
 
-# ------------------------------------------------------------------ yeni: http_request
+# ------------------------------------------------------------------ new: http_request
 
 
 def test_http_request_risk_by_method_and_save(ctx):
@@ -390,9 +390,9 @@ def test_http_request_download_to_file(ctx, monkeypatch, workdir):
     assert real_stream is not None
 
 
-# ------------------------------------------------------------------ önbellek (hız)
+# ------------------------------------------------------------------ cache (speed)
 def test_web_fetch_caches_same_url(ctx, monkeypatch):
-    """Aynı sayfa ikinci kez istenince ağa çıkılmaz: ajan aynı dokümana dönüp duruyor."""
+    """Requesting the same page again does not hit the network: the agent keeps returning to the same doc."""
     calls = []
 
     def fake_get(url, **kw):
@@ -420,7 +420,7 @@ def test_web_fetch_errors_are_not_cached(ctx, monkeypatch):
 
 
 def test_web_search_caches_engine_results(ctx, monkeypatch):
-    """Aynı sorgu arka arkaya sorulunca arama motoruna bir kez gidilir."""
+    """The same query asked back to back hits the search engine only once."""
     calls = []
 
     def fake_post(url, data=None, headers=None, timeout=None, follow_redirects=False):
@@ -432,7 +432,7 @@ def test_web_search_caches_engine_results(ctx, monkeypatch):
     first = web.WebSearch().run(ctx, query="aynı sorgu").text
     second = web.WebSearch().run(ctx, query="aynı sorgu").text
     assert first == second and len(calls) == 1
-    # Farklı sorgu önbelleğe takılmaz.
+    # A different query does not hit the cache.
     web.WebSearch().run(ctx, query="başka sorgu")
     assert len(calls) == 2
 
@@ -445,7 +445,7 @@ def test_http_request_interrupted_download_keeps_existing_file(ctx, monkeypatch,
     with pytest.raises(ToolError, match="durdurdu"):
         web.HttpRequest().run(ctx, url="https://a/f.bin", save_to="f.bin")
     assert (workdir / "f.bin").read_bytes() == b"eski ve saglam"
-    assert [p.name for p in workdir.iterdir()] == ["f.bin"]  # yarım .part kalmaz
+    assert [p.name for p in workdir.iterdir()] == ["f.bin"]  # no half-written .part file is left behind
 
 
 def test_http_request_env_secret_in_url_not_echoed(ctx, monkeypatch):

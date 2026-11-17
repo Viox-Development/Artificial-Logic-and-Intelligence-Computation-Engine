@@ -1,4 +1,4 @@
-"""Tur sonu kutusu (next_step), kalıcı dosya kartları ve dosya önizleme."""
+"""Turn-end box (next_step), persistent file cards and file preview."""
 
 from __future__ import annotations
 
@@ -32,10 +32,10 @@ def test_sent_files_survive_reload_and_preview(workdir):
     f.write_text("# Başlık\n\nmetin", encoding="utf-8")
     agent, _, _ = make_agent([tool_call("send_file", {"paths": [str(f)]}), "gösterdim"], workdir)
     agent.run_turn("raporu göster")
-    SENT_FILES.clear()  # uygulama yeniden başladı
+    SENT_FILES.clear()  # app restarted
     items = display_history(agent.messages, agent.tools)
     assert next(i for i in items if i["type"] == "tool")["files"][0]["name"] == "rapor.md"
-    assert str(f) in SENT_FILES  # geçmiş yüklenince yine açılabilir
+    assert str(f) in SENT_FILES  # still openable after history loads
     pv = file_preview(str(f), SENT_FILES)
     assert pv["ok"] and pv["kind"] == "markdown" and "# Başlık" in pv["text"]
 

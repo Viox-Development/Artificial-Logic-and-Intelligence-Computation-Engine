@@ -17,7 +17,7 @@ def test_falls_back_on_rate_limit_and_cools_down():
     b = FakeProvider("b", ["from b", "again b"])
     r = router_with(cfg, {"a": a, "b": b})
     assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "from b"
-    # a soğumada, ikinci istek a'ya hiç gitmemeli
+    # while a is cooling down, the second request must never go to a
     assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "again b"
     assert len(a.calls) == 1
     assert not r.available("a:m1")[0]
@@ -61,7 +61,7 @@ def test_all_fail_waits_for_short_cooldown_then_retries():
     a = FakeProvider("a", [ProviderError("rate_limit", "slow down", 429, retry_after=2), "after wait"])
     slept = []
     r = Router(cfg, provider_factory=lambda pc: a, sleep=slept.append)
-    # sleep sahte olduğu için cooldown'u elle geçmişe çekiyoruz
+    # sleep is fake, so we move the cooldown into the past by hand
     orig = r.available
 
     def avail(ref, now=None, pinned=False):
@@ -185,7 +185,7 @@ def test_seconds_until_reset_uses_pacific_midnight_for_gemini():
 
     from alice.providers.router import seconds_until_reset
 
-    now = datetime(2026, 10, 10, 6, 0, tzinfo=timezone.utc)  # Pasifik 23:00 (PDT) ya da 22:00 (UTC-8)
+    now = datetime(2026, 10, 10, 6, 0, tzinfo=timezone.utc)  # Pacific 23:00 (PDT) or 22:00 (UTC-8)
     assert 3600 <= seconds_until_reset("gemini", now=now) <= 2 * 3600 + 60
     assert abs(seconds_until_reset("groq", now=now) - (18 * 3600 + 60)) < 1
 
@@ -193,7 +193,7 @@ def test_seconds_until_reset_uses_pacific_midnight_for_gemini():
 def test_daily_quota_survives_restart(tmp_path, monkeypatch):
     from alice.providers import router as router_mod
 
-    # Gece yarısına (UTC) birkaç dakika kala koşunca kota zaten sıfırlanmış sayılıyordu: süreyi sabitle.
+    # Running a few minutes before midnight (UTC) counted the quota as already reset: pin the time.
     monkeypatch.setattr(router_mod, "seconds_until_reset", lambda *a, **k: 3600.0)
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
     a = FakeProvider("a", [ProviderError("quota", "per day", 429, daily=True)])
@@ -239,7 +239,7 @@ def test_hidden_models_and_providers_leave_auto_chain_but_pin_still_works():
     r.set_hidden("a", True)
     assert r.chain("brain") == ["b:m3"]
     r.set_hidden("b", True)
-    assert r.chain("brain") == ["a:m1", "a:m2", "b:m3"]  # her şey gizlenirse rol çalışmaz hale gelmesin
+    assert r.chain("brain") == ["a:m1", "a:m2", "b:m3"]  # if everything is hidden, the role must not stop working
     r.set_hidden("a", False)
     r.set_hidden("b", False)
     assert cfg.agent["hidden_models"] == ["a:m1"]
@@ -260,7 +260,8 @@ def test_catalog_view_groups_tested_models_by_provider():
 
 
 def test_catalog_view_explains_provider_with_no_working_model():
-    """Arayüzden eklenen sunucunun hiçbir modeli cevap vermiyorsa kart boş kalmasın, sağlayıcının hatası görünsün."""
+    """If a server added from the UI has no model answering, the card must not stay empty:
+    the provider's error must show."""
     cfg = make_config({"brain": ["a:m1"]}, auto_models=False)
     err = ('[quota] {"error":{"code":"free_rate_limited","message":"Free models are not available to this '
            'account yet."}}')
@@ -279,7 +280,8 @@ GARBLED = ("Projeye tıklamayı denedim ama 项目视图没有找到请再试一
 
 
 def test_garbled_answer_falls_back_to_next_model():
-    """glm-4.7-flash uzun bağlamda Türkçe, Çince, Yunanca karışık uydurma metin üretti: kullanıcıya gösterme."""
+    """glm-4.7-flash produced invented text mixing Turkish, Chinese and Greek on a long context:
+    do not show it to the user."""
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
     a = FakeProvider("a", [GARBLED])
     b = FakeProvider("b", ["İlk projeyi açtım."])
@@ -304,23 +306,24 @@ def test_real_calls_are_recorded_for_reliability():
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
     r = router_with(cfg, {"a": FakeProvider("a", [ProviderError("network", "zaman aşımı (ReadTimeout)")]),
                           "b": FakeProvider("b", ["tamam"])})
-    r._real_clients = True  # gerçek sağlayıcılarla çalışıyormuş gibi (testlerde varsayılan kapalı)
+    r._real_clients = True  # as if running with real providers (off by default in tests)
     assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "tamam"
     assert round(ranking.reliability("a:m1")[1], 3) == 1 and ranking.reliability("b:m2")[1] == 0
     assert ranking.load_health()["b:m2"]["ok"] == 1
 
 
 def test_thinking_model_out_of_budget_retries_with_bigger_max_tokens():
-    # Cerebras qwen küçük max_tokens'ı düşünmeye harcayıp boş dönüyordu: her istekte sıradaki modele düşülüyordu
+    # Cerebras qwen spent a small max_tokens on thinking and returned empty:
+    # every request fell through to the next model
     cfg = make_config({"fast": ["a:think", "b:m"]})
     a = FakeProvider("a", [ProviderError("too_large", "cevap max_tokens'a takıldı, içerik yok"), "a ok", "a again"])
     b = FakeProvider("b", ["unused"])
     r = router_with(cfg, {"a": a, "b": b})
     assert r.chat("fast", [{"role": "user", "content": "x"}], max_tokens=200).text == "a ok"
     assert a.calls[1]["max_tokens"] == 1024 and b.calls == []
-    assert r.size_limit == {}  # girdi büyük değildi, öğrenilen sınır olmamalı
+    assert r.size_limit == {}  # the input was not large, so no learned limit should be stored
     r.chat("fast", [{"role": "user", "content": "x"}], max_tokens=200)
-    assert a.calls[2]["max_tokens"] == 1024  # hatırlanır, ilk denemede geniş pay
+    assert a.calls[2]["max_tokens"] == 1024  # remembered, so the first attempt gets the wide allowance
 
 
 def test_thinking_model_at_max_budget_not_retried_and_backs_off():
@@ -331,10 +334,10 @@ def test_thinking_model_at_max_budget_not_retried_and_backs_off():
     r = router_with(cfg, {"a": a, "b": b})
     r.out_floor["a:think"] = 8192
     assert r.chat("fast", [{"role": "user", "content": "x"}], max_tokens=400).text == "b ok"
-    assert len(a.calls) == 1  # pay zaten en büyükte: aynı istek boşuna tekrarlanmaz
+    assert len(a.calls) == 1  # the budget is already at the max: the same request is not repeated for nothing
     t = __import__("time").monotonic()
     r._penalize("a:think", "a", err(), False, False)
-    assert round((r.cooldown_until["a:think"] - t) / 300) == 2  # ikinci başarısızlık: 10 dk
+    assert round((r.cooldown_until["a:think"] - t) / 300) == 2  # second failure: 10 min
 
 
 def test_repeated_timeouts_back_off_and_reset_on_success():
@@ -346,7 +349,7 @@ def test_repeated_timeouts_back_off_and_reset_on_success():
         r._penalize("a:m", "a", e, False, False)
         waits.append(round((r.cooldown_until["a:m"] - t) / 600))
     assert waits == [1, 2, 4]
-    r.strikes.pop("a:m")  # başarı sayacı sıfırlar
+    r.strikes.pop("a:m")  # success resets the counter
     r._penalize("a:m", "a", e, False, False)
     assert r.strikes["a:m"] == 1
 
@@ -362,7 +365,8 @@ def test_proxy_models_are_split_by_provider_without_chatgpt_duplicates():
     view = {e["name"]: e for e in Router._split_proxy(out, {"cliproxy:kimi-*"})}
     assert "cliproxy" not in view
     assert [m["model"] for m in view["cliproxy:claude-*"]["models"]] == ["claude-opus-5-5"]
-    # Proxy'de ChatGPT hesabı varken doğrudan ChatGPT girişinin grubu ayrıca gösterilmez: tek ChatGPT başlığı.
+    # When the proxy has a ChatGPT account, the direct ChatGPT entry's group is not shown separately:
+    # one ChatGPT heading.
     assert "chatgpt" not in view
     assert [m["model"] for m in view["cliproxy:gpt-*"]["models"]] == ["gpt-6-luna", "gpt-6.1-terra"]
     assert view["cliproxy:kimi-*"]["hidden"] and view["cliproxy:kimi-*"]["label"] == "Kimi"
@@ -376,8 +380,9 @@ def test_pattern_hides_whole_proxy_group():
 
 
 def test_repeated_rate_limit_backs_off_past_the_servers_hint():
-    """Canlı kayıt (9 Kasım): kotası biten Gemini her 429'da "23 sn sonra dene" diyor, süre dolunca yine 429 veriyordu;
-    aynı modele dakikada birkaç kez boşuna gidildi. Üst üste hatada bekleme sunucunun dediğinden uzar."""
+    """Live log (9 Nov): Gemini with its quota used up said "retry after 23 s" on every 429; once that time passed,
+    it returned 429 again, so the same model was hit several times a minute for nothing. On repeated errors, the wait
+    grows past what the server said."""
     import time
 
     cfg = make_config({"brain": ["a:m", "b:m"]})
@@ -386,7 +391,7 @@ def test_repeated_rate_limit_backs_off_past_the_servers_hint():
     r = router_with(cfg, {"a": a, "b": b})
     waits = []
     for _ in range(4):
-        r.cooldown_until.clear()  # süre dolmuş gibi: a yeniden denenir
+        r.cooldown_until.clear()  # as if the time had passed: a is retried
         r.chat("brain", [{"role": "user", "content": "x"}])
         waits.append(round(r.cooldown_until["a:m"] - time.monotonic()))
     assert waits[0] == 23 and waits[1] == 23 and waits[2] == 40 and waits[3] == 80
@@ -413,7 +418,8 @@ def test_long_quota_reset_is_not_cut_to_six_hours():
 
 
 def test_pinned_model_does_not_fall_back_to_the_role_chain():
-    # 11 Kasım: Opus elle seçiliyken 503 verdi, iş sessizce gemini-flash-lite ile sürdü. Elle seçim kesin olmalı.
+    # 11 Nov: while Opus was picked by hand it returned 503, and the work silently continued with gemini-flash-lite.
+    # A manual choice must be final.
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
     a = FakeProvider("a", [ProviderError("server", "503", 503)])
     b = FakeProvider("b", ["from b"])
@@ -427,8 +433,8 @@ def test_pinned_model_does_not_fall_back_to_the_role_chain():
 
 
 def test_pinned_model_is_tried_even_while_cooling_down():
-    # 13 Kasım: elle seçilen model bir kez zaman aşımına düşünce soğumaya giriyor, "devam et" de dakikalarca
-    # "soğumada" diye reddediliyordu. Soğuma ve oturumluk kapatma yalnız otomatik sırayı etkiler.
+    # 13 Nov: once a hand-picked model timed out it went into cooldown, and "continue" was rejected for minutes as
+    # "cooling down". Cooldown and session-long closing only affect the automatic order.
     import time
 
     cfg = make_config({"brain": ["a:m1", "b:m2"]})
@@ -437,10 +443,10 @@ def test_pinned_model_is_tried_even_while_cooling_down():
     r.role_overrides["brain"] = ["a:m1"]
     with pytest.raises(AllProvidersFailed):
         r.chat("brain", [{"role": "user", "content": "hi"}])
-    assert r.cooldown_until["a:m1"] > time.monotonic()  # otomatik sıra için soğumada
+    assert r.cooldown_until["a:m1"] > time.monotonic()  # cooling down for the automatic order
     assert not r.available("a:m1")[0] and r.available("a:m1", pinned=True)[0]
     assert r.chat("brain", [{"role": "user", "content": "devam et"}]).text == "tekrar geldim"
-    r.dead_providers.add("a")  # oturumluk kapatma da elle seçimi durdurmaz
+    r.dead_providers.add("a")  # session-long closing does not stop a hand pick either
     a.script.append("yine")
     assert r.chat("brain", [{"role": "user", "content": "x"}]).text == "yine"
 
@@ -453,7 +459,8 @@ def test_pinned_fallback_can_be_turned_back_on():
 
 
 def test_auto_brain_chain_skips_weak_models(monkeypatch):
-    # Güçlü modellerin kotası dolunca flash-lite / gemma gibi küçük modellere düşülmez; elle yazılanlara dokunulmaz.
+    # When the strong models' quota runs out, do not fall back to small models like flash-lite / gemma;
+    # hand-written entries are left alone.
     from alice.providers import picker
 
     scores = {"a:gemini-3.5-flash": 66, "b:gemini-flash-lite-latest": 44, "b:gemma-4-31b-it": 48}
@@ -462,7 +469,7 @@ def test_auto_brain_chain_skips_weak_models(monkeypatch):
     cfg = make_config({"brain": ["b:mistral-small", "auto"]})
     r = router_with(cfg, {"a": FakeProvider("a", []), "b": FakeProvider("b", [])}, auto_cache=cache)
     assert r.chain("brain") == ["b:mistral-small", "a:gemini-3.5-flash"]
-    # Yalnız küçük modellere erişim varsa rol boş kalmaz.
+    # If only small models are reachable, the role is not left empty.
     weak = {"chains": {"brain": ["b:gemini-flash-lite-latest"]}}
     r2 = router_with(make_config({"brain": ["auto"]}), {"a": FakeProvider("a", []), "b": FakeProvider("b", [])},
                      auto_cache=weak)
@@ -477,14 +484,14 @@ def test_retry_on_same_model_is_not_reported_as_a_switch():
     a = FakeProvider("a", [ProviderError("rate_limit", "429", 429, retry_after=1), "ok"])
     events: list[str] = []
     r = router_with(cfg, {"a": a}, on_event=events.append)
-    r.sleep = lambda s: r.cooldown_until.clear()  # bekleme bitti: soğuma doldu
+    r.sleep = lambda s: r.cooldown_until.clear()  # wait is over: the cooldown has expired
     assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "ok"
     assert not any("modeline geçildi" in e for e in events)
 
 
 def test_subscription_order_claude_then_chatgpt_then_antigravity(monkeypatch):
-    """Ana modelin otomatik sırası abonelikle başlar: önce Claude hesapları, hepsi kapalıysa ChatGPT, sonra
-    Antigravity. Bütün hesapları dolu/girişi düşmüş servis sıraya hiç girmez."""
+    """The main model's automatic order starts with subscriptions: Claude accounts first, then ChatGPT if those are
+    all off, then Antigravity. A service whose accounts are all full or whose login has lapsed never enters the order."""
     from alice.app import cliproxy
     from alice.providers import picker
 
@@ -504,11 +511,11 @@ def test_subscription_order_claude_then_chatgpt_then_antigravity(monkeypatch):
     r._real_clients = True
     monkeypatch.setattr(cliproxy, "live_models", lambda: ["claude-opus-5-5", "gpt-6.1-terra"])
     monkeypatch.setattr(cliproxy, "groups_ready", lambda: {"claude": False, "codex": True})
-    assert r.subscription_chain() == ["cliproxy:gpt-6.1-terra"]  # Claude hesaplarının girişi düşmüş: atlanır
+    assert r.subscription_chain() == ["cliproxy:gpt-6.1-terra"]  # Claude accounts' logins have lapsed: skipped
 
 
 def test_proxy_auth_error_does_not_close_the_whole_proxy():
-    """Claude hesabının girişi düştü diye proxy'deki ChatGPT ve Gemini modelleri oturum boyunca kapanmamalı."""
+    """A lapsed Claude login must not close the ChatGPT and Gemini models on the proxy for the whole session."""
     providers = {"cliproxy": {"base_url": "http://p", "api_key_env": "", "max_input_tokens": 200000}}
     r = router_with(make_config({"brain": ["cliproxy:claude-opus-5-5"]}, providers=providers), {})
     r._penalize("cliproxy:claude-opus-5-5", "cliproxy", ProviderError("auth", "401", 401), False, False)

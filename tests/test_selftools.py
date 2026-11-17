@@ -54,7 +54,7 @@ def clean_pending():
     selftools._PENDING.clear()
 
 
-# ------------------------------------------------------------------ bildirge
+# ------------------------------------------------------------------ manifest
 def test_good_code_passes_manifest_check():
     assert selftools.check_code(GOOD, "steam_recent", NO_NET) == []
 
@@ -88,7 +88,7 @@ def test_declared_access_is_allowed():
     assert selftools.describe_access(selftools.normalize_manifest({})) == "hiçbir şeye erişmez (sadece hesap yapar)"
 
 
-# ---------------------------------------------------------------- akış
+# ---------------------------------------------------------------- flow
 def test_prepare_rejects_before_sandbox(monkeypatch):
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: pytest.fail("denetimi geçmeyen kod denenmemeli"))
     ok, msg = selftools.prepare("steam_recent", "son oyunlar", "listeler", {}, "import httpx\nPLUGIN = 1", "t", None)
@@ -110,7 +110,7 @@ def test_failed_test_means_no_pending(monkeypatch):
 def test_install_only_after_prepare_then_usable_and_tracked(monkeypatch):
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: (True, "1 passed"))
     with pytest.raises(ValueError):
-        selftools.install("steam_recent")  # onay bekleyen yok: dosya yazılmaz
+        selftools.install("steam_recent")  # no pending approval: no file is written
     assert not (plugins.plugin_dir() / "steam_recent.py").exists()
     ok, msg = selftools.prepare("steam_recent", "Steam'de son oynadıklarım", "Steam'de son oynanan oyunları "
                                 "listeler.", NO_NET, GOOD, GOOD_TEST, None)
@@ -135,7 +135,7 @@ def test_three_errors_disable_tool_and_loader_skips_it(monkeypatch):
     info = selftools.load_registry()["steam_recent"]
     assert info["errors"] == 3 and info["disabled"] and "liste boş" in info["last_error"]
     assert "kapalı (3 hata)" in selftools.listing()
-    with pytest.raises(ToolError, match="kapatıldı"):  # aynı oturumda da artık çalışmaz
+    with pytest.raises(ToolError, match="kapatıldı"):  # it no longer runs in the same session either
         tools[0].run(None, n=1)
     assert selftools.load_registry()["steam_recent"]["errors"] == 3
     loaded = plugins.load_plugins(None)
@@ -156,11 +156,11 @@ def test_remove_moves_file_aside(monkeypatch):
     assert "kaldırıldı" in selftools.remove("steam_recent")
     assert not path.exists() and list((plugins.plugin_dir() / "_kaldirilan").glob("steam_recent-*.py"))
     assert selftools.load_registry()["steam_recent"]["disabled"]
-    with pytest.raises(ToolError, match="kaldırıldı"):  # çalışan ajandaki kopyası da durur
+    with pytest.raises(ToolError, match="kaldırıldı"):  # the copy in the running agent stops too
         tools[0].run(None, n=1)
 
 
-# ---------------------------------------------------------------- araç
+# ---------------------------------------------------------------- tool
 def test_make_tool_risk_and_approval_summary(monkeypatch):
     t = MakeTool()
     assert t.risk_for({"action": "list"}) == READ and t.risk_for({"action": "test"}) == EXEC
@@ -189,7 +189,7 @@ def test_make_tool_is_in_a_group():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows düşük bütünlük kum havuzu")
 def test_real_sandbox_runs_test_and_blocks_writes_outside(tmp_path):
-    """Uçtan uca: test gerçekten düşük bütünlük seviyesinde çalışır; ev klasörüne yazamaz."""
+    """End to end: the test really runs at low integrity level and cannot write to the home folder."""
     ctx = SimpleNamespace(config=SimpleNamespace(agent={}))
     ok, out = selftools.run_tests("steam_recent", selftools.file_text("steam_recent", GOOD, NO_NET, "x"), GOOD_TEST,
                                   ctx)
@@ -203,14 +203,14 @@ def test_real_sandbox_runs_test_and_blocks_writes_outside(tmp_path):
 
 
 def test_future_import_stays_first_and_double_backslash_paths_match():
-    """Canlı kayıt (Steam aracı): başlık "from __future__"ı ikinci sıraya itip SyntaxError verdiriyordu; kodda çift
-    ters eğik çizgiyle yazılan klasör bildirgedekiyle eşleşmiyordu."""
+    """Live record (Steam tool): the header pushed "from __future__" to the second line and raised a
+    SyntaxError; a folder written with a doubled backslash in the code did not match the manifest."""
     import ast
 
     from alice import selftools
 
     src = selftools.file_text("steam_x", "from __future__ import annotations\nX: int = 1\n", {"folders": []}, "n")
-    ast.parse(src)  # SyntaxError olmamalı
+    ast.parse(src)  # must not raise SyntaxError
     compile(src, "steam_x.py", "exec")
     assert src.index("from __future__") < src.index("MANIFEST")
     folder = "C:" + "\\" + "Program Files (x86)" + "\\" + "Steam"

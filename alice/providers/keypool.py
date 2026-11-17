@@ -1,14 +1,16 @@
-"""Anahtar havuzu: bir sağlayıcının birden çok API anahtarını birlikte kullan.
+"""Key pool: use multiple API keys of one provider together.
 
-.env'de GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3 ... varsa istekler aralarında sırayla paylaştırılır
-([agent] key_strategy = "round-robin", varsayılan) ya da biri bitene kadar ilki kullanılır ("fill-first").
-Bir anahtar hata verince:
-  rate_limit (429) -> o anahtar o modelde retry-after kadar (yoksa 20 sn) bekler, aynı istek sıradakiyle denenir
-  quota            -> günlük kotaysa o anahtar o modelde ertesi sıfırlanmaya kadar kapanır (diske de yazılır),
-                      değilse 1 saat
-  auth             -> anahtar bu oturumda kapanır (yanlış/iptal edilmiş), diğerleriyle devam edilir
-Bütün anahtarlar tükenince son hata router'a gider; router o modeli her zamanki gibi soğumaya alır.
-Akış başladıktan sonra (kullanıcı metni görmeye başladıysa) anahtar değiştirilmez, hata router'a gider.
+If GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3 ... exist in .env, requests are shared between them in turn
+([agent] key_strategy = "round-robin", the default), or the first one is used until it runs out ("fill-first").
+When a key returns an error:
+  rate_limit (429) -> that key waits on that model for retry-after seconds (20 sec if none), and the same request
+                      is tried with the next key
+  quota            -> if it is a daily quota, that key is closed on that model until the reset (also written to
+                      disk), otherwise 1 hour
+  auth             -> the key is closed for this session (wrong or revoked), and work continues with the others
+When all keys are used up, the last error goes to the router; the router puts that model in cooldown as usual.
+Once the stream has started (the user has started seeing the text), the key is not changed;
+the error goes to the router.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ def fingerprint(key: str) -> str:
 class KeyState:
     key: str
     client: Any
-    dead: str = ""  # auth hatası: neden
+    dead: str = ""  # auth error: reason
     uses: int = 0
     errors: int = 0
     last_error: str = ""
@@ -54,14 +56,14 @@ class KeyPool:
         self.cfg = pc
         self.strategy = strategy if strategy in ("round-robin", "fill-first") else "round-robin"
         self.keys = [KeyState(k, make(replace(pc, key_override=k))) for k in pc.api_keys]
-        self.until: dict[tuple[str, str], float] = {}  # (anahtar izi, model) -> monotonic
+        self.until: dict[tuple[str, str], float] = {}  # (key fingerprint, model) -> monotonic
         self.kind: dict[tuple[str, str], str] = {}
         self._next = 0
         self._lock = threading.Lock()
         self.path = path or alice_home() / "key-cooldowns.json"
         self._load()
 
-    # ------------------------------------------------------------------------------- kalıcı günlük kota
+    # ------------------------------------------------------------------------------- persistent daily quota
     def _load(self) -> None:
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8")).get(self.name) or {}
@@ -95,7 +97,7 @@ class KeyPool:
         except OSError:
             pass
 
-    # --------------------------------------------------------------------------------------- seçim
+    # --------------------------------------------------------------------------------------- selection
     def _waiting(self, ks: KeyState, model: str, now: float) -> float:
         return max(self.until.get((ks.fp, model), 0.0), self.until.get((ks.fp, "*"), 0.0)) - now
 
@@ -154,7 +156,7 @@ class KeyPool:
         assert last is not None
         raise last
 
-    # ----------------------------------------------------------------------- sağlayıcı arayüzü
+    # ----------------------------------------------------------------------- provider interface
     def chat(self, model: str, messages: list[dict[str, Any]], **kw: Any) -> Any:
         return self._run(model, lambda c, _e: c.chat(model, messages, **kw))
 
@@ -182,7 +184,7 @@ class KeyPool:
                     pass
 
     def status(self) -> list[dict[str, Any]]:
-        """Arayüz için: her anahtarın son 4 hanesi, kullanım ve beklemedeki modeller (anahtarın kendisi gitmez)."""
+        """For the UI: last 4 characters of each key, usage and waiting models (the key itself is not included)."""
         from alice.config import mask_secret
 
         now = time.monotonic()
@@ -200,7 +202,7 @@ def is_pool(client: Any) -> bool:
 
 
 def client_for(pc: ProviderConfig, make: Callable[[ProviderConfig], Any], strategy: str = "round-robin") -> Any:
-    """Tek anahtar (ya da anahtarsız) sağlayıcıda düz istemci, birden çok anahtarda havuz."""
+    """A plain client for a provider with one key (or no key); a pool when there are several keys."""
     if len(pc.api_keys) > 1:
         return KeyPool(pc, make, strategy)
     return make(pc)

@@ -1,5 +1,5 @@
-"""Uzun konuşmalarda görülen hatalar: çalışırken mesaj (steer), sessiz biten tur, bozuk özet, başlık, arşiv tekrarı,
-yeniden başlatmada kaybolan "okundu" kaydı, ölü Google jetonu, uzaktaki dala geçiş."""
+"""Long-conversation bugs: a steer message sent while working, a silent turn end, a broken summary, a title,
+an archive duplicate, the "okundu" (read) record lost on restart, a dead Google token, a remote branch switch."""
 
 from __future__ import annotations
 
@@ -25,20 +25,20 @@ def test_message_sent_while_working_reaches_the_model_in_the_same_turn(workdir):
     def script(model, messages, tools, **kw):
         seen.append(json.dumps(messages, ensure_ascii=False))
         if len(seen) == 1:
-            # İlk adım sürerken kullanıcı yazıyor (arayüz /api/send -> agent.steer).
+            # The user types while the first step is running (UI /api/send -> agent.steer).
             assert agent.steer("bir de README'ye bak")
             return tool_call("list_dir", {"path": "."})
         return "tamam, README'ye de baktım"
 
     agent, _, _ = make_agent(script, workdir)
     assert agent.run_turn("dosyaları listele") == "tamam, README'ye de baktım"
-    assert "bir de README'ye bak" in seen[1]  # bir sonraki adımda modele gitti, tur bitmesi beklenmedi
+    assert "bir de README'ye bak" in seen[1]  # it reached the model at the next step; the turn did not wait for it
     steer = [m for m in agent.messages if m.get("_steer")]
     assert len(steer) == 1 and steer[0]["_display"] == "bir de README'ye bak"
-    # Araç çağrısı ile sonucu arasına mesaj girmedi.
+    # No message was inserted between the tool call and its result.
     i = agent.messages.index(steer[0])
     assert agent.messages[i - 1]["role"] == "tool"
-    assert not agent.steer("tur bitti") and not agent.take_inbox()  # boştayken kabul edilmez: yeni tur olur
+    assert not agent.steer("tur bitti") and not agent.take_inbox()  # when idle it is not accepted: it starts a new turn
 
 
 def test_message_arriving_with_the_final_answer_keeps_the_turn_going(workdir):
@@ -55,7 +55,7 @@ def test_message_arriving_with_the_final_answer_keeps_the_turn_going(workdir):
     assert agent.run_turn("selam") == "bitti" and calls["n"] == 2
 
 
-# ------------------------------------------------------------------------------------ sessiz bitiş
+# ------------------------------------------------------------------------------------ silent end
 def test_turn_that_runs_out_of_models_says_so_in_the_chat(workdir):
     from alice.providers.openai_compat import ProviderError
 
@@ -74,10 +74,10 @@ def test_promise_to_report_after_background_work_is_not_nagged(workdir):
     agent, _, _ = make_agent(["x"], workdir)
     agent._turn_tools = {"team"}
     assert agent._unfinished("İşi ajanlara verdim. Bitince ne değiştiğini yazacağım.") == ""
-    assert agent._unfinished("Şimdi testleri çalıştıracağım.")  # gerçekten yarım kalan söz yine hatırlatılır
+    assert agent._unfinished("Şimdi testleri çalıştıracağım.")  # a real unfinished promise is still reminded
 
 
-# --------------------------------------------------------------------------------------------- özet
+# --------------------------------------------------------------------------------------------- summary
 def test_summary_that_is_a_tool_call_dump_is_rejected():
     assert not _valid_summary('<tool calls> <tool call name="read_file"> <parameter name="path">a.py</parameter>')
     assert not _valid_summary('-> git({"action": "commit"}) [tool] ok\n[assistant] x\n[tool] y\n[user] z')
@@ -96,7 +96,7 @@ def test_fallback_summary_keeps_user_requests_and_last_answer():
     assert "devam kontrolü" not in s
 
 
-# --------------------------------------------------------------------------------------- oturum
+# --------------------------------------------------------------------------------------- session
 def test_session_title_comes_from_the_first_real_prompt_not_the_summary():
     sid = sess.new_session_id()
     msgs = [{"role": "user", "content": "[Önceki konuşmanın özeti]\n<tool calls>…"},
@@ -112,7 +112,7 @@ def test_session_title_comes_from_the_first_real_prompt_not_the_summary():
 
     assert sess.ensure_title(R(), sid, msgs) == "War Thunder uyarı susturma"
     assert sess.load_meta()[sid]["auto_title"] == "War Thunder uyarı susturma"
-    assert sess.ensure_title(None, sid, msgs) == "War Thunder uyarı susturma"  # bir kez üretilir
+    assert sess.ensure_title(None, sid, msgs) == "War Thunder uyarı susturma"  # generated only once
 
 
 def test_bad_model_title_is_ignored():
@@ -127,11 +127,11 @@ def test_archive_does_not_write_the_same_messages_twice():
     sid = sess.new_session_id()
     old = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
     sess.archive(sid, old)
-    sess.archive(sid, old)  # özetlemeden sonra kayıt düşmüş, aynı mesajlar yeniden özetlendi
+    sess.archive(sid, old)  # a record was written after summarizing, and the same messages were summarized again
     assert [m["content"] for m in sess.load_archive(sid)] == ["a", "b"]
 
 
-# ------------------------------------------------------------------------------- okundu kaydı
+# ------------------------------------------------------------------------------- read record
 def test_reads_are_restored_after_restart_unless_the_file_changed(workdir):
     from alice.tools.files import require_read, restore_reads
 
@@ -145,7 +145,7 @@ def test_reads_are_restored_after_restart_unless_the_file_changed(workdir):
         {"role": "tool", "tool_call_id": "2", "content": "1 y = 1"}]
     saved = time.time()
     later = saved + 30
-    os.utime(b, (later, later))  # sohbet kaydedildikten sonra b değişti
+    os.utime(b, (later, later))  # b changed after the chat was saved
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     assert restore_reads(ctx, msgs, saved) == 1
     require_read(ctx, a.resolve())
@@ -172,7 +172,7 @@ def test_apply_patch_writes_are_restored_as_read_after_restart(workdir):
     require_read(ctx, (workdir / "m.py").resolve())
 
 
-# --------------------------------------------------------------------------------- Google girişi
+# --------------------------------------------------------------------------------- Google sign-in
 def test_dead_refresh_token_is_tried_once_then_reported_without_network(monkeypatch):
     from alice.connect import oauth, store
     from alice.connect.manifest import Auth
@@ -193,9 +193,9 @@ def test_dead_refresh_token_is_tried_once_then_reported_without_network(monkeypa
     for _ in range(3):
         with pytest.raises(oauth.OAuthError, match="yeniden giriş"):
             oauth.refresh(auth, "google_calendar", "cid")
-    assert len(calls) == 1  # ölü jetonla bir daha istek atılmadı
+    assert len(calls) == 1  # no more requests were sent with the dead token
     assert oauth.needs_sign_in("google_calendar")
-    store.save("google_calendar", refresh_token="r2")  # kullanıcı yeniden bağlandı
+    store.save("google_calendar", refresh_token="r2")  # the user reconnected
     assert not oauth.needs_sign_in("google_calendar")
 
 
@@ -206,7 +206,7 @@ needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git yok")
 def _git(cwd, *args):
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@t",
-           # Geçici klasörün sahibi farklı görünebilir (sandbox, CI): git "dubious ownership" deyip reddetmesin.
+           # The temp dir's owner may look different (sandbox, CI); git must not reject it as "dubious ownership".
            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": "*"}
     r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, env=env)
     assert r.returncode == 0, (args, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace"))
@@ -236,7 +236,7 @@ def test_switch_to_a_branch_that_only_exists_on_github(tmp_path):
     assert current_branch(two) == "main"
     names = {b["name"]: b for b in list_branches(two)}
     assert names["ozellik"]["remote"] and not names["main"]["remote"]
-    switch_branch(two, "ozellik")  # yerelde yok: origin'dekini izleyen dal açılır
+    switch_branch(two, "ozellik")  # not local: a branch tracking origin's copy is created
     assert current_branch(two) == "ozellik" and (two / "b.txt").exists()
     assert "zaten" in switch_branch(two, "ozellik")
     with pytest.raises(ToolError, match="ne yerelde ne de origin"):
@@ -246,7 +246,7 @@ def test_switch_to_a_branch_that_only_exists_on_github(tmp_path):
 
 
 def test_client_config_error_is_not_treated_as_a_dead_token(monkeypatch):
-    """unauthorized_client istemci ayar hatasıdır: jeton kilitlenmez, düzeltilince yeniden denenir."""
+    """unauthorized_client is a client config error: the token is not locked and is retried once it is fixed."""
     from alice.connect import oauth, store
     from alice.connect.manifest import Auth
 
@@ -269,13 +269,13 @@ def test_client_config_error_is_not_treated_as_a_dead_token(monkeypatch):
 def test_archive_dedupe_only_matches_whole_trailing_lines():
     sid = sess.new_session_id()
     sess.archive(sid, [{"role": "user", "content": "xa"}])
-    sess.archive(sid, [{"role": "user", "content": "a"}])  # "xa" satırının sonu "a" ile bitiyor ama farklı mesaj
+    sess.archive(sid, [{"role": "user", "content": "a"}])  # the "xa" line ends in "a", but it is a different message
     assert [m["content"] for m in sess.load_archive(sid)] == ["xa", "a"]
 
 
 def test_background_chat_runs_leftover_steer_message_before_closing(monkeypatch, workdir):
-    """Arka plandaki sohbetin turu araya yazılan mesajı alamadan bittiyse mesaj aynı sohbette yeni tur olur; sohbet
-    önce kapatılıp mesaj kapanmış kuyruğa eklenmez."""
+    """If the background chat's turn ends before it picks up a message typed in between, that message becomes a
+    new turn in the same chat; the chat is not closed first, so the message is not added to a closed queue."""
     import threading
 
     from alice.app.server import AppState
@@ -291,7 +291,7 @@ def test_background_chat_runs_leftover_steer_message_before_closing(monkeypatch,
         if len(seen) == 1:
             chat.agent.busy = chat.agent._steering = True
             assert chat.agent.steer("bir de bunu yap")
-            chat.agent.busy = chat.agent._steering = False  # tur mesajı almadan bitti
+            chat.agent.busy = chat.agent._steering = False  # the turn ended without picking up the message
         else:
             done.set()
         return "ok"
@@ -306,5 +306,5 @@ def test_background_chat_runs_leftover_steer_message_before_closing(monkeypatch,
         if closed:
             break
         time.sleep(0.05)
-    assert closed == [2]  # sohbet ancak ikinci tur bitince kapandı
+    assert closed == [2]  # the chat closed only after the second turn finished
     state.shutdown()

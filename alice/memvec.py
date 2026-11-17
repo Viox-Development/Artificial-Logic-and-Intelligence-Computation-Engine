@@ -1,9 +1,10 @@
-"""Hafıza için anlam araması: metni vektöre çevir (embedding), benzerliği kosinüsle ölç.
+"""Semantic search for memory: turn text into a vector (embedding) and measure similarity with cosine.
 
-Kelime eşleşmesi "Unity projem" ile "oyun motorunda yaptığım şey"i bağlayamıyor; vektörler bağlıyor. Vektörler
-ücretsiz bir embedding modeliyle (varsayılan Gemini `gemini-embedding-001`, OpenAI uyumlu /embeddings ucu)
-üretilir ve ~/.alice/memory.db içinde saklanır. Anahtar yoksa, ağ yoksa ya da sağlayıcı hata verirse hafıza
-eskisi gibi kelime aramasıyla çalışır; hata sonrası bir süre denenmez ki her konuşma turu beklemesin.
+Word matching cannot link "Unity projem" (my Unity project) with "oyun motorunda yaptığım şey" (the thing I made
+in a game engine); vectors can. Vectors are produced by a free embedding model (default Gemini
+`gemini-embedding-001`, OpenAI-compatible /embeddings endpoint) and stored in ~/.alice/memory.db. If there is no key,
+no network, or the provider returns an error, memory works as before with word search; after an error it is not
+retried for a while, so every conversation turn does not have to wait.
 """
 
 from __future__ import annotations
@@ -16,11 +17,11 @@ from array import array
 from collections import OrderedDict
 from typing import Any
 
-# Gemini'nin ücretsiz embedding kotası dakikada ~100 metin: 64'lük partiler ikinci partide 429 alıyor, yapılan iş de
-# kaydedilmeden atılıyordu (hafızada hiç vektör yoktu). Küçük partiler, kota dolunca bir dakika bekleme.
+# Gemini's free embedding quota is ~100 texts per minute: 64-item batches got a 429 on the second batch, and the work
+# done was discarded unsaved (memory ended up with no vectors). Small batches; wait a minute once the quota is full.
 BATCH = 20
 QUERY_CACHE = 64
-RATE_WAIT = 70.0  # sn: dakikalık kota dolunca bu kadar sonra yeniden dene
+RATE_WAIT = 70.0  # sec: retry this long after the per-minute quota is exhausted
 
 
 class RateLimited(RuntimeError):
@@ -43,11 +44,11 @@ def normalize(vec: list[float]) -> list[float]:
 
 
 def top(query: list[float], rows: list[tuple[Any, bytes]], k: int = 10, min_score: float = 0.0) -> list[tuple[Any, float]]:
-    """Normalize edilmiş vektörlerle en benzer k satır: [(ref, kosinüs)]. numpy varsa onunla (binlerce satırda hızlı)."""
+    """Top k rows for normalized vectors: [(ref, cosine)]. Uses numpy if present (fast on thousands of rows)."""
     if not rows or not query:
         return []
     dim = len(query)
-    rows = [r for r in rows if len(r[1]) == dim * 4]  # model değişmişse eski boyuttaki vektörler atlanır
+    rows = [r for r in rows if len(r[1]) == dim * 4]  # if the model changed, skip vectors of the old dimension
     if not rows:
         return []
     try:
@@ -63,7 +64,7 @@ def top(query: list[float], rows: list[tuple[Any, bytes]], k: int = 10, min_scor
 
 
 class Embedder:
-    """OpenAI uyumlu /embeddings ucu. embed() hata fırlatabilir; çağıran yakalar ve kelime aramasına döner."""
+    """OpenAI-compatible /embeddings endpoint. embed() may raise; the caller catches it and returns to word search."""
 
     def __init__(self, base_url: str, key: str, model: str, timeout: float = 4.0, client: Any = None,
                  cooldown: float = 600.0):
@@ -108,7 +109,7 @@ class Embedder:
         return out
 
     def query(self, text: str) -> list[float]:
-        """Arama cümlesinin vektörü (son aramalar hatırlanır: aynı soru iki kez ağa çıkmasın)."""
+        """Vector of the query; recent queries are cached so the same question doesn't go to the network twice."""
         text = " ".join(text.split())[:2000]
         with self._lock:
             hit = self._cache.get(text)

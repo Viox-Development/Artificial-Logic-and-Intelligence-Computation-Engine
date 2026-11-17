@@ -1,4 +1,4 @@
-"""alice/core/service.py: tur, görev çalıştırma, durum dosyası, kilit ve otomatik başlatma (alt süreç yok)."""
+"""alice/core/service.py: ticks, task execution, state file, lock and autostart (no subprocesses)."""
 
 from __future__ import annotations
 
@@ -50,13 +50,13 @@ def make_core(tmp_path, monitors=None, run_agent=None, **core_cfg):
     return core, sent
 
 
-# --------------------------------------------------------------- durum dosyası
+# --------------------------------------------------------------- state file
 def test_force_mode_roundtrip():
     force_mode("flight")
     assert force_path().read_text(encoding="utf-8") == "flight"
     force_mode(None)
     assert not force_path().exists()
-    force_mode(None)  # dosya yokken de sorun değil
+    force_mode(None)  # also fine when the file doesn't exist
     force_mode("")
     assert not force_path().exists()
 
@@ -111,13 +111,13 @@ def test_write_state_retries_brief_lock_and_prime_survives_failure(tmp_path, mon
     monkeypatch.setattr(service.time, "sleep", lambda s: None)
     core.write_state(1.0)
     assert json.loads(state_path().read_text(encoding="utf-8"))["ts"] == 1.0
-    fails[0] = 99  # hiç bırakmıyor: açılış (prime) yine de çökmemeli
+    fails[0] = 99  # never releases: startup (prime) must still not crash
     core.prime()
     with pytest.raises(PermissionError):
         core.write_state(2.0)
 
 
-# ----------------------------------------------------------------------- tur
+# ----------------------------------------------------------------------- ticks
 def test_core_config_values(tmp_path):
     core, _ = make_core(tmp_path, interval=5, retention_days=2)
     assert core.interval == 5.0 and core.retention_days == 2.0
@@ -127,7 +127,7 @@ def test_core_default_monitors_include_watch(monkeypatch, tmp_path):
     cfg = Config(default_config_dict())
     cfg.data.setdefault("watch", {})["export_path"] = str(tmp_path / "gb")
     core = Core(cfg, store=Store(":memory:"), rules=RuleSet(tmp_path / "r.json"), tasks=TaskStore(tmp_path / "t.json"))
-    # Akış gözlemcisi her zaman takılı: sohbetten eklenen akış çekirdek yeniden başlamadan çalışsın (boşken iş yapmaz).
+    # The feeds monitor is always attached: a feed added from chat runs without a core restart (empty = no-op).
     assert [getattr(m, "name", "") for m in core.monitors][1:] == ["watch", "feeds", "internet", "telefon"] and core.monitors[0] is core.pc
     cfg.data["watch"]["export_path"] = ""
     core2 = Core(cfg, store=Store(":memory:"), rules=RuleSet(tmp_path / "r.json"),
@@ -152,10 +152,10 @@ def test_mode_event_only_on_change_and_invalid_force_ignored(tmp_path):
     core.tick(1015)
     mode_events = core.store.events(kind="mode")
     assert [e.title for e in mode_events] == ["Mod: uçuş"]
-    force_mode("uzay")  # tanımsız mod: yok sayılır
+    force_mode("uzay")  # undefined mode: ignored
     core.tick(1030)
     assert core.modes.forced is None and core.modes.current == "flight"
-    # mod her turda yazılır
+    # the mode is written on every tick
     assert len(core.store.texts(MODE_KEY)) == 3
 
 
@@ -178,7 +178,7 @@ def test_prune_runs_at_most_hourly(tmp_path, monkeypatch):
 def test_reload_when_files_change_externally(tmp_path):
     core, _ = make_core(tmp_path)
     core.tasks.add(ScheduledTask("0 3 * * *", "ilk"))
-    core.tick(1000)  # ilk görüşte sadece zaman damgası kaydedilir
+    core.tick(1000)  # on the first look only the timestamp is recorded
     other = TaskStore(tmp_path / "tasks.json")
     other.add(ScheduledTask("0 4 * * *", "başka süreçten"))
     st = (tmp_path / "tasks.json").stat()
@@ -189,14 +189,14 @@ def test_reload_when_files_change_externally(tmp_path):
 
 def test_reload_picks_up_file_created_after_start(tmp_path):
     core, _ = make_core(tmp_path)
-    core.tick(1000)  # henüz dosya yok
+    core.tick(1000)  # no file yet
     TaskStore(tmp_path / "tasks.json").add(ScheduledTask("0 4 * * *", "yeni görev"))
     core.tick(1015)
     assert [t.prompt for t in core.tasks.tasks] == ["yeni görev"]
 
 
-# ----------------------------------------------------------------- görevler
-# Windows'ta 1970'e yakın zamanlar datetime.timestamp() ile OSError verir; gerçekçi bir an kullan.
+# ----------------------------------------------------------------- tasks
+# On Windows, times near 1970 raise OSError from datetime.timestamp(); use a realistic moment.
 NOW = 1_760_000_000
 
 
@@ -256,8 +256,8 @@ def test_run_task_uses_original_when_removed_meanwhile(tmp_path):
 
 
 def test_failing_rule_step_does_not_skip_tasks_or_state(tmp_path, monkeypatch):
-    """Kural değerlendirmesi her turda patlasa da görevler çalışmalı ve durum dosyası yazılmalı (yoksa uygulama
-    çekirdeği kapalı sanıyordu); aynı hata günde bir kez kaydedilir."""
+    """Even if rule evaluation fails on every tick, tasks must still run and the state file must be written (otherwise
+    the app thought the core was off); the same error is logged once a day."""
     core, _ = make_core(tmp_path, run_agent=lambda p: "ok")
     ran = []
 
@@ -274,7 +274,7 @@ def test_failing_rule_step_does_not_skip_tasks_or_state(tmp_path, monkeypatch):
     assert len(errs) == 1 and "bozuk kural" in errs[0].body
 
 
-# -------------------------------------------------------------------- döngü
+# -------------------------------------------------------------------- loop
 def test_run_forever_records_start_stop_and_errors(tmp_path, monkeypatch):
     core, _ = make_core(tmp_path)
     calls = []
@@ -298,7 +298,7 @@ def test_run_forever_records_start_stop_and_errors(tmp_path, monkeypatch):
     assert not state_path().exists()
 
 
-# --------------------------------------------------------------- ajan koşucu
+# --------------------------------------------------------------- agent runner
 def test_make_agent_runner_uses_unattended_agent(monkeypatch, tmp_path):
     from tests.conftest import make_config
 
@@ -324,7 +324,7 @@ def test_make_agent_runner_uses_unattended_agent(monkeypatch, tmp_path):
     assert a.prompt.startswith("raporu yaz\n\n") and "Soru sorma" in a.prompt
     assert a.ctx.cwd == tmp_path and cleaned == [a.ctx]
     FakeAgent.reply = "tamam"
-    assert run("x") == "tamam" and len(made) == 2 and made[0] is not made[1]  # her çağrıda temiz ajan
+    assert run("x") == "tamam" and len(made) == 2 and made[0] is not made[1]  # a clean agent on every call
 
     def broken(self, prompt):
         raise RuntimeError("x")
@@ -332,18 +332,18 @@ def test_make_agent_runner_uses_unattended_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(FakeAgent, "run_turn", broken)
     with pytest.raises(RuntimeError):
         run("y")
-    assert len(cleaned) == 3  # hata olsa da temizlenir
+    assert len(cleaned) == 3  # cleaned up even on error
 
 
-# --------------------------------------------------------------------- kilit
+# --------------------------------------------------------------------- lock
 def test_lock_acquire_and_release():
     assert acquire_lock() is True
     lock = alice_home() / "core.pid"
     assert lock.read_text(encoding="utf-8") == str(os.getpid())
-    assert acquire_lock() is True  # kendi pid'imiz
+    assert acquire_lock() is True  # our own pid
     release_lock()
     assert not lock.exists()
-    release_lock()  # dosya yokken sorun değil
+    release_lock()  # fine when the file doesn't exist
 
 
 def test_lock_blocked_by_live_alice_core(monkeypatch):
@@ -355,8 +355,8 @@ def test_lock_blocked_by_live_alice_core(monkeypatch):
     monkeypatch.setattr(service.psutil, "Process", lambda pid: SimpleNamespace(cmdline=lambda: cmd))
     assert acquire_lock() is False
     release_lock()
-    assert lock.exists()  # başkasının kilidi silinmez
-    cmd[:] = ["notepad.exe"]  # pid başka bir programa geçmiş
+    assert lock.exists()  # someone else's lock is not deleted
+    cmd[:] = ["notepad.exe"]  # the pid now belongs to another program
     assert acquire_lock() is True
 
 
@@ -372,10 +372,10 @@ def test_lock_stale_or_garbage(monkeypatch):
 
     monkeypatch.setattr(service.psutil, "pid_exists", lambda pid: True)
     monkeypatch.setattr(service.psutil, "Process", denied)
-    assert acquire_lock() is True  # komut satırı okunamazsa alice değil sayılır
+    assert acquire_lock() is True  # if the command line can't be read, it counts as not alice
 
 
-# -------------------------------------------------------------- tepsi/başlat
+# -------------------------------------------------------------- tray/autostart
 def test_run_tray_without_pystray(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "pystray", None)
     core, _ = make_core(tmp_path)
@@ -447,7 +447,7 @@ def test_install_autostart_windows_uses_powershell(monkeypatch, tmp_path):
 
     calls = []
     monkeypatch.setattr(service.sys, "platform", "win32")
-    monkeypatch.setenv("APPDATA", str(tmp_path / "it's"))  # tırnak kaçışı
+    monkeypatch.setenv("APPDATA", str(tmp_path / "it's"))  # quote escaping
     monkeypatch.setattr(subprocess, "run", lambda args, **kw: calls.append((args, kw)))
     p = install_autostart()
     args, kw = calls[0]
@@ -457,11 +457,11 @@ def test_install_autostart_windows_uses_powershell(monkeypatch, tmp_path):
 
 
 def test_same_step_error_is_logged_once_a_day_even_across_restarts():
-    # Takvim izni dolunca aynı hata her yeniden başlatmada yazılıyordu (2 günde 13 kez).
+    # When calendar permission ran out, the same error was written on every restart (13 times in 2 days).
     events = []
     store = SimpleNamespace(add_event=lambda *a, **k: events.append(a))
     err = ConnectionError("token yenilenemedi")
     service.Core._step_error(SimpleNamespace(store=store), "takvim takibi", err)
-    service.Core._step_error(SimpleNamespace(store=store), "takvim takibi", err)  # yeni süreç gibi: bellek boş
+    service.Core._step_error(SimpleNamespace(store=store), "takvim takibi", err)  # like a new process: empty memory
     service.Core._step_error(SimpleNamespace(store=store), "takvim takibi", ConnectionError("başka hata"))
     assert len(events) == 2

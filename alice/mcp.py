@@ -1,17 +1,17 @@
-"""MCP (Model Context Protocol) istemcisi, stdio taşıması.
+"""MCP (Model Context Protocol) client, stdio transport.
 
-Claude Code'daki gibi dış araç sunucularını bağlar (GitHub, veritabanı, Blender, Unity
-MCP sunucuları vb.). config.toml:
+Connects external tool servers the way Claude Code does (GitHub, databases, Blender, Unity
+MCP servers, etc.). config.toml:
 
     [mcp.servers.dosyalar]
     command = "npx"
-    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/hayat/Projeler"]
+    args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you/Projects"]
     # env = { TOKEN = "${GITHUB_TOKEN}" }   # ${AD} ortamdan / .env'den doldurulur
     # enabled = false
-    # trust_annotations = true   # sunucunun "readOnlyHint" etiketine güven: o araçlar okuma sayılır (plan modunda
-    #                            # da çalışır, onay sormaz). Yoksa etiketli araçlar yazma sayılır (ask modunda sorar).
+    # trust_annotations = true   # trust the "readOnlyHint" tag: those tools count as reads (plan mode too,
+    #                            # no prompt). Otherwise tagged tools count as writes (ask mode prompts).
 
-Her sunucunun araçları ajana `mcp__<sunucu>__<araç>` adıyla eklenir.
+Each server's tools are added to the agent as `mcp__<server>__<tool>`.
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ from alice import __version__
 from alice.config import Config, alice_home
 from alice.tools.base import DANGER, EXEC, READ, WRITE, Tool, ToolContext, ToolError, ToolResult
 
-# Yutulan hatalar için iz: varsayılan olarak sessiz, `logging.basicConfig(level=logging.DEBUG)` ile görünür.
+# Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
 log = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2025-06-18"
-# Geri alınamaz işler (PR birleştirme, dosya/dal/depo silme, kapatma): auto modda da onay ister.
+# Irreversible actions (merging PRs, deleting files/branches/repos, closing): ask for approval even in auto mode.
 _DANGER_NAME = re.compile(r"(^|_)(merge|delete|remove|drop|destroy|close|archive|transfer|force)", re.I)
 
 
@@ -48,7 +48,7 @@ class MCPServer:
         self.name = name
         self.command = command
         self.args = list(args or [])
-        # "${AD}" değerleri ortamdan doldur: token config.toml'a değil .env'e yazılsın.
+        # Fill "${AD}" values from the environment: the token should go in .env, not config.toml.
         self.env = {k: os.path.expandvars(str(v)) for k, v in (env or {}).items()}
         self.timeout = timeout
         self.proc: subprocess.Popen | None = None
@@ -56,13 +56,13 @@ class MCPServer:
         self._lock = threading.Lock()
         self._pending: dict[int, tuple[threading.Event, dict[str, Any]]] = {}
         self.server_info: dict[str, Any] = {}
-        self.trust_annotations = False  # config: trust_annotations = true ise readOnlyHint'e güvenilir
+        self.trust_annotations = False  # config: trust readOnlyHint when trust_annotations = true
 
-    # ------------------------------------------------------------ süreç
+    # ------------------------------------------------------------ process
     def _argv(self) -> list[str]:
         exe = shutil.which(self.command) or self.command
         if sys.platform == "win32" and exe.lower().endswith((".cmd", ".bat")):
-            return ["cmd", "/c", exe, *self.args]  # npx.cmd gibi batch dosyaları doğrudan başlatılamaz
+            return ["cmd", "/c", exe, *self.args]  # batch files such as npx.cmd can't be launched directly
         return [exe, *self.args]
 
     def start(self) -> None:
@@ -70,7 +70,7 @@ class MCPServer:
         kwargs: dict[str, Any] = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-        with open(alice_home() / f"mcp-{self.name}.log", "ab") as err_log:  # çocuk kendi kopyasını alır
+        with open(alice_home() / f"mcp-{self.name}.log", "ab") as err_log:  # the child gets its own copy
             self.proc = subprocess.Popen(self._argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=err_log, env={**os.environ, **self.env}, **kwargs)
         threading.Thread(target=self._reader, daemon=True, name=f"mcp-{self.name}").start()
@@ -102,12 +102,12 @@ class MCPServer:
             for raw in self.proc.stdout:
                 try:
                     msg = json.loads(raw.decode("utf-8", "replace"))
-                except ValueError:  # JSON olmayan günlük satırı (cp1254 dahil): okumayı bırakma
+                except ValueError:  # non-JSON log line (cp1254 included): don't stop reading
                     continue
                 if not isinstance(msg, dict):
                     continue
                 try:
-                    if "method" in msg and "id" in msg:  # sunucudan istek
+                    if "method" in msg and "id" in msg:  # request from the server
                         if msg["method"] == "ping":
                             self._write({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
                         else:
@@ -118,12 +118,12 @@ class MCPServer:
                     if pending:
                         pending[1].update(msg)
                         pending[0].set()
-                except Exception:  # noqa: BLE001 - tek bozuk mesaj okuyucuyu öldürmesin
+                except Exception:  # noqa: BLE001 - one bad message must not kill the reader
                     log.debug("MCP mesajı işlenemedi", exc_info=True)
                     continue
         finally:
-            self.proc.stdout.close()  # süreç bitti: boru tanıtıcısı sızmasın
-            for ev, box in list(self._pending.values()):  # süreç öldü
+            self.proc.stdout.close()  # process ended: don't leak the pipe handle
+            for ev, box in list(self._pending.values()):  # process died
                 box.setdefault("error", {"message": "sunucu kapandı"})
                 ev.set()
 
@@ -147,7 +147,7 @@ class MCPServer:
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self._write({"jsonrpc": "2.0", "method": method, "params": params or {}})
 
-    # ------------------------------------------------------------- araçlar
+    # ------------------------------------------------------------- tools
     def list_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
         cursor = None
@@ -181,7 +181,7 @@ def _safe(name: str) -> str:
 
 
 class MCPTool(Tool):
-    untrusted = True  # sunucunun döndürdüğü içerik (issue, sayfa, dosya) dışarıdan gelir
+    untrusted = True  # content returned by the server (issue, page, file) comes from outside
 
     def __init__(self, server: MCPServer, spec: dict[str, Any]):
         self.server = server
@@ -198,13 +198,14 @@ class MCPTool(Tool):
         elif _DANGER_NAME.search(spec["name"]):
             self.risk = DANGER
         elif ann.get("readOnlyHint"):
-            # "Salt okuma" etiketini sunucu kendisi koyuyor: güvenilmeyen sunucu yazan aracını böyle işaretleyip
-            # plan/ask modunda onaysız çalıştırabilirdi. Yazma sayılır: auto modda yine sormadan çalışır (yolu yok),
-            # ask modunda sorar, plan modunda kapalı. Sunucuya güveniliyorsa: trust_annotations = true.
+            # The server sets the "read-only" tag itself. An untrusted server could use it to mark a write tool
+            # and run it without approval in plan/ask mode. So it counts as a write: auto mode runs it without
+            # asking (there is no path to stop it), ask mode asks, plan mode blocks it. For trusted servers:
+            # trust_annotations = true.
             self.risk = WRITE
         else:
             self.risk = EXEC
-        self.parallel_safe = self.risk == READ  # istemci thread-safe, salt okuma araçları paralel çalışabilir
+        self.parallel_safe = self.risk == READ  # the client is thread-safe, read-only tools can run in parallel
 
     def run(self, ctx: ToolContext, **args: Any) -> ToolResult:
         try:

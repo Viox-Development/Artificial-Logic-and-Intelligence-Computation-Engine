@@ -1,12 +1,12 @@
-"""Eksik paketleri bul ve ALICE'in çalıştığı Python'a kendiliğinden kur.
+"""Find missing packages and install them automatically into the Python ALICE runs on.
 
-ALICE iki ayrı Python ortamından başlayabiliyor (oturum açılınca .venv, elle başlatınca sistem Python'u); paketler
-birinde olup ötekinde olmayınca bir özellik sessizce kapanıyordu (OCR "kurulu değil" görünüyordu). Güncelleyicinin
-extra tahmini de her extra için tek paketin varlığına baktığı için eksik kalan paketi görmüyordu.
+ALICE can start from two different Python environments (.venv when a session opens, the system Python when started
+by hand); when a package was in one but not the other, a feature silently turned off (OCR looked "not installed").
+The updater's extra guess also checked only one package per extra, so it missed the package that was still missing.
 
-Burada kurulu her extra'nın (ve temel bağımlılıkların) paketleri tek tek, bu platformun işaretlerine göre denetlenir;
-eksik varsa `sys.executable -m pip install -e .[extra'lar]` arka planda çalışır. Kullanıcıya verilen kurulum komutu
-da hep bu Python'u gösterir (çıplak "pip" başka bir Python'a kurabilir).
+Here the packages of every installed extra (and the base dependencies) are checked one by one against this platform's
+markers; if any are missing, `sys.executable -m pip install -e .[extras]` runs in the background. The install command
+shown to the user also always shows this Python (a bare "pip" may install into a different Python).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _pyproject() -> dict[str, Any]:
 
 
 def _applies(marker: str) -> bool:
-    """Gereksinim işareti (sys_platform == 'win32' or ...) bu makinede geçerli mi."""
+    """Whether the requirement marker (sys_platform == 'win32' or ...) applies on this machine."""
     if not marker.strip():
         return True
     try:
@@ -67,7 +67,7 @@ def _installed(name: str) -> bool:
 
 
 def missing(extras: list[str] | None = None) -> dict[str, list[str]]:
-    """extra -> bu platformda gerekip kurulu olmayan paketler ("" temel bağımlılıklar)."""
+    """extra -> packages required on this platform but not installed ("" = base dependencies)."""
     data = _pyproject().get("project") or {}
     groups: dict[str, list[str]] = {"": list(data.get("dependencies") or [])}
     opt = data.get("optional-dependencies") or {}
@@ -86,13 +86,13 @@ def missing(extras: list[str] | None = None) -> dict[str, list[str]]:
 
 
 def install_command(extras: list[str]) -> str:
-    """Kullanıcıya gösterilecek komut: bu Python'la, bu kopyaya."""
+    """Command shown to the user: with this Python, for this copy."""
     target = f"{REPO}[{','.join(extras)}]" if extras else str(REPO)
     return f'"{sys.executable}" -m pip install -e "{target}"'
 
 
 def heal(log: Callable[[str], None] = lambda s: None, run=subprocess.run) -> list[str]:
-    """Eksik paket varsa kur. Kurulanları döner (boşsa ya bir şey eksik değildi ya da kurulamadı)."""
+    """Install missing packages if any. Returns what was installed (empty if nothing was missing or install failed)."""
     if not (REPO / "pyproject.toml").exists():
         return []
     lack = missing()
@@ -114,7 +114,7 @@ def heal(log: Callable[[str], None] = lambda s: None, run=subprocess.run) -> lis
     if r.returncode != 0:
         log(f"eksik paketler kurulamadı: {(r.stderr or r.stdout or '').strip()[-300:]}")
         return []
-    try:  # önceki denemede "kurulu değil" diye önbelleğe alınan OCR yeniden denensin
+    try:  # retry OCR, which was cached as "not installed" in an earlier attempt
         from alice.reflex import perceive
 
         perceive._ocr_error = ""

@@ -1,5 +1,5 @@
-"""Saf mantık: oturum dosyaları, kısayol ayrıştırma/Windows döngüleri (sahte ctypes), gözlemciler,
-çekirdek ve görev araçları, model sıralama/ölçüm, site yardımcıları. Ağ, ekran ve opsiyonel paket gerekmez."""
+"""Pure logic: session files, shortcut parsing/Windows message loops (fake ctypes), observers,
+core and task tools, model ranking/measurement, site helpers. No network, screen or optional packages needed."""
 
 from __future__ import annotations
 
@@ -40,15 +40,15 @@ def test_session_save_strips_system_and_images_and_lists(tmp_path):
     session.save("20260101-000000", [{"role": "system"}, {"role": "assistant", "content": "x"}], tmp_path)
     (session.sessions_dir() / "20251231-000000.json").write_text("{bozuk", encoding="utf-8")
     rows = session.list_sessions()
-    assert [r[0] for r in rows] == ["20260102-030405", "20260101-000000"]  # bozuk dosya atlanır
+    assert [r[0] for r in rows] == ["20260102-030405", "20260101-000000"]  # corrupt file is skipped
     assert rows[0][2].startswith("ilk soru ikinci satır") and len(rows[0][2]) == 70
-    assert rows[1][2] == ""  # kullanıcı mesajı yok
+    assert rows[1][2] == ""  # no user message
     assert len(session.list_sessions(limit=1)) == 1
 
 
 def test_session_save_concurrent_writers_keep_file_valid(tmp_path):
-    """Ajan thread'i ve arayüz istekleri aynı oturumu aynı anda kaydedince ortak geçici dosya karışıyor ya da
-    replace hata veriyordu; şimdi hepsi başarılı ve dosya geçerli JSON."""
+    """When the agent thread and UI requests save the same session at the same time, the shared temp file got
+    mixed up or replace failed; now all succeed and the file is valid JSON."""
     errors: list[BaseException] = []
     msgs = [{"role": "system"}] + [{"role": "user", "content": "x" * 2000} for _ in range(200)]
 
@@ -81,7 +81,7 @@ def test_session_load_latest_or_by_id():
 
 def test_new_session_id_format():
     sid = session.new_session_id()
-    base = sid[:15]  # aynı saniyede başka sohbet açıldıysa sonuna -2, -3 eklenir
+    base = sid[:15]  # if another chat opens in the same second, -2/-3 is appended
     assert base[8] == "-" and base.replace("-", "").isdigit() and (sid == base or sid[15] == "-")
 
 
@@ -126,7 +126,7 @@ class _FakeUser32:
         self.unregistered: list[int] = []
         self.posted: list[tuple] = []
 
-    def RegisterHotKey(self, hwnd, i, mods, vk):  # noqa: N802 - Win32 adı
+    def RegisterHotKey(self, hwnd, i, mods, vk):  # noqa: N802 - Win32 name
         if vk in self.refuse:
             return 0
         self.registered.append((i, mods, vk))
@@ -166,7 +166,7 @@ def test_win_hotkeys_registers_dispatches_and_cleans_up(monkeypatch):
                              "": lambda: None})
     assert hk.start() is True
     hk._thread.join(5)
-    assert fired == ["a", "boom", "a"]  # bir kısayolun hatası dinlemeyi durdurmaz
+    assert fired == ["a", "boom", "a"]  # an error in one shortcut does not stop listening
     assert hk.failed == ["<ctrl>+<alt>+c", "<ctrl>+<bozuk>"]
     assert user32.registered == [(1, 0x3 | hotkeys.MOD_NOREPEAT, ord("A")), (2, 0x3 | hotkeys.MOD_NOREPEAT, ord("S"))]
     assert sorted(user32.unregistered) == [1, 2]
@@ -178,7 +178,7 @@ def test_win_hotkeys_all_failed_and_stop_before_start(monkeypatch):
     user32 = _FakeUser32([], refuse={ord("A")})
     _fake_windll(monkeypatch, user32)
     hk = hotkeys.WinHotkeys({"<ctrl>+a": lambda: None})
-    hk.stop()  # başlamadan durdurmak bir şey yapmaz
+    hk.stop()  # stopping before starting does nothing
     assert hk.start() is False
     hk._thread.join(5)
     assert user32.posted == []
@@ -675,13 +675,13 @@ def test_cache_helpers(tmp_path):
 
 
 def test_scores():
-    # Ağırlıklı puan: dört ölçüt 0-100, rolün ağırlıklarıyla.
+    # Weighted score: four metrics 0-100, using the role's weights.
     fast = Probe("a:x", True, 60, latency=0.1, ttft=0.1, tps=300)
     slow = Probe("a:y", True, 60, latency=10, ttft=4)
     assert ranking.metric_scores(fast) == {"zeka": 60, "hiz": 100, "tepki": 100, "akis": 100, "baglam": 50,
-                                            "guven": 100}  # bağlam bilinmiyor
+                                            "guven": 100}  # context unknown
     m = ranking.metric_scores(slow)
-    assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 50  # tps 0 = ölçülemedi, ceza değil
+    assert m["hiz"] < 35 and m["tepki"] < 25 and m["akis"] == 50  # tps 0 = not measured, not a penalty
     assert ranking.fast_score(fast) > ranking.fast_score(slow) + 40
     assert ranking.brain_score_of(90, 2) > ranking.brain_score_of(90, 13) > ranking.brain_score_of(90, 100)
     assert ranking.voice_score(fast) - ranking.voice_score(slow) > ranking.brain_score(fast) - ranking.brain_score(slow)
@@ -694,7 +694,7 @@ def test_weights_change_order_and_are_saved():
     w = ranking.load_weights()
     w["brain"] = {"zeka": 20, "hiz": 60, "tepki": 10, "akis": 10}
     ranking.save_weights(w)
-    assert ranking.brain_score(quick) > ranking.brain_score(smart_slow)  # kayıttan okunur
+    assert ranking.brain_score(quick) > ranking.brain_score(smart_slow)  # read back from the saved file
     assert ranking.load_weights()["voice"] == ranking.DEFAULT_WEIGHTS["voice"]
 
 
@@ -703,8 +703,8 @@ def test_vision_backups_one_per_provider():
     results = {"v:gemini-3.8-flash": {"ok": True, "quality": 93, "latency": 2},
                "v:gemini-3.5-flash": {"ok": True, "quality": 87, "latency": 1},
                "w:gemma-4-31b": {"ok": True, "quality": 68, "latency": 1},
-               "n:kimi-k3": {"ok": True, "quality": 92, "latency": 1},  # görme yok
-               "g:gemini-3-flash": {"ok": True, "quality": 84, "latency": 1},  # zincirdeki sağlayıcı
+               "n:kimi-k3": {"ok": True, "quality": 92, "latency": 1},  # no vision
+               "g:gemini-3-flash": {"ok": True, "quality": 84, "latency": 1},  # provider in the chain
                "w:gpt-oss-20b": {"ok": False, "quality": 60, "latency": 1}}
     assert ranking.vision_backups(results, pcs, ["g:gemini-3.8-flash"]) == ["v:gemini-3.8-flash", "w:gemma-4-31b"]
     assert ranking.vision_backups(results, pcs, ["g:x"], limit=1) == ["v:gemini-3.8-flash"]
@@ -734,11 +734,11 @@ def test_candidates_filters_catalogs():
     assert errors == {"groq": "GROQ_KEY tanımlı değil", "nvidia": "401 yetkisiz"}
     assert catalog["gemini"] == ["bilinmeyen", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-3.8-flash-tts"]
     gem = [r for r in refs if r.startswith("gemini:")]
-    # kaliteye göre; tts hiç yok, bilinmeyen model en sonda yine ölçülür (SambaNova'nın modelleri hiç denenmiyordu)
+    # by quality; no tts; an unknown model last is still measured (SambaNova's models were never tried before)
     assert gem == ["gemini:gemini-3.8-flash", "gemini:gemini-2.5-pro", "gemini:bilinmeyen"]
     orr = [r for r in refs if r.startswith("openrouter:")]
-    assert len(orr) == ranking.PROVIDER_CAP["openrouter"]  # günlük ortak kota: en çok 6 aday
-    assert not any("glm-5" in r or "kimi" in r for r in orr)  # araç desteklemeyen ve ücretli olan yok
+    assert len(orr) == ranking.PROVIDER_CAP["openrouter"]  # shared daily quota: at most 6 candidates
+    assert not any("glm-5" in r or "kimi" in r for r in orr)  # no models that lack tool support or are paid
 
 
 class _FakeClient:
@@ -806,12 +806,12 @@ def test_probe_all_emits_per_model(monkeypatch, probe_router):
 def test_refresh_in_background(monkeypatch, isolated_home):
     cfg = make_config({"brain": ["g:x"]}, PROVIDERS, auto_models=False)
     router = Router(cfg, auto_cache={})
-    assert ranking.refresh_in_background(router) is False  # auto kullanılmıyor
+    assert ranking.refresh_in_background(router) is False  # auto is not used
 
     cfg = make_config({"brain": ["auto"]}, PROVIDERS)
     router = Router(cfg, auto_cache={})
     monkeypatch.setattr(ranking, "load_cache", lambda path=None: {"probed_ts": time.time()})
-    assert ranking.refresh_in_background(router) is False  # önbellek taze
+    assert ranking.refresh_in_background(router) is False  # cache is fresh
 
     monkeypatch.setattr(ranking, "load_cache", lambda path=None: {})
     done = threading.Event()
@@ -828,7 +828,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
 
     assert ranking._refreshing.acquire(blocking=False)
     try:
-        assert ranking.refresh_in_background(router, emit) is False  # zaten ölçülüyor
+        assert ranking.refresh_in_background(router, emit) is False  # already being measured
     finally:
         ranking._refreshing.release()
     assert ranking.refresh_in_background(router, emit) is True
@@ -839,7 +839,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
         raise RuntimeError("ağ yok")
 
     monkeypatch.setattr(ranking, "refresh", boom)
-    for _ in range(100):  # önceki iş kilidi bıraksın
+    for _ in range(100):  # let the previous job release the lock
         if not ranking._refreshing.locked():
             break
         time.sleep(0.02)
@@ -894,7 +894,7 @@ def test_safe_path_directories(tmp_path):
     (tmp_path / "docs").mkdir()
     assert site.safe_path(tmp_path, "") == (tmp_path / "index.html").resolve()
     assert site.safe_path(tmp_path, "/./") == (tmp_path / "index.html").resolve()
-    assert site.safe_path(tmp_path, "docs") is None  # klasörde index.html yok
+    assert site.safe_path(tmp_path, "docs") is None  # no index.html in the folder
     assert site.safe_path(tmp_path, "docs\\..\\index.html") is None
 
 
@@ -922,11 +922,11 @@ def test_cli_capture_runs_headless_browser(monkeypatch):
     png = b"\x89PNG" + b"0" * 2000
     cmds = []
 
-    class Proc:  # görüntüyü yazıp kapanan sahte tarayıcı
+    class Proc:  # fake browser that writes the image and exits
         def __init__(self, cmd, **kw):
             cmds.append(cmd)
             shot = next(a for a in cmd if a.startswith("--screenshot=")).split("=", 1)[1]
-            Path(shot).write_bytes(png if len(cmds) == 1 else b"kucuk")  # ikinci görüntü bozuk/boş
+            Path(shot).write_bytes(png if len(cmds) == 1 else b"kucuk")  # second image is corrupt/empty
 
         def poll(self):
             return 0
@@ -936,7 +936,7 @@ def test_cli_capture_runs_headless_browser(monkeypatch):
 
     monkeypatch.setattr(site, "browser_exe", lambda: "chrome")
     monkeypatch.setattr(site.subprocess, "Popen", Proc)
-    for env in ("HTTPS_PROXY", "https_proxy"):  # Windows'ta ikisi aynı değişken
+    for env in ("HTTPS_PROXY", "https_proxy"):  # on Windows both are the same variable
         monkeypatch.setenv(env, "http://proxy:3128")
     out = site._cli_capture("https://ornek.com", timeout=5, settle=100)
     assert out == {"masaüstü": base64.b64encode(png).decode()}
@@ -945,7 +945,7 @@ def test_cli_capture_runs_headless_browser(monkeypatch):
     assert "--virtual-time-budget=2000" in cmds[0] and "--proxy-server=http://proxy:3128" in cmds[0]
     cmds.clear()
     site._cli_capture("http://127.0.0.1:5000/", viewports={"tek": (10, 10)})
-    assert not any(a.startswith("--proxy-server") for a in cmds[0])  # yerel siteye vekil sunucu kullanılmaz
+    assert not any(a.startswith("--proxy-server") for a in cmds[0])  # no proxy server is used for a local site
 
 
 def test_cli_capture_timeout_and_no_browser(monkeypatch):
@@ -954,7 +954,7 @@ def test_cli_capture_timeout_and_no_browser(monkeypatch):
     monkeypatch.setattr(site, "browser_exe", lambda: "chrome")
     procs = []
 
-    class Hung:  # görüntü yazmadan asılı kalan tarayıcı
+    class Hung:  # browser that hangs without writing an image
         def __init__(self, cmd, **kw):
             self.killed = False
             procs.append(self)
@@ -969,7 +969,7 @@ def test_cli_capture_timeout_and_no_browser(monkeypatch):
             return -9
 
     monkeypatch.setattr(site.subprocess, "Popen", Hung)
-    # Boyutlar aynı anda başlar; süre dolunca hepsi kapatılır, boş döner.
+    # Sizes start at the same time; when time runs out, all are closed and it returns empty.
     assert site._cli_capture("https://x", timeout=0.3) == {}
     assert len(procs) == 2 and all(p.killed for p in procs)
 
@@ -981,7 +981,7 @@ def test_cli_capture_timeout_and_no_browser(monkeypatch):
 
 
 def test_capture_falls_back_to_cli(monkeypatch):
-    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)  # playwright yok
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)  # playwright not installed
     assert site._pw_capture("https://x", 1, 0) == {}
     seen = []
     monkeypatch.setattr(site, "_cli_capture", lambda url, t, s, vp: seen.append((url, vp)) or {"x": "y"})
@@ -1030,7 +1030,7 @@ def test_reachable(monkeypatch):
     assert site.reachable("https://ornek.com") == (True, "https://www.ornek.com/")
     assert site.reachable("https://ornek.com") == (False, "HTTP 404")
     assert site.reachable("https://ornek.com") == (False, "web sayfası değil (application/json)")
-    assert site.reachable("https://ornek.com")[0] is True  # içerik türü yoksa sayfa sayılır
+    assert site.reachable("https://ornek.com")[0] is True  # no content type: counts as a page
     assert site.reachable("https://ornek.com") == (False, "ConnectError: DNS hatası")
 
 
@@ -1044,7 +1044,7 @@ def test_screenshots_serve_local_site(monkeypatch, tmp_path):
     pages = []
 
     def grab(url, *a, **k):
-        r = httpx.get(url, timeout=5, trust_env=False)  # yerel geçici sunucu gerçekten sunuyor mu
+        r = httpx.get(url, timeout=5, trust_env=False)  # is the local temporary server really serving?
         pages.append((url, r.status_code, r.text))
         return {"masaüstü": "png"}
 

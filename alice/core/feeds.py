@@ -1,10 +1,11 @@
-"""Akışlar: bağlı servisleri arka planda izle, önemli bir şey olunca ALICE söylesin.
+"""Feeds: watch connected services in the background, and let ALICE speak up when something important happens.
 
-Jarvis'in "sorulunca cevap veren" değil "olanı haber veren" tarafı bu. Çekirdek servis her turda
-vadesi gelen akışları yokluyor: bağlantının (alice/connect) bir eylemini çağırıyor, dönen öğeleri
-daha önce görülenlerle karşılaştırıyor, koşulları geçenleri bildirime çeviriyor.
+This is the Jarvis side that reports what happened ("olanı haber veren"), not the one that answers when
+asked ("sorulunca cevap veren"). Each round the core service polls the feeds that are due: it calls an action
+of a connector (alice/connect), compares the returned items with those seen before, and turns the ones that
+pass the conditions into notifications.
 
-Tanım `~/.alice/feeds.toml`:
+Definition in `~/.alice/feeds.toml`:
 
     [[feed]]
     name = "discord_genel"
@@ -16,31 +17,31 @@ Tanım `~/.alice/feeds.toml`:
     title = "Discord · {author.username}"
     body = "{content}"
     topic = "discord"
-    metric = "feed.discord.yeni"   # opsiyonel: koşulu geçen sayı metrik olur, kurallar kullanabilir
-    agent = ""                      # dolu: bildirim gidince ALICE uyanır ve bu işi yapar
+    metric = "feed.discord.yeni"   # optional: count of items passing the condition, usable as a metric in rules
+    agent = ""                      # if set: when a notification goes out, ALICE wakes up and does this job
 
     [feed.when]                     # hangi öğe bildirime değer (bkz. alice/core/conditions.py)
-    any = ["hayat", "@everyone"]
+    any = ["alice", "@everyone"]
     none = ["bot"]
     ask = "Bu mesaj bana bir şey soruyor ya da acil mi?"
 
-    [feed.escalate]                 # bu koşul tutarsa önem "critical": sessiz saatte de söylenir
+    [feed.escalate]                 # if this matches, severity is "critical": announced even during quiet hours
     regex = "\\b(acil|hemen)\\b"
 
-İki çalışma şekli var:
+There are two modes:
 
-* `mode = "new"` (varsayılan): listeye yeni giren öğe (yeni mesaj, yeni video).
-* `mode = "change"`: aynı öğenin izlenen alanı değişince (`watch = ["gameextrainfo"]`), ör. "Ahmet DCS'e
-  girdi". Şablonda `{prev.alan}` eski değeri, `{changed}` değişen alanları verir.
+* `mode = "new"` (default): a new item in the list (new message, new video).
+* `mode = "change"`: the watched field of the same item changes (`watch = ["gameextrainfo"]`), e.g. "Ahmet DCS'e
+  girdi" (Ahmet joined DCS). In the template, `{prev.alan}` gives the old value and `{changed}` gives the changed fields.
 
-Teslim zamanlaması:
+Delivery timing:
 
-* `digest_minutes = 60`: tek tek değil, saatte bir özet halinde.
-* `quiet = "23:00-08:00"`: bu saatlerde biriktirilir, saat bitince özet gelir (critical olan beklemez).
-* `cooldown_minutes = 10`: bir bildirimden sonra bu kadar süre gelenler toplanır, sonra özet olarak gelir.
+* `digest_minutes = 60`: as an hourly digest instead of one by one.
+* `quiet = "23:00-08:00"`: held during these hours; a digest arrives when the window ends (critical items don't wait).
+* `cooldown_minutes = 10`: after a notification, items arriving within this many minutes are collected and then sent as a digest.
 
-İlk turda hiçbir şey bildirilmez: o anki öğeler "görüldü" diye işaretlenir. Yoksa akışı ilk kurduğunda
-son 15 mesaj peş peşe bildirim olarak gelirdi.
+Nothing is notified in the first round: the items present at that moment are marked "görüldü" (seen).
+Otherwise, when a feed is first set up, the last 15 messages would arrive as back-to-back notifications.
 """
 
 from __future__ import annotations
@@ -65,12 +66,12 @@ from alice.core.notify import Notification
 
 FIELD_RX = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 QUIET_RX = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
-# Şablondan kalmış, doldurulmamış değer ("KANAL_ID", "STEAMID1,STEAMID2")
+# Leftover unfilled template value ("KANAL_ID", "STEAMID1,STEAMID2")
 _PLACEHOLDER = re.compile(r"^(?=.*[_0-9])[A-Z][A-Z0-9_]{3,}(,[A-Z][A-Z0-9_]{3,})*$")
-MAX_SEEN = 200          # akış başına hatırlanan öğe kimliği / izlenen öğe sayısı
-MAX_PER_TICK = 5        # bir turda en fazla bu kadar tek tek bildirim (akış patlarsa ekranı doldurmasın)
-MAX_HELD = 50           # özet için biriktirilen en fazla öğe
-DIGEST_LINES = 6        # özet bildiriminde gösterilen satır
+MAX_SEEN = 200          # item IDs remembered per feed / number of items watched per feed
+MAX_PER_TICK = 5        # max individual notifications per round (a flooding feed must not fill the screen)
+MAX_HELD = 50           # max items held for a digest
+DIGEST_LINES = 6        # lines shown in a digest notification
 MODES = ("new", "change")
 
 
@@ -130,7 +131,7 @@ def state_path() -> Path:
 
 
 def _parse_quiet(s: str) -> tuple[int, int] | None:
-    """'23:00-08:00' -> (1380, 480) dakika. Boşsa None, bozuksa ValueError."""
+    """'23:00-08:00' -> (1380, 480) minutes. None if empty, ValueError if malformed."""
     if not s:
         return None
     m = QUIET_RX.match(s)
@@ -149,7 +150,7 @@ def in_quiet(feed: Feed, now: float) -> bool:
     start, end = q
     t = datetime.fromtimestamp(now)
     cur = t.hour * 60 + t.minute
-    return start <= cur < end if start <= end else (cur >= start or cur < end)  # gece yarısını geçen aralık
+    return start <= cur < end if start <= end else (cur >= start or cur < end)  # range that crosses midnight
 
 
 def parse_feed(raw: dict[str, Any]) -> Feed:
@@ -163,9 +164,9 @@ def parse_feed(raw: dict[str, Any]) -> Feed:
     if mode == "change" and not watch:
         raise ValueError(f"{name}: mode = \"change\" için watch = [\"alan\", ...] gerekir")
     quiet = str(raw.get("quiet", ""))
-    _parse_quiet(quiet)  # bozuksa burada söylensin, gece 3'te değil
+    _parse_quiet(quiet)  # if malformed, say so here, not at 3 a.m.
     esc = raw.get("escalate") or {}
-    esc = dict(esc) if isinstance(esc, dict) else esc  # severity koşul alanı değil: ayır, girdiyi bozma
+    esc = dict(esc) if isinstance(esc, dict) else esc  # severity is not a condition field: split it off without changing the input
     esc_sev = str(esc.pop("severity", "critical")) if isinstance(esc, dict) else "critical"
     return Feed(name=name, connector=str(raw["connector"]), action=str(raw["action"]),
                 args=dict(raw.get("args") or {}), every_minutes=float(raw.get("every_minutes", 10) or 10),
@@ -180,7 +181,7 @@ def parse_feed(raw: dict[str, Any]) -> Feed:
 
 
 def load_feeds(path: Path | None = None) -> tuple[list[Feed], list[str]]:
-    """(akışlar, hatalar). Bozuk tanım diğerlerini düşürmez."""
+    """(feeds, errors). A malformed definition does not drop the others."""
     p = path or feeds_path()
     try:
         data = tomllib.loads(p.read_text(encoding="utf-8-sig"))
@@ -195,8 +196,8 @@ def load_feeds(path: Path | None = None) -> tuple[list[Feed], list[str]]:
             continue
         blank = [k for k, v in (raw.get("args") or {}).items() if isinstance(v, str) and _PLACEHOLDER.match(v)]
         if blank:
-            # Şablondaki "KANAL_ID" gibi doldurulmamış değer: akış hiç kurulmamış, kapalı sayılır (listede ve
-            # panelde görünür ama yoklanmaz). Eskiden her 5 dakikada çalışıp aynı hatayı veriyordu ("ornek" akışı).
+            # Unfilled template value such as "KANAL_ID": the feed was never set up, so it counts as disabled
+            # (listed and shown in the panel, but not polled). It used to fail every 5 min ("ornek" feed).
             errors.append(f"akış kapalı: {raw.get('name', '?')}: {', '.join(blank)} doldurulmamış")
             raw = {**raw, "enabled": False}
         try:
@@ -224,7 +225,7 @@ def _write_state(data: dict[str, Any]) -> None:
 
 
 def fill(template: str, item: Any, feed: Feed) -> str:
-    """{alan} ve {iç.içe.alan} yer tutucularını doldur; {name} akışın adı."""
+    """Fill the {field} and {nested.field} placeholders; {name} is the feed's name."""
     from alice.connect.runner import pick
 
     def one(m: re.Match) -> str:
@@ -239,7 +240,7 @@ def fill(template: str, item: Any, feed: Feed) -> str:
 
 @dataclass
 class Note:
-    """Koşulları geçmiş, teslim edilmeyi bekleyen bir öğe."""
+    """An item that passed the conditions, waiting to be delivered."""
     title: str
     body: str
     severity: str
@@ -251,7 +252,7 @@ class Note:
 
 @dataclass
 class Verdict:
-    """`alice feeds --test` için: öğe geçti mi, neden, hangi önemle."""
+    """For `alice feeds --test`: whether the item passed, why, and with what severity."""
     item: Any
     title: str
     body: str
@@ -261,7 +262,7 @@ class Verdict:
 
 
 class FeedMonitor:
-    """Çekirdek servise takılan gözlemci: akışları yoklar, koşulları geçenleri bildirir, sayıyı metrik yazar."""
+    """Core service observer: polls feeds, notifies items that pass the conditions, writes counts as metrics."""
 
     name = "feeds"
     processes: set[str] = set()
@@ -289,7 +290,7 @@ class FeedMonitor:
             return 0.0
 
     def reload_if_changed(self) -> bool:
-        """feeds.toml değiştiyse (sohbetten akış eklendi, elle düzenlendi) yeniden yükle; durum korunur."""
+        """If feeds.toml changed (a feed was added from chat or edited by hand), reload it; state is kept."""
         mt = self._file_mtime()
         if mt == self._mtime:
             return False
@@ -299,7 +300,7 @@ class FeedMonitor:
             self.emit(e)
         return True
 
-    # ------------------------------------------------------------------ veri
+    # ------------------------------------------------------------------ data
     def _call_connector(self, feed: Feed) -> list[Any]:
         from alice.connect.manifest import discover
         from alice.connect.runner import ConnectError, call, pick, ready
@@ -314,7 +315,7 @@ class FeedMonitor:
         hazır, sebep = ready(m)
         if not hazır:
             raise ConnectError(f"{m.label}: {sebep}")
-        data = call(m, act, feed.args, cache=False)  # akış hep taze ister: önbellek yeni mesajı saklamasın
+        data = call(m, act, feed.args, cache=False)  # feeds always need fresh data: the cache must not hold on to new messages
         rows = pick(data, act.pick) if act.pick else data
         if isinstance(rows, dict):
             rows = [rows]
@@ -327,7 +328,7 @@ class FeedMonitor:
         return str(v) if v not in (None, "") else json.dumps(item, ensure_ascii=False, sort_keys=True)[:200]
 
     def _ask(self, feed: Feed) -> Callable[[str, str], bool] | None:
-        """Koşuldaki anlam sorusu için karar motoru (Jev / hızlı model), kurallardaki confirm gibi."""
+        """Decider for the meaning question in a condition (Jev / fast model), like confirm in rules."""
         if self.decider is None:
             return None
 
@@ -341,7 +342,7 @@ class FeedMonitor:
         return ask
 
     def judge(self, feed: Feed, item: Any) -> Verdict:
-        """Öğe bildirime değer mi, değerse hangi önemle? Durumu değiştirmez (test komutu da bunu kullanır)."""
+        """Is the item worth notifying, and at what severity? Changes no state (the test command uses it too)."""
         title = fill(feed.title, item, feed) or feed.name
         body = fill(feed.body, item, feed)
         text = haystack(item, title, body)
@@ -353,7 +354,7 @@ class FeedMonitor:
                 severity, reason = feed.escalate_severity, "geçti (acil)"
         return Verdict(item, title, body, ok, reason, severity)
 
-    # ------------------------------------------------------------------ tur
+    # ------------------------------------------------------------------ round
     def due(self, feed: Feed, now: float) -> bool:
         last = float((self.state.get(feed.name) or {}).get("last") or 0)
         return now - last >= feed.interval
@@ -372,8 +373,8 @@ class FeedMonitor:
                 changed = True
                 try:
                     items = self._fetch(feed)
-                except Exception as e:  # noqa: BLE001 - bir akış patlasa diğerleri sürsün
-                    # aynı hata her turda yazılmasın (kurulmamış örnek akış 2 günde 74 kez "token yok" yazdı)
+                except Exception as e:  # noqa: BLE001 - if one feed fails, the others keep going
+                    # don't repeat the same error each round (an unset example feed logged "token yok" 74x in 2 days)
                     if row.get("error") != str(e)[:200]:
                         self.emit(f"akış {feed.name}: {e}")
                     row["error"] = str(e)[:200]
@@ -382,14 +383,14 @@ class FeedMonitor:
                     row.pop("error", None)
                     fresh = self._changes(feed, row, items) if feed.mode == "change" else self._new(feed, row, items)
                     if fresh is None and feed.metric:
-                        rows.append((feed.metric, 0.0, None))  # ilk tur: hiçbiri "yeni" değil
+                        rows.append((feed.metric, 0.0, None))  # first round: none of them is "new"
                     if fresh is not None:
                         notes = [Note(v.title, v.body, v.severity, v.item)
                                  for v in (self.judge(feed, it) for it in fresh) if v.ok]
                         if feed.metric:
                             rows.append((feed.metric, float(len(notes)), None))
                         self._deliver(feed, row, notes, now)
-            # Süresi dolan özet (sessiz saat bitti, bekleme geçti) yoklama zamanı gelmese de gitsin.
+            # A digest that is due (quiet hours over, cooldown passed) is sent even if it's not yet time to poll.
             if row.get("held") and self._flush_due(feed, row, now):
                 self._flush(feed, row, now)
                 changed = True
@@ -398,7 +399,7 @@ class FeedMonitor:
         return rows
 
     def _new(self, feed: Feed, row: dict[str, Any], items: list[Any]) -> list[Any] | None:
-        """Listeye yeni giren öğeler. İlk turda None (sadece işaretlenir)."""
+        """New items that entered the list. None in the first round (they are only marked)."""
         seen = list(row.get("seen") or [])
         first_run = "seen" not in row
         ids = [self._item_id(feed, it) for it in items]
@@ -411,7 +412,7 @@ class FeedMonitor:
         return new
 
     def _changes(self, feed: Feed, row: dict[str, Any], items: list[Any]) -> list[Any] | None:
-        """İzlenen alanı değişen öğeler; şablon için {prev.alan} ve {changed} eklenir."""
+        """Items whose watched field changed; {prev.alan} and {changed} are added for the template."""
         from alice.connect.runner import pick
 
         snap: dict[str, dict[str, Any]] = dict(row.get("snap") or {})
@@ -434,7 +435,7 @@ class FeedMonitor:
             return None
         return out
 
-    # ------------------------------------------------------------------ teslim
+    # ------------------------------------------------------------------ delivery
     def _cooling(self, feed: Feed, row: dict[str, Any], now: float) -> bool:
         return bool(feed.cooldown_minutes) and now - float(row.get("last_sent") or 0) < feed.cooldown_minutes * 60
 
@@ -494,10 +495,10 @@ class FeedMonitor:
         özet = "\n".join(f"- {n.line()}" for n in notes)
         try:
             self.run_agent(f"{feed.agent}\n\nYeni gelenler:\n{özet}")
-        except Exception as e:  # noqa: BLE001 - ajan patlarsa akış ölmesin
+        except Exception as e:  # noqa: BLE001 - if the agent fails, the feed must not die
             self.emit(f"akış {feed.name}: ajan çalıştırılamadı: {e}")
 
-    # ------------------------------------------------------------------ test komutu
+    # ------------------------------------------------------------------ test command
     def explain(self, feed: Feed) -> list[Verdict]:
-        """Şimdi yokla ve her öğe için koşulun ne dediğini döndür (durum değişmez, bildirim gitmez)."""
+        """Poll now and return what the condition says about each item (state unchanged, no notifications sent)."""
         return [self.judge(feed, it) for it in self._fetch(feed)]

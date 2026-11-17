@@ -1,13 +1,13 @@
-"""Bilgisayar kullanma ajanı: Codex / Claude computer use gibi ekranı görerek fare ve klavyeyle iş yapar.
+"""Computer use agent: performs tasks using mouse and keyboard by viewing the screen, like Codex / Claude computer use.
 
-Her adım:
-  1. bak    -> ekran görüntüsü + öndeki pencerenin UI Automation öğeleri; öğeler görüntüde numaralı kutularla
-               işaretlenir (set-of-marks), model piksel tahmini yerine numarayla tıklayabilir
-  2. karar  -> görme modeli (vision rolü) hedefe, geçmiş adımlara ve görüntüye bakıp TEK aksiyon seçer (JSON)
-  3. yap    -> fare/klavye (kendi pencerelerinde de çalışır: Blender, oyun, UIA vermeyen uygulamalar)
-  4. tekrar -> sonuç bir sonraki ekran görüntüsünde görülür, model kendini düzeltir
+Each step:
+  1. observe -> screenshot + foreground window's UI Automation elements; elements are marked on the image
+                with numbered boxes (set-of-marks), so the model can click by number instead of pixel guessing
+  2. decide  -> vision model (vision role) inspects the goal, past steps, and image to pick a SINGLE action (JSON)
+  3. act     -> mouse/keyboard (also works in their own windows: Blender, games, apps that do not provide UIA)
+  4. repeat  -> outcome is observed in the next screenshot, model self-corrects
 
-Sesli konuşmada (Live) bu döngü arka planda çalışır; bitince sonuç konuşmaya yazılır ve Alice söyler.
+In voice conversation (Live), this loop runs in the background; when finished, the result is written to chat and Alice speaks it.
 """
 
 from __future__ import annotations
@@ -48,10 +48,10 @@ Do not close or delete the user's things unless the GOAL says so."""
 
 @dataclass
 class Shot:
-    png_b64: str  # modele giden (küçültülmüş, işaretli) görüntü; JPEG (adı eski)
+    png_b64: str  # image sent to model (resized, marked); JPEG (legacy name)
     left: int
     top: int
-    width: int  # gerçek piksel
+    width: int  # real pixels
     height: int
     elements: list[dict[str, Any]] = field(default_factory=list)
     title: str = ""
@@ -74,7 +74,7 @@ def parse_action(text: str) -> dict[str, Any]:
     if not m:
         raise ValueError(f"JSON yok: {text[:120]}")
     a = json.loads(m.group(0))
-    if isinstance(a.get("action"), dict):  # {"action": {"action": "click", ...}} ya da {"action": {"point": ...}}
+    if isinstance(a.get("action"), dict):  # {"action": {"action": "click", ...}} or {"action": {"point": ...}}
         inner = a.pop("action")
         a = {**a, **inner}
         a.setdefault("action", "click" if ("point" in inner or "id" in inner) else "")
@@ -85,12 +85,12 @@ ACTIONS = {"click", "double_click", "right_click", "type", "key", "scroll", "dra
 
 
 def normalize_action(b: dict[str, Any]) -> dict[str, Any]:
-    """Model bazen aksiyon adını unutuyor ya da alanları karıştırıyor: {"key": "ctrl+f"},
-    {"type": "stalk", "enter": true}. Alanlardan ne demek istediğini çıkar."""
+    """The model sometimes forgets the action name or confuses fields: {"key": "ctrl+f"},
+    {"type": "stalk", "enter": true}. Infer what it meant from the fields."""
     b = dict(b)
     kind = b.get("action")
     if isinstance(b.get("type"), str) and b["type"] not in ACTIONS and kind in (None, "", "type"):
-        b.setdefault("text", b.pop("type"))  # {"type": "metin"}: yazılacak metin
+        b.setdefault("text", b.pop("type"))  # {"type": "text"}: text to type
         kind = b["action"] = "type"
     if isinstance(b.get("key"), str) and not b.get("keys"):
         b["keys"] = b.pop("key")
@@ -117,11 +117,11 @@ def normalize_action(b: dict[str, Any]) -> dict[str, Any]:
     return b
 
 
-_RUNNING = threading.Lock()  # fare/klavye tek: aynı anda tek ekran görevi
+_RUNNING = threading.Lock()  # mouse/keyboard is single: only one screen task at a time
 
 
 def log_line(text: str) -> None:
-    """Ekran görevinin adımlarını voice.log'a yaz (neden olmadı, sonradan anlaşılsın)."""
+    """Write screen task steps to voice.log (so it is understood afterwards why it failed)."""
     try:
         from alice.config import alice_home
 
@@ -131,17 +131,17 @@ def log_line(text: str) -> None:
         pass
 
 
-STABLE_DIFF = 1.5  # 0-255 ortalama piksel farkı (küçük gri görüntüde): altı "ekran duruldu"
+STABLE_DIFF = 1.5  # 0-255 mean pixel difference (in small grayscale image): below this means "screen settled"
 
 
 class Screen:
-    """Gerçek ekran: görüntü + UIA öğeleri + fare/klavye."""
+    """Real screen: image + UIA elements + mouse/keyboard."""
 
-    # 1280 geniş: 3440x1440 ekran 1280x536'ya iniyordu, sağ tık menüsünün yazıları seçilemedi ve "Görünüm"e
-    # tıklarken ıskalayıp menüyü 3 kez yeniden açtı (2026-11-02, 11 adım).
+    # 1280 width: 3440x1440 screen was downscaled to 1280x536, right-click menu text was illegible and missed
+    # when clicking "View", reopening the menu 3 times (2026-11-02, 11 steps).
     def __init__(self, ctx, max_width: int = 1920, max_elements: int = 60, monitor: int = 0):
         self.ctx = ctx
-        self.monitor = monitor  # 0: öndeki pencerenin monitörü
+        self.monitor = monitor  # 0: foreground window's monitor
         self.max_width = max_width
         self.max_elements = max_elements
 
@@ -159,7 +159,7 @@ class Screen:
 
             title, items = collect_ui_elements(self.ctx, limit=self.max_elements)
             elements = [i for i in items if i.get("rect")]
-        except Exception:  # noqa: BLE001 - UIA yoksa sadece görüntü
+        except Exception:  # noqa: BLE001 - image only if no UIA
             pass
         with mss.mss() as sct:
             mon = sct.monitors[self.monitor] if 0 < self.monitor < len(sct.monitors) else self._monitor(sct)
@@ -179,15 +179,15 @@ class Screen:
             d.rectangle([box[0], box[1], box[0] + 7 + 7 * len(str(e["id"])), box[1] + 13], fill=(255, 0, 200))
             d.text((box[0] + 2, box[1]), str(e["id"]), fill=(255, 255, 255))
         buf = io.BytesIO()
-        # JPEG: 1920 genişlikte PNG ~1 MB'tı, her adımda modele yükleniyor ve okunuyordu; JPEG ~5 kat küçük, yazılar
-        # ve işaret kutuları okunur kalır.
+        # JPEG: at 1920 width PNG was ~1 MB, uploaded to and read by the model every step; JPEG is ~5x smaller, text
+        # and marker boxes remain readable.
         img.save(buf, "JPEG", quality=82)
         return Shot(base64.b64encode(buf.getvalue()).decode(), mon["left"], mon["top"], mon["width"],
                     mon["height"], elements, title)
 
     def wait_stable(self, max_wait: float = 0.8, every: float = 0.1) -> float:
-        """Eylemden sonra ekran durulana kadar bekle (art arda iki küçük görüntü aynıysa); geçen süreyi döner. Sabit
-        0,5 sn beklemek yerine: tıklama anında oturan ekranda hemen devam, açılan menüde biraz bekle."""
+        """Wait until the screen settles after an action (if two consecutive small images match); returns elapsed time.
+        Instead of fixed 0.5 s wait: continue immediately on fast settling clicks, wait a bit on opening menus."""
         import mss
         from PIL import Image, ImageChops, ImageStat
 
@@ -198,7 +198,7 @@ class Screen:
             while time.monotonic() - t0 < max_wait:
                 raw = sct.grab(mon)
                 small = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX").resize((96, 54)).convert("L")
-                # Küçük hareket (oynayan video, saat, imleç) durulmayı engellemesin: ortalama fark eşiğin altındaysa dur
+                # Small motion (video, clock, cursor) shouldn't prevent settling: stop if mean diff is below threshold
                 if prev is not None and ImageStat.Stat(ImageChops.difference(small, prev)).mean[0] < STABLE_DIFF:
                     break
                 prev = small
@@ -232,14 +232,14 @@ class Screen:
             from alice.tools.desktop import is_script_target
 
             target = str(a.get("target") or "").strip()
-            if not target:  # boş hedef Windows'ta Path("") = "." sayılıp çalışma klasörünü açıyordu
+            if not target:  # empty target was treated as Path("") = "." on Windows, opening the working directory
                 raise ValueError("open için target gerekli")
-            if is_script_target(target):  # ekrandan okunan bir betiği onaysız çalıştırma
+            if is_script_target(target):  # do not run a script read from the screen without confirmation
                 raise ValueError("betik/kurulum dosyası ekran görevinden açılmaz; kullanıcıya sor")
             res = open_app(target)
             time.sleep(1.5)
-            # Zaten açık uygulamayı yeniden "açmak" Windows'ta onu öne getirmiyor (öndeki oyun kilidi):
-            # pencere varsa gerçekten öne al, yoksa model öndekinin hâlâ eski pencere olduğunu bilsin.
+            # "Opening" an already open app again does not bring it to foreground on Windows (foreground lock):
+            # if window exists bring it to foreground, otherwise let the model know foreground is still the old window.
             name = target.strip()
             if name and "://" not in name and "\\" not in name and "/" not in name:
                 try:
@@ -265,7 +265,7 @@ class Screen:
         x, y = self.point(a, shot)
         from alice.hud import views
 
-        views.click_target(x, y, kind)  # HUD açıksa nereye tıklayacağını önceden göster
+        views.click_target(x, y, kind)  # preview where it will click if HUD is active
         if kind in ("click", "double_click", "right_click"):
             pg.click(x, y, clicks=2 if kind == "double_click" else 1, button="right" if kind == "right_click" else "left",
                      interval=0.08)
@@ -292,14 +292,14 @@ class Screen:
         p = a.get("point")
         if not isinstance(p, (list, tuple)) or len(p) != 2:
             raise ValueError("id ya da point gerekli")
-        # 0-1000 dışı (modelin piksel sanıp verdiği) noktalar başka monitöre/ekran dışına tıklamasın.
+        # Prevent points outside 0-1000 (model assumed pixels) from clicking off-screen or on another monitor.
         y, x = (min(1000.0, max(0.0, float(v))) for v in p)
         return round(shot.left + x / 1000 * shot.width), round(shot.top + y / 1000 * shot.height)
 
 
-# ------------------------------------------------------------------------------- deneyim
-# Biten işlerin adımları (~/.alice/computer_recipes.json): benzer bir hedef gelince modele ipucu olarak verilir.
-# Başarılı yol "bu sırayla oldu", başarısız deneme "bu yoldan gitme" der; aynı işte her seferinde sıfırdan aramaz.
+# ------------------------------------------------------------------------------- experience
+# Steps of finished tasks (~/.alice/computer_recipes.json): passed as hint to the model when a similar goal arrives.
+# Successful path says "it worked in this order", failed trial says "avoid this path"; avoids searching from scratch.
 RECIPES_MAX = 80
 
 
@@ -333,7 +333,7 @@ def save_recipe(goal: str, status: str, summary: str, steps: list[str], title: s
 
 
 def similar_recipes(goal: str, min_score: float = 0.5) -> list[dict[str, Any]]:
-    """Hedefe en çok benzeyen geçmiş başarı ve başarısızlık (en fazla birer tane)."""
+    """Past success and failure that best match the goal (at most one of each)."""
     from alice.memory import terms
 
     mine = set(terms(goal))
@@ -367,11 +367,11 @@ class ComputerAgent:
     def __init__(self, screen, ask: Callable[[list[dict[str, Any]]], str], emit: Callable[[str], None] = lambda s: None,
                  settle: float = 0.5, stop: Callable[[], bool] = lambda: False, learn: bool = True):
         self.screen = screen
-        self.ask = ask  # mesajlar -> model cevabı (metin)
+        self.ask = ask  # messages -> model response (text)
         self.emit = emit
         self.settle = settle
         self.stop = stop
-        self.learn = learn  # biten işin adımlarını sakla, benzer işte ipucu ver
+        self.learn = learn  # persist steps of finished task, provide hints on similar tasks
 
     def run(self, goal: str, max_steps: int = 30, max_seconds: float = 180.0) -> TaskResult:
         hint = recipe_hint(goal) if self.learn else ""
@@ -379,11 +379,11 @@ class ComputerAgent:
             self.emit("benzer bir işin geçmiş adımları ipucu olarak verildi")
         res = self._run(goal, max_steps, max_seconds, hint)
         if self.learn and res.status in ("done", "fail", "max_steps") and res.steps:
-            # yarım kalan iş de ders: bir dahaki sefere "bu yol bitmedi, başka yol dene" ipucu olur
+            # unfinished task is also a lesson: next time it hints "this path didn't finish, try another"
             save_recipe(goal, "done" if res.status == "done" else "fail", res.summary, res.steps)
         return res
 
-    EXTEND_STEPS = 10  # ilerleme varken adım sınırı dolarsa bir kez bu kadar uzat
+    EXTEND_STEPS = 10  # extend once by this much if step limit is reached while making progress
     STUCK_NOTE = ("NOTE: you repeated the same action 3 times without success. Do NOT repeat it. Try a different "
                   "approach: keyboard shortcut, search box, scrolling, another element.\n")
     SAME_NOTE = ("NOTE: your last action did not change the screen at all. It probably missed: pick a different "
@@ -396,7 +396,7 @@ class ComputerAgent:
         deadline = time.monotonic() + max_seconds
         limit, extended, nudged = max_steps, False, False
         prev_hash: str | None = None
-        changed: list[bool] = []  # her adımdan sonra ekran değişti mi (ilerleme ölçüsü)
+        changed: list[bool] = []  # whether screen changed after each step (measure of progress)
         note = ""
         n = 0
         while n < limit:
@@ -413,7 +413,7 @@ class ComputerAgent:
             if prev_hash is not None:
                 changed.append(h != prev_hash)
                 if h == prev_hash and steps and not note:
-                    note = self.SAME_NOTE  # tıklama boşa gitti: model aynı yere tekrar basmasın
+                    note = self.SAME_NOTE  # click had no effect: prevent the model from clicking the same spot again
             prev_hash = h
             elems = "\n".join(f"[{e['id']}] {e.get('role', '')} '{e.get('name', '')}'"
                               + (f" değer='{e['value']}'" if e.get("value") else "") for e in shot.elements[:60])
@@ -427,7 +427,7 @@ class ComputerAgent:
                             "url": f"data:image/jpeg;base64,{shot.png_b64}"}}]}]
             try:
                 answer = self.ask(messages)
-            except Exception as e:  # noqa: BLE001 - kota/bağlantı: görmeden devam etme
+            except Exception as e:  # noqa: BLE001 - quota/connection: do not continue blindly
                 model_errors += 1
                 self.emit(f"görme modeli hatası: {str(e)[:200]}")
                 if model_errors >= 2:
@@ -456,7 +456,7 @@ class ComputerAgent:
             if len(last) >= 3 and len(set(last[-3:])) == 1:
                 if nudged:
                     return TaskResult("fail", "aynı adım tekrarlanıyor, ilerleyemedim", steps)
-                nudged = True  # bir kez toparlan: üçüncü kez aynısı yerine başka bir yol
+                nudged = True  # recover once: try another way instead of repeating the same action a third time
                 last.clear()
                 note = self.STUCK_NOTE
                 steps.append(f"{n}. (takıldı: aynı adım 3 kez, başka bir yol denenecek)")
@@ -470,24 +470,24 @@ class ComputerAgent:
                     results.append(self.screen.act(b, shot))
                 except Exception as e:  # noqa: BLE001
                     results.append(f"HATA {e}")
-                    break  # sonrakiler bu adıma dayanıyor olabilir
+                    break  # subsequent actions might depend on this step
                 time.sleep(0.25)
             line = f"{n}. {key[:160]} -> {'; '.join(results)} ({str(a.get('thought', ''))[:100]})"
             steps.append(line)
             self.emit(line)
             stable = getattr(self.screen, "wait_stable", None)
             if stable is not None and self.settle > 0:
-                stable(self.settle)  # ekran duruldu mu: durulunca hemen, en fazla eski sabit bekleme kadar
+                stable(self.settle)  # did screen settle: resume immediately once settled, up to old fixed wait at most
             else:
                 time.sleep(self.settle)
             if n == limit and not extended and sum(changed[-5:]) >= 2:
-                extended, limit = True, limit + self.EXTEND_STEPS  # ekran değişiyor, ilerliyor: yarıda bırakma
+                extended, limit = True, limit + self.EXTEND_STEPS  # screen is changing: do not abandon halfway
                 self.emit(f"ilerleme var, {self.EXTEND_STEPS} adım daha")
         return TaskResult("max_steps", "adım sınırı doldu", steps)
 
 
 def router_asker(router, role: str = "vision", effort: str = "low") -> Callable[[list[dict[str, Any]]], str]:
-    # Düşük düşünme: aynı ekranda aynı kararı ~2x hızlı veriyor (ölçüm: 4,7 sn -> 2,4 sn).
+    # Low reasoning: makes the same decision on the same screen ~2x faster (benchmark: 4.7 s -> 2.4 s).
     extra = {"reasoning_effort": effort} if effort else None
 
     def ask(messages: list[dict[str, Any]]) -> str:

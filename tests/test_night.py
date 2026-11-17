@@ -29,7 +29,7 @@ def ts(day: int, hour: int, minute: int = 0) -> float:
 
 def test_noisy_callouts_found_by_pattern_not_exact_text():
     evs = [ev(1000 + i * 30, body=f"Arkanda düşman, saat {4 + i % 3}, {300 + i * 10} metre!") for i in range(6)]
-    evs += [ev(1000 + i * 400, body="Düşman saat 2, 3,0 kilometre.") for i in range(4)]  # seyrek: sorun değil
+    evs += [ev(1000 + i * 400, body="Düşman saat 2, 3,0 kilometre.") for i in range(4)]  # sparse: not a problem
     found = night.noisy_callouts(evs)
     assert len(found) == 1 and found[0].count == 6 and "Arkanda düşman" in found[0].title
 
@@ -59,15 +59,15 @@ def test_insights_short_flights_after_late_nights():
     flights = []
     for day in range(1, 21):
         late = day % 2 == 0
-        if late:  # o gece 02:00'de oynandı (önceki güne sayılır)
+        if late:  # played that night at 02:00 (counted toward the previous day)
             flights.append({"start_wall": ts(day + 1 if day < 20 else day, 2), "duration_s": 300})
         for k in range(3):
-            # geç gecenin ertesi akşamı kısa uçuşlar
+            # short flights on the evening after a late night
             prev_late = (day - 1) % 2 == 0 and day > 1
             flights.append({"start_wall": ts(day, 19, k * 10), "duration_s": 120 if prev_late else 360})
     out = night.insights(flights)
     assert out and out[0].startswith("Gece 1'den sonra oynadığın günlerin ertesinde uçuşların ortalama")
-    assert night.insights(flights[:5]) == []  # az veri: bağlantı uydurulmaz
+    assert night.insights(flights[:5]) == []  # little data: no connection is invented
 
 
 def test_run_writes_report_and_morning_flow(tmp_path, monkeypatch):
@@ -75,17 +75,17 @@ def test_run_writes_report_and_morning_flow(tmp_path, monkeypatch):
     evs = [ev(now - 3000 + i * 20, body=f"Yere yaklaşıyorsun, burnu kaldır! {i}") for i in range(5)]
     st = Store(evs)
     kw = dict(voice_log=tmp_path / "yok.log", core_log=tmp_path / "yok.log")
-    assert night.maybe_run(st, None, now=ts(30, 2), flights=[], **kw) is None  # gece 3'ten önce değil
+    assert night.maybe_run(st, None, now=ts(30, 2), flights=[], **kw) is None  # not before 3 a.m.
     r = night.maybe_run(st, None, now=now, flights=[], **kw)
     assert r is not None and r["findings"][0]["kind"] == "noisy"
-    assert night.maybe_run(st, None, now=now + 600, flights=[], **kw) is None  # gecede bir kez
+    assert night.maybe_run(st, None, now=now + 600, flights=[], **kw) is None  # once per night
     md = (night.reports_dir() / "2026-10-30.md").read_text(encoding="utf-8")
     assert "# Gece raporu: 2026-10-30" in md and "Öneri:" in md
     assert st.added[0][1] == "Gece raporu hazır"
 
     said = []
-    assert not night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 7))  # sabah 8'den önce değil
-    assert not night.maybe_tell(lambda t, b: False, now=ts(30, 9))  # uçuş modunda susturuldu: söylenmiş sayılmaz
+    assert not night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 7))  # not before 8 a.m.
+    assert not night.maybe_tell(lambda t, b: False, now=ts(30, 9))  # silenced in flight mode: does not count as told
     assert night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 9, 10))
     assert not night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 10))
     assert len(said) == 1 and said[0].startswith("Gece 1 şey buldum") and "Düzeltmeyi deneyeyim mi?" in said[0]
@@ -105,7 +105,7 @@ def test_failed_night_is_retried_three_times(monkeypatch):
             night.maybe_run(Store([]), None, now=ts(29, 4, i * 10))
         except ValueError:
             pass
-    assert len(calls) == 3  # 3 denemeden sonra o gece bırakılır
+    assert len(calls) == 3  # after 3 attempts that night is abandoned
 
 
 def test_render_when_all_is_well():
@@ -128,7 +128,7 @@ def test_core_runs_night_step(monkeypatch):
 
 
 def test_single_thread_death_is_reported():
-    """Canlı kayıt: ses iş parçacığı bir kez çöktü, ALICE saatlerce sağır kaldı; "en az 2 kez" kuralı kaçırıyordu."""
+    """Live log: voice thread died once, ALICE was deaf for hours; "en az 2 kez" (at least 2 times) rule missed it."""
     from alice import night
 
     log = ("Exception in thread alice-voice:\nTraceback (most recent call last):\n  File \"x.py\", line 1, in run\n"
@@ -149,7 +149,7 @@ def test_struggles_find_loops_repeated_keys_interrupts_and_frustration(tmp_path)
                                         "4. pressed enter"},
             {"role": "tool", "content": "durduruldu (kullanıcı kesti)"},
             {"role": "user", "content": "yine saçmaladın ya"},
-            {"role": "user", "content": "napayım boş boş takılmaca aq"}]  # gündelik konuşma: sayılmaz
+            {"role": "user", "content": "napayım boş boş takılmaca aq"}]  # everyday chat: not counted
     (tmp_path / "s.json").write_text(json.dumps({"messages": msgs}), encoding="utf-8")
     titles = [f.title for f in night.struggles(tmp_path, 0)]
     assert "Aynı adımı tekrarladı: reflex" in titles
@@ -164,11 +164,11 @@ def test_tomorrow_does_not_close_followups_that_are_still_current():
 
     m = LongMemory(":memory:")
     now = datetime(2026, 10, 20, 4, 0).timestamp()
-    # 3,5 gün önce sorulacaktı: bugün hâlâ geçerli (4 gün kuralı); 36 saat sonrası için bakınca "eski" görünür.
+    # It was due 3.5 days ago: still valid today (4-day rule); looking 36 hours ahead makes it look "eski" (old).
     fid = m.add_followup("Sınavın nasıl geçtiğini sor.", now - 3.5 * 86400, "ask")
     m.add_followup("Dişçi randevusunu hatırlat.", now + 20 * 3600, "remind")
     assert night.tomorrow(m, now) == ["Dişçi randevusunu hatırlat."]
-    assert fid in [f.id for f in m.due_followups(now)]  # gece raporu takibi kapatmadı
+    assert fid in [f.id for f in m.due_followups(now)]  # the night report did not close the follow-up
 
 
 def test_state_is_written_atomically_and_retries_locked_target(monkeypatch):
@@ -196,5 +196,5 @@ def test_state_is_written_atomically_and_retries_locked_target(monkeypatch):
     monkeypatch.setattr(night.os, "replace", broken)
     with pytest.raises(OSError):
         night._save_state(told="x")
-    assert json.loads(night.state_path().read_text(encoding="utf-8"))["told"] == "2026-11-15"  # eski hali sağlam
+    assert json.loads(night.state_path().read_text(encoding="utf-8"))["told"] == "2026-11-15"  # the old version is intact
     assert [p.name for p in night.state_path().parent.iterdir() if p.name.endswith(".tmp")] == []

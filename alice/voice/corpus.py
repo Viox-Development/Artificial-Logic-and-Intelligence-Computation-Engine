@@ -1,16 +1,21 @@
-"""Gerçek ses korpusu: kullanıcının gerçek cümleleriyle uyandırma kararını test etmek.
+"""Real voice corpus: testing the wake decision with the user's real sentences.
 
-Sahte sesle yazılan testler kodun mantığını sınar, ama "Alışanlar" uyandırır mı, Discord'daki arkadaşın sesi geçer mi
-gibi soruları ancak gerçek kayıt cevaplar. Çekirdek her cümlenin sesini ve kararını görür (VoiceAssistant.on_decision);
-bunlardan bazıları kalıcı korpusa girer:
-- uyanan cümle "uyanmalıydı" (zayıf); 2 dakika içinde düzeltme gelmezse güçlü olur,
-- uyandıktan sonra "sana demedim" denirse "uyanmamalıydı", "yanlış anladın" denirse "yanlış döküm" (güçlü),
-- Gemini "Alice" duymadıysa "belirsiz" (etiketleme sırasında önce sorulur),
-- ses izi çok uzak başka konuşmacı ve kullanıcının uyandırmasız cümleleri (günlük sınırla) olumsuz örnek.
+Tests written with fake audio check the code's logic, but questions like whether "Alışanlar" wakes ALICE, or whether
+a friend's voice on Discord gets through, can only be answered by real recordings. The core sees every sentence's
+audio and decision (VoiceAssistant.on_decision); some of them go into the permanent corpus:
+- a sentence that woke ALICE is "uyanmalıydı" (should have woken; weak); if no correction comes within 2 minutes,
+  it becomes strong,
+- if "sana demedim" ("I wasn't talking to you") comes after a wake, it is "uyanmamalıydı" (should not have woken);
+  if "yanlış anladın" ("you misunderstood") comes, it is "yanlış döküm" (wrong transcription; strong),
+- if Gemini did not hear "Alice", it is "belirsiz" (uncertain; asked first during labeling),
+- a voice print far from the user's (another speaker), and the user's sentences without a wake (limited per day),
+  are negative examples.
 
-Korpus repo dışında kalır (kullanıcının ve arkadaşlarının sesi): ~/.alice/voice/corpus/{audio/GÜN/ID.wav, manifest.jsonl}.
-Tekrar oynatma gerçek yerel Whisper (temperature=0, tekrarlanabilir) ve gerçek ses izi ile kararı yeniden hesaplar;
-metne değil karara bakılır (aynı ses iki kez dökülünce Whisper'ın metni yarı yarıya değişiyordu).
+The corpus stays outside the repo (it holds the voices of the user and their friends):
+~/.alice/voice/corpus/{audio/DAY/ID.wav, manifest.jsonl}.
+Replay recomputes the decision with the real local Whisper (temperature=0, repeatable) and the real voice print;
+it looks at the decision, not the text (when the same audio was transcribed twice, Whisper's text changed
+about half the time).
 """
 
 from __future__ import annotations
@@ -26,12 +31,12 @@ from typing import Any, Callable
 
 LABELS = ("uyanmaliydi", "uyanmamaliydi", "belirsiz", "yanlis_dokum")
 STRONG = ("kesin", "guclu")
-OTHER_MAX = 0.22  # ses izi bunun altındaysa kesinlikle başka konuşmacı (30 kayıtta tekrarlanabilirlik %100)
+OTHER_MAX = 0.22  # a voice print below this is definitely another speaker (100% repeatable over 30 recordings)
 STATE_KEYS = ("direct", "ptt", "armed", "social", "muted", "awaiting")
 
 
 def root() -> Path:
-    """Korpus klasörü: ALICE_CORPUS ortam değişkeni ya da ~/.alice/voice/corpus."""
+    """Corpus folder: the ALICE_CORPUS environment variable, or ~/.alice/voice/corpus."""
     env = os.environ.get("ALICE_CORPUS")
     if env:
         return Path(env)
@@ -43,11 +48,11 @@ def root() -> Path:
 @dataclass
 class Case:
     id: str
-    path: str  # korpus köküne göre
+    path: str  # relative to the corpus root
     dur: float
     label: str
     bucket: str = ""
-    confidence: str = "zayif"  # kesin (kullanıcı onayladı) | guclu | zayif
+    confidence: str = "zayif"  # kesin (confirmed by the user) | guclu (strong) | zayif (weak)
     labeled_by: str = "auto"
     ts: float = 0.0
     state: dict[str, Any] = field(default_factory=dict)
@@ -84,8 +89,8 @@ _lock = threading.Lock()
 
 @contextmanager
 def _locked(base: Path, wait: float = 10.0):
-    """Manifest kilidi: aynı süreçte iş parçacıkları, süreçler arasında (çekirdek toplarken "alice voice corpus
-    label") manifest.lock dosyası. 60 sn'den eski kilit yarıda kalmış sayılır."""
+    """Manifest lock: threads within one process, and across processes a manifest.lock file (while the core
+    collects, "alice voice corpus label"). A lock older than 60 s is treated as abandoned."""
     base.mkdir(parents=True, exist_ok=True)
     lock = base / "manifest.lock"
     with _lock:
@@ -112,7 +117,7 @@ def _locked(base: Path, wait: float = 10.0):
 
 
 def save_manifest(cases: list[Case], base: Path | None = None) -> None:
-    """Kilit içinde çağrılmalı (relabel/remove)."""
+    """Must be called while holding the lock (relabel/remove)."""
     base = base or root()
     base.mkdir(parents=True, exist_ok=True)
     tmp = base / f"manifest.jsonl.{os.getpid()}.tmp"
@@ -121,7 +126,7 @@ def save_manifest(cases: list[Case], base: Path | None = None) -> None:
         try:
             tmp.replace(base / "manifest.jsonl")
             return
-        except PermissionError:  # Windows: dosya o an başka süreçte okunuyor
+        except PermissionError:  # Windows: the file is being read by another process right now
             if i == 4:
                 raise
             time.sleep(0.1)
@@ -130,7 +135,7 @@ def save_manifest(cases: list[Case], base: Path | None = None) -> None:
 def add(audio, label: str, *, bucket: str = "", confidence: str = "zayif", state: dict | None = None,
         orig: dict | None = None, note: str = "", case_id: str = "", base: Path | None = None,
         labeled_by: str = "auto") -> Case:
-    """Sesi korpusa kopyala (16 kHz) ve manifeste ekle. audio: Audio ya da wav yolu."""
+    """Copy the audio into the corpus (16 kHz) and add it to the manifest. audio: an Audio or a wav path."""
     from alice.voice.audio import Audio
 
     base = base or root()
@@ -141,7 +146,7 @@ def add(audio, label: str, *, bucket: str = "", confidence: str = "zayif", state
     with _locked(base):
         rel = f"audio/{cid[:8]}/{cid}.wav"
         n = 1
-        while (base / rel).exists():  # aynı milisaniyede iki kayıt: kimlik tek olsun (etiket yanlış kayda gitmesin)
+        while (base / rel).exists():  # same millisecond: keep IDs unique so labels don't land on the wrong take
             n += 1
             rel = f"audio/{cid[:8]}/{cid}-{n}.wav"
         (base / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -180,11 +185,12 @@ def remove(case_id: str, base: Path | None = None) -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------------------------- toplama
+# ---------------------------------------------------------------------------------------------- collection
 def correction_label(text: str) -> str | None:
-    """Düzeltmenin uyanma için anlamı. Yalnızca açık sözler etiket verir: "sana demedim" -> uyanmamalıydı,
-    "yanlış anladın / onu demedim" -> yanlış döküm (seslenme doğruydu). "Hayır, YouTube'da", "saçmaladın",
-    "yapmadın ki" gibi iş düzeltmeleri uyanma hakkında bir şey söylemez: None."""
+    """What a correction means for the wake. Only explicit phrases give a label: "sana demedim" ("I wasn't talking
+    to you") -> uyanmamalıydı; "yanlış anladın / onu demedim" ("you misunderstood / I didn't say that") -> yanlış döküm
+    (the wake was right). Task corrections such as "Hayır, YouTube'da" ("No, on YouTube"), "saçmaladın" ("you
+    talked nonsense") or "yapmadın ki" ("you didn't do it") say nothing about the wake: None."""
     from alice.voice.lang import misheard, not_for_me
 
     if text.lower().startswith("[gemini"):
@@ -197,25 +203,25 @@ def correction_label(text: str) -> str | None:
 
 
 class Collector:
-    """Çekirdekte VoiceAssistant'a bağlanır: on_decision ve on_correct."""
+    """Attached to VoiceAssistant in the core: on_decision and on_correct."""
 
-    CONFIRM_AFTER = 120.0  # sn: uyanmadan sonra bu kadar süre düzeltme gelmezse "uyanmalıydı" güçlü olur
-    POS_PER_DAY = 100  # uyanmalar, günde en fazla
-    NEG_PER_DAY = 40  # kullanıcının uyandırmasız cümleleri (olumsuz örnek), günde en fazla
-    OTHER_PER_DAY = 10  # başka konuşmacı, günde en fazla
-    MAX_CASES = 3000  # ~40 KB/kayıt: en fazla ~120 MB
+    CONFIRM_AFTER = 120.0  # s: if no correction arrives this long after a wake, "uyanmalıydı" becomes strong
+    POS_PER_DAY = 100  # wakes, at most per day
+    NEG_PER_DAY = 40  # the user's sentences without a wake (negative examples), at most per day
+    OTHER_PER_DAY = 10  # other speakers, at most per day
+    MAX_CASES = 3000  # ~40 KB per recording: at most ~120 MB
 
     def __init__(self, base: Path | None = None, log: Callable[[str], None] = lambda s: None):
         self.base = base or root()
         self.log = log
-        # (zaman, id, duyulan): düzeltme beklenen uyanmalar
+        # (time, id, heard text): wakes waiting for a correction
         self._pending: list[tuple[float, str, str]] = []
         self._day = ""
         self._counts = {"pos": 0, "neg": 0, "other": 0}
         self._total: int | None = None
 
     def _count(self) -> int:
-        """Korpustaki kayıt sayısı (süreç yeniden başlasa da manifestten: tavan her oturumda sıfırlanmasın)."""
+        """Number of recordings in the corpus, read from the manifest so the cap survives a process restart."""
         if self._total is None:
             self._total = len(load_manifest(self.base))
         return self._total
@@ -223,8 +229,8 @@ class Collector:
     def _room(self, kind: str) -> bool:
         day = time.strftime("%Y%m%d")
         if day != self._day:
-            # Bugünkü sayı manifestten: çekirdek her yeniden başladığında sıfırlanınca günlük sınır tutmuyordu
-            # (günde 40 yerine 96 kayıt).
+            # Today's count comes from the manifest: when it reset on every core restart, the daily limit was
+            # not enforced (96 recordings a day instead of 40).
             today = [c for c in load_manifest(self.base) if c.id.startswith(day)]
             kinds = {"pozitif": "pos", "negatif-konusma": "neg", "baska-konusmaci": "other"}
             self._day, self._counts = day, {"pos": 0, "neg": 0, "other": 0}
@@ -244,7 +250,7 @@ class Collector:
         while self._pending and now - self._pending[0][0] > self.CONFIRM_AFTER:
             try:
                 relabel(self._pending[0][1], self.base, confidence="guclu", note="düzeltme gelmedi")
-            except Exception:  # noqa: BLE001 - kilit/disk: sonraki kararda yeniden dene
+            except Exception:  # noqa: BLE001 - lock/disk: retry on the next decision
                 return
             self._pending.pop(0)
 
@@ -255,30 +261,31 @@ class Collector:
         orig = {"reason": reason, "spk": spk, "head": head, "path": d.get("path"), "recent": str(path or "")}
         thr = d.get("thr")
         if d.get("ptt") or reason in ("cevap", "kisa", "?"):
-            return  # bas-konuş ve onay cevabı uyandırma kararı değil
+            return  # push-to-talk and confirmation replies are not wake decisions
         if d.get("woke") and reason in ("uyandi", "takip", "susturma"):
             if self._room("pos"):
                 c = self._add("pos", audio, "uyanmaliydi", path, bucket="pozitif", state=d, orig=orig)
                 self._pending.append((now, c.id, head))
         elif reason == "ses_izi" and spk is not None and spk < OTHER_MAX and self._room("other"):
-            orig["head"] = ""  # başkasının sözü saklanmaz
+            orig["head"] = ""  # someone else's words are not stored
             self._add("other", audio, "uyanmamaliydi", path, bucket="baska-konusmaci", confidence="guclu",
                       state=d, orig=orig)
         elif (reason == "uyandirma_yok" and head.strip() and spk is not None and thr is not None and spk >= thr
               and self._room("neg")):
-            # Yalnızca ses izi kullanıcıya ait olan cümle: gri bölgedeki ya da tanınmayan sesin sözü saklanmaz.
+            # Only sentences whose voice print belongs to the user: words from a gray-zone or unrecognized voice
+            # are not stored.
             self._add("neg", audio, "uyanmamaliydi", path, bucket="negatif-konusma", state=d, orig=orig)
 
     def on_correct(self, text: str) -> None:
-        """Son uyanma düzeltildi (bkz. correction_label). Düzeltme cümlesinin kendisi de uyanma olarak kaydedilmiş
-        olabilir (oturum kapandıktan sonra "Alice sana demedim"): etiket ondan önceki uyanmaya gider."""
+        """The last wake was corrected (see correction_label). The correction sentence itself may also have been
+        recorded as a wake (after the session closed, "Alice sana demedim"): the label goes to the wake before it."""
         from alice.voice.lang import correction
 
         label = correction_label(text)
         if label is None or not self._pending:
             return
         while self._pending and correction(self._pending[-1][2]):
-            _, cid, _ = self._pending.pop()  # düzeltme cümlesi: ALICE'e söylendi, doğru uyanma
+            _, cid, _ = self._pending.pop()  # correction sentence: said to ALICE, a correct wake
             relabel(cid, self.base, confidence="guclu", note="düzeltme cümlesi")
         if not self._pending:
             return
@@ -298,7 +305,7 @@ def attach(va, base: Path | None = None, log: Callable[[str], None] = lambda s: 
     return c
 
 
-# --------------------------------------------------------------------------------------- tekrar oynatma
+# --------------------------------------------------------------------------------------- replay
 @dataclass
 class Decision:
     woke: bool
@@ -357,7 +364,7 @@ class _Sink:
 
 
 def _deterministic(gate) -> None:
-    """Whisper'ın sıcaklık geri dönüşünü kapat: aynı ses hep aynı metni versin (yalnızca bu kapı nesnesi)."""
+    """Turn off Whisper's temperature fallback: the same audio always gives the same text (this gate only)."""
     load = gate._load
 
     def loaded():
@@ -376,15 +383,16 @@ def _deterministic(gate) -> None:
 
 def build_replay_assistant(*, home: Path | None = None, wake_model: str = "base", threshold: float | None = None,
                            deterministic: bool = True, names: list[str] | None = None, speaker: bool = True):
-    """Gerçek yerel Whisper ve gerçek ses iziyle, ajan/hoparlör/Live sahte bir VoiceAssistant. Hiçbir şey konuşmaz,
-    buluta gitmez (ikinci kulak kapalı). home: profil ve modellerin olduğu ~/.alice/voice."""
+    """A VoiceAssistant with the real local Whisper and real voice print, but a fake agent, speaker and Live.
+    Nothing is spoken and nothing goes to the cloud (second ear off). home: ~/.alice/voice, which holds the
+    profile and models."""
     from types import SimpleNamespace
 
     from alice.voice import assistant as A
     from alice.voice import speaker_id as sid
     from alice.voice.stt import WakeGate
 
-    A.voice_log = lambda line: None  # tekrar oynatma gerçek voice.log'u kirletmesin (yalnızca bu süreçte)
+    A.voice_log = lambda line: None  # replay must not pollute the real voice.log (this process only)
     if home is None:
         from alice.config import alice_home
 
@@ -416,12 +424,12 @@ def build_replay_assistant(*, home: Path | None = None, wake_model: str = "base"
         except Exception:  # noqa: BLE001
             names = []
     va = A.VoiceAssistant(_Agent(), _Speaker(), stt, live=_Live(names), speaker_gate=spk)
-    va._jobs = _Sink()  # uyanınca Live'a gitmesin: karar yeter
+    va._jobs = _Sink()  # after a wake, don't go to Live: the decision is enough
     return va
 
 
 def replay(case: Case, va, base: Path | None = None) -> Decision:
-    """Kaydı kayıt anındaki ALICE durumuyla yeniden oynat, kararı döndür."""
+    """Replay the recording with the ALICE state it had when recorded, and return the decision."""
     from alice.voice.audio import Audio
 
     base = base or root()
@@ -443,7 +451,7 @@ def replay(case: Case, va, base: Path | None = None) -> Decision:
 
 
 def expected(case: Case) -> bool | None:
-    """Bu kayıtta uyanılmalı mı? (belirsizde None)"""
+    """Should this recording wake ALICE? (None when uncertain)"""
     if case.label in ("uyanmaliydi", "yanlis_dokum"):
         return True
     if case.label == "uyanmamaliydi":
@@ -453,7 +461,7 @@ def expected(case: Case) -> bool | None:
 
 def evaluate(cases: list[Case], va, base: Path | None = None, runs: int = 1,
              progress: Callable[[int, int], None] = lambda i, n: None) -> dict[str, Any]:
-    """Hepsini oynat; metrikler ve vaka başına sonuç."""
+    """Replay them all; metrics and per-case results."""
     rows = []
     for i, c in enumerate(cases):
         progress(i, len(cases))
@@ -513,16 +521,17 @@ def format_report(rep: dict[str, Any], threshold: float | None = None) -> str:
     return "\n".join(lines)
 
 
-# ------------------------------------------------------------------------------------- içe alma, etiket
+# ------------------------------------------------------------------------------------- import, labeling
 def label_from_decision(d: dict[str, Any]) -> tuple[str, str, str]:
-    """Eski bir kaydın kararından (etiket, kova, güven). Uyanmış kayıt doğru muydu bilinmez: belirsiz."""
+    """(label, bucket, confidence) from an old recording's decision. Whether a recording that woke was right is
+    unknown: uncertain."""
     spk, head = d.get("spk"), str(d.get("head") or "").strip()
     if d.get("woke"):
         return "belirsiz", "pozitif", "zayif"
     if spk is not None and spk < OTHER_MAX:
         return "uyanmamaliydi", "baska-konusmaci", "guclu"
     if d.get("reason") in ("ses_izi", "gri", "stt_hata"):
-        return "belirsiz", "negatif-konusma", "zayif"  # içerik bilinmiyor: etiketlerken sorulur
+        return "belirsiz", "negatif-konusma", "zayif"  # content unknown: asked during labeling
     if not head:
         return "uyanmamaliydi", "konusma-yok", "guclu"
     return "uyanmamaliydi", "negatif-konusma", "zayif"
@@ -530,7 +539,8 @@ def label_from_decision(d: dict[str, Any]) -> tuple[str, str, str]:
 
 def import_recent(va=None, recent: Path | None = None, base: Path | None = None,
                   log: Callable[[str], None] = lambda s: None) -> int:
-    """~/.alice/voice/recent'teki son kayıtları korpusa al (yan dosyada karar yoksa yeniden oynatılarak)."""
+    """Import the latest recordings in ~/.alice/voice/recent into the corpus (replayed when the side file has no
+    decision)."""
     from alice.config import alice_home
 
     recent = recent or alice_home() / "voice" / "recent"
@@ -572,12 +582,12 @@ def play(path: Path) -> None:
         a = Audio.load(path)
         sd.play(__import__("numpy").frombuffer(a.pcm, dtype="<i2"), a.rate)
         sd.wait()
-    except Exception:  # noqa: BLE001 - ses çalınamazsa yalnızca soru sorulur
+    except Exception:  # noqa: BLE001 - if the audio can't be played, only the question is asked
         pass
 
 
 def to_label(order: list[Case]) -> list[Case]:
-    """Etiketlenecekler: önce belirsizler, sonra zayıflar (yeni önce)."""
+    """To be labeled: uncertain ones first, then weak ones (newest first)."""
     rank = {"belirsiz": 0}
     return sorted([c for c in order if c.labeled_by != "kullanıcı"],
                   key=lambda c: (rank.get(c.label, 1), c.confidence != "zayif", -c.ts))

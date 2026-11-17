@@ -1,11 +1,11 @@
-"""ALICE masaüstü uygulamasının yerel sunucusu.
+"""Local server for the ALICE desktop application.
 
-Ajan bir thread'de çalışır, olaylar Server-Sent Events ile arayüze akar, arayüz
-komutları POST ile gelir. Sadece 127.0.0.1'e bağlanır ve her istek oturuma özel
-rastgele bir token ister: bu sunucu bilgisayarı tam kontrol eden bir ajana bağlı
-olduğu için tarayıcıdaki başka bir sitenin ona istek atabilmesi kabul edilemez.
-Token özel bir header'da gittiği için çapraz site istekleri CORS preflight'ta
-takılır; Host kontrolü de DNS rebinding'i keser.
+The agent runs in a thread, events flow to the UI via Server-Sent Events, and UI
+commands arrive via POST. It binds only to 127.0.0.1 and every request requires
+a session-specific random token: because this server is connected to an agent with
+full computer control, another site in the browser sending requests to it is unacceptable.
+Because the token travels in a custom header, cross-site requests are blocked by
+CORS preflight; Host header checks also prevent DNS rebinding.
 """
 
 from __future__ import annotations
@@ -42,24 +42,24 @@ STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
                 "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript",
                 "Geist.woff2": "font/woff2", "GeistMono.woff2": "font/woff2"}
-# media-src: Sistem → Ses'teki "Dinle" örneği data: adresinden çalınır. Yoktu; default-src 'none' yüzünden
-# tarayıcı sesi sessizce engelliyordu.
+# media-src: "Listen" sample in System → Voice is played from a data: URL. Missing; default-src 'none' caused
+# the browser was silently blocking audio.
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
        "media-src 'self' data: blob:; "
        "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
        "frame-src 'self' blob:")
-# frame-src blob: dosya önizlemesindeki PDF bir blob: adresinden çerçevede açılır; 'self' blob:'u kapsamaz, PDF
-# önizlemesi boş kalıyordu. blob: adresini yalnız sayfanın kendisi üretebilir.
-# Önizlenen site korumalı çerçevede (ayrı köken) çalışır: ALICE'in sayfasına ve API'sine dokunamaz.
+# frame-src blob: In file preview, a PDF opens in an iframe from a blob: URL; 'self' does not cover blob:, so the PDF
+# preview stayed blank. Only the page itself can generate blob: URLs.
+# The previewed site runs in a sandboxed frame (separate origin): it cannot touch ALICE's page or API.
 PREVIEW_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
-# İstek gövdesi sınırı: 6 ekran görüntüsü (1600 px PNG, base64) ya da uzun bir ses kaydı sığsın.
+# Request body limit: sized to fit 6 screenshots (1600 px PNG, base64) or a long audio recording.
 MAX_BODY = 32_000_000
-# Yanıt vermeyen bağlantı thread tutmasın (yerel ağdaki biri boş bağlantılarla sunucuyu tıkayamasın).
+# Unresponsive connection should not hold a thread (prevents clogging server with idle connections from LAN).
 REQUEST_TIMEOUT = 60
 
 
 def _same(given: str, expected: str) -> bool:
-    """Sabit zamanlı anahtar karşılaştırması. compare_digest ASCII dışı str'de TypeError atar; baytla karşılaştır."""
+    """Constant-time key comparison. compare_digest raises TypeError on non-ASCII str; compare with bytes."""
     return secrets.compare_digest(given.encode("utf-8", "surrogateescape"), expected.encode("utf-8"))
 
 
@@ -70,7 +70,7 @@ class BadRequest(Exception):
 
 
 def int_field(d: dict[str, Any], key: str, default: int = 0) -> int:
-    """İstek gövdesindeki tamsayı alan; sayı değilse 500 yerine 400 (BadRequest)."""
+    """Integer field in request body; returns 400 (BadRequest) instead of 500 if not a number."""
     v = d.get(key)
     if v is None or v == "":
         return default
@@ -82,7 +82,7 @@ def int_field(d: dict[str, Any], key: str, default: int = 0) -> int:
         raise BadRequest(400, f"{key} tamsayı olmalı") from None
 
 
-# ----------------------------------------------------------------------- olaylar
+# ----------------------------------------------------------------------- events
 class EventBus:
     def __init__(self) -> None:
         self._subs: list[queue.Queue] = []
@@ -110,8 +110,8 @@ class EventBus:
 
 
 class AppUI:
-    """Agent'ın UI sözleşmesini olay yayınına çevirir. İzin soruları cevap gelene kadar bekler.
-    Olaylar sohbetin kimliğini (sid) taşır: arkada çalışan sohbetin akışı öndeki sohbete karışmasın."""
+    """Translates the Agent UI contract into event publishing. Permission prompts wait until an answer arrives.
+    Events carry the chat ID (sid): prevents background chat streams from interfering with the foreground chat."""
 
     sid = ""
 
@@ -150,7 +150,7 @@ class AppUI:
                       "files": getattr(result, "files", [])[:10], "card": getattr(result, "card", {}) or {}})
 
     def ask_permission(self, name: str, summary: str, risk: str, cancelled: Any = None) -> str:
-        """cancelled: soruyu kapatan durdurma (alt ajanın kendi Durdur'u); verilmezse bu sohbetin ajanınki."""
+        """cancelled: stop callable that dismisses the prompt (sub-agent's own Stop); defaults to this chat's agent."""
         pid = secrets.token_hex(6)
         ev = threading.Event()
         self._events[pid] = ev
@@ -176,7 +176,7 @@ class AppUI:
         return True
 
     def ask_choice(self, question: str, options: list[str], multi: bool = False) -> str:
-        """Seçenekli soru kartı; cevap /api/choice ile gelir (boş = vazgeçildi)."""
+        """Multiple choice question card; answer arrives via /api/choice (empty = cancelled)."""
         pid = secrets.token_hex(6)
         ev = threading.Event()
         self._events[pid] = ev
@@ -210,7 +210,7 @@ def _summary(tools: dict[str, Any], name: str, raw: str) -> str:
     if tool is not None:
         try:
             return tool.summary(parse_args(raw))
-        except Exception:  # noqa: BLE001 - bozuk argüman: ham metni göster
+        except Exception:  # noqa: BLE001 - invalid argument: show raw text
             pass
     return raw if len(raw) < 160 else raw[:157] + "..."
 
@@ -226,11 +226,11 @@ def _user_text(m: dict[str, Any]) -> str:
 
 def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None = None,
                     archive: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """Mesaj geçmişini arayüzün çizebileceği öğelere çevir. Kullanıcı mesajları geri sarma için
-    ajan geçmişindeki indekslerini (mi) taşır.
+    """Convert message history into items that the UI can render. User messages carry their indices
+    in the agent history (mi) for rewinding.
 
-    archive: özetlemeyle bağlamdan çıkmış eski mesajlar (bkz. session.archive). Başa eklenir; ajan geçmişinde
-    olmadıkları için indeksleri yoktur (geri sarılamazlar)."""
+    archive: old messages evicted from context by summarization (see session.archive). Prepended to the front;
+    they have no index because they are not in agent history (cannot be rewound)."""
     from alice.agent import PLAN_NOTE
 
     items: list[dict[str, Any]] = []
@@ -238,7 +238,7 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
         items = [{k: v for k, v in it.items() if k != "mi"} for it in display_history([{"role": "system"}, *archive], tools)]
     results = {m.get("tool_call_id"): m.get("content", "") for m in messages if m.get("role") == "tool"}
     extras = {m.get("tool_call_id"): m for m in messages if m.get("role") == "tool" and (m.get("_files") or m.get("_card"))}
-    if extras:  # yeniden açılan sohbette gösterilen dosyalar yine açılabilsin / önizlenebilsin
+    if extras:  # allow files displayed in a reopened chat to still be opened / previewed
         from alice.tools.meta import SENT_FILES
 
         for m in extras.values():
@@ -256,7 +256,7 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
             elif not text.startswith("[eski ekran görüntüsü"):
                 if text.startswith(PLAN_NOTE):
                     text = text[len(PLAN_NOTE):]
-                # Çalışırken araya yazılan mesajda geri sarma noktası yok (tur ortası): indeks verilmez.
+                # A message inserted mid-turn while running has no rewind point: no index is assigned.
                 items.append({"type": "user", "text": text, "mi": None if m.get("_steer") else i,
                               "n_images": m.get("_user_images", 0)})
         elif role == "assistant":
@@ -279,11 +279,11 @@ PREVIEW_TEXT = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".lo
                 ".sh": "code", ".ps1": "code", ".sql": "code", ".ini": "code", ".cfg": "code"}
 PREVIEW_IMAGE = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                  ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp"}
-PREVIEW_MAX = 400_000  # bayt: daha büyük metin dosyasının başı gösterilir
+PREVIEW_MAX = 400_000  # bytes: the head of larger text files is displayed
 
 
 def file_preview(path: str, allowed: set[str]) -> dict[str, Any]:
-    """Kullanıcıya gösterilmiş bir dosyanın önizlemesi: metin (markdown/kod/csv/html) ya da görsel/PDF (base64)."""
+    """Preview of a file displayed to the user: text (markdown/code/csv/html) or image/PDF (base64)."""
     import base64
 
     p = Path(path)
@@ -311,7 +311,7 @@ def file_preview(path: str, allowed: set[str]) -> dict[str, Any]:
 
 
 def git_branch(cwd: Path) -> str:
-    """Çalışma klasörünün git dalı (durum çubuğu için). git çalıştırmadan .git/HEAD okunur."""
+    """Working directory's git branch (for the status bar). Reads .git/HEAD without invoking git."""
     for d in (cwd, *cwd.parents):
         g = d / ".git"
         try:
@@ -342,8 +342,8 @@ def _text_of(data: bytes | None) -> str | None:
 
 
 def session_changes(checkpoints: dict[int, dict[str, bytes | None]], cwd: Path) -> list[dict[str, Any]]:
-    """Bu oturumda dosya araçlarıyla değiştirilen dosyalar: ilk halleriyle şimdiki halleri arasındaki fark.
-    Codex'teki inceleme paneli gibi tüm değişiklikler tek yerde görünsün."""
+    """Files modified by file tools in this session: diff between their initial state and current state.
+    Shows all changes in one place, like the review panel in Codex."""
     import difflib
 
     original: dict[str, bytes | None] = {}
@@ -380,7 +380,7 @@ def session_changes(checkpoints: dict[int, dict[str, bytes | None]], cwd: Path) 
 
 
 def revert_change(checkpoints: dict[int, dict[str, bytes | None]], path: str) -> bool:
-    """Tek bir dosyayı oturumdaki ilk haline döndür (Codex'teki dosya bazında "geri al")."""
+    """Revert a single file to its initial state in the session (per-file "undo" like in Codex)."""
     for idx in sorted(checkpoints):
         if path in checkpoints[idx]:
             data = checkpoints[idx][path]
@@ -395,14 +395,14 @@ def revert_change(checkpoints: dict[int, dict[str, bytes | None]], path: str) ->
     return False
 
 
-# ------------------------------------------------------------------------ durum
+# ------------------------------------------------------------------------ state
 class Chat:
-    """Bir sohbet: kendi ajanı, araç bağlamı ve iş thread'i. Bir sohbet çalışırken başka sohbete geçilip orada da iş
-    verilebilsin diye: geride kalan sohbet arkada sürer, bitince kaydedilip kapanır.
+    """A chat: its own agent, tool context, and worker thread. Enables switching to another chat and assigning work
+    there while one chat is running: the remaining chat continues in the background, is saved and closed when done.
 
-    Thread'e bağlı nesneler (Playwright tarayıcısı, UI Automation) sohbetin bağlamında ve kendi thread'inde kalır; her
-    mesajda yeni thread açmak onları bozardı. Araç nesneleri durumsuz (durum bağlamda), sohbetler arasında paylaşılır.
-    Ekranı/tarayıcıyı süren araçlar sohbetler arasında sırayla kullanılır (bkz. DesktopLock)."""
+    Thread-bound objects (Playwright browser, UI Automation) remain in the chat's context and its own thread; spawning
+    a new thread for every message would break them. Tool objects are stateless (state is in context) and shared across chats.
+    Tools that drive the screen/browser are used sequentially across chats (see DesktopLock)."""
 
     def __init__(self, app: "AppState", cwd: Path, mode: str, sid: str = "",
                  messages: list[dict[str, Any]] | None = None):
@@ -414,33 +414,33 @@ class Chat:
         self.ctx = ToolContext(cwd=cwd, config=app.cfg, router=app.router, decider=app.decider, emit=self.ui.info)
         self.agent = Agent(app.cfg, app.router, list(app.tools), self.ctx, Permissions(mode), self.ui, app.decider)
         self.ui.agent = self.agent
-        self.ctx.state["set_cwd"] = lambda path: app.set_cwd(path, self)  # github clone aracı klasörü değiştirir
-        self.ctx.state["publish"] = app.bus.publish  # takım paneli canlı güncellensin
-        self.ctx.state["teams"] = app.teams  # projeler bütün sohbetlerin
+        self.ctx.state["set_cwd"] = lambda path: app.set_cwd(path, self)  # github clone tool changes the folder
+        self.ctx.state["publish"] = app.bus.publish  # live update for team panel
+        self.ctx.state["teams"] = app.teams  # projects belong to all chats
         self.ctx.state["desktop_lock"] = app.desktop_lock
-        self.ctx.state["session_id"] = self.sid  # PR takibi olayları kodu yazan bu sohbete geri getirebilsin
-        # Arka plandan bu sohbete mesaj (monitor olayları, ayrı oturumun sonucu) ve ayrı oturum başlatma.
+        self.ctx.state["session_id"] = self.sid  # allow PR watch events to return to the chat that wrote the code
+        # Messages from background to this chat (monitor events, detached results) and starting detached sessions.
         self.ctx.state["deliver"] = lambda text: app.deliver(self.sid, text)
-        self.ctx.state["deliver_to"] = app.deliver  # (sohbet, metin): alt ajan sonucu başlatan sohbete gitsin
+        self.ctx.state["deliver_to"] = app.deliver  # (chat, text): route subagent result to the initiating chat
         self.ctx.state["sessions"] = SessionsAPI(app, self)
-        self.ctx.state["builtin_browser"] = app.builtin_browser  # tarayıcı aracı ve preview bunu kullanır
+        self.ctx.state["builtin_browser"] = app.builtin_browser  # used by browser tool and preview
         attach_memory(self.agent, "uygulama")
-        self.started = time.time()  # oturum süresi (durum çubuğu); kayıtlı sohbette ilk açılışı
+        self.started = time.time()  # session duration (status bar); first launch time in saved chat
         self._ckpt_sig = (0, 0)
         if messages is not None:
             self.agent.messages = self.agent.messages[:1] + messages
             self._restore_extra()
-            try:  # yeniden açılan sohbette az önce okunan dosyalar yine "okunmuş" sayılsın
+            try:  # in a reopened chat, consider recently read files as "read" again
                 from alice.tools.files import restore_reads
 
                 saved = (sess.sessions_dir() / f"{self.sid}.json").stat().st_mtime
                 restore_reads(self.ctx, messages, saved)
-            except Exception:  # noqa: BLE001 - kayıt geri kurulamazsa eski davranış: önce okumak gerekir
+            except Exception:  # noqa: BLE001 - if record cannot be restored, fallback to old behavior: must read first
                 pass
         self.agent.on_step = self.save
-        self.agent.on_compact = lambda old: sess.archive(self.sid, old)  # özetlenen mesajlar ekranda kalsın
+        self.agent.on_compact = lambda old: sess.archive(self.sid, old)  # keep summarized messages on screen
         self.queued = False
-        self.abandoned = False  # durdurulamayan iş: thread'i bırakıldı, artık kaydetmez ve arayüze yazmaz
+        self.abandoned = False  # unstoppable job: thread abandoned, no longer saves or writes to the UI
         self._jobs: queue.Queue = queue.Queue()
         self._thread = threading.Thread(target=self._work, daemon=True, name=f"alice-chat-{self.sid[-6:]}")
         self._thread.start()
@@ -462,7 +462,7 @@ class Chat:
             sess.save(self.sid, self.agent.messages, self.ctx.cwd, extra)
             cps = self.agent.checkpoints
             sig = (len(cps), sum(len(v) for v in cps.values()))
-            if sig != self._ckpt_sig:  # dosyaların ilk halleri yalnız değişince yazılır
+            if sig != self._ckpt_sig:  # initial file states are only written when changed
                 try:
                     sess.save_checkpoints(self.sid, cps)
                     self._ckpt_sig = sig
@@ -471,8 +471,8 @@ class Chat:
             self._title_once()
 
     def switch_to(self, sid: str, messages: list[dict[str, Any]] | None = None) -> None:
-        """Aynı ajanla başka bir sohbete geç (yeni ya da kayıtlı): önceki sohbetin istatistiği, kullanım dökümü,
-        geri sarma kayıtları ve alt ajanları yenisine taşınmasın."""
+        """Switch to another chat with the same agent (new or saved): do not carry over previous chat's statistics,
+        usage breakdown, rewind checkpoints, or subagents to the new one."""
         self.agent.reset()
         self.agent.stats = {k: 0 for k in self.agent.stats}
         self.agent.usage_models, self.agent.usage_tools = {}, {}
@@ -488,7 +488,7 @@ class Chat:
             self._restore_extra()
 
     def _restore_extra(self) -> None:
-        """Kayıtlı sohbet açılınca: istatistik, kullanım dökümü, alt ajanlar, geri sarma kayıtları ve başlangıç."""
+        """When opening a saved chat: statistics, usage breakdown, subagents, rewind checkpoints, and start time."""
         from alice import subagents
 
         try:
@@ -500,11 +500,11 @@ class Chat:
             if cps:
                 self.agent.checkpoints.update(cps)
                 self._ckpt_sig = (len(cps), sum(len(v) for v in cps.values()))
-        except Exception:  # noqa: BLE001 - eksik bilgi sohbeti açmayı engellemesin
+        except Exception:  # noqa: BLE001 - missing information should not prevent opening the chat
             pass
 
     def _title_once(self) -> None:
-        """İlk kayıtta sohbete ilk istekten bir başlık üret (arka planda, bir kez)."""
+        """Generate a title for the chat from the first request on initial save (in the background, once)."""
         if getattr(self, "_titled", False) or not getattr(self.app.router, "_real_clients", False):
             return
         self._titled = True
@@ -512,8 +512,8 @@ class Chat:
 
         def work() -> None:
             try:
-                sess.ensure_title(self.app.router, sid, msgs)  # liste tur bitince yenilenir, başlık orada görünür
-            except Exception:  # noqa: BLE001 - başlık üretilemedi: liste isteğin başını gösterir
+                sess.ensure_title(self.app.router, sid, msgs)  # list refreshes after turn finishes, title appears there
+            except Exception:  # noqa: BLE001 - failed to generate title: list displays the beginning of the prompt
                 pass
 
         threading.Thread(target=work, daemon=True, name="alice-title").start()
@@ -539,14 +539,14 @@ class Chat:
             done.wait(wait)
 
     def close(self, wait: float | None = None) -> None:
-        """Araçların bıraktıklarını (tarayıcı bağlantısı, arka plan komutları) kendi thread'inde temizle, thread'i bitir."""
+        """Clean up tool resources (browser connections, background commands) in its own thread, terminate thread."""
         self.run(lambda: cleanup(self.ctx), wait=wait)
         self._jobs.put(None)
 
 
 def fork_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Ayrı oturuma verilecek geçmiş: sistem mesajı hariç, sonda cevabı gelmemiş araç çağrısı varsa (oturumu
-    başlatan çağrının kendisi) ondan öncesi. Cevapsız tool_calls sağlayıcıya giderse istek 400 ile reddedilir."""
+    """History to pass to a detached session: excluding the system message, up to the last unhandled tool call
+    if present (the call that initiated the session). Unanswered tool_calls cause provider requests to fail with 400."""
     rows = [dict(m) for m in messages[1:]]
     answered = {m.get("tool_call_id") for m in rows if m.get("role") == "tool"}
     for i in range(len(rows) - 1, -1, -1):
@@ -559,7 +559,7 @@ def fork_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class SessionsAPI:
-    """Bir sohbetin başlattığı ayrı oturumlar (session aracı)."""
+    """Detached sessions initiated by a chat (session tool)."""
 
     def __init__(self, app: "AppState", chat: "Chat"):
         self.app, self.chat = app, chat
@@ -603,15 +603,15 @@ class SessionsAPI:
 
 
 class AppState:
-    MAX_BACKGROUND = 3  # arkada aynı anda çalışabilecek sohbet sayısı
-    STOP_GRACE = 10.0  # Durdur'dan sonra işin bırakılmasını bu kadar bekle
+    MAX_BACKGROUND = 3  # number of chats that can run concurrently in the background
+    STOP_GRACE = 10.0  # seconds to wait for job abandonment after Stop
 
     def __init__(self, cfg: Config, cwd: Path, mode: str, provider_factory=None):
         self.cfg = cfg
         self.bus = EventBus()
         self.router = Router(cfg, provider_factory=provider_factory,
                              on_event=lambda s: self.bus.publish({"type": "route", "text": s}))
-        # Menüden seçilen ana model yeniden başlatmada da kalır: önceden her güncellemede Otomatik'e dönüyordu.
+        # Main model selected from menu persists across restarts: previously reverted to Automatic on every update.
         pin = str(cfg.agent.get("pinned_brain") or "")
         if pin.partition(":")[0] in self.router.providers_cfg and pin.partition(":")[2]:
             self.router.role_overrides["brain"] = [pin]
@@ -621,31 +621,31 @@ class AppState:
         self.desktop_lock = DesktopLock()
         self._mcp_servers: list[Any] = []
         self._chats_lock = threading.RLock()
-        self.background: dict[str, Chat] = {}  # öndeki sohbetten ayrılınca çalışmaya devam edenler
-        # Silinen sohbetler: bellekte hâlâ açık duran Chat bunları diske geri yazmasın (silinen sohbet açılışta
-        # yeniden çıkıyordu).
+        self.background: dict[str, Chat] = {}  # chats that continue running after navigating away from foreground
+        # Deleted chats: prevent a Chat still in memory from saving them back to disk (a deleted chat used to reappear
+        # on startup).
         self.deleted_sids: set[str] = set()
         self.chat = Chat(self, cwd, mode)
         self.token = secrets.token_urlsafe(24)
-        # Önizleme adresindeki anahtar ayrı: sitenin kodu onu görse bile sadece proje dosyalarını okuyabilir.
+        # Preview URL key is separate: even if site code inspects it, it can only read project files.
         self.preview_token = secrets.token_urlsafe(18)
-        self.allowed_hosts = {"127.0.0.1", "localhost"}  # telefon sunucusunda LAN adresi eklenir
-        self.watch_store = None  # telefon sunucusu: saat verisi buraya yazılır
-        self.quick_pending: dict[str, Any] | None = None  # hızlı bar açılırken doldurulacak metin/görsel
-        self.update: Any = None  # alice.updater.UpdateInfo: açılışta/arka planda bulunan yeni sürüm
-        self.restart_hook: Any = None  # çekirdeğin içindeyken (alice/app/host.py) yeniden başlayan çekirdektir
+        self.allowed_hosts = {"127.0.0.1", "localhost"}  # LAN address is added in phone server
+        self.watch_store = None  # phone server: watch data is written here
+        self.quick_pending: dict[str, Any] | None = None  # text/image to fill when opening quick bar
+        self.update: Any = None  # alice.updater.UpdateInfo: new version found at startup/in background
+        self.restart_hook: Any = None  # when running inside host (alice/app/host.py), this is the host restart hook
         self._update_lock = threading.Lock()
-        self._update_stop = threading.Event()  # kapanışta arka plan güncelleme döngüsü dursun
-        self._update_waits = (10.0, 60.0)  # ilk bakış, sonraki turlar (sn)
+        self._update_stop = threading.Event()  # stop background update loop on shutdown
+        self._update_waits = (10.0, 60.0)  # initial check, subsequent rounds (s)
         self._stt = None
-        # MCP sunucuları (npx ile açılanlar yavaş olabilir) arayüzü bekletmesin. Sunucular uygulamanın, sohbetin değil:
-        # kapanan sohbet onları kapatmasın; araçları sonradan açılan sohbetlere de geçsin.
+        # MCP servers (npx launched ones can be slow) should not block the UI. Servers belong to the app, not chat:
+        # a closing chat should not terminate them; their tools should pass to subsequent chats as well.
         self.run_in_worker(self._attach_mcp)
         self._start_cliproxy()
 
     def _watch_quota(self) -> None:
-        """Abonelik hesabı kotası dolmak üzereyse bir kez haber ver (alice/quota_watch.py). [cliproxy] quota_warn = false
-        kapatır."""
+        """Notify once if subscription quota is about to run out (alice/quota_watch.py). [cliproxy] quota_warn = false
+        disables this."""
         try:
             if not bool((self.cfg.data.get("cliproxy", {}) or {}).get("quota_warn", True)):
                 return
@@ -654,11 +654,11 @@ class AppState:
 
                 self._quota_watch = QuotaWatch(lambda s: self.bus.publish({"type": "info", "text": s}))
             self._quota_watch.maybe_check()
-        except Exception:  # noqa: BLE001 - uyarı yüzünden tur bitişi bozulmasın
+        except Exception:  # noqa: BLE001 - warning should not break turn completion
             pass
 
     def _start_cliproxy(self) -> None:
-        """Yerel Claude Code proxy'si (CLIProxyAPI) kuruluysa açılışta kendiliğinden başlat."""
+        """If local Claude Code proxy (CLIProxyAPI) is installed, automatically start it on launch."""
         try:
             cl = self.cfg.data.get("cliproxy", {}) or {}
             if not bool(cl.get("auto_start", True)):
@@ -667,7 +667,7 @@ class AppState:
 
             cliproxy.start_in_background(install=bool(cl.get("auto_install", True)),
                                          version=str(cl.get("version") or ""))
-        except Exception:  # noqa: BLE001 - proxy yoksa ALICE açılışı etkilenmesin
+        except Exception:  # noqa: BLE001 - if proxy is missing, ALICE startup should not be affected
             pass
 
     def _attach_mcp(self) -> None:
@@ -682,7 +682,7 @@ class AppState:
                 for t in added:
                     c.agent.tools.setdefault(t.name, t)
 
-    # Öndeki sohbet: uç noktalar ve diğer modüller (hızlı bar, telefon) bunlar üzerinden çalışır.
+    # Foreground chat: endpoints and other modules (quick bar, phone) operate through these.
     @property
     def agent(self) -> Agent:
         return self.chat.agent
@@ -711,15 +711,15 @@ class AppState:
         self.chat.run(fn, wait)
 
     def running(self) -> list[str]:
-        """Arkada hâlâ çalışan sohbetler (kenar çubuğunda işaretlenir)."""
+        """Chats still running in the background (marked in the sidebar)."""
         with self._chats_lock:
             return [sid for sid, c in self.background.items() if c.busy]
 
-    # ------------------------------------------------------------------ cihaza göre sohbet
-    # Masaüstü, hızlı bar ve telefon aynı uygulama durumunu paylaşır ama her biri kendi sohbetini gösterebilir. Eskiden
-    # tek bir "öndeki sohbet" vardı: telefonda yeni sohbet açınca bilgisayarın ekranı da ona geçiyor, bilgisayarda başka
-    # sohbete geçince telefondan yazılan mesaj oraya gidiyordu (7 Kasım). İstek bir sid taşıyorsa o sohbette çalışılır;
-    # öndekinden farklıysa arka planda, bilgisayarın ekranı değişmez.
+    # ------------------------------------------------------------------ chat by device
+    # Desktop, quick bar, and phone share the same app state, but each can display its own chat. Previously
+    # there was only a single "foreground chat": opening a new chat on phone switched the PC screen as well, and
+    # switching chats on PC routed phone messages to it (Nov 7). If request carries a sid, work is done in that chat;
+    # if different from foreground, it runs in the background without changing the PC screen.
     _SID_RX = re.compile(r"[\w-]{6,64}")
 
     def find_chat(self, sid: str) -> "Chat | None":
@@ -729,7 +729,7 @@ class AppState:
             return self.background.get(sid)
 
     def chat_for(self, sid: str) -> "Chat | None":
-        """sid'in canlı sohbeti; yoksa diskten (ya da yeni) arka plan sohbeti açar. Yer yoksa None."""
+        """Live chat for sid; otherwise opens background chat from disk (or creates new). Returns None if no room."""
         if not self._SID_RX.fullmatch(sid or ""):
             return None
         with self._chats_lock:
@@ -739,8 +739,8 @@ class AppState:
             if len(self.running()) >= self.MAX_BACKGROUND:
                 return None
             loaded = sess.load(sid)
-            # Kayıtlı sohbet kendi klasöründe açılır: kullanıcı başka projeye geçmiş olsa da PR takibinin işi
-            # o sohbetin deposunda yapılsın.
+            # A saved chat opens in its own directory: even if the user switched to another project, PR watch tasks
+            # are executed in that chat's repository.
             cwd = (sess.saved_cwd(sid) if loaded else None) or self.ctx.cwd
             chat = Chat(self, cwd, self.agent.permissions.mode, sid=sid,
                         messages=loaded[1] if loaded else [])
@@ -748,7 +748,7 @@ class AppState:
             return chat
 
     def history_for(self, sid: str = "") -> list[dict[str, Any]]:
-        """Görüntülenecek geçmiş: sid'in canlı sohbeti ya da diskteki kaydı; sid yoksa öndeki sohbet."""
+        """History to display: sid's live chat or record from disk; foreground chat if sid is not provided."""
         if not sid or sid == self.chat.sid:
             return display_history(self.agent.messages, self.agent.tools, sess.load_archive(self.chat.sid))
         live = self.find_chat(sid)
@@ -760,31 +760,31 @@ class AppState:
         return display_history([{"role": "system", "content": ""}, *loaded[1]], self.agent.tools,
                                sess.load_archive(loaded[0]))
 
-    # ------------------------------------------------------------------ sohbet değiştirme
+    # ------------------------------------------------------------------ chat switching
     def _make_room(self) -> str | None:
-        """Öndeki sohbet çalışıyorsa arkaya al. Yer yoksa hata metni."""
+        """Move foreground chat to background if running. Returns error string if no room."""
         if not self.chat.busy:
             return None
         if len(self.running()) >= self.MAX_BACKGROUND:
             return f"arkada zaten {self.MAX_BACKGROUND} sohbet çalışıyor; birini bitmeden yenisine geçilemez"
         self.background[self.chat.sid] = self.chat
         try:
-            self.chat.save()  # ilk adımı bitmemiş olsa da kenar çubuğunda görünsün
+            self.chat.save()  # show in sidebar even if its first step has not finished
         except OSError:
             pass
         return ""
 
     def _swap_in(self, chat: Chat, old_busy: bool) -> None:
-        """Öne yeni sohbeti al. Eski öndeki boştaysa kapanır; çalışıyorsa _make_room onu arkaya almıştır."""
+        """Bring new chat to front. If old front is idle, close it; if running, _make_room moved it to background."""
         old = self.chat
-        chat.agent.permissions.mode = old.agent.permissions.mode  # izin modu kullanıcının, sohbetin değil
+        chat.agent.permissions.mode = old.agent.permissions.mode  # permission mode belongs to the user, not the chat
         self.chat = chat
         if not old_busy and old is not chat:
             old.close()
 
     def delete_session(self, sid: str) -> dict[str, Any]:
-        """Sohbeti geçmişten sil: dosyası, arşivi, geri sarma kayıtları, başlığı ve hafızadaki izleri (turlar,
-        özetler). Hafıza silinmezse ALICE silinen sohbeti "Son konuşmalar"dan hatırlamaya devam ediyordu."""
+        """Delete chat from history: file, archive, rewind checkpoints, title, and traces in memory (turns,
+        summaries). If memory is not cleared, ALICE continued to remember the deleted chat from "Recent chats"."""
         f = sess.sessions_dir() / f"{sid}.json"
         if not sid or f.parent != sess.sessions_dir() or not f.exists():
             return {"ok": True}
@@ -817,30 +817,30 @@ class AppState:
         if mem is not None:
             try:
                 forgot = mem.forget_session(sid, users, start, end)
-            except Exception:  # noqa: BLE001 - hafıza silinemese de sohbet silindi
+            except Exception:  # noqa: BLE001 - chat deleted even if memory could not be deleted
                 log_error()
         return {"ok": True, "forgot": forgot}
 
     def new_session(self) -> str | None:
-        """Yeni sohbet. Hata varsa metni döner."""
+        """New chat. Returns error text if any."""
         with self._chats_lock:
             err = self._make_room()
             if err:
                 return err
-            if err is None:  # öndeki boşta: aynı ajanı (ve tarayıcı bağlantısını) kullanmaya devam et
-                self.ctx.state.pop("team", None)  # takım proje olarak çalışmaya devam eder (Projeler sayfası)
+            if err is None:  # foreground is idle: continue using the same agent (and browser connection)
+                self.ctx.state.pop("team", None)  # team continues running as a project (Projects page)
                 self.chat.switch_to(sess.new_session_id())
                 return None
             self._swap_in(Chat(self, self.ctx.cwd, self.agent.permissions.mode), old_busy=True)
         return None
 
     def resume(self, sid: str) -> bool:
-        if not sid:  # sess.load("") en son sohbeti açar: boş kimlik "o sohbet" değil
+        if not sid:  # sess.load("") opens the latest chat: empty ID is not "that chat"
             return False
         with self._chats_lock:
             if sid == self.chat.sid:
                 return True
-            if sid in self.background:  # arkada çalışan sohbete dön: diskten değil canlı halinden
+            if sid in self.background:  # return to chat running in background: from live instance, not disk
                 target = self.background.pop(sid)
                 busy = self.chat.busy
                 if busy and self._make_room():
@@ -862,7 +862,7 @@ class AppState:
             return True
 
     def _finished(self, chat: Chat) -> None:
-        """Sohbetin turu bitti (kendi thread'inde). Öndeki değilse artık işi yok: kapanır."""
+        """Chat's turn finished (in its own thread). If not foreground, it has no more work: closed."""
         self._watch_quota()
         with self._chats_lock:
             chat.queued = False
@@ -873,12 +873,12 @@ class AppState:
 
     # ------------------------------------------------------------------ durdurma
     def stop(self, sid: str = "") -> None:
-        """Durdur düğmesi (öndeki sohbet; sid verilirse o sohbet). Araç her şeye rağmen bırakmıyorsa (cevap vermeyen
-        bir pencere/COM çağrısı) sohbetin thread'i sonsuza dek meşgul kalırdı: o zaman sohbet o thread'den ayrılır
-        (bkz. _abandon).
+        """Stop button (foreground chat; if sid is provided, that chat). If a tool fails to terminate despite everything
+        (unresponsive window/COM call), chat's thread would remain busy forever: in that case, the chat detaches from that thread
+        (see _abandon).
 
-        sid verilip o sohbet canlı değilse (telefonun sohbeti bitmiş ya da hiç başlamamış) hiçbir şey durmaz: önceden
-        öndeki sohbete düşülüyor, telefondaki Durdur bilgisayarda süren işi kesiyordu."""
+        If sid is provided and that chat is not live (phone chat finished or never started), nothing stops: previously
+        it fell back to the foreground chat, and clicking Stop on phone cancelled running work on PC."""
         chat = self.find_chat(sid) if sid else self.chat
         if chat is None:
             return
@@ -895,12 +895,12 @@ class AppState:
         self._abandon(chat)
 
     def _abandon(self, chat: Chat) -> None:
-        """Takılan thread'i bırak: sohbet kaydedilir ve öndeyse yeni bir thread'le aynı sohbet açılır. Eski thread bir
-        gün dönerse kaydetmez, arayüze yazmaz, ekranı tutmaz."""
+        """Abandon the stuck thread: chat is saved and if in foreground, the same chat is opened with a new thread.
+        If the old thread ever returns, it does not save, write to the UI, or hold the screen."""
         try:
-            chat.agent._repair_after_interrupt()  # cevapsız araç çağrısı geçmişte kalmasın
+            chat.agent._repair_after_interrupt()  # prevent unanswered tool call from staying in history
             chat.save()
-        except Exception:  # noqa: BLE001 - kayıt olmasa da takılı kalmaktan iyi
+        except Exception:  # noqa: BLE001 - better than hanging even if save fails
             log_error()
         msgs = chat.agent.messages[1:]
         with self._chats_lock:
@@ -922,7 +922,7 @@ class AppState:
     _builtin_lock = threading.Lock()
 
     def builtin_browser(self) -> Any:
-        """Yerleşik tarayıcı (tek örnek, ilk kullanımda açılır): ajan da panel de aynısına bağlanır."""
+        """Built-in browser (singleton, opened on first use): both agent and panel connect to the same instance."""
         with self._builtin_lock:
             if self._builtin is None:
                 from alice.app.builtin_browser import BuiltinBrowser
@@ -934,7 +934,7 @@ class AppState:
         if self._builtin is not None:
             try:
                 self._builtin.stop()
-            except Exception:  # noqa: BLE001 - kapanışta hata önemsiz
+            except Exception:  # noqa: BLE001 - errors on shutdown can be ignored
                 pass
         self._update_stop.set()
         with self._chats_lock:
@@ -951,8 +951,8 @@ class AppState:
         a = self.agent
         return {
             "version": __version__,
-            # Düğmede seçilen model (sabitlendiyse o, hemen); alttaki çubukta son cevabı gerçekten veren model.
-            # Önceden ikisi de son cevabı veren modeldi: yeni seçilen model bir sonraki cevaba kadar görünmüyordu.
+            # Selected model button (pinned model immediately); bottom bar shows model that actually served response.
+            # Previously both were the serving model: newly selected model was not visible until the next response.
             "model": ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
                       or self.router.first_available("brain") or ""),
             "served_model": self.router.last_ref.get("brain") or "",
@@ -968,8 +968,8 @@ class AppState:
             "session": self.sid,
             "started": self.chat.started,
             "running": self.running(),
-            # Hangi sohbetin sorusu olduğu da gelir: arayüz arkadaki sohbetin kartını öndekine çizmesin. list(): soru
-            # ajan thread'inde eklenip silinirken sözlüğü gezmek RuntimeError atıyordu.
+            # Includes chat ID of prompt: UI shouldn't draw background card in foreground. list(): iterating
+            # over the dictionary while prompts were added/removed in agent thread caused RuntimeError.
             "pending": [{**p, "sid": ui.sid} for ui in self.all_uis() for p in list(ui.pending.values())],
             "brain_chain": self.router.chain("brain"),
             "brain_pinned": "brain" in self.router.role_overrides,
@@ -984,7 +984,7 @@ class AppState:
         }
 
     def subagents_view(self) -> dict[str, Any]:
-        """Ajanlar paneli: öndeki sohbetin alt ajanları ve özel alt ajan tanımları."""
+        """Agents panel: foreground chat's subagents and custom subagent definitions."""
         from alice import subagents
         from alice.skills import load_agents
 
@@ -1024,7 +1024,7 @@ class AppState:
         return {"ok": False, "error": "bilinmeyen işlem"}, 404
 
     def pr_panel(self, force: bool = False) -> dict[str, Any]:
-        """PR paneli: izlenen PR'lar (canlı durumla) ve bulunulan dalın izlenmeyen açık PR'ı (izlemeye almak için)."""
+        """PR panel: watched PRs (with live status) and unwatched open PR of the current branch (to start watching)."""
         from alice import prwatch
         from alice.tools.base import ToolError
         from alice.tools.github import GitHubAPI, current_branch, github_token, origin_repo
@@ -1042,7 +1042,7 @@ class AppState:
             if api is not None:
                 try:
                     row.update(prwatch.live_status(api, w.repo, w.number, cache=not force))
-                except Exception as e:  # noqa: BLE001 - bir PR'ın hatası paneli düşürmesin
+                except Exception as e:  # noqa: BLE001 - a single PR error should not take down the panel
                     row["error"] = str(e)[:160]
             out["watching"].append(row)
         if api is not None:
@@ -1054,12 +1054,12 @@ class AppState:
                     if prs and not any(w.repo == repo and w.number == prs[0]["number"] for w in watches):
                         out["suggest"] = {"repo": repo, "number": prs[0]["number"], "title": prs[0]["title"],
                                           "url": prs[0]["html_url"], "head": branch}
-            except Exception:  # noqa: BLE001 - git deposu değil, ağ yok
+            except Exception:  # noqa: BLE001 - not a git repository, no network
                 pass
         return out
 
     def _thinking_options(self) -> dict[str, Any]:
-        """Seçili (ya da son cevap veren) ana modelin desteklediği düşünme seviyeleri: menü yalnız bunları gösterir."""
+        """Thinking levels supported by the selected (or last responding) brain model: menu only displays these."""
         from alice.providers import thinking
 
         ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
@@ -1067,13 +1067,13 @@ class AppState:
         provider, _, model = ref.partition(":")
         levels, kind = thinking.levels_for(provider, model) if ref else (list(thinking.LEVELS), "graded")
         if ref in getattr(self.router, "no_thinking", set()):
-            levels, kind = ["default"], "none"  # model ayarı reddetti (çalışırken öğrenildi)
+            levels, kind = ["default"], "none"  # model rejected the setting (learned at runtime)
         return {"thinking_levels": levels, "thinking_kind": kind,
                 "thinking_effective": thinking.fit(self.router.thinking_level("brain"), levels)}
 
-    # ----------------------------------------------------------------- bağlantılar
+    # ----------------------------------------------------------------- connections
     def connections(self) -> dict[str, Any]:
-        """Bağlantılar: servislerin durumu ve izleyen akışlar."""
+        """Connections: service statuses and monitoring feeds."""
         from alice.connect.manifest import discover
         from alice.connect.runner import ready
         from alice.core.feeds import load_feeds, state_path
@@ -1101,7 +1101,7 @@ class AppState:
         return {"connectors": rows, "feeds": frows, "errors": errors + feed_errors, "actions": sent}
 
     def connect_auth(self, name: str) -> dict[str, Any]:
-        """OAuth akışını arka planda başlat: tarayıcıda izin sayfası açılır, biten iş olay olarak duyurulur."""
+        """Start OAuth flow in the background: opens consent page in browser, reports completion as an event."""
         import os
 
         from alice.connect import oauth
@@ -1135,14 +1135,14 @@ class AppState:
 
         return {"ok": store.forget(name)}
 
-    # ------------------------------------------------------------------ güncelleme
+    # ------------------------------------------------------------------ updater
     def _update_mode(self) -> str:
         from alice import updater
 
         return str(updater.settings(self.cfg).get("mode", "auto"))
 
-    # ------------------------------------------------------------------ Asistan sekmesi
-    ASSISTANT_SETTINGS = {  # (bölüm, anahtar) -> geçerli değerler; arayüzden sadece bunlar değiştirilebilir
+    # ------------------------------------------------------------------ Assistant tab
+    ASSISTANT_SETTINGS = {  # (section, key) -> allowed values; only these can be changed from the UI
         ("agent", "sandbox"): ("off", "auto", "on"),
         ("agent", "taint_guard"): (True, False),
         ("agent", "search_grounding"): (True, False),
@@ -1183,7 +1183,7 @@ class AppState:
                        for a in load_agents(self.ctx.cwd).values()],
         }
 
-    # ------------------------------------------------------------------ BUDDY ve KAIROS
+    # ------------------------------------------------------------------ BUDDY and KAIROS
     def buddy_view(self) -> dict[str, Any]:
         from alice import buddy
 
@@ -1259,7 +1259,7 @@ class AppState:
             return {"ok": True, "started": True}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
-    # ------------------------------------------------------------------ Ses sekmesi
+    # ------------------------------------------------------------------ Voice tab
     PREVIEW_TEXT = "Selam, ben Alice. Bugün ne yapıyoruz? İstersen önce şu indirmeleri bir toparlayayım."
 
     def voice_view(self) -> dict[str, Any]:
@@ -1272,7 +1272,7 @@ class AppState:
                 "voices": [{"name": n, "desc": d} for n, d in ALL_GEMINI_VOICES.items()]}
 
     def voice_preview(self, name: str) -> dict[str, Any]:
-        """Bu sesle kısa bir Türkçe örnek (wav, base64). Bir kez üretilir, ~/.alice/voice/previews'da saklanır."""
+        """Short Turkish sample with this voice (wav, base64). Generated once, stored in ~/.alice/voice/previews."""
         import base64
 
         from alice.voice.tts import ALL_GEMINI_VOICES, TTSError, make_cloud
@@ -1293,7 +1293,7 @@ class AppState:
         return {"ok": True, "audio": base64.b64encode(path.read_bytes()).decode()}
 
     def set_voice(self, name: str) -> dict[str, Any]:
-        """Live ve normal sesli cevap aynı sesle konuşsun."""
+        """Make Live and standard spoken responses use the same voice."""
         from alice.config import set_config_value
         from alice.voice.tts import ALL_GEMINI_VOICES
 
@@ -1309,7 +1309,7 @@ class AppState:
 
     @property
     def setup(self):
-        """Sistem → Kurulum: doctor, modelleri ölç, Google, telefon, DCS, eklentiler, kısayol."""
+        """System → Setup: doctor, benchmark models, Google, phone, DCS, plugins, shortcut."""
         if self._setup is None:
             from alice.app.setup_panel import SetupPanel
 
@@ -1320,7 +1320,7 @@ class AppState:
 
     @property
     def journal(self):
-        """Otomasyonlar → Notlar ve Kayıtlar."""
+        """Automations → Notes and Logs."""
         if self._journal is None:
             from alice.app.journal import Journal
 
@@ -1331,7 +1331,7 @@ class AppState:
 
     @property
     def automations(self):
-        """Otomasyonlar → Otomasyon: kurallar, zamanlanmış görevler, akışlar."""
+        """Automations → Automation: rules, scheduled tasks, feeds."""
         if self._automations is None:
             from alice.app.automations import Automations
 
@@ -1342,7 +1342,7 @@ class AppState:
 
     @property
     def system(self):
-        """Sistem → Çekirdek: arka plandaki ALICE ve sesli asistan."""
+        """System → Core: background ALICE and voice assistant."""
         if self._system is None:
             from alice.app.system import SystemPanel
 
@@ -1350,7 +1350,7 @@ class AppState:
         return self._system
 
     def _restart_core(self) -> bool:
-        """Sistem paneli: uygulama çekirdeğin içindeyse çekirdeği yeniden başlat (güncellemedeki yol)."""
+        """System panel: restart core if app is running inside core (path used during updates)."""
         if self.restart_hook is None:
             return False
         threading.Thread(target=self._restart_soon, daemon=True, name="alice-restart").start()
@@ -1360,7 +1360,7 @@ class AppState:
 
     @property
     def enroll(self):
-        """Sistem → Ses → Sesimi tanıt (alice voice enroll'un ekranlı hâli)."""
+        """System → Voice → Enroll voice (GUI version of alice voice enroll)."""
         if self._enroll is None:
             from alice.voice.enroll import EnrollSession
 
@@ -1373,10 +1373,10 @@ class AppState:
               "skip": self.enroll.skip}.get(action)
         return fn() if fn else {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
-    # ------------------------------------------------------------------ Hafıza sekmesi
+    # ------------------------------------------------------------------ Memory tab
     def memory_view(self) -> dict[str, Any]:
-        """Hafızadaki notlar (kapsama göre; açılıp düzenlenebilir, silinebilir), açık takipler, son Dream ve eski
-        rolden kalan izler."""
+        """Notes in memory (by scope; can be opened, edited, deleted), open follow-ups, last Dream, and traces
+        remaining from former role."""
         from alice.memdir import TYPE_TR, age_text
         from alice.memory import OLD_ROLE_RX
 
@@ -1403,8 +1403,8 @@ class AppState:
             "enabled": True,
             "books": out,
             "followups": [{"id": f.id, "text": f.line()} for f in mem.followups()],
-            # Hatırlanan geçmiş konuşmalar: özetler ve son turlar. Silinebilsinler (önceden yalnız notlar silinebiliyordu;
-            # ALICE'in "hatırladığı" konuşmalar arayüzden kaldırılamıyordu).
+            # Remembered past chats: summaries and recent turns. Can be deleted (previously only notes could be deleted;
+            # conversations ALICE "remembered" could not be removed from the UI).
             "summaries": [{"id": x.id, "text": x.line()} for x in reversed(mem.summaries(30))],
             "episodes": [{"id": e.id, "text": e.line(width=200), "channel": e.channel} for e in reversed(mem.recent(30))],
             "dream": {"summary": mem._meta("dream_summary") or "", "at": float(mem._meta("dream_at") or 0),
@@ -1422,11 +1422,11 @@ class AppState:
         cwd = getattr(self.agent.ctx, "cwd", None)
         if action in ("tidy", "dream", "forget", "save", "restore", "forget_summary", "forget_episode",
                       "forget_history", "purge_old_role"):
-            mem.mark_user_edit()  # açık sohbetlerin sistem istemi de bir sonraki turda yenilensin
-        if action in ("tidy", "dream"):  # Ayarlar → Hafıza → Dream: toparlamayı şimdi çalıştır
+            mem.mark_user_edit()  # refresh system prompts of open chats on the next turn
+        if action in ("tidy", "dream"):  # Settings → Memory → Dream: run consolidation now
             try:
                 done = mem.dream(force=True, cwd=cwd)
-            except Exception as e:  # noqa: BLE001 - model yok/kota
+            except Exception as e:  # noqa: BLE001 - no model / quota error
                 return {"ok": False, "error": f"toparlanamadı: {e}"}
             return {"ok": True, "done": done}
         if action == "forget":
@@ -1439,7 +1439,7 @@ class AppState:
             b, n = mem.find_note(key, cwd) if key else (None, None)
             if n is None:
                 return {"ok": False, "error": "not bulunamadı"}
-            # Yalnız gönderilen alanlar değişir: gövdesiz kayıt (ör. sadece açıklama) notun gövdesini silmesin.
+            # Only sent fields are modified: body-less save (e.g. description only) should not erase note body.
             body = str(d.get("body") or "") if "body" in d else n.body
             try:
                 b.save(n.name, str(d.get("description") or n.description), str(d.get("type") or n.type),
@@ -1480,7 +1480,7 @@ class AppState:
 
     @property
     def calls(self) -> Any:
-        """Telefonla sesli görüşme (alice/app/call.py); ilk kullanımda kurulur."""
+        """Voice call with phone (alice/app/call.py); initialized on first use."""
         if getattr(self, "_calls", None) is None:
             from alice.app.call import CallManager
 
@@ -1493,7 +1493,7 @@ class AppState:
         try:
             if action == "start":
                 return mgr.start()
-            if action == "ring":  # ALICE kullanıcıyı arasın (masaüstünden deneme, otomasyon)
+            if action == "ring":  # ALICE calls the user (desktop test, automation)
                 return mgr.ring(str(d.get("reason", "")), str(d.get("message", "")) or "Selam, ben ALICE.")
             if action == "answer":
                 return mgr.answer(cid)
@@ -1516,8 +1516,8 @@ class AppState:
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
 
     def all_uis(self) -> list[Any]:
-        """Bütün canlı sohbetlerin arayüzleri: öndeki, arkada çalışanlar ve telefon görüşmesi. İzin ve seçim cevabı
-        hangisi sorduysa ona gider (önceden sadece öndeki sohbete gidiyordu, arkadaki sohbetin sorusu cevapsız kalırdı)."""
+        """UIs of all live chats: foreground, background workers, and phone call. Permission and choice responses
+        route to the asking chat (previously routed only to foreground chat, leaving background prompts unanswered)."""
         with self._chats_lock:
             chats = [self.chat, *self.background.values()]
         calls = getattr(self, "_calls", None)
@@ -1526,10 +1526,10 @@ class AppState:
             chats.append(c.chat)
         return [ch.ui for ch in chats]
 
-    # ------------------------------------------------------------------ Anahtarlar sekmesi
+    # ------------------------------------------------------------------ Keys tab
     def keys(self) -> dict[str, Any]:
-        """API anahtarları: hangisi dolu, nereden alınır. Değerlerin tamamı tarayıcıya hiç gönderilmez.
-        Model sağlayıcılarında ek anahtarlar (GEMINI_API_KEY_2...) ve havuzun durumu da gelir."""
+        """API keys: which are populated, where to obtain them. Full values are never sent to browser.
+        Also includes additional keys (GEMINI_API_KEY_2...) and pool status for model providers."""
         from alice.config import env_catalog, env_path, mask_secret, read_env
 
         in_file = read_env()
@@ -1537,7 +1537,7 @@ class AppState:
         providers = {pc.api_key_env: name for name, pc in cfgs.items() if pc.api_key_env}
         catalog = env_catalog()
         known = {e["key"] for e in catalog}
-        for name, pc in cfgs.items():  # arayüzden eklenen sunucular
+        for name, pc in cfgs.items():  # custom providers added via UI
             if pc.custom and pc.api_key_env and pc.api_key_env not in known:
                 catalog.append({"key": pc.api_key_env, "label": name, "url": "", "help": pc.base_url, "group": "model",
                                 "part_of": pc.api_key_env, "field": "Anahtar"})
@@ -1562,14 +1562,14 @@ class AppState:
 
     @staticmethod
     def _extra_keys(base: str) -> list[str]:
-        """BASE_2, BASE_3...: ortamda dolu olan ek anahtarların adları (sırayla)."""
+        """BASE_2, BASE_3...: names of populated additional keys in environment (in order)."""
         rx = re.compile(rf"{re.escape(base)}_(\d+)")
         found = [(int(m.group(1)), k) for k, v in os.environ.items() if (m := rx.fullmatch(k)) and v.strip()]
         return [k for _, k in sorted(found)]
 
     def _key_owner(self, key: str) -> tuple[str, str] | None:
-        """Yazılabilir bir anahtar adı mı: (temel ad, sağlayıcı). Katalogdaki ya da arayüzden eklenen sunucunun
-        anahtarı ve onların ek anahtarları (GEMINI_API_KEY_2 ... _50)."""
+        """Is it a writable key name: (base name, provider). Catalog or UI-added provider key
+        and their secondary keys (GEMINI_API_KEY_2 ... _50)."""
         from alice.config import env_catalog
 
         known = {e["key"] for e in env_catalog()}
@@ -1583,7 +1583,7 @@ class AppState:
         return None
 
     def set_key(self, key: str, value: str) -> dict[str, Any]:
-        """.env'e yaz ve hemen kullan: yeni anahtarla sağlayıcı bu oturumda açılır, model sırası yeniden ölçülür."""
+        """Write to .env and use right away: provider initialized with new key in session, model ranks re-measured."""
         from alice.config import set_env_value
 
         owner = self._key_owner(key)
@@ -1595,17 +1595,17 @@ class AppState:
             return {"ok": False, "error": str(e)}
         for name, pc in self.router.providers_cfg.items():
             if pc.api_key_env == owner[0] or (key in pc.base_url):
-                # Önceki yanlış anahtar sağlayıcıyı "auth" ile kapatmış olabilir; havuz da yeni anahtarla kurulsun.
+                # Previous invalid key may have shut down provider with "auth"; recreate pool with the new key.
                 self.router.reload_providers(name)
         if value.strip():
             from alice.providers import ranking
 
-            # Yeni sağlayıcı "auto" zincirine girsin: ölçüm arka planda, bitince sıra güncellenir.
+            # Put new provider into "auto" chain: benchmark runs in background, ranking updates on completion.
             ranking.refresh_in_background(self.router, emit=self.router.on_event, max_age=0)
         return {"ok": True}
 
     def add_key(self, base: str, value: str) -> dict[str, Any]:
-        """Sağlayıcıya bir anahtar daha ekle (havuz): boş olan ilk sıraya. Aynı anahtar ikinci kez eklenmez."""
+        """Add another key to provider (pool): into the first vacant slot. Duplicate key is not added."""
         owner = self._key_owner(base)
         if owner is None or owner[0] != base or not owner[1]:
             return {"ok": False, "error": f"bu anahtara ek anahtar eklenemez: {base}"}
@@ -1634,8 +1634,8 @@ class AppState:
         return {"ok": True}
 
     def add_provider(self, d: dict[str, Any]) -> dict[str, Any]:
-        """Arayüzden OpenAI uyumlu bir sunucu ekle (LM Studio, vLLM, LiteLLM, kendi proxy'n, başka bir bulut).
-        Önce /models denenir; cevap vermezse kaydedilmez (force ile yine de kaydedilir)."""
+        """Add an OpenAI-compatible server from the UI (LM Studio, vLLM, LiteLLM, custom proxy, another cloud).
+        Attempts /models first; if unresponsive, it is not saved (force saves anyway)."""
         from alice.config import ProviderConfig, set_config_value, set_env_value
         from alice.providers.openai_compat import OpenAICompatProvider, ProviderError
 
@@ -1694,7 +1694,7 @@ class AppState:
         return {"ok": True}
 
     def set_update_mode(self, mode: str) -> bool:
-        """Güncelleme davranışını kalıcı yaz (config.toml [update] mode)."""
+        """Persist update behavior (config.toml [update] mode)."""
         from alice.config import set_config_value
 
         if mode not in ("auto", "notify", "off"):
@@ -1708,7 +1708,7 @@ class AppState:
         return u is not None and (u.available or u.stale)
 
     def check_update(self, details: bool = True) -> dict[str, Any]:
-        """GitHub'daki dalda yeni commit var mı? Sonucu durumda tutar ve arayüze duyurur."""
+        """Is there a new commit on the GitHub branch? Keeps result in state and publishes to the UI."""
         from alice import updater
 
         with self._update_lock:
@@ -1720,7 +1720,7 @@ class AppState:
         return data
 
     def apply_update(self, force: bool = False) -> dict[str, Any]:
-        """Güncellemeyi çek. Başarılıysa uygulama yeniden başlatılır (yeni pencere açılır)."""
+        """Pull the update. On success, application restarts (a new window opens)."""
         from alice import updater
 
         if self.agent.busy or self._queued:
@@ -1728,7 +1728,7 @@ class AppState:
         with self._update_lock:
             info = self.update if self._update_shown() else updater.check(self.cfg)
             if info.stale and not info.available:
-                # Kod zaten indirilmiş (çekirdek ya da elle git pull): çekecek bir şey yok, yeniden başlamak yeter.
+                # Code is already downloaded (core or manual git pull): nothing to pull, restarting is sufficient.
                 ok, msg = True, f"yeni sürüm zaten indirilmiş ({info.local[:7]})"
             else:
                 ok, msg = updater.apply_update(info, self.cfg, force=force,
@@ -1740,7 +1740,7 @@ class AppState:
         return {"ok": ok, "note": msg, "restarting": ok}
 
     def _restart_soon(self) -> None:
-        """Cevabın arayüze ulaşması için biraz bekle, sonra aynı komutla yeniden başla."""
+        """Wait briefly for response to reach the UI, then restart with the same command."""
         import sys
 
         from alice import updater
@@ -1748,17 +1748,17 @@ class AppState:
         time.sleep(1.2)
         try:
             self.shutdown()
-        except Exception:  # noqa: BLE001 - kapanış hatası yeniden başlamayı engellemesin
+        except Exception:  # noqa: BLE001 - shutdown error should not block restarting
             pass
         if self.restart_hook is not None:
-            self.restart_hook()  # çekirdek: kilidi bırakıp yeniden başlar, pencere yeni adrese geçer
+            self.restart_hook()  # core: releases lock and restarts, window moves to new address
             return
-        # Yeni süreç açılışta tekrar bakabilsin: bayrağı taşımıyoruz.
+        # Allow new process to check again at launch: do not forward the flag.
         updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]],
                         env={"ALICE_RESTARTED": ""})
 
     def watch_updates(self, first: Any = None) -> None:
-        """Arka planda periyodik güncelleme kontrolü; bulunca arayüze bildirir."""
+        """Periodic background update check; notifies UI when an update is found."""
         from alice import updater
 
         if updater.settings(self.cfg).get("mode") == "off":
@@ -1766,42 +1766,42 @@ class AppState:
         self.update = first
         def loop() -> None:
             if first is not None and (getattr(first, "available", False) or getattr(first, "stale", False)):
-                time.sleep(2.0)  # arayüz bağlanana kadar bekle
+                time.sleep(2.0)  # wait until UI connects
                 self.bus.publish({"type": "update", **first.as_dict()})
-            wait = self._update_waits[0]  # ilk bakış açılıştan hemen sonra, sonrası dakikalık tur
-            first_round = first is None  # açılışta bakılmadıysa (notify modu, kapalı açılış kontrolü) hemen bak
+            wait = self._update_waits[0]  # first check right after launch, then minute intervals
+            first_round = first is None  # if not checked at launch (notify mode, disabled check) check immediately
             last = 0.0
             while not self._update_stop.wait(wait):
                 wait = self._update_waits[1]
                 try:
                     u = self.update
-                    # Yeni sürüm CI'ın bitmesini bekliyorsa saatte bir değil birkaç dakikada bir bak: merge'den
-                    # sonra açılan ALICE "CI sürüyor" deyip bir saat yeni sürümü göstermiyordu.
+                    # If new version is waiting for CI, check every few minutes instead of hourly: ALICE launched
+                    # after merge kept saying "CI running" and hid the new version for an hour.
                     waiting_ci = u is not None and getattr(u, "ci", "") == "pending" and \
                         time.monotonic() - last >= updater.CI_RECHECK
                     if (first_round or waiting_ci or updater.due(self.cfg)) and not (self.agent.busy or self._queued):
                         first_round = False
                         last = time.monotonic()
                         self.check_update()
-                except Exception:  # noqa: BLE001 - güncelleme kontrolü uygulamayı düşürmesin
+                except Exception:  # noqa: BLE001 - update check should not crash the app
                     pass
 
         threading.Thread(target=loop, daemon=True, name="alice-update").start()
 
     def team_snapshot(self) -> dict[str, Any] | None:
-        """Sohbetteki mini kart: ALICE'in son projesi; o bitmişse çalışan en yeni proje."""
+        """Mini card in chat: ALICE's last project; if finished, the newest active project."""
         team = self.ctx.state.get("team")
         if team is None or not team.active():
             live = sorted((t for t in self._teams().values() if t.active()), key=lambda t: -t.created)
             team = live[0] if live else team
         return team.snapshot() if team is not None else None
 
-    # -------------------------------------------------------------- projeler
+    # -------------------------------------------------------------- projects
     def _teams(self) -> dict[str, Any]:
         return self.ctx.state.setdefault("teams", {})
 
     def get_team(self, pid: str):
-        """Canlı projeyi ya da diskteki projeyi (yükleyip) döndür."""
+        """Return the live project or project from disk (loading it)."""
         from alice.team import Team
         from alice.tools.base import ToolError
 
@@ -1845,8 +1845,8 @@ class AppState:
             if member == "__preview":
                 out["preview"]["changed"] = last_change(team.cwd)
         if member == "__preview":
-            return out  # site yoksa arayüz önizlemeyi kapatır
-        if member == "__council":  # proje düzeyi kurullar: plan, final, kurula sor
+            return out  # if site is not found, UI closes the preview
+        if member == "__council":  # project-level councils: plan, final, ask council
             out["council_list"] = team.councils
             return out
         if member == "__timeline":
@@ -1909,7 +1909,7 @@ class AppState:
         if action == "send":
             return team.send(USER, name or "all", text)
         if action == "answer":
-            team.answer(name, text)  # name: soru kimliği
+            team.answer(name, text)  # name: question ID
             return "cevap iletildi"
         if action in ("approve", "revise"):
             return team.review_member(name, action == "approve", text, by=USER)
@@ -1934,9 +1934,9 @@ class AppState:
         if action == "delete":
             if team.active():
                 raise ToolError("önce projeyi durdur")
-            # Bayrak ve silme kayıt kilidi altında: kapanmakta olan bir ajan thread'i save()'in içinde (bayrak
-            # kontrolünü geçmiş) olabilir; kilitsiz silince dosyayı geri yazıyor, silinen proje yine
-            # açılıyordu (Windows CI'da görüldü).
+            # Flag and deletion under save lock: an agent thread in the process of shutting down might be inside save()
+            # (having passed the flag check); deleting without lock rewrote the file, reopening the deleted project
+            # (observed in Windows CI).
             with team._save_lock:
                 team.deleted = True
                 team.path().unlink(missing_ok=True)
@@ -1948,7 +1948,7 @@ class AppState:
         raise ToolError(f"bilinmeyen işlem: {action}")
 
     def _ctx_window(self) -> int:
-        """Şu anki ana modelin bağlam penceresi (arayüzde gösterilen sınır)."""
+        """Context window of the current brain model (limit displayed in the UI)."""
         try:
             ref = self.router.last_ref.get("brain") or self.router.first_available("brain")
         except KeyError:
@@ -1967,15 +1967,15 @@ class AppState:
             threading.Thread(target=self._side_question, args=(chat, question), daemon=True, name="alice-btw").start()
             return True, None
         if chat.busy:
-            # ALICE bir soru kartında cevap bekliyorsa yazılan mesaj o sorunun cevabıdır. Önceden mesaj gelen kutusuna
-            # gidiyordu; ajan soru aracının içinde beklediği için kutu hiç okunmuyor, mesaj "kayboluyordu".
+            # If ALICE is waiting for an answer on a question card, the sent message is the answer to that question.
+            # Previously message went to inbox; since agent waited in question tool, inbox unread, message was "lost".
             choice = next((p for p in list(chat.ui.pending.values()) if p.get("type") == "ask_choice"), None)
             if choice and not text.startswith("/") and chat.ui.answer_choice(choice["id"], text):
                 chat.ui.publish({"type": "user", "text": text, "mi": None, "images": [], "steer": True})
                 return True, None
             if not text.startswith("/") and chat.agent.steer(text, images):
-                # Çalışan tura iletildi: iş durmadan bir sonraki adımda ALICE bunu görür. Önceden mesaj arayüzde
-                # sırada bekliyor, iş bitmeden ALICE'e hiç gitmiyordu.
+                # Delivered to the running turn: ALICE sees this on the next step without stopping work. Previously
+                # the message waited in the UI queue, never reaching ALICE until work finished.
                 chat.ui.publish({"type": "user", "text": text, "mi": None, "images": (images or [])[:6],
                                  "steer": True})
                 return True, None
@@ -1984,7 +1984,7 @@ class AppState:
         if text.startswith("/"):
             from alice.commands import builtin_prompt, expand_custom
 
-            prompt = expand_custom(text, chat.ctx.cwd)  # kullanıcının komutu önce (yerleşikler zaten hariç tutulur)
+            prompt = expand_custom(text, chat.ctx.cwd)  # user's command first (built-ins are already excluded)
             if prompt is None:
                 prompt = builtin_prompt(text)
                 if prompt is None:
@@ -1994,8 +1994,8 @@ class AppState:
         return True, None
 
     def _drop_if_idle(self, chat: Chat) -> None:
-        """chat_for'un bu istek için açtığı arka plan sohbeti tur başlatmadan kaldıysa (bilinmeyen komut, /btw) kapat.
-        Arkadaki sohbetler yalnız tur bitince kapanıyordu: tur hiç başlamayınca thread'i ve ajanı sonsuza dek kalıyordu."""
+        """Close background chat opened by chat_for if it stalled without starting a turn (unknown command, /btw).
+        Background chats only closed on turn finish: if turn never started, thread and agent stayed forever."""
         with self._chats_lock:
             if chat is self.chat or chat.busy or self.background.get(chat.sid) is not chat:
                 return
@@ -2003,8 +2003,8 @@ class AppState:
         chat.close()
 
     def _suggest(self, chat: Any) -> list[str]:
-        """Tur bitince kullanıcının muhtemel sonraki mesajı (en fazla 2 kısa öneri). Arayüzde düğme olur; tıklayınca
-        kutuya yazılır, kullanıcı değiştirip gönderir. Emin değilse öneri yok."""
+        """User's likely next message after turn ends (up to 2 short suggestions). Displayed as buttons in UI; clicking
+        populates the input box for the user to edit and send. No suggestions if not confident."""
         msgs = [m for m in chat.agent.messages[1:] if m.get("role") in ("user", "assistant")
                 and isinstance(m.get("content"), str) and m["content"].strip() and not m.get("_nudge")]
         if len(msgs) < 2 or msgs[-1].get("role") != "assistant":
@@ -2021,15 +2021,15 @@ class AppState:
             raw = res.text or ""
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1] or "{}")
             items = [" ".join(str(x).split())[:80] for x in data.get("items") or [] if str(x).strip()][:2]
-        except Exception:  # noqa: BLE001 - öneri yoksa düğme de yok
+        except Exception:  # noqa: BLE001 - no suggestions means no buttons
             items = []
         if items and not chat.busy:
             chat.ui.publish({"type": "suggest", "items": items})
         return items
 
     def recap(self) -> dict[str, Any]:
-        """"Sen yokken": uzun aradan sonra uygulamaya dönünce öndeki sohbetin nerede kaldığının 1-3 cümlelik özeti.
-        Yalnız son ~30 mesaja bakılır; konuşmaya yazılmaz. Aynı konuşma hâli için bir kez üretilir."""
+        """"While you were away": 1-3 sentence summary of where foreground chat left off after returning from absence.
+        Only inspects last ~30 messages; not written to chat. Generated once for the same conversation state."""
         chat = self.chat
         msgs = [m for m in chat.agent.messages[1:] if m.get("role") in ("user", "assistant", "tool")
                 and isinstance(m.get("content"), str) and m["content"].strip()]
@@ -2049,14 +2049,14 @@ class AppState:
         try:
             res = chat.agent.router.chat("fast", [{"role": "user", "content": prompt}], max_tokens=220)
             text = " ".join((res.text or "").split())
-        except Exception:  # noqa: BLE001 - özet yoksa kart da yok
+        except Exception:  # noqa: BLE001 - if there is no recap, there is no card
             text = ""
         self._recap_cache = (key, text)
         return {"text": text}
 
     def _side_question(self, chat: Any, question: str) -> None:
-        """/btw: iş sürerken yan soru. Konuşmanın o anki hâliyle (araçsız) cevaplanır; konuşmaya ve hafızaya
-        yazılmaz, çalışan turu bölmez. Aynı önek kullanıldığı için çoğu önbellekten okunur."""
+        """/btw: side question while work is ongoing. Answered with current conversation state (no tools);
+        not saved to chat or memory, doesn't interrupt turn. Mostly read from cache due to shared prefix."""
         pub = chat.ui.publish
         pub({"type": "btw", "q": question, "a": "", "pending": True})
         try:
@@ -2066,14 +2066,14 @@ class AppState:
                 "işe devam etme, plan değiştirme.]\n" + question)})
             res = chat.agent.router.chat(chat.agent.role, msgs, max_tokens=800)
             answer = (res.text or "").strip() or "(cevap yok)"
-        except Exception as e:  # noqa: BLE001 - yan soru başarısızsa iş etkilenmesin
+        except Exception as e:  # noqa: BLE001 - failure of side question should not affect ongoing work
             answer = f"cevaplanamadı: {str(e)[:300]}"
         pub({"type": "btw", "q": question, "a": answer, "pending": False})
         self._drop_if_idle(chat)
 
     def deliver(self, sid: str, text: str, tries: int = 30) -> str:
-        """Arka plandan bir sohbete mesaj (izleme olayı, ayrı oturumun sonucu): sohbet çalışıyorsa işe iletilir,
-        boştaysa yeni tur başlar. Tam o an tur bitiyorsa birkaç kez yeniden denenir. Boş: iletildi."""
+        """Message to chat from background (watch event, detached session result): steered into work if chat is running,
+        starts a new turn if idle. Retries a few times if turn finishes at that exact moment. Empty: delivered."""
         err = ""
         for _ in range(max(1, tries)):
             ok, err = self.send(text, sid=sid)
@@ -2085,7 +2085,7 @@ class AppState:
         return err or "iletilemedi"
 
     def _report_to_parent(self, chat: Chat) -> None:
-        """Ayrı oturumun turu bittiyse sonucu onu başlatan sohbete bildir (kullanıcı durdurduysa bildirme)."""
+        """If detached session finished its turn, report result to parent chat (do not report if user stopped)."""
         parent = chat.ctx.state.get("report_to")
         if not parent or chat.agent.cancel.is_set() or chat.abandoned:
             return
@@ -2105,12 +2105,12 @@ class AppState:
                 pub({"type": "busy", "value": True})
                 start = len(agent.messages)
                 agent.run_turn(prompt, images=images or None)
-                if prompt != text:  # özel komutlarda kullanıcı kendi yazdığını görsün (arada gelen mesajlar değil)
+                if prompt != text:  # for custom commands, display what the user actually typed (not injected text)
                     for m in agent.messages[start:]:
                         if m.get("role") == "user" and not m.get("_image") and not m.get("_steer"):
                             m["_display"] = text
                             break
-            except Exception as e:  # noqa: BLE001 - thread içinde hata uygulamayı düşürmesin
+            except Exception as e:  # noqa: BLE001 - errors within thread should not crash the app
                 chat.ui.publish({"type": "info", "text": f"beklenmeyen hata: {e}"})
                 log_error()
             finally:
@@ -2118,9 +2118,9 @@ class AppState:
                     chat.save()
                 except OSError:
                     pass
-                # Tur, araya yazılan mesajı alamadan bittiyse (hata, adım sınırı) mesaj kaybolmasın: aynı sohbette yeni
-                # tur olur. Bu karar sohbet kapatılmadan verilmeli: arka plandaki sohbet _finished'de kapanınca
-                # kuyruğuna eklenen iş hiç çalışmıyordu. Kullanıcı Durdur'a bastıysa bekleyenler bırakılır.
+                # If turn ended before taking an incoming message (error, step limit), do not lose message: start
+                # a new turn in the same chat. Must decide before chat closes: when background chat closed in _finished,
+                # jobs queued to it never ran. Pending messages are discarded if user clicked Stop.
                 left = agent.take_inbox()
                 if left and not agent.cancel.is_set() and not chat.abandoned:
                     joined = "\n\n".join(t for t, _ in left)
@@ -2137,7 +2137,7 @@ class AppState:
         chat.run(run)
 
     def transcribe(self, data: bytes, filename: str) -> str:
-        """Arayüzün mikrofon kaydını yazıya çevir (Whisper)."""
+        """Transcribe UI microphone recording to text (Whisper)."""
         if self._stt is None:
             from alice.voice.stt import make_stt
 
@@ -2145,8 +2145,8 @@ class AppState:
         return self._stt.transcribe_file(data, filename)
 
     def set_cwd(self, path: Path, chat: Chat | None = None) -> None:
-        """Çalışma klasörünü değiştir, sistem istemindeki klasörü güncelle ve sonraki açılış için hatırla.
-        chat: klasörü değişen sohbet (arkadaki bir sohbetin github aracı öndekinin klasörünü değiştirmesin)."""
+        """Change working directory, update directory in system prompt, and remember for next launch.
+        chat: chat whose folder changed (prevents background chat's github tool from modifying foreground folder)."""
         from alice.prompts import build_system_prompt
 
         chat = chat or self.chat
@@ -2175,7 +2175,7 @@ class AppState:
         return rows
 
     def open_github(self, repo: str, branch: str = "") -> str:
-        """Depoyu klonla (varsa güncelle) ve çalışma klasörü yap."""
+        """Clone repository (update if exists) and set as working directory."""
         from alice.tools.github import clone_or_update
 
         path, note = clone_or_update(self.cfg, repo, branch)
@@ -2184,7 +2184,7 @@ class AppState:
 
     def rewind(self, mi: int) -> dict[str, Any]:
         text, restored = self.agent.rewind(mi)
-        try:  # istatistik, alt ajanlar ve geri sarma kayıtları da (extra'sız kayıt onları siliyordu)
+        try:  # statistics, subagents, and rewind checkpoints as well (saving without extra wiped them)
             self.chat.save()
         except OSError:
             pass
@@ -2215,17 +2215,17 @@ def make_handler(state: AppState):
         server_version = "ALICE"
         timeout = REQUEST_TIMEOUT
 
-        def log_message(self, *args: Any) -> None:  # sessiz
+        def log_message(self, *args: Any) -> None:  # silent
             pass
 
-        # ------------------------------------------------------------ yardımcı
+        # ------------------------------------------------------------ helpers
         def _host_ok(self) -> bool:
             host = (self.headers.get("Host") or "").split(":")[0]
             return host in state.allowed_hosts
 
         def _origin_ok(self) -> bool:
-            """Tarayıcı Origin gönderiyorsa izinli bir adresten gelmeli (Host kontrolünün eşi; token sızsa bile
-            başka bir sitenin sayfası API'yi kullanamasın). Origin'siz istemciler (saat otomasyonu) etkilenmez."""
+            """If the browser sends an Origin, it must come from an allowed address (companion to Host check; prevents
+            site page from using API even if token leaks). Origin-less clients (watch automations) unaffected."""
             origin = self.headers.get("Origin")
             if origin is None:
                 return True
@@ -2241,7 +2241,7 @@ def make_handler(state: AppState):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")  # adreste anahtar var, dış bağlantılara gitmesin
+            self.send_header("Referrer-Policy", "no-referrer")  # URL contains key, prevent leaking to external links
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -2257,11 +2257,11 @@ def make_handler(state: AppState):
                 raise BadRequest(400, "geçersiz Content-Length") from None
             if n <= 0:
                 return {}
-            if n > MAX_BODY:  # sessizce boş gövdeyle devam etmek ekli görselleri kaybettiriyordu
+            if n > MAX_BODY:  # silently proceeding with empty body caused attached images to be lost
                 raise BadRequest(413, "istek çok büyük")
             try:
                 data = json.loads(self.rfile.read(n))
-            except ValueError:  # JSONDecodeError ve UTF-8 olmayan gövde (UnicodeDecodeError)
+            except ValueError:  # JSONDecodeError and non-UTF-8 body (UnicodeDecodeError)
                 raise BadRequest(400, "geçersiz JSON") from None
             return data if isinstance(data, dict) else {}
 
@@ -2269,13 +2269,13 @@ def make_handler(state: AppState):
             self._send(403, b"forbidden", "text/plain")
 
         def _preview(self, path: str) -> None:
-            """/preview/<önizleme anahtarı>/<proje>/<yol>: proje klasöründeki siteyi korumalı olarak sun."""
+            """/preview/<preview key>/<project>/<path>: serve the site in the project folder in sandbox."""
             from urllib.parse import unquote
 
             from alice.site import content_type, safe_path
             from alice.tools.base import ToolError
 
-            parts = path.split("/", 4)  # "", "preview", anahtar, proje, yol
+            parts = path.split("/", 4)  # "", "preview", key, project, path
             if len(parts) < 4 or not _same(parts[2], state.preview_token):
                 return self._deny()
             try:
@@ -2293,7 +2293,7 @@ def make_handler(state: AppState):
                        {"Content-Security-Policy": PREVIEW_CSP, "Access-Control-Allow-Origin": "*"})
 
         def _fail(self) -> None:
-            """Beklenmeyen hata: ayrıntı app.log'a, istemciye iz (traceback) değil kısa bir mesaj."""
+            """Unexpected error: details logged to app.log, client receives a short message instead of traceback."""
             log_error()
             try:
                 self._json({"ok": False, "error": "sunucu hatası (ayrıntı app.log'da)"}, 500)
@@ -2306,7 +2306,7 @@ def make_handler(state: AppState):
                 self._get()
             except (BrokenPipeError, ConnectionResetError):
                 pass
-            except Exception:  # noqa: BLE001 - bağlantı yanıtsız kopmasın
+            except Exception:  # noqa: BLE001 - connection should not drop without a response
                 self._fail()
 
         def _get(self) -> None:
@@ -2315,7 +2315,7 @@ def make_handler(state: AppState):
             if not self._host_ok():
                 return self._deny()
             if not u.path.startswith(("/preview/", "/static/")) and not self._origin_ok():
-                return self._deny()  # önizleme korumalı çerçeveden (Origin: null) kaynak ister
+                return self._deny()  # preview requests resources from sandboxed iframe (Origin: null)
             if u.path == "/":
                 if not self._token_ok(q):
                     return self._deny()
@@ -2328,14 +2328,14 @@ def make_handler(state: AppState):
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
                                   {"Content-Security-Policy": CSP.replace("img-src 'self' data:",
                                                                           "img-src 'self' data:; media-src 'self' blob:")})
-            if u.path == "/m":  # telefon uygulaması
+            if u.path == "/m":  # mobile web app
                 if not self._token_ok(q):
                     return self._deny()
                 html = (STATIC / "m.html").read_text(encoding="utf-8").replace("{{TOKEN}}", state.token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
                                   {"Content-Security-Policy": CSP.replace("img-src 'self' data:",
                                                                           "img-src 'self' data: blob:")})
-            if u.path == "/m.webmanifest":  # "Ana ekrana ekle": açılış adresi anahtarı taşısın
+            if u.path == "/m.webmanifest":  # "Add to Home Screen": launch URL carries the token
                 if not self._token_ok(q):
                     return self._deny()
                 body = json.dumps({"name": "ALICE", "short_name": "ALICE", "start_url": f"/m?t={state.token}",
@@ -2353,7 +2353,7 @@ def make_handler(state: AppState):
                 return self._deny()
             if u.path == "/api/events":
                 return self._events()
-            if u.path == "/api/phone/app":  # telefon uygulamasının bilgisayardaki son sürümü
+            if u.path == "/api/phone/app":  # latest version of mobile app on PC
                 from alice.app import phone_apk
 
                 phone_apk.refresh_async()
@@ -2381,13 +2381,13 @@ def make_handler(state: AppState):
 
                 try:
                     return self._send(200, remote.screen_jpeg(int((q.get("m") or ["1"])[0])), "image/jpeg")
-                except Exception:  # noqa: BLE001 - ekran yakalanamadı (kilitli ekran gibi)
+                except Exception:  # noqa: BLE001 - failed to capture screen (e.g. lock screen)
                     return self._send(503, b"", "image/jpeg")
             if u.path == "/api/remote/apps":
                 from alice.app import remote
 
                 return self._json({"apps": remote.apps()})
-            if u.path == "/api/call":  # süren görüşme (yoksa boş)
+            if u.path == "/api/call":  # ongoing call (empty if none)
                 return self._json(state.calls.view())
             if u.path == "/api/call/audio":
                 try:
@@ -2398,7 +2398,7 @@ def make_handler(state: AppState):
                 if wav is None:
                     return self._send(404, b"not found", "text/plain")
                 return self._send(200, wav, "audio/wav")
-            if u.path == "/api/cliproxy":  # Claude Code proxy hesapları (CLIProxyAPI)
+            if u.path == "/api/cliproxy":  # Claude Code proxy accounts (CLIProxyAPI)
                 from alice.app import cliproxy
 
                 return self._json(cliproxy.status())
@@ -2406,7 +2406,7 @@ def make_handler(state: AppState):
                 from alice.app import remote
 
                 return self._json({"windows": remote.windows()})
-            if u.path == "/api/history":  # sid: o cihazın açık sohbeti (telefon), yoksa öndeki
+            if u.path == "/api/history":  # sid: active chat of that device (phone), otherwise foreground
                 return self._json(state.history_for((q.get("sid") or [""])[0]))
             if u.path == "/api/sessions":
                 rows = []
@@ -2419,7 +2419,7 @@ def make_handler(state: AppState):
                 meta = sess.load_meta()
                 for r in rows:
                     m = meta.get(r["id"]) or {}
-                    if m.get("auto_title"):  # ilk istekten üretilen başlık; yoksa isteğin başı
+                    if m.get("auto_title"):  # title generated from the first prompt; otherwise start of prompt
                         r["title"] = m["auto_title"]
                     if m.get("title"):
                         r["auto_title"], r["title"] = r["title"], m["title"]
@@ -2455,7 +2455,7 @@ def make_handler(state: AppState):
                 except ToolError as e:
                     return self._json({"ok": False, "error": str(e)}, 404)
             if u.path == "/api/usage":
-                # Oturum dökümü (Kullanım dökümü penceresi) + bugünün model başına istek sayıları (Ayarlar > Kullanım).
+                # Session breakdown (Usage Breakdown dialog) + today's request count per model (Settings > Usage).
                 return self._json({**state.agent.usage_breakdown(), "today": state.router.usage.today()})
             if u.path == "/api/prs":
                 return self._json(state.pr_panel(force=(q.get("force") or [""])[0] == "1"))
@@ -2475,7 +2475,7 @@ def make_handler(state: AppState):
                 except (BrowserError, OSError) as e:
                     return self._json({"ok": False, "error": str(e)[:200]})
             if u.path == "/api/file_preview":
-                # send_file kartındaki "Önizle": yalnız ALICE'in kullanıcıya gösterdiği dosyalar (rastgele yol değil).
+                # "Preview" on send_file card: only files displayed to user by ALICE (not arbitrary paths).
                 from alice.tools.meta import SENT_FILES
 
                 return self._json(file_preview(str((q.get("path") or [""])[0]), SENT_FILES))
@@ -2487,7 +2487,7 @@ def make_handler(state: AppState):
                 from alice.commands import catalog
 
                 return self._json(catalog(state.ctx.cwd))
-            if u.path == "/api/dirs":  # klasör seçici: alt klasörler, hızlı yerler, son kullanılanlar
+            if u.path == "/api/dirs":  # directory picker: subdirectories, quick locations, recent paths
                 from alice.app import folders
                 from alice.tools.github import clone_root
 
@@ -2597,9 +2597,9 @@ def make_handler(state: AppState):
 
                     try:
                         return self._json({"ok": True, "text": remote.action(d)})
-                    except Exception as e:  # noqa: BLE001 - kullanıcıya kısa sebep
+                    except Exception as e:  # noqa: BLE001 - short reason for user
                         return self._json({"ok": False, "error": str(e)[:200]}, 400)
-                if p == "/api/client_error":  # telefondaki sayfanın hataları: ~/.alice/phone-errors.log
+                if p == "/api/client_error":  # phone client page errors: ~/.alice/phone-errors.log
                     from datetime import datetime
 
                     try:
@@ -2698,7 +2698,7 @@ def make_handler(state: AppState):
                 if p == "/api/keys/set":
                     r = state.set_key(str(d.get("key", "")), str(d.get("value", "")))
                     return self._json(r, 200 if r.get("ok") else 400)
-                if p == "/api/keys/add":  # anahtar havuzu: sağlayıcıya bir anahtar daha
+                if p == "/api/keys/add":  # key pool: add another key to provider
                     r = state.add_key(str(d.get("base", "")), str(d.get("value", "")))
                     return self._json(r, 200 if r.get("ok") else 400)
                 if p == "/api/keys/strategy":
@@ -2728,8 +2728,8 @@ def make_handler(state: AppState):
                     pid, ans = str(d.get("id")), str(d.get("answer") or "")
                     return self._json({"ok": any(ui.answer_choice(pid, ans) for ui in state.all_uis())})
                 if p == "/api/reveal":
-                    # send_file ile gösterilen dosyayı aç ya da klasöründe göster. Sadece o liste: arayüzden rastgele
-                    # bir yol açılamasın.
+                    # Open file shown by send_file or reveal in folder. Only that list: prevent opening arbitrary
+                    # paths from the UI.
                     from alice.tools.meta import SENT_FILES
 
                     path = str(d.get("path", ""))
@@ -2789,17 +2789,17 @@ def make_handler(state: AppState):
                         return self._json({"ok": False}, 400)
                     state.agent.permissions.mode = mode
                     return self._json({"ok": True, **state.status()})
-                # Sohbet değiştirmek çalışan işi durdurmaz: o sohbet arkada sürer (bkz. Chat).
+                # Switching chats does not stop running work: that chat continues in background (see Chat).
                 if p == "/api/new":
-                    if d.get("detached"):  # telefon: yeni sohbet bilgisayarın ekranını değiştirmesin
+                    if d.get("detached"):  # phone: new chat should not change the PC screen
                         return self._json({"ok": True, "sid": sess.new_session_id(), **state.status()})
                     err = state.new_session()
                     return self._json({"ok": not err, "error": err, **state.status()}, 409 if err else 200)
                 if p == "/api/resume":
                     sid = str(d.get("id") or "").strip()
-                    if not sid:  # boş kimlik en son sohbeti açıyordu (sess.load("")): istenen sohbet değil
+                    if not sid:  # empty ID opened the latest chat (sess.load("")): not the requested chat
                         return self._json({"ok": False, "error": "sohbet kimliği gerekli"}, 400)
-                    if d.get("detached"):  # telefon: sohbeti aç ama bilgisayarın öndeki sohbetini değiştirme
+                    if d.get("detached"):  # phone: open chat without switching the PC's foreground chat
                         hist = state.history_for(sid)
                         found = bool(hist) or state.find_chat(sid) is not None
                         return self._json({"ok": found, "sid": sid, "history": hist,
@@ -2834,7 +2834,7 @@ def make_handler(state: AppState):
                 if p == "/api/rewind":
                     try:
                         out = state.rewind(int_field(d, "mi", -1))
-                    except ValueError as e:  # geçersiz mesaj sırası: istemci hatası
+                    except ValueError as e:  # invalid message index: client error
                         return self._json({"ok": False, "error": str(e)}, 400)
                     return self._json({"ok": True, **out, "history": state.history_for(),
                                        **state.status()})
@@ -2845,7 +2845,7 @@ def make_handler(state: AppState):
                 if p.startswith(("/api/subagents/", "/api/agents/")):
                     return self._json(*state.subagents_action(p, d))
                 if p.startswith("/api/prs/"):
-                    # PR paneli: izlemeye al / bırak, davranış düğmeleri, başarısız CI'ı yeniden çalıştır.
+                    # PR panel: watch / unwatch, behavior flags, rerun failed CI.
                     from alice import prwatch
                     from alice.tools.base import ToolError
 
@@ -2885,7 +2885,7 @@ def make_handler(state: AppState):
                     prwatch._live_cache.pop(f"{repo}#{number}", None)
                     return self._json({"ok": True, "note": note})
                 if p == "/api/browser/input":
-                    # Paneldeki yerleşik tarayıcı: kullanıcı görüntüye tıklayıp yazarak kontrolü devralır.
+                    # Built-in browser in panel: user takes over control by clicking and typing on the image.
                     from alice.app.builtin_browser import BrowserError
 
                     bb = state.builtin_browser()
@@ -2925,7 +2925,7 @@ def make_handler(state: AppState):
                             return self._json({"ok": True, "branches": list_branches(
                                 state.ctx.cwd, fetch=True, token=github_token(state.cfg))[:60]})
                         if state.chat.busy or state.running():
-                            # Arkada çalışan sohbetler de aynı depoyu okuyup yazıyor olabilir: dal altlarından değişmesin.
+                            # Background chats might read/write the same repo: don't switch branch under them.
                             return self._json({"ok": False, "error": "ALICE çalışırken dal değiştirilmez; arkadakiler "
                                                "dahil işler bitsin ya da durdur"}, 409)
                         note = switch_branch(state.ctx.cwd, str(d.get("branch", "")), bool(d.get("create")),
@@ -2937,7 +2937,7 @@ def make_handler(state: AppState):
                 if p == "/api/session/delete":
                     sid = str(d.get("id", ""))
                     live = state.find_chat(sid)
-                    # Çalışan sohbet (arkadaki ya da öndeki: telefondan silinebilir) bitince kendini yeniden kaydederdi.
+                    # Running chat (background or foreground: deletable from phone) would re-save itself on finish.
                     if live is not None and live.busy:
                         return self._json({"ok": False, "error": "bu sohbet arkada çalışıyor; önce bitsin"}, 409)
                     return self._json(state.delete_session(sid))
@@ -2954,7 +2954,7 @@ def make_handler(state: AppState):
                 if p == "/api/compact":
                     ok = state.agent.compact()
                     if ok:
-                        state.chat.save()  # arşive geçen mesajlar oturum dosyasında da kalıp iki kez görünmesin
+                        state.chat.save()  # prevent archived messages in session file from appearing twice
                     return self._json({"ok": ok, **state.status()})
                 if p == "/api/thinking":
                     from alice.config import set_config_value
@@ -2964,7 +2964,7 @@ def make_handler(state: AppState):
                     if level not in LEVELS:
                         return self._json({"ok": False, "error": f"seviye: {' | '.join(LEVELS)}"}, 400)
                     state.router.thinking_overrides["brain"] = level
-                    set_config_value("thinking", "brain", level)  # sonraki açılışta da kalsın
+                    set_config_value("thinking", "brain", level)  # persist across restarts
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/models/hide":
                     from alice.config import set_config_value
@@ -2987,7 +2987,7 @@ def make_handler(state: AppState):
                         pin = "" if ref == "reset" else ref
                         state.cfg.data.setdefault("agent", {})["pinned_brain"] = pin
                         try:
-                            set_config_value("agent", "pinned_brain", pin)  # sonraki açılışta da kalsın
+                            set_config_value("agent", "pinned_brain", pin)  # persist across restarts
                         except OSError:
                             pass
                     return self._json({"ok": True})
@@ -3002,9 +3002,9 @@ def make_handler(state: AppState):
 
 
 class QuietHTTPServer(ThreadingHTTPServer):
-    """Tarayıcının/telefonun bağlantıyı kendi kapatması (sekme kapandı, sayfa yenilendi, ağ değişti) hata değildir.
-    Varsayılan sunucu her birinde çekirdek günlüğüne 20 satırlık iz döküyordu (bir günde 65 kez): gerçek hatalar
-    arada kayboluyordu."""
+    """Browser/phone closing the connection itself (tab closed, page refreshed, network changed) is not an error.
+    The default server dumped a 20-line traceback to core log on each one (65 times a day): real errors
+    were lost in between."""
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
@@ -3015,7 +3015,7 @@ class QuietHTTPServer(ThreadingHTTPServer):
 class AppServer:
     def __init__(self, state: AppState, port: int = 0, host: str = "127.0.0.1", owns_state: bool = True):
         self.state = state
-        self.owns_state = owns_state  # çekirdekte hızlı bar/telefon ortak durumu kullanır: onu kapatmak sahibinin işi
+        self.owns_state = owns_state  # in core, quick bar/phone share state: shutdown is owner's responsibility
         self.httpd = QuietHTTPServer((host, port), make_handler(state))
         self.httpd.daemon_threads = True
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True, name="alice-http")

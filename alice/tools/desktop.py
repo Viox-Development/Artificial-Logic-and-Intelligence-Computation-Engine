@@ -1,8 +1,8 @@
-"""Masaüstü: pencereler, uygulama açma, pano ve Windows UI Automation ağacı.
+"""Desktop: windows, app launching, clipboard and the Windows UI Automation tree.
 
-ui_elements, ekrandaki pencerenin tıklanabilir öğelerini ID'li bir listeye çevirir.
-Bu liste hem beyin modeline (pixel tahmin etmeden tıklasın diye) hem de Jev reflex
-döngüsüne aday menüsü olarak verilir.
+ui_elements turns the clickable elements of the on-screen window into a list with IDs.
+This list is given both to the brain model (so it can click without guessing pixels) and
+to the Jev reflex loop as a candidate menu.
 """
 
 from __future__ import annotations
@@ -25,24 +25,24 @@ INTERACTIVE = {"Button", "Edit", "ComboBox", "CheckBox", "RadioButton", "MenuIte
                "Hyperlink", "TreeItem", "SplitButton", "Slider", "Spinner", "DataItem", "MenuBar", "Document"}
 
 
-# ------------------------------------------------------------------ pencereler
+# ------------------------------------------------------------------ windows
 def fold(s: str) -> str:
-    """Büyük/küçük harf ve Türkçe i/ı farkını yok sayan karşılaştırma anahtarı. "İ".lower() "i̇" (i + birleşen
-    nokta) verdiği için "indirilenler", "İndirilenler" başlığında bulunamıyordu; ı/i de birbirine eşlenir."""
+    """Comparison key that ignores case and the Turkish i/ı distinction. "İ".lower() "i̇" (i + combining
+    dot), so "indirilenler" could not be found in the title "İndirilenler"; ı and i are also mapped to each other."""
     return (s or "").casefold().replace("\u0307", "").replace("ı", "i")
 
 
 def pick_window(wins: list[Any], title: str, text_of=lambda w: w.title or "", strict: bool = False) -> Any:
-    """Başlığa göre pencere seç: önce tam eşleşme, sonra başlığı o parçayla başlayan, sonra içeren.
-    strict=True (kapatma gibi geri alınamaz işler) iken birden çok farklı pencere eşleşirse yanlışını
-    kapatmamak için hata verir ve adayları listeler."""
+    """Pick a window by title: exact match first, then titles starting with the fragment, then titles containing it.
+    With strict=True (for irreversible actions such as closing), if several different windows match it raises an
+    error and lists the candidates, so the wrong one is not closed."""
     want = fold(title.strip())
     if not want:
         raise ToolError("pencere başlığı boş olamaz")
     hits = [w for w in wins if want in fold(text_of(w))]
     if not hits:
-        # Açık pencereleri de söyle: model başlığı tahmin edip ("Setup - Sonora", "Setup - Sonora version 0.47.0")
-        # aynı hatayı tekrarlıyordu; doğru başlığı görünce tek seferde seçer.
+        # Also list the open windows: the model kept guessing the title ("Setup - Sonora", "Setup - Sonora version 0.47.0")
+        # and repeating the same error; seeing the real title, it picks the right one in a single step.
         names = list(dict.fromkeys(t.strip() for t in (text_of(w) for w in wins) if t and t.strip()))
         seen = "; ".join(n[:60] for n in names[:12])
         raise ToolError(f"'{title}' başlıklı pencere yok" + (f". Açık pencereler: {seen}" if seen else ""))
@@ -80,7 +80,7 @@ def focus_window(title: str) -> str:
             if getattr(w, "isMinimized", False):
                 w.restore()
             w.activate()
-        except Exception:  # noqa: BLE001 - Windows bazen ön plana almayı reddeder (oyun öndeyken)
+        except Exception:  # noqa: BLE001 - Windows sometimes refuses to bring a window to the front (while a game is in front)
             if not IS_WIN:
                 raise
         if IS_WIN and not force_foreground(getattr(w, "_hWnd", 0)):
@@ -99,14 +99,14 @@ def _wmctrl(args: list[str], title: str) -> None:
         raise ToolError("Linux'ta pencere işlemleri için wmctrl gerekli (sudo apt install wmctrl)") from e
     except subprocess.TimeoutExpired as e:
         raise ToolError("wmctrl 10 sn içinde cevap vermedi") from e
-    if r.returncode != 0:  # eşleşen pencere yok: sessizce "öne alındı" demesin
+    if r.returncode != 0:  # no matching window: must not silently report "brought to front"
         raise ToolError(f"'{title}' başlıklı pencere yok")
 
 
 def force_foreground(hwnd: int) -> bool:
-    """Pencereyi gerçekten öne al. Windows, öndeki uygulama (ör. tam ekran oyun) başka bir sürece
-    ait olunca SetForegroundWindow'u sessizce reddeder; alt tuşu ve iş parçacığı girdisini bağlama
-    hileleriyle tekrar dene. Sonunda öndeki pencereyi doğrula."""
+    """Really bring the window to the front. When the app in front (e.g. a full-screen game) belongs to another
+    process, Windows silently rejects SetForegroundWindow; retry with Alt-key and thread-input attach tricks.
+    Finally verify that the window is in front."""
     if not IS_WIN or not hwnd:
         return True
     import ctypes
@@ -116,7 +116,7 @@ def force_foreground(hwnd: int) -> bool:
         return True
     if u.IsIconic(hwnd):
         u.ShowWindow(hwnd, 9)  # SW_RESTORE
-    u.keybd_event(0x12, 0, 0, 0)  # alt bas-bırak: "son girdi bizden" sayılır, kilit açılır
+    u.keybd_event(0x12, 0, 0, 0)  # press and release Alt: counts as "the last input was ours", which unlocks the foreground
     u.keybd_event(0x12, 0, 2, 0)
     u.SetForegroundWindow(hwnd)
     if u.GetForegroundWindow() != hwnd:
@@ -162,14 +162,14 @@ def _shortcut_roots() -> list[Path]:
 
 
 SHORTCUT_SUFFIXES = (".lnk", ".url", ".appref-ms")
-# URI (ms-settings:, mailto:, steam://...); şema en az iki harf, yani "C:\..." sürücü harfi eşleşmez
+# URI (ms-settings:, mailto:, steam://...); the scheme is at least two letters, so a drive letter like "C:\..." does not match
 URI_RX = re.compile(r"^[a-z][a-z0-9+.-]+:", re.I)
-# Sürücüyle başlayan ya da klasör içeren dosya yolu (uygulama adı değil): yoksa açmaya çalışılmaz
+# File path that starts with a drive or contains a folder (not an app name): if it doesn't exist, no open is attempted
 FILE_PATH_RX = re.compile(r"^([a-z]:[\\/]|\\\\|~[\\/]|%\w+%[\\/]|/)", re.I)
 
 
 def missing_file(p: Path) -> str:
-    """Olmayan dosya için açıklama + aynı klasördeki en yeni benzer dosyalar (yanlış adla inmiş olabilir)."""
+    """Missing file message + the newest similar files in the same folder (maybe downloaded under another name)."""
     msg = f"dosya yok: {p}"
     try:
         same = sorted((f for f in p.parent.iterdir() if f.is_file() and f.suffix.lower() == p.suffix.lower()),
@@ -182,15 +182,15 @@ def missing_file(p: Path) -> str:
     return msg
 
 
-# Tarayıcıda açılınca indirilen dosyalar (kurulumlar, arşivler): adres çubuğu yerine eklentiyle indirilir
+# Files that download when opened in the browser (installers, archives): downloaded by the extension, not the address bar
 DOWNLOAD_RX = re.compile(r"\.(exe|msi|msix|zip|7z|rar|dmg|appimage|deb|iso)$", re.I)
-SHORTCUT_TTL = 60.0  # sn: kısayol listesi bu kadar önbellekte
+SHORTCUT_TTL = 60.0  # sec: the shortcut list stays cached this long
 _shortcut_cache: dict[tuple[str, ...], tuple[float, list[Path]]] = {}
 
 
 def _shortcut_files() -> list[Path]:
-    """Başlat menüsü (alt klasörleriyle) ve masaüstü (sadece üst seviye) kısayolları, kısa süre önbellekli. Masaüstü
-    de alt klasörleriyle taranıyordu: projeler ve videolarla dolu bir masaüstünde her uygulama açılışı ~20 sn sürdü."""
+    """Start menu shortcuts (with subfolders) and desktop shortcuts (top level only), briefly cached. The desktop
+    used to be scanned with its subfolders too: on a desktop full of projects and videos each app launch took ~20 sec."""
     roots = _shortcut_roots()
     key = tuple(str(r) for r in roots)
     hit = _shortcut_cache.get(key)
@@ -225,7 +225,7 @@ def _norm(s: str) -> str:
 
 
 def _resolve_lnks(lnks: list[Path]) -> dict[Path, str]:
-    """Kısayolların hedef exe yollarını tek PowerShell çağrısıyla çöz."""
+    """Resolve the target exe paths of the shortcuts in a single PowerShell call."""
     lnks = [p for p in lnks if p.suffix.lower() == ".lnk"]
     if not lnks:
         return {}
@@ -265,7 +265,7 @@ def _steam_libraries() -> list[Path]:
 
 
 def _exes_in(folder: Path, needle: str, depth: int = 3) -> list[Path]:
-    """Klasörde adı aranan kelimeyi içeren exe'ler (yoksa klasördeki tüm exe'ler), sığ arama."""
+    """Exes in the folder whose name contains the searched word (otherwise all exes in the folder); shallow search."""
     found: list[Path] = []
     stack = [(folder, 0)]
     while stack and len(found) < 40:
@@ -288,8 +288,8 @@ _START_APPS: list[tuple[str, str]] | None = None
 
 
 def start_apps(refresh: bool = False) -> list[tuple[str, str]]:
-    """Başlat menüsündeki TÜM uygulamalar (Microsoft Store / UWP dahil: WhatsApp, Spotify...) -> (ad, AppID).
-    Store uygulamalarının exe'si/kısayolu yok; shell:AppsFolder\\<AppID> ile açılır."""
+    """ALL apps in the Start menu (including Microsoft Store / UWP: WhatsApp, Spotify...) -> (name, AppID).
+    Store apps have no exe or shortcut; they are opened with shell:AppsFolder\\<AppID>."""
     global _START_APPS
     if _START_APPS is not None and not refresh:
         return _START_APPS
@@ -315,7 +315,7 @@ def match_start_app(name: str) -> tuple[str, str] | None:
     if not needle:
         return None
     apps = start_apps()
-    for n, app_id in apps:  # önce tam eşleşme, sonra içeren
+    for n, app_id in apps:  # exact match first, then partial match
         if _norm(n) == needle:
             return n, app_id
     for n, app_id in apps:
@@ -325,8 +325,8 @@ def match_start_app(name: str) -> tuple[str, str] | None:
 
 
 def find_installed_apps(name: str, limit: int = 15) -> list[str]:
-    """Kurulu bir programın yerini bul: Başlat menüsü, kayıt defteri (Uninstall, App Paths),
-    Program Files, LOCALAPPDATA\\Programs ve Steam kütüphaneleri. Satır başına 'kaynak: yol'."""
+    """Find where an installed program is: Start menu, registry (Uninstall, App Paths),
+    Program Files, LOCALAPPDATA\\Programs and Steam libraries. One 'source: path' per line."""
     if not IS_WIN:
         exe = shutil.which(name)
         return [f"PATH: {exe}"] if exe else []
@@ -349,7 +349,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
         if needle in _norm(n) and len(out) < limit:
             out.append(f"Başlat uygulaması ({n}): shell:AppsFolder\\{app_id}")
 
-    # Başlat menüsü / masaüstü kısayolları (hedef exe'leriyle birlikte)
+    # Start menu / desktop shortcuts (together with their target exes)
     lnks = [p for p in _shortcut_files() if needle in _norm(p.stem)]
     targets = _resolve_lnks(lnks[:20])
     for lnk in lnks[:20]:
@@ -358,7 +358,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
             add("kısayol hedefi", t)
         add("kısayol", str(lnk))
 
-    # Kayıt defteri
+    # Registry
     try:
         import winreg
 
@@ -403,7 +403,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
     except ImportError:
         pass
 
-    # Program klasörleri ve Steam: adı eşleşen klasörlerin içindeki exe'ler
+    # Program folders and Steam: exes inside folders whose name matches
     bases = [Path(os.environ.get(k, "")) for k in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")]
     bases.append(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs")
     bases += _steam_libraries()
@@ -417,7 +417,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
         for d in subs:
             if not d.is_dir():
                 continue
-            # "Blender Foundation\Blender 4.2" gibi bir alt seviyeye de bak
+            # also look one level deeper, e.g. "Blender Foundation\Blender 4.2"
             cands = [d] if needle in _norm(d.name) else []
             if not cands:
                 try:
@@ -439,33 +439,33 @@ CMD_META = set('&|<>^%"')
 
 def is_script_target(target: str) -> bool:
     t = target.strip().strip('"').lower()
-    if re.match(r"^https?://", t):  # web adresi tarayıcıda açılır, çalıştırılmaz
+    if re.match(r"^https?://", t):  # a web address opens in the browser; it is not executed
         return False
-    # Windows dosya adının sonundaki nokta/boşluğu ve ::$DATA akışını yok sayar: "x.bat." de x.bat'i çalıştırır.
-    # file:///C:/x.bat de ShellExecute ile çalışır.
+    # Windows ignores a trailing dot/space in a file name and the ::$DATA stream: "x.bat." runs x.bat.
+    # file:///C:/x.bat also works via ShellExecute.
     t = re.sub(r"::\$data$", "", t.split("?", 1)[0] if t.startswith("file:") else t).rstrip(". ")
     return t.endswith(SCRIPT_EXT)
 
 
 def open_app(target: str) -> str:
-    """Uygulama adı, exe yolu, dosya ya da URL aç."""
+    """Open an app name, exe path, file or URL."""
     target = (target or "").strip()
-    if not target:  # Windows'ta Path("") "." olur: boş hedef çalışma klasörünü açıyordu
+    if not target:  # On Windows Path("") becomes "."; an empty target was opening the working folder
         raise ToolError("açılacak hedef boş")
     if re.match(r"https?://", target, re.I) and DOWNLOAD_RX.search(target.split("?", 1)[0]):
-        # Kurulum/arşiv bağlantısı: tarayıcıda açılınca Opera "Farklı Kaydet" penceresi açıp orada bekliyordu
-        # (ALICE dosya inmeden kurulumu çalıştırmaya kalktı). Doğrudan İndirilenler'e indir.
+        # Installer/archive link: in the browser, Opera showed a "Farklı Kaydet" (Save As) window and waited there.
+        # ALICE tried to run the installer before the file arrived. Download straight into İndirilenler (Downloads).
         from alice.tools import fetch_file
 
         return fetch_file.describe(fetch_file.download(target), opened=True)
     path = Path(os.path.expandvars(target)).expanduser()
     if FILE_PATH_RX.match(target) and not path.exists():
-        # Var olmayan dosya yolu: Windows'ta "son çare" başlatma "bulunamadı" hata penceresini açıyordu, ALICE de o
-        # pencerede Enter'a basıp duruyordu (olmayan Sonora-Setup.exe; dosya e.exe adıyla inmişti).
+        # Nonexistent file path: on Windows the "last resort" launch opened a "not found" error window, and ALICE
+        # kept pressing Enter in it (the missing Sonora-Setup.exe; the file had been downloaded as e.exe).
         raise ToolError(missing_file(path))
     if IS_WIN:
         if URI_RX.match(target):
-            # ms-settings:nightlight, mailto:, steam:// ... doğrudan: aramaya sokulunca Ayarlar sayfası 42 sn'de açılmıştı.
+            # ms-settings:nightlight, mailto:, steam:// ...: open directly; via search, Settings took 42 sec to open.
             os.startfile(target)  # type: ignore[attr-defined]
             return f"açıldı: {target}"
         p = Path(os.path.expandvars(target)).expanduser()
@@ -480,7 +480,7 @@ def open_app(target: str) -> str:
             os.startfile(str(lnk))  # type: ignore[attr-defined]
             return f"açıldı: {lnk.stem} ({lnk})"
         app = match_start_app(target)
-        if app:  # Store uygulamaları (WhatsApp vb.) dahil Başlat menüsündeki her uygulama
+        if app:  # every Start menu app, including Store apps (WhatsApp etc.)
             subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"])
             return f"açıldı: {app[0]}"
         for line in find_installed_apps(target):
@@ -488,8 +488,8 @@ def open_app(target: str) -> str:
             if path.lower().endswith(".exe"):
                 os.startfile(path)  # type: ignore[attr-defined]
                 return f"açıldı: {path}"
-        # Son çare: shell'in kendi çözümlemesi (App Paths kayıtları dahil). cmd.exe & | ^ gibi karakterleri komut
-        # ayırıcı sayar: "x&calc" ikinci bir komut çalıştırmasın (hedef bir web sayfasından gelmiş olabilir).
+        # Last resort: the shell's own resolution (including App Paths entries). cmd.exe treats & | ^ as command
+        # separators: "x&calc" must not run a second command (the target may have come from a web page).
         if CMD_META & set(target):
             raise ToolError(f"'{target}' bulunamadı (geçersiz karakter içeriyor)")
         subprocess.Popen(["cmd", "/c", "start", "", target], creationflags=0x08000000)
@@ -516,7 +516,7 @@ BROWSER_TITLES = {"opera": "Opera", "chrome": "Chrome", "msedge": "Edge", "brave
 
 
 def browser_window_title() -> str:
-    """Kullanıcının varsayılan tarayıcısının pencere başlığında geçen ad (ör. 'Opera')."""
+    """The name in the window title of the user's default browser (e.g. 'Opera')."""
     from alice.tools.browser import default_browser_exe
 
     exe = (default_browser_exe() or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
@@ -532,7 +532,7 @@ SITE_TITLES = {"mail.google": "gmail", "music.youtube": "youtube music", "web.wh
 
 
 def site_key(target: str) -> str | None:
-    """URL'nin sekme başlığında görünen adı: youtube.com/results?... -> 'youtube'. Arama metni için None."""
+    """The name a URL shows in the tab title: youtube.com/results?... -> 'youtube'. None for search text."""
     t = target.strip().lower()
     if " " in t or ("." not in t and "://" not in t):
         return None
@@ -546,7 +546,7 @@ def site_key(target: str) -> str | None:
 
 
 def is_site_root(target: str) -> bool:
-    """'youtube.com', 'https://www.youtube.com/' gibi sadece site adresi mi (yol/sorgu yok)?"""
+    """Is it just a site address such as 'youtube.com' or 'https://www.youtube.com/' (no path or query)?"""
     rest = re.sub(r"^[a-z]+://", "", target.strip().lower()).split("/", 1)
     return len(rest) == 1 or rest[1].strip("/") == ""
 
@@ -562,8 +562,8 @@ def active_title() -> str:
 
 
 def switch_tab(want: str, title: str | None = None, max_tabs: int = 40) -> str | None:
-    """Kullanıcının açık tarayıcısında başlığında `want` geçen sekmeye geç (Ctrl+Tab ile gezerek).
-    Bulursa sekme başlığını, bulamazsa None döner (başladığı sekmeye geri döner)."""
+    """Switch to the tab whose title contains `want` in the user's open browser (cycling with Ctrl+Tab).
+    Returns the tab title if found, otherwise None (and it goes back to the tab it started on)."""
     from alice.tools.computer import press_keys
 
     want = fold(want.strip())
@@ -586,7 +586,7 @@ def switch_tab(want: str, title: str | None = None, max_tabs: int = 40) -> str |
 
 
 def current_tab_url(title: str | None = None) -> str:
-    """Kullanıcının tarayıcısında öndeki sekmenin adresi (adres çubuğundan kopyalanır, pano geri konur)."""
+    """Address of the front tab in the user's browser (copied from the address bar; the clipboard is restored)."""
     from alice.tools.computer import press_keys
 
     try:
@@ -616,8 +616,8 @@ def current_tab_url(title: str | None = None) -> str:
 
 
 def navigate_tab(target: str, title: str | None = None, new_tab: bool | None = None) -> str:
-    """Kullanıcının açık tarayıcısında gez (CDP gerekmez). Site zaten bir sekmede açıksa o sekmeye geçip orada,
-    öndeki sekme boşsa orada, yoksa yeni sekmede açar. new_tab=True/False bunu zorlar."""
+    """Navigate in the user's open browser (no CDP needed). If the site is already open in a tab, switch to it;
+    if the front tab is blank, use it there, otherwise open a new tab. new_tab=True/False forces this."""
     from alice.tools.computer import press_keys, type_text
 
     name = title or browser_window_title()
@@ -630,7 +630,7 @@ def navigate_tab(target: str, title: str | None = None, new_tab: bool | None = N
     key = site_key(target)
     if new_tab is None and key:
         found = switch_tab(key, name)
-        if found and is_site_root(target):  # sadece siteyi aç: açık sekmeye geçmek yeter, içindekini bozma
+        if found and is_site_root(target):  # just opening the site: switching to the open tab is enough, don't disturb what is in it
             return f"zaten açık sekmeye geçildi: {found}"
         if found:
             new_tab, where = False, f"açık '{found}' sekmesinde"
@@ -645,7 +645,7 @@ def navigate_tab(target: str, title: str | None = None, new_tab: bool | None = N
     return f"{where or ('yeni sekmede' if new_tab else 'öndeki sekmede')} açıldı: {target}"
 
 
-# ------------------------------------------------------------------- UIA ağacı
+# ------------------------------------------------------------------- UIA tree
 def _foreground_uia(title: str | None):
     try:
         from pywinauto import Desktop
@@ -662,9 +662,9 @@ def _foreground_uia(title: str | None):
 
 def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int = 150,
                         budget: float = 5.0, hwnd: int = 0) -> tuple[str, list[dict[str, Any]]]:
-    """Öndeki (ya da başlığı/tutamacı verilen) pencerenin etkileşimli öğelerini topla. Chromium/WebView2 tabanlı
-    uygulamalarda (WhatsApp, Discord...) ağaç çok büyük: budget saniyede ne bulunduysa onunla dön. hwnd: pencereyi
-    başlıkla aramak bütün pencereleri taramak demek (~1 sn); reflex her adımda aynı pencereye bakıyor."""
+    """Collect interactive elements of the front window (or the one given by title/handle). In Chromium/WebView2
+    apps (WhatsApp, Discord...) the tree is huge: return whatever was found within budget seconds. hwnd: finding a
+    window by title scans all windows (~1 sec); reflex looks at the same window on every step."""
     if not IS_WIN:
         raise ToolError("ui_elements şimdilik sadece Windows'ta (UI Automation). Linux/macOS'ta computer aracını kullan.")
     if hwnd:
@@ -675,7 +675,7 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
         win = _foreground_uia(title)
     deadline = time.monotonic() + budget
     if hasattr(win, "iter_descendants"):
-        descendants = win.iter_descendants(depth=14)  # tembel: süre dolunca durabilelim
+        descendants = win.iter_descendants(depth=14)  # lazy, so we can stop once the time is up
     else:
         try:
             descendants = win.descendants(depth=14)
@@ -696,8 +696,8 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
                 continue
             name = (info.name or "").strip()
             value = ""
-            # Document'ın değeri sayfanın bütün metni: WebView2 penceresinde (ALICE'in kendisi, Discord) okumak
-            # tek başına bir dakika sürebiliyordu ve 80 karakterden fazlası zaten kullanılmıyor.
+            # A Document's value is the whole page text: in a WebView2 window (ALICE itself, Discord) reading it
+            # could take a minute alone, and more than 80 characters is not used anyway.
             if ctype in ("Edit", "ComboBox"):
                 try:
                     value = (el.get_value() if hasattr(el, "get_value") else el.window_text()) or ""
@@ -716,7 +716,7 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
             })
             if len(items) >= limit:
                 break
-        except Exception:  # noqa: BLE001 - UIA öğeleri tararken kaybolabilir
+        except Exception:  # noqa: BLE001 - UIA elements can disappear while scanning
             continue
     ctx.state["ui_elems"] = wrappers
     ctx.state["ui_items"] = {i["id"]: i for i in items}
@@ -737,11 +737,11 @@ def format_ui(title: str, items: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-SET_TEXT_SETTLE = 0.6  # sn: alan değeri geri alıyor mu, bu kadar bekleyip bakılır
+SET_TEXT_SETTLE = 0.6  # sec: wait this long, then check whether the field value reverted
 
 
 def _edit_value(el: Any) -> str | None:
-    """Alanın şu anki değeri; okunamıyorsa None (o zaman yazılanın tuttuğu varsayılır, iki kez yazılmasın)."""
+    """The field's current value, or None if unreadable (then the typed text is assumed kept, so it is not typed twice)."""
     try:
         v = el.get_value() if hasattr(el, "get_value") else el.window_text()
     except Exception:  # noqa: BLE001
@@ -761,7 +761,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
     if action == "click":
         try:
             el.invoke()
-        except Exception:  # noqa: BLE001 - invoke pattern'i olmayan öğeler
+        except Exception:  # noqa: BLE001 - elements without an invoke pattern
             el.click_input()
     elif action == "double_click":
         el.double_click_input()
@@ -774,8 +774,8 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
             raise ToolError("set_text için text gerekli")
         try:
             el.set_edit_text(text)
-            # Bazı alanlar değeri sessizce geri alıyor: Gezgin'in adres çubuğu düzenleme kipinde değilken ~1 sn sonra
-            # eski adrese dönüyor, Enter de eski klasörü yeniliyordu. Okunabiliyorsa bak; tutmadıysa klavyeyle yaz.
+            # Some fields revert the value: Explorer's address bar (Gezgin), outside edit mode, went back to the old
+            # address after ~1 sec, and Enter refreshed the old folder. If readable, check the value; otherwise type it.
             time.sleep(SET_TEXT_SETTLE)
             kept = _edit_value(el)
             ok = kept is None or kept.strip() == text.strip()
@@ -804,7 +804,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
     return f"{action} -> [{element_id}] {item.get('role', '')} '{item.get('name', '')}'"
 
 
-# ----------------------------------------------------------------------- araçlar
+# ----------------------------------------------------------------------- tools
 class Windows(Tool):
     name = "windows"
     description = ("Masaüstü pencereleri ve uygulamalar: uygulama/dosya açma, pencereyi öne alma, küçültme, kapatma; "
@@ -838,7 +838,7 @@ class Windows(Tool):
         if args.get("action") in ("list", "find"):
             return READ
         if args.get("action") == "open" and is_script_target(str(args.get("target") or "")):
-            return EXEC  # betik/exe çalıştırmak komut çalıştırmakla aynı: run_command gibi onaya tabi
+            return EXEC  # running a script/exe is the same as running a command: it needs approval, like run_command
         return COMPUTER
 
     def run(self, ctx: ToolContext, action: str, title: str | None = None, target: str | None = None,
@@ -860,7 +860,7 @@ class Windows(Tool):
             if not target:
                 raise ToolError("open için target gerekli")
             msg = open_app(target)
-            if "://" not in target:  # uygulama penceresinin gelmesini bekle; site açmak beklemeye değmez
+            if "://" not in target:  # wait for the app window to appear; opening a site is not worth waiting for
                 time.sleep(1.5)
             return ToolResult(msg)
         if action == "navigate":
@@ -954,7 +954,7 @@ class Clipboard(Tool):
             return ToolResult(pyperclip.paste() or "(pano boş)")
         if action != "set":
             raise ToolError(f"bilinmeyen action: {action}. Geçerli: get, set, history")
-        if text is None:  # eksik text panoyu sessizce boşaltıyordu (kullanıcının kopyaladığı şey gidiyordu)
+        if text is None:  # a missing text used to silently empty the clipboard (the user's copied content was lost)
             raise ToolError("set için text gerekli")
         pyperclip.copy(str(text))
         return ToolResult("panoya kopyalandı")

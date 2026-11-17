@@ -32,10 +32,10 @@ def test_remember_writes_typed_note_dedupes_and_profile_shows_index_and_rules():
     assert new_a and not new_b and a == b
     m.remember("Kullanıcı oyunu kapatmadan önce sorulmasını ister.", "preference")
     types = {n.type for n in notes(m)}
-    assert types == {"user", "feedback"}  # kalıcı talimat feedback notu olur
+    assert types == {"user", "feedback"}  # a persistent instruction becomes a feedback note
     prof = m.profile()
     assert "Long-term memory" in prof and "MEMORY.md" in prof and "Note types" in prof
-    assert f"]({a}.md)" in prof and "sorulmasını" in prof  # dizin + feedback notunun tamamı
+    assert f"]({a}.md)" in prof and "sorulmasını" in prof  # index + full text of the feedback note
     assert m.notes.index_raw().count("\n") == 2
 
 
@@ -56,7 +56,7 @@ def test_recall_attaches_whole_note_once_and_strips_cleanly():
     seen: set[str] = set()
     block = m.recall("opera gx tarayıcısını aç", surfaced=seen)
     assert block.startswith("[hafızadan") and "Opera GX" in block
-    assert m.recall("opera gx tarayıcısını aç", surfaced=seen) == ""  # bu sohbette ikinci kez eklenmez
+    assert m.recall("opera gx tarayıcısını aç", surfaced=seen) == ""  # not added a second time in this chat
     assert clean_user_text("merhaba\n\n" + block) == "merhaba"
 
 
@@ -81,9 +81,9 @@ def test_recall_lets_the_fast_model_pick_and_warns_about_old_notes():
                           old.read_text(encoding="utf-8")), encoding="utf-8")
     os.utime(old, (then, then))
     block = m.recall("testleri çalıştır")
-    assert "genel:feedback-testler" in asked[0] and "Unciv" in asked[0]  # açıklamalar modele gösterildi
+    assert "genel:feedback-testler" in asked[0] and "Unciv" in asked[0]  # descriptions were shown to the model
     assert "**Neden:**" in block and "War Thunder" not in block
-    assert "gün önce yazıldı" in block  # eski not: şimdiki hâli kontrol et uyarısı
+    assert "gün önce yazıldı" in block  # old note: warning to check its current state
 
 
 def test_explicit_note_and_signals():
@@ -112,15 +112,15 @@ def test_learn_extracts_typed_notes_and_updates_existing_by_name():
     m = LongMemory(":memory:", {}, extractor)
     m.record("YouTube'u aç", "Açtım.")
     m.learn("YouTube'u aç", background=False)
-    assert not seen  # sinyal yok, sıra da gelmedi: model çağrılmaz
+    assert not seen  # no signal and no turn either: the model is not called
     m.record("ben kahveyi hep şekersiz içerim", "Not ettim.")
     m.learn("ben kahveyi hep şekersiz içerim", "Not ettim.", background=False)
     assert [n.description for n in notes(m)] == ["Kahveyi şekersiz içer"]
     m.record("artık kahve içmiyorum, çay seviyorum", "Tamam.")
     m.learn("artık kahve içmiyorum, çay seviyorum", background=False)
-    assert "genel:user-icecek" in seen[-1] and "Kahveyi şekersiz" in seen[-1]  # mevcut not modele gösterildi
-    assert [n.description for n in notes(m)] == ["Artık çay içiyor"]  # aynı adla güncellendi, kopya yok
-    assert "artık kahve" in seen[-1] and "YouTube" not in seen[-1]  # imleç: zaten bakılan turlar tekrar gitmez
+    assert "genel:user-icecek" in seen[-1] and "Kahveyi şekersiz" in seen[-1]  # the existing note was shown to the model
+    assert [n.description for n in notes(m)] == ["Artık çay içiyor"]  # updated under the same name, no duplicate
+    assert "artık kahve" in seen[-1] and "YouTube" not in seen[-1]  # cursor: turns already checked are not sent again
 
 
 def test_feedback_and_confirmation_trigger_extraction_and_own_write_skips_it():
@@ -130,10 +130,10 @@ def test_feedback_and_confirmation_trigger_extraction_and_own_write_skips_it():
     m.learn("hayır öyle değil, testleri tek tek koşma", background=False)
     m.record("aynen böyle devam", "Peki.")
     m.learn("aynen böyle devam", background=False)
-    assert len(calls) == 2  # düzeltme de onay da feedback sinyali
+    assert len(calls) == 2  # both the correction and the confirmation are feedback signals
     m.record("bunu feedback olarak kaydettim", "")
     m.learn("hayır, bundan sonra hep sor", wrote=True, background=False)
-    assert len(calls) == 2  # ALICE bu turda hafızaya kendisi yazdı: arka plan çıkarımı atlanır
+    assert len(calls) == 2  # ALICE wrote to memory itself this turn, so background extraction is skipped
 
 
 def test_one_off_things_are_not_saved_as_user_notes_and_requested_notes_are_protected():
@@ -148,7 +148,7 @@ def test_one_off_things_are_not_saved_as_user_notes_and_requested_notes_are_prot
     m.remember("Kullanıcının adı Hayat.", "fact", source="kullanıcı")
     keep = [n for n in notes(m) if n.source == "kullanıcı"][0]
     m.apply_notes({"delete": [keep.key, "genel:user-kahve"]})
-    assert {n.name for n in notes(m)} == {keep.name}  # elle istenen silinmedi
+    assert {n.name for n in notes(m)} == {keep.name}  # the explicitly requested note was not deleted
 
 
 def test_import_markdown_once(tmp_path):
@@ -192,11 +192,11 @@ def test_partial_fact_migration_is_retried_without_overwriting_migrated_notes(mo
 
     monkeypatch.setattr(m, "remember", flaky)
     assert m.migrate_facts() == 1
-    assert not m._meta("notes_migrated")  # biri taşınamadı: bitti sayılmaz
+    assert not m._meta("notes_migrated")  # one could not be moved: not counted as done
     cat = next(n for n in notes(m) if "Pamuk" in n.body)
-    m.notes.save(cat.name, cat.description, cat.type, "Kullanıcının kedisinin adı Pamuk, 3 yaşında.")  # elle düzenleme
+    m.notes.save(cat.name, cat.description, cat.type, "Kullanıcının kedisinin adı Pamuk, 3 yaşında.")  # manual edit
     monkeypatch.setattr(m, "remember", real)
-    assert m.migrate_facts() == 1  # yalnız kalan taşındı
+    assert m.migrate_facts() == 1  # only the remaining ones were moved
     assert m._meta("notes_migrated") and m.migrate_facts() == 0
     bodies = {n.body for n in notes(m)}
     assert "Kullanıcının kedisinin adı Pamuk, 3 yaşında." in bodies and "Kullanıcı sabahları kahve içer." in bodies
@@ -225,7 +225,7 @@ def test_agent_injects_recall_records_turns_and_refreshes_profile(workdir):
     agent.memory.remember("Kullanıcının en sevdiği film Interstellar.", "preference")
     agent.run_turn("en sevdiğim film interstellar mıydı?")
     sent = provs["a"].calls[0]["messages"]
-    assert "Interstellar" in sent[0]["content"]  # dizin + kullanıcı notu sistem isteminde
+    assert "Interstellar" in sent[0]["content"]  # index + user note are in the system prompt
     assert "[hafızadan" in sent[-1]["content"]
     assert agent.messages[1]["_display"] == "en sevdiğim film interstellar mıydı?"
     ep = agent.memory.recent(1)[0]
@@ -246,8 +246,8 @@ def test_memory_tool_save_read_search_delete(workdir):
     assert tool.risk_for({"action": "delete"}) == "write" and tool.risk_for({"action": "save"}) == "read"
     assert tool.run(ctx, "delete", name="user-takim").text.startswith("silindi")
     assert agent.memory.notes.scan() == [] and "user-takim" not in agent.memory.notes.index_raw()
-    assert any((agent.memory.notes.root / ".trash").glob("*user-takim.md"))  # çöpte, geri alınabilir
-    # eski adlar da çalışır
+    assert any((agent.memory.notes.root / ".trash").glob("*user-takim.md"))  # in the trash, can be restored
+    # old names still work
     assert "kaydedildi" in tool.run(ctx, "add", note="Kullanıcı Galatasaray tutar.", kind="preference").text
     assert tool.run(ctx, "forget", query="Galatasaray").text.startswith("silindi")
 
@@ -266,7 +266,7 @@ def test_gecmis_sohbet_arama_ve_son_sohbetler():
                                 ("geri tepme de ekleyelim", "Tamam, recoil eklendi")]):
         _chat(m, now - 3 * day + i * 60, u, r)
     _chat(m, now - day, "yarın matematik sınavım var", "Başarılar!")
-    with m._lock:  # terms sütunu: kelime araması için
+    with m._lock:  # terms column: for word search
         for row in m.db.execute("SELECT id, user, reply FROM episodes").fetchall():
             m.db.execute("UPDATE episodes SET terms = ? WHERE id = ?", (" ".join(terms(row[1] + " " + row[2])), row[0]))
         m.db.commit()
@@ -275,10 +275,10 @@ def test_gecmis_sohbet_arama_ve_son_sohbetler():
     recent = m.recent_chats(1)
     assert "matematik" in recent and "silah" not in recent
     both = m.recent_chats(5)
-    assert both.index("matematik") < both.index("silah")  # yeniden eskiye
+    assert both.index("matematik") < both.index("silah")  # newest to oldest
     assert "silah" in m.recent_chats(5, before=now - 2 * day) and "matematik" not in m.recent_chats(5, before=now - 2 * day)
     assert "bulunamadı" in m.search_chats("uzay gemisi")
-    # Eski turlar artık her mesaja kendiliğinden eklenmez; onları model search_chats ile bulur.
+    # Old turns are no longer added to every message automatically; the model finds them with search_chats.
     assert "Raycast" not in m.recall("unity silah sistemi")
 
 
@@ -307,13 +307,13 @@ def test_vektorler_parti_parti_kaydedilir_kota_dolunca_kalan_beklenir():
         def embed(self, texts):
             self.calls += 1
             if self.calls > 1:
-                raise RateLimited("429")  # dakikalık kota: ilk parti geçti, ikincisi takıldı
+                raise RateLimited("429")  # per-minute quota: first batch passed, second hit the limit
             return [normalize([1.0, float(i)]) for i in range(len(texts))]
 
     m = LongMemory(":memory:", {}, None, Emb())
     for i in range(30):
         _chat(m, time.time() - i, f"konuşma {i}", "cevap")
-    assert m.index_pending() == 20  # ilk parti kaydedildi; eskiden hepsi atılıyordu
+    assert m.index_pending() == 20  # first batch saved; previously all of them were dropped
     assert m.db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == 20
 
 
@@ -337,13 +337,13 @@ def test_silinen_kaydin_vektoru_kalmaz(tmp_path):
     _chat(m, time.time() - 5, "yeni konuşma", "cevap")
     gone = m.db.execute("SELECT id FROM episodes WHERE ts = ?", (old,)).fetchone()[0]
     keep = m.db.execute("SELECT id FROM episodes WHERE ts != ?", (old,)).fetchone()[0]
-    # Embedding sürerken sohbet silinirse sahipsiz vektör yazılmasın.
+    # If a chat is deleted while embedding runs, don't write an orphaned vector.
     m.embedder = Emb(hook=lambda: m.forget_episode(keep))
     m.index_pending()
     refs = {r[0] for r in m.db.execute("SELECT ref FROM vectors WHERE kind = 'episode'")}
     assert keep not in refs and gone in refs
     m.close()
-    # Eski turlar budanınca vektörleri de gider (anlam aramasının ilk sıralarını kapmasın).
+    # When old turns are pruned, their vectors go too (so they don't take the top spots in semantic search).
     m2 = LongMemory(tmp_path / "m.db", {"keep_days": 30}, None, None, notes_root=tmp_path / "notes")
     assert m2.db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == 0
     m2.close()
@@ -378,9 +378,9 @@ def test_aractan_sonra_gelen_canli_cevap_soruya_eklenir():
     s.agent = SimpleNamespace(memory=m)
     ui = SimpleNamespace(tools=[])
     state = {"heard": ["Ankara'da hava nasıl?"], "said": []}
-    s._flush_log(state, ui)  # model önce sustu, aracı çağırdı
+    s._flush_log(state, ui)  # the model went quiet first and then called a tool
     state["said"] = ["Ankara'da hava kapalı ve on iki derece."]
-    s._flush_log(state, ui)  # cevap ayrı turda geldi
+    s._flush_log(state, ui)  # the reply came in a separate turn
     ep = m.recent(1)[0]
     assert ep.user == "Ankara'da hava nasıl?" and "on iki derece" in ep.reply
     assert len(m.recent(5)) == 1 and "on iki derece" in s._history[-1][2]
@@ -425,13 +425,13 @@ def test_dream_merges_fixes_prunes_and_keeps_a_backup():
     done = m.dream(force=True)
     names = {n.name for n in notes(m)}
     assert "user-oyunlar" in names and "user-unciv" not in names and "user-solitaire" not in names
-    assert any("Hayat" in n.body for n in notes(m))  # elle istenen not dokunulmadan kaldı
+    assert any("Hayat" in n.body for n in notes(m))  # the explicitly requested note was left untouched
     idx = m.notes.index_raw()
-    assert idx.startswith("## Kullanıcı") and "olmayan.md" not in idx and "Hayat" in idx  # eksik satır eklendi
-    assert "Unciv'de savaş" in seen[0] and "(kullanıcı istedi)" in seen[0]  # özetler ve koruma işareti modelde
-    assert any("İki oyun notu" in x for x in done) and m.notes.backups()  # yedek alındı
+    assert idx.startswith("## Kullanıcı") and "olmayan.md" not in idx and "Hayat" in idx  # missing line was added
+    assert "Unciv'de savaş" in seen[0] and "(kullanıcı istedi)" in seen[0]  # summaries and protection marker reach the model
+    assert any("İki oyun notu" in x for x in done) and m.notes.backups()  # backup taken
     assert "Dream:" in m.notes.logs_since(0)
-    # yedeğe dönülebilir
+    # can be rolled back to the backup
     m.notes.restore(m.notes.backups()[-1])
     assert {"user-unciv", "user-solitaire"} <= {n.name for n in notes(m)}
 
@@ -443,8 +443,8 @@ def test_dream_never_bulk_deletes_and_uses_the_strong_model():
     for i in range(8):
         m.save_note(f"user-meyve-{i}", f"meyve {i} sever", "user", f"{i}. meyveyi sever.")
     m.dream(force=True)
-    assert len(notes(m)) == 6  # 8'in en fazla dörtte biri (2) silindi
-    assert seen and not fast  # Dream güçlü modelle
+    assert len(notes(m)) == 6  # at most a quarter of 8 (2) were deleted
+    assert seen and not fast  # Dream uses the strong model
 
 
 def test_maybe_dream_waits_for_time_and_enough_conversations():
@@ -453,12 +453,12 @@ def test_maybe_dream_waits_for_time_and_enough_conversations():
     now = time.time()
     for i in range(2):
         _chat(m, now - 10 * 3600 + i * 3600, f"konuşma {i}", "cevap")
-    assert not m.maybe_dream() and not seen  # 2 konuşma < 3
+    assert not m.maybe_dream() and not seen  # 2 conversations < 3
     m._last_dream_scan = None
     _chat(m, now - 5 * 3600, "üçüncü konuşma", "cevap")
     assert m.maybe_dream() and seen
     m._last_dream_scan = None
-    assert not m.maybe_dream()  # son Dream'in üstünden 24 saat geçmedi
+    assert not m.maybe_dream()  # 24 hours have not passed since the last Dream
     assert m.notes.last_dream() > now - 60
 
 
@@ -468,9 +468,9 @@ def test_dream_lock_blocks_a_second_process_and_failure_rolls_back_the_clock():
     m, _ = _dream_mem(lambda p: "bozuk cevap")
     m.save_note("user-x", "x", "user", "x")
     prior = m.notes.last_dream()
-    m.dream(force=True)  # cevap boş: hata -> kilit zamanı eskiye döner, kapı yine açık
+    m.dream(force=True)  # empty answer: error -> lock time rolls back, gate is open again
     assert m.notes.last_dream() == prior == 0.0
-    m.notes.lock_path.write_text("999999", encoding="utf-8")  # başka (ölü olmayan) süreç tutuyor gibi
+    m.notes.lock_path.write_text("999999", encoding="utf-8")  # as if another (live) process were holding it
     import alice.memdir as md
 
     real = md._pid_alive
@@ -493,9 +493,9 @@ def test_failing_dream_backs_off_instead_of_retrying_every_scan():
     m.save_note("user-x", "x", "user", "x")
     _chat(m, time.time() - 5 * 3600, "konuşma", "cevap")
     assert m.maybe_dream() and len(calls) == 1
-    m._last_dream_scan = None  # 10 dakika geçti gibi
-    assert not m.maybe_dream() and len(calls) == 1  # hata sonrası bekleme: model tekrar çağrılmadı
-    m._dream_retry_at = 0.0  # bekleme bitti
+    m._last_dream_scan = None  # as if 10 minutes had passed
+    assert not m.maybe_dream() and len(calls) == 1  # backoff after the error: model not called again
+    m._dream_retry_at = 0.0  # backoff is over
     m._last_dream_scan = None
     assert m.maybe_dream() and len(calls) == 2 and m._dream_fails == 2
 
@@ -511,15 +511,15 @@ def test_pending_sessions_do_not_split_a_conversation_at_the_page_boundary(monke
                 m.db.execute("INSERT INTO episodes(ts, user, reply) VALUES (?, ?, 'tamam')", (start + i * 60, f"tur {i}"))
             m.db.commit()
 
-    turns(m, base, 4)                # 1. konuşma: 4 tur
-    turns(m, base + 3600, 9)         # 2. konuşma: 9 tur, sayfa (10) ortasından kesilir
+    turns(m, base, 4)                # 1st conversation: 4 turns
+    turns(m, base + 3600, 9)         # 2nd conversation: 9 turns, cut off in the middle of the page (10)
     groups = m.pending_sessions()
-    assert [len(g) for g in groups] == [4]  # yarım kalan ikinci konuşma bu geçişte özetlenmez
+    assert [len(g) for g in groups] == [4]  # the unfinished 2nd conversation is not summarized this pass
     m._meta("digested_until", repr(groups[0][-1].ts))
-    assert [len(g) for g in m.pending_sessions()] == [9]  # sonraki geçişte bütün olarak gelir
+    assert [len(g) for g in m.pending_sessions()] == [9]  # it comes in whole on the next pass
 
     m2 = mem(session_gap_minutes=20)
-    turns(m2, base, 15)  # sayfadan uzun tek konuşma: ilerlemek için parça özetlenir
+    turns(m2, base, 15)  # a single conversation longer than a page: a part is summarized to make progress
     assert [len(g) for g in m2.pending_sessions()] == [10]
 
 
@@ -531,7 +531,7 @@ def test_learn_turn_counter_is_thread_safe(monkeypatch):
     calls = []
     monkeypatch.setattr(m, "_extract", lambda cwd: calls.append(1))
     old = sys.getswitchinterval()
-    sys.setswitchinterval(1e-6)  # iş parçacıkları sık sık yer değiştirsin
+    sys.setswitchinterval(1e-6)  # let threads switch often
     try:
         threads = [threading.Thread(target=lambda: [m.learn("tamam", background=False) for _ in range(100)])
                    for _ in range(8)]

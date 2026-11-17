@@ -1,7 +1,7 @@
-"""HUD'a komut gönderen istemci: show("arrow", clock=4, text="SAM 12 km", ttl=3).
+"""HUD client: show("arrow", clock=4, text="SAM 12 km", ttl=3).
 
-UDP ile 127.0.0.1'e tek datagram yollar: bağlantı kurmaz, cevap beklemez. HUD kapalıysa paket düşer, hiçbir şey
-olmaz; uçuş anonsu ya da ses asla HUD yüzünden beklemez.
+Sends a single datagram via UDP to 127.0.0.1: no connection, no response expected. If HUD is closed, the packet drops, nothing
+happens; flight announcement or voice never waits because of HUD.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from alice.hud import PORT
 _port = PORT
 _sock: socket.socket | None = None
 _lock = threading.Lock()
-active = False  # çekirdek HUD'u başlattı: göstermek için beklemeye değer (tıklama önizlemesi gibi)
+active = False  # core started HUD: worth waiting to show (like click preview)
 
 
 def configure(port: int, on: bool = True) -> None:
@@ -26,7 +26,7 @@ def configure(port: int, on: bool = True) -> None:
 
 
 def send(msg: dict[str, Any]) -> bool:
-    """Komutu gönder. Gönderilemezse (HUD kapalı, ağ yığını hata verdi) sessizce False."""
+    """Send the command. Quietly False if unable to send (HUD closed, network stack error)."""
     global _sock
     try:
         raw = json.dumps(msg, ensure_ascii=False).encode("utf-8")
@@ -37,18 +37,18 @@ def send(msg: dict[str, Any]) -> bool:
             _sock.sendto(raw, ("127.0.0.1", _port))
         return True
     except (OSError, TypeError, ValueError):
-        # Windows'ta kapalı porta giden önceki paketin ICMP'si sonraki çağrıda ConnectionResetError olarak döner.
+        # ICMP of previous packet sent to closed port on Windows returns as ConnectionResetError on next call.
         return False
 
 
 def show(kind: str, ttl: float = 3.0, **fields: Any) -> bool:
-    """Bir öğe göster: arrow (clock), edge (clock), label (text, x, y), card (title, text), box (x, y, w, h),
-    progress (value 0-1, text). severity: info | warn | critical. Aynı id yenisiyle değişir."""
+    """Show an item: arrow (clock), edge (clock), label (text, x, y), card (title, text), box (x, y, w, h),
+    progress (value 0-1, text). severity: info | warn | critical. Same id replaces the new one."""
     return send({"kind": kind, "ttl": ttl, **fields})
 
 
-def clear(id: str = "") -> bool:  # noqa: A002 - protokoldeki alan adı
-    """Hepsini ya da yalnızca bu kimlikteki öğeyi sil."""
+def clear(id: str = "") -> bool:  # noqa: A002 - field name in protocol
+    """Clear all or only the item with this id."""
     return send({"kind": "clear", "id": id} if id else {"kind": "clear"})
 
 

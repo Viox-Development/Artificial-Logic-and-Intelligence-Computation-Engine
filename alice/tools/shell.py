@@ -1,7 +1,7 @@
-"""Shell komutları ve arka plan süreçleri.
+"""Shell commands and background processes.
 
-Windows'ta PowerShell (varsa pwsh) kullanılır ve çıktı UTF-8'e zorlanır; yoksa Türkçe
-karakterler cp857 yüzünden bozuk gelir.
+On Windows, PowerShell (pwsh if available) is used and output is forced to UTF-8; otherwise Turkish
+characters come out garbled because of cp857.
 """
 
 from __future__ import annotations
@@ -23,17 +23,17 @@ from typing import Any
 from alice.tools.base import DANGER, EXEC, Tool, ToolContext, ToolError, ToolResult, obj, truncate
 
 IS_WIN = sys.platform == "win32"
-# Konsolsuz çalışan çekirdekten (pythonw) her komut ayrı bir siyah pencere açmasın. Komutun başlattığı
-# pencereli programlar (Blender, Not Defteri...) yine görünür.
+# Commands run from the windowless core (pythonw) must not each open a black console window. Windowed
+# programs started by a command (Blender, Notepad...) are still visible.
 NO_WINDOW = 0x08000000 if IS_WIN else 0
 
-# Geri dönüşü zor ya da sistemi bozabilecek kalıplar. "auto" modda bunlar için onay istenir.
+# Patterns that are hard to undo or could break the system. In "auto" mode these ask for approval.
 DANGEROUS = [
-    r"\brm\s+(-\w+\s+)*-\w*[rR]",  # özyinelemeli silme
+    r"\brm\s+(-\w+\s+)*-\w*[rR]",  # recursive delete
     r"\bmkfs\b", r"\bdd\s+if=", r"\bfdisk\b", r"\bdiskpart\b", r"\bformat\s+[a-z]:",
     r"\b(shutdown|reboot|halt|poweroff)\b", r"Stop-Computer", r"Restart-Computer",
     r"Remove-Item\b.*-Recurse", r"\brd\s+/s\b", r"\brmdir\s+/s\b", r"\bdel\s+/[sq]",
-    # PowerShell takma adları, bayrak yoldan sonra: "rm .\build -Recurse -Force", "ri C:\x -r"
+    # PowerShell aliases, with the flag after the path: "rm .\build -Recurse -Force", "ri C:\x -r"
     r"\b(rm|ri|del|erase|rd|rmdir)\b[^\n|;&]*\s-r(ecurse)?\b",
     r"\|\s*(Remove-Item|ri|rm|del|erase)\b",  # Get-ChildItem ... | Remove-Item
     r"\breg\s+(delete|add)\b", r"Remove-ItemProperty", r"Set-ItemProperty\s+.*HKLM",
@@ -45,12 +45,12 @@ DANGEROUS = [
     r"\bcurl\b.*\|\s*(sh|bash|iex)", r"\biwr\b.*\|\s*iex", r"Invoke-Expression.*DownloadString",
 ]
 _DANGER_RX = [re.compile(p, re.I) for p in DANGEROUS]
-# Aynı anda iki kopyası çalışınca kilit dosyasına takılan ya da kurulumu yarım bırakan programlar: paralel
-# çalıştırmada bunlar birbirini bekler (bkz. RunCommand.exclusive_key).
+# Programs that lock a file or leave an install half-done when two copies run at once: in parallel
+# runs, these wait for each other (see RunCommand.exclusive_key).
 _GIT_RX = re.compile(r"(?:^|[;&|({]|\s)git(?:\.exe)?\s", re.I)
 _INSTALLER_RX = re.compile(r"(?:^|[;&|({]|\s)(?:npm|pnpm|yarn|npx|pip3?|uv|poetry|conda|winget|choco|scoop|apt|apt-get|"
                            r"brew|cargo|dotnet|msiexec)(?:\.exe|\.cmd)?\s|-m\s+pip\s", re.I)
-_sandbox_lock = threading.Lock()  # ilk kullanımda klasör etiketlenir: paralel komutlar aynı anda etiketlemesin
+_sandbox_lock = threading.Lock()  # the folder is labeled on first use: parallel commands must not label it at the same time
 READ_ONLY = re.compile(r"^\s*(get-\w+|dir|ls|type|cat|where(\.exe)?|test-path|select-string)(\s|$)", re.I)
 ACCESS_DENIED = re.compile(r"access (is )?denied|access to the path .* is denied|erişim (engellendi|reddedildi)|UnauthorizedAccess|permission denied|"
                            r"EACCES|EPERM", re.I)
@@ -63,11 +63,11 @@ def is_dangerous(command: str) -> bool:
 def shell_argv(command: str) -> list[str]:
     if IS_WIN:
         exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
-        # Kodlama kurulumunu ayrı bir SATIRA al (eskiden "; " ile aynı satırdaydı). Böylece PowerShell'in
-        # ayrıştırma hatalarındaki "At line:N char:M" konumu kullanıcının komutuna (2. satır) denk gelir;
-        # önceden ~110 karakterlik önek yüzünden char konumu kayıyor, model hatayı yanlış yerde arıyordu
-        # (2026-11-13 oturumunda gh/jq komutlarında çok görüldü). -EncodedCommand denendi ama Windows
-        # PowerShell 5.1 onunla stderr'i okunamaz CLIXML'e sarıyor; -Command düz metin bırakıyor.
+        # Put the encoding setup on its own LINE (it used to share one via "; "). That way the position in
+        # PowerShell's parse errors ("At line:N char:M") points at the user's command (line 2);
+        # before, the ~110-character prefix shifted the char position, so the model looked for the error in
+        # the wrong place (seen often with gh/jq commands in the 2026-11-13 session). -EncodedCommand was tried,
+        # but Windows PowerShell 5.1 wraps stderr in CLIXML that can't be read with it; -Command keeps plain text.
         setup = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8"
         return [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", setup + "\n" + command]
     sh = shutil.which("bash") or "/bin/sh"
@@ -123,14 +123,15 @@ class RunCommand(Tool):
 
     def risk_for(self, args: dict[str, Any]) -> str:
         if args.get("unsandboxed"):
-            return DANGER  # sandbox'tan çıkmak her zaman onay ister
+            return DANGER  # leaving the sandbox always requires approval
         return DANGER if is_dangerous(args.get("command", "")) else EXEC
 
     def summary(self, args: dict[str, Any]) -> str:
         return args.get("command", "")[:300]
 
     def parallel_for(self, ctx: ToolContext, args: dict[str, Any]) -> bool:
-        # Onay isteyen (tehlikeli, sandbox dışı) komutlar zaten tek tek sorulur; gerisi yan yana çalışabilir.
+        # Commands that need approval (dangerous, outside the sandbox) are already asked about one by one;
+        # the rest can run side by side.
         return (bool(ctx.config.agent.get("parallel_commands", True)) and not args.get("unsandboxed")
                 and not is_dangerous(str(args.get("command", ""))))
 
@@ -157,23 +158,24 @@ class RunCommand(Tool):
             except (RuntimeError, OSError, subprocess.SubprocessError) as e:
                 raise ToolError(f"sandbox kurulamadı, komut çalıştırılmadı: {e}. Gerekiyorsa unsandboxed=true ile "
                                 "(kullanıcı onayıyla) çalıştır.") from e
-            env = sandbox.scrub_env(env, ctx)  # .env'deki API anahtarları sandbox'a geçmesin
+            env = sandbox.scrub_env(env, ctx)  # keep API keys from .env out of the sandbox
             env.update(extra)
         from alice import gitsafe
 
-        # Sandbox .git'e yazabilir: hook ya da config değişirse (ALICE ya da kullanıcı sonra sandbox dışında git
-        # çalıştırınca devreye girer) sonuca uyarı eklenir.
+        # The sandbox can write to .git: if a hook or config changes (ALICE or the user later runs git outside
+        # the sandbox it kicks in), a warning is added to the result.
         git_before = gitsafe.snapshot(wd) if boxed and not background else None
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
         if background:
-            # Ad zaman damgasıydı: aynı milisaniyede başlayan iki süreç aynı dosyaya yazıp çıktıları karışıyordu.
+            # The name used to be a timestamp: two processes started in the same millisecond wrote to one file
+            # and their output got mixed.
             log = Path(tempfile.gettempdir()) / f"alice-bg-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.log"
             kwargs: dict[str, Any] = {}
             if IS_WIN:
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW  # type: ignore[attr-defined]
             else:
                 kwargs["start_new_session"] = True
-            with open(log, "wb") as fh:  # çocuk süreç kendi kopyasını alır; bizdeki tanıtıcı sızmasın
+            with open(log, "wb") as fh:  # the child process gets its own copy; our handle must not leak
                 pop = subprocess.Popen(argv, cwd=wd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                        env=env, **kwargs)
             procs: dict[int, BgProc] = ctx.state.setdefault("bg_procs", {})
@@ -183,8 +185,8 @@ class RunCommand(Tool):
             state = "çalışıyor" if pop.poll() is None else f"bitti (kod {pop.returncode})"
             return ToolResult(f"arka planda başlatıldı pid={pop.pid}, durum: {state}\nlog: {log}\n{head}")
         timeout = max(1, min(int(timeout), 1800))
-        # Çıktı boru yerine geçici dosyaya yazılır: komutun başlattığı pencereli bir program (ör. Blender)
-        # boruları devralırsa subprocess.run zaman aşımından sonra bile sonsuza kadar bekliyordu.
+        # Output goes to a temp file instead of a pipe: if a windowed program the command started (e.g. Blender)
+        # inherits the pipes, subprocess.run kept waiting forever even after the timeout.
         with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
             pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, env=env,
                                    creationflags=NO_WINDOW)
@@ -193,9 +195,10 @@ class RunCommand(Tool):
                     returncode = pop.wait(timeout=timeout)
                     timed_out = False
                 except subprocess.TimeoutExpired:
-                    # Kabuk ve konsol alt süreçleri (takılan pytest, node...) ölür; komutun açtığı pencereli program
-                    # (Not Defteri, Blender penceresi) ve onun alt süreçleri açık kalır. Eskiden yalnız kabuk
-                    # öldürülüyordu, takılan alt süreçler arkada çalışmaya devam ediyordu.
+                    # The shell and console child processes (a stuck pytest, node...) are killed; the windowed
+                    # program the command opened (Notepad, a Blender window) and its child processes stay open.
+                    # Previously only the shell
+                    # was killed, and stuck child processes kept running in the background.
                     kill_console_tree(pop.pid)
                     try:
                         pop.wait(timeout=10)
@@ -218,8 +221,9 @@ class RunCommand(Tool):
             body += ("\n[stderr]\n" if out.strip() else "[stderr]\n") + err
         body = truncate(body.strip(), limit) or "(çıktı yok)"
         if len(out) + len(err) > limit:
-            # Kesilen çıktı kaybolmasın: tamamı geçici bir dosyaya yazılır, model oradan okuyabilir.
-            # mkstemp: POSIX'te dosyayı 0600 ile açar; write_bytes 0644 bırakıp çıktıyı başka kullanıcılara açardı.
+            # So truncated output is not lost: the full output is written to a temp file the model can read.
+            # mkstemp opens the file as 0600 on POSIX; write_bytes would leave it 0644 and expose the output to
+            # other users.
             try:
                 fd, name = tempfile.mkstemp(prefix="alice-out-", suffix=".log")
                 with os.fdopen(fd, "wb") as fh:
@@ -231,11 +235,12 @@ class RunCommand(Tool):
             body += ("\n[ipucu] Bu Windows PowerShell 5.1: '&&' ve '||' yok. Komutları ';' ile ayır, "
                      "koşul için 'if ($?) { ... }' ya da 'if (-not $?) { ... }' kullan.")
         body += _ps_hint(command, err) if IS_WIN else ""
-        # Yalnız gerçek erişim hatasında ya da yazmaya çalışan komut başarısız olunca (düşük bütünlükte engellenen
-        # yazma bazen hiç çıktı vermiyor). Salt okuma komutunun hatası ("dosya yok") sandbox'tan değil.
+        # Only on a real access error, or when a command that tries to write fails (a write blocked at low integrity
+        # sometimes gives no output at all). An error from a read-only command ("dosya yok") is not from the sandbox.
         if boxed and (ACCESS_DENIED.search(out + err) or (returncode != 0 and not READ_ONLY.match(command))):
-            # Yalnız gerçekten erişim hatası varken: her başarısız komuta eklenince model "dosya yok"u da "erişim
-            # engellendi" sanıyordu (olmayan Sonora-Setup.exe'ye bakan Get-Item, 2026-11-02).
+            # Only when there really is an access error: once this was added to every failing command,
+            # the model also took "dosya yok" as "access
+            # blocked" (a Get-Item looking for the nonexistent Sonora-Setup.exe, 2026-11-02).
             body += (f"\n[sandbox: komut sadece {wd} ve geçici klasöre yazabildi. Bu erişim hatası bu yüzdense ve proje "
                      "dışına yazmak gerçekten gerekiyorsa unsandboxed=true ile tekrar dene.]")
         if git_before is not None:
@@ -247,8 +252,8 @@ _INLINE_CODE_RX = re.compile(r"(python(\.exe)?\"?|py|node(\.exe)?)\s+-[ce]\s", r
 
 
 def _ps_hint(command: str, err: str) -> str:
-    """PowerShell'in sık yapılan sözdizimi hatalarına tek satırlık çare (oturum kayıtlarında tekrar edenler):
-    model hatayı çözmek için birkaç tur harcıyordu."""
+    """One-line fix for common PowerShell syntax errors (the ones that recur in session logs):
+    the model spent several turns working out the error."""
     if "was not followed by a valid variable name character" in err:
         return ("\n[ipucu] PowerShell \"$ad: ...\" içindeki ':' işaretini değişken adının parçası sanıyor. "
                 "\"${ad}: ...\" ya da \"$($ad): ...\" yaz.")
@@ -288,7 +293,7 @@ class ProcessOutput(Tool):
             raise ToolError(f"pid {pid} ALICE tarafından başlatılmamış")
         data = p.log.read_bytes().decode("utf-8", errors="replace") if p.log.exists() else ""
         state = "çalışıyor" if p.popen.poll() is None else f"bitti (kod {p.popen.returncode})"
-        # data[-0:] bütün logu döndürüyordu: 0 ve negatif "çıktı yok, yalnız durum" demek.
+        # data[-0:] returned the whole log: 0 and negative values mean "no output, status only".
         n = int(tail_chars or 0)
         if n <= 0:
             return ToolResult(f"pid={pid} {state}")
@@ -317,7 +322,7 @@ class ProcessStop(Tool):
 
 @contextlib.contextmanager
 def track_foreground(ctx: ToolContext, pop: subprocess.Popen):
-    """Ön planda beklenen süreci kaydet ki Durdur tuşu onu (ve alt süreçlerini) sonlandırabilsin."""
+    """Record the foreground process so the Stop button can kill it (and its child processes)."""
     procs: set = ctx.state.setdefault("fg_procs", set())
     procs.add(pop)
     try:
@@ -331,7 +336,7 @@ def kill_foreground(ctx: ToolContext) -> None:
         if pop.poll() is None:
             try:
                 kill_tree(pop.pid)
-            except Exception:  # noqa: BLE001 - durdururken hata yutulur
+            except Exception:  # noqa: BLE001 - errors are swallowed while stopping
                 pass
 
 
@@ -354,7 +359,7 @@ def kill_tree(pid: int) -> None:
 
 
 def _visible_window_pids() -> set[int]:
-    """Görünür üst düzey penceresi olan süreçlerin pid'leri (yalnız Windows)."""
+    """PIDs of processes that have a visible top-level window (Windows only)."""
     if not IS_WIN:
         return set()
     import ctypes
@@ -379,7 +384,7 @@ def _visible_window_pids() -> set[int]:
 
 
 def _is_gui_exe(path: str) -> bool:
-    """PE başlığındaki alt sistem alanı: 2 = Windows GUI (pencereli program), 3 = konsol."""
+    """Subsystem field in the PE header: 2 = Windows GUI (windowed program), 3 = console."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(4096)
@@ -395,18 +400,18 @@ def _is_gui_exe(path: str) -> bool:
 
 def _is_gui_process(proc: Any, window_pids: set[int]) -> bool:
     if not IS_WIN:
-        return False  # POSIX'te güvenilir ayrım yok; zaman aşımında bütün ağaç ölür
+        return False  # no reliable distinction on POSIX; the whole tree is killed on timeout
     if proc.pid in window_pids:
         return True
     try:
         return _is_gui_exe(proc.exe())
-    except Exception:  # noqa: BLE001 - erişilemeyen süreç konsol sayılır
+    except Exception:  # noqa: BLE001 - a process we can't access counts as console
         return False
 
 
 def kill_console_tree(pid: int) -> None:
-    """Zaman aşımında: kabuğu ve konsol alt süreçlerini öldür, pencereli programları (ve onların alt
-    süreçlerini) açık bırak. Pencereli = görünür penceresi var ya da exe'si GUI alt sistemli."""
+    """On timeout: kill the shell and console child processes, but leave windowed programs (and their child
+    processes) open. Windowed = has a visible window, or its exe is a GUI subsystem program."""
     import psutil
 
     try:
@@ -439,7 +444,7 @@ def kill_console_tree(pid: int) -> None:
 
 
 def _reap(pop: subprocess.Popen) -> None:
-    """Öldürülen süreci bekle: uzun oturumda zombi süreç birikmesin."""
+    """Wait for the killed process so zombie processes don't pile up in a long session."""
     try:
         pop.wait(timeout=5)
     except subprocess.TimeoutExpired:
@@ -454,7 +459,7 @@ def cleanup(ctx: ToolContext) -> None:
 
 
 class ProcessWait(Tool):
-    """Claude Code'daki Monitor/until-döngüsünün karşılığı: tek çağrıda bekle, araç çağrısı israf etme."""
+    """The counterpart of the Monitor/until loop in Claude Code: wait in one call, don't waste tool calls."""
 
     name = "process_wait"
     parallel_safe = True
@@ -492,8 +497,9 @@ class ProcessWait(Tool):
         start = len(read())
         end = time.monotonic() + max(1, min(int(timeout or 60), 600))
         while True:
-            # Önce bitti mi bak, sonra oku: tersinde süreç son satırını yazıp okuma ile poll arasında çıkınca o satır
-            # (çoğu zaman aranan "error"/"done") hiç görülmeden "desen görünmedi" deniyordu.
+            # Check whether it has finished first, then read. In the reverse order, a process that writes its
+            # last line and exits between the read and the poll (often the "error"/"done" being searched for)
+            # would be reported as "desen görünmedi" without ever being seen.
             code = p.popen.poll()
             data = read()
             new = data[start:]

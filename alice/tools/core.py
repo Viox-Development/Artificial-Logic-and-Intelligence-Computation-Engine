@@ -1,7 +1,7 @@
-"""Çekirdekle konuşan araçlar: geçmiş metrikler, kurallar, zamanlanmış görevler, mod.
+"""Tools communicating with the core: historical metrics, rules, scheduled tasks, mode.
 
-Böylece "dün DCS oynarken GPU kaç dereceydi?", "nabzım uzun süre yüksek kalırsa beni uyar",
-"her pazar gece projelerimi yedekle" gibi istekleri beyin modeli doğrudan karşılar.
+This allows the brain model to directly handle requests like "what was the GPU temperature yesterday while playing DCS?",
+"warn me if my heart rate stays high for a long time", "backup my projects every Sunday night".
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _store(ctx: ToolContext):
 
 class Metrics(Tool):
     name = "metrics"
-    parallel_safe = False  # sqlite bağlantısı ctx.state'te paylaşılıyor
+    parallel_safe = False  # sqlite connection is shared in ctx.state
     description = ("Çekirdeğin kaydettiği GEÇMİŞ ölçümler ve olaylar: bilgisayar (pc.*), uçuş (dcs.*), saat/nabız "
                    "(watch.hr) gibi. 'Dün DCS'te GPU kaç dereceydi', 'son 2 saatte CPU' gibi sorular için. Şu anki "
                    "durum için system_info. Anahtarı bilmiyorsan önce action=keys.\n"
@@ -129,7 +129,7 @@ class Rules(Tool):
     def risk_for(self, args: dict[str, Any]) -> str:
         if args.get("action") == "list":
             return READ
-        # Tetiklenince gözetimsiz ajan çalıştıran kural, onay ister.
+        # Rules that run an autonomous agent when triggered require confirmation.
         return DANGER if args.get("rule_action") == "agent" else WRITE
 
     def run(self, ctx: ToolContext, action: str, id: str | None = None, rule_action: str = "notify",
@@ -231,7 +231,7 @@ class Schedule(Tool):
         if not id:
             raise ToolError("id gerekli")
         if action == "remove":
-            if not ts.remove(id):  # bilinmeyen id hata sayılsın: model silindi sanmasın
+            if not ts.remove(id):  # treat unknown id as an error so the model doesn't think it was deleted
                 raise ToolError(f"görev yok: {id}. Kimlikler için action=list")
             return ToolResult("silindi")
         task = ts.get(id)
@@ -243,7 +243,7 @@ class Schedule(Tool):
 
 
 def _obj_arg(name: str, v: Any) -> dict[str, Any]:
-    """Nesne parametreleri JSON metni olarak gelir (bazı sağlayıcılar serbest nesne kabul etmiyor)."""
+    """Object parameters arrive as JSON text (some providers don't accept free-form objects)."""
     import json
 
     if v in (None, ""):
@@ -255,7 +255,7 @@ def _obj_arg(name: str, v: Any) -> dict[str, Any]:
     except ValueError as e:
         raise ToolError(f"{name} geçerli JSON değil: {e}") from e
     if not isinstance(out, dict):
-        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"hayat\"]}}")
+        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"alice\"]}}")
     return out
 
 
@@ -293,7 +293,7 @@ class Feeds(Tool):
                  "{prev.alan} eski değer, {changed} değişen alanlar."},
         "when": {"type": "string", "description": "Hangi öğe bildirime değer, JSON: any/all/none (kelime listesi), "
                  "regex, fields (alan -> değer ya da liste, \"*\" boş değil), min/max (sayısal), ask (anlama göre "
-                 "evet/hayır sorusu). Ör. '{\"any\": [\"hayat\"], \"none\": [\"bot\"]}'."},
+                 "evet/hayır sorusu). Ör. '{\"any\": [\"alice\"], \"none\": [\"bot\"]}'."},
         "escalate": {"type": "string", "description": "Bu koşul tutarsa önem critical (sessiz saatte de söylenir), "
                      "when ile aynı biçim."},
         "quiet": {"type": "string", "description": "Biriktirilecek saatler, ör. '23:00-08:00'; bitince özet gelir."},
@@ -348,7 +348,7 @@ class Feeds(Tool):
                 raise ToolError(f"akış yok: {name}")
             try:
                 verdicts = FeedMonitor(cfg=ctx.config, decider=ctx.decider).explain(feed)
-            except Exception as e:  # noqa: BLE001 - bağlantı hatası modele anlaşılır dönsün
+            except Exception as e:  # noqa: BLE001 - return connection error clearly to the model
                 raise ToolError(f"yoklanamadı: {e}") from e
             lines = [f"{'✓' if v.ok else '✗'} {v.title}" + (f" — {v.body}" if v.body else "")
                      + f"  ({v.reason}{', ' + v.severity if v.ok and v.severity != feed.severity else ''})"
@@ -369,7 +369,7 @@ def _connectors_text(ctx: ToolContext) -> str:
         out.append(f"{m.name} ({'hazır' if ok else note})")
         for a in m.actions.values():
             if a.writes or a.sends:
-                continue  # akış sadece okuyan eylemleri yoklar
+                continue  # feed checks read-only actions only
             params = ", ".join(f"{p.name}{'*' if p.required else ''}" for p in a.params.values())
             fields = f" alanlar: {', '.join(a.fields)}" if a.fields else ""
             out.append(f"  - {a.name}({params}): {a.summary}{fields}")

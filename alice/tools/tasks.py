@@ -1,4 +1,4 @@
-"""Çok adımlı görev araçları: run_plan (planla, yürüt, doğrula) ve task_control (onay, durdurma, durum)."""
+"""Multi-step task tools: run_plan (plan, execute, verify) and task_control (approval, stop, status)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class RunPlan(Tool):
     )
     parameters = obj({"goal": {"type": "string", "description": "Kullanıcının isteği eksiksiz, kişi, dosya ve "
                                "uygulama adlarıyla; konuşmayı görmeyen birinin anlayacağı gibi."}}, ["goal"])
-    risk = COMPUTER  # içindeki her araç çağrısı ayrıca izin kontrolünden geçer
+    risk = COMPUTER  # each tool call inside it goes through its own permission check
 
     def summary(self, args: dict[str, Any]) -> str:
         return str(args.get("goal", ""))[:150]
@@ -134,7 +134,7 @@ class TeamTool(Tool):
         "name": {"type": "string", "description": "stop: tek ajan. Boş: proje."},
         "timeout": {"type": "integer", "description": "wait: en çok kaç saniye. Varsayılan 600, en çok 1800."},
     }, ["action"])
-    risk = READ  # ajanların her araç çağrısı ayrıca izin kontrolünden geçer
+    risk = READ  # each tool call the agents make goes through its own permission check
 
     def summary(self, args: dict[str, Any]) -> str:
         a = args.get("action")
@@ -178,7 +178,7 @@ class TeamTool(Tool):
                               + (f"\n\nÖzet:\n{team.summary}" if team.summary else ""))
         if action == "send":
             target = (to or LEAD).strip().lower()
-            return ToolResult(team.send("kullanıcı", target, text))  # sohbetteki ALICE, kullanıcı adına yazar
+            return ToolResult(team.send("kullanıcı", target, text))  # the ALICE in the chat, writing on the user's behalf
         if action == "stop":
             target = (name or "").strip().lower() or None
             if target and target not in team.members:

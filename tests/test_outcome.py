@@ -1,4 +1,4 @@
-"""Eylem sonrası gözlem: araçtan sonra ekranda gerçekte ne olduğu (yeni pencere, hata kutusu, UAC) modele gider."""
+"""Post-action observation: what actually changed on screen (new window, error box, UAC) is passed to the model."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from alice.tools.base import COMPUTER, READ, Tool, ToolResult
 
 @pytest.fixture
 def screen(monkeypatch):
-    """Sahte masaüstü: pencereleri ve iletişim kutusu yazılarını test belirler."""
+    """Fake desktop: the test sets the windows and dialog texts."""
     s = SimpleNamespace(wins={1: {"title": "Opera", "cls": "Chrome_WidgetWin_1", "pid": 5}}, texts={}, fg=1,
                         uac=False, after=None)
     monkeypatch.setattr(outcome, "IS_WIN", True)
@@ -36,7 +36,7 @@ def test_new_error_box_is_reported_with_its_text(screen):
 def test_dialog_already_in_front_is_mentioned_again(screen):
     screen.wins[8] = {"title": "Farklı Kaydet", "cls": "#32770", "pid": 5}
     screen.fg = 8
-    note = outcome.Watch().note(sleep=lambda s: None)  # kutu önceden açıktı, hâlâ önde
+    note = outcome.Watch().note(sleep=lambda s: None)  # the box was already open and is still in front
     assert "önde açık bir iletişim kutusu var 'Farklı Kaydet'" in note
 
 
@@ -82,7 +82,7 @@ def test_agent_appends_what_happened_on_screen(screen, monkeypatch):
     a = object.__new__(agent_mod.Agent)
     a.config = SimpleNamespace(agent={})
     a.cancel = SimpleNamespace(is_set=lambda: False)
-    assert a._watch(Reader(), {}) is None  # salt okuma: gözlem yok, gecikme yok
+    assert a._watch(Reader(), {}) is None  # read-only: no observation, no delay
     w = a._watch(Clicker(), {"action": "click"})
     Clicker().run(None)
     assert "Dosya bulunamadı" in w.note(sleep=lambda s: None)

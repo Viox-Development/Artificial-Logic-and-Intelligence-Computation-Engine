@@ -1,17 +1,17 @@
-"""Gizli mod (undercover): GitHub'a giden yazılarda ALICE'in ve yapay zekânın izini bırakmamak.
+"""Undercover mode: keep ALICE and AI traces out of writing that goes to GitHub.
 
-Açıkken commit mesajları, PR başlık ve açıklamaları, issue'lar ve yorumlar kullanıcının kendi yazısı gibi gider:
-* imza satırları ("Co-Authored-By: …", "Generated with …", "— ALICE") kendiliğinden silinir;
-* metinde hâlâ ALICE'i ya da bir yapay zekâyı ele veren söz varsa araç yazıyı reddeder, ajan yeniden yazar;
-* PR takibi kendi cevaplarını imzadan değil, yazdığı yorumların kimliğinden tanır (``own.json``);
-* bağımsız inceleme bulguları PR'a yazılmaz, yalnız kullanıcıya bildirilir: depo sahibinin hesabından yazılmış
-  yorumlar takip tarafından "sahibin isteği" sanılıp uygulanırdı.
+When on, commit messages, PR titles and bodies, issues and comments are sent as if the user wrote them:
+* signature lines ("Co-Authored-By: …", "Generated with …", "— ALICE") are removed automatically;
+* if the text still gives away ALICE or an AI, the tool rejects it and the agent rewrites it;
+* PR tracking recognizes its own replies by the IDs of the comments it wrote (``own.json``), not by signature;
+* independent review findings are not posted to the PR, only reported to the user: comments written from the
+  repo owner's account would be mistaken by tracking for "the owner's request" and applied.
 
-Sınır: biri doğrudan ve ciddi olarak "bunu bir bot mu yazdı" diye sorarsa ALICE yalan söylemez; o konuya cevap
-vermez, kullanıcıya bırakır.
+Limit: if someone directly and seriously asks whether a bot wrote it, ALICE does not lie; it does not answer
+that question and leaves it to the user.
 
-Ayar: ``[github] undercover = "off" | "on" | "auto"`` ("auto": yalnız herkese açık depolarda). Ek gizli sözcükler
-(şirket içi kod adları gibi): ``[github] undercover_words = ["..."]``.
+Setting: ``[github] undercover = "off" | "on" | "auto"`` ("auto": only public repos). Extra hidden words
+(such as internal code names): ``[github] undercover_words = ["..."]``.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ MODES = ("off", "on", "auto")
 OWN_FILE = "github-own.json"
 OWN_KEEP = 3000
 
-# Satırın tamamı imza: silinir.
+# A line that is entirely a signature: removed.
 _SIGN_LINE = re.compile(
     r"(?im)^\s*(?:"
     r"co-authored-by:.*(?:claude|anthropic|alice|openai|chatgpt|gpt|gemini|copilot|cursor|\bai\b|bot\b|noreply@).*"
@@ -36,7 +36,7 @@ _SIGN_LINE = re.compile(
     r")$")
 _BLANKS = re.compile(r"\n{3,}")
 
-# Silinmeden kalırsa yazıyı ele verir: ajan yeniden yazmalı.
+# If left in place, these give the writing away: the agent must rewrite it.
 _TELLS = [
     (re.compile(r"(?i)\bALICE\b"), "ALICE"),
     (re.compile(r"(?i)\b(?:claude|anthropic|chatgpt|openai|gemini|copilot)\b"), "model/şirket adı"),
@@ -62,7 +62,7 @@ def mode(cfg: Any) -> str:
 
 
 def is_public(api: Any, repo: str) -> bool:
-    """Depo herkese açık mı (oturum boyunca önbellekte). Bakılamazsa açık sayılır: emin değilken gizlemek güvenli."""
+    """Is the repo public? Cached for the session. If it can't be checked, assume public: hiding is safer when unsure."""
     if repo in _public:
         return _public[repo]
     try:
@@ -87,13 +87,13 @@ def active(cfg: Any, repo: str | None, api: Any = None) -> bool:
 
 
 def scrub(text: str) -> str:
-    """İmza satırlarını sil, fazla boş satırları topla."""
+    """Remove signature lines and collapse extra blank lines."""
     out = _SIGN_LINE.sub("", text or "")
     return _BLANKS.sub("\n\n", out).strip()
 
 
 def tells(text: str, extra: list[str] | tuple[str, ...] = ()) -> list[str]:
-    """Silinmeden kalan ele veren sözler (tekrarsız)."""
+    """Give-away phrases left after scrubbing (no duplicates)."""
     found: list[str] = []
     for rx, label in _TELLS:
         if rx.search(text or "") and label not in found:
@@ -106,7 +106,7 @@ def tells(text: str, extra: list[str] | tuple[str, ...] = ()) -> list[str]:
 
 
 def clean(cfg: Any, text: str, what: str = "metin") -> str:
-    """İmzaları sil; ele veren söz kalırsa ToolError ile reddet (ajan yazıyı yeniden yazar)."""
+    """Remove signatures; if a give-away phrase remains, reject with ToolError (the agent rewrites the text)."""
     from alice.tools.base import ToolError
 
     out = scrub(text)
@@ -124,7 +124,7 @@ RULES = (
 )
 
 
-# --------------------------------------------------------------------------- ALICE'in yazdığı yorumlar
+# --------------------------------------------------------------------------- comments written by ALICE
 def _own_path() -> Path:
     from alice.config import alice_home
 
@@ -139,7 +139,7 @@ def _load_own() -> list[int]:
 
 
 def remember_own(*ids: Any) -> None:
-    """ALICE'in GitHub'a yazdığı yorum/inceleme kimlikleri: PR takibi bunları yeni yorum saymaz."""
+    """IDs of comments/reviews ALICE wrote on GitHub: PR tracking does not count these as new comments."""
     new = [int(i) for i in ids if i]
     if not new:
         return

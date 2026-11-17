@@ -1,5 +1,5 @@
-"""Araç tanımlarının kalitesi: Claude Code / Codex'teki gibi her parametre açıklanmış, açıklama Live sınırına
-sığıyor, hatalı çağrı modelin düzeltebileceği bir mesajla geri dönüyor."""
+"""Quality of tool definitions: as in Claude Code / Codex, every parameter is described, the description fits
+the Live limit, and a bad call comes back with a message the model can fix."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def _props(schema: dict) -> dict:
 
 @pytest.mark.parametrize("tool", TOOLS, ids=lambda t: t.name)
 def test_description_fits_live_limit(tool):
-    # Gemini Live açıklamayı 1000 karakterde kesiyor (live.declarations): sonu kaybolmasın.
+    # Gemini Live cuts the description at 1000 characters (live.declarations): keep its end from being lost.
     assert 40 <= len(tool.description) <= 1000
 
 
@@ -67,13 +67,13 @@ def test_unknown_params_lists_valid_ones():
 
 
 def test_empty_string_is_not_missing():
-    # edit_file new_string="" metni silmek demek; boş içerikli dosya yazmak da geçerli.
+    # edit_file new_string="" means deleting the text; writing a file with empty content is valid too.
     assert check_args(_tool("edit_file"), {"path": "a", "old_string": "x", "new_string": ""}) == ""
     assert check_args(_tool("write_file"), {"path": "a", "content": ""}) == ""
 
 
 def test_truncate_zero_or_negative_limit_does_not_return_whole_text():
-    # text[-0:] eskiden bütün metni döndürüyordu.
+    # text[-0:] used to return the whole text.
     from alice.tools.base import truncate
     text = "x" * 50
     for limit in (0, -3):

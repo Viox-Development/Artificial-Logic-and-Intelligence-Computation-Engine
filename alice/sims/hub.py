@@ -1,7 +1,7 @@
-"""Simülasyonları çekirdeğe bağlar: dinleyiciler -> uçuş arkadaşı -> bildirim (ve ses).
+"""Connects the simulators to the core: listeners -> flight companion -> notification (and sound).
 
-Çekirdekle aynı süreçte çalışır; sesli asistan da aynı süreçte olduğundan `flight` aracı
-canlı duruma ACTIVE üzerinden ulaşır.
+Runs in the same process as the core. The voice assistant is in that process too, so the `flight` tool
+reaches the live state through ACTIVE.
 """
 
 from __future__ import annotations
@@ -20,21 +20,21 @@ ACTIVE: "SimHub | None" = None
 class SimHub:
     def __init__(self, cfg: dict[str, Any], store: Store, notifier: Notifier, processes=lambda: set(), show=None):
         self.cfg = cfg
-        self.show = show  # HUD'a çizim (alice.hud.client.show); None ise sadece ses
+        self.show = show  # Draws on the HUD (alice.hud.client.show); if None, sound only
         self.store = store
         self.notifier = notifier
         self.processes = processes
         self.companions: dict[str, FlightCompanion] = {}
         self.last_debrief: tuple[Debrief, str] | None = None
         self._parts: list = []
-        self._briefed: str = ""  # brifingi verilen görev (yol + değişme zamanı): aynı görev için bir kez
+        self._briefed: str = ""  # Mission already briefed (path + modification time): once per mission
         self._fullscreen_said = False
-        self._coach_said: dict[str, str] = {}  # desen -> söylendiği gün
+        self._coach_said: dict[str, str] = {}  # Pattern -> day it was said
         self._coach_last = 0.0
         self._break_last = 0.0
 
     def _fullscreen_check(self, game: str) -> None:
-        """HUD açıkken oyun özel tam ekrandaysa oklar görünmez: çekirdek çalıştığı sürece bir kez söyle."""
+        """HUD on and the game in exclusive fullscreen: the arrows are invisible; say so once while the core runs."""
         if self.show is None or self._fullscreen_said:
             return
         from alice.hud.screen import exclusive_fullscreen
@@ -59,11 +59,11 @@ class SimHub:
         page = save_debrief(d, self.store.series("watch.hr", d.start_wall, d.end_wall))
         self.last_debrief = (d, str(page))
         self.store.add_event("flight", f"Uçuş değerlendirmesi: {d.aircraft}", f"{d.summary()} ({page})", "info", "flight")
-        try:  # bir sonraki uçuşun bingo'su bu uçuşun seyir yakıtını da kullansın
+        try:  # So the next flight's bingo also uses this flight's cruise fuel
             from alice.sims.flight import learn_cruise
 
             learn_cruise(page.parent)
-        except Exception:  # noqa: BLE001 - öğrenme değerlendirmeyi bozmasın
+        except Exception:  # noqa: BLE001 - learning must not break the debrief
             pass
 
     def companion(self, source: str) -> FlightCompanion:
@@ -78,7 +78,7 @@ class SimHub:
             from alice.sims.dcs import PORT, DCSListener, ensure_installed
             from alice.sims.wingmen import settings as wingmen_settings
 
-            try:  # betik kurulu değilse ya da eskiyse kur: kurulmadan DCS hiç veri göndermiyor
+            try:  # Install the script if it is missing or outdated: DCS sends no data without it
                 wport, wnames = wingmen_settings(self.cfg)
                 for d in ensure_installed(port=int(self.cfg.get("dcs_port", PORT)), wingmen_port=wport,
                                           wingmen=wnames):
@@ -93,7 +93,7 @@ class SimHub:
             def feed(s, comp=comp, tracker=tracker):
                 if comp.last_state is None:
                     self._fullscreen_check("DCS")
-                    if (s.ias or 0) < 30:  # yerde yeni oturum: kalkıştan önce brifing
+                    if (s.ias or 0) < 30:  # New session on the ground: brief before takeoff
                         threading.Thread(target=self.brief_mission, daemon=True, name="alice-dcs-brief").start()
                 tracker.feed(s)
 
@@ -113,9 +113,9 @@ class SimHub:
             vision = self._missile_vision()
 
             def wt_feed(s, comp=comp, tracker=tracker):
-                if comp.last_state is None:  # yeni oturum (maç)
+                if comp.last_state is None:  # New session (match)
                     self._fullscreen_check("War Thunder")
-                if vision is not None:  # ekrandan görülen füze uyarısı temas listesine
+                if vision is not None:  # A missile warning seen on screen goes into the contact list
                     vision.poke()
                     seen = vision.contacts()
                     if seen:
@@ -128,11 +128,11 @@ class SimHub:
         ACTIVE = self
         return self
 
-    COACH_GAP = 20 * 60.0   # iki koçluk cümlesi arası en az (sn)
-    BREAK_GAP = 45 * 60.0   # "ara ver" önerisi en sık
+    COACH_GAP = 20 * 60.0   # Minimum gap between two coaching sentences (s)
+    BREAK_GAP = 45 * 60.0   # "ara ver" (take a break) suggestion, at most this often
 
     def _session_end(self, comp: FlightCompanion) -> None:
-        """Ölüm / maç sonu: uçuşu kapat, sonra ölüm desenlerine ve ruh haline arka planda bak."""
+        """Death / end of match: close the flight, then check death patterns and mood in the background."""
         comp.session_end()
         threading.Thread(target=self._after_death, args=(comp,), daemon=True, name="alice-coach").start()
 
@@ -148,7 +148,7 @@ class SimHub:
             events = self.store.events(since=now - 6 * 3600, kind="flight", limit=5000)
             found = coach.patterns(coach.contexts(flights, events))
             m = mood.current(self.store, now, flights=flights)
-        except Exception:  # noqa: BLE001 - koçluk uçuşu bozmasın
+        except Exception:  # noqa: BLE001 - coaching must not break the flight
             return
         comp.coach_flags = set(found)
         comp.calm = m.level == "tilt"
@@ -164,13 +164,13 @@ class SimHub:
                 break
 
     def _missile_vision(self):
-        """[sims] missile_vision açık ve RWR bölgesi ayarlıysa ekrandan füze görme (alice/sims/vision.py)."""
+        """Detect missiles on screen if [sims] missile_vision is on and the RWR region is set (alice/sims/vision.py)."""
         if not self.cfg.get("missile_vision"):
             return None
         from alice.sims.vision import MissileWatcher, region_of
 
         region = region_of(self.cfg)
-        if region is None:  # ayarlanmadıysa War Thunder'ın varsayılan RWR yeri (ekran yüksekliğine göre ölçekli)
+        if region is None:  # If not set, War Thunder's default RWR location (scaled to screen height)
             from alice.sims.vision import default_region
 
             try:
@@ -192,7 +192,7 @@ class SimHub:
             ACTIVE = None
 
     def brief_mission(self, path=None) -> str:
-        """Yüklü DCS görevini oku: sesli kısa brifing ver, kneeboard'u güncelle. Aynı görev için bir kez."""
+        """Read the loaded DCS mission: give a short spoken briefing and update the kneeboard. Once per mission."""
         from alice.sims import kneeboard as kb
         from alice.sims.dcs import briefing_text, current_mission, read_mission, saved_games_dirs
 
@@ -214,13 +214,13 @@ class SimHub:
             dirs = saved_games_dirs()
             if dirs:
                 kb.write(kb.render(info, kb.load_notes()), kb.kneeboard_dirs(dirs))
-        except Exception:  # noqa: BLE001 - kneeboard olmadan da brifing söylendi
+        except Exception:  # noqa: BLE001 - the briefing was spoken even without the kneeboard
             pass
         return text
 
     def cockpit(self, command: str, mhz: float | None = None, wait: float = 2.0) -> str:
-        """Sesli kokpit komutu (sadece DCS, izin listesi betikte). Teker yerde kaldırılmaz, zaten istenen konumdaysa
-        gönderilmez. Betiğin onayı ("ack") beklenir; gelmezse betik eski olabilir."""
+        """Voice cockpit command (DCS only; allow-list in the script). The gear is not raised on the ground;
+        not sent if already in position. Waits for the script's "ack"; if none comes, the script may be outdated."""
         from alice.sims.dcs import COMMANDS, send_command
 
         c = self.companions.get("dcs")
@@ -253,7 +253,7 @@ class SimHub:
                 "komutu desteklemiyor")
 
     def alert_home(self, nm: float) -> str:
-        """Havadaki uçuşa 'üsse nm mil kalınca söyle' uyarısı kur."""
+        """Set an alert on the airborne flight: 'üsse nm mil kalınca söyle' (tell me when nm miles from home)."""
         nm = float(nm)
         for c in self.companions.values():
             if c.last_state is not None and c.phase == "air":
@@ -267,7 +267,7 @@ class SimHub:
         return next((c for c in self.companions.values() if c.last_state is not None and c.phase == "air"), None)
 
     def alert_altitude(self, ft: float) -> str:
-        """'X feet'e gelince söyle': irtifa hangi yönden geçilirse geçilsin bir kez söyle."""
+        """'X feet'e gelince söyle' (tell me when reaching X feet): say it once, whichever direction is crossed."""
         ft = float(ft)
         c = self._flying()
         if c is None:

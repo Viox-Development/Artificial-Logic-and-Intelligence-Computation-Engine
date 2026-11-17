@@ -1,8 +1,8 @@
-"""Sesli modun gecikmesi: kullanıcı sustuktan ALICE'in ilk sesine kadar geçen süre, her tur için.
+"""Voice mode latency: the time elapsed from when the user stops speaking until ALICE's first audio, for each turn.
 
-voice.log'da "live cevap gecikmesi" satırları vardı ama dağınıktı; yavaşlığın nereden geldiği (araç mı, model mi,
-hangi yol) tahminle bulunuyordu. Her tur ~/.alice/voice/latency.jsonl'e bir satır yazılır; `alice voice gecikme` ve
-çekirdeğin haftalık bildirimi buradan özet çıkarır.
+There used to be "live response latency" lines in voice.log, but they were scattered; where the slowness came from
+(tool, model, or which path) was found by guesswork. Each turn writes a row to ~/.alice/voice/latency.jsonl;
+`alice voice latency` and the core's weekly notification summarize from here.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def log_path() -> Path:
 
 
 def record(kind: str, seconds: float, **extra: Any) -> None:
-    """Bir turun gecikmesi. kind: "canlı" (Gemini Live) ya da "klasik" (yazıya çevir + model + ses)."""
+    """Latency of a turn. kind: "live" (Gemini Live) or "classic" (transcribe + model + audio)."""
     row = {"ts": round(time.time(), 1), "kind": kind, "s": round(float(seconds), 2)}
     row.update({k: v for k, v in extra.items() if v not in (None, "", False)})
     path = log_path()
@@ -34,7 +34,7 @@ def record(kind: str, seconds: float, **extra: Any) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-            if path.stat().st_size > 512_000:  # ~5000 tur: eskileri at
+            if path.stat().st_size > 512_000:  # ~5000 turns: drop older ones
                 rows = load(KEEP_DAYS)
                 path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     except OSError:
@@ -65,7 +65,7 @@ def _p(values: list[float], q: float) -> float:
 
 
 def summary(days: float = 7) -> str:
-    """Yol başına tur sayısı, ortanca, en kötü %10 ve araçlı/araçsız fark. Kayıt yoksa ""."""
+    """Turn count per path, median, worst 10%, and tool/no-tool difference. Returns "" if no records."""
     rows = load(days)
     if not rows:
         return ""
@@ -83,14 +83,14 @@ def summary(days: float = 7) -> str:
 
 
 def weekly_report(now: float | None = None) -> str:
-    """Haftada bir özet (çekirdeğin bildirimi için); zamanı gelmediyse ya da kayıt yoksa ""."""
+    """Weekly summary (for the core's notification); returns "" if not time yet or no records."""
     now = now or time.time()
     marker = log_path().with_name("latency-report.json")
     try:
         last = float(json.loads(marker.read_text(encoding="utf-8")).get("last", 0))
     except (OSError, ValueError, AttributeError):
         last = 0.0
-    if not last:  # ilk açılış: bir hafta biriksin
+    if not last:  # first startup: let a week accumulate
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps({"last": now}), encoding="utf-8")

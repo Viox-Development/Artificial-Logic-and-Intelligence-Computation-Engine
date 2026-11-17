@@ -1,9 +1,9 @@
-"""Büyük araç çıktıları kaybolmasın: sınırı aşan çıktının tamamı diske yazılır, modele başı-sonu ve dosya yolu gider.
+"""Don't lose big tool output: output over the limit is written to disk in full; the model gets head, tail and path.
 
-Önceden 12 bin karakteri aşan çıktının ortası atılıyordu (yalnız run_command tamamını saklıyordu): uzun bir CI logu,
-web sayfası, grep ya da MCP çıktısında kesilen kısım bir daha görülemiyordu. Model artık gerekirse read_file
-(offset/limit) ya da grep ile dosyadan okur. Dosyalar ``~/.alice/tool-results/GGAAYY/`` altında; 7 günden eskiler
-silinir.
+Previously the middle of output over 12 thousand characters was thrown away (only run_command kept all of it): the
+part cut from a long CI log, web page, grep or MCP output could never be seen again. The model now reads the file with
+read_file (offset/limit) or grep if needed. Files are in ``~/.alice/tool-results/GGAAYY/``; ones older than 7 days are
+deleted.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 KEEP_DAYS = 7
-NO_PERSIST = {"read_file"}  # kendi sınırı var; dosyaya yazıp tekrar okutmak döngü olur
+NO_PERSIST = {"read_file"}  # has its own limit; writing it to a file and reading it back would be a loop
 _MARK = "[tam çıktı dosyada:"
 _last_sweep = 0.0
 
@@ -43,8 +43,8 @@ def save(text: str, call_id: str, tool: str) -> Path | None:
     now = time.time()
     folder = root() / datetime.fromtimestamp(now).strftime("%Y%m%d")
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{tool}-{call_id}")[:120] or "cikti"
-    # Çağrı kimliği tekil değil: bazı sağlayıcılar boş ya da sıra numarası ("call_0") veriyor. Ad yalnız kimlikten
-    # olunca sonraki çıktı öncekinin dosyasını eziyor, eski sonuçtaki yol başka bir çıktıyı gösteriyordu.
+    # The call ID is not unique: some providers send an empty one or a sequence number ("call_0"). When the name was
+    # only from the ID, a later output overwrote the earlier file; the old result's path pointed at another output.
     path = folder / f"{safe}-{uuid.uuid4().hex[:8]}.txt"
     try:
         folder.mkdir(parents=True, exist_ok=True)
@@ -56,7 +56,7 @@ def save(text: str, call_id: str, tool: str) -> Path | None:
 
 
 def shape(text: str, limit: int, call_id: str, tool: str) -> str:
-    """Sınırı aşıyorsa tamamını sakla, başı-sonu ve dosya yolunu döndür; aşmıyorsa metnin kendisi."""
+    """If over the limit, save the whole text and return head, tail and file path; otherwise return the text itself."""
     from alice.tools.base import truncate
 
     if len(text) <= limit or tool in NO_PERSIST or _MARK in text:

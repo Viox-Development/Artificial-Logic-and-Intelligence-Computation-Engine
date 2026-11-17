@@ -1,16 +1,19 @@
-"""War Thunder: oyunun kendi yayınladığı yerel göstergeleri (http://127.0.0.1:8111) okur.
+"""War Thunder: reads the game's own published local indicators (http://127.0.0.1:8111).
 
-/state uçuş değerlerini ("IAS, km/h", "H, m", "Ny", "AoA, deg", "Mfuel, kg"...) verir,
-/indicators uçak tipini. Oyun açık değilse bağlantı reddedilir; o zaman sessizce bekler.
-/map_obj.json mini haritada oyuncunun gördüğü nesneleri (düşman ve dost uçaklar, kendisi) verir, /map_info.json haritanın
-metre cinsinden boyutunu: bunlardan en yakın düşmanların saat yönü ve mesafesi çıkar (irtifa haritada yok).
+/state gives flight values ("IAS, km/h", "H, m", "Ny", "AoA, deg", "Mfuel, kg"...), /indicators the aircraft type.
+If the game is not open, the connection is refused; then it waits silently.
+/map_obj.json gives the objects the player sees on the mini-map (enemy and friendly aircraft, and self), /map_info.json
+the map's size in meters. From these, the bearing and distance of the nearest enemies are derived
+(altitude is not on the map).
 
-Oyun RWR'ı, kilidi ya da gelen füzeyi bu arayüzde yayınlamıyor (1 Kasım'da canlı bakıldı: /state, /indicators,
-/map_obj.json'da yok). Onun yerine eldekinden tehdit çıkarılır:
-  * düşman uçağının haritadaki burun yönü: burnu sana dönük ve menzildeyse füze atabilir
-  * haritadaki düşman SAM, uçaksavar ve füzeli gemiler: menziline girince söylenir
-  * /hudmsg savaş kayıtları: oyuncunun düşürdüğü, onu vuran/yakan. Oyuncunun adı ilk ölümde öğrenilir (ölmeden hemen
-    önce "X (Su-30MKK)'i düşürdü" satırı) ya da [sims] warthunder_nick ile verilir.
+The game does not publish its RWR, lock or incoming missile through this interface (checked live on November 1: not in
+/state, /indicators or /map_obj.json). Threats are derived from what is available instead:
+  * the nose direction of an enemy aircraft on the map: if its nose points at you and you are in range,
+    it can fire a missile
+  * enemy SAMs, anti-aircraft guns and missile-armed ships on the map: announced when you enter their range
+  * /hudmsg combat log: what the player shot down, and what shot them down or set them on fire. The player's name is
+    learned on the first death (the "X (Su-30MKK)'i düşürdü" line right before dying) or given by
+    [sims] warthunder_nick.
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ def to_state(state: dict[str, Any], indicators: dict[str, Any], t: float) -> Fli
 
 
 def _extra(st: dict[str, Any], ind: dict[str, Any]) -> dict[str, Any]:
-    """Oyunun yerel göstergelerinden ek değerler (kokpitte/HUD'da görülenler; başka oyuncu bilgisi yok)."""
+    """Extra values from the game's local indicators (what is visible in the cockpit/HUD; no other-player info)."""
     fuel, fuel0 = _f(st, "Mfuel, kg"), _f(st, "Mfuel0, kg")
     pct = lambda v: None if v is None else v / 100  # noqa: E731
     e: dict[str, Any] = {
@@ -73,7 +76,7 @@ def _extra(st: dict[str, Any], ind: dict[str, Any]) -> dict[str, Any]:
 
 
 def _enemy(color: str) -> bool:
-    """Mini haritada düşman kırmızı ("#f40C00" gibi), dost mavi/yeşil, oyuncu sarı/beyaz."""
+    """On the mini-map enemies are red (like "#f40C00"), friends blue/green, the player yellow/white."""
     c = (color or "").lstrip("#")
     try:
         rr, gg, bb = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
@@ -82,7 +85,7 @@ def _enemy(color: str) -> bool:
     return rr > 180 and gg < 110 and bb < 110
 
 
-# Haritadaki düşman hava savunması: simge -> (söylenen ad, yaklaşık etkili menzil m)
+# Enemy air defense on the map: icon -> (name spoken, approximate effective range in m)
 GROUND_THREATS = {
     "SAM": ("SAM", 18000.0), "SPAA": ("uçaksavar", 6000.0), "MissileDestroyer": ("füzeli muhrip", 18000.0),
     "Cruiser": ("kruvazör", 15000.0), "Frigate": ("fırkateyn", 12000.0), "Destroyer": ("muhrip", 8000.0),
@@ -91,10 +94,11 @@ GROUND_THREATS = {
 
 def contacts(objs: list[dict[str, Any]], info: dict[str, Any], limit: int = 6,
              heading: float | None = None) -> list[dict[str, Any]]:
-    """Mini harita nesneleri -> en yakın düşman uçakları (saat yönü oyuncunun gidiş yönüne göre), ardından menzile
-    yakın düşman hava savunması (kind="sam").
+    """Mini-map objects -> nearest enemy aircraft (clock relative to the player's direction of travel), then enemy
+    air defense within range (kind="sam").
 
-    Uçakta "aspect": düşmanın burnu ile ona göre senin olduğun yön arasındaki açı (0 = burnu tam sana dönük)."""
+    For aircraft, "aspect": the angle between the enemy's nose and the direction from it to you
+    (0 = nose pointing straight at you)."""
     from alice.sims.dcs import clock_of
 
     me = next((o for o in objs if o.get("icon") == "Player"), None)
@@ -103,7 +107,7 @@ def contacts(objs: list[dict[str, Any]], info: dict[str, Any], limit: int = 6,
     if me is None or w <= 0 or h <= 0:
         return []
     hx, hy = float(me.get("dx") or 0), float(me.get("dy") or 0)
-    if heading is None:  # pusula yoksa haritadaki okun yönü
+    if heading is None:  # no compass: use the arrow's direction on the map
         heading = math.degrees(math.atan2(hx * w, -hy * h)) % 360 if (hx or hy) else 0.0
     planes, ground = [], []
     for o in objs:
@@ -143,7 +147,7 @@ def _norm(t: str) -> str:
 
 
 def parse_hud(msg: str) -> dict[str, str] | None:
-    """Savaş kaydı satırı -> {a, at, verb, b, bt}. Füze/bomba düşürme ("... destroyed weapons/...") sayılmaz."""
+    """Combat log line -> {a, at, verb, b, bt}. Missile/bomb kills ("... destroyed weapons/...") are not counted."""
     m = _HUD.match((msg or "").strip())
     if not m or m["b"].startswith("weapons/"):
         return None
@@ -155,13 +159,15 @@ def _type_name(t: str) -> str:
 
 
 def _attacker(d: dict[str, str]) -> str:
-    """Vuranın tipi. Yapay zekâ hava savunmasında tip "TEL" (fırlatıcı) gibi genel olur; o zaman adı ("SAMP/T") daha açık."""
+    """The attacker's type. For AI air defense the type is generic, like "TEL" (launcher); then the name
+    ("SAMP/T") is clearer."""
     t = _type_name(d["at"])
     return d["a"].strip() if t.upper() in ("TEL", "DÜŞMAN", "AI") and d["a"].strip() else t
 
 
 def hud_events(msgs: list[dict[str, Any]], nick: str) -> list[tuple[str, str]]:
-    """Oyuncuyu ilgilendiren savaş kayıtları -> [(tür, karşı taraf tipi)]: kill | hit | fire | killed (seni düşürdü)."""
+    """Combat log entries involving the player -> [(type, opposing side's type)]:
+    kill | hit | fire | killed (shot you down)."""
     out: list[tuple[str, str]] = []
     if not nick:
         return out
@@ -173,7 +179,7 @@ def hud_events(msgs: list[dict[str, Any]], nick: str) -> list[tuple[str, str]]:
             out.append(("kill", _type_name(d["bt"] or d["b"])))
         elif d["b"] == nick and d["a"] != nick:
             if d["verb"] in ("shot down", "destroyed"):
-                out.append(("killed", _attacker(d)))  # ölümün asıl sebebi: önceden hiç okunmuyordu
+                out.append(("killed", _attacker(d)))  # the real cause of death: it was never read before
             elif d["verb"] in ("critically damaged", "severely damaged"):
                 out.append(("hit", _attacker(d)))
             elif d["verb"] == "set afire":
@@ -182,7 +188,8 @@ def hud_events(msgs: list[dict[str, Any]], nick: str) -> list[tuple[str, str]]:
 
 
 def learn_nick(recent: list[dict[str, Any]], aircraft: str) -> str | None:
-    """Ölümden hemen önceki kayıtlarda bu uçak tipinden tek bir oyuncu düşürüldüyse o oyuncudur."""
+    """If a single player was shot down by this aircraft type in the records just before death,
+    that player is the one."""
     me = _norm(aircraft)
     if not me:
         return None
@@ -226,7 +233,7 @@ class WarThunderPoller:
         self.on_metrics = on_metrics
         self.interval = 1 / hz
         self.client = client or httpx.Client(base_url=URL, timeout=1.0)
-        self.running = running  # oyun açık mı (süreç listesinden); kapalıyken yoklamaz
+        self.running = running  # is the game open (from the process list); not polled while closed
         self.active = False
         self._stop = threading.Event()
         self._metrics_at = 0.0
@@ -234,10 +241,10 @@ class WarThunderPoller:
         self._map_info: dict[str, Any] = {}
         self._contacts: list[dict[str, Any]] = []
         self._t0 = time.monotonic()
-        self._fixed_nick = bool(nick)  # ayarda verildiyse öğrenilenle değiştirme
+        self._fixed_nick = bool(nick)  # if set in the config, do not replace it with a learned one
         self.nick = nick or load_nick()
-        self._hud_last: int | None = None  # son okunan savaş kaydı; None: ilk okuma (eskiler anons edilmez)
-        self._hud_recent: deque = deque(maxlen=40)  # (alındığı an, kayıt): ölümde oyuncunun adını öğrenmek için
+        self._hud_last: int | None = None  # last combat log entry read; None: first read (old ones are not announced)
+        self._hud_recent: deque = deque(maxlen=40)  # (time received, entry): for learning the player's name on death
         self._hud_new: list[tuple[str, str]] = []
         self._aircraft = ""
 
@@ -259,7 +266,7 @@ class WarThunderPoller:
             return None
         s = to_state(st, ind, time.monotonic() - self._t0)
         if s is None:
-            if self.active:  # hangar / ölüm / maç sonu
+            if self.active:  # hangar / death / match end
                 self.active = False
                 self._death()
                 self.on_end()
@@ -306,7 +313,7 @@ class WarThunderPoller:
             self._hud_new += hud_events(fresh, self.nick)
 
     def _death(self) -> None:
-        """Oyuncu öldü ya da çıktı: adı bilinmiyorsa son saniyelerin savaş kayıtlarından öğren."""
+        """The player died or left: if the name is unknown, learn it from the combat log of the last few seconds."""
         if self._fixed_nick:
             return
         self._read_hud()

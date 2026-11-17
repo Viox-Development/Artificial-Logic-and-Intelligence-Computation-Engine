@@ -1,4 +1,4 @@
-"""Ayarlar → Otomasyon: kural/görev düz cümleyle eklenir (önce önizleme), akışlar denenir (alice rules/tasks/feeds)."""
+"""Ayarlar → Otomasyon: add a rule/task from a sentence (preview first), try feeds (alice rules/tasks/feeds)."""
 
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ TASK = {"cron": "0 9 * * *", "prompt": "Discord'daki mesajları özetle", "catch
 
 def test_rule_preview_then_save_toggle_remove(tmp_path):
     a = Automations(Router(RULE), rules_path=tmp_path / "r.json", tasks_path=tmp_path / "t.json")
-    before = len(RuleSet(tmp_path / "r.json").rules)  # hazır gelen kurallar
+    before = len(RuleSet(tmp_path / "r.json").rules)  # built-in rules that come ready-made
     r = a.action("rule_parse", {"text": "GPU 85'i 2 dakika geçerse haber ver"})
     assert r["ok"] and r["view"]["condition"] == "pc.gpu.temp > 85, 2 dk boyunca"
-    assert len(RuleSet(tmp_path / "r.json").rules) == before  # önizleme kaydetmez
+    assert len(RuleSet(tmp_path / "r.json").rules) == before  # a preview does not save
     assert a.action("rule_add", {"rule": json.loads(json.dumps(r["rule"]))})["ok"]
     rules = a.view()["rules"]
     mine = next(x for x in rules if x["text"].startswith("GPU 85'i"))
@@ -39,7 +39,7 @@ def test_rule_preview_then_save_toggle_remove(tmp_path):
     find = lambda: next((x for x in a.view()["rules"] if x["id"] == rid), None)  # noqa: E731
     assert a.action("rule_enable", {"id": rid, "on": False})["ok"] and not find()["enabled"]
     assert a.action("rule_rm", {"id": rid})["ok"] and find() is None
-    assert not a.action("rule_add", {"rule": {**RULE, "op": "~"}})["ok"]  # geçersiz kural kaydedilmez
+    assert not a.action("rule_add", {"rule": {**RULE, "op": "~"}})["ok"]  # an invalid rule is not saved
     assert not a.action("rule_parse", {"text": " "})["ok"]
     assert not a.action("__init__", {})["ok"] and not a.action("rule-x", {})["ok"]
 
@@ -55,7 +55,7 @@ def test_task_preview_then_save_run_toggle_remove(tmp_path):
     assert a.action("task_enable", {"id": t["id"], "on": False})["ok"] and not a.view()["tasks"][0]["enabled"]
     assert not a.action("task_run", {"id": "yok"})["ok"]
     assert a.action("task_rm", {"id": t["id"]})["ok"] and a.view()["tasks"] == []
-    assert not a.action("task_add", {"task": {"cron": "0 0 30 2 *", "prompt": "x"}})["ok"]  # 30 Şubat
+    assert not a.action("task_add", {"task": {"cron": "0 0 30 2 *", "prompt": "x"}})["ok"]  # February 30
 
 
 def test_feeds_open_creates_template_and_test_reports(monkeypatch):

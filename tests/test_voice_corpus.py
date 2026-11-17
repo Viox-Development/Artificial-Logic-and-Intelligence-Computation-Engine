@@ -1,10 +1,10 @@
-"""Gerçek sesle testler (sahte ses yerine).
+"""Tests with real audio (instead of fake audio).
 
-1. tests/fixtures/voice: Edge TTS ile üretilmiş 10 Türkçe/İspanyolca cümle (kullanıcı sesi yok, repoda). Gerçek yerel
-   Whisper ile uyandırma kararı hattını uçtan uca sınar ("Alışveriş" uyandırmaz, "Alice, saat kaç?" uyandırır).
-2. ~/.alice/voice/corpus: kullanıcının gerçek cümleleri (repo dışında, çekirdek toplar). Yerelde koşar; CI'da
-   faster-whisper/sherpa-onnx ve korpus olmadığı için atlanır. Kök: ALICE_CORPUS ya da gerçek ev dizini.
-3. Toplama mantığı (sahte sesle, CI'da da koşar): uyanma kaydı, düzeltme etiketi, günlük sınır.
+1. tests/fixtures/voice: 10 Turkish/Spanish sentences made with Edge TTS (no user voice; in the repo). Tests the
+   wake decision pipeline end to end with real local Whisper ("Alışveriş" does not wake, "Alice, saat kaç?" wakes).
+2. ~/.alice/voice/corpus: the user's real sentences (outside the repo, collected by the core). Runs locally; in CI
+   skipped, where faster-whisper/sherpa-onnx and the corpus are absent. Root: ALICE_CORPUS or the real home dir.
+3. Collection logic (fake audio, also runs in CI): wake record, correction label, daily limit.
 """
 
 from __future__ import annotations
@@ -30,13 +30,13 @@ def _need_whisper():
         pytest.skip("faster-whisper modeli yok")
 
 
-# ------------------------------------------------------------------ 1. repodaki TTS örnekleri
+# ------------------------------------------------------------------ 1. TTS samples in the repo
 @pytest.fixture(scope="module")
 def fixture_assistant():
     _need_whisper()
     try:
         return corpus.build_replay_assistant(speaker=False, names=[])
-    except Exception as e:  # noqa: BLE001 - model indirilemedi (çevrimdışı CI)
+    except Exception as e:  # noqa: BLE001 - model could not be downloaded (offline CI)
         pytest.skip(f"yerel Whisper kurulamadı: {e}")
 
 
@@ -49,7 +49,7 @@ def test_tts_sentence_wake_decision(case, fixture_assistant):
     assert d.woke == (case.label == "uyanmaliydi"), f"{case.note} -> {d.reason}: {d.head!r}"
 
 
-# ------------------------------------------------------------------ 2. kullanıcının gerçek korpusu
+# ------------------------------------------------------------------ 2. the user's real corpus
 def _real_root() -> Path:
     return Path(os.environ["ALICE_CORPUS"]) if os.environ.get("ALICE_CORPUS") else REAL_HOME / "corpus"
 
@@ -97,7 +97,7 @@ def test_replay_is_deterministic(real):
     assert [(d.woke, d.reason) for d in first] == [(d.woke, d.reason) for d in again]
 
 
-# ------------------------------------------------------------------ 3. toplama (sahte ses, CI'da da koşar)
+# ------------------------------------------------------------------ 3. collection (fake audio, also runs in CI)
 def _audio():
     return Audio(b"\1\0" * 16000, 16000)
 
@@ -108,7 +108,7 @@ def test_wake_is_collected_and_confirmed_without_correction(tmp_path, monkeypatc
                              "armed": False, "social": ""})
     (case,) = corpus.load_manifest(tmp_path)
     assert case.label == "uyanmaliydi" and case.confidence == "zayif" and case.wav(tmp_path).exists()
-    c.CONFIRM_AFTER = -1  # süre doldu, düzeltme gelmedi
+    c.CONFIRM_AFTER = -1  # time window expired, no correction came
     c.on_decision(_audio(), {"woke": False, "reason": "kisa"})
     assert corpus.load_manifest(tmp_path)[0].confidence == "guclu"
 
@@ -123,7 +123,7 @@ def test_correction_relabels_the_last_wake(tmp_path):
 
 
 def test_task_corrections_do_not_touch_wake_labels(tmp_path):
-    """"Hayır, YouTube'da" ya da "saçmaladın": seslenme doğruydu, iş yanlıştı; uyanma etiketi değişmez."""
+    """"Hayır, YouTube'da" or "saçmaladın": the wake was right, the task was wrong; the wake label does not change."""
     c = corpus.Collector(tmp_path)
     c.on_decision(_audio(), {"woke": True, "reason": "uyandi", "head": "Alice Spotify'ı aç"})
     for text in ("Hayır, YouTube'da", "saçmaladın yine"):
@@ -132,8 +132,8 @@ def test_task_corrections_do_not_touch_wake_labels(tmp_path):
 
 
 def test_correction_sentence_itself_is_not_the_false_wake(tmp_path):
-    """Oturum kapandıktan sonra "Alice sana demedim" kendisi de uyanma olarak kaydedilir; etiket ondan önceki
-    uyanmaya gitmeli (inceleme bulgusu)."""
+    """After the session closes, "Alice sana demedim" itself is also recorded as a wake; the label must go to
+    the wake before it (review finding)."""
     c = corpus.Collector(tmp_path)
     c.on_decision(_audio(), {"woke": True, "reason": "uyandi", "head": "Alışacak"})
     c.on_decision(_audio(), {"woke": True, "reason": "uyandi", "head": "Alice sana demedim"})
@@ -145,7 +145,7 @@ def test_correction_sentence_itself_is_not_the_false_wake(tmp_path):
 def test_case_limit_survives_restart(tmp_path):
     c = corpus.Collector(tmp_path)
     c.on_decision(_audio(), {"woke": True, "reason": "uyandi", "head": "Alice"})
-    fresh = corpus.Collector(tmp_path)  # çekirdek yeniden başladı
+    fresh = corpus.Collector(tmp_path)  # core restarted
     fresh.MAX_CASES = 1
     fresh.on_decision(_audio(), {"woke": True, "reason": "uyandi", "head": "Alice"})
     assert len(corpus.load_manifest(tmp_path)) == 1
@@ -161,7 +161,7 @@ def test_negatives_are_capped_and_other_voices_keep_no_text(tmp_path):
     c.on_decision(_audio(), {"woke": False, "reason": "uyandirma_yok", "spk": None, "head": "profil yok"})
     c.on_decision(_audio(), {"woke": False, "reason": "ses_izi", "spk": 0.1, "head": "gizli söz"})
     cases = corpus.load_manifest(tmp_path)
-    assert sum(c.bucket == "negatif-konusma" for c in cases) == 2  # gri bölge ve profilsiz ses saklanmadı
+    assert sum(c.bucket == "negatif-konusma" for c in cases) == 2  # grey zone and profile-less voices were not stored
     other = [c for c in cases if c.bucket == "baska-konusmaci"]
     assert len(other) == 1 and other[0].orig["head"] == "" and other[0].confidence == "guclu"
 
@@ -172,7 +172,7 @@ def test_daily_limit_survives_restart(tmp_path):
     neg = {"woke": False, "reason": "uyandirma_yok", "spk": 0.5, "thr": 0.3, "head": "otur çabuk"}
     c.on_decision(_audio(), neg)
     c.on_decision(_audio(), neg)
-    fresh = corpus.Collector(tmp_path)  # çekirdek yeniden başladı: sayaç sıfırlanmamalı
+    fresh = corpus.Collector(tmp_path)  # core restarted: the counter must not reset
     fresh.NEG_PER_DAY = 2
     fresh.on_decision(_audio(), neg)
     assert len(corpus.load_manifest(tmp_path)) == 2

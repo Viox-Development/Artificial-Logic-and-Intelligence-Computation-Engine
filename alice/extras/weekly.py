@@ -1,8 +1,9 @@
-"""Haftalık "ne yaptın" özeti: pazar akşamı bir kez, kısa ve sesli.
+"""Weekly "ne yaptın" (what did you do) summary: once on Sunday evening, short and spoken.
 
-Veri: haftanın uçuşları (~/.alice/flights), bilgisayarda en çok kullanılan programlar (pc.foreground), uçuş ve
-geliştirme modunda geçen süre, konuşma özetleri ve tamamlanan hatırlatmalar. Metni hızlı model kişilikle yazar; model
-yoksa kalıp cümleler. Hangi hafta söylendiği dosyada durur, ALICE yeniden başlasa da tekrarlanmaz.
+Data: the week's flights (~/.alice/flights), the programs most used on the computer (pc.foreground), time spent in
+flight and development mode, conversation summaries and completed reminders. The fast model writes the text in the
+personality; without a model, template sentences. Which week was already announced is kept in the file, so it is not
+repeated even if ALICE restarts.
 """
 
 from __future__ import annotations
@@ -15,13 +16,13 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-WEEKDAY = 6        # pazar
-HOUR = 19          # bu saatten sonra
-GAP_CAP = 120.0    # iki ölçüm arası bundan uzunsa bilgisayar başında değildi
+WEEKDAY = 6        # Sunday
+HOUR = 19          # from this hour on
+GAP_CAP = 120.0    # a gap between two samples longer than this means the computer was unattended
 
-# Ekranda olan ama "ne yaptın" sayılmayanlar
+# On screen but not counted as "ne yaptın" (what you did)
 IGNORED_APPS = {"explorer.exe", "searchhost.exe", "lockapp.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe",
-                "applicationframehost.exe", "textinputhost.exe", "pythonw.exe", "python.exe", ""}  # ALICE kendisi
+                "applicationframehost.exe", "textinputhost.exe", "pythonw.exe", "python.exe", ""}  # ALICE itself
 APP_NAMES = {"aces.exe": "War Thunder", "dcs.exe": "DCS", "opera.exe": "Opera", "chrome.exe": "Chrome",
              "msedge.exe": "Edge", "discord.exe": "Discord", "code.exe": "VS Code", "claude.exe": "Claude",
              "spotify.exe": "Spotify", "steam.exe": "Steam", "blender.exe": "Blender", "windowsterminal.exe": "Terminal",
@@ -33,7 +34,7 @@ def state_path() -> Path:
 
 
 def app_minutes(samples: list[tuple[float, str]]) -> dict[str, float]:
-    """Ön plandaki program ölçümlerinden program başına dakika (ölçüm arası boşluk GAP_CAP'te kesilir)."""
+    """Minutes per program from the foreground-program samples (gaps between samples are capped at GAP_CAP)."""
     out: dict[str, float] = {}
     for (t0, app), (t1, _) in zip(samples, samples[1:]):
         name = (app or "").lower()
@@ -84,7 +85,7 @@ def gather(store, mem=None, now: float | None = None, flights: list[dict[str, An
                     if f.done and f.kind == "remind" and float(f.due or 0) >= since]
             if done:
                 data["tamamlanan hatırlatmalar"] = "; ".join(done[:6])
-        except Exception:  # noqa: BLE001 - hafıza olmadan da özet çıkar
+        except Exception:  # noqa: BLE001 - produce a summary even without memory
             pass
     return data
 
@@ -113,7 +114,7 @@ def compose(data: dict[str, Any], router=None) -> str:
             text = (res.message.get("content") or "").strip()
             if text:
                 return text
-        except Exception:  # noqa: BLE001 - model yoksa kalıp metin
+        except Exception:  # noqa: BLE001 - no model: template text
             pass
     parts = ["Haftanın özeti."]
     for k, v in data.items():
@@ -139,7 +140,7 @@ def maybe_send(store, mem, router, send: Callable[[str, str], bool], now: float 
     data = gather(store, mem, now, **kw)
     text = compose(data, router) if data else None
     if text and not send("Haftanın özeti", text):
-        return None  # mod susturdu (uçuştasın): sonraki turda yeniden
+        return None  # the mode muted it (you are flying): retry in the next round
     st["week"] = week
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

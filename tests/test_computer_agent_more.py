@@ -1,4 +1,4 @@
-"""alice/computer_agent.py: döngü kenar durumları, aksiyonlar ve ekran görüntüsü (sahte mss/pyautogui)."""
+"""alice/computer_agent.py: loop edge cases, actions and screenshots (fake mss/pyautogui)."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def test_task_result_report_tail():
     assert TaskResult("fail", "olmadı", []).report() == "fail: olmadı"
 
 
-# --------------------------------------------------------------------- döngü
+# --------------------------------------------------------------------- loop
 def test_prompt_lists_elements_values_and_placeholders():
     s = FakeScreen()
     ask = scripted('{"action": "done", "summary": "ok"}')
@@ -121,7 +121,7 @@ def test_batch_stops_at_error_and_at_done():
                                            {"action": "key", "keys": "z"}]}),
                    '{"action": "done", "summary": "bitti"}')
     res = ComputerAgent(s, ask, settle=0).run("x")
-    assert [a["action"] for a in s.acts] == ["click", "click"]  # hata sonrası ve done sonrası çalışmaz
+    assert [a["action"] for a in s.acts] == ["click", "click"]  # not run after an error or after done
     assert "HATA olmadı" in res.steps[0] and res.status == "done" and res.summary == "bitti"
 
 
@@ -174,7 +174,7 @@ def test_repeat_detection_ignores_thought_changes():
     s = FakeScreen()
     answers = [json.dumps({"thought": f"deneme {i}", "action": "click", "id": 1}) for i in range(8)]
     res = ComputerAgent(s, scripted(*answers), settle=0).run("x")
-    assert res.status == "fail" and "tekrarlanıyor" in res.summary and len(s.acts) == 4  # bir kez toparlanma
+    assert res.status == "fail" and "tekrarlanıyor" in res.summary and len(s.acts) == 4  # one recovery attempt
 
 
 def test_router_asker_passes_role_and_effort():
@@ -201,7 +201,7 @@ def test_log_line_appends_truncated():
 
 
 def test_log_line_ignores_missing_dir():
-    ca.log_line("dizin yok")  # alice_home oluşturulmamış: hata fırlatmamalı
+    ca.log_line("dizin yok")  # alice_home not created: must not raise an error
 
 
 # ---------------------------------------------------------------- Screen.act
@@ -308,11 +308,11 @@ def fake_mss(monkeypatch):
 def test_observe_downscales_and_keeps_elements(fake_mss, monkeypatch):
     items = [{"id": 1, "rect": (10, 10, 200, 60), "center": (105, 35)},
              {"id": 2, "rect": None},
-             {"id": 3, "rect": (-500, -500, -400, -400), "center": (0, 0)}]  # ekran dışı: çizilmez ama listede
+             {"id": 3, "rect": (-500, -500, -400, -400), "center": (0, 0)}]  # off-screen: not drawn, kept in list
     monkeypatch.setattr("alice.tools.desktop.collect_ui_elements", lambda ctx, limit: ("Not Defteri", items))
     import ctypes
 
-    monkeypatch.setattr(ctypes, "windll", None, raising=False)  # _monitor: ön pencere bulunamaz -> monitör 1
+    monkeypatch.setattr(ctypes, "windll", None, raising=False)  # _monitor: no foreground window found -> monitor 1
     shot = Screen("CTX", max_width=1000).observe()
     assert shot.title == "Not Defteri" and [e["id"] for e in shot.elements] == [1, 3]
     assert (shot.left, shot.top, shot.width, shot.height) == (0, 0, 2000, 1000)

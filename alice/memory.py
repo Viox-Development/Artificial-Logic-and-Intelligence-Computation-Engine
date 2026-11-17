@@ -1,27 +1,30 @@
-"""Uzun süreli hafıza: kalıcı notlar, geçmiş konuşmalar, özetler ve takipler.
+"""Long-term memory: persistent notes, past conversations, summaries and follow-ups.
 
-İki katman var:
-- Notlar (alice/memdir.py): kullanıcıya ve işlerine dair kalıcı bilgi, her biri ayrı bir markdown dosyası
-  (~/.alice/memory/*.md, projeye özgü olanlar ~/.alice/projects/<depo>/memory/). Türleri user / feedback / project /
-  reference; MEMORY.md dizini sistem istemine girer, ilgili notların tamamı her mesaja eklenir. Arka planda model
-  konuşmadan not çıkarır; Dream (günde bir, yeterince konuşma birikince) notları toparlar.
-- Konuşma kaydı (~/.alice/memory.db, SQLite): her tur (episodes), bitmiş konuşmaların özetleri (summaries), ileride
-  sorulacak/hatırlatılacak takipler (followups). Eski tek cümlelik "facts" tablosu yalnız ilk açılışta notlara
-  taşınmak için okunur.
+There are two layers:
+- Notes (alice/memdir.py): lasting information about the user and their work, each in its own markdown file
+  (~/.alice/memory/*.md, project-specific ones in ~/.alice/projects/<repo>/memory/). Types: user / feedback /
+  project / reference. The MEMORY.md index goes into the system prompt, and all relevant notes are added to every
+  message. In the background a model extracts notes from the conversation; Dream (once a day, once enough
+  conversation has built up) consolidates the notes.
+- Conversation log (~/.alice/memory.db, SQLite): every turn (episodes), summaries of finished conversations
+  (summaries), follow-ups to ask about or remind of later (followups). The old one-sentence "facts" table is only
+  read to move its contents into notes on first startup.
 
-- episodes: her konuşma turu (kullanıcının sözü + ALICE'in cevabı, kanal, zaman).
-- Hatırlama: kullanıcının sözüne en çok benzeyen bilgiler ve geçmiş konuşmalar her turda mesaja eklenir.
-  Benzerlik Türkçe için sade bir yöntemle ölçülür: harfler sadeleştirilir (ç->c, ı->i...), kelimeler ilk 4
-  harfine kısaltılır (ekler düşer: "kahveyi", "kahvemi" -> "kahv"), seyrek kelimeler daha ağır basar (IDF).
-  Ücretsiz bir embedding anahtarı varsa (varsayılan Gemini) anlam araması da eklenir: "Unity projem" ile "oyun
-  motorunda yaptığım şey" aynı hatırayı bulur (bkz. alice/memvec.py). Yoksa sadece kelime araması.
-- Öğrenme: "bunu hatırla: X" gibi açık istekler doğrudan kaydedilir. Kullanıcı kendinden bahsediyorsa
-  (seviyorum, benim, her zaman...) konuşma arka planda hızlı modele verilir; kalıcı bilgileri çıkarır,
-  eskiyenleri günceller ya da siler.
-- Özetleme (digest): bir konuşma bitince (varsayılan 20 dk sessizlik) bütün konuşma tek seferde hızlı modele
-  verilir: kısa özet, sinyal kelimesi olmadan geçen kalıcı bilgiler ("yarın sınavım var", "Unity'de FPS
-  yapıyorum") ve takip edilecekler (sınav nasıl geçti diye sorulacak, yarım kalan iş) çıkarılır. Özetler ve
-  günü gelen takipler sistem istemine girer: ALICE dün ne konuşulduğunu bilir, sınavı kendisi sorar.
+- episodes: every conversation turn (the user's words + ALICE's reply, channel, time).
+- Recall: the facts and past conversations most similar to the user's words are added to the message on every turn.
+  Similarity for Turkish is measured with a simple method: letters are folded (ç->c, ı->i...), words are cut to
+  their first 4 letters (suffixes drop off: "kahveyi", "kahvemi" -> "kahv"), and rare words weigh more (IDF).
+  If a free embedding key is available (Gemini by default), semantic search is added too: "Unity projem" (my
+  Unity project) and "oyun motorunda yaptığım şey" (the thing I made in a game engine) find the same memory
+  (see alice/memvec.py). Otherwise, keyword search only.
+- Learning: explicit requests like "bunu hatırla: X" (remember this: X) are saved directly. When the user talks
+  about themselves (seviyorum = I love, benim = mine, her zaman = always...), the conversation is handed to the
+  fast model in the background; it extracts lasting facts and updates or deletes outdated ones.
+- Summarizing (digest): when a conversation ends (20 min of silence by default), the whole conversation is handed
+  to the fast model at once. It extracts a short summary, lasting facts stated without a signal word ("yarın
+  sınavım var" = "I have an exam tomorrow", "Unity'de FPS yapıyorum" = "I'm making an FPS in Unity"), and
+  follow-ups (e.g. asking how the exam went, unfinished work). Summaries and follow-ups that are due today go into
+  the system prompt: ALICE knows what was discussed yesterday and asks about the exam itself.
 """
 
 from __future__ import annotations
@@ -41,7 +44,7 @@ from typing import Any, Callable
 
 from alice.config import alice_home
 
-# Yutulan hatalar için iz: varsayılan olarak sessiz, `logging.basicConfig(level=logging.DEBUG)` ile görünür.
+# Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
 log = logging.getLogger(__name__)
 
 KINDS = {"preference": "tercih", "fact": "bilgi", "person": "kişi", "routine": "alışkanlık", "note": "not"}
@@ -69,10 +72,10 @@ CREATE TABLE IF NOT EXISTS vectors (
 CREATE TABLE IF NOT EXISTS forgotten (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, text TEXT NOT NULL, terms TEXT NOT NULL DEFAULT '');
 """
-KEEP_FORGOTTEN = 200  # silinen notların izi (otomatik çıkarım ve Dream aynı şeyi geri yazmasın)
+KEEP_FORGOTTEN = 200  # trace of deleted notes (so auto-extraction and Dream don't write them back)
 FOLLOWUP_KINDS = {"ask": "sor", "remind": "hatırlat", "open": "yarım kaldı"}
-# Eski "sevgili/mommy" kişiliğinden kalan izler. Hafızada kaldıkça yeni kişilik "Buradayım bebeğim" diye geri
-# dönüyordu (voice.log); Ayarlar > Hafıza bunları gösterip tek tıkla temizler.
+# Traces left from the old "sevgili/mommy" persona. While they stayed in memory, the new persona kept coming
+# back with "Buradayım bebeğim" (voice.log); Settings > Memory shows them and clears them in one click.
 OLD_ROLE_RX = re.compile(
     r"\b(bebeğim|bebegim|aşkım|askim|tatlım|tatlim|sevgilin|sevgilim|sevgili(si)?|kız ?arkadaş\w*|mommy|mami|"
     r"canım benim|iyi çocu\w*|choker|kıskan\w*|cilve\w*|öpücük|sarıl\w*)\b", re.I)
@@ -88,17 +91,17 @@ on for
 """.split())
 _STOP = {w.translate(_FOLD) for w in _STOP}
 _CLOCK = re.compile(r"\s*\[şu an:[^\]]*\]\s*$")
-_RECALL = re.compile(r"\s*\[hafızadan.*\]\s*$", re.S)  # not gövdelerinde ']' olabilir: sona kadar
+_RECALL = re.compile(r"\s*\[hafızadan.*\]\s*$", re.S)  # note bodies may contain ']': match to the end
 
-# Açıkça hatırlatma isteği: model olmadan, anında kaydedilir.
+# Explicit remember request: saved immediately, without a model.
 _EXPLICIT = [
     re.compile(r"^(?:alice[,\s]+)?(?:(?:bunu|şunu|sunu)\s+)?(?:hatırla|hatirla|aklında tut|aklinda tut|unutma)"
                r"\s*[:,-]?\s+(?:ki\s+)?(.{6,})$", re.I),
     re.compile(r"^(?:alice[,\s]+)?(.{6,}?)[,.;\s]+(?:bunu\s+)?(?:hatırla|hatirla|unutma|aklında tut|aklinda tut)"
                r"(?:\s+(?:lütfen|lutfen|tamam mı|tamam mi))?[.!]?$", re.I),
 ]
-# Kullanıcının kendinden bahsettiğini gösteren kelime kökleri (sadeleştirilmiş). Sadece bunlar varken modele
-# çıkarım yaptırılır; "saat kaç" gibi her soru için ücretsiz kota harcanmaz.
+# Word stems (folded) showing the user is talking about themselves. The model is asked to extract only when
+# one of these is present, so questions like "saat kaç" (what time is it) don't use up free quota.
 _SIGNALS = ("benim", "bana ", "beni ", "seviyor", "sevmiyor", "sevmem", "severim", "hoslan", "nefret", "tercih",
             "istemiyorum", "her zaman", "hep ", "asla", "genelde", "genellikle", "adim ", "ismim", "yasim",
             "yasiyorum", "oturuyorum", "calisiyorum", "okuyorum", "dogum", "kardes", "annem", "babam", "arkadasim",
@@ -107,8 +110,8 @@ _SIGNALS = ("benim", "bana ", "beni ", "seviyor", "sevmiyor", "sevmem", "severim
             "i like", "i love", "i hate", "i prefer", "my ", "remember", "call me")
 
 
-# Kullanıcının ALICE'in çalışma biçimini düzelttiği ya da beğendiği anlar (feedback notları buradan doğar). Sadece
-# düzeltmeler kaydedilirse ALICE işe yaradığı onaylanmış yollardan da uzaklaşır; onaylar da sinyal.
+# Moments when the user corrects or approves how ALICE works (feedback notes come from here). If only
+# corrections were saved, ALICE would drift away from approaches that worked; approvals are signals too.
 _FEEDBACK = re.compile(
     r"\b(hayır|hayir|öyle değil|oyle degil|yanlış|yanlis|yapma|yapmasana|bırak|birak|olmamış|olmamis|olmadı|olmadi|"
     r"bir daha|asla|her zaman|hep böyle|bundan sonra|aynen|tam olarak|mükemmel|mukemmel|harika|süper|super|"
@@ -119,11 +122,11 @@ DIGEST_BAD_TRIES = 3  # modelin kullanılamaz özet cevabı aynı konuşmada bu 
 
 
 class _BadDigest(ValueError):
-    """Özet modeli cevap verdi ama cevap JSON değil/boş (ağ ya da kota hatası değil)."""
+    """The digest model replied, but the reply is not JSON or is empty (not a network or quota error)."""
 
 
 RECALL_ITEM_CHARS, RECALL_TOTAL_CHARS = 1800, 6000
-RECENT_TURNS_HOURS = 3  # sistem istemine giren "son turlar" bundan eskiyse girmez (yeni sohbet devam sanılmasın)
+RECENT_TURNS_HOURS = 3  # "recent turns" in the system prompt are left out if older than this (a new chat isn't taken for a continuation)
 
 
 def _clip(text: str, n: int) -> str:
@@ -139,12 +142,12 @@ def terms(text: str) -> list[str]:
     for w in re.findall(r"[a-z0-9]+", fold(text)):
         if (len(w) < 3 and not w.isdigit()) or w in _STOP:
             continue
-        out.append(w[:4])  # Türkçe ekler düşsün: kahveyi/kahvemi -> kahv, filmini/film -> film
+        out.append(w[:4])  # let Turkish suffixes drop: kahveyi/kahvemi -> kahv, filmini/film -> film
     return out
 
 
 def clean_user_text(text: str) -> str:
-    """Sesli asistanın eklediği saat ve hafıza notunu at: kayda ve aramaya kullanıcının kendi sözü girsin."""
+    """Strip the time and memory note the voice assistant adds: only the user's own words go into the log and search."""
     return _RECALL.sub("", _CLOCK.sub("", text or "")).strip()
 
 
@@ -159,8 +162,9 @@ def explicit_note(text: str) -> str | None:
     return None
 
 
-# Model kurala rağmen bir turun sonucunu "bilgi" diye yazarsa (eski hafızada çoğu buydu): dosya yolu, başarısız/denenen
-# iş, onaylanan değer, ALICE'i test etmek. Sadece otomatik çıkarılanlara uygulanır; "bunu hatırla" her zaman kaydedilir.
+# If the model writes a turn's result as a "bilgi" (fact) despite the rule (most of the old memory was like
+# that): file paths, failed or attempted work, approved values, testing ALICE. Applied only to automatically
+# extracted items; "bunu hatırla" is always saved.
 _EPHEMERAL = re.compile(
     r"[a-z]:\\|(?:^|\s)/[\w.-]+/|\b(?:başarısız|basarisiz|onayladı|onayladi|denedi|deniyor|test (?:et|ed)\w*|"
     r"deneme klasör\w*|indirilenler|kurulum dosyası|şu anda|su anda|şu an\b|bu konuşmada|endişe duy\w*)", re.I)
@@ -170,26 +174,26 @@ def ephemeral(text: str) -> bool:
     return bool(_EPHEMERAL.search(text))
 
 
-# Ses tanımanın gürültüden uydurduğu yabancı yazı ("हे या इनिशियलाइज़ेशन"): sohbet kaydına girip aramayı kirletiyordu.
-# Yunan, Kiril, İbrani/Arap, Hint, Tay/Tibet, Japon, Çin, Kore yazıları.
+# Foreign script that speech recognition invents from noise ("हे या इनिशियलाइज़ेशन"): it got into the chat
+# log and polluted search. Greek, Cyrillic, Hebrew/Arabic, Indic, Thai/Tibetan, Japanese, Chinese, Korean.
 _FOREIGN_RANGES = ((0x0370, 0x04FF), (0x0590, 0x06FF), (0x0900, 0x0FFF), (0x3040, 0x30FF), (0x3400, 0x9FFF),
                    (0xAC00, 0xD7AF))
 _FOREIGN = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in _FOREIGN_RANGES) + "]")
 
 
-# Kullanıcının ALICE'ten kalıcı isteği ("... sormasını ister", "asla ... yapmasın").
+# A lasting request from the user to ALICE ("... sormasını ister" = wants it to ask ..., "asla ... yapmasın" = never do ...).
 _INSTRUCTION = re.compile(r"\b(ister|istemez|istiyor|istemiyor|asla|her zaman|hitap|çağır|cagir|sorulmasını)\w*",
                           re.I)
 
 
 def noise_turn(user: str) -> bool:
-    """Kaydedilmeye değmeyen tur: harflerin çoğu Latin dışı yazıysa (ses tanıma gürültüyü başka dilde yazmış)."""
+    """A turn not worth saving: most of its letters are non-Latin script (speech recognition wrote noise in another language)."""
     letters = [c for c in user if c.isalpha()]
     return bool(letters) and len(_FOREIGN.findall(user)) > len(letters) * 0.3
 
 
-# Cümle geçmiş zamanla bitiyorsa ("şarkısını açtı", "iletişime geçti", "dinlemeye çalıştı") bir olaydır, alışkanlık
-# değil ("dinler", "oynar"). Özetlerden çıkarılan bilgilerde bu ayrım modele bırakılamadı.
+# A sentence ending in the past tense ("şarkısını açtı", "iletişime geçti", "dinlemeye çalıştı") is an event,
+# not a habit ("dinler", "oynar"). This distinction could not be left to the model for facts taken from summaries.
 _PAST = re.compile(r"\w+(?:dı|di|du|dü|tı|ti|tu|tü)(?:lar|ler)?[.!]?$", re.I)
 
 
@@ -210,7 +214,7 @@ _KIND_TYPE = {"preference": "user", "fact": "user", "person": "user", "routine":
 
 
 def kind_to_type(kind: str, text: str) -> str:
-    """Eski tür adlarını (tercih, bilgi, kişi...) not türüne çevir; ALICE'e verilen kalıcı talimat feedback'tir."""
+    """Convert old kind names (tercih, bilgi, kişi...) to note types; a lasting instruction given to ALICE is feedback."""
     if kind in ("user", "feedback", "project", "reference"):
         return kind
     return "feedback" if _INSTRUCTION.search(text) else _KIND_TYPE.get(kind, "user")
@@ -303,25 +307,25 @@ class LongMemory:
         from alice.memdir import NoteBook
 
         if notes_root is None:
-            # ":memory:" (testler, geçici kullanım): notlar da geçici bir klasörde, kimseninkine karışmaz.
+            # ":memory:" (tests, temporary use): notes also go in a temporary folder, not mixed with anyone else's.
             notes_root = (Path(path).parent / "memory" if str(path) != ":memory:"
                           else Path(tempfile.mkdtemp(prefix="notes-", dir=_scratch_dir())))
         self.notes = NoteBook(notes_root)
-        self.recall_model = bool(o.get("recall_model", True))  # ilgili notları hızlı modelle seç
-        self.extract_every = max(1, int(o.get("extract_every", 4)))  # sinyal yoksa da her N turda bir bak
+        self.recall_model = bool(o.get("recall_model", True))  # pick the relevant notes with the fast model
+        self.extract_every = max(1, int(o.get("extract_every", 4)))  # even without a signal, check every N turns
         self.dream_enabled = bool(o.get("dream", o.get("consolidate", True)))
         self.dream_hours = float(o.get("dream_hours", 24))
         self.dream_sessions = int(o.get("dream_sessions", 5))
         self._turns_since_extract = 0
-        self._turns_lock = threading.Lock()  # sayaç birden çok kanaldan (ses, sohbet, Discord) aynı anda artar
-        self._last_dream_scan: float | None = None  # monotonic; None = hiç taranmadı (açılıştan hemen sonra monotonic < 600 olabilir)
+        self._turns_lock = threading.Lock()  # the counter is incremented from several channels at once (voice, chat, Discord)
+        self._last_dream_scan: float | None = None  # monotonic; None = never scanned (right after startup, monotonic may be < 600)
         self._dream_lock = threading.Lock()
-        self._in_profile: dict[str, set[str]] = {}  # cwd -> sistem isteminde tamamı duran notlar (anahtar@zaman)
-        self.embedder = embedder  # alice.memvec.Embedder ya da None (sadece kelime araması)
-        self.embed_min = float(o.get("embed_min", 0.68))  # bu kosinüsün altı "ilgisiz" sayılır
+        self._in_profile: dict[str, set[str]] = {}  # cwd -> notes that stay in full in the system prompt (key@time)
+        self.embedder = embedder  # alice.memvec.Embedder or None (keyword search only)
+        self.embed_min = float(o.get("embed_min", 0.68))  # below this cosine similarity, results count as "unrelated"
         self.digest_enabled = bool(o.get("digest", True))
         self.consolidate_enabled = bool(o.get("consolidate", True))
-        self.max_facts = int(o.get("max_facts", 60))  # toparlamada hedef: profil kısa ve öz kalsın
+        self.max_facts = int(o.get("max_facts", 60))  # consolidation target: keep the profile short and to the point
         self.session_gap = float(o.get("session_gap_minutes", 20)) * 60
         self._digest_lock = threading.Lock()
         self._index_lock = threading.Lock()
@@ -331,9 +335,10 @@ class LongMemory:
         self.recall_limit = int(o.get("recall_limit", 4))
         self.profile_chars = int(o.get("profile_chars", 2500))
         self.keep_days = float(o.get("keep_days", 365))
-        self.extractor = extractor  # prompt -> JSON metni; None ise sadece açık "hatırla" istekleri kaydedilir
-        # Günlük toparlama ve tanıtım için daha güçlü model (günde iki çağrı). Hızlı model kuralları tutmuyordu:
-        # "WhatsApp'ta X'e yazdı"yı kalıcı bilgi yaptı, bütün özetleri sildi. None: extractor kullanılır.
+        self.extractor = extractor  # prompt -> JSON text; if None, only explicit "hatırla" requests are saved
+        # A stronger model for the daily consolidation and introduction (two calls a day). The fast model did not
+        # follow the rules: it turned "WhatsApp'ta X'e yazdı" (wrote to X on WhatsApp) into a lasting fact and
+        # deleted all the summaries. None: the extractor is used.
         self.synthesizer: Callable[[str], str] | None = None
         self._lock = threading.RLock()
         self._learn_lock = threading.Lock()
@@ -342,18 +347,18 @@ class LongMemory:
         self.db = sqlite3.connect(str(self.path), check_same_thread=False, timeout=10)
         if isinstance(self.path, Path):
             try:
-                self.db.execute("PRAGMA journal_mode=WAL")  # çekirdek, ses ve uygulama aynı dosyayı kullanabilir
+                self.db.execute("PRAGMA journal_mode=WAL")  # the core, voice and the app may use the same file
             except sqlite3.DatabaseError:
                 pass
         self.db.executescript(_SCHEMA)
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(episodes)")}
-        if "sid" not in cols:  # tur hangi sohbetten: sohbet silinince hafızadaki turları da silinebilsin
+        if "sid" not in cols:  # which chat a turn belongs to: deleting a chat can also delete its turns from memory
             self.db.execute("ALTER TABLE episodes ADD COLUMN sid TEXT NOT NULL DEFAULT ''")
         self.db.execute("CREATE INDEX IF NOT EXISTS ix_episodes_sid ON episodes(sid)")
         self.db.commit()
         self._prune()
 
-    # ------------------------------------------------------------------ kurulum
+    # ------------------------------------------------------------------ setup
     @classmethod
     def open(cls, cfg=None, router=None) -> "LongMemory | None":
         o = dict((cfg.data.get("memory") if cfg is not None else None) or {})
@@ -363,7 +368,7 @@ class LongMemory:
 
         try:
             embedder = Embedder.from_config(cfg, o)
-        except Exception:  # noqa: BLE001 - embedding opsiyonel: yoksa kelime araması
+        except Exception:  # noqa: BLE001 - embedding is optional: without it, keyword search is used
             embedder = None
         mem = cls(alice_home() / "memory.db", o, make_extractor(o, router), embedder,
                   notes_root=o.get("dir") or alice_home() / "memory")
@@ -371,19 +376,19 @@ class LongMemory:
         mem.import_markdown(alice_home() / "memory.md")
         try:
             mem.migrate_facts()
-        except Exception:  # noqa: BLE001 - taşıma bir sonraki açılışta yeniden denenir
+        except Exception:  # noqa: BLE001 - the migration is retried on the next start
             log.debug("eski bilgiler notlara taşınamadı", exc_info=True)
         return mem
 
-    # ------------------------------------------------------------------ notlar
+    # ------------------------------------------------------------------ notes
     def books(self, cwd: Path | str | None = None) -> list[Any]:
-        """Genel defter + cwd bir git deposundaysa o projenin defteri."""
+        """General notebook + the project's notebook if cwd is in a git repo."""
         from alice.memdir import books_for
 
         return books_for(self.notes, cwd)
 
     def all_books(self) -> list[Any]:
-        """Genel defter + notu ya da günlüğü olan bütün proje defterleri (Dream ve Hafıza sekmesi için)."""
+        """General notebook + all project notebooks that have notes or a log (for the Dream and Memory tabs)."""
         from alice.memdir import NoteBook
 
         out = [self.notes]
@@ -410,7 +415,7 @@ class LongMemory:
         return tuple(b.stamp() for b in self.books(cwd))
 
     def find_note(self, key: str, cwd: Path | str | None = None) -> tuple[Any, Any] | tuple[None, None]:
-        """'genel:ad', 'proje:ad' ya da yalnız 'ad' -> (defter, not)."""
+        """'genel:ad', 'proje:ad' or just 'ad' -> (notebook, note)."""
         key = str(key or "").strip()
         scope = key.split(":", 1)[0] if ":" in key else ""
         books = self.books(cwd) if cwd else []
@@ -438,9 +443,9 @@ class LongMemory:
                 best, best_score = n, j
         return best if best_score >= 0.75 else None
 
-    # Kullanıcının elle yaptığı hafıza değişiklikleri (not silme/düzenleme, geçmişi unutma). Sohbet ortasında sistem
-    # istemi yalnız bunlar değişince yenilenir; otomatik çıkarım ve Dream'in yazdıkları sonraki sohbete kalır (sistem
-    # istemi değişince prompt önbelleği baştan kuruluyor, bkz. Agent.refresh_memory).
+    # Memory edits the user makes by hand (deleting/editing notes, forgetting history). The system prompt is only
+    # refreshed mid-chat when these change; automatic extraction and Dream's writes wait for the next chat (a changed
+    # system prompt rebuilds the prompt cache from scratch, see Agent.refresh_memory).
     user_edits = 0
 
     def mark_user_edit(self) -> None:
@@ -450,7 +455,7 @@ class LongMemory:
                   scope: str = "genel", cwd: Path | str | None = None) -> tuple[Any, bool]:
         b = self.book(scope, cwd)
         note, new = b.save(name, description, type, content, title=title, source=source)
-        if source in ("kullanıcı", "araç"):  # konuşmada açıkça yeniden kaydedildi
+        if source in ("kullanıcı", "araç"):  # explicitly saved again in the conversation
             self.unforget(f"{title} {description} {content}")
         if source == "kullanıcı":
             self.mark_user_edit()
@@ -458,9 +463,9 @@ class LongMemory:
         return note, new
 
     def delete_note(self, key: str, cwd: Path | str | None = None) -> Any:
-        """Notu sil (kullanıcı arayüzden, sesle ya da ALICE kullanıcının isteğiyle). Silinen notun izi tutulur: konuşma
-        özetleri durduğu için tur sonu çıkarımı ve Dream aynı bilgiyi yeniden not yapıyor, silinen not geri
-        geliyordu. Dream'in birleştirme silmeleri buradan geçmez (iz bırakmaz)."""
+        """Delete the note (UI, voice, or ALICE at the user's request). Its trace is kept: conversation summaries
+        persist, so end-of-turn extraction and Dream kept re-noting the same facts and the deleted note kept coming
+        back. Dream's merge deletions don't go through here (they leave no trace)."""
         b, n = self.find_note(key, cwd)
         if b is None:
             return None
@@ -485,7 +490,7 @@ class LongMemory:
             return [r[0] for r in self.db.execute("SELECT text FROM forgotten ORDER BY id DESC LIMIT ?", (int(limit),))]
 
     def _forgotten_like(self, text: str) -> list[int]:
-        """Metinle aynı şeyi söyleyen silinmiş notların kimlikleri (kelime örtüşmesi: kısa olanın en az %60'ı)."""
+        """IDs of deleted notes that say the same thing as the text (word overlap: at least 60% of the shorter one)."""
         mine = set(terms(text))
         if len(mine) < 2:
             return []
@@ -499,7 +504,7 @@ class LongMemory:
         return out
 
     def unforget(self, text: str) -> int:
-        """Kullanıcı aynı şeyi yeniden açıkça kaydettirdi: izi kaldır."""
+        """The user explicitly had the same thing saved again: remove the trace."""
         ids = self._forgotten_like(text)
         if ids:
             with self._lock:
@@ -508,11 +513,11 @@ class LongMemory:
         return len(ids)
 
     def migrate_facts(self) -> int:
-        """Eski tek cümlelik bilgileri (facts tablosu) notlara taşı. Tablo silinmez (yedek).
+        """Move the old one-sentence facts (facts table) into notes. The table is not deleted (kept as a backup).
 
-        Taşınan her bilginin kimliği kaydedilir; biri taşınamadıysa (dizin dolu vb.) taşıma "bitti" sayılmaz ve
-        sonraki açılışta yalnız taşınmamış olanlar denenir. Eskiden ilk denemede bitti işaretleniyordu (kalanlar
-        hiç taşınmıyordu); hepsini yeniden taşımak da sonradan düzenlenmiş notların üzerine yazardı."""
+        The ID of each moved fact is recorded. If one could not be moved (e.g. the directory is full), the migration
+        is not counted as "done"; only unmoved ones are retried on the next start. Previously the first attempt was
+        marked done (the rest were never moved); moving everything again would also overwrite notes edited since."""
         if self._meta("notes_migrated"):
             return 0
         try:
@@ -529,7 +534,7 @@ class LongMemory:
                     self.remember(f.text, f.kind,
                                   source="kullanıcı" if src in ("kullanıcı", "araç", "memory.md") else src,
                                   when=f.updated)
-                except Exception:  # noqa: BLE001 - dizin doluysa kalanı sonra
+                except Exception:  # noqa: BLE001 - if the directory is full, the rest is done later
                     failed += 1
                     log.debug("bilgi nota taşınamadı: %s", f.text, exc_info=True)
                     continue
@@ -551,8 +556,8 @@ class LongMemory:
                 self.db.execute("DELETE FROM episodes WHERE ts < ?", (time.time() - self.keep_days * 86400,))
                 self.db.commit()
         with self._lock:
-            # Silinen turların/özetlerin vektörleri kalıyordu: tablo durmadan büyüyor, anlam aramasının ilk sıralarını
-            # artık var olmayan kayıtlar kapıyordu (gerçek eşleşmeler k sınırının dışında kalıyordu).
+            # Vectors of deleted turns/summaries were left behind: the table kept growing and stale records
+            # took the top ranks of semantic search (real matches fell outside the k limit).
             self.db.execute("DELETE FROM vectors WHERE kind = 'episode' AND ref NOT IN (SELECT id FROM episodes)")
             self.db.execute("DELETE FROM vectors WHERE kind = 'summary' AND ref NOT IN (SELECT id FROM summaries)")
             self.db.execute("DELETE FROM vectors WHERE kind = 'fact' AND ref NOT IN (SELECT id FROM facts)")
@@ -572,13 +577,13 @@ class LongMemory:
         return int(self._meta("version") or 0)
 
     def _bump(self) -> None:
-        # Oku-yaz tek kilit altında: iki iş parçacığı aynı sürümü okuyup aynı sayıyı yazınca bir değişiklik
-        # görünmez kalıyordu (sürümü izleyen taraf ikincisini hiç fark etmiyordu).
+        # Read and write under one lock: when two threads read the same version and wrote the same number, one
+        # change stayed invisible (the side watching the version never noticed the second one).
         with self._lock:
             self._meta("version", str(self.version + 1))
 
     def import_markdown(self, path: Path) -> int:
-        """Eski düz hafıza dosyasını (memory.md, "* not  _(tarih)_" satırları) bir kez içeri al."""
+        """Import the old plain memory file once (memory.md, "* not  _(tarih)_" lines, tarih = date)."""
         if self._meta("imported_md") or not path.is_file():
             return 0
         n = 0
@@ -593,7 +598,7 @@ class LongMemory:
         self._meta("imported_md", datetime.now().isoformat(timespec="seconds"))
         return n
 
-    # ------------------------------------------------------------------ bilgiler
+    # ------------------------------------------------------------------ facts
     def facts(self, limit: int | None = None) -> list[Fact]:
         with self._lock:
             rows = self.db.execute("SELECT id, kind, text, created, updated, hits FROM facts "
@@ -602,8 +607,8 @@ class LongMemory:
 
     def remember(self, text: str, kind: str = "fact", source: str = "", cwd: Path | str | None = None,
                  scope: str = "genel", when: float | None = None) -> tuple[str, bool]:
-        """Tek cümlelik bilgiyi not olarak kaydet (eski arayüz: 'bunu hatırla', eski bilgilerin taşınması).
-        Neredeyse aynısını söyleyen not varsa onun yerine geçer. (not adı, yeni_mi) döner."""
+        """Save the one-sentence fact as a note (old interface: 'remember this', migrating old facts).
+        If a note saying almost the same thing exists, it is replaced by that one. Returns (note name, is_new)."""
         from alice.memdir import slugify
 
         text = " ".join(str(text or "").split())
@@ -623,7 +628,7 @@ class LongMemory:
             title = _clip(words.rstrip("."), 60)
         note, new = book.save(name, text, typ, text, title=title,
                               source=source if old is None else (old.source or source), when=when)
-        if source in ("kullanıcı", "araç"):  # konuşmada açıkça yeniden kaydedildi
+        if source in ("kullanıcı", "araç"):  # explicitly saved again in the conversation
             self.unforget(text)
         if source == "kullanıcı":
             self.mark_user_edit()
@@ -631,7 +636,7 @@ class LongMemory:
         return note.name, new
 
     def update(self, key: str | int, text: str, cwd: Path | str | None = None) -> bool:
-        """Notun açıklamasını ve gövdesini tek cümleyle değiştir (eski arayüz)."""
+        """Replace the note's description and body with a single sentence (old interface)."""
         text = " ".join(str(text or "").split())
         b, n = self.find_note(str(key), cwd)
         if n is None or not text:
@@ -641,11 +646,11 @@ class LongMemory:
         return True
 
     def forget(self, key: str | int, cwd: Path | str | None = None) -> Any:
-        """Notu sil (çöpe taşınır). Silinen not ya da None."""
+        """Delete the note (moved to the trash). Returns the deleted note or None."""
         return self.delete_note(str(key), cwd)
 
     def old_role(self) -> dict[str, list[Any]]:
-        """Eski rolden kalan izler: notlar, özetler ve o dönemin cevapları."""
+        """Traces left from the old role: notes, summaries and that period's replies."""
         notes = [n for b in self.all_books() for n in b.scan()
                  if OLD_ROLE_RX.search(f"{n.description}\n{n.body}")]
         with self._lock:
@@ -656,8 +661,9 @@ class LongMemory:
         return {"facts": notes, "summaries": sums, "episodes": eps}
 
     def purge_old_role(self) -> dict[str, int]:
-        """Eski rol izlerini sil: notlar (çöpe) ve özetler gider, konuşmaların sadece eski cevabı silinir
-        (kullanıcının söyledikleri kalır, "geçen hafta ne konuşmuştuk" aramaları bozulmasın)."""
+        """Delete the traces of the old role: notes (to the trash) and summaries go, and in conversations only the old
+        reply is deleted (what the user said stays, so searches like "geçen hafta ne konuşmuştuk" (what did we talk
+        about last week) don't break)."""
         found = self.old_role()
         for n in found["facts"]:
             self.delete_note(n.key)
@@ -667,33 +673,33 @@ class LongMemory:
                 self.db.execute("DELETE FROM vectors WHERE kind = 'summary' AND ref = ?", (s.id,))
             for e in found["episodes"]:
                 self.db.execute("UPDATE episodes SET reply = '' WHERE id = ?", (e.id,))
-                self.db.execute("DELETE FROM vectors WHERE kind = 'episode' AND ref = ?", (e.id,))  # yeniden dizinlensin
+                self.db.execute("DELETE FROM vectors WHERE kind = 'episode' AND ref = ?", (e.id,))  # so it is re-indexed
             self.db.commit()
             self._bump()
         return {k: len(v) for k, v in found.items()}
 
     def search_notes(self, query: str, cwd: Path | str | None = None, limit: int = 8) -> list[Any]:
-        """Notlarda kelime araması (başlık, açıklama ve gövde)."""
+        """Keyword search in notes (title, description and body)."""
         from alice.memdir import keyword_relevant
 
         notes = self.all_notes(cwd) if cwd else [n for b in self.all_books() for n in b.scan()]
         hits = keyword_relevant(query, notes, limit=limit, min_score=0.25)
         q = fold(query).strip()
-        if q and len(q) >= 3:  # birebir geçen ifade (ad, sayı, kısaltma) kelime köküne takılmasın
+        if q and len(q) >= 3:  # exact phrases (name, number, abbreviation) must not be lost to stem matching
             for n in notes:
                 if n not in hits and q in fold(f"{n.name} {n.description} {n.body}"):
                     hits.append(n)
         return hits[:limit]
 
     def forget_matching(self, query: str, cwd: Path | str | None = None) -> tuple[list[Any], list[Any]]:
-        """Sorguya açıkça uyan tek notu sil. Emin olunamazsa hiçbirini silmez, adayları döndürür."""
+        """Delete the single note that clearly matches the query. If unsure, delete none and return the candidates."""
         hits = self.search_notes(query, cwd, limit=5)
         if len(hits) == 1:
             gone = self.delete_note(hits[0].key, cwd)
             return ([gone] if gone else []), hits
         return [], hits
 
-    # ------------------------------------------------------------------ konuşmalar
+    # ------------------------------------------------------------------ conversations
     def record(self, user: str, reply: str, channel: str = "", sid: str = "") -> int | None:
         user = clean_user_text(user)
         reply = (reply or "").strip()
@@ -708,8 +714,9 @@ class LongMemory:
         return int(cur.lastrowid)
 
     def add_reply(self, eid: int, reply: str) -> bool:
-        """Tura sonradan gelen cevabı ekle. Canlı sesli modda araç çağrılınca model önce susup cevabı araçtan sonra
-        ayrı bir turda söylüyor; o cevap eskiden kaydedilmiyordu (kayıtların yarısında cevap boştu)."""
+        """Add a reply that arrives after the turn was recorded. In live voice mode, when a tool is called, the model
+        stays silent first and speaks the reply in a separate turn after the tool; that reply used to go unsaved
+        (half of the records had an empty reply)."""
         reply = (reply or "").strip()
         if not reply:
             return False
@@ -731,18 +738,18 @@ class LongMemory:
                                    (int(n),)).fetchall()
         return [Episode(*r) for r in reversed(rows)]
 
-    # ------------------------------------------------------------------ vektörler
+    # ------------------------------------------------------------------ vectors
     def index_soon(self) -> None:
-        """Vektörü olmayan kayıtları arka planda vektöre çevir (tek iş parçacığı; embedding yoksa hiçbir şey)."""
+        """Turn records lacking a vector into vectors in the background (single thread; no-op without embeddings)."""
         if self.embedder is None or not self.embedder.available or self._index_lock.locked():
             return
         threading.Thread(target=self.index_pending, kwargs={"wait": False}, daemon=True,
                          name="alice-memory-index").start()
 
     def index_pending(self, limit: int = 60, wait: bool = True) -> int:
-        """Vektörü olmayanları vektöre çevir; bu çağrının eklediği sayıyı döndürür. wait: arka planda süren bir
-        indeksleme varsa bitmesini bekle (sonra kalanları yap). Her parti ayrı kaydedilir: kota yarıda dolarsa
-        yapılan iş kaybolmaz; kalanlar kota açılınca kendiliğinden devam eder."""
+        """Turn records without a vector into vectors; returns how many this call added. wait: if an indexing run
+        is already running in the background, wait for it (then do the rest). Each batch is saved separately:
+        if quota runs out midway, the work done is kept; the rest resumes on its own when quota reopens."""
         if self.embedder is None or not self._index_lock.acquire(timeout=30 if wait else 0):
             return 0
         from alice.memvec import BATCH, pack
@@ -763,12 +770,12 @@ class LongMemory:
                 part = todo[i:i + BATCH]
                 try:
                     vecs = self.embedder.embed([t[2][:2000] for t in part])
-                except Exception:  # noqa: BLE001 - embedding opsiyonel; kelime araması çalışmaya devam eder
+                except Exception:  # noqa: BLE001 - embedding is optional; keyword search keeps working
                     left = True
                     break
                 with self._lock:
-                    # Embedding sürerken güncellenen/silinen kayıt eski metnin vektörüyle kaydedilmesin (silinen
-                    # sohbetin turu sahipsiz vektör olarak kalıyordu; add_reply sonrası eski cevabın vektörü yazılıyordu).
+                    # Don't save a record's vector with its old text if the record was updated/deleted while embedding
+                    # (a deleted turn stayed as an orphan vector; after add_reply the old reply's vector was written).
                     rows = [(k, ref, pack(v)) for (k, ref, text), v in zip(part, vecs)
                             if self._embed_text(k, ref) == text]
                     self.db.executemany("INSERT OR REPLACE INTO vectors(kind, ref, vec) VALUES (?, ?, ?)", rows)
@@ -781,7 +788,7 @@ class LongMemory:
         return done
 
     def _embed_text(self, kind: str, ref: int) -> str | None:
-        """Kaydın şu anki vektörlenecek metni (index_pending'deki biçimle aynı); kayıt yoksa None."""
+        """The record's current text to embed (same format as in index_pending); None if the record is gone."""
         if kind == "fact":
             row = self.db.execute("SELECT text FROM facts WHERE id = ?", (ref,)).fetchone()
             return row[0] if row else None
@@ -792,7 +799,7 @@ class LongMemory:
         return f"Kullanıcı: {row[0]}\nALICE: {row[1][:400]}" if row else None
 
     def _index_later(self) -> None:
-        """Birikmiş kayıtlar var (kota doldu ya da çok fazla): kota açılınca devam et."""
+        """Records have piled up (quota exhausted or too many): resume once the quota reopens."""
         if getattr(self, "_index_timer", None) is not None and self._index_timer.is_alive():
             return
         from alice.memvec import RATE_WAIT
@@ -806,7 +813,7 @@ class LongMemory:
         self._index_timer.start()
 
     def _semantic(self, query: str, kinds: list[str], limit: int = 12) -> dict[tuple[str, int], float]:
-        """(tür, id) -> 0..1 anlam benzerliği puanı (embed_min'in altı yok sayılır). Embedding yoksa boş."""
+        """(kind, id) -> 0..1 semantic similarity score (below embed_min is ignored). Empty without embeddings."""
         if self.embedder is None or not self.embedder.available or not kinds:
             return {}
         with self._lock:
@@ -824,7 +831,7 @@ class LongMemory:
         return {ref: 0.3 + 0.7 * (cos - lo) / max(1e-6, 1 - lo)
                 for ref, cos in top(qvec, [((k, r), v) for k, r, v in rows], k=limit, min_score=lo)}
 
-    # ------------------------------------------------------------------ arama
+    # ------------------------------------------------------------------ search
     def search(self, query: str, limit: int = 5, facts: bool = True, episodes: bool = True,
                min_score: float = 0.3, exclude_after: float | None = None, summaries: bool = True) -> list[Hit]:
         clean = clean_user_text(query)
@@ -833,7 +840,7 @@ class LongMemory:
         sem = self._semantic(clean, kinds) if clean.strip() else {}
         if not q and not sem:
             return []
-        frows: list[Any] = []  # eski "facts" tablosu notlara taşındı; notlarda arama: search_notes
+        frows: list[Any] = []  # the old "facts" table moved to notes; searching notes: search_notes
         with self._lock:
             srows = self.db.execute("SELECT id, start, end, channel, text, terms FROM summaries "
                                     "ORDER BY end DESC LIMIT 500").fetchall() if summaries and episodes else []
@@ -850,7 +857,7 @@ class LongMemory:
             matched = [t for t in q if t in d]
             return sum(idf[t] for t in matched) / total if len(matched) >= need and matched else 0.0
 
-        def mix(a: float, b: float) -> float:  # kelime ve anlam puanı: güçlü olan + diğerinden küçük katkı
+        def mix(a: float, b: float) -> float:  # keyword/meaning score: the stronger one + a small share of the other
             return max(a, b) + 0.1 * min(a, b)
 
         hits: list[Hit] = []
@@ -870,19 +877,19 @@ class LongMemory:
         for r, d in zip(erows, docs[off:]):
             if exclude_after is not None and r[1] >= exclude_after:
                 continue
-            # Konuşmalarda tek ortak kelime çoğu zaman tesadüf: kısa sorgu dışında en az iki kelime eşleşsin.
+            # In chats one shared word is often chance: unless the query is short, require two matching words.
             score = mix(kw(d, min(2, len(q))), sem.get(("episode", r[0]), 0.0))
-            score *= 0.6 + 0.4 * math.exp(-(now - r[1]) / 86400 / 60)  # eski konuşma biraz geride kalır
+            score *= 0.6 + 0.4 * math.exp(-(now - r[1]) / 86400 / 60)  # older conversations rank a bit lower
             if score >= min_score + 0.15:
                 hits.append(Hit(score, Episode(*r[:5])))
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:limit]
 
-    # ------------------------------------------------------------------ geçmiş sohbetler (isteyince)
-    # Claude'un conversation_search / recent_chats araçları gibi: eski konuşmalar her mesaja kendiliğinden eklenmez
-    # (yanlış eşleşen bir konuşma modelin kafasını karıştırıyordu); kullanıcı geçmişe değinince model bunlarla bakar.
+    # ------------------------------------------------------------------ past chats (on request)
+    # Like Claude's conversation_search / recent_chats tools: old conversations are not added to every message
+    # automatically (a wrong match confused the model); when the user mentions the past, the model looks them up.
     def sessions(self, after: float | None = None, before: float | None = None, limit: int = 400) -> list[list[Episode]]:
-        """Zaman aralığındaki konuşmalar, session_gap'ten uzun sessizlikle ayrılmış tur grupları (eskiden yeniye)."""
+        """Chats in a time range: groups of turns split by silences longer than session_gap (oldest first)."""
         sql, args = "SELECT id, ts, channel, user, reply FROM episodes WHERE 1=1", []
         if after is not None:
             sql, args = sql + " AND ts >= ?", args + [after]
@@ -900,7 +907,7 @@ class LongMemory:
         return groups
 
     def _session_text(self, group: list[Episode], turns: int = 4, now: float | None = None) -> str:
-        """Bir konuşmanın kısa hâli: özeti varsa özet, ayrıca ilk ve son birkaç tur."""
+        """Short form of a chat: its summary if it has one, plus the first and last few turns."""
         start, end = group[0].ts, group[-1].ts
         with self._lock:
             row = self.db.execute("SELECT text FROM summaries WHERE start <= ? AND end >= ? ORDER BY id DESC LIMIT 1",
@@ -920,14 +927,14 @@ class LongMemory:
                          + [turn(e) for e in last])
 
     def recent_chats(self, n: int = 5, after: float | None = None, before: float | None = None) -> str:
-        """Son n konuşma (ya da verilen zaman aralığındakiler), yeniden eskiye."""
+        """The last n chats (or those in the given time range), newest first."""
         groups = self.sessions(after, before)[-max(1, min(int(n), 20)):]
         now = time.time()
         return "\n\n".join(self._session_text(g, now=now) for g in reversed(groups)) or "bu aralıkta konuşma yok"
 
     def search_chats(self, query: str, limit: int = 5, after: float | None = None,
                      before: float | None = None) -> str:
-        """Konuya göre geçmiş konuşma arama: eşleşen turların bulunduğu konuşmalar (özet + bağlam turları)."""
+        """Search past chats by topic: the chats containing matching turns (summary + context turns)."""
         hits = self.search(query, limit=30, facts=False, min_score=0.2)
         picked: list[tuple[float, float]] = []  # (puan, tur zamanı)
         for h in hits:
@@ -944,7 +951,7 @@ class LongMemory:
             if not group or group[0].id in seen:
                 continue
             seen.add(group[0].id)
-            # Eşleşen tur görünsün: konuşma uzunsa onun etrafındaki turlar.
+            # Show the matching turn: if the chat is long, the turns around it.
             i = min(range(len(group)), key=lambda k: abs(group[k].ts - ts))
             window = group[max(0, i - 2): i + 3]
             text = self._session_text(group, turns=0, now=now).splitlines()
@@ -958,23 +965,23 @@ class LongMemory:
     def recall(self, query: str, exclude_after: float | None = None, cwd: Path | str | None = None,
                surfaced: set[str] | None = None, use_model: bool | None = None,
                recent_tools: tuple[str, ...] = ()) -> str:
-        """Kullanıcının sözüne eklenecek hafıza notu (boş olabilir): bu mesaja gerçekten yarayacak notların tamamı
-        (en fazla 5; bu sohbette zaten gösterilenler tekrar gösterilmez) ve güçlü eşleşen konuşma özetleri. Tek tek
-        eski turlar eklenmez; onları model search_chats / recent_chats ile kendisi bulur."""
+        """Memory note to add to the user's message (may be empty): all notes that will really help this message
+        (at most 5; ones already shown in this chat are skipped) and strongly matching chat summaries. Old turns
+        are not added one by one; the model finds them itself with search_chats / recent_chats."""
         from alice.memdir import select_relevant
 
         clean = clean_user_text(query)
         if not clean.strip():
             return ""
         seen = surfaced if surfaced is not None else set()
-        stamp = lambda n: f"{n.key}@{int(n.modified)}"  # noqa: E731 - not değişince yeniden gösterilsin
+        stamp = lambda n: f"{n.key}@{int(n.modified)}"  # noqa: E731 - shown again when the note changes
         in_profile = self._in_profile.get(str(cwd or ""), set())
         notes = [n for n in self.all_notes(cwd) if stamp(n) not in seen and stamp(n) not in in_profile]
         use = self.recall_model if use_model is None else use_model
         chooser = self.extractor if use and self.extractor is not None else None
         if chooser is not None and notes and not _worth_asking(clean, notes):
-            # "selam naber", "hava nasıl" gibi kısa mesajlar: hiçbir notla kelime ortaklığı yoksa model çağrısı (her
-            # mesajın başında ~1 sn bekleme) boşuna; zaten hiçbir not seçilmiyordu.
+            # Short messages like "selam naber" or "hava nasıl": if no note shares a word with them, the model call
+            # (a ~1 s wait at the start of every message) is wasted; no note was being picked anyway.
             chooser = None
         picked = select_relevant(clean, notes, chooser, limit=5, recent_tools=recent_tools) if notes else []
         sums = [h for h in self.search(clean, limit=4, facts=False, exclude_after=exclude_after)
@@ -991,7 +998,7 @@ class LongMemory:
         return ("[hafızadan — bu mesajla ilgili olabilecek notların; işine yararsa kullan, hafızadan okuduğunu "
                 f"söyleme:\n{body}]")
 
-    # ------------------------------------------------------------------ özetler ve takipler
+    # ------------------------------------------------------------------ summaries and follow-ups
     def summaries(self, n: int = 5, within_days: float | None = None) -> list[Summary]:
         sql = "SELECT id, start, end, channel, text FROM summaries"
         args: tuple = ()
@@ -1018,7 +1025,7 @@ class LongMemory:
             raise ValueError("boş takip")
         kind = kind if kind in FOLLOWUP_KINDS else "ask"
         with self._lock:
-            for f in self.followups():  # aynı takip ikinci kez eklenmesin
+            for f in self.followups():  # don't add the same follow-up a second time
                 if f.kind == kind and set(terms(f.text)) == set(terms(text)):
                     return f.id
             cur = self.db.execute("INSERT INTO followups(created, due, kind, text) VALUES (?, ?, ?, ?)",
@@ -1036,10 +1043,10 @@ class LongMemory:
         return [Followup(*r) for r in rows]
 
     def due_followups(self, now: float | None = None, prune: bool = True) -> list[Followup]:
-        """Bugün ya da daha önce günü gelmiş takipler + yarım kalan işler. Çok eskiyenler kendiliğinden düşer
-        (sınavdan 4 gün sonra "nasıl geçti" sorulmaz; iki hafta önce yarım kalan iş artık güncel değil).
-        prune=False: eskiyenler yalnız listeden çıkar, kalıcı olarak kapatılmaz (ileri bir an için bakarken: gece
-        raporu "yarın"a bakarken takipleri bir buçuk gün erken kapatıyordu)."""
+        """Follow-ups due today or earlier, plus unfinished tasks. Very old ones drop off on their own
+        ("how did it go?" is not asked 4 days after an exam; a task left unfinished two weeks ago is stale).
+        prune=False: old ones are only dropped from the list, not permanently closed (used when looking ahead:
+        the nightly report, when looking at "tomorrow", was closing follow-ups a day and a half early)."""
         now = now or time.time()
         end_of_day = datetime.fromtimestamp(now).replace(hour=23, minute=59, second=59).timestamp()
         out, stale = [], []
@@ -1068,14 +1075,14 @@ class LongMemory:
             self._bump()
         return Followup(*row)
 
-    # ------------------------------------------------------------------ özetleme
-    PENDING_PAGE = 400  # bir geçişte okunan en çok tur
+    # ------------------------------------------------------------------ summarization
+    PENDING_PAGE = 400  # most turns read in one pass
 
     def pending_sessions(self, now: float | None = None, force: bool = False) -> list[list[Episode]]:
-        """Henüz özetlenmemiş, bitmiş konuşmalar (aralarında session_gap'ten uzun sessizlik olan tur grupları)."""
+        """Finished conversations not yet summarized (turn groups; a silence longer than session_gap splits them)."""
         now = now or time.time()
         raw = self._meta("digested_until")
-        since = float(raw) if raw else now - 3 * 86400  # ilk açılışta bütün geçmiş değil, son üç gün
+        since = float(raw) if raw else now - 3 * 86400  # on first run: the last three days, not all history
         with self._lock:
             rows = self.db.execute("SELECT id, ts, channel, user, reply FROM episodes WHERE ts > ? "
                                    "ORDER BY ts LIMIT ?", (since, self.PENDING_PAGE)).fetchall()
@@ -1087,17 +1094,18 @@ class LongMemory:
             else:
                 groups.append([e])
         if len(rows) >= self.PENDING_PAGE:
-            # Sayfa doldu: son grup sayfa sınırında kesilmiş olabilir (devamı sonraki sayfada). Özetlenirse bir
-            # konuşma iki ayrı özete bölünüyordu; sonraki geçişte bütün olarak gelir. Tek grup varsa (sayfadan
-            # uzun tek konuşma) başka yol yok: ilerlemek için bu parça özetlenir.
+            # Page is full: the last group may have been cut at the page boundary (the rest is on the next page).
+            # If it were summarized, one conversation would be split into two summaries; on the next pass it comes
+            # whole. If there is only one group (a single conversation longer than a page) there is no other way:
+            # this part is summarized so that we make progress.
             if len(groups) > 1:
                 groups.pop()
         elif groups and not force and now - groups[-1][-1].ts < self.session_gap:
-            groups.pop()  # konuşma sürüyor
+            groups.pop()  # conversation still going
         return groups
 
     def maybe_digest(self) -> None:
-        """Ucuz kontrol (dakikada bir): bitmiş ve özetlenmemiş konuşma varsa arka planda özetle."""
+        """Cheap check (once a minute): summarize any finished, unsummarized conversation in the background."""
         if not self.digest_enabled or self.extractor is None or self._digest_lock.locked():
             return
         now = time.monotonic()
@@ -1109,18 +1117,19 @@ class LongMemory:
         threading.Thread(target=self.digest, daemon=True, name="alice-memory-digest").start()
 
     def digest(self, force: bool = False, max_sessions: int = 3) -> int:
-        """Bitmiş konuşmaları özetle; kalıcı bilgileri ve takipleri çıkar. Özetlenen konuşma sayısını döndürür."""
+        """Summarize finished conversations; extract lasting facts and follow-ups. Returns the count summarized."""
         if self.extractor is None or not self._digest_lock.acquire(blocking=False):
             return 0
         done = 0
         try:
             for group in self.pending_sessions(force=force)[:max_sessions]:
-                if sum(len(e.user) for e in group) >= 40:  # "saat kaç" gibi tek kısa tur özetlenmez
+                if sum(len(e.user) for e in group) >= 40:  # a single short turn like "saat kaç" is not summarized
                     try:
                         self._digest_one(group)
                     except _BadDigest:
-                        # Model cevap verdi ama kullanılamaz: aynı konuşmada hep böyle olursa sonraki bütün
-                        # konuşmalar sonsuza dek özetsiz kalıyordu. Birkaç denemeden sonra bu konuşma atlanır.
+                        # The model answered, but the answer is unusable. If this kept happening in the same
+                        # conversation, all later conversations would stay unsummarized forever. After a few
+                        # tries, this conversation is skipped.
                         key = repr(group[-1].ts)
                         fails = (int(self._meta("digest_bad_count") or 0) + 1
                                  if self._meta("digest_bad_group") == key else 1)
@@ -1130,7 +1139,7 @@ class LongMemory:
                             self._meta("digest_fail_until", repr(time.time() + 900))
                             break
                         log.debug("konuşma özetlenemedi, atlanıyor (%s deneme)", fails)
-                    except Exception:  # noqa: BLE001 - model yok/kota: sonra tekrar denenir
+                    except Exception:  # noqa: BLE001 - no model or quota: retried later
                         self._meta("digest_fail_until", repr(time.time() + 900))
                         break
                     else:
@@ -1142,7 +1151,7 @@ class LongMemory:
 
     def _digest_one(self, group: list[Episode]) -> None:
         lines, used = [], 0
-        for e in reversed(group):  # uzun konuşmada son kısım önemli: sondan geriye 6000 karaktere kadar
+        for e in reversed(group):  # in a long conversation the end matters most: go back up to 6000 characters
             line = f"{datetime.fromtimestamp(e.ts):%H:%M} Kullanıcı: {e.user[:600]}\nALICE: {e.reply[:400]}"
             if used + len(line) > 6000:
                 break
@@ -1155,7 +1164,8 @@ class LongMemory:
         data = parse_json(self.extractor(prompt) if self.extractor else "")
         if not data:
             raise _BadDigest("özet cevabı boş")
-        # Kalıcı notları özet değil, tur sonu çıkarımı ve Dream yazar (Dream bu özetleri okuyup damıtır).
+        # Durable notes are not written from the summary but by end-of-turn extraction and Dream
+        # (Dream reads these summaries and distills them).
         summary = strip_filler(data.get("summary") or "") if isinstance(data.get("summary"), str) else ""
         if summary:
             channels = ", ".join(dict.fromkeys(e.channel for e in group if e.channel))
@@ -1177,10 +1187,10 @@ class LongMemory:
             except ValueError:
                 continue
 
-    # ------------------------------------------------------------------ istem
+    # ------------------------------------------------------------------ prompt
     def profile(self, chars: int | None = None, recent: int = 3, cwd: Path | str | None = None) -> str:
-        """Sistem istemine giren blok: hafıza kuralları, MEMORY.md dizin(ler)i, her zaman geçerli kurallar
-        (feedback notları) ve kullanıcıyı tanıtan notlar, son günlerin özeti, günü gelen takipler, son konuşmalar."""
+        """Block for the system prompt: memory rules, MEMORY.md index(es), always-valid rules (feedback notes),
+        notes introducing the user, a summary of recent days, follow-ups due today, and recent conversations."""
         from alice.memdir import MEMORY_RULES, TYPE_TR
 
         chars = chars or self.profile_chars
@@ -1195,14 +1205,15 @@ class LongMemory:
             if b.near_limit():
                 parts.append(f"(Not: {b.scope} dizini sınıra yaklaştı; benzer notları birleştir ya da memory "
                              "action=dream ile toparla.)")
-        # Davranış kuralları ve kullanıcıyı tanıtan notlar kısa olur ve her konuşmada gerekir: tamamı istemde. Diğer
-        # notlar dizinden okunur ya da ilgili olduklarında mesaja kendiliğinden eklenir.
+        # Behavior rules and notes that introduce the user are short and needed in every conversation, so they
+        # go into the prompt in full. Other notes are read from the index, or added to the message automatically
+        # when relevant.
         always, used = [], 0
-        shown: set[str] = set()  # tamamı istemde olan notlar: hatırlama bunları mesaja bir daha eklemesin
+        shown: set[str] = set()  # notes shown in full in the prompt; recall must not repeat them
         for typ in ("feedback", "user"):
             for n in sorted((n for b in books for n in b.scan() if n.type == typ), key=lambda n: -n.modified):
                 if " ".join(n.body.split()) == " ".join(n.description.split()):
-                    continue  # tek cümlelik not: dizin satırında zaten tamamı var
+                    continue  # one-sentence note: the full text is already on its index line
                 block = n.render(limit=700)
                 if used + len(block) > chars:
                     continue
@@ -1213,8 +1224,9 @@ class LongMemory:
         if always:
             parts.append(f"## Notların tamamı: {TYPE_TR['feedback']} ve {TYPE_TR['user']} (her konuşmada geçerli)\n"
                          + "\n\n".join(always))
-        # Son turlar yalnız yakın zamandansa girer: dünkü sohbetin son cümleleri yeni açılan sohbete "kaldığımız yer"
-        # gibi giriyor, ALICE kullanıcının yeni (alakasız) mesajını dünkü konuşmanın devamı sanıyordu.
+        # Recent turns are included only if they are recent: yesterday's last sentences were slipping into a new
+        # chat as "kaldığımız yer" (where we left off), and ALICE took the user's new, unrelated message for a
+        # continuation of yesterday's conversation.
         cutoff = time.time() - RECENT_TURNS_HOURS * 3600
         eps = [e for e in self.recent(recent) if e.ts >= cutoff]
         sums = self.summaries(4, within_days=10)
@@ -1257,13 +1269,14 @@ class LongMemory:
             lines += ["", "# Son konuşmalar"] + [f"* {e.line()}" for e in eps]
         return "\n".join(lines).strip() or "(hafıza boş)"
 
-    # ------------------------------------------------------------------ öğrenme
+    # ------------------------------------------------------------------ learning
     def learn(self, user: str, reply: str = "", background: bool = True, cwd: Path | str | None = None,
               wrote: bool = False) -> None:
-        """Konuşma turundan kalıcı not çıkar. Açık "hatırla" isteği hemen kaydedilir; diğerleri arka planda modelle.
-        wrote: ALICE bu turda hafızaya kendisi yazdı; o zaman arka plandaki çıkarım aynı şeyi bir daha yazmasın."""
+        """Extract durable notes from a conversation turn. An explicit "hatırla" (remember) request is saved
+        right away; the others are handled by the model in the background.
+        wrote: ALICE wrote to memory itself this turn, so background extraction must not write it again."""
         user = clean_user_text(user)
-        self.maybe_digest()  # önceki (bitmiş) konuşma henüz özetlenmediyse şimdi arka planda
+        self.maybe_digest()  # if the previous finished conversation is not summarized yet, do it now in background
         if wrote:
             with self._turns_lock:
                 self._turns_since_extract = 0
@@ -1273,14 +1286,14 @@ class LongMemory:
         if note:
             try:
                 self.remember(note, "note", source="kullanıcı", cwd=cwd)
-            except Exception:  # noqa: BLE001 - dizin dolu: model memory aracıyla toparlayıp kaydeder
+            except Exception:  # noqa: BLE001 - directory full: the model tidies up and saves via the memory tool
                 log.debug("açık not kaydedilemedi", exc_info=True)
             self._advance_cursor()
             return
         if self.extractor is None or not self.auto_extract:
             return
-        # Oku-artır-sıfırla tek kilit altında: kilitsizken eşzamanlı turlarda artışlar kayboluyor ya da aynı eşikte
-        # iki çıkarım birden başlıyordu.
+        # Read-increment-reset under a single lock: without it, concurrent turns lost increments, or two
+        # extractions started at the same threshold at once.
         with self._turns_lock:
             self._turns_since_extract += 1
             if not (has_signal(user) or has_feedback(user) or self._turns_since_extract >= self.extract_every):
@@ -1292,13 +1305,13 @@ class LongMemory:
             self._extract(cwd)
 
     def _advance_cursor(self) -> None:
-        """Buraya kadarki turlar not için incelendi (ya da ALICE kendisi yazdı): çıkarım bir daha bakmasın."""
+        """Turns up to here were reviewed for notes (or ALICE wrote them itself): don't look at them again."""
         with self._lock:
             row = self.db.execute("SELECT MAX(id) FROM episodes").fetchone()
         self._meta("notes_cursor", str(int(row[0] or 0)))
 
     def _recent_turns(self, n: int = 8) -> list[Episode]:
-        """İmleçten sonraki (en fazla son 3 saatin) turları, eskiden yeniye."""
+        """Turns after the cursor (at most from the last 3 hours), oldest first."""
         after = int(float(self._meta("notes_cursor") or 0))
         with self._lock:
             rows = self.db.execute("SELECT id, ts, channel, user, reply FROM episodes WHERE id > ? AND ts > ? "
@@ -1306,7 +1319,7 @@ class LongMemory:
         return [Episode(*r) for r in reversed(rows)]
 
     def _extract(self, cwd: Path | str | None = None) -> list[str]:
-        """Son turlara bakıp kalıcı not yaz/güncelle/sil (yalnız hafıza notlarına dokunur)."""
+        """Look at recent turns and write, update or delete durable notes (touches only memory notes)."""
         from alice.memdir import EXTRACT_PROMPT, MEMORY_RULES, keyword_relevant, project_root
 
         if not self._learn_lock.acquire(timeout=60):
@@ -1333,7 +1346,7 @@ class LongMemory:
             if done:
                 log.info("hafıza: %s", ", ".join(done))
             return done
-        except Exception:  # noqa: BLE001 - öğrenme hatası konuşmayı etkilemesin
+        except Exception:  # noqa: BLE001 - a learning error must not affect the conversation
             log.debug("konuşmadan not çıkarılamadı", exc_info=True)
             return []
         finally:
@@ -1341,8 +1354,8 @@ class LongMemory:
 
     def apply_notes(self, data: dict[str, Any], cwd: Path | str | None = None, source: str = "otomatik",
                     max_save: int = 3, max_delete: int = 2, book: Any = None, protect: bool = True) -> list[str]:
-        """Modelin {"save": [...], "delete": [...]} cevabını uygula. Kullanıcının açıkça istediği notlar (source
-        kullanıcı) silinmez; tek seferde en fazla max_delete not silinir."""
+        """Apply the model's {"save": [...], "delete": [...]} answer. Notes the user explicitly asked for (source
+        "kullanıcı" = user) are not deleted; at most max_delete notes are deleted at once."""
         from alice.memdir import TYPES, MemoryFull
 
         done: list[str] = []
@@ -1354,14 +1367,14 @@ class LongMemory:
             typ = str(s.get("type") or "")
             if typ not in TYPES or not (content or desc) or len(content) > 6000:
                 continue
-            if typ == "user" and ephemeral(desc):  # yol, deneme, tek seferlik iş: kullanıcıya dair bilgi değil
+            if typ == "user" and ephemeral(desc):  # a path, a test or a one-off task: not info about the user
                 continue
             try:
                 target = book or self.book(str(s.get("scope") or "genel"), cwd)
             except ValueError:
                 target = self.notes
-            # Kaydedilecek adla aynı ad: ad boşken get("") "not" adlı başka bir notu buluyordu (silinmiş not kontrolü
-            # atlanıyor, kaynağı o nottan alınıyordu).
+            # Same name as the note being saved: with an empty name, get("") found another note called "not"
+            # (the deleted-note check was skipped and the source was taken from that note).
             key = str(s.get("name") or s.get("title") or desc)
             old = target.get(key)
             if old is None and source in ("otomatik", "dream") and \
@@ -1392,9 +1405,9 @@ class LongMemory:
 
     # ------------------------------------------------------------------ Dream
     def maybe_dream(self) -> bool:
-        """Ucuz kontrol (çekirdek dakikada bir çağırır): son Dream'den beri dream_hours geçtiyse ve en az
-        dream_sessions konuşma biriktiyse hafızayı toparla. Kapı sırası: zaman (dosya zamanı) -> 10 dakikada bir
-        konuşma sayımı -> kilit."""
+        """Cheap check (the core calls it every minute): if dream_hours passed since the last Dream and at least
+        dream_sessions conversations have piled up, consolidate memory. Gate order: time (file timestamp) ->
+        conversation count every 10 minutes -> lock."""
         if not self.dream_enabled or (self.synthesizer is None and self.extractor is None):
             return False
         last = self.notes.last_dream()
@@ -1403,17 +1416,17 @@ class LongMemory:
         if self._last_dream_scan is not None and time.monotonic() - self._last_dream_scan < 600:
             return False
         if time.monotonic() < getattr(self, "_dream_retry_at", 0.0):
-            return False  # son Dream'ler başarısız oldu: güçlü modeli 10 dakikada bir boşuna çağırma
+            return False  # the last Dreams failed: don't pointlessly call the strong model every 10 minutes
         self._last_dream_scan = time.monotonic()
         groups = self.sessions(after=last or time.time() - 7 * 86400)
         if groups and time.time() - groups[-1][-1].ts < self.session_gap:
-            groups = groups[:-1]  # süren konuşma sayılmaz
+            groups = groups[:-1]  # an ongoing conversation is not counted
         if len(groups) < self.dream_sessions:
             return False
         report = self.dream()
         if any("toparlanamadı" in r for r in report):
-            # Başarısız Dream zaman kapısını geri sarıyor (bir sonraki fırsatta tekrar denensin diye); model sürekli
-            # hata veriyorsa bu her 10 dakikada bir güçlü model çağrısı demekti. Art arda hatada bekleme katlanır.
+            # A failed Dream rolls the time gate back (so it is retried at the next chance); if the model keeps
+            # failing, that would mean a strong-model call every 10 minutes. Waits compound on consecutive failures.
             self._dream_fails = getattr(self, "_dream_fails", 0) + 1
             self._dream_retry_at = time.monotonic() + min(3600.0 * 2 ** (self._dream_fails - 1), 24 * 3600.0)
         else:
@@ -1421,8 +1434,8 @@ class LongMemory:
         return True
 
     def dream(self, force: bool = False, cwd: Path | str | None = None) -> list[str]:
-        """Hafızanın üstünden geç: tekrarları birleştir, eskiyeni düzelt, göreli tarihleri mutlak yap, son
-        konuşmalardan kalıcı olanı ekle, dizini toparla. Yapılanları döndürür. Önce yedek alınır."""
+        """Go over the memory: merge duplicates, correct outdated entries, make relative dates absolute, add what
+        is lasting from recent conversations, tidy the index. Returns what was done. A backup is taken first."""
         from alice.memdir import DREAM_PROMPT, MEMORY_RULES, MemoryFull
 
         if not self._dream_lock.acquire(blocking=False):
@@ -1441,7 +1454,7 @@ class LongMemory:
                 try:
                     report += self._dream_book(b, prior, DREAM_PROMPT, MEMORY_RULES, MemoryFull)
                     ok = True
-                except Exception as e:  # noqa: BLE001 - model yok/kota/bozuk cevap: zaman kapısı yine açık kalsın
+                except Exception as e:  # noqa: BLE001 - no model/quota/bad reply: keep the time gate open
                     log.debug("Dream başarısız", exc_info=True)
                     report.append(f"{b.scope}: toparlanamadı ({str(e)[:120]})")
                 finally:
@@ -1504,7 +1517,7 @@ class LongMemory:
             done.append(f"yedek: {backup.name}")
         return [f"{b.scope}: {x}" for x in done]
 
-    # Eski adlar (çekirdek ve arayüz bunlarla çağırıyordu).
+    # Old names (the core and the UI called these).
     def maybe_consolidate(self, every_hours: float | None = None) -> bool:
         return self.maybe_dream()
 
@@ -1513,11 +1526,13 @@ class LongMemory:
 
     def forget_session(self, sid: str, users: list[str] | None = None, start: float | None = None,
                        end: float | None = None) -> dict[str, int]:
-        """Silinen sohbetin hafızadaki izleri: turları (vektörleriyle) ve yalnız o turları kapsayan özetler.
+        """Traces of a deleted conversation in memory: its turns (with their vectors) and only the summaries that
+        cover nothing but those turns.
 
-        Sohbet kimliğiyle kaydedilen turlar kimlikten bulunur. Kimlik eklenmeden önceki eski turlar için sohbetin
-        zaman aralığı (start..end) ve kullanıcının yazdıkları eşleştirilir; başka sohbetin turu silinmesin diye
-        ikisi birden tutmalı. Sohbet silindiği hâlde ALICE onu "Son konuşmalar"dan hatırlamaya devam ediyordu."""
+        Turns saved with the conversation id are found by that id. For older turns from before ids were added, the
+        conversation's time range (start..end) and the user's messages are matched; both must hold, so that another
+        conversation's turn is not deleted. Even after the conversation was deleted, ALICE kept recalling it from
+        "Son konuşmalar" (Recent conversations)."""
         ids: set[int] = set()
         with self._lock:
             if sid:
@@ -1534,7 +1549,7 @@ class LongMemory:
             lo, hi = self.db.execute(f"SELECT MIN(ts), MAX(ts) FROM episodes WHERE id IN ({marks})", tuple(ids)).fetchone()
             self.db.execute(f"DELETE FROM episodes WHERE id IN ({marks})", tuple(ids))
             self.db.execute(f"DELETE FROM vectors WHERE kind = 'episode' AND ref IN ({marks})", tuple(ids))
-            # Özet bir konuşmanın tamamını anlatır: aralığında başka tur kalmadıysa o sohbetindir, gider.
+            # A summary covers a whole conversation; if no other turn is left in its range, it goes too.
             gone_sums = []
             for s_id, s_start, s_end in self.db.execute("SELECT id, start, end FROM summaries WHERE end >= ? AND "
                                                         "start <= ?", (lo - 1, hi + 1)).fetchall():
@@ -1550,7 +1565,7 @@ class LongMemory:
         return {"episodes": len(ids), "summaries": len(gone_sums)}
 
     def forget_history(self) -> dict[str, int]:
-        """Bütün konuşma geçmişi (turlar, özetler, vektörleri). Notlar ve takipler kalır."""
+        """The whole conversation history (turns, summaries, vectors). Notes and follow-ups stay."""
         with self._lock:
             n_eps = self.db.execute("DELETE FROM episodes").rowcount
             n_sums = self.db.execute("DELETE FROM summaries").rowcount
@@ -1578,13 +1593,13 @@ class LongMemory:
         return bool(cur.rowcount)
 
     def _synth(self, prompt: str) -> str:
-        """Dream: güçlü model; o yoksa ya da hata verirse hızlı model."""
+        """Dream: the strong model; if it is missing or errors, the fast model."""
         if self.synthesizer is not None:
             try:
                 out = self.synthesizer(prompt)
                 if parse_json(out):
                     return out
-            except Exception:  # noqa: BLE001 - beyin zinciri düşükse hızlı modelle dene
+            except Exception:  # noqa: BLE001 - if the brain chain fails, try the fast model
                 log.debug("güçlü model toparlayamadı", exc_info=True)
         return self.extractor(prompt) if self.extractor else ""
 
@@ -1595,7 +1610,7 @@ class LongMemory:
 
 
 def _scratch_dir() -> Path:
-    """Geçici (":memory:") hafızanın notları: ALICE evinin altında (testlerde her testin kendi geçici evi)."""
+    """Notes of the temporary (":memory:") memory: under the ALICE home (tests each get their own temp home)."""
     d = alice_home() / "tmp"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -1614,8 +1629,8 @@ def project_label(cwd: Path | str | None) -> str:
     return root.name if root else "?"
 
 
-# Konuşma özeti: konuşma kaydının (günlüğün) kendisi. Kalıcı notlar buradan değil, tur sonu çıkarımından ve Dream'den
-# gelir; Dream bu özetleri okuyup birkaç konuşmada tekrar edenleri nota damıtır.
+# Conversation summary: the conversation log (journal) itself. Lasting notes do not come from here but from the
+# end-of-turn extraction and Dream. Dream reads these and distills what recurs in several conversations into notes.
 DIGEST_PROMPT = """You keep the conversation log of ALICE, a personal assistant (like Jarvis) for one user. Below is \
 one finished conversation (it started {date}). Produce:
 1. "summary": 1-3 short Turkish sentences: what was talked about, what got done or decided, what is left. Concrete \
@@ -1639,8 +1654,8 @@ Conversation:
 {transcript}"""
 
 
-# Özet modelinin her özete eklediği boş cümleler ("Hiçbir işlem tamamlanmadı veya karar alınmadı."): aramayı ve
-# profili dolduruyor, bir şey söylemiyordu.
+# Filler sentences the summary model adds to every summary ("Hiçbir işlem tamamlanmadı veya karar alınmadı."):
+# they padded search and the profile but said nothing.
 _FILLER_SENTENCE = re.compile(
     r"[^.!?;]*\b(?:hiçbir|herhangi bir) (?:işlem|karar|iş|eylem|şey)\w*[^.!?;]*?(?:yapılmadı|alınmadı|gerçekleş\w*|"
     r"tamamlanmadı|kalmadı|yok)\w*[^.!?;]*[.!?;]?|[^.!?;]*\bdevam eden (?:bir )?(?:iş|konu) (?:kalmadı|yok)[^.!?;]*[.!?;]?|"
@@ -1653,7 +1668,7 @@ def strip_filler(text: str) -> str:
 
 
 def _parse_day(value: Any) -> float | None:
-    """'2026-10-23' -> o günün sabahı 09:00 (yerel saat); geçersizse None."""
+    """'2026-10-23' -> 09:00 (local time) on that day; None if invalid."""
     if not isinstance(value, str):
         return None
     try:
@@ -1663,7 +1678,7 @@ def _parse_day(value: Any) -> float | None:
 
 
 def _day_start(value: Any) -> float | None:
-    """'2026-10-23' -> o günün başı (00:00, yerel saat); boş ya da geçersizse None."""
+    """'2026-10-23' -> start of that day (00:00, local time); None if empty or invalid."""
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -1685,7 +1700,7 @@ def parse_json(raw: str) -> dict[str, Any]:
 
 
 def _worth_asking(text: str, notes: list[Any]) -> bool:
-    """Not seçimini modele sormaya değer mi: mesajda en az 3 anlamlı kelime var ya da bir notla ortak kelime var."""
+    """Worth asking the model about note selection? 3+ meaningful words, or a word shared with a note."""
     q = set(terms(text))
     if len(q) >= 3:
         return True
@@ -1698,7 +1713,7 @@ def _worth_asking(text: str, notes: list[Any]) -> bool:
 
 
 def make_extractor(options: dict[str, Any], router, role: str | None = None) -> Callable[[str], str] | None:
-    """Bilgi çıkarımı için mevcut ücretsiz model zincirini (varsayılan "fast" rolü) kullanan fonksiyon."""
+    """Function using the existing free model chain (default "fast" role) for information extraction."""
     if router is None or not options.get("auto_extract", True):
         return None
     role = role or str(options.get("extract_role", "fast"))
@@ -1707,7 +1722,7 @@ def make_extractor(options: dict[str, Any], router, role: str | None = None) -> 
         msgs = [{"role": "user", "content": prompt}]
         try:
             res = router.chat(role, msgs, temperature=0, max_tokens=1600, response_format={"type": "json_object"})
-        except Exception:  # noqa: BLE001 - bazı modeller response_format'ı reddediyor
+        except Exception:  # noqa: BLE001 - some models reject response_format
             res = router.chat(role, msgs, temperature=0, max_tokens=1600)
         return res.message.get("content") or ""
 
@@ -1719,7 +1734,7 @@ _shared_lock = threading.Lock()
 
 
 def shared_memory(cfg=None, router=None) -> LongMemory | None:
-    """Süreç başına tek hafıza nesnesi (araç, ajan ve Live aynı bağlantıyı kullanır)."""
+    """One memory object per process (the tool, the agent and Live share the same connection)."""
     key = str(alice_home())
     with _shared_lock:
         mem = _shared.get(key)
@@ -1736,10 +1751,10 @@ def shared_memory(cfg=None, router=None) -> LongMemory | None:
 
 
 def attach_memory(agent, channel: str) -> Any:
-    """Etkileşimli bir ajana hafızayı bağla: profil sistem istemine girer, her tur kaydedilir ve öğrenilir."""
+    """Attach memory to an interactive agent: profile enters the system prompt, every turn is recorded and learned."""
     try:
         mem = shared_memory(agent.config, agent.router)
-    except Exception:  # noqa: BLE001 - bozuk hafıza dosyası ALICE'i açılmaz yapmasın
+    except Exception:  # noqa: BLE001 - a corrupted memory file must not stop ALICE from starting
         mem = None
     agent.memory, agent.memory_channel = mem, channel
     if mem is not None:

@@ -1,4 +1,4 @@
-"""Dışa dönük eylemler (SEND): başkasına giden mesaj auto modda da sorulur, plan modda reddedilir."""
+"""Outward actions (SEND): a message sent to someone else is asked about even in auto mode, rejected in plan mode."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def test_confirm_outward_kapatilabilir(workdir):
     cfg = make_config({"brain": ["a:m"]}, confirm_outward=False)
     c = ToolContext(cwd=workdir, config=cfg)
     assert Permissions("auto").decide(Sender(), {}, c) == "allow"
-    assert Permissions("plan").decide(Sender(), {}, c) == "deny"  # plan modu yine de dokunmaz
+    assert Permissions("plan").decide(Sender(), {}, c) == "deny"  # plan mode still does not touch it
 
 
 def test_discord_mesaj_gondermek_send_spotify_calmak_degil(ctx):
@@ -48,7 +48,7 @@ def test_discord_mesaj_gondermek_send_spotify_calmak_degil(ctx):
     discord, spotify = ConnectTool(ms["discord"]), ConnectTool(ms["spotify"])
     assert discord.risk_for({"action": "send"}) == SEND
     assert discord.risk_for({"action": "messages"}) == "network"
-    assert spotify.risk_for({"action": "play"}) == "write"   # kendi çalarını kontrol: başkasına gitmiyor
+    assert spotify.risk_for({"action": "play"}) == "write"   # controlling my own player: nothing goes to someone else
     assert Permissions("auto").decide(discord, {"action": "send"}, ctx) == "ask"
     assert Permissions("auto").decide(spotify, {"action": "play"}, ctx) == "allow"
 
@@ -56,7 +56,7 @@ def test_discord_mesaj_gondermek_send_spotify_calmak_degil(ctx):
 def test_whatsapp_gonder_send_okumak_degil(ctx):
     t = AppTool()
     assert t.risk_for({"action": "flow", "name": "whatsapp", "flow": "send"}) == SEND
-    assert t.risk_for({"action": "flow", "name": "wp", "flow": "send"}) == SEND   # takma ad da
+    assert t.risk_for({"action": "flow", "name": "wp", "flow": "send"}) == SEND   # alias too
     assert t.risk_for({"action": "flow", "name": "whatsapp", "flow": "read"}) == "computer"
     assert t.risk_for({"action": "flow", "name": "gmail", "flow": "compose"}) == SEND
     assert t.risk_for({"action": "flow", "name": "instagram", "flow": "dm"}) == SEND
@@ -64,7 +64,7 @@ def test_whatsapp_gonder_send_okumak_degil(ctx):
 
 
 def test_gozetimsiz_ajan_mesaj_gonderemez(ctx):
-    """Arka plan görevi (kullanıcı başında değil): soru soramaz, SEND reddedilir."""
+    """Background task (user not present): cannot ask questions, so SEND is rejected."""
     from alice.agent import NullUI
 
     assert NullUI(approve="n").ask_permission("discord", "mesaj", SEND) == "n"

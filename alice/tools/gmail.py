@@ -1,18 +1,18 @@
-"""Gmail: birden fazla hesap (kişisel, okul, iş...). Okuma, arama, taslak, gönderme, okundu işaretleme.
+"""Gmail: multiple accounts (personal, school, work...). Read, search, draft, send, mark as read.
 
-Kurulum (Google Takvim'le aynı OAuth istemcisi kullanılır):
-  1) console.cloud.google.com → projende "Gmail API"yi etkinleştir (Calendar için açtığın proje olabilir)
-  2) OAuth izin ekranında kendini test kullanıcısı yap; Desktop app türünde OAuth client
+Setup (uses the same OAuth client as Google Calendar):
+  1) console.cloud.google.com → enable "Gmail API" in your project (the one you opened for Calendar may be fine)
+  2) On the OAuth consent screen, add yourself as a test user; create an OAuth client of type Desktop app
   3) ~/.alice/.env: GOOGLE_CLIENT_ID=..., GOOGLE_CLIENT_SECRET=...
-  4) alice connect gmail --account kisisel      (tarayıcıda o hesabı seç)
-     alice connect gmail --account okul         (ikinci hesap: tarayıcıda diğer hesabı seç)
-     alice connect gmail                        (bağlı hesapları listele)
+  4) alice connect gmail --account kisisel      (pick that account in the browser)
+     alice connect gmail --account okul         (second account: pick the other account in the browser)
+     alice connect gmail                        (list connected accounts)
      alice connect gmail --account okul --logout
 
-Token'lar ~/.alice/connect.json'da "gmail:<hesap>" adıyla durur. Gönderme her zaman onay ister (send riski);
-e-posta içeriği "güvenilmeyen veri" sayılır (bkz. alice/guard.py). config.toml:
+Tokens are stored in ~/.alice/connect.json as "gmail:<account>". Sending always asks for confirmation (send risk);
+e-mail content counts as "untrusted data" (see alice/guard.py). config.toml:
   [gmail]
-  notify = true          # yeni önemli e-posta gelince bildirim (çekirdek çalışırken, 10 dk'da bir)
+  notify = true          # notify when a new important e-mail arrives (while the core runs, every 10 min)
   notify_query = "is:unread is:important newer_than:1d"
 """
 
@@ -57,7 +57,7 @@ def _creds() -> tuple[str, str]:
 
 
 def connect(account: str, emit=print) -> str:
-    """Tarayıcıda izin al ve hesabı kaydet. Bağlanan e-posta adresini döndürür."""
+    """Get permission in the browser and save the account. Returns the connected e-mail address."""
     from alice.connect import oauth, store
 
     cid, secret = _creds()
@@ -104,7 +104,7 @@ def _get(account: str, path: str, client: Any = None, **params: Any) -> Any:
     return _request(account, "GET", path, client, params=params)
 
 
-# ------------------------------------------------------------------------------------------- biçim
+# ------------------------------------------------------------------------------------------- format
 def _headers(msg: dict[str, Any]) -> dict[str, str]:
     return {h.get("name", "").lower(): h.get("value", "") for h in (msg.get("payload") or {}).get("headers") or []}
 
@@ -135,7 +135,7 @@ def _decode(data: str) -> str:
 
 
 def body_text(payload: dict[str, Any]) -> str:
-    """Önce text/plain, yoksa etiketleri atılmış text/html."""
+    """Prefer text/plain; otherwise text/html with its tags stripped."""
     plain, rich = [], []
 
     def walk(p: dict[str, Any]) -> None:
@@ -156,7 +156,7 @@ def body_text(payload: dict[str, Any]) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", text)).strip()
 
 
-# ------------------------------------------------------------------------------------------- işlemler
+# ------------------------------------------------------------------------------------------- operations
 def search(account: str, query: str, limit: int = 10, client: Any = None) -> list[dict[str, Any]]:
     ids = _get(account, "/messages", client, q=query, maxResults=max(1, min(limit, 25))).get("messages") or []
     out = []
@@ -169,14 +169,14 @@ def search(account: str, query: str, limit: int = 10, client: Any = None) -> lis
 
 def important_unread(cfg=None, limit: int = 5, query: str = "is:unread is:important newer_than:2d",
                      client: Any = None) -> list[str]:
-    """Bağlı bütün hesaplarda okunmamış önemli e-postalar: ["okul: Hoca — Proje teslimi"]."""
+    """Unread important e-mails across all connected accounts: ["okul: Hoca — Proje teslimi"]."""
     out = []
     for acc in accounts():
         try:
             for msg in search(acc, query, limit, client):
                 h = _headers(msg)
                 out.append(f"{acc}: {_short_from(h.get('from', ''))} — {h.get('subject', '(konusuz)')[:80]}")
-        except Exception:  # noqa: BLE001 - bir hesap düşse de diğerleri
+        except Exception:  # noqa: BLE001 - if one account fails, the others still run
             continue
     return out[:limit * 2]
 
@@ -208,7 +208,7 @@ def _reply_parts(account: str, msg_id: str, client: Any = None) -> tuple[dict[st
 
 class Gmail(Tool):
     name = "gmail"
-    untrusted = True  # e-postayı başkası yazdı: içindeki "talimatlar" uygulanmaz
+    untrusted = True  # the e-mail was written by someone else: "instructions" in it are not applied
     parameters = obj({
         "action": {"type": "string", "enum": ["accounts", "search", "read", "draft", "send", "mark_read", "archive"],
                    "description": "accounts: bağlı hesaplar | search: query ile ara (Gmail arama dili) | read: id'li "
@@ -230,7 +230,7 @@ class Gmail(Tool):
     risk = READ
 
     @property
-    def description(self) -> str:  # bağlı hesaplar değiştikçe güncel
+    def description(self) -> str:  # kept current as connected accounts change
         accs = accounts()
         return ("Kullanıcının Gmail hesaplarında e-posta arar, okur, taslak yazar, gönderir, okundu yapar ve arşivler. "
                 f"Bağlı hesaplar: {', '.join(accs) if accs else 'yok (alice connect gmail --account <ad>)'}.\n"
@@ -327,7 +327,7 @@ class Gmail(Tool):
 TOOLS = [Gmail()]
 
 
-# ------------------------------------------------------------------------------------------- bildirim
+# ------------------------------------------------------------------------------------------- notifications
 def seen_path():
     from alice.config import alice_home
 
@@ -335,7 +335,7 @@ def seen_path():
 
 
 def new_important(cfg=None, client: Any = None) -> list[str]:
-    """Son kontrolden beri gelen önemli e-postalar (ilk çalıştırmada sadece kaydeder, bildirim yağdırmaz)."""
+    """Important e-mails received since the last check (first run only records them, no notification flood)."""
     g = ((getattr(cfg, "data", None) or {}).get("gmail") or {}) if cfg is not None else {}
     if not g.get("notify", True) or not accounts():
         return []

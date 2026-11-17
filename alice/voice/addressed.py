@@ -1,12 +1,13 @@
-"""Discord/oyunda "Alice" denmeden gelen devam cümlesi ALICE'e mi söylendi? (Jev ile)
+"""Was the follow-up sentence, said without "Alice" on Discord/in the game, addressed to ALICE? (with Jev)
 
-Kullanıcı kendi sesiyle arkadaşlarına da konuşur; ses izi bunu ayıramaz, canlı model de "sana söylenmediyse sus"
-talimatına uymuyordu ("Bilemiyorum", "Ne olacaksa?" gibi arkadaşa söylenen cümlelere cevap verdi, 7 Kasım).
-Canlı model cevap üretmeden önce döküm Jev'e sorulur; karar koddadır:
+The user also talks to friends with their own voice; the audio trace cannot tell the two apart, and the live
+model did not follow the "stay silent unless it was addressed to you" instruction either (it answered sentences
+said to friends such as "Bilemiyorum" (I can't tell) and "Ne olacaksa?" (whatever will be), on 7 November).
+Before the live model produces a reply, the transcript is checked with Jev; the decision lives in code:
 
-  p >= ADDRESSED   -> cevap ver
-  p <  ADDRESSED   -> sus (oturum sessizce kapanır)
-  Jev'e ulaşılamadı -> cevap ver (eski davranış; konuşma kilitlenmesin) ve günlüğe yaz
+  p >= ADDRESSED   -> reply
+  p <  ADDRESSED   -> stay silent (the session closes quietly)
+  Jev unreachable  -> reply (old behaviour, so the conversation doesn't lock up) and log it
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ QUESTION = Noul(
      "false": "The user is talking to friends or to themselves, for example about the game or what a teammate "
               "did, and the sentence does not follow from ALICE's last reply."})
 
-# TypeSafe'in varsayılan "evet" eşiği. 0,3-0,7 arası "belli değil": Discord'da susmak, arkadaşa söylenen cümleye
-# cevap vermekten iyidir. Denemede ALICE'e söylenenler 0,84-0,93, arkadaşa söylenenler 0,05-0,39 aldı.
+# TypeSafe's default "yes" threshold. 0.3-0.7 is "unclear": staying silent on Discord is better than answering a
+# sentence said to a friend. In testing, sentences addressed to ALICE scored 0.84-0.93, friend-directed ones 0.05-0.39.
 ADDRESSED = 0.7
 
 
@@ -37,7 +38,7 @@ def build_state(utterance: str, alice_last_reply: str) -> dict[str, Any]:
 
 def is_addressed(config, utterance: str, alice_last_reply: str = "", engine: Any = None,
                  log: Callable[[str], None] = lambda s: None) -> tuple[bool, float | None]:
-    """(cevap verilsin mi, olasılık). Olasılık None: Jev'e sorulamadı."""
+    """(should it be answered, probability). A probability of None means Jev could not be asked."""
     if not utterance.strip():
         return False, None
     if engine is None:
@@ -49,7 +50,7 @@ def is_addressed(config, utterance: str, alice_last_reply: str = "", engine: Any
     try:
         d = engine.decide(build_state(utterance, alice_last_reply), {"addressed": QUESTION})
         p = float(d["addressed"].value)
-    except Exception as e:  # noqa: BLE001 - hata bir cevap değildir: konuşma kilitlenmesin
+    except Exception as e:  # noqa: BLE001 - an error is not an answer: don't lock up the conversation
         log(f"hitap kontrolü başarısız ({str(e)[:120]}), cevap veriliyor")
         return True, None
     return p >= ADDRESSED, p

@@ -1,1 +1,1 @@
-"""ALICE masaüstü uygulaması."""
+"""ALICE desktop application."""

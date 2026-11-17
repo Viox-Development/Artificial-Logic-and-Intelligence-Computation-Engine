@@ -1,13 +1,13 @@
-"""Çekirdek komutları.
+"""Core commands.
 
-  alice core run [--tray] [--once]   çekirdeği çalıştır (--tray: sistem tepsisinde)
-  alice core install | uninstall     oturum açılınca otomatik başlat / kaldır
-  alice core status                  çalışıyor mu, hangi mod, son olaylar
-  alice core mode <mod|auto>         modu elle sabitle (normal, dev, flight, quiet) ya da otomatiğe dön
-  alice core stats <anahtar> [süre]  ör. alice core stats pc.gpu.temp 1d
-  alice rules [list|add "cümle"|rm|on|off <id>]
-  alice tasks [list|add "cümle"|rm|run <id>]
-  alice feeds [list|--new|--test <ad>]   bağlı servisleri izleyip haber veren akışlar
+  alice core run [--tray] [--once]   run the core (--tray: in system tray)
+  alice core install | uninstall     auto-start on login / remove
+  alice core status                  is it running, which mode, recent events
+  alice core mode <mode|auto>        manually lock mode (normal, dev, flight, quiet) or return to auto
+  alice core stats <key> [period]    e.g. alice core stats pc.gpu.temp 1d
+  alice rules [list|add "phrase"|rm|on|off <id>]
+  alice tasks [list|add "phrase"|rm|run <id>]
+  alice feeds [list|--new|--test <name>] feeds that monitor connected services and notify
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def core_cmd(argv: list[str]) -> int:
         from alice import runtime
 
         if "--once" not in argv and runtime.redirect_core(argv):
-            return 0  # başka bir Python'dan başlatıldı (ör. .venv açılış kısayolu): kayıtlı Python'la yeniden başladı
+            return 0  # started from another Python (e.g. .venv startup shortcut): restarted with registered Python
         cfg = load_config()
         if not service.acquire_lock():
             console.print("[yellow]çekirdek zaten çalışıyor[/]")
@@ -47,44 +47,44 @@ def core_cmd(argv: list[str]) -> int:
         router = Router(cfg)
         from alice import updater
 
-        if updater.boot_check() == "rolled":  # yeni sürüm üst üste çöktü: önceki sürüme dönüldü
+        if updater.boot_check() == "rolled":  # new version crashed repeatedly: rolled back to previous version
             service.release_lock()
             updater.restart(env={"ALICE_RESTARTED": "1"})
-        updater.mark_running()  # diskteki kod bundan yenileşirse boşta kalınca yeniden başlarız
+        updater.mark_running()  # if code on disk gets newer than this, restart when idle
         updater.watch_health()
         from alice.config import refresh_home
 
-        refresh_home()  # güncellemeyle gelen yeni anahtar satırları .env'e
+        refresh_home()  # write new key lines from the update into .env
         core = service.Core(cfg, decider=Decider.from_config(cfg, router), run_agent=service.make_agent_runner(cfg))
-        core.prime()  # DCS açık mı: ses modülü ekran kartını kullanıp kullanmayacağını buna göre seçer
+        core.prime()  # is DCS open: voice module chooses whether to use GPU based on this
         announce_update(core, updater)
         voice = _start_voice(cfg, core) if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv else None
-        core.greeter.voice = voice  # karşılamadan sonra "Hey Alice" demeden cevap verilebilsin
+        core.greeter.voice = voice  # allow answering after greeting without saying "Hey Alice"
         if cfg.data.get("voice", {}).get("enabled") and "--once" not in argv:
             core.voice = "listening" if voice is not None else "no-mic"
         if "--once" not in argv:
             _start_browser_ext(cfg)
             from alice import deps
 
-            # Hangi Python'dan başlatılırsa başlatılsın (oturum açılışı .venv, elle sistem Python'u) eksik paket kalmasın
+            # Whichever Python it was started from (login .venv, manual system Python), don't leave missing packages
             deps.heal_in_background(lambda s: print(f"[paketler] {s}", flush=True))
         hud = _start_hud(cfg, core) if (cfg.data.get("hud", {}) or {}).get("enabled") and "--once" not in argv else None
         if hud is not None:
             from alice.extras import nowplaying
             from alice.hud import views as hud_views
 
-            nowplaying.Watcher(hud_views.now_playing).start()  # şarkı değişince Adada kısa süre
+            nowplaying.Watcher(hud_views.now_playing).start()  # briefly show on Island when song changes
         sims = _start_sims(cfg, core, show=_hud_show(hud)) if "--once" not in argv else None
         tl = _start_timeline(cfg, core) if (cfg.data.get("timeline", {}) or {}).get("enabled") and             "--once" not in argv else None
         host = _start_app(cfg, core) if (cfg.data.get("app", {}) or {}).get("in_core", True) and \
             "--once" not in argv else None
-        # Masaüstü uygulaması, hızlı bar ve telefon tek uygulama durumunu paylaşır: üçü aynı sohbeti görür, araçlar ve
-        # MCP sunucuları bir kez kurulur.
+        # Desktop app, quick bar, and phone share single app state: all three see the same chat, tools and
+        # MCP servers are initialized once.
         shared = getattr(host, "state", None)
         phone = _start_phone(cfg, core, shared) if cfg.data.get("phone", {}).get("enabled") and \
             "--once" not in argv else None
         if phone is not None and shared is not None:
-            host.publish()  # telefon ortak durumun anahtarını değiştirdi: masaüstü adresi de değişti
+            host.publish()  # phone changed the shared state key: desktop address also changed
         quick = _start_quick(cfg, shared) if cfg.data.get("quick", {}).get("enabled", True) and \
             "--once" not in argv else None
         try:
@@ -102,7 +102,7 @@ def core_cmd(argv: list[str]) -> int:
             core.stop()
         finally:
             if host is not None:
-                host.stop()  # açık pencere bunu görüp kapanır
+                host.stop()  # open window detects this and closes
             if voice is not None:
                 voice.stop()
             if quick is not None:
@@ -184,17 +184,17 @@ def _start_phone(cfg, core, state=None):
 
 
 def _start_app(cfg, core):
-    """Uygulama çekirdeğin içinde açık durur: `alice app` sadece pencereyi buna bağlar (alice/app/host.py)."""
+    """App stays open inside the core: `alice app` only connects the window to it (alice/app/host.py)."""
     from alice.app.host import AppHost
 
-    # Hızlı bar ve telefon bu durumu paylaştığı için hemen kurulur (eskiden hızlı bar kendi kopyasını yine burada,
-    # beklemeden kuruyordu; açılış süresi aynı).
+    # Set up immediately because quick bar and phone share this state (previously quick bar set up its own copy here,
+    # without waiting; startup time is the same).
     host = AppHost(cfg, restart=core.restart).start(background=False)
-    core.busy_hook = lambda: host.busy  # sohbet sürerken güncelleme için yeniden başlama
+    core.busy_hook = lambda: host.busy  # do not restart for updates while a chat is in progress
 
     def deliver(sid: str, text: str) -> str:
-        """PR takibinin işini kodu yazan sohbete mesaj olarak ver. Boş: verildi; değilse neden verilemediği.
-        Sohbet o an başka işle meşgulse bölünmez ("meşgul"): takip bir sonraki turda yeniden dener."""
+        """Deliver PR tracking output as a message to the chat that wrote code. Empty: delivered; else why it failed.
+        If the chat is currently busy with another task it is not interrupted ("meşgul"): watcher retries next tick."""
         st = host.state
         if st is None:
             return "uygulama hazır değil"
@@ -210,7 +210,7 @@ def _start_app(cfg, core):
 
 
 def _start_sims(cfg, core, show=None):
-    """DCS ve War Thunder dinleyicilerini başlat."""
+    """Start DCS and War Thunder listeners."""
     from alice.sims.hub import SimHub
 
     return SimHub(cfg.data.get("sims", {}), core.store, core.notifier, processes=lambda: core.pc.processes,
@@ -218,8 +218,8 @@ def _start_sims(cfg, core, show=None):
 
 
 def _start_browser_ext(cfg) -> None:
-    """ALICE tarayıcı eklentisinin bağlanacağı yerel sunucu. Eklenti bağlıyken tarayıcı aracı uzaktan hata ayıklamayı
-    hiç kullanmaz (Opera her açılışta izin sormaz). websockets yoksa ya da port doluysa sessizce eski yol."""
+    """Local server for ALICE browser extension to connect to. While extension is connected, the browser tool never
+    uses remote debugging (Opera won't ask permission on each launch). If no websockets or port busy, fallback quietly."""
     port = int(cfg.agent.get("browser_ext_port", 9340) or 0)
     if not port:
         return
@@ -232,8 +232,8 @@ def _start_browser_ext(cfg) -> None:
 
 
 def _start_hud(cfg, core):
-    """Ekran üstü HUD'u ayrı süreçte başlat; çökerse denetleyici yeniden başlatır. Bildirimler Windows balonu yerine
-    ALICE'in kartıyla gelir."""
+    """Start on-screen HUD in a separate process; supervisor restarts if it crashes. Notifications arrive as ALICE's
+    card instead of Windows toast balloon."""
     from alice.hud import PORT, client, views
     from alice.hud.supervisor import HudSupervisor
 
@@ -248,12 +248,12 @@ def _start_hud(cfg, core):
     def card(n, pol) -> None:
         if sv.alive():
             views.notification(n)
-        elif desktop is not None:  # HUD çöktü/yeniden başlıyor: bildirim kaybolmasın, balon gelsin
+        elif desktop is not None:  # HUD crashed/restarting: don't lose notification, show toast balloon
             desktop(n, pol)
 
     notifier.channels.append(card)
-    # Kritik sınıra yaklaşan sıcaklık/RAM köşede küçük çubuk olarak görünsün (konuşmadan). Kanca sadece HUD açıkken
-    # eklenir: HUD kapalıysa çekirdek turuna hiç maliyeti yok.
+    # Show temperature/RAM nearing critical threshold as small bar in corner (without speaking). Hook is only
+    # added when HUD is on: zero cost to core tick if HUD is off.
     hooks = getattr(core, "hooks", None)
     if hooks is not None and getattr(core, "store", None) is not None:
         from alice.core.watchdogs import SystemGauges
@@ -263,18 +263,18 @@ def _start_hud(cfg, core):
 
 
 def _start_timeline(cfg, core):
-    """Zaman makinesi hafıza: öndeki pencerenin yazısını şifreli zaman çizgisine yaz (uçuş modunda durur)."""
+    """Time machine memory: write foreground window text to encrypted timeline (pauses in flight mode)."""
     from alice.timeline import Recorder, Timeline
 
     try:
         return Recorder(Timeline(), cfg.data.get("timeline", {}) or {}, mode=lambda: core.modes.current).start()
-    except Exception as e:  # noqa: BLE001 - kayıt açılamasa da çekirdek çalışsın
+    except Exception as e:  # noqa: BLE001 - let core run even if recording fails to start
         core.store.add_event("error", "Zaman çizgisi başlamadı", str(e)[:200], "warn", "core")
         return None
 
 
 def _hud_show(hud):
-    """HUD açıksa uçuş tehditleri ok ve kenar parlaması olarak da çizilsin."""
+    """If HUD is active, draw flight threats as arrows and edge glow as well."""
     if hud is None:
         return None
     from alice.hud import client
@@ -283,7 +283,7 @@ def _hud_show(hud):
 
 
 def _start_quick(cfg, state=None):
-    """Hızlı bar kısayollarını çekirdekle birlikte başlat (pynput yoksa sessizce atla)."""
+    """Start quick bar shortcuts alongside the core (silently skip if pynput is missing)."""
     import importlib.util
 
     if importlib.util.find_spec("pynput") is None:
@@ -298,9 +298,9 @@ def _start_quick(cfg, state=None):
 
 
 def _raise_priority(v: dict, log) -> None:
-    """Oyun işlemciyi doldururken "Alice" kontrolü sıra beklemesin: çekirdek "normalin üstü" önceliğe alınır.
-    Boştaki bilgisayarda kontrol 0,4 sn, War Thunder açıkken medyan 1,3 sn, en kötü 16,7 sn sürüyordu (7 Kasım).
-    Kontroller cümle başına kısa (~0,4 sn) olduğundan oyuna etkisi küçük. [voice] priority = "normal" ile kapatılır."""
+    """Keep "Alice" wake check from queuing when game maxes CPU: core is raised to "above normal" priority.
+    On idle PC check took 0.4s, with War Thunder running median 1.3s, worst 16.7s (Nov 7).
+    Since checks are short per sentence (~0.4s), impact on game is small. Disabled with [voice] priority = "normal"."""
     want = str(v.get("priority", "above_normal")).lower()
     if sys.platform != "win32" or want != "above_normal":
         return
@@ -309,12 +309,12 @@ def _raise_priority(v: dict, log) -> None:
 
         psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
         log("işlem önceliği: normalin üstü (uyandırma kontrolü oyunda beklemesin)")
-    except Exception as e:  # noqa: BLE001 - yetki yoksa normal öncelikle devam
+    except Exception as e:  # noqa: BLE001 - continue with normal priority if lacking permission
         log(f"işlem önceliği değiştirilemedi: {e}")
 
 
 def _start_voice(cfg, core):
-    """Sesli asistanı çekirdekle aynı süreçte başlat; bildirimler de seslendirilsin."""
+    """Start voice assistant in the same process as core; notifications are voiced too."""
     import threading
     import time
 
@@ -327,8 +327,8 @@ def _start_voice(cfg, core):
 
     t0 = time.monotonic()
     v = cfg.data.get("voice", {})
-    # En uzun süren iş uyandırma modelinin yüklenmesi (ekran kartında ilk CUDA çağrısı dahil birkaç sn): ajan,
-    # ses ve mikrofon hazırlanırken paralel başlasın. Uygulama/site adları da ilk "Hey Alice"i bekletmesin.
+    # Longest task is loading wake model (several seconds including first CUDA call on GPU): start in
+    # parallel while agent, voice and mic are prepared. Also don't make first "Hey Alice" wait for app/site names.
     stt = make_stt(cfg)
     if stt.wake_gate is not None and mic_available():
         stt.wake_gate.warm_up(log=voice_log)
@@ -345,18 +345,18 @@ def _start_voice(cfg, core):
     core.hooks.append(gpu_hook)
 
     def speak(n, pol):
-        # Sessiz modda (voice = false) bildirim sadece yazılı gelir.
+        # In quiet mode (voice = false), notification is text-only.
         if pol.voice:
             speaker.say(n.body or n.title, n.emotion or None, severity=n.severity, topic=n.topic)
 
     core.notifier.channels.append(speak)
 
-    # Oyun/uçuş uyarılarını (topic "flight") tek tuşla aç/kapat; sesli sohbet etkilenmez.
-    # Eskiden "War Thunder açık mı" diye SocialWatch.reason()'a bakıyordu; Discord'dayken o "Discord sesli
-    # konuşmada" döndürdüğü için tuş hiçbir şey yapmıyordu. Artık koşulsuz çalışır, bip ile durumu söyler.
+    # Toggle game/flight alerts (topic "flight") with a single key; voice chat is unaffected.
+    # Previously checked SocialWatch.reason() for "is War Thunder open"; on Discord it returned "in Discord voice
+    # call", causing key to do nothing. Now works unconditionally, beeps the state.
     alert_mute_key = v.get("game_mute_key", "")
-    # WinHotkeys yalnızca Windows'ta (RegisterHotKey / ctypes.windll). Linux/macOS'ta kayıt denenirse işçi
-    # düşer, _ready hiç kurulmaz ve start() 5 sn bekleyip başarılı gibi dönerdi; kayıt platforma bağlandı.
+    # WinHotkeys is Windows-only (RegisterHotKey / ctypes.windll). If registration was attempted on Linux/macOS, worker
+    # crashed, _ready never set, and start() waited 5s returning pseudo-success; registration bound to platform.
     if alert_mute_key and sys.platform == "win32":
         from alice.hotkeys import WinHotkeys
 
@@ -364,9 +364,9 @@ def _start_voice(cfg, core):
             try:
                 import winsound
 
-                if muted:  # kapandı: alçalan iki bip
+                if muted:  # muted: two descending beeps
                     winsound.Beep(880, 90); winsound.Beep(440, 140)
-                else:  # açıldı: yükselen iki bip
+                else:  # unmuted: two ascending beeps
                     winsound.Beep(440, 90); winsound.Beep(880, 140)
             except Exception:  # noqa: BLE001
                 pass
@@ -387,14 +387,14 @@ def _start_voice(cfg, core):
         else:
             voice_log(f"uyarı susturma kısayolu hazır: {alert_mute_key}")
     if v.get("prewarm_callouts", True):
-        # Uçuş uyarılarının sesi önceden diske: uçuşta ses buluttan geliyor, önbellekteki anında çalar.
+        # Prewarm flight alert audio to disk: flight audio comes from cloud, cached ones play instantly.
         from alice.sims.flight import callouts
 
         warm = threading.Timer(120, speaker.prewarm, args=(callouts(),),
                                kwargs={"limit": int(v.get("prewarm_per_start", 12)), "log": voice_log})
         warm.daemon = True
         warm.start()
-        # Önsezi: alışkanlığa göre War Thunder açılmadan ~20 dk önce kalan uçuş seslerini de hazırla.
+        # Anticipation: based on habit, prepare remaining flight audio ~20 min before War Thunder opens.
         core.anticipator.hooks.append(lambda: speaker.prewarm(callouts(), limit=int(v.get("prewarm_per_start", 12)),
                                                               log=voice_log))
     if not mic_available():
@@ -408,7 +408,7 @@ def _start_voice(cfg, core):
                         speaker_gate=SpeakerGate.load(cfg, log=voice_log), social=SocialWatch(cfg, log=voice_log).reason,
                         social_ptt=v.get("social_mode", "wake") == "ptt")
     va.keep_recent = bool(v.get("keep_recent_audio", True))
-    if v.get("corpus", True):  # gerçek ses korpusu: uyanmalar ve düzeltmeler test kaydı olur (alice voice replay)
+    if v.get("corpus", True):  # real voice corpus: wake-ups and corrections become test recordings (alice voice replay)
         from alice.voice import corpus
 
         corpus.attach(va, log=voice_log)
@@ -436,7 +436,7 @@ topic = "discord"
 # cooldown_minutes = 10      # bir bildirimden sonra gelenleri topla
 
 [feed.when]                  # hangi mesaj bildirime degsin (bos: hepsi)
-any = ["hayat", "@everyone"] # en az biri gecsin
+any = ["alice", "@everyone"] # en az biri gecsin
 none = ["bot"]               # bunlar gecmesin
 # ask = "Bu mesaj bana bir sey soruyor ya da acil mi?"   # anlamina gore: hizli model karar verir
 
@@ -461,7 +461,7 @@ regex = '\\b(acil|hemen)\\b'   # tek tırnak: TOML kaçış yapmaz
 
 
 def announce_update(core, updater) -> None:
-    """Az önce güncellendiysek bir kez söyle. Uygulama açıksa sohbete o yazar, çekirdek susar."""
+    """If we were just updated, say so once. If the app is open, it writes to the chat and the core stays quiet."""
     if updater.app_running():
         return
     from alice.core.notify import Notification
@@ -483,7 +483,7 @@ def announce_update(core, updater) -> None:
 
 
 def feeds_cmd(argv: list[str]) -> int:
-    """alice feeds [list] | --new | --test <ad>"""
+    """alice feeds [list] | --new | --test <name>"""
     from alice.core.feeds import FeedMonitor, feeds_path, load_feeds
 
     sub = argv[0] if argv else "list"
@@ -516,7 +516,7 @@ def feeds_cmd(argv: list[str]) -> int:
         mon = FeedMonitor(cfg=cfg, decider=decider, emit=lambda s: console.print(f"[dim]{escape(s)}[/]"))
         try:
             verdicts = mon.explain(feed)
-        except Exception as e:  # noqa: BLE001 - test komutu: hatayı göster, çökme
+        except Exception as e:  # noqa: BLE001 - test command: show the error, don't crash
             console.print(f"[red]{escape(str(e))}[/]")
             return 1
         passed = sum(v.ok for v in verdicts)

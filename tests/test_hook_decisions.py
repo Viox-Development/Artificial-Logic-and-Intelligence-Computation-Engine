@@ -1,4 +1,4 @@
-"""PreToolUse/PostToolUse hook'larının JSON kararları: argüman değiştirme, izin kararı, ek bağlam."""
+"""JSON decisions of PreToolUse/PostToolUse hooks: argument rewriting, permission decision, extra context."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from tests.test_agent import make_agent
 
 
 def script_hook(tmp, name: str, payload: dict) -> str:
-    """stdout'a JSON yazan küçük hook betiği (kabuk tırnaklarıyla uğraşmamak için dosyaya)."""
+    """Small hook script that writes JSON to stdout (kept in a file to avoid fighting shell quoting)."""
     p = tmp / f"{name}.py"
     p.write_text("import json, sys\nsys.stdout.write(" + repr(json.dumps(payload, ensure_ascii=False)) + ")\n",
                  encoding="utf-8")
@@ -47,7 +47,7 @@ def test_hook_deny_and_allow_decisions(workdir):
     assert not (workdir / "a.txt").exists()
     assert "dosya kilitli" in next(m for m in agent.messages if m["role"] == "tool")["content"]
 
-    # ask modunda normalde sorulurdu (NullUI "n" der); hook allow verince sormadan çalışır
+    # In ask mode this would normally prompt (NullUI answers "n"); when the hook says allow, it runs without asking
     agent2, _, ui = make_agent([tool_call("write_file", {"path": "c.txt", "content": "x"}), "oldu"], workdir,
                                mode="ask", approve="n")
     agent2.hooks = Hooks([Hook("PreToolUse", script_hook(workdir, "allow", {"permissionDecision": "allow"}))],
@@ -57,7 +57,7 @@ def test_hook_deny_and_allow_decisions(workdir):
 
 
 def test_post_hook_replaces_tool_output(workdir):
-    # SDK'daki updatedToolOutput: PostToolUse hook'u çıktıyı değiştirir (ör. sır gizleme), model yalnız onu görür.
+    # updatedToolOutput in the SDK: the PostToolUse hook replaces the output (e.g. secret redaction); the model sees only that.
     (workdir / "s.txt").write_text("API_KEY=gizli123", encoding="utf-8")
     agent, provs, _ = make_agent([tool_call("read_file", {"path": "s.txt"}), "tamam"], workdir)
     cmd = script_hook(workdir, "redact", {"updatedToolOutput": "API_KEY=[gizlendi]"})
@@ -70,7 +70,7 @@ def test_post_hook_replaces_tool_output(workdir):
 def test_failing_hook_ignored_by_default_but_blocks_when_asked(workdir):
     broken = f'"{sys.executable}" -c "import sys; sys.exit(1)"'
     ok = HookResult(Hook("PreToolUse", broken), 1, "", "çöktü")
-    assert ok.failed and not ok.blocked  # eski davranış: bozuk hook yok sayılır
+    assert ok.failed and not ok.blocked  # old behavior: a broken hook is ignored
     strict = HookResult(Hook("PreToolUse", broken, on_failure="block"), 1, "", "çöktü")
     assert strict.failed and strict.blocked
     assert not HookResult(Hook("PreToolUse", broken, on_failure="block"), 0, "", "").blocked
@@ -86,7 +86,7 @@ def test_failing_hook_ignored_by_default_but_blocks_when_asked(workdir):
 def test_on_failure_round_trips_through_hooks_file(tmp_path, monkeypatch):
     from alice import hooks as hk
 
-    # Modülün kendi okuyucusu (3.10'da tomli yedeği var): dosya gerçekten yazılıp geri okunur.
+    # The module's own reader (falls back to tomli on 3.10): the file is really written and read back.
     monkeypatch.setattr("alice.config.alice_home", lambda: tmp_path)
     hk.add_hook("PreToolUse", "denetle", "run_command", 10, on_failure="block")
     hk.add_hook("PostToolUse", "ruff", "")
@@ -95,8 +95,8 @@ def test_on_failure_round_trips_through_hooks_file(tmp_path, monkeypatch):
 
 
 def test_timed_out_hook_does_not_hang_on_grandchild(tmp_path):
-    """Zaman aşımında kabukla birlikte kabuğun başlattığı program da öldürülür: önceden boruyu tutan alt süreç
-    bitene kadar (burada 30 sn) ajan kilitleniyordu."""
+    """On timeout, the shell and the program it started are both killed. Before, a grandchild holding the pipe
+    kept the agent blocked until it finished (30 sec here)."""
     import time
 
     p = tmp_path / "uyu.py"
