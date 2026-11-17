@@ -7,9 +7,9 @@ Claude Code and Codex, but not tied to one paid model. It chains free API tiers 
 with automatic failover, talks to you by voice, uses your mouse, keyboard and browser, remembers what matters, and
 can run whole projects with a team of autonomous agents.
 
-[![ALICE fixes a bug, runs the tests, and switches models when one hits its rate limit](docs/media/alice-demo.gif)](docs/media/alice-demo.mp4)
+https://github.com/user-attachments/assets/4b67b5c5-4148-49cb-9195-05c788c51b02
 
-*ALICE fixes a bug and runs the tests, then keeps going on another model when the first one hits its rate limit. [Watch with sound](docs/media/alice-demo.mp4) (56 s).*
+*ALICE fixes a bug and runs the tests, then keeps going on another model when the first one hits its rate limit.*
 
 > ALICE started as a Turkish-speaking assistant. The interface and prompts are being translated to English;
 > the full, detailed guide is currently in Turkish: [docs/README.tr.md](docs/README.tr.md).
