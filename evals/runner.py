@@ -213,6 +213,20 @@ class Meter:
             _orig(ref, usage, ok)
 
         router.usage.record = record
+        self.outages: list[str] = []  # phases in which a request failed on every model of the chain
+        chat = router.chat
+
+        def chat_wrapper(*a: Any, _chat=chat, **kw: Any) -> Any:
+            from alice.providers.router import AllProvidersFailed
+
+            try:
+                return _chat(*a, **kw)
+            except AllProvidersFailed:
+                with self._lock:
+                    self.outages.append(self.phase)
+                raise
+
+        router.chat = chat_wrapper
         prev = router.on_event
         router.on_event = lambda s, _p=prev: (self.events.append(s), _p(s))
 
@@ -220,6 +234,7 @@ class Meter:
         with self._lock:
             self.calls.clear()
             self.events.clear()
+            self.outages.clear()
         self.phase = "agent"
 
     def summary(self) -> dict[str, Any]:
@@ -236,6 +251,7 @@ class Meter:
             "models": dict(Counter(c["ref"] for c in self.calls if c["ok"])),
             "model_switches": switches,
             "failovers": sum(1 for e in self.events if "modeline geçildi" in e),
+            "outages": len(self.outages),
         }
 
 
@@ -390,9 +406,10 @@ def run_task(task: Task, cfg: Any, router: Any, meter: Meter, s: Settings, log: 
     checks = run_checks(task, work, reply, ui.tools)
     passed = all(c["ok"] for c in checks) and not error
     m = meter.summary()
-    # No model ever answered the agent (quota gone, every model too small or down): this says nothing about ALICE,
-    # so the run is reported apart and left out of the pass rate.
-    no_model = m["model_calls"] == 0
+    # No model answered (quota gone, every model too small, busy or down) at some point of the run: ALICE was cut off,
+    # so the result says nothing about it. Such runs are retried, and if it persists reported apart and left out of
+    # the pass rate.
+    no_model = m["model_calls"] == 0 or m["outages"] > 0
     row = {"task": task.id, "category": task.category, "council": s.council, "passed": passed, "no_model": no_model,
            "checks": checks, "seconds": round(seconds, 1), "steps": m["model_calls"], "tool_calls": len(ui.tools),
            "tools": dict(Counter(ui.tools)), "permission_asks": len(ui.asked), "denied": ui.denied,
@@ -407,7 +424,7 @@ def run_task(task: Task, cfg: Any, router: Any, meter: Meter, s: Settings, log: 
         row["workdir"] = str(work)
     else:
         shutil.rmtree(work, ignore_errors=True)
-    mark = "PASS" if passed else ("NO MODEL" if no_model else "FAIL")
+    mark = "NO MODEL" if no_model else ("PASS" if passed else "FAIL")
     log(f"  {mark} {task.id} [{'council' if s.council else 'plain'}] {seconds:.0f}s, {m['model_calls']} steps, "
         f"{m['tokens_in'] + m['tokens_out']} tok"
         + (f", council {council['decision']}{' + fix' if council['fix_round'] else ''}" if council else "")
@@ -538,6 +555,7 @@ def _pf(r: dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------------------------------------------------- CLI
 STOP_AFTER_NO_MODEL = 3  # consecutive runs without any model answer: the chain is used up, stop instead of skimming
+RETRY_WAITS = [60, 180, 600]  # busy providers ("model at capacity", 503) usually come back within minutes
 
 
 class ChainExhausted(Exception):
@@ -591,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-steps", type=int, help="override each task's step limit")
     ap.add_argument("--timeout", type=float, help="override each task's time limit (seconds)")
     ap.add_argument("--out", type=Path, help="result folder (default evals/results/<timestamp>)")
+    ap.add_argument("--retries", type=int, default=2,
+                    help="rerun a task whose models became unavailable, after 1 and 3 minutes (default 2)")
     ap.add_argument("--keep", action="store_true", help="keep the temporary task folders for inspection")
     ap.add_argument("--list", action="store_true", help="list the tasks and exit")
     ap.add_argument("--render", type=Path, metavar="RESULTS_JSON", help="only re-render the scoreboard of a result")
@@ -666,7 +686,14 @@ def main(argv: list[str] | None = None) -> int:
             for council in modes:
                 s = Settings(council=council, mode=a.mode, max_steps=a.max_steps, timeout=a.timeout, keep=a.keep,
                              transcripts=out / "transcripts")
-                rows.append(run_task(t, cfg, router, meter, s))
+                row = run_task(t, cfg, router, meter, s)
+                for wait in RETRY_WAITS[:a.retries]:
+                    if not row["no_model"]:
+                        break
+                    print(f"  models unavailable; retrying in {wait} s")
+                    time.sleep(wait)
+                    row = run_task(t, cfg, router, meter, s)
+                rows.append(row)
                 save()  # partial results survive a crash or Ctrl+C
                 if len(rows) >= STOP_AFTER_NO_MODEL and all(r["no_model"] for r in rows[-STOP_AFTER_NO_MODEL:]):
                     raise ChainExhausted

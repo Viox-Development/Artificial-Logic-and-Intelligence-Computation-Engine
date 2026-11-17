@@ -141,7 +141,7 @@ def test_run_without_any_model_answer_is_not_a_failure(tmp_path):
     runner.restrict_models(router, {"*": ["a:m"]})
     task = next(t for t in TASKS if t.id == "log-top-error")
     row = runner.run_task(task, cfg, router, runner.Meter(router), runner.Settings(), log=lambda s: None)
-    assert row["no_model"] and not row["passed"] and row["failed_calls"] >= 1
+    assert row["no_model"] and not row["passed"] and row["failed_calls"] >= 1 and row["outages"] >= 1
     assert runner.summarize([row]) == {"runs": 0, "no_model": 1}
     md = runner.scoreboard({"meta": {"started": "now", "models": "a:m", "tasks": 1, "mode": "auto",
                                      "alice_version": "x", "commit": "", "python": "3", "platform": "test"},

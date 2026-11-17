@@ -36,6 +36,7 @@ Useful options:
 | `--council off\|on\|both` | Plain only, council only, or both (default). |
 | `--only log` | Only tasks whose id or category contains the text (repeatable). |
 | `--max-steps N`, `--timeout S` | Override the per-task limits (default 40 steps and 600 s). |
+| `--retries N` | Rerun a task whose models became unavailable (busy, overloaded, quota), after 1, 3 and 10 minutes (default 2 retries). |
 | `--keep` | Keep the temporary task folders so you can look at what ALICE left behind. |
 | `--list` | List the tasks. |
 | `--render results.json` | Rebuild the scoreboard from a saved result. |
