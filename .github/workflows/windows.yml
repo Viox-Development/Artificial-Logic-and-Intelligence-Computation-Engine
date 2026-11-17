@@ -66,11 +66,13 @@ jobs:
           if ($LASTEXITCODE -eq 0 -and (Get-Item dist\ALICE.apk).Length -gt 100000) { $files += "dist\ALICE.apk" }
           gh release delete windows --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag 2>$null
           $notes = @"
-          **Windows:** ALICE-Setup.exe'yi indir ve çalıştır. Yönetici izni istemez; Python ve gerekli paketleri kendisi kurar (internet gerekir, birkaç dakika sürer). Kurulan ALICE kendini otomatik günceller.
+          Always the newest build from `main`. What changed in each version is in the `vX.Y.Z` releases.
 
-          **Android:** ALICE.apk (imzalı). Kurulu uygulama kendini otomatik günceller; bu dosya elle kurmak için.
+          **Windows:** download `ALICE-Setup.exe` and run it. It needs no admin rights and installs Python and the required packages itself (internet required, takes a few minutes). Installed ALICE updates itself.
 
-          Sürüm 0.3.$env:GITHUB_RUN_NUMBER · commit $env:GITHUB_SHA
+          **Android:** `ALICE.apk` (signed). The installed app updates itself; this file is for installing it by hand.
+
+          Build 0.3.$env:GITHUB_RUN_NUMBER · commit $env:GITHUB_SHA
           "@
           gh release create windows @files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --latest `
-            --title "ALICE (Windows kurulumu + Android)" --notes $notes
+            --title "ALICE installers (Windows + Android)" --notes $notes

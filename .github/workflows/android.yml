@@ -77,19 +77,14 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "ALICE.apk 0.2.$GITHUB_RUN_NUMBER"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" android-apk
-      - name: GitHub Releases'a yükle
-        # Elle indirmek için de: her yayın bir sürüm (android-v0.2.N). "Latest" Windows kurulumunun sürümüdür
-        # (windows.yml; en son APK oraya da eklenir). Telefonun kendi güncellemesi android-apk dalından gider.
+      - name: Refresh the APK on the installers release
+        # One rolling "installers" release (windows.yml) carries ALICE-Setup.exe and the latest APK; there is no
+        # release per Android build. Installed phones update themselves from the android-apk branch, not from here.
+        # Uploading here as well matters: when windows.yml ran at the same time it attached the previous APK.
         if: env.SIGNED == '1' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="android-v0.2.$GITHUB_RUN_NUMBER"
-          gh release create "$TAG" ALICE.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
-            --title "ALICE Android 0.2.$GITHUB_RUN_NUMBER" \
-            --notes "Telefon uygulaması (imzalı APK). Kurulu uygulama kendini otomatik günceller; bu dosya elle kurmak için. Commit: $GITHUB_SHA"
-          # "Latest" (windows) sürümündeki APK da yenilensin: windows.yml aynı anda çalışınca eski APK'yı
-          # ekliyordu (7 Kasım: Latest'te 0.2.13 kaldı, kullanıcı düzeltmesiz sürümü indirdi).
           if gh release view windows --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload windows ALICE.apk --repo "$GITHUB_REPOSITORY" --clobber
           fi
