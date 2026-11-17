@@ -1,4 +1,4 @@
-"""Sağlamlık: tek bir hatanın sesli asistanı, çekirdeği ya da sohbet geçmişini kalıcı bozmaması."""
+"""Robustness: a single error must not permanently break the voice assistant, the core, or the chat history."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from tests.test_computer_agent import FakeScreen
 from tests.test_voice import FakeAgent, FakeSpeaker, FakeTTS, tone, wait_for
 
 
-# --------------------------------------------------------------- sesli onay
+# --------------------------------------------------------------- voice confirmation
 @pytest.mark.parametrize("text,yes", [
     ("evet", True), ("Tamamdır, yap.", True), ("peki", True), ("onaylıyorum", True),
     ("yapma", False), ("hayır, yapma", False), ("onaylama", False), ("dur bekle", False), ("", False),
@@ -32,11 +32,11 @@ def test_ask_yes_no_ignores_stale_answer():
     from alice.voice.assistant import VoiceAssistant
 
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=None)
-    va._answers.put("evet")  # önceki sorudan kalan
+    va._answers.put("evet")  # left over from the previous question
     assert va.ask_yes_no("Silinsin mi?", timeout=0.2) is False
 
 
-# --------------------------------------------------------- ses iş parçacığı
+# --------------------------------------------------------- voice worker thread
 def test_voice_worker_survives_unexpected_error():
     from alice.voice.assistant import VoiceAssistant
 
@@ -113,7 +113,7 @@ def test_wake_gate_recovers_after_single_error():
     gate._load = lambda: model
     gate._model = model
     assert gate.heard(tone(1.0)) is None
-    assert gate.heard(tone(1.0)) == "Hey Alice, saat kaç?"  # kalıcı kapanmadı
+    assert gate.heard(tone(1.0)) == "Hey Alice, saat kaç?"  # did not stay disabled permanently
 
 
 def test_tts_router_falls_back_on_any_engine_error():
@@ -127,14 +127,14 @@ def test_tts_router_falls_back_on_any_engine_error():
     r.synth("merhaba")
     assert r.last == "cloud"
     r.synth("tekrar")
-    assert len(local.calls) == 1  # bozuk motor bekletiliyor
+    assert len(local.calls) == 1  # the broken engine is kept on hold
 
 
 def test_corrupt_speech_cache_file_is_replaced(tmp_path):
     cache = SpeechCache(tmp_path)
     cache.put("cloud", "calm", "Hemen bakıyorum.", Audio(b"\x01\x00" * 100, 16000))
     f = cache._file("cloud", "calm", "Hemen bakıyorum.")
-    f.write_bytes(b"RIFF\0\0\0\0WAVE")  # yarım yazılmış
+    f.write_bytes(b"RIFF\0\0\0\0WAVE")  # half-written
     assert cache.get("cloud", "calm", "Hemen bakıyorum.") is None
     assert not f.exists()
     assert not list(tmp_path.glob("*.tmp"))
@@ -154,7 +154,7 @@ def test_audio_out_death_stops_playing():
     assert out.q.empty()
 
 
-# ------------------------------------------------------------- ekran görevi
+# ------------------------------------------------------------- screen task
 @pytest.mark.parametrize("raw,want", [
     ({"key": "ctrl+f"}, {"action": "key", "keys": "ctrl+f"}),
     ({"enter": True, "type": "stalk"}, {"action": "type", "text": "stalk", "enter": True}),
@@ -210,7 +210,7 @@ def test_glob_skips_heavy_dirs_and_respects_deadline(workdir, monkeypatch):
     assert res.is_error and "YARIDA KESİLDİ" in res.text
 
 
-# ------------------------------------------------------------------ güvenlik
+# ------------------------------------------------------------------ security
 @pytest.mark.parametrize("cmd", [r"rm .\build -Recurse -Force", r"ri C:\x -r", r"del C:\proj -Recurse",
                                  r"Get-ChildItem C:\x | Remove-Item"])
 def test_powershell_recursive_delete_is_dangerous(cmd):
@@ -251,7 +251,7 @@ def test_process_kill_by_pid_of_self_is_danger():
     assert ProcessKill().risk_for({"pid": os.getpid()}) == DANGER
 
 
-# --------------------------------------------------------------------- ajan
+# --------------------------------------------------------------------- agent
 @pytest.mark.parametrize("args", [{"command": ["git", "status"]}, {"command": None}])
 def test_bad_tool_args_return_error_and_keep_history_valid(workdir, args):
     script = [tool_call("run_command", args), "düzelttim"]
@@ -289,7 +289,7 @@ def test_mcp_reader_survives_garbage_lines():
     assert box.get("result") == {"x": 1}
 
 
-# ------------------------------------------------------------------- ayarlar
+# ------------------------------------------------------------------- settings
 def test_broken_config_falls_back_to_defaults(tmp_path, monkeypatch, capsys):
     from alice.config import load_config
 

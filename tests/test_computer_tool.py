@@ -1,5 +1,5 @@
-"""alice/tools/computer.py için birim testleri: pyautogui/mss/pyperclip sahte modüllerle değiştirilir,
-gerçek ekran, fare ya da klavye kullanılmaz."""
+"""Unit tests for alice/tools/computer.py: pyautogui/mss/pyperclip are replaced with fake modules,
+no real screen, mouse or keyboard is used."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def set_platform(monkeypatch, plat):
     monkeypatch.setattr(computer, "sys", SimpleNamespace(platform=plat))
 
 
-# ------------------------------------------------------------------ yardımcılar
+# ------------------------------------------------------------------ helpers
 
 
 def test_pyautogui_missing_raises_tool_error(monkeypatch):
@@ -151,7 +151,7 @@ def test_dpi_aware_windows_falls_back_and_runs_once(monkeypatch):
                                          user32=SimpleNamespace(SetProcessDPIAware=lambda: calls.append("u32")))
     monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
     computer._dpi_aware()
-    computer._dpi_aware()  # ikinci çağrı hiçbir şey yapmamalı
+    computer._dpi_aware()  # the second call should do nothing
     assert calls == ["u32"]
     assert computer._DPI_SET is True
 
@@ -160,9 +160,9 @@ def test_dpi_aware_windows_swallows_all_errors(monkeypatch):
     set_platform(monkeypatch, "win32")
     monkeypatch.setattr(computer, "_DPI_SET", False)
     fake_ctypes = types.ModuleType("ctypes")
-    fake_ctypes.windll = SimpleNamespace()  # her erişim AttributeError
+    fake_ctypes.windll = SimpleNamespace()  # every attribute access raises AttributeError
     monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
-    computer._dpi_aware()  # istisna fırlatmamalı
+    computer._dpi_aware()  # must not raise an exception
     assert computer._DPI_SET is True
 
 
@@ -174,7 +174,7 @@ def test_to_real_requires_screenshot(ctx):
 def test_to_real_applies_scale_and_offset(ctx):
     ctx.state["screen"] = {"scale": 2.0, "left": 100, "top": 50, "w": 10, "h": 10}
     assert computer.to_real(ctx, 10, 20) == (120, 90)
-    assert computer.to_real(ctx, 0.4, 0.4) == (100, 50)  # int() aşağı yuvarlar
+    assert computer.to_real(ctx, 0.4, 0.4) == (100, 50)  # int() rounds down
 
 
 def test_type_text_ascii_uses_write(pg):
@@ -220,14 +220,14 @@ def test_type_text_non_ascii_without_pyperclip(pg, monkeypatch):
     ("ctrl+s", ("hotkey", "ctrl", "s")),
     ("Control + Shift + Esc", ("hotkey", "ctrl", "shift", "escape")),
     ("cmd+pgdn", ("hotkey", "command", "pagedown")),
-    ("alt++tab", ("hotkey", "alt", "tab")),  # boş parça atılır
+    ("alt++tab", ("hotkey", "alt", "tab")),  # empty parts are dropped
 ])
 def test_press_keys_aliases(pg, keys, expected):
     computer.press_keys(keys)
     assert pg.calls == [expected]
 
 
-# ------------------------------------------------------------------ ekran görüntüsü
+# ------------------------------------------------------------------ screenshot
 
 
 def _decode(b64):
@@ -247,7 +247,7 @@ def test_grab_screen_scales_and_stores_state(ctx, monkeypatch):
     assert img.size == (100, 50)
     assert ctx.state["screen"] == {"scale": 2.0, "left": 10, "top": 20, "w": 100, "h": 50}
     assert "100x50" in desc and "200x100" in desc and "monitör 1" in desc
-    # koordinat dönüşümü artık çalışmalı
+    # coordinate conversion should work now
     assert computer.to_real(ctx, 50, 25) == (110, 70)
 
 
@@ -257,7 +257,7 @@ def test_grab_screen_small_image_not_scaled_with_grid(ctx, monkeypatch):
     img = _decode(b64).convert("RGB")
     assert img.size == (80, 250)
     assert ctx.state["screen"]["scale"] == 1.0
-    # y=100 ve y=200'de macenta ızgara çizgisi olmalı
+    # there should be magenta grid lines at y=100 and y=200
     assert img.getpixel((40, 100)) == (255, 0, 255)
     assert img.getpixel((40, 200)) == (255, 0, 255)
     assert img.getpixel((40, 150)) != (255, 0, 255)
@@ -283,7 +283,7 @@ def test_type_text_restore_failure_is_ignored(pg, monkeypatch, sleeps):
 
     clip = Clip("eski")
     monkeypatch.setitem(sys.modules, "pyperclip", clip)
-    computer.type_text("ğ")  # geri yükleme hatası yutulur
+    computer.type_text("ğ")  # restore errors are swallowed
     assert clip.copies == ["ğ"]
 
 
@@ -299,7 +299,7 @@ def test_grab_screen_monitor_zero_uses_all(ctx, monkeypatch):
     assert ctx.state["screen"]["left"] == 0 and "monitör 0" in desc
 
 
-# ------------------------------------------------------------------ Computer aracı
+# ------------------------------------------------------------------ Computer tool
 
 
 def test_risk_for():
@@ -345,7 +345,7 @@ def test_run_type_and_key_validation(ctx, pg):
         t.run(ctx, action="type")
     with pytest.raises(ToolError, match="keys"):
         t.run(ctx, action="key", keys="")
-    # boş metin geçerli (None değil)
+    # empty text is valid (not None)
     assert t.run(ctx, action="type", text="").text == "0 karakter yazıldı"
 
 
@@ -396,7 +396,7 @@ def test_run_screenshot_after(ctx, pg, monkeypatch, sleeps):
     assert len(r.images) == 1 and sleeps == [0.4]
 
 
-# ------------------------------------------------------------------ ComputerTask aracı
+# ------------------------------------------------------------------ ComputerTask tool
 
 
 class _FakeRes:
@@ -446,7 +446,7 @@ def test_computer_task_runs_agent(ctx, fake_agent_mod):
     ctx.emit = emitted.append
     r = computer.ComputerTask().run(ctx, goal="not defteri aç", max_steps=500, monitor=2)
     assert r.text == "rapor:done" and not r.is_error
-    assert fake_agent_mod["max_steps"] == 60  # üst sınır
+    assert fake_agent_mod["max_steps"] == 60  # upper bound
     assert fake_agent_mod["screen"] == ("screen", 2)
     assert fake_agent_mod["ask"] == ("asker", "vision")
     assert emitted == ["adım 1"]
@@ -456,7 +456,7 @@ def test_computer_task_runs_agent(ctx, fake_agent_mod):
 
 
 def test_computer_task_shows_progress_on_hud(ctx, fake_agent_mod, monkeypatch):
-    """Canlı kayıt: ekran görevi sürerken HUD'da hiçbir şey yoktu (adım arası 5-20 sn boş)."""
+    """Live progress: while a screen task was running, the HUD showed nothing (5-20 s of blank between steps)."""
     from alice.hud import client
 
     sent = []
@@ -478,7 +478,7 @@ def test_computer_task_shows_progress_on_hud(ctx, fake_agent_mod, monkeypatch):
     computer.ComputerTask().run(ctx, goal="g")
     texts = [m.get("text") for m in sent if m.get("id") == "task"]
     assert texts[:2] == ["Ekran görevi · 1. adım", "Ekran görevi · 2. adım"]
-    assert sent[-1] == {"kind": "clear", "id": "task"}  # bitince Adadan kalkar
+    assert sent[-1] == {"kind": "clear", "id": "task"}  # removed from the HUD ("Ada") when finished
 
 
 def test_screen_act_frames_click_on_hud(monkeypatch):

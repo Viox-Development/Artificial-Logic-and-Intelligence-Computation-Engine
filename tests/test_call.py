@@ -1,4 +1,4 @@
-"""Uygulama içi arama: kullanıcı ALICE'i arar, ALICE kullanıcıyı arar; cevap cümle cümle sese çevrilir."""
+"""In-app call: the user calls ALICE, ALICE calls the user; the answer is spoken sentence by sentence."""
 
 from __future__ import annotations
 
@@ -62,10 +62,10 @@ def test_user_calls_alice_and_gets_spoken_answer_sentence_by_sentence(setup):
     assert state.call_action("say", {"id": r["id"], "text": "saat kaç"})["turn"] == 1
     done, seen = wait_for(events, lambda e: e["type"] == "call_turn_done")
     spoken = [e["text"] for e in seen if e["type"] == "call_audio"]
-    while not done["end"] and len(spoken) < 2:  # ses sırası tur bitişinden sonra da akabilir
+    while not done["end"] and len(spoken) < 2:  # speech may keep coming after the turn ends
         spoken.append(wait_for(events, lambda e: e["type"] == "call_audio")[0]["text"])
     assert spoken == ["Saat beşi on geçiyor.", "Bir de yağmur başlamış, şemsiye al."] and not done["end"]
-    # Görüşme kendi sohbetinde: sesli konuşma talimatı ve saat bilgisiyle.
+    # The call has its own chat, with the spoken-conversation instruction and the time.
     sent = prov.calls[-1]["messages"]
     assert "Telefon görüşmesi" in sent[0]["content"] and "saat kaç" in sent[-1]["content"]
     assert [x["who"] for x in state.calls.view()["lines"]] == ["alice", "user", "alice"]
@@ -81,7 +81,7 @@ def test_alice_marks_end_and_bye_phrase_hangs_up_without_model(setup):
     n = len(prov.calls)
     state.call_action("say", {"id": cid, "text": "görüşürüz"})
     done, _ = wait_for(events, lambda e: e["type"] == "call_turn_done" and e["turn"] == 2)
-    assert done["end"] and len(prov.calls) == n  # veda modele gitmedi
+    assert done["end"] and len(prov.calls) == n  # the goodbye never went to the model
     assert state.call_action("hangup", {"id": cid})["ok"]
     wait_for(events, lambda e: e["type"] == "call_end" and e["reason"] == "hangup")
     assert not state.call_action("say", {"id": cid, "text": "alo"})["ok"]
@@ -96,7 +96,7 @@ def test_alice_rings_user_who_answers(setup):
     assert "Telefon çalıyor" in res.text
     ev, _ = wait_for(events, lambda e: e["type"] == "call")
     assert ev["from"] == "alice" and ev["reason"] == "Hatırlatma: ilaç"
-    # Kullanıcı tam o sırada kendisi ararsa yeni arama açılmaz, çalan arama açılır.
+    # If the user calls at that moment, no new call opens; the ringing call opens instead.
     assert state.call_action("start", {})["id"] == ev["id"]
     view = state.calls.view()
     assert view["state"] == "active" and view["outbound"]
@@ -125,7 +125,7 @@ def test_without_speech_engine_text_still_goes_to_phone(setup):
     tts.fail = True
     cid = state.call_action("start", {})["id"]
     ev, _ = wait_for(events, lambda e: e["type"] == "call_audio")
-    assert ev["audio"] is False and ev["text"]  # telefon kendi sesiyle okur
+    assert ev["audio"] is False and ev["text"]  # the phone reads it with its own voice
     assert state.calls.audio(cid, ev["n"]) is None
 
 
@@ -150,14 +150,14 @@ def test_http_endpoints(setup):
         assert c.get("/api/call").json()["state"] == "active"
         assert c.get("/api/call/audio", params={"id": r["id"], "n": 99}).status_code == 404
         assert not c.post("/api/call/say", json={"id": "yok", "text": "x"}).json()["ok"]
-        assert httpx.get(srv.url.split("/?")[0] + "/api/call").status_code == 403  # anahtarsız olmaz
+        assert httpx.get(srv.url.split("/?")[0] + "/api/call").status_code == 403  # not allowed without the key
         assert c.post("/api/call/hangup", json={"id": r["id"]}).json()["ok"]
     finally:
         srv.stop()
 
 
 def test_permission_asked_in_call_is_answered_from_phone(workdir):
-    """Görüşmenin kendi sohbeti var: izin isteği öndeki sohbete değil ona gitmeli (önceden cevapsız kalıyordu)."""
+    """The call has its own chat: permission requests go there, not to the front chat (they used to go unanswered)."""
     from tests.conftest import tool_call
 
     cfg = make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["a:m"]})
@@ -181,7 +181,7 @@ def test_permission_asked_in_call_is_answered_from_phone(workdir):
 
 
 class FakeRealtime:
-    """Canlı arama için RealtimeSession yerine: selam verir, mikrofon karelerini toplar, kapanınca döner."""
+    """Stand-in for RealtimeSession in a live call: greets, collects mic frames, returns when the call ends."""
 
     def __init__(self, agent, out_factory):
         self.agent, self.out_factory = agent, out_factory
@@ -210,7 +210,7 @@ class FakeRealtime:
 
 
 def test_live_call_streams_mic_and_voice_like_the_pc(setup):
-    """Telefon araması bilgisayardaki gibi Realtime üzerinden akar: cümle cümle TTS yok, ses parça parça gider."""
+    """A phone call streams over Realtime like on the PC: no sentence-by-sentence TTS, audio goes out in chunks."""
     import base64
 
     state, prov, tts, events = setup
@@ -228,11 +228,11 @@ def test_live_call_streams_mic_and_voice_like_the_pc(setup):
     end = time.time() + 5
     while len(rt.frames) < 2 and time.time() < end:
         time.sleep(0.02)
-    assert [len(f) for f in rt.frames] == [960, 960]  # 30 ms'lik kareler
+    assert [len(f) for f in rt.frames] == [960, 960]  # 30 ms frames
     assert state.call_action("say", {"id": r["id"], "text": "saat kaç"})["ok"] and rt.injected == ["saat kaç"]
     state.call_action("interrupt", {"id": r["id"]})
     wait_for(events, lambda e: e["type"] == "call_pcm_clear")
-    assert not tts.said and not prov.calls  # eski yol (ajan turu + TTS) hiç çalışmadı
+    assert not tts.said and not prov.calls  # the old path (agent turn + TTS) never ran
     assert state.call_action("mic", {"id": r["id"], "pcm": "%%%"})["ok"] is False
     state.call_action("hangup", {"id": r["id"]})
     wait_for(events, lambda e: e["type"] == "call_end")
@@ -240,7 +240,7 @@ def test_live_call_streams_mic_and_voice_like_the_pc(setup):
 
 
 def test_live_call_warns_phone_when_no_mic_audio_arrives(setup):
-    """Telefonun mikrofon sesi hiç gelmezse ALICE kullanıcıyı duyamaz: telefona söylenir, o da kendi tanımasına geçer."""
+    """No mic audio from the phone means ALICE can't hear the user: the phone is told to use its own recognition."""
     import base64
 
     state, prov, tts, events = setup

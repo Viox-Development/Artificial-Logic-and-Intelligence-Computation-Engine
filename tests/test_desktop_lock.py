@@ -1,4 +1,4 @@
-"""Aynı anda çalışan sohbetler ekranı/tarayıcıyı sırayla kullanır (alice/tools/base.py: DesktopLock)."""
+"""Chats running at the same time use the screen/browser one after another (alice/tools/base.py: DesktopLock)."""
 
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ class FakeBrowser:
 
 def test_second_chat_waits_until_first_releases():
     lock, a, b = DesktopLock(), ctx(), ctx()
-    assert lock.acquire(a, lambda: False) and lock.acquire(a, lambda: False)  # aynı sohbet tekrar alabilir
+    assert lock.acquire(a, lambda: False) and lock.acquire(a, lambda: False)  # the same chat can take it again
     waited, got = [], []
     t = threading.Thread(target=lambda: got.append(lock.acquire(b, lambda: False, on_wait=lambda: waited.append(1))))
     t.start()
     time.sleep(0.3)
-    assert got == [] and waited == [1]  # bir kez söylendi, bekliyor
-    lock.release(b)  # sahibi olmayan bırakamaz
+    assert got == [] and waited == [1]  # announced once, now waiting
+    lock.release(b)  # a non-owner cannot release it
     assert lock.owner is a
     lock.release(a)
     t.join(2)
@@ -49,12 +49,12 @@ def test_waiting_chat_can_be_stopped():
 
 
 def test_handoff_drops_previous_browser_connection():
-    # Tarayıcı köprüsü tek istemciye hizmet verir: önceki sohbetin bağlantısı sessizce ölü kalmasın.
+    # The browser bridge serves a single client: the previous chat's connection must not silently stay dead.
     lock, a, b = DesktopLock(), ctx(), ctx()
     a.state["browser"] = br = FakeBrowser()
     lock.acquire(a, lambda: False)
     lock.release(a)
-    lock.acquire(a, lambda: False)  # aynı sohbet: dokunma
+    lock.acquire(a, lambda: False)  # same chat: leave it alone
     assert br.aborted == ""
     lock.release(a)
     lock.acquire(b, lambda: False)
@@ -90,7 +90,7 @@ def test_agent_stopped_while_waiting_for_desktop(workdir):
     agent.tools["fare"] = mouse = Mouse()
     lock = DesktopLock()
     other = ctx()
-    lock.acquire(other, lambda: False)  # başka sohbet ekranda
+    lock.acquire(other, lambda: False)  # another chat is on the screen
     agent.ctx.state["desktop_lock"] = lock
     threading.Timer(0.3, agent.stop).start()
     agent.run_turn("tıkla")
@@ -98,7 +98,7 @@ def test_agent_stopped_while_waiting_for_desktop(workdir):
 
 
 def test_no_lock_outside_app(workdir):
-    # CLI, ses ve çekirdek ajanlarında kilit yok: hiçbir şey beklemez.
+    # The CLI, voice and core agents have no lock: nothing waits.
     cfg = make_config({"brain": ["a:m"]})
     a = Agent(cfg, None, [Mouse()], ToolContext(cwd=workdir, config=cfg), Permissions("auto"), None,  # type: ignore[arg-type]
               system_prompt="sys")

@@ -1,5 +1,5 @@
-"""GitHub otomasyonu: CI logu özeti, inceleme konuları, PR takibi (kendiliğinden düzeltme / birleştirme), bağımsız
-kod incelemesi, CI bekleme ve ayrı çalışma kopyası (worktree)."""
+"""GitHub automation: CI log summary, review threads, PR tracking (automatic fixing / merging), independent
+code review, CI waiting and separate working copy (worktree)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from alice.tools.base import ToolContext, ToolError
 from tests.conftest import make_config
 
 
-# ------------------------------------------------------------------------------------------ sahte GitHub
+# ------------------------------------------------------------------------------------------ fake GitHub
 class FakeAPI:
     token = "t"
 
@@ -71,14 +71,14 @@ def thread(tid, author, body, assoc="OWNER", resolved=False, cid=1, kind="User")
                                     "author": {"__typename": kind, "login": author}}]}}
 
 
-# ----------------------------------------------------------------------------------------------- CI logu
+# ----------------------------------------------------------------------------------------------- CI log
 def test_excerpt_keeps_errors_with_context_and_tail():
     log = "\n".join([f"2026-11-12T09:00:0{i}.0Z satır {i}" for i in range(5)]
                     + ["2026-11-12T09:00:05.0Z FAILED tests/test_a.py::test_x - AssertionError: 1 != 2"]
                     + [f"gürültü {i}" for i in range(200)] + ["2 failed, 10 passed"])
     out = gh.excerpt_log(log)
-    assert "FAILED tests/test_a.py::test_x" in out and "satır 4" in out  # bağlam
-    assert "2 failed, 10 passed" in out and "2026-11-12T" not in out  # son satırlar, zaman damgasız
+    assert "FAILED tests/test_a.py::test_x" in out and "satır 4" in out  # context
+    assert "2 failed, 10 passed" in out and "2026-11-12T" not in out  # last lines, no timestamps
     assert "gürültü 50" not in out
 
 
@@ -91,7 +91,7 @@ def test_failed_jobs_reads_logs_of_failed_jobs_only():
     assert [j["name"] for j in jobs] == ["test (windows)"] and "assert 1 == 2" in jobs[0]["log"]
 
 
-# ---------------------------------------------------------------------------------------- inceleme konuları
+# ---------------------------------------------------------------------------------------- review threads
 def test_new_comments_split_trusted_outside_and_skip_alice_replies():
     data = gh.review_threads(FakeAPI(threads={
         "reviewThreads": {"nodes": [
@@ -106,10 +106,10 @@ def test_new_comments_split_trusted_outside_and_skip_alice_replies():
                                 "authorAssociation": "OWNER", "author": {"login": "hayatexe"}}]}}), "o/r", 7)
     w = prwatch.Watch("o/r", 7)
     good, outside = prwatch.new_comments(w, data)
-    assert sorted(c["id"] for c in good) == [1, 3]  # sahip ve Copilot; çözülmüş konu ve ALICE'in cevabı yok
+    assert sorted(c["id"] for c in good) == [1, 3]  # owner and Copilot; no resolved thread and no ALICE reply
     assert [c["id"] for c in outside] == [2]
     w.seen = [1, 3]
-    assert prwatch.new_comments(w, data)[0] == []  # görülenler bir daha ele alınmaz
+    assert prwatch.new_comments(w, data)[0] == []  # already-seen ones are not handled again
     assert "konu T1" in gh.format_threads(data) and "(dışarıdan)" in gh.format_threads(data)
 
 
@@ -119,7 +119,7 @@ def test_reply_is_signed_so_watcher_ignores_it():
     assert api.calls[-1][1].endswith("/pulls/7/comments/5/replies") and gh.ALICE_MARK in api.calls[-1][2]["body"]
 
 
-# --------------------------------------------------------------------------------------------- PR takibi
+# --------------------------------------------------------------------------------------------- PR tracking
 @pytest.fixture
 def fixer(monkeypatch, tmp_path):
     seen = {"prompts": [], "notes": [], "reviews": []}
@@ -129,7 +129,7 @@ def fixer(monkeypatch, tmp_path):
         seen["reviews"].append(pr["head"]["sha"])
         return "1 bulgu: https://r"
 
-    monkeypatch.setattr(prwatch, "default_reviewer", lambda cfg: reviewer)  # gerçek ajan/ağ yok
+    monkeypatch.setattr(prwatch, "default_reviewer", lambda cfg: reviewer)  # no real agent/network
 
     def run(prompt, cwd):
         seen["prompts"].append(prompt)
@@ -152,7 +152,7 @@ def test_red_ci_is_fixed_once_per_commit_in_a_separate_worktree(fixer):
     p = seen["prompts"][0]
     assert "FAILED tests/test_a.py::test_x" in p and "<untrusted_content" in p and "action=push branch=ozellik" in p
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=api, run_fix=run)
-    assert len(seen["prompts"]) == 1  # aynı commit'in aynı CI hatası bir kez ele alınır
+    assert len(seen["prompts"]) == 1  # the same CI failure on the same commit is handled once
     assert any("ele alındı" in n for n in notes)
 
 
@@ -195,7 +195,7 @@ def test_auto_merge_only_when_green_and_no_open_threads(fixer):
     prwatch.watch("o/r", 7, auto_merge=True)
     api = FakeAPI(pr=pr(), checks={"state": "pending", "failed": [], "pending": ["t"], "total": 1})
     prwatch.check_all(cfg, lambda t, b: None, api=api, run_fix=run)
-    assert not any(c[0] == "PUT" for c in api.calls)  # CI sürüyor: bekle
+    assert not any(c[0] == "PUT" for c in api.calls)  # CI still running: wait
     api = FakeAPI(pr=pr())
     prwatch.check_all(cfg, lambda t, b: None, api=api, run_fix=run)
     assert any(c[0] == "PUT" and c[1].endswith("/pulls/7/merge") for c in api.calls)
@@ -221,7 +221,7 @@ def test_ci_wait_polls_until_done(monkeypatch):
     assert "kırmızı" in out.text and "ci_logs" in out.text
 
 
-# ------------------------------------------------------------------------------------------ kod incelemesi
+# ------------------------------------------------------------------------------------------ code review
 def test_review_keeps_only_findings_the_verifier_did_not_reject(monkeypatch, tmp_path):
     answers = iter([
         json.dumps({"findings": [
@@ -275,13 +275,13 @@ def test_worktree_opens_separate_copy_and_switches_cwd(tmp_path):
     ctx = ToolContext(cwd=repo, config=make_config({"brain": ["a:m"]}))
     out = gh.Git().run(ctx, "worktree", branch="deneme/yeni", create=True)
     assert ctx.cwd != repo and (ctx.cwd / ".git").exists() and "deneme/yeni" in out.text
-    assert not (ctx.cwd / "yarim.txt").exists() and (repo / "yarim.txt").exists()  # ana kopyaya dokunulmadı
+    assert not (ctx.cwd / "yarim.txt").exists() and (repo / "yarim.txt").exists()  # the main copy was not touched
     assert "deneme/yeni" in gh.Git().run(ctx, "worktrees").text
     with pytest.raises(ToolError, match="create=true"):
         gh.Git().run(ToolContext(cwd=repo, config=ctx.config), "worktree", branch="olmayan")
 
 
-# ---------------------------------------------------------------------- sohbete yönlendirme ve otomatik inceleme
+# ---------------------------------------------------------------------- routing to the chat and automatic review
 def test_fix_goes_to_the_chat_that_wrote_the_code(fixer):
     seen, run = fixer
     prwatch.watch("o/r", 7, session="20261112-101500")
@@ -294,14 +294,14 @@ def test_fix_goes_to_the_chat_that_wrote_the_code(fixer):
 
     cfg = make_config({"brain": ["a:m"]})
     out = prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr(), checks=red), run_fix=run, deliver=deliver)
-    assert "meşgul" in out[0] and not prwatch.load()[0].handled  # sohbet başka işteyken bölünmez, sonra denenir
+    assert "meşgul" in out[0] and not prwatch.load()[0].handled  # a busy chat is not interrupted; retried later
     prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr(), checks=red), run_fix=run, deliver=deliver)
     sid, text = sent[-1]
     assert sid == "20261112-101500" and text.startswith("[PR takibi]") and "baştan araştırma yapma" in text
-    assert "git action=worktree" in text  # kullanıcının commit'lenmemiş işine dokunmaz
-    assert not seen["prompts"]  # temiz bağlamlı ajana gitmedi
+    assert "git action=worktree" in text  # does not touch the user's uncommitted work
+    assert not seen["prompts"]  # did not go to the clean-context agent
     assert "ci:abc123" in prwatch.load()[0].handled
-    assert not seen["reviews"]  # düzeltme gönderilen turda inceleme yok: commit birazdan değişecek
+    assert not seen["reviews"]  # no review in the turn where the fix was sent: the commit is about to change
 
 
 def test_falls_back_to_clean_agent_when_chat_unreachable(fixer):
@@ -326,7 +326,7 @@ def test_each_new_commit_is_reviewed_once(fixer):
     prwatch.watch("o/r", 8, auto_review=False)
     before = len(seen["reviews"])
     prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr={**pr(sha="x9"), "number": 8}), run_fix=run)
-    assert len(seen["reviews"]) == before + 1  # yalnız #7'nin yeni commit'i; #8'de inceleme kapalı
+    assert len(seen["reviews"]) == before + 1  # only #7's new commit; review is off for #8
 
 
 def test_user_reply_under_alices_review_comment_is_seen():
@@ -349,10 +349,10 @@ def test_watch_tool_records_the_chat_session():
 
 def test_bot_trust_needs_exact_name_and_a_real_bot():
     assert gh.trusted("copilot-pull-request-reviewer", "NONE", "Bot")
-    assert gh.trusted("github-actions[bot]", "NONE")  # REST biçimi
-    assert not gh.trusted("copilot-helper", "NONE", "Bot")  # önek yetmez
+    assert gh.trusted("github-actions[bot]", "NONE")  # REST format
+    assert not gh.trusted("copilot-helper", "NONE", "Bot")  # a prefix is not enough
     assert not gh.trusted("github-actionsx[bot]", "NONE")
-    assert not gh.trusted("copilot", "NONE", "User")  # aynı adlı kullanıcı hesabı bot değil
+    assert not gh.trusted("copilot", "NONE", "User")  # a user account with the same name is not a bot
     assert gh.trusted("herhangi", "COLLABORATOR")
 
 
@@ -391,8 +391,8 @@ def test_saved_session_reopens_in_its_own_folder(tmp_path):
 
 
 def test_unreadable_watch_file_is_not_wiped_by_writers(monkeypatch):
-    # Windows'ta dosya o an başka süreçte replace ediliyorsa okuma PermissionError veriyordu; load() boş dönünce
-    # ardından gelen watch/_update kaydı bütün izleme listesini siliyordu.
+    # On Windows, reads raised PermissionError while another process was replacing the file; when load()
+    # then returned empty, the next watch/_update write wiped the entire watch list.
     prwatch.watch("o/r", 1)
     prwatch.watch("o/r", 2)
     real, fail = Path.read_text, [True]
@@ -409,7 +409,7 @@ def test_unreadable_watch_file_is_not_wiped_by_writers(monkeypatch):
         prwatch.watch("o/r", 3)
     fail[0] = False
     assert sorted(w.number for w in prwatch.load()) == [1, 2]
-    # Kısa kilit: birkaç denemede okunur, kayıt kaybolmaz.
+    # Short lock: read succeeds after a few attempts, the record is not lost.
     calls = []
 
     def flaky(self, *a, **k):

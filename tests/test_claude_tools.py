@@ -1,5 +1,5 @@
-"""Claude Code araç davranışlarının ALICE karşılıkları: okumadan düzenleme yok, process_wait, send_file,
-exit_plan_mode (bkz. docs/TOOL-STYLE.md)."""
+"""ALICE counterparts of Claude Code tool behaviors: no editing without reading, process_wait, send_file,
+exit_plan_mode (see docs/TOOL-STYLE.md)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_edit_requires_read_and_fresh_copy(ctx, workdir):
         MultiEdit().run(ctx, path="a.txt", edits=[{"old_string": "bir", "new_string": "iki"}])
     ReadFile().run(ctx, path="a.txt")
     EditFile().run(ctx, path="a.txt", old_string="bir", new_string="iki")
-    EditFile().run(ctx, path="a.txt", old_string="iki", new_string="üç")  # kendi yazdığını bilir: tekrar okumaz
+    EditFile().run(ctx, path="a.txt", old_string="iki", new_string="üç")  # it knows what it wrote itself: no re-read
     time.sleep(0.02)
     f.write_text("başkası değiştirdi\n", encoding="utf-8")
     import os
@@ -45,14 +45,14 @@ def test_edit_requires_read_and_fresh_copy(ctx, workdir):
 
 
 def test_new_file_needs_no_read_and_guard_can_be_disabled(ctx, workdir):
-    WriteFile().run(ctx, path="yeni.txt", content="x")  # yeni dosya: okunacak bir şey yok
+    WriteFile().run(ctx, path="yeni.txt", content="x")  # new file: nothing to read
     (workdir / "b.txt").write_text("b", encoding="utf-8")
     ctx.config.data.setdefault("agent", {})["require_read_before_edit"] = False
     WriteFile().run(ctx, path="b.txt", content="c")
     assert (workdir / "b.txt").read_text(encoding="utf-8") == "c"
 
 
-PY = f'& "{sys.executable}"' if sys.platform == "win32" else f'"{sys.executable}"'  # PowerShell: tırnaklı exe için &
+PY = f'& "{sys.executable}"' if sys.platform == "win32" else f'"{sys.executable}"'  # PowerShell: & is needed for a quoted exe
 
 
 def test_process_wait_returns_when_pattern_appears(ctx):

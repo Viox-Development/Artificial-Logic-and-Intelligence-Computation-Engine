@@ -1,5 +1,5 @@
-"""Gevşek JSON argümanları: computer / computer_task araçları ve ekran ajanının aksiyonları metin sayıları,
-"false" gibi bayrakları ve eksik alanları çökmeden, düzeltilebilir bir hatayla karşılar."""
+"""Loose JSON arguments: the computer / computer_task tools and the screen agent's actions handle numbers given as
+text, "false"-style flags and missing fields without crashing, returning a recoverable error."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def test_as_number_rejects_garbage(value):
 
 
 def test_click_with_string_coordinates(ctx, pg):
-    r = computer.Computer().run(ctx, action="click", x="50", y="20.5")  # eskiden "50" * 2.0 TypeError
+    r = computer.Computer().run(ctx, action="click", x="50", y="20.5")  # previously "50" * 2.0 raised TypeError
     assert pg.calls[-1] == ("click", 110, 41)
     assert r.text == "click (50,20)"
     with pytest.raises(ToolError, match="x sayı olmalı"):
@@ -91,7 +91,7 @@ def test_scroll_and_drag_with_strings(ctx, pg):
 
 def test_wait_with_string_or_null_seconds(ctx, sleeps):
     computer.Computer().run(ctx, action="wait", seconds="2.5")
-    computer.Computer().run(ctx, action="wait", seconds=None)  # float(None) TypeError idi
+    computer.Computer().run(ctx, action="wait", seconds=None)  # used to raise TypeError from float(None)
     assert sleeps == [2.5, 1.0]
     with pytest.raises(ToolError, match="seconds sayı olmalı"):
         computer.Computer().run(ctx, action="wait", seconds="biraz")
@@ -111,7 +111,7 @@ def test_screenshot_after_string_false_and_bad_monitor(ctx, pg, monkeypatch):
     monkeypatch.setattr(computer, "grab_screen", lambda c, grid=False, monitor=1: shots.append((grid, monitor))
                         or ("b64", "d"))
     r = computer.Computer().run(ctx, action="move", x=1, y=1, screenshot_after="false")
-    assert not r.images and shots == []  # "false" metni ekstra ekran görüntüsü aldırıyordu
+    assert not r.images and shots == []  # the "false" text used to trigger an extra screenshot
     computer.Computer().run(ctx, action="screenshot", grid="false", monitor="2")
     assert shots == [(False, 2)]
     with pytest.raises(ToolError, match="monitor 0 ya da pozitif"):
@@ -130,7 +130,7 @@ def test_computer_task_bad_numbers_release_lock(ctx, monkeypatch):
     ca._RUNNING.release()
 
 
-# ------------------------------------------------------------------ ekran ajanı
+# ------------------------------------------------------------------ screen agent
 
 
 SHOT = Shot("", 100, 50, 2000, 1000, [])
@@ -142,7 +142,7 @@ def test_agent_open_rejects_empty_target(monkeypatch):
     for target in ("", "   ", None):
         with pytest.raises(ValueError, match="target gerekli"):
             Screen(None).act({"action": "open", "target": target}, SHOT)
-    assert opened == []  # Windows'ta Path("") "." olup çalışma klasörünü açıyordu
+    assert opened == []  # On Windows, Path("") is "." and was opening the working folder
 
 
 def test_agent_open_refuses_script_with_trailing_dot(monkeypatch):
@@ -152,7 +152,7 @@ def test_agent_open_refuses_script_with_trailing_dot(monkeypatch):
 
 
 def test_point_is_clamped_to_screen():
-    # model 0-1000 yerine piksel verirse ekran dışına / diğer monitöre tıklamasın
+    # if the model sends pixels instead of 0-1000, don't click off-screen or on another monitor
     assert Screen.point({"point": [1500, -20]}, SHOT) == (100, 1050)
     with pytest.raises(ValueError, match="id ya da point"):
         Screen.point({"point": "500,500"}, SHOT)

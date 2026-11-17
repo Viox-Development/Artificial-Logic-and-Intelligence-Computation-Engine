@@ -37,17 +37,17 @@ def test_tally_rules():
     adv = Vote("advocate", "m", 1, "approve", "approve")
     ver = Vote("verifier", "m", 1, "approve", "approve")
     r = tally([crit, adv, ver], [f1])
-    assert r["decision"] == "approve" and not crit.counted  # çürütülen bulguya dayanan ret sayılmaz
+    assert r["decision"] == "approve" and not crit.counted  # a rejection based on a refuted finding is not counted
     r = tally([Vote("critic", "m", 1, "reject", "reject", basis=["F2"]), adv, ver], [f2])
-    assert r["decision"] == "revise" and r["veto"] == ["F2"]  # doğrulanmış kritik bulgu veto
+    assert r["decision"] == "revise" and r["veto"] == ["F2"]  # a confirmed critical finding is a veto
     cond = Vote("critic", "m", 1, "conditional", "conditional", conditions=["log ekle"])
     r = tally([cond, adv, ver], [])
     assert r["decision"] == "approve_conditions" and r["conditions"] == ["log ekle"]
     sec = Vote("security", "m", 1, "reject", "reject", basis=["F3"])
     f3 = Finding("F3", "security", "major", "z", status="unclear")
-    r = tally([sec, adv], [f3], relevant=["security"])  # uzman ağırlığı 2: 1/3 onay
+    r = tally([sec, adv], [f3], relevant=["security"])  # expert weight 2: 1/3 approval
     assert r["decision"] == "revise" and sec.weight == 2
-    r = tally([sec, adv], [f3], user={"vote": "approve"}, relevant=["security"])  # kullanıcı 3 kat: 4/6
+    r = tally([sec, adv], [f3], user={"vote": "approve"}, relevant=["security"])  # the user counts 3x: 4/6
     assert r["decision"] == "approve"
 
 
@@ -89,7 +89,7 @@ def test_refuted_finding_does_not_block(workdir):
     critic = next(v for v in snap["votes"] if v["role"] == "critic")
     assert not critic["counted"] and "çürütüldü" in critic["note"]
     assert "ONAY" in report(snap) and "çürütüldü" in report(snap)
-    assert not any(k.startswith("council:") for k in ctx.router.role_overrides)  # roller temizlendi
+    assert not any(k.startswith("council:") for k in ctx.router.role_overrides)  # roles were cleaned up
 
 
 def test_confirmed_critical_finding_vetoes_and_debate_changes_votes(workdir):
@@ -98,10 +98,10 @@ def test_confirmed_critical_finding_vetoes_and_debate_changes_votes(workdir):
     snap = Council(ctx, "work", "ödeme kodu", "a\n" * 200, depth=2).run()
     assert snap["result"]["decision"] == "revise" and snap["result"]["veto"] == ["F1"]
     adv = next(v for v in snap["votes"] if v["role"] == "advocate")
-    assert adv["first"] == "approve" and adv["last"] == "conditional"  # tartışmada ikna oldu
+    assert adv["first"] == "approve" and adv["last"] == "conditional"  # convinced in the debate
     assert any(r == "advocate" and k == "debate" for r, k in state["calls"])
     assert "F1" in fix_list(snap) and "sıfır kontrolü" in fix_list(snap)
-    again = retally(snap, {"vote": "approve"})  # kullanıcı oyu veto'yu kaldırmaz
+    again = retally(snap, {"vote": "approve"})  # the user's vote does not lift the veto
     assert again["result"]["decision"] == "revise"
 
 
@@ -116,7 +116,7 @@ def test_debate_stops_early_when_nobody_moves(workdir):
 
     agent, prov, ctx = make(script, workdir)
     snap = Council(ctx, "work", "iş", "a\n" * 200, depth=3).run()
-    assert snap["round"] == 2  # bir tartışma turu, kimse değişmedi, bitti
+    assert snap["round"] == 2  # one debate round, nobody changed, done
     assert snap["result"]["decision"] == "approve_conditions"
 
 
@@ -139,7 +139,7 @@ def test_chat_council_tool_and_slash_command(workdir):
 
 
 def project_script(state):
-    """Planı bir kez reddedilen, işi bir kez düzeltmeye gönderilen ve sonunda finali geçen proje."""
+    """A project whose plan is rejected once, whose work goes back for one fix, and which passes the final review."""
 
     def run(model, messages, tools, **kw):
         role = role_of(messages)
@@ -174,7 +174,7 @@ def project_script(state):
             if "Final kurulu projeyi onayladı" in event and k == 0:
                 return tool_call("finish", {"summary": "bitti"})
             return "tamam"
-        # backend ajanı
+        # backend agent
         n = steps(messages)
         if any("Kurul kararı" in str(m.get("content")) for m in messages if m["role"] == "user"):
             return "rapor: kontrol eklendi"
@@ -234,8 +234,8 @@ def test_prose_drops_json_decisions():
 
 
 def plan_council_script(state):
-    """Plan kurulu: ilk planda bölme sorunu (planı bozan) + küçük öneri; düzeltilmiş planda sadece öneri kalır.
-    state['stubborn'] ise kurul düzeltilmiş plana da itiraz eder."""
+    """Plan council: the first plan has a split problem (one that breaks the plan) plus a minor suggestion;
+    the corrected plan keeps only the suggestion. If state['stubborn'] is set, the council still objects."""
     def run(model, messages, tools, **kw):
         role = role_of(messages)
         prompt = str(messages[1]["content"]) if len(messages) > 1 else ""
@@ -280,16 +280,16 @@ def test_plan_council_blocks_only_plan_breaking_issues_and_routes_notes(workdir)
     assert team.wait_until(lambda: "web" in team.members, 30), team.status_text()
     plans = [c for c in team.councils if c["kind"] == "plan"]
     assert [c["result"]["decision"] for c in plans] == ["revise", "approve_conditions"]
-    assert all(f["severity"] != "critical" for c in plans for f in c["findings"])  # planda kritik/veto yok
+    assert all(f["severity"] != "critical" for c in plans for f in c["findings"])  # no critical/veto in the plan
     assert plans[0]["result"]["veto"] == [] and plans[0]["result"]["blocking"] == ["F1"]
     assert plans[0]["rubric"]["bölme"] == 2 and plans[0]["rubric"]["kapsam"] >= 4
     assert "Kurul notu: sayfalar tarayıcıda açılıp bakılsın" in team.members["web"].constraints
     sys_prompt, material = next((s, p) for r, s, p in state["prompts"] if r == "critic")
     assert "Plan incelemesi" in sys_prompt and "Yasak: uygulama ayrıntıları" in sys_prompt
     assert "Proje klasörü" in material and "index.html" in material and "DESIGN.md" in material
-    # Ajan hemen başlayınca iş incelemesi de gelebiliyor: son *plan* incelemesine bak.
+    # The work review can also arrive as soon as the agent starts: look at the last *plan* review.
     second = [p for r, s, p in state["prompts"] if r == "critic" and "Plan incelemesi" in s][-1]
-    assert "Önceki kurulun bulguları" in second  # düzeltilmiş plan öncekine göre incelenir
+    assert "Önceki kurulun bulguları" in second  # the corrected plan is reviewed against the earlier one
     assert team.plan_rejects == 0
 
 
@@ -300,7 +300,7 @@ def test_plan_starts_with_notes_after_one_revision(workdir):
     team.start(plan=True)
     assert team.wait_until(lambda: "web" in team.members, 30), team.status_text()
     assert [c["result"]["decision"] for c in team.councils if c["kind"] == "plan"] == ["revise", "revise"]
-    assert not team.questions  # kullanıcıya sorulmadı, notlarla başlandı
+    assert not team.questions  # the user was not asked; it started with notes
     assert any("notlarıyla başlatıldı" in x["text"] for x in team.timeline)
     assert "Kurul notu" in team.members["web"].constraints
 
@@ -308,20 +308,20 @@ def test_plan_starts_with_notes_after_one_revision(workdir):
 def test_plan_decision_edge_cases():
     from alice.council import Finding, Vote, norm_area, norm_scores, plan_decision, plan_override, tally
 
-    # hiç oy sayılamadı (gerekçesiz ret): plan reddedilmez
+    # no vote could be counted (rejection without a reason): the plan is not rejected
     res = tally([Vote("critic", "m", 1.0, last="reject")], [])
     assert plan_decision(res, [])["decision"] == "approve"
-    # büyük harfli / İngilizce alan da planı bozan sorun sayılır
+    # an upper-case / English area name also counts as a plan-breaking issue
     f = Finding("F1", "critic", "major", "eksik sayfa", status="confirmed", area=norm_area("Kapsam"))
     assert plan_decision({"score": 0.9, "weight": 3}, [f])["decision"] == "revise"
     assert norm_area("SIRA") == "sıra" and norm_area("scope") == "kapsam" and norm_area("x") == ""
-    # doğrulama alanı tek başına planı durdurmaz
+    # the verification area alone does not stop the plan
     g = Finding("F2", "critic", "major", "test adımı yok", status="confirmed", area="doğrulama")
     assert plan_decision({"score": 0.9, "weight": 3}, [g])["decision"] == "approve_conditions"
-    # bozuk puanlar kurulu çökertmez
+    # malformed scores do not crash the council
     assert norm_scores({"kapsam": float("nan"), "Bölme": "4", "sıra": True, "risk": float("inf"), "doğrulama": 9}) == \
         {"bölme": 4, "doğrulama": 5}
-    # kullanıcının reddi de geçer
+    # the user's rejection also applies
     assert plan_override({"decision": "approve"}, [], {"vote": "reject"})["decision"] == "revise"
 
 
@@ -338,7 +338,7 @@ def test_plan_verifier_cannot_escalate_or_veto(workdir):
     agent, _, ctx = make(script, workdir)
     snap = Council(ctx, "plan", "Proje planı", "plan metni", depth=1).run()
     sev = {f["id"]: f["severity"] for f in snap["findings"]}
-    assert sev["F1"] == "minor"  # yükseltilemez
+    assert sev["F1"] == "minor"  # cannot be escalated
     assert all(f["severity"] != "critical" for f in snap["findings"]) and snap["result"]["veto"] == []
 
 

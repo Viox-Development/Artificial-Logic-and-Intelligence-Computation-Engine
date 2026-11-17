@@ -1,4 +1,4 @@
-"""Sohbetten akış kurma: feeds aracı ve feeds.toml'u yorumlarına dokunmadan düzenleme."""
+"""Creating feeds from chat: the feeds tool and editing feeds.toml without touching its comments."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ any = ["hayat"]
 """
 
 
-# ------------------------------------------------------------------------------ dosya
+# ------------------------------------------------------------------------------ file
 def test_ekle_yorumlari_korur_ve_gecerli_toml_uretir(ffile):
     ffile.write_text(USER_FILE, encoding="utf-8")
     feedfile.add_feed({"name": "yeni", "connector": "steam", "action": "profile",
@@ -70,7 +70,7 @@ def test_ayni_ad_ve_gecersiz_akis_reddedilir(ffile):
         feedfile.add_feed({"name": "x", "connector": "steam", "action": "profile", "mode": "change"})
     with pytest.raises(ValueError, match="bilinmeyen alan"):
         feedfile.add_feed({"name": "y", "connector": "d", "action": "m", "when": {"icerir": ["a"]}})
-    assert ffile.read_text(encoding="utf-8") == USER_FILE      # bozuk ekleme dosyaya hiç dokunmadı
+    assert ffile.read_text(encoding="utf-8") == USER_FILE      # the broken add did not touch the file at all
 
 
 def test_sil_ve_ac_kapa_sadece_ilgili_blogu_degistirir(ffile):
@@ -79,7 +79,7 @@ def test_sil_ve_ac_kapa_sadece_ilgili_blogu_degistirir(ffile):
     assert feedfile.set_enabled("elle", False)
     feeds = {f.name: f for f in F.load_feeds()[0]}
     assert feeds["elle"].enabled is False and feeds["ikinci"].enabled is True
-    assert feeds["elle"].when.any == ["hayat"]                 # alt tablo bozulmadı
+    assert feeds["elle"].when.any == ["hayat"]                 # sub-table was not broken
     assert feedfile.set_enabled("elle", True)
     assert {f.name: f.enabled for f in F.load_feeds()[0]}["elle"] is True
     assert feedfile.remove_feed("ikinci") and not feedfile.remove_feed("ikinci")
@@ -93,7 +93,7 @@ def test_dosya_yokken_ekleme_olusturur(ffile):
 
 
 def test_toml_degerleri():
-    assert feedfile.toml_value(r"\bacil\b") == r"'\bacil\b'"       # regex: literal, kaçış yok
+    assert feedfile.toml_value(r"\bacil\b") == r"'\bacil\b'"       # regex: literal string, no escaping
     assert feedfile.toml_value('tırnak "var"') == '"tırnak \\"var\\""'
     assert feedfile.toml_value({"author.username": ["a"]}) == '{ "author.username" = ["a"] }'
     assert feedfile.toml_value(5.0) == "5" and feedfile.toml_value(0.5) == "0.5" and feedfile.toml_value(True) == "true"
@@ -101,7 +101,7 @@ def test_toml_degerleri():
         {"a": [1, "b"], "c": {"d": False}}
 
 
-# ------------------------------------------------------------------------------ araç
+# ------------------------------------------------------------------------------ tool
 def test_arac_akis_ekler_listeler_siler(ffile, ctx):
     t = Feeds()
     out = t.run(ctx, action="add", name="ahmet_oyun", connector="steam", connector_action="profile",
@@ -136,7 +136,7 @@ def test_arac_yanlis_baglanti_ve_eksik_parametreyi_soyler(ffile, ctx):
 def test_connectors_sadece_okuyan_eylemleri_alanlariyla_gosterir(ctx):
     out = Feeds().run(ctx, action="connectors").text
     assert "steam (hazır)" in out and "profile(steamids*)" in out and "gameextrainfo" in out
-    assert "send(" not in out          # gönderen eylem akışa verilemez
+    assert "send(" not in out          # a sending action cannot be given to a feed
 
 
 def test_test_action_ornek_ogeleri_gosterir(ctx, monkeypatch):
@@ -151,7 +151,7 @@ def test_risk_ajanli_akis_onay_ister():
     t = Feeds()
     assert t.risk_for({"action": "list"}) == "read"
     assert t.risk_for({"action": "add", "name": "x"}) == "write"
-    assert t.risk_for({"action": "add", "agent": "özetle"}) == "danger"   # gözetimsiz ajan uyandırır
+    assert t.risk_for({"action": "add", "agent": "özetle"}) == "danger"   # an unattended agent wakes up
     assert t.risk_for({"action": "test_action"}) == "network"
 
 

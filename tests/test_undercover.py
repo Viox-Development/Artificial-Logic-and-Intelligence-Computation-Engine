@@ -1,4 +1,4 @@
-"""Gizli mod: GitHub'a giden yazılarda imza ve yapay zekâ izi kalmaz; ALICE kendi yorumlarını kimliğinden tanır."""
+"""Undercover mode: text sent to GitHub carries no signature or AI trace; ALICE recognises its own comments by ID."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def test_scrub_removes_signature_lines():
     text = ("Önbellek anahtarını düzelt\n\nAyrıntı.\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>\n"
             "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n— ALICE")
     assert undercover.scrub(text) == "Önbellek anahtarını düzelt\n\nAyrıntı."
-    # insan ortak yazar korunur
+    # a human co-author is kept
     assert "Co-Authored-By: Ayşe" in undercover.scrub("x\n\nCo-Authored-By: Ayşe <ayse@ornek.com>")
 
 
@@ -80,7 +80,7 @@ def test_own_ids_are_recognised_without_signature():
         {"id": 11, "author": "sahip", "body": "düzelttim", "trusted": True, "at": ""}]}],
         "reviews": [], "comments": [{"id": 12, "author": "sahip", "body": "tamam", "trusted": True, "at": ""}]}
     good, outside = prwatch.new_comments(prwatch.Watch("o/r", 7), data)
-    assert good == [] and outside == []  # son söz ALICE'in, genel yorum da onun
+    assert good == [] and outside == []  # the last word is ALICE's, and so is the general comment
 
 
 def test_github_tool_hidden_reply_and_pr(monkeypatch, tmp_path):

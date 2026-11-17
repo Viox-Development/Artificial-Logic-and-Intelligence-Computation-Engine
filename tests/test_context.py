@@ -14,12 +14,12 @@ def test_model_windows():
     assert model_window("z-ai/glm-5.3") == 1_048_576
     assert model_window("gemini-3.8-flash") == 1_048_576
     assert model_window("bilinmeyen-model") is None
-    # Bilinen modelde sağlayıcının genel ayarı (NVIDIA 128K) değil modelin penceresi geçerli.
+    # For a known model, the model's own window applies, not the provider's general setting (NVIDIA 128K).
     assert context_limit(128_000, "z-ai/glm-5.3") == 1_048_576
-    # Dakikalık sınırı dar ücretsiz katman (Groq 8K) her modelde üst sınır.
+    # The narrow free tier's per-minute limit (Groq 8K) is the upper bound for every model.
     assert context_limit(8_000, "qwen/qwen3.8-27b") == 8_000
     assert context_limit(32_000, "bilinmeyen") == 32_000
-    # Model bir isteği reddettiyse öğrenilen sınır kazanır.
+    # If the model rejected a request, the learned limit wins.
     assert context_limit(128_000, "z-ai/glm-5.3", learned=500_000) == 500_000
 
 
@@ -45,14 +45,14 @@ def _cfg(**agent):
 def test_compact_at_follows_model_window():
     a = _agent(_cfg(compact_at_tokens="auto"))
     assert a.compact_at == int(1_048_576 * 0.8)
-    # Eski config.toml'lardaki 48000 de "auto" sayılır.
+    # A 48000 in old config.toml files also counts as "auto".
     assert _agent(_cfg(compact_at_tokens=48000)).compact_at == int(1_048_576 * 0.8)
-    # Elle yazılmış başka bir sayı olduğu gibi kalır.
+    # Any other manually written number is kept as is.
     assert _agent(_cfg(compact_at_tokens=200000)).compact_at == 200000
 
 
 def test_context_tokens_uses_provider_count():
-    # Sağlayıcı araç tanımlarını da sayar: tahmin yalnız mesajlara bakarsa çok düşük kalır.
+    # The provider also counts tool definitions: an estimate based only on messages would stay far too low.
     a = _agent(_cfg(), usage_tokens=lambda messages, tools: estimate_tokens(messages, tools) + 5000)
     a.run_turn("merhaba")
     before = a.context_tokens()
@@ -68,4 +68,4 @@ def test_legacy_brain_default_becomes_glm(tmp_path):
     assert cfg.roles["brain"][0] == "nvidia:z-ai/glm-5.3"
     assert cfg.roles["fast"] == ["auto"]
     p.write_text('[roles]\nbrain = ["gemini:gemini-3.8-flash"]\n', encoding="utf-8")
-    assert load_config(p).roles["brain"] == ["gemini:gemini-3.8-flash"]  # kullanıcının seçimi kalır
+    assert load_config(p).roles["brain"] == ["gemini:gemini-3.8-flash"]  # the user's choice stays

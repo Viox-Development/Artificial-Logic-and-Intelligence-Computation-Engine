@@ -1,4 +1,4 @@
-"""Ayarlar → Notlar ve Kayıtlar: alice notes / brief / report / log / eval uygulamadan."""
+"""Settings → Notes and Logs: alice notes / brief / report / log / eval from the app."""
 
 from __future__ import annotations
 
@@ -19,15 +19,15 @@ def test_notes_add_search_remove():
     p.notes_action("add", {"text": "yarın Ayşe'yi ara"})
     p.notes_action("add", {"text": "F-16 bingo yakıtı 2000"})
     v = p.notes_view()
-    assert v["total"] == 2 and v["notes"][0]["text"].startswith("F-16")  # en yeni üstte
-    assert [n["text"] for n in p.notes_view("ayse")["notes"]] == ["yarın Ayşe'yi ara"]  # Türkçe harfsiz arama
+    assert v["total"] == 2 and v["notes"][0]["text"].startswith("F-16")  # newest on top
+    assert [n["text"] for n in p.notes_view("ayse")["notes"]] == ["yarın Ayşe'yi ara"]  # search without Turkish characters (ASCII query)
     ts = v["notes"][1]["ts"]
     assert p.notes_action("remove", {"ts": ts})["ok"] and [n.text for n in notes.all_notes()] == ["F-16 bingo yakıtı 2000"]
     assert not p.notes_action("remove", {"ts": 1.0})["ok"]
 
 
 def test_brief_and_report_install_show_remove():
-    p = j()  # şehir ayarlı değil: hava için ağa çıkılmaz
+    p = j()  # no city set: no network call for the weather
     assert p.notes_view()["brief"] is None
     assert p.notes_action("brief_install", {"at": "7:45", "weekdays": True})["ok"]
     b = p.notes_view()["brief"]
@@ -46,7 +46,7 @@ def test_logs_show_sent_and_feedback():
     actionlog.log("gmail_send", "patrona e-posta", "rejected", detail="kullanıcı reddetti")
     evals.record_feedback("hava nasıl", "Buradayım efendim", "soruma cevap vermedi", source="uygulama")
     v = j().logs_view()
-    assert [s["status"] for s in v["sent"]] == ["reddedildi", "gönderildi"]  # en yeni üstte
+    assert [s["status"] for s in v["sent"]] == ["reddedildi", "gönderildi"]  # newest on top
     assert v["feedback"][0]["say"] == "hava nasıl" and v["cases"] == 1 and v["last_run"] is None
     assert v["run"]["state"] == "idle"
 
@@ -56,14 +56,14 @@ def test_logs_view_survives_malformed_results_file():
     p.parent.mkdir(parents=True, exist_ok=True)
     for bad in ("[1, 2]", '"metin"', "null", '{"ts": "dün", "passed": 1}', '{"ts": [1]}'):
         p.write_text(bad, encoding="utf-8")
-        assert j().logs_view()["last_run"] is None, bad  # Kayıtlar sekmesi 500 vermeden açılır
+        assert j().logs_view()["last_run"] is None, bad  # the Logs tab opens without a 500
     p.write_text('{"ts": 0, "passed": 3, "total": 4}', encoding="utf-8")
     assert j().logs_view()["last_run"]["passed"] == 3
 
 
 def test_eval_runs_in_background_with_progress(monkeypatch):
     p = j()
-    assert not p.logs_action("eval_run", {})["ok"]  # boş set
+    assert not p.logs_action("eval_run", {})["ok"]  # empty set
     assert p.logs_action("eval_add", {"text": "saat kaç"})["added"]
     assert p.logs_action("eval_add", {"text": "hava nasıl"})["ok"]
     seen = []

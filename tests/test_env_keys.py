@@ -1,4 +1,4 @@
-"""API anahtarları: .env'e eksik satırların kendiliğinden eklenmesi ve uygulamadan anahtar girme (Ayarlar → Anahtarlar)."""
+"""API keys: missing lines are added to .env automatically; keys can be entered in the app (Ayarlar → Anahtarlar)."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ def test_catalog_lists_template_keys_with_links():
     assert cat["GEMINI_API_KEY"]["url"] == "https://aistudio.google.com/apikey"
     assert cat["GEMINI_API_KEY"]["label"] == "Google AI Studio" and cat["GEMINI_API_KEY"]["group"] == "model"
     assert cat["DISCORD_BOT_TOKEN"]["group"] == "connect"
-    # açıklamasız satır bir öncekinin parçası: aynı bağlantıyı gösterir
+    # a line with no description belongs to the one before it: it shows the same link
     assert cat["CLOUDFLARE_ACCOUNT_ID"]["url"] == cat["CLOUDFLARE_API_TOKEN"]["url"]
-    # iki değer isteyen servis tek kartta, adlı iki kutu ("aynı anahtarı iki kere istiyor" sanılmasın)
+    # two values share one card with two named boxes (not the same key asked twice)
     assert cat["CLOUDFLARE_ACCOUNT_ID"]["part_of"] == "CLOUDFLARE_API_TOKEN"
     assert cat["CLOUDFLARE_API_TOKEN"]["field"] == "API token" and "Account ID" in cat["CLOUDFLARE_ACCOUNT_ID"]["field"]
     assert cat["GOOGLE_CLIENT_SECRET"]["part_of"] == "GOOGLE_CLIENT_ID" and cat["GOOGLE_CLIENT_SECRET"]["field"] == "Client secret"
@@ -36,12 +36,12 @@ def test_refresh_home_adds_missing_lines_once_and_reports_them(tmp_path, monkeyp
     assert "GROQ_API_KEY" in added and "GEMINI_API_KEY" not in added
     text = env.read_text(encoding="utf-8")
     assert text.startswith("# benim notum\nGEMINI_API_KEY=abc\n") and "\nGROQ_API_KEY=\n" in text
-    assert refresh_home() == []  # ikinci açılışta eklenecek bir şey yok
+    assert refresh_home() == []  # nothing left to add on the second startup
     assert env.read_text(encoding="utf-8") == text
 
 
 def test_set_env_value_replaces_appends_and_clears(tmp_path, monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "eski")  # testten sonra ortam eski haline dönsün
+    monkeypatch.setenv("GROQ_API_KEY", "eski")  # restore the environment after the test
     monkeypatch.setenv("STEAM_API_KEY", "eski")
     env = tmp_path / ".env"
     env.write_text("# yorum kalsın\nGROQ_API_KEY=\nexport GEMINI_API_KEY=g1\n", encoding="utf-8")
@@ -50,12 +50,12 @@ def test_set_env_value_replaces_appends_and_clears(tmp_path, monkeypatch):
     set_env_value("STEAM_API_KEY", "s1", env)
     text = env.read_text(encoding="utf-8")
     assert text.startswith("# yorum kalsın\nGROQ_API_KEY=gsk_yeni\nGEMINI_API_KEY=g2\n") and text.endswith("STEAM_API_KEY=s1\n")
-    assert os.environ["GROQ_API_KEY"] == "gsk_yeni"  # bu süreçte hemen geçerli
+    assert os.environ["GROQ_API_KEY"] == "gsk_yeni"  # takes effect immediately in this process
     assert read_env(env) == {"GROQ_API_KEY": "gsk_yeni", "GEMINI_API_KEY": "g2", "STEAM_API_KEY": "s1"}
     set_env_value("STEAM_API_KEY", "", env)
     assert "STEAM_API_KEY" not in read_env(env) and "STEAM_API_KEY" not in os.environ
     with pytest.raises(ValueError):
-        set_env_value("GROQ_API_KEY", "a\nGEMINI_API_KEY=x", env)  # satır enjeksiyonu
+        set_env_value("GROQ_API_KEY", "a\nGEMINI_API_KEY=x", env)  # line injection
     with pytest.raises(ValueError):
         set_env_value("bad key", "x", env)
 
@@ -84,13 +84,13 @@ def test_app_keys_tab_saves_without_leaking_value(app, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "x")
     monkeypatch.delenv("GROQ_API_KEY")
     state.router.providers_cfg["groq"] = ProviderConfig("groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY")
-    state.router.dead_providers.add("groq")  # eski yanlış anahtar sağlayıcıyı kapatmıştı
+    state.router.dead_providers.add("groq")  # the old wrong key had disabled this provider
     r = client.post("/api/keys/set", json={"key": "GROQ_API_KEY", "value": "gsk_gizli_1234567890"})
     assert r.status_code == 200 and r.json()["ok"]
     assert os.environ["GROQ_API_KEY"] == "gsk_gizli_1234567890" and "groq" not in state.router.dead_providers
-    assert probes == [0]  # yeni sağlayıcı model sırasına girsin diye ölçüm başladı
+    assert probes == [0]  # a probe started so the new provider joins the model order
     body = client.get("/api/keys").text
-    assert "gsk_gizli_1234567890" not in body  # anahtarın tamamı tarayıcıya hiç gitmez
+    assert "gsk_gizli_1234567890" not in body  # the full key never reaches the browser
     row = next(k for k in client.get("/api/keys").json()["keys"] if k["key"] == "GROQ_API_KEY")
     assert row["set"] and row["source"] == "file" and row["preview"] == "••••7890"
     assert "GROQ_API_KEY=gsk_gizli_1234567890" in (config.alice_home() / ".env").read_text(encoding="utf-8")
@@ -116,7 +116,7 @@ def test_feedback_from_app_lands_in_eval_set(app):
     text = evals.evals_path().read_text(encoding="utf-8")
     assert case and "beğenilmedi (uygulama)" in text and "soruma cevap vermedi" in text
     assert evals.recent_feedback()[-1]["reply"].startswith("Buradayım")
-    assert client.post("/api/feedback", json={"say": "hava nasıl", "reply": "x"}).json()["added"] is False  # tekrar yok
+    assert client.post("/api/feedback", json={"say": "hava nasıl", "reply": "x"}).json()["added"] is False  # no dupes
 
 
 def test_feedback_tool_records(workdir):
@@ -150,7 +150,7 @@ def test_voice_tab_lists_previews_and_sets_voice(app, monkeypatch):
     for _ in range(2):
         r = client.post("/api/voice/preview", json={"voice": "Puck"}).json()
         assert base64.b64decode(r["audio"])[:4] == b"RIFF"
-    assert len(made) == 1  # ikinci dinleyiş önbellekten
+    assert len(made) == 1  # the second listen is served from the cache
     assert client.post("/api/voice/preview", json={"voice": "Yok"}).status_code == 400
     assert client.post("/api/voice/set", json={"voice": "Sulafat"}).json()["ok"]
     from alice.config import alice_home
@@ -172,13 +172,13 @@ def test_live_picks_up_voice_change_without_restart(monkeypatch):
     import os
     import time as _t
 
-    os.utime(alice_home() / "config.toml", (_t.time() + 5,) * 2)  # dosya sistemi saat çözünürlüğü
+    os.utime(alice_home() / "config.toml", (_t.time() + 5,) * 2)  # file system clock resolution
     assert s.current_voice() == "Achernar"
 
 
 def test_app_checks_for_update_right_after_opening_and_rechecks_pending_ci(app, monkeypatch):
-    # Kullanıcı: "güncelleme yok diyor, açtım ama". Açılışta bakılmadıysa saat dolmadan hiç bakılmıyordu;
-    # CI sürerken de bir saat bekleniyordu.
+    # User: "güncelleme yok diyor, açtım ama" (says no update, but I opened it). If it wasn't checked on startup,
+    # nothing was checked until the hour was up; and while CI was running, it also waited a full hour.
     import time as _t
 
     from alice import updater
@@ -188,7 +188,7 @@ def test_app_checks_for_update_right_after_opening_and_rechecks_pending_ci(app, 
     infos = iter([updater.UpdateInfo(local="a" * 40, remote="b" * 40, ci="pending")] * 2
                  + [updater.UpdateInfo(local="a" * 40, remote="b" * 40, ci="green")] * 50)
     monkeypatch.setattr(updater, "check", lambda cfg=None, **k: calls.append(1) or next(infos))
-    monkeypatch.setattr(updater, "due", lambda cfg=None: False)  # saatlik tur gelmedi
+    monkeypatch.setattr(updater, "due", lambda cfg=None: False)  # the hourly round has not come up
     monkeypatch.setattr(updater, "CI_RECHECK", 0.0)
     state._update_waits = (0.01, 0.01)
     state.watch_updates(None)
@@ -198,7 +198,7 @@ def test_app_checks_for_update_right_after_opening_and_rechecks_pending_ci(app, 
             _t.sleep(0.02)
         assert len(calls) >= 3 and state.update.ci == "green" and state.update.can_auto
     finally:
-        state._update_stop.set()  # döngü sonraki testlere (saati taklit edenlere) taşmasın
+        state._update_stop.set()  # so the loop does not leak into later tests (ones that fake the clock)
 
 
 def test_voice_enroll_endpoints(app, monkeypatch):
@@ -215,11 +215,11 @@ def test_voice_enroll_endpoints(app, monkeypatch):
 
 
 def test_page_allows_voice_preview_audio(app):
-    # "Dinle" sesi data: adresinden çalınır; CSP'de media-src yoktu, tarayıcı sessizce engelliyordu.
+    # The "Dinle" (Listen) audio plays from a data: URL; the CSP had no media-src, so the browser silently blocked it.
     state, client, _ = app
     csp = client.get("/?t=" + state.token).headers["Content-Security-Policy"]
     media = next(p for p in csp.split(";") if p.strip().startswith("media-src"))
     assert "data:" in media and "default-src 'none'" in csp
-    # PDF önizlemesi blob: adresinden çerçevede açılır; 'self' blob:'u kapsamaz.
+    # The PDF preview opens in a frame from a blob: URL; 'self' does not cover blob:.
     frame = next(p for p in csp.split(";") if p.strip().startswith("frame-src"))
     assert "blob:" in frame and "'self'" in frame

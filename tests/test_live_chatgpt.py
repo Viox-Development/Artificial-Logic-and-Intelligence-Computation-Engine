@@ -1,4 +1,4 @@
-"""ALICE Live (ChatGPT Realtime) birim testleri: protokol, ses dönüşümü, araç çağrısı ve arka uç seçimi."""
+"""Unit tests for ALICE Live (ChatGPT Realtime): protocol, audio conversion, tool calls and backend selection."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def make_session(**voice):
 def test_resample_16_to_24_length_and_shape():
     pcm = b"\x00\x00" * 480  # 30 ms @16 kHz
     out = resample_16_to_24(pcm)
-    assert len(out) == 480 * 3 // 2 * 2  # 720 örnek, 16-bit
+    assert len(out) == 480 * 3 // 2 * 2  # 720 samples, 16-bit
     assert out[:2] == b"\x00\x00"
 
 
@@ -71,7 +71,7 @@ def test_hush_detection():
     assert RealtimeSession._is_hush("Alice sus lütfen")
     assert RealtimeSession._is_hush("tamam yeter")
     assert not RealtimeSession._is_hush("bugün hava nasıl")
-    # 16 Kasım logu: noktalama ve "sana demedim" susturmuyordu
+    # Nov 16 log: punctuation and "sana demedim" (I didn't say that to you) did not trigger hush
     for t in ("Sus.", "Sus!", "Sus ya, sus ya. Ya sus ya.", "Sana demiyorum.", "Sana demedim, sana demedim.",
               "sesini kes", "Şşt"):
         assert RealtimeSession._is_hush(t), t
@@ -80,7 +80,7 @@ def test_hush_detection():
 
 
 def test_hush_cancels_response_in_progress():
-    """Sus denince sunucudaki cevap da iptal edilmeli: yoksa ALICE konuşmayı sürdürüyordu."""
+    """Saying "Sus" (shut up) must also cancel the server's in-progress response; otherwise ALICE kept talking."""
     ws = FakeWS([
         {"type": "session.created"},
         {"type": "response.created"},
@@ -126,7 +126,7 @@ def test_tool_schema_types_are_lowercase_for_realtime():
 
 
 def test_secret_uses_proxy_key_and_converse_sends_session_update():
-    """client_secrets 64 KiB sınırına takılmasın: proxy anahtarıyla bağlan, oturumu WS'ten güncelle."""
+    """Avoid the client_secrets 64 KiB limit: connect with the proxy key, update the session over WS."""
     s = make_session()
     s._proxy = {"base": "http://127.0.0.1:8317", "key": "proxy-key"}  # noqa: SLF001
     assert s._secret() == "proxy-key"  # noqa: SLF001
@@ -165,7 +165,7 @@ def test_silence_frames_do_not_keep_session_open():
 
     def mic():
         while running.is_set():
-            frames.put(b"\x00\x00" * 480)  # sessizlik
+            frames.put(b"\x00\x00" * 480)  # silence
             time.sleep(0.03)
 
     threading.Thread(target=mic, daemon=True).start()
@@ -173,7 +173,7 @@ def test_silence_frames_do_not_keep_session_open():
     s.converse("", frames, stop)
     elapsed = time.monotonic() - t0
     running.clear()
-    assert elapsed < 2.0  # sessizlikte kapanır (5 sn'lik ayar burada 0.3 sn)
+    assert elapsed < 2.0  # closes on silence (the 5 s setting is 0.3 s here)
 
 
 def test_converse_plays_audio_and_sends_mic_frames():
@@ -187,23 +187,23 @@ def test_converse_plays_audio_and_sends_mic_frames():
     out = RecordingOut()
     s = make_session()
     s._connect = lambda url, secret: ws
-    s._secret = lambda: "test-secret"  # noqa: SLF001 - ağ çağrısı yok
+    s._secret = lambda: "test-secret"  # noqa: SLF001 - no network call
     s._out_factory = lambda: out
     frames: queue.Queue = queue.Queue()
-    frames.put(b"\x10\x00" * 480)  # 30 ms mikrofon karesi
+    frames.put(b"\x10\x00" * 480)  # 30 ms mic frame
     stop = threading.Event()
     t = threading.Thread(target=s.converse, args=("", frames, stop), daemon=True)
     t.start()
     t.join(10)
     assert not t.is_alive()
-    assert out.data == b"\x01\x02" * 12  # ALICE'in sesi çalındı
+    assert out.data == b"\x01\x02" * 12  # ALICE's audio was played
     appends = [m for m in ws.sent if m.get("type") == "input_audio_buffer.append"]
     assert appends and len(base64.b64decode(appends[0]["audio"])) == 720 * 2
     assert ws.closed
 
 
 def test_echo_guard_drops_mic_frames_while_assistant_audio_is_playing():
-    """Hoparlör yankısı yeni tur açıp Realtime cevabını iptal etmemeli."""
+    """Speaker echo must not open a new turn or cancel the Realtime response."""
     class SpeakingOut(RecordingOut):
         def put(self, pcm):
             super().put(pcm)
@@ -225,7 +225,7 @@ def test_echo_guard_drops_mic_frames_while_assistant_audio_is_playing():
     end = time.monotonic() + 2
     while not out.playing and time.monotonic() < end:
         time.sleep(0.01)
-    frames.put(b"\\x10\\x00" * 480)  # hoparlörden mikrofona geri dönen 30 ms kare
+    frames.put(b"\\x10\\x00" * 480)  # 30 ms frame echoed from the speaker back into the mic
     time.sleep(0.1)
     stop.set()
     t.join(3)
@@ -233,7 +233,7 @@ def test_echo_guard_drops_mic_frames_while_assistant_audio_is_playing():
 
 
 class TimedOut(RecordingOut):
-    """Gelen sesi gerçek zamanda çalıyormuş gibi: put'tan sonra `secs` boyunca playing True; close() kalanı keser."""
+    """Plays incoming audio in real time: playing is True for `secs` after put(); close() cuts the rest."""
 
     def __init__(self, secs):
         super().__init__()
@@ -258,7 +258,7 @@ class TimedOut(RecordingOut):
 
 
 def test_single_turn_waits_until_answer_is_played():
-    """Discord/oyunda tek cevap: response.done gelince ses bitmeden kapanıp cümleyi kesmemeli."""
+    """Single answer (Discord/games): on response.done, don't close before the audio ends and cut the sentence."""
     ws = FakeWS([
         {"type": "session.created"},
         {"type": "response.output_audio.delta", "delta": base64.b64encode(b"\x01\x02" * 12).decode()},
@@ -277,7 +277,7 @@ def test_single_turn_waits_until_answer_is_played():
 
 
 def test_idle_window_starts_after_assistant_stops_talking():
-    """Ses gerçek zamandan hızlı gelir: sessizlik süresi son paketten değil, ALICE sustuktan sonra sayılmalı."""
+    """Audio arrives faster than real time: count silence from when ALICE stops, not the last packet."""
     ws = FakeWS([
         {"type": "session.created"},
         {"type": "response.output_audio.delta", "delta": base64.b64encode(b"\x01\x02" * 12).decode()},
@@ -291,7 +291,7 @@ def test_idle_window_starts_after_assistant_stops_talking():
     t0 = time.monotonic()
     s.converse("selam", queue.Queue(), threading.Event())
     elapsed = time.monotonic() - t0
-    assert elapsed >= 0.8 + 0.3 - 0.05  # çalma + tam sessizlik penceresi
+    assert elapsed >= 0.8 + 0.3 - 0.05  # playback + full silence window
     assert out.closed_while_playing is False
 
 
@@ -312,7 +312,7 @@ def test_hush_still_cuts_immediately():
 
 
 def test_next_session_gets_previous_turns_and_log_has_reply():
-    """Discord'da her cümle yeni oturum: önceki konuşma talimata girmeli, log ALICE'in cevabını ve aracı yazmalı."""
+    """Discord: each sentence is a new session, so earlier turns go into the instructions; log records reply and tool."""
     logs = []
     ws = FakeWS([
         {"type": "session.created"},
@@ -332,17 +332,17 @@ def test_next_session_gets_previous_turns_and_log_has_reply():
     assert "video açar mısın" in line and "Bir bakayım. Açtım." in line and "think(" in line
     instr = s._session_config()["session"]["instructions"]
     assert "Az önceki konuşma" in instr and "video açar mısın" in instr and "Açtım." in instr
-    assert "aksan" in instr  # telaffuz talimatı kırpılmadı
+    assert "aksan" in instr  # pronunciation instruction was not truncated
 
 
 def test_voice_choice_and_unsupported_voice_falls_back():
     assert make_session(live_realtime_voice="Cedar")._session_config()["session"]["audio"]["output"]["voice"] == "cedar"
-    # "quip" sunucuda yok: tüm session.update reddedilmesin
+    # "quip" is not on the server: don't let it reject the whole session.update
     assert make_session(live_realtime_voice="quip")._session_config()["session"]["audio"]["output"]["voice"] == "marin"
 
 
 def test_session_stays_open_while_tool_runs():
-    """think 1 sn sürse de oturum 0,2 sn'lik sessizlikte kapanmamalı; sonuç modele gönderilmeli."""
+    """Even if think takes 1 s, don't close on 0.2 s silence; the result must reach the model."""
     ws = FakeWS([
         {"type": "session.created"},
         {"type": "response.function_call_arguments.done", "call_id": "c1", "name": "think",
@@ -407,7 +407,7 @@ def test_audio_out_counts_held_chunk_as_playing():
     o.q = queue.Queue()
     o.busy_until = 0.0
     assert not o.playing
-    o._holding = True  # noqa: SLF001 - parça kuyruktan alındı, ön tampon bekleniyor
+    o._holding = True  # noqa: SLF001 - chunk taken from the queue, waiting on the pre-buffer
     assert o.playing
 
 
@@ -475,7 +475,7 @@ def test_only_quick_tools_go_to_realtime_and_transcription_is_on():
 
 
 def test_prefetched_session_is_reused_without_second_update():
-    """Isıtılmış oturum: bağlantı ve ayar önceden; konuşmada session.update tekrar gönderilmez."""
+    """Pre-warmed session: connection and settings ready ahead; no second session.update during the talk."""
     ws = FakeWS([{"type": "session.created"},
                  {"type": "response.output_audio.delta", "delta": base64.b64encode(b"\x01\x02" * 12).decode()},
                  {"type": "response.done", "response": {"status": "completed"}}])
@@ -485,7 +485,7 @@ def test_prefetched_session_is_reused_without_second_update():
     s._proxy = {"base": "http://127.0.0.1:8317", "key": "k"}  # noqa: SLF001
     s.prefetch(owner="o")
     s._pre["thread"].join(5)  # noqa: SLF001
-    s.discard(owner="baskası")  # başkasının uyandırması ısıtılmış oturumu kapatmaz
+    s.discard(owner="baskası")  # another owner's wake-up does not close the pre-warmed session
     s.converse("selam", queue.Queue(), threading.Event())
     assert opened == [1]
     assert [m["type"] for m in ws.sent].count("session.update") == 1
@@ -504,7 +504,7 @@ def test_discard_closes_own_prefetch():
 
 
 def test_verified_user_can_interrupt_alice():
-    """Ses izi doğrulanmış kare ALICE konuşurken gelirse: ses kesilir, cevap iptal edilir, kullanıcının sesi gider."""
+    """Verified user audio while ALICE speaks: playback is cut, response cancelled, user's voice goes through."""
     class SpeakingOut(RecordingOut):
         def put(self, pcm):
             super().put(pcm)
@@ -532,7 +532,7 @@ def test_verified_user_can_interrupt_alice():
     end = time.monotonic() + 2
     while not out.playing and time.monotonic() < end:
         time.sleep(0.01)
-    for _ in range(5):  # kullanıcının doğrulanmış sesi; çalıcı kesildikten sonra kısa süre "çalıyor" görünür
+    for _ in range(5):  # user's verified voice; just after playback is cut it briefly looks "playing"
         out.playing = True
         frames.put(b"\x10\x00" * 480)
         time.sleep(0.03)
@@ -540,5 +540,5 @@ def test_verified_user_can_interrupt_alice():
     stop.set()
     t.join(3)
     types = [m.get("type") for m in ws.sent]
-    assert types.count("response.cancel") == 1 and out.cleared == 1  # bir cevap için tek iptal
+    assert types.count("response.cancel") == 1 and out.cleared == 1  # one cancel per response
     assert "input_audio_buffer.append" in types

@@ -1,4 +1,4 @@
-"""Dosya tabanlı hafıza notları (alice/memdir.py)."""
+"""File-based memory notes (alice/memdir.py)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_note_round_trip_keeps_hash_and_colon_in_values(tmp_path):
     assert again.description == note.description and again.title == "Testler"
     assert b.index_raw().strip() == "- [Testler](feedback-testler.md) — C# testleri: yalnız ilgili olanlar #önemli"
     _, new2 = b.save("feedback-testler", "güncel", "feedback", "Yeni kural.")
-    assert not new2 and b.index_raw().count("feedback-testler.md") == 1  # satır yerinde güncellendi
+    assert not new2 and b.index_raw().count("feedback-testler.md") == 1  # line updated in place
 
 
 def test_sanitize_neutralizes_prompt_tags_and_invisible_chars():
@@ -41,7 +41,7 @@ def test_index_limit_refuses_instead_of_truncating(tmp_path):
                             encoding="utf-8")
     with pytest.raises(MemoryFull, match="sınırı aşılacaktı"):
         b.save("yeni-not", "açıklama", "user", "gövde")
-    assert not b.path_for("yeni-not").exists()  # hiçbir şey yazılmadı
+    assert not b.path_for("yeni-not").exists()  # nothing was written
     b.index_path.write_text("\n".join(f"- [n{i}](n{i}.md) — x" for i in range(MAX_INDEX_LINES + 30)) + "\n",
                             encoding="utf-8")
     shown = b.index_for_prompt()
@@ -53,7 +53,7 @@ def test_index_heals_missing_and_dangling_lines(tmp_path):
     b.save("a", "birinci", "user", "1")
     (b.root / "elle.md").write_text("---\nname: elle\ndescription: elle yazılmış\ntype: reference\n---\n\nx\n",
                                     encoding="utf-8")
-    assert "elle.md" in b.index_for_prompt()  # dizinde yok ama istemde görünür
+    assert "elle.md" in b.index_for_prompt()  # not in the index but visible in the prompt
     b.index_path.write_text(b.index_raw() + "- [Kayıp](kayip.md) — dosyası yok\n", encoding="utf-8")
     assert b.repair_index()
     idx = b.index_raw()
@@ -122,7 +122,7 @@ def test_worktrees_of_a_repo_share_one_project_memory(tmp_path, monkeypatch):
     a = memdir.project_book(repo / "sub", home)
     b = memdir.project_book(tmp_path / "wt", home)
     assert a is not None and b is not None and a.root == b.root and a.scope == "proje"
-    assert memdir.project_book(tmp_path, home) is None  # depo değil
+    assert memdir.project_book(tmp_path, home) is None  # not a repo
 
 
 def test_relevance_falls_back_to_keywords_when_the_model_fails(tmp_path):
@@ -136,7 +136,7 @@ def test_relevance_falls_back_to_keywords_when_the_model_fails(tmp_path):
     picked = memdir.select_relevant("grafana panosu neredeydi", b.scan(), broken)
     assert [n.name for n in picked] == ["reference-grafana"]
     picked = memdir.select_relevant("kahve", b.scan(), lambda p: '{"selected": ["genel:user-kahve", "uydurma"]}')
-    assert [n.name for n in picked] == ["user-kahve"]  # olmayan ad yok sayılır
+    assert [n.name for n in picked] == ["user-kahve"]  # names that do not exist are ignored
 
 
 def test_books_of_the_same_folder_share_one_lock_and_lose_no_index_lines(tmp_path):
@@ -146,7 +146,7 @@ def test_books_of_the_same_folder_share_one_lock_and_lose_no_index_lines(tmp_pat
     assert NoteBook(root)._lock is NoteBook(root, scope="proje")._lock
 
     def work(prefix):
-        b = NoteBook(root, scope="proje")  # proje defteri her çağrıda yeniden kuruluyor
+        b = NoteBook(root, scope="proje")  # the project book is rebuilt on every call
         for i in range(25):
             b.save(f"{prefix}-{i}", f"not {prefix} {i}", "project", "gövde")
 
@@ -167,7 +167,7 @@ def test_hand_added_file_with_spaces_can_be_read_updated_and_deleted(tmp_path):
     b.save(n.name, "Sunucu portu", "reference", "Sunucu 9001 portunda.")
     assert [x.name for x in b.scan()] == ["Sunucu Notları"] and "9001" in b.scan()[0].body
     assert b.delete(n.key) is not None and b.scan() == []
-    assert b._resolve("../dışarı") == "disari"  # yol dışarı çıkamaz
+    assert b._resolve("../dışarı") == "disari"  # the path cannot escape the folder
 
 
 def test_note_named_memory_does_not_overwrite_the_index(tmp_path):

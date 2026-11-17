@@ -1,5 +1,5 @@
-"""alice/tools/system.py için birim testleri: psutil, subprocess ve platform sahte nesnelerle değiştirilir;
-gerçek süreç sonlandırılmaz, gerçek komut çalıştırılmaz."""
+"""Unit tests for alice/tools/system.py: psutil, subprocess and platform are replaced with fake objects;
+no real process is terminated and no real command is run."""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def test_system_info_rows(ctx, monkeypatch):
     assert out[2] == "RAM: 8.0/16.0 GB (%50.0)"
     assert out[3] == "GPU: FakeGPU"
     assert out[4] == "Disk /: 100/500 GB (%20.0) ext4"
-    assert not any("/locked" in r for r in out)  # izin hatası atlanır
+    assert not any("/locked" in r for r in out)  # permission errors are skipped
     assert out[5] == "Pil: %77 pilde"
     assert out[6] == "Ağ: gönderilen 300 MB, alınan 1200 MB"
 
@@ -140,7 +140,7 @@ class FakeProc:
                      "memory_info": SimpleNamespace(rss=rss_mb * MB) if rss_mb is not None else None}
         self.terminate_error = terminate_error
         self.terminated = False
-        self.stubborn = False  # terminate'i yok sayar, kill ile kapanır
+        self.stubborn = False  # ignores terminate, closes only via kill
         self.killed = False
 
     def kill(self):
@@ -176,7 +176,7 @@ def test_process_list_sorted_by_memory_default(ctx, monkeypatch):
     _patch_procs(monkeypatch, PROCS)
     out = system.ProcessList().run(ctx).text
     assert out.startswith("    PID       RAM     CPU  İSİM\n")
-    assert _pids(out) == [2, 1, 4, 3]  # memory_info None -> 0, en sona
+    assert _pids(out) == [2, 1, 4, 3]  # memory_info None -> 0, placed last
     assert "     900 MB" in out
 
 
@@ -201,17 +201,17 @@ def test_process_list_no_match(ctx, monkeypatch):
 
 
 def test_process_kill_risk(monkeypatch):
-    # pid'in adı gerçek psutil'den okunuyor: makinede 1234 o an korunan bir sürece (csrss, svchost) denk gelirse
-    # test Windows runner'ında rastgele düşüyordu. Süreç tablosunu sabitle.
+    # The pid's name is read from the real psutil: if 1234 happened to map to a protected process (csrss, svchost),
+    # the test randomly failed on the Windows runner. Pin the process table.
     names = {1234: "notepad.exe", 4321: "csrss.exe"}
     monkeypatch.setattr(system.psutil, "Process", lambda pid: SimpleNamespace(name=lambda: names[pid]))
     k = system.ProcessKill()
     assert k.risk_for({"pid": 1234}) == EXEC
-    assert k.risk_for({"pid": 4321}) == DANGER     # pid ile verilen korunan süreç de sorulur
+    assert k.risk_for({"pid": 4321}) == DANGER     # a protected process given by pid also requires confirmation
     assert k.risk_for({"name": "notepad.exe"}) == EXEC
     assert k.risk_for({"name": "LSASS.EXE"}) == DANGER
     assert k.risk_for({"name": "explorer.exe"}) == DANGER
-    assert k.risk_for({}) == DANGER  # hedefsiz çağrı
+    assert k.risk_for({}) == DANGER  # call without a target
     assert k.risk_for({"pid": 0}) == DANGER
 
 
@@ -236,7 +236,7 @@ def test_process_kill_reports_terminate_errors(ctx, monkeypatch):
     procs = [FakeProc(5, "x", terminate_error=psutil.AccessDenied(5)), FakeProc(6, "x")]
     _patch_procs(monkeypatch, procs)
     r = system.ProcessKill().run(ctx, name="x")
-    # kapatılamayan süreç "sonlandırıldı" diye raporlanmaz
+    # a process that could not be closed is not reported as "sonlandırıldı"
     assert r.text.startswith("sonlandırıldı: 6\n5: kapatılamadı (") and not r.is_error
     assert procs[1].terminated
 

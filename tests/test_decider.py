@@ -37,7 +37,7 @@ def test_jev_request_shape_and_parse():
     assert seen["body"]["questions"]["dept"] == {"type": "choice", "instructions": "which team",
                                                  "criteria": {"technical": "bugs", "billing": "money"}}
     assert seen["body"]["questions"]["urgent"]["type"] == "noul"
-    # Score Jev'e choice olarak gider
+    # Score is sent to Jev as a choice
     assert seen["body"]["questions"]["mood"]["type"] == "choice"
     assert d["dept"].value == "technical" and d["dept"].confidence == 0.85
     assert d["urgent"].value == 0.9
@@ -103,7 +103,7 @@ def test_from_config_skips_jev_without_key(monkeypatch):
 def test_question_validation():
     router, _ = _llm_router([])
     with pytest.raises(ValueError):
-        LLMEngine(router).decide("s", {f"q{i}": Noul("?") for i in range(17)})  # Jev'de sayı sınırı yok; 16 makul
+        LLMEngine(router).decide("s", {f"q{i}": Noul("?") for i in range(17)})  # Jev has no question limit; 16 is fine
     with pytest.raises(ValueError):
         LLMEngine(router).decide("s", {})
 
@@ -131,4 +131,4 @@ def test_jev_openrouter_engine_and_402_cooldown(monkeypatch):
     assert dec.decide("s", q)["q"].value == "a"
     assert calls[0]["model"] == "~typesafe/jev-latest"
     dec.decide("s", q)
-    assert len(calls) == 1  # kredi yok: 1 saat boyunca tekrar denenmez
+    assert len(calls) == 1  # no credits: not retried for 1 hour

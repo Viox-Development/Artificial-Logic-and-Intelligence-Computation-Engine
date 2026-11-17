@@ -1,4 +1,4 @@
-"""Ayarlar → Çekirdek: arka plandaki ALICE ve sesli asistan uygulamadan (alice core / alice voice on|off|test)."""
+"""Settings → Core: manages background ALICE and voice assistant from the app (alice core / alice voice on|off|test)."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ def wait(pred, timeout=5.0):
 
 def test_stop_request_ends_running_core_within_a_second(tmp_path):
     core, _ = make_core(tmp_path)
-    core.interval = 60  # tur arası uzun: istek yine de bir saniye içinde fark edilmeli
-    service.request_stop()  # önceki çekirdeğe kalmış istek yenisini kapatmasın
+    core.interval = 60  # long interval between turns: the request must still be noticed within a second
+    service.request_stop()  # a leftover request for the previous core must not stop the new one
     t = threading.Thread(target=core.run_forever, daemon=True)
     t.start()
     assert wait(lambda: core.store.events(limit=5) and not service.stop_path().exists())
@@ -76,7 +76,7 @@ def test_stop_core_terminates_old_core_that_ignores_request(monkeypatch):
 
 
 def test_stop_core_waits_until_old_core_releases_lock(monkeypatch):
-    """Durum dosyası silindi ama süreç kilidi hâlâ tutuyor: yeni çekirdek başlatılmadan önce beklenmeli."""
+    """State file was removed but the process lock is still held: wait before starting a new core."""
     import os
 
     import psutil
@@ -99,7 +99,7 @@ def test_stop_core_waits_until_old_core_releases_lock(monkeypatch):
     def sleep(s):
         slept.append(s)
         if len(slept) == 3:
-            lock.unlink()  # eski çekirdek kapandı, kilidi bıraktı
+            lock.unlink()  # old core shut down and released the lock
 
     assert system.stop_core(wait=5, sleep=sleep)
     assert len(slept) == 3 and not lock.exists()
@@ -123,7 +123,7 @@ def test_panel_actions(monkeypatch):
     p.action("autostart", {"on": True})
     p.action("autostart", {"on": False})
     assert calls == ["install", "uninstall"]
-    assert p.action("voice", {"on": False})["ok"] and calls == ["install", "uninstall"]  # çekirdek kapalı: başlatma yok
+    assert p.action("voice", {"on": False})["ok"] and calls == ["install", "uninstall"]  # core is off: no start
     assert p.action("voice", {"on": True})["ok"]
     assert wait(lambda: "start" in calls and not p._busy)
     assert load_config().data["voice"]["enabled"] is True and p.cfg.data["voice"]["enabled"] is True
@@ -134,7 +134,7 @@ def test_panel_actions(monkeypatch):
 
 
 def test_restart_inside_core_uses_core_restart_not_stop_start(monkeypatch):
-    """Uygulama çekirdeğin içindeyse stop_core bu süreci kapatır, start_detached'e sıra gelmezdi."""
+    """If the app runs inside the core, stop_core would kill this process and start_detached would never be reached."""
     calls = []
     monkeypatch.setattr(service, "start_detached", lambda: calls.append("start"))
     monkeypatch.setattr(system, "stop_core", lambda: calls.append("stop"))
@@ -144,7 +144,7 @@ def test_restart_inside_core_uses_core_restart_not_stop_start(monkeypatch):
     assert p.action("restart", {}) == {"ok": True, "restarting": True}
     assert p.action("voice", {"on": True})["ok"]
     assert calls == ["core", "core"] and not p._busy
-    # Başka bir süreçteki çekirdek (bağımsız uygulama): eski yol.
+    # Core in another process (standalone app): the old path.
     calls.clear()
     monkeypatch.setattr(service, "read_state", lambda: {"running": True, "pid": os.getpid() + 1})
     assert p.action("restart", {})["ok"]
@@ -188,7 +188,7 @@ def test_mic_test_shows_level_and_what_was_heard():
     t = system.MicTest(cfg(), mic=lambda: FakeMic(loud=False), stt=lambda c: stt, seconds=0.1)
     t.start()
     t._thread.join(5)
-    assert "ses gelmiyor" in t.view()["message"] and len(stt.got) == 1  # sessizse yazıya çevirmeye uğraşmaz
+    assert "ses gelmiyor" in t.view()["message"] and len(stt.got) == 1  # if silent, it does not bother transcribing
 
 
 def test_app_endpoints(workdir, monkeypatch):

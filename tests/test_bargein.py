@@ -1,4 +1,4 @@
-"""Söz kesilince ALICE cevabının duyulmayan kısmını bilir: "devam et" deyince oradan sürdürür."""
+"""After an interruption ALICE knows the unheard part of its reply; on "devam et" (continue) it picks up there."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def test_split_heard_kelime_ortasindan_bolmez():
     assert heard + " " + unheard == text
     assert split_heard(text, 1.2) == (text, "")
     assert split_heard(text, 0.0) == ("", text)
-    assert cut_note("Ankara", "kısa") == ""  # duyulmayan kısım çok kısa: not gerekmez
+    assert cut_note("Ankara", "kısa") == ""  # the unheard part is very short: no note needed
     note = cut_note("Ankara'da hava kapalı.", "Akşam yağmur bekleniyor, şemsiye almayı unutma.")
     assert "Duyduğu kısım" in note and "şemsiye" in note and "devam et" in note
 
@@ -30,7 +30,7 @@ def test_canli_modda_duyulmayan_kisim_modele_not_olarak_gider():
     ws = SimpleNamespace(send=lambda raw: sent.append(json.loads(raw)))
     said = "Ankara'da hava kapalı ve on iki derece. Akşama doğru yağmur bekleniyor, şemsiye almayı unutma."
     state = {"said": [said], "recv": 1000, "play0": 100, "mute": False}
-    s._note_cut(ws, state, SimpleNamespace(played=400))  # cevabın %30'u çalındı
+    s._note_cut(ws, state, SimpleNamespace(played=400))  # 30% of the answer had been played
     content = sent[0]["clientContent"]
     assert content["turnComplete"] is False
     note = content["turns"][0]["parts"][0]["text"]

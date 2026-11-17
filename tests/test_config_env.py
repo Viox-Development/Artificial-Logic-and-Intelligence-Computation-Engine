@@ -27,7 +27,7 @@ def test_set_config_value_header_with_comment_and_multiline_value(tmp_path, monk
         encoding="utf-8")
     set_config_value("kairos", "enabled", True)
     set_config_value("voice", "models", ["c"])
-    data = tomllib.loads(cfg.read_text(encoding="utf-8-sig"))  # tek [kairos], dosya geçerli TOML
+    data = tomllib.loads(cfg.read_text(encoding="utf-8-sig"))  # a single [kairos] section; the file is valid TOML
     assert data["kairos"] == {"enabled": True, "min_minutes": 20}
     assert data["voice"] == {"models": ["c"], "live": 1}
     assert remove_config_section("x.y")

@@ -53,7 +53,7 @@ def test_requires_token_and_local_host(app):
     assert httpx.get(base + "/api/state", headers={"X-Alice-Token": state.token, "Host": "evil.com"}).status_code == 403
     r = httpx.get(srv.url)
     assert r.status_code == 200 and state.token in r.text and "Content-Security-Policy" in r.headers
-    for f in ("app.js", "projects.js", "ui.js", "main.js"):  # arayüz dört betiğe bölünmüş, sırayla yüklenir
+    for f in ("app.js", "projects.js", "ui.js", "main.js"):  # the UI is split into four scripts, loaded in order
         assert client.get(f"/static/{f}").status_code == 200 and f"/static/{f}" in r.text
     assert client.get("/static/alice.png").headers["content-type"] == "image/png"
     assert client.get("/static/../server.py").status_code == 404
@@ -87,11 +87,11 @@ def test_permission_via_api(app, workdir):
     perm = events[-1]
     assert perm["risk"] == "danger"
     pend = client.get("/api/state").json()["pending"][0]
-    assert pend["id"] == perm["id"] and pend["sid"] == state.sid  # arayüz arkadaki sohbetin sorusunu ayırabilsin
-    # Meşgulken yazılan mesaj yeni iş başlatmaz, çalışan işe iletilir (bir sonraki adımda modele gider).
+    assert pend["id"] == perm["id"] and pend["sid"] == state.sid  # so the UI can tell background questions apart
+    # A message sent while busy starts no new job; it goes to the running one (the model sees it next step).
     assert client.post("/api/send", json={"text": "başka"}).status_code == 200
     assert state.agent._inbox and state.agent._inbox[0][0] == "başka"
-    assert client.post("/api/send", json={"text": "/plan"}).status_code == 409  # komut yeni tur ister
+    assert client.post("/api/send", json={"text": "/plan"}).status_code == 409  # a command needs a new turn
     done, t2 = collect(state, lambda e: e["type"] == "status")
     assert client.post("/api/permission", json={"id": perm["id"], "answer": "y"}).json()["ok"]
     t2.join()
@@ -118,20 +118,20 @@ def test_mode_cwd_new_and_model(app, workdir):
     sub = workdir / "proje"
     sub.mkdir()
     assert client.post("/api/cwd", json={"path": str(sub)}).json()["cwd"] == str(sub)
-    assert str(sub) in state.agent.messages[0]["content"]  # sistem istemi yeni klasörü biliyor
+    assert str(sub) in state.agent.messages[0]["content"]  # system prompt knows the new folder
     from alice.cli import default_workspace
 
-    assert default_workspace() == sub  # sonraki açılışta aynı klasör
+    assert default_workspace() == sub  # the same folder on the next launch
     assert client.post("/api/cwd", json={"path": str(workdir / "yok")}).status_code == 400
     assert client.post("/api/model", json={"role": "brain", "ref": "a:other"}).json()["ok"]
     assert client.get("/api/models").json()["brain"][0]["ref"] == "a:other"
     assert client.get("/api/models/all").json()["pinned"] == "a:other"
-    # düğme seçilen modeli hemen göstersin (önceden bir sonraki cevaba kadar eski model yazıyordu)
+    # the button shows the selected model right away (it used to show the old one until the next reply)
     st = state.status()
     assert st["model"] == "a:other" and st["brain_pinned"]
     a_models = next(p for p in client.get("/api/models/all").json()["providers"] if p["name"] == "a")["models"]
-    assert "a:other" in [m["ref"] for m in a_models]  # ölçülmemiş olsa da menüde işaretli
-    state.router.last_ref["brain"] = "a:m"  # seçili model cevap veremedi, yedek cevapladı
+    assert "a:other" in [m["ref"] for m in a_models]  # marked in the menu even if not measured yet
+    state.router.last_ref["brain"] = "a:m"  # the selected model failed to answer; the fallback did
     assert state.status()["model"] == "a:other" and state.status()["served_model"] == "a:m"
     assert client.post("/api/models/hide", json={"name": "b", "hidden": True}).json()["ok"]
     assert state.router.is_hidden("b:x") and "hidden_models" in (alice_home() / "config.toml").read_text(encoding="utf-8")
@@ -169,7 +169,7 @@ def test_all_turns_run_on_same_worker_thread(app):
         events, t = collect(state, lambda e: e["type"] == "status")
         assert client.post("/api/send", json={"text": text}).json()["ok"]
         t.join()
-    # Aynı sohbetin turları hep aynı thread'de (Playwright/UI Automation nesneleri thread'e bağlı).
+    # Turns of the same chat always run on the same thread (Playwright/UI Automation objects are thread-bound).
     assert len(set(seen)) == 1 and seen[0].startswith("alice-chat-")
 
 
@@ -186,9 +186,9 @@ def test_new_endpoints_rewind_files_commands_images(app, workdir):
     t.join()
     user_ev = next(e for e in events if e["type"] == "user")
     assert user_ev["mi"] == 1 and user_ev["images"] == ["AAAA"]
-    assert "<file path=" in str(state.agent.messages[1]["content"])  # @dosya içeriği modele gitti
+    assert "<file path=" in str(state.agent.messages[1]["content"])  # the @file content was sent to the model
     hist = client.get("/api/history").json()
-    assert hist[0]["text"] == "yaz @notlar.txt"  # arayüzde kullanıcının yazdığı görünür
+    assert hist[0]["text"] == "yaz @notlar.txt"  # the UI shows what the user typed
     r = client.post("/api/rewind", json={"mi": 1}).json()
     assert r["ok"] and r["text"] == "yaz @notlar.txt" and not (workdir / "a.txt").exists() and r["history"] == []
     sid = client.get("/api/sessions").json()[0]["id"]
@@ -227,7 +227,7 @@ def test_changes_panel_lists_and_reverts_session_edits(app, workdir):
     assert (workdir / "eski.txt").read_text(encoding="utf-8") == "bir\niki\n"
     r = client.post("/api/changes/revert", json={"path": changes["yeni.txt"]["abs"]}).json()
     assert r["ok"] and r["changes"] == [] and not (workdir / "yeni.txt").exists()
-    # oturumda dokunulmamış bir dosya geri alınamaz
+    # a file not touched in this session cannot be reverted
     assert client.post("/api/changes/revert", json={"path": str(workdir / "x")}).status_code == 404
 
 
@@ -249,7 +249,7 @@ def test_git_branch_and_session_times(app, workdir):
 
 
 def test_update_api(app, monkeypatch):
-    """Arayüz güncellemeyi görür, uygular ve yeniden başlatmayı tetikler."""
+    """The UI sees the update, applies it, and triggers a restart."""
     from alice import updater
 
     state, _srv, client, _ = app
@@ -273,7 +273,7 @@ def test_update_api(app, monkeypatch):
 
 
 def test_update_apply_waits_for_agent(app, monkeypatch):
-    """Ajan çalışırken güncelleme yapılmaz: iş yarıda kalmasın."""
+    """No update while the agent is busy: the work must not be cut off halfway."""
     state, _srv, client, _ = app
     monkeypatch.setattr(state.agent, "busy", True, raising=False)
     r = client.post("/api/update/apply", json={})
@@ -281,7 +281,7 @@ def test_update_apply_waits_for_agent(app, monkeypatch):
 
 
 def test_update_mode_persists(app):
-    """Ayarlardan seçilen güncelleme modu config.toml'a yazılır."""
+    """The update mode chosen in Settings is written to config.toml."""
     from alice.config import alice_home
 
     state, _srv, client, _ = app
@@ -292,7 +292,7 @@ def test_update_mode_persists(app):
 
 
 def test_connections_api_lists_connectors_and_feeds(app, monkeypatch):
-    """Ayarlar > Bağlantılar: servislerin durumu ve akışlar arayüzden görünür."""
+    """Settings > Bağlantılar (Connections): service status and feeds are visible in the UI."""
     from alice.config import alice_home
 
     state, _srv, client, _ = app
@@ -336,7 +336,7 @@ def test_connect_logout_forgets_token(app):
 
 
 def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
-    """Kod başka bir süreçten indirildiyse 'Yeniden başlat' çekmeden yeniden başlatır."""
+    """If the code was downloaded by another process, 'Yeniden başlat' (Restart) restarts without pulling."""
     from alice import updater
 
     state, _srv, client, _ = app
@@ -353,9 +353,9 @@ def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
     assert restarted.wait(2)
 
 
-# ------------------------------------------------------------------ aynı anda birden çok sohbet
+# ------------------------------------------------------------------ multiple chats at once
 def _hold_turn(state, release):
-    """Öndeki sohbetin turu release gelene kadar sürsün (uzun süren bir araç gibi); Durdur'u da dinlemez."""
+    """The foreground chat's turn lasts until release arrives (like a long tool); it also ignores Durdur (Stop)."""
     agent = state.agent
     run_turn = agent.run_turn
 
@@ -387,16 +387,16 @@ def test_other_chat_works_while_one_is_busy(app):
     assert _wait(lambda: state.agent.busy)
     a_sid = state.sid
 
-    r = client.post("/api/new", json={}).json()  # eskiden "önce mevcut işi durdur"
+    r = client.post("/api/new", json={}).json()  # formerly "önce mevcut işi durdur" (stop the current job first)
     assert r["ok"] and r["session"] != a_sid and not r["busy"] and r["running"] == [a_sid]
     events, t = collect(state, lambda e: e["type"] == "busy" and e.get("value") is False and e.get("sid") == state.sid)
     assert client.post("/api/send", json={"text": "kısa soru"}).json()["ok"]
     t.join()
     assert state.agent is not busy_agent and state.agent.messages[-1]["content"].startswith("cevap")
-    # Arkadaki sohbetin olayları öndekinden ayrılabilsin: hepsi kendi sid'ini taşır.
+    # Background-chat events must be told apart from the foreground's: each carries its own sid.
     assert {e.get("sid") for e in events if e["type"] in ("delta", "stream_end", "user")} == {state.sid}
 
-    # Arkadaki sohbete geri dönülür: diskten değil canlı halinden, hâlâ çalışıyor.
+    # Switching back to the background chat: from its live state, not disk; it is still running.
     b_sid = state.sid
     r = client.post("/api/resume", json={"id": a_sid}).json()
     assert r["ok"] and r["session"] == a_sid and r["busy"] and state.agent is busy_agent
@@ -415,9 +415,9 @@ def test_background_chat_finishes_and_closes(app):
     assert _wait(lambda: state.agent.busy)
     a_sid, a_chat = state.sid, state.chat
     assert client.post("/api/new", json={}).json()["ok"]
-    assert client.post("/api/session/delete", json={"id": a_sid}).status_code == 409  # çalışırken silinmez
+    assert client.post("/api/session/delete", json={"id": a_sid}).status_code == 409  # not deleted while running
     release.set()
-    assert _wait(lambda: not state.running() and not a_chat._thread.is_alive())  # bitti, kaydedildi, kapandı
+    assert _wait(lambda: not state.running() and not a_chat._thread.is_alive())  # finished, saved, closed
     from alice import session as sess
 
     loaded = sess.load(a_sid)
@@ -443,7 +443,7 @@ def test_background_limit(app, monkeypatch):
 
 
 def test_stuck_chat_is_abandoned_not_the_app(app, monkeypatch):
-    """Durdur'a rağmen bırakmayan araç: sohbet kaydedilip yeni thread'le açılır; eski thread dönünce bir şey bozmaz."""
+    """A tool ignores Durdur (Stop): chat saved, reopened on a new thread; the old thread is harmless."""
     state, srv, client, prov = app
     monkeypatch.setattr(AppState, "STOP_GRACE", 0.2)
     release = threading.Event()
@@ -452,7 +452,7 @@ def test_stuck_chat_is_abandoned_not_the_app(app, monkeypatch):
     client.post("/api/send", json={"text": "takılacak"})
     assert _wait(lambda: state.agent.busy)
     sid, old = state.sid, state.chat
-    state.desktop_lock.acquire(old.ctx, lambda: False)  # takılan araç ekranı tutuyordu
+    state.desktop_lock.acquire(old.ctx, lambda: False)  # the stuck tool was holding the screen
     assert client.post("/api/stop", json={}).json()["ok"]
     assert _wait(lambda: state.chat is not old)
     assert state.sid == sid and not state.chat.busy and state.desktop_lock.owner is None
@@ -462,7 +462,7 @@ def test_stuck_chat_is_abandoned_not_the_app(app, monkeypatch):
     assert state.agent.messages[-1]["content"] == "ok" and stuck is not state.agent
 
     seen = state.bus.subscribe()
-    release.set()  # takılan thread sonunda döndü
+    release.set()  # the stuck thread returned at last
     assert _wait(lambda: not old._thread.is_alive())
     from alice import session as sess
 
@@ -471,17 +471,17 @@ def test_stuck_chat_is_abandoned_not_the_app(app, monkeypatch):
     leaked = []
     while not seen.empty():
         leaked.append(seen.get())
-    assert not [e for e in leaked if e["type"] in ("delta", "stream_end", "tool_start")]  # eski thread arayüze yazmaz
+    assert not [e for e in leaked if e["type"] in ("delta", "stream_end", "tool_start")]  # old thread: no UI writes
 
 
 def test_phone_chat_does_not_move_the_desktop_chat(app):
-    """Telefon kendi sohbetinde çalışır: yeni sohbet açmak ve mesaj atmak bilgisayarın öndeki sohbetini değiştirmez,
-    bilgisayarda başka sohbete geçmek de telefonun mesajını oraya götürmez (7 Kasım)."""
+    """The phone works in its own chat: a new chat and a message sent there do not change the desktop's
+    foreground chat; switching chats on the desktop does not carry the phone's message there (7 Kasım / Nov 7)."""
     state, srv, client, prov = app
     desk = state.sid
     r = client.post("/api/new", json={"detached": True}).json()
     phone = r["sid"]
-    assert r["ok"] and phone != desk and state.sid == desk  # bilgisayar aynı sohbette
+    assert r["ok"] and phone != desk and state.sid == desk  # the computer stays in the same chat
     prov.script.append("telefona cevap")
     events, t = collect(state, lambda e: e["type"] == "busy" and e.get("value") is False and e.get("sid") == phone)
     assert client.post("/api/send", json={"text": "telefondan", "sid": phone}).json()["ok"]
@@ -490,13 +490,13 @@ def test_phone_chat_does_not_move_the_desktop_chat(app):
     assert any(e.get("type") == "user" and e.get("sid") == phone for e in events)
     hist = client.get("/api/history", params={"sid": phone}).json()
     assert [h["text"] for h in hist if h["type"] == "user"] == ["telefondan"]
-    assert not [h for h in client.get("/api/history").json() if h["type"] == "user"]  # masaüstü sohbeti boş
+    assert not [h for h in client.get("/api/history").json() if h["type"] == "user"]  # the desktop chat is empty
     r = client.post("/api/resume", json={"id": phone, "detached": True}).json()
     assert r["ok"] and r["sid"] == phone and state.sid == desk
 
 
 def test_phone_stop_for_finished_chat_does_not_stop_the_desktop(app):
-    """Telefonun sohbeti bitmiş (ya da hiç başlamamış) iken Durdur, bilgisayarda süren işi kesmemeli."""
+    """If the phone's chat is finished (or never started), Durdur (Stop) must not stop the computer's running job."""
     state, srv, client, prov = app
     release = threading.Event()
     busy_agent = _hold_turn(state, release)
@@ -506,14 +506,14 @@ def test_phone_stop_for_finished_chat_does_not_stop_the_desktop(app):
     phone = client.post("/api/new", json={"detached": True}).json()["sid"]
     assert client.post("/api/stop", json={"sid": phone}).json()["ok"]
     assert not busy_agent.cancel.is_set() and state.agent.busy
-    # Öndeki çalışan sohbet de (ör. telefondan) silinemez: arkadaki gibi bitince kendini yeniden yazardı.
+    # A running foreground chat can't be deleted either (e.g. from the phone): it would rewrite itself on finish.
     assert client.post("/api/session/delete", json={"id": state.sid}).status_code == 409
     release.set()
     assert _wait(lambda: not state.agent.busy)
 
 
 def test_phone_message_that_starts_no_turn_does_not_leak_a_chat(app):
-    """Telefonun canlı olmayan sohbetine /btw ya da bilinmeyen komut: açılan arka plan sohbeti kapanmalı."""
+    """/btw or an unknown command sent to the phone's non-live chat: the background chat it opened must close."""
     state, srv, client, prov = app
     prov.script = lambda model, messages, tools, **kw: "yan cevap"
     phone = client.post("/api/new", json={"detached": True}).json()["sid"]
@@ -529,7 +529,7 @@ def test_phone_message_that_starts_no_turn_does_not_leak_a_chat(app):
 def test_btw_side_question_does_not_touch_history(app):
     state, srv, client, prov = app
 
-    def answer(model, messages, tools, **kw):  # arka plandaki başka çağrılar (başlık vb.) sırayı bozmasın
+    def answer(model, messages, tools, **kw):  # other calls in the background (e.g. title) must not break the order
         last = messages[-1].get("content")
         return "Yan cevap: 42." if isinstance(last, str) and "Yan soru" in last else "cevap 1"
 
@@ -543,25 +543,25 @@ def test_btw_side_question_does_not_touch_history(app):
     t.join()
     done = [e for e in events if e["type"] == "btw" and not e.get("pending")]
     assert done and done[-1]["a"] == "Yan cevap: 42." and done[-1]["q"] == "sayı kaç?"
-    assert state.chat.agent.messages == before  # konuşmaya yazılmadı
+    assert state.chat.agent.messages == before  # not written to the chat
     assert "Yan soru" in prov.calls[-1]["messages"][-1]["content"] and not prov.calls[-1].get("tools")
     assert client.post("/api/send", json={"text": "/btw"}).json()["ok"] is False
 
 
 def test_recap_summarizes_once_per_state(app):
     state, srv, client, prov = app
-    assert client.get("/api/recap").json() == {"text": ""}  # konuşma yok
+    assert client.get("/api/recap").json() == {"text": ""}  # no conversation
     for m in ("bir", "iki"):
         state.chat.agent.messages += [{"role": "user", "content": m}, {"role": "assistant", "content": m + " oldu"}]
     prov.script.append("Dosyalar yazıldı, testler bekliyor.")
     assert client.get("/api/recap").json()["text"] == "Dosyalar yazıldı, testler bekliyor."
     n = len(prov.calls)
     assert client.get("/api/recap").json()["text"].startswith("Dosyalar")
-    assert len(prov.calls) == n  # aynı hâl için tekrar üretilmez
+    assert len(prov.calls) == n  # not regenerated for the same state
 
 
 def test_message_while_question_waits_answers_the_question(app):
-    """ALICE soru kartında beklerken yazılan mesaj kaybolmaz: sorunun cevabı olur."""
+    """A message written while ALICE waits on a question card is not lost; it answers the question."""
     state, srv, client, prov = app
     prov.script.extend([tool_call("ask_user", {"question": "Hangi yol?", "options": ["A", "B"]}), "Tamam, C ile."])
     events, t = collect(state, lambda e: e["type"] == "status", timeout=15)

@@ -49,7 +49,7 @@ def test_ux_reviewer_gets_screenshots_on_a_vision_model(workdir):
     from alice.tools import ToolContext, all_tools
     from tests.conftest import FakeProvider, make_config
 
-    cfg = make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["b:v"]})  # b görsel destekli
+    cfg = make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["b:v"]})  # b supports vision
     prov = FakeProvider("x", script)
     router = Router(cfg, provider_factory=lambda pc: prov, sleep=lambda s: None)
     ctx = ToolContext(cwd=workdir, config=cfg, router=router)
@@ -76,7 +76,7 @@ def test_screenshot_server_hides_secrets_even_when_escaped(tmp_path):
 
     (tmp_path / "index.html").write_text("ok", encoding="utf-8")
     (tmp_path / ".env").write_text("KEY=gizli", encoding="utf-8")
-    try:  # Windows'ta sembolik bağlantı yetki ister; yoksa o kısım atlanır
+    try:  # Symlinks need privileges on Windows; otherwise that part is skipped
         (tmp_path / "link.txt").symlink_to(tmp_path / ".env")
     except OSError:
         pass

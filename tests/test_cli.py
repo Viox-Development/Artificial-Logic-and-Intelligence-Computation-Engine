@@ -1,4 +1,4 @@
-"""Komut satırı kullanımı: yardım, sürüm, yazım hataları ve eksik paketlerde traceback yerine tek satır mesaj."""
+"""Command-line usage: help, version, typos and missing packages print a one-line message instead of a traceback."""
 
 from __future__ import annotations
 
@@ -12,15 +12,15 @@ from alice.config import load_config
 
 
 def _no_agent(monkeypatch):
-    """Ajan kurulursa test başarısız olsun (yazım hatası REPL'i açmamalı)."""
+    """The test must fail if an agent gets built (a typo must not open the REPL)."""
     monkeypatch.setattr(cli, "build", lambda *a, **k: pytest.fail("ajan kurulmamalıydı"))
 
 
 def test_init_creates_home(isolated_home, capsys):
-    # main() içindeki yerel import alice_home'u gölgeliyordu: `alice init` UnboundLocalError veriyordu.
+    # The local import inside main() shadowed alice_home: `alice init` raised UnboundLocalError.
     assert cli.main(["init"]) == 0
     assert (isolated_home / "config.toml").exists() and (isolated_home / ".env").exists()
-    # Rich uzun yolu satırlara böler (Windows'ta geçici klasör yolu uzun): boşlukları tekleştirip bak.
+    # Rich wraps long paths across lines (the temp folder path is long on Windows): collapse the whitespace and check.
     assert "alice doctor" in " ".join(capsys.readouterr().out.split())
 
 
@@ -65,7 +65,7 @@ def test_typo_subcommand_suggests_instead_of_starting_agent(monkeypatch, capsys)
 def test_unknown_command_hint_leaves_real_prompts_alone():
     assert cli.unknown_command_hint(["merhaba"]) is None
     assert cli.unknown_command_hint(["notlar"]) is None
-    assert cli.unknown_command_hint(["dotcor", "bak"]) is None  # birden çok kelime: mesajdır
+    assert cli.unknown_command_hint(["dotcor", "bak"]) is None  # more than one word: it is a message
     assert cli.unknown_command_hint(["modles"]) is not None
     assert cli.unknown_command_hint(["voise"]) is not None
 
@@ -74,12 +74,12 @@ def test_unknown_command_hint_leaves_real_prompts_alone():
                                         ("notes", "alice notes"), ("core", "[--tray]"), ("voice", "--no-wake"),
                                         ("watch", "alice watch"), ("dcs", "alice dcs"), ("plugins", "alice plugins")])
 def test_subcommand_help_does_not_run_the_command(sub, needle, monkeypatch, capsys):
-    # `alice phone --help` köprüyü açıp sonsuza kadar beklememeli, `alice notes --help` notları listelememeli.
+    # `alice phone --help` must not open the bridge and wait forever, and `alice notes --help` must not list the notes.
     import alice.app.phone as phone
 
     monkeypatch.setattr(phone, "PhoneServer", lambda *a, **k: pytest.fail("köprü açılmamalıydı"))
     assert cli.main([sub, "--help"]) == 0
-    assert needle in capsys.readouterr().out  # rich markup köşeli parantezleri yutmamalı
+    assert needle in capsys.readouterr().out  # rich markup must not swallow the square brackets
 
 
 def test_strict_args_for_simple_commands(capsys):
@@ -143,14 +143,14 @@ def test_check_ready_warns_when_no_api_keys(isolated_home, capsys, monkeypatch):
     from alice.providers.router import Router
 
     cfg = load_config()
-    # Ortamı bu testte gerçekten anahtarsız yap: CI'da aynı süreçte koşan başka bir testin bıraktığı (ör. .env'den
-    # yüklenen GEMINI_API_KEY_2) numaralı anahtarlar isolated_home'un listesinde yoktu ve uyarı çıkmıyordu.
+    # Really make the environment keyless here: numbered keys (e.g. GEMINI_API_KEY_2 from .env) left by another test in
+    # the same CI process were not in isolated_home's list, so no warning was printed.
     envs = {pc.get("api_key_env") for pc in (cfg.data.get("providers") or {}).values() if pc.get("api_key_env")}
     for k in list(os.environ):
         if any(k == e or re.fullmatch(rf"{re.escape(e)}_\d+", k) for e in envs):
             monkeypatch.delenv(k, raising=False)
     router = Router(cfg)
-    if router.first_available("brain") is None:  # anahtarsız zincirde Ollama yoksa uyarı zaten "model yok"
+    if router.first_available("brain") is None:  # with no keys and no Ollama, the warning is already "model yok"
         assert not cli._check_ready(router)
         return
     assert cli._check_ready(router)

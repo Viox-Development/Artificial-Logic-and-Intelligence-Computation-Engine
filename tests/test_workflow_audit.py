@@ -1,4 +1,4 @@
-"""GitHub Actions iş akışı denetimi (alice/workflow_audit.py) ve incelemeye bağlanması (review.workflow_findings)."""
+"""GitHub Actions workflow audit (alice/workflow_audit.py) and how it connects to review (review.workflow_findings)."""
 
 from __future__ import annotations
 
@@ -54,18 +54,18 @@ def test_flags_known_dangerous_patterns():
     got = by_line(BAD)
     assert got[5] == "medium"  # write-all
     assert got[12] == "critical"  # pull_request_target + PR head checkout
-    assert got[13] == "low"  # someone/tool@v2 sabitlenmemiş
-    assert 14 not in got  # SHA'ya sabitlenmiş: sorun yok
-    assert 10 not in got  # actions/* güvenilir sahip
-    assert got[17] == "high"  # run içinde PR başlığı
-    assert 18 not in got  # number: sayı, saldırgan yazamaz
-    assert got[19] == "high"  # tek satırlık run: head_ref
-    assert got[23] == "high"  # github-script içinde yorum gövdesi
-    assert 24 not in got  # yorum satırı
+    assert got[13] == "low"  # someone/tool@v2 not pinned
+    assert 14 not in got  # pinned to a SHA: no issue
+    assert 10 not in got  # actions/* is a trusted owner
+    assert got[17] == "high"  # PR title inside run
+    assert 18 not in got  # number: a plain number, an attacker cannot write it
+    assert got[19] == "high"  # single-line run: head_ref
+    assert got[23] == "high"  # comment body inside github-script
+    assert 24 not in got  # comment line
 
 
 def test_safe_workflow_has_no_issues():
-    # pull_request (ayrıcalıksız) + env üzerinden tırnaklı kullanım: güvenli desen.
+    # pull_request (no extra privileges) + quoted use via env: a safe pattern.
     assert workflow_audit.audit(SAFE) == []
 
 
@@ -86,13 +86,13 @@ def test_review_reports_only_added_lines_that_match_local_file(tmp_path):
     wf.mkdir(parents=True)
     (wf / "ci.yml").write_text(BAD, encoding="utf-8")
     lines = BAD.splitlines()
-    # Fark yalnız 17. satırı (run içindeki PR başlığı) ekliyor; 5 ve 12 eskiden beri var: raporlanmaz.
+    # The diff only adds line 17 (the PR title inside run); lines 5 and 12 have been there all along: not reported.
     diff = ("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n"
             "--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n"
             "@@ -16,1 +16,2 @@\n " + lines[15] + "\n+" + lines[16] + "\n")
     found = review.workflow_findings(tmp_path, diff)
     assert [(f.line, f.severity, f.verdict) for f in found] == [(17, "high", "KURAL")]
-    # Yereldeki dosya farktan farklıysa (başka dal açık) bulgu yanlış satıra düşmesin: atlanır.
+    # If the local file differs from the diff (another branch open), skip it so it never lands on the wrong line.
     (wf / "ci.yml").write_text(BAD.replace("pull_request.title", "pull_request.number"), encoding="utf-8")
     assert review.workflow_findings(tmp_path, diff) == []
 
@@ -106,7 +106,7 @@ def test_deep_review_runs_each_focus_merges_and_survives_a_failing_reviewer(monk
             raise RuntimeError("model yok")
         if focus == "bugs":
             return [review.Finding("a.py", 10, "medium", "Yarış durumu!", "d")]
-        if focus == "security":  # aynı sorun, 1 satır öte, daha yüksek önem: bu kalır
+        if focus == "security":  # same issue one line away but higher severity: this one stays
             return [review.Finding("a.py", 11, "high", "yarış durumu", "d")]
         return [review.Finding("a.py", 40, "low", "test yok", "d")]
 

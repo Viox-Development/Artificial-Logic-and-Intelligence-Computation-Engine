@@ -15,14 +15,14 @@ from alice.voice.live import LiveSession, declarations, sanitize_schema
 
 @pytest.fixture(autouse=True)
 def no_screen(monkeypatch):
-    monkeypatch.setattr("alice.voice.live.screen_frame", lambda: None)  # testler gerçek ekranı çekmesin
+    monkeypatch.setattr("alice.voice.live.screen_frame", lambda: None)  # keep tests from capturing the real screen
 
 
 @pytest.fixture(autouse=True)
 def no_filler_synth(monkeypatch, tmp_path):
     from alice.voice import fillers
 
-    # Testler Gemini TTS'e gitmesin, gerçek ~/.alice'e ses yazmasın.
+    # Keep tests away from Gemini TTS and don't write audio into the real ~/.alice.
     monkeypatch.setattr(fillers, "gemini_fillers", lambda cfg, voice, key: fillers.Fillers(voice, None, tmp_path))
 
 
@@ -34,7 +34,7 @@ def test_sanitize_schema_for_gemini():
         "a": {"type": "STRING", "nullable": True}, "b": {"type": "ARRAY", "items": {"type": "INTEGER"}}},
         "required": ["a"]}
     assert sanitize_schema({"type": "string", "enum": ["", "pdf"]}) == {"type": "STRING", "enum": ["pdf"]}
-    assert sanitize_schema({"type": "string", "enum": [""]}) == {"type": "STRING"}  # boş enum Live'ı açtırmıyordu
+    assert sanitize_schema({"type": "string", "enum": [""]}) == {"type": "STRING"}  # empty enum used to block Live
     d = declarations([{"type": "function", "function": {"name": "t", "description": "d",
                                                          "parameters": {"type": "object", "properties": {}}}}])
     assert d == [{"name": "t", "description": "d"}]
@@ -43,7 +43,7 @@ def test_sanitize_schema_for_gemini():
 
 @pytest.fixture(autouse=True)
 def _short_answer_wait(monkeypatch):
-    """Sahte sunucu cevap vermediğinde oturum 20 sn "cevap bekleniyor" diye açık kalıyordu; testlerde kısa tut."""
+    """Without an answer from the fake server, the session stayed open 20 s on "cevap bekleniyor"; keep it short."""
     monkeypatch.setattr(LiveSession, "ANSWER_WAIT", 1.5)
 
 class FakeWS:
@@ -125,7 +125,7 @@ def test_live_converse_runs_tools_and_plays_audio(monkeypatch):
     assert resp == {"id": "c1", "name": "windows", "response": {"result": "açıldı"}}
     assert out.chunks == [b"\x01\x00" * 100]
     assert any("YouTube açıldı." in line for line in logs)
-    assert agent.ui is None  # eski UI geri kondu
+    assert agent.ui is None  # old UI restored
 
 
 def test_prefetch_reuses_connection_and_discard_closes(monkeypatch):
@@ -146,9 +146,9 @@ def test_prefetch_reuses_connection_and_discard_closes(monkeypatch):
     assert _wait(lambda: len(opened) == 1 and opened[0].closed)
     s.prefetch()
     s.converse("", queue.Queue(), threading.Event(), first_audio=b"\0\0" * 1600)
-    assert len(opened) == 2  # converse önceden açılan bağlantıyı kullandı
+    assert len(opened) == 2  # converse reused the connection opened earlier
     audio = [m for m in opened[1].sent if "realtimeInput" in m]
-    assert len(audio) == 2  # cümle + arkasından sessizlik
+    assert len(audio) == 2  # sentence + silence after it
 
 
 def _wait(cond, t=3):
@@ -187,7 +187,7 @@ def test_live_mutes_leaked_internal_note(monkeypatch):
     logs = []
     s = LiveSession(cfg, agent, log=logs.append, connect=lambda url, **k: ws, out_factory=lambda: out)
     s.converse("selam", queue.Queue(), threading.Event())
-    assert out.chunks == [b"\x01\x00" * 10]  # düşünce ve iç not çalınmadı, sonraki tur çalındı
+    assert out.chunks == [b"\x01\x00" * 10]  # thought and internal note were not played; the next turn was
     assert any("iç not susturuldu" in line for line in logs)
 
 
@@ -200,7 +200,7 @@ def test_live_tool_timeout_answers_model(monkeypatch):
     s.agent, s.log = agent, lambda m: None
     s.TOOL_TIMEOUT = 0.05
     s._run_call(ws, {"id": "c1", "name": "browser", "args": {"action": "snapshot"}})
-    assert len(sent) == 1  # geç gelen sonuç ikinci kez gönderilmez
+    assert len(sent) == 1  # a late result is not sent a second time
     assert "bitmedi" in sent[0]["toolResponse"]["functionResponses"][0]["response"]["result"]
 
 
@@ -214,7 +214,7 @@ def test_live_first_turn_uses_local_text_and_names(monkeypatch):
     s.names = lambda: ["GitHub", "YouTube Music"]
     s.converse("", queue.Queue(), threading.Event(), first_audio=b"\0\0" * 1600, hint=lambda: "GitHub'ı açar mısın")
     assert "GitHub, YouTube Music" in ws.sent[0]["setup"]["systemInstruction"]["parts"][0]["text"]
-    assert not [m for m in ws.sent if "realtimeInput" in m]  # ses yerine yazı gitti
+    assert not [m for m in ws.sent if "realtimeInput" in m]  # text was sent instead of audio
     turn = next(m for m in ws.sent if "clientContent" in m)["clientContent"]["turns"][0]
     assert turn["parts"][0]["text"] == "GitHub'ı açar mısın"
 
@@ -247,7 +247,7 @@ def test_live_sends_screen_frame_each_turn(monkeypatch):
     first = next(m for m in ws.sent if "clientContent" in m)["clientContent"]["turns"][0]["parts"]
     assert first[0] == {"inlineData": {"mimeType": "image/jpeg", "data": "IMG"}}
     frames = [m for m in ws.sent if "video" in m.get("realtimeInput", {})]
-    assert len(frames) == 1  # ilk tur yazıyla birlikte gitti; ikinci tur başında bir kare daha
+    assert len(frames) == 1  # first turn went with the text; one more frame at the start of the second turn
 
 
 def test_live_screen_off_by_default(monkeypatch):
@@ -265,7 +265,7 @@ def test_reflex_works_in_users_visible_tab(monkeypatch):
     fake = SimpleNamespace(attached=True, page=SimpleNamespace(url="about:blank"), _visible_page=lambda: visible)
     monkeypatch.setattr(browser, "get_browser", lambda ctx, separate=False: calls.append(separate) or fake)
     ob = observers.BrowserObserver(SimpleNamespace())
-    assert calls == [False]  # ayrı pencere istemedi
+    assert calls == [False]  # did not ask for a separate window
     assert ob.b.page is visible
 
 
@@ -288,7 +288,7 @@ def test_stuck_tool_does_not_lock_conversation(monkeypatch):
 
     def execute(calls):
         if calls[0]["function"]["name"] == "ui_elements":
-            release.wait(5)  # takılan araç
+            release.wait(5)  # the stuck tool
         return [ToolResult("ok")]
 
     state = {"browser": object()}
@@ -300,10 +300,10 @@ def test_stuck_tool_does_not_lock_conversation(monkeypatch):
     t0 = time.monotonic()
     s._run_call(ws, {"id": "1", "name": "ui_elements", "args": {}})
     assert time.monotonic() - t0 < 2 and "browser" not in state
-    # İkinci araç takılmıyor: ona gerçekçi süre ver. 0,2 sn yavaş CI makinesinde (Windows) iş parçacığının
-    # başlamasına bile yetmeyip "bitmedi" dönüyordu; sınanan şey yeni iş parçacığında çalışabilmesi.
+    # The second tool must not hang, so give it a realistic timeout. On a slow CI machine (Windows), 0.2 s was not
+    # even enough for the thread to start and it returned "bitmedi"; what is tested is running in a new thread.
     s.TOOL_TIMEOUT = 5
-    s._run_call(ws, {"id": "2", "name": "windows", "args": {}})  # yeni iş parçacığında hemen çalışır
+    s._run_call(ws, {"id": "2", "name": "windows", "args": {}})  # runs right away in a new thread
     results = [m["toolResponse"]["functionResponses"][0]["response"]["result"] for m in sent]
     assert "YAPILMADI" in results[0] and results[1] == "ok"
     release.set()
@@ -327,7 +327,7 @@ def test_live_tool_budget_stops_runaway_loop():
     r = results()
     assert r[:3] == [f'sonuç {{"command": "komut {i}"}}' for i in range(3)]
     assert all("DUR" in x and "ÇALIŞTIRILMADI" in x for x in r[3:])
-    s._new_turn()  # kullanıcı tekrar konuştu: sayaç sıfırlanır
+    s._new_turn()  # the user spoke again: the counter is reset
     s._run_call(ws, {"id": "9", "name": "run_command", "args": {"command": "yeni"}})
     assert results()[-1].startswith("sonuç")
 
@@ -341,7 +341,7 @@ def test_live_consecutive_duplicate_call_not_rerun():
     assert len(calls) == 1 and "tekrar çalıştırılmadı" in results()[1] and "adım 3" in results()[1]
     s._run_call(ws, {"id": "3", "name": "computer", "args": {"action": "scroll"}})
     s._run_call(ws, {"id": "4", "name": "computer", "args": {"action": "scroll"}})
-    assert len(calls) == 3  # kaydırma gibi tekrar edilebilir işler engellenmez
+    assert len(calls) == 3  # repeatable actions such as scrolling are not blocked
 
 
 def test_live_idle_is_capped_and_hush_closes_session(monkeypatch):
@@ -376,7 +376,7 @@ def test_live_asks_for_affective_dialog_and_proactive_audio(monkeypatch):
         return sockets[-1]
 
     s0, _ = _session(connect)
-    s0._open()  # varsayılan kapalı: desteklemeyen modelde ilk seste 1007 ile kopuyordu
+    s0._open()  # off by default: a model that doesn't support it dropped the connection with 1007 on first audio
     assert "v1beta" in urls[0] and "proactivity" not in sockets[0].sent[0]["setup"]
     urls.clear()
     sockets.clear()
@@ -413,7 +413,7 @@ def test_live_falls_back_without_extras_when_model_rejects_them(monkeypatch):
     assert s.model == "m1" and "v1alpha" in urls[0] and "v1beta" in urls[1]
     assert any("desteklenmiyor" in line for line in logs)
     urls.clear()
-    s._open()  # bir kez reddeden modelde bir daha denenmez
+    s._open()  # a model that rejected it once is not tried again
     assert len(urls) == 1 and "v1beta" in urls[0]
 
 
@@ -434,7 +434,7 @@ def test_canned_replies_are_kept_out_of_history():
 
 
 def test_live_same_read_is_not_rerun_even_with_calls_between():
-    # voice.log (10 Ekim): Get-Volume ve İndirilenler listesi aynı istekte arada başka komutlarla 5-6 kez çalıştı.
+    # voice.log (Oct 10): Get-Volume and İndirilenler listing ran 5-6x in one request, with other commands in between.
     s, ws, results = _guard_session(budget=20)
     calls = []
     s.agent._execute_calls = lambda c: calls.append(c) or [ToolResult("C: D:")]
@@ -443,14 +443,14 @@ def test_live_same_read_is_not_rerun_even_with_calls_between():
     s._run_call(ws, {"id": "2", "name": "list_dir", "args": {"path": "İndirilenler"}})
     s._run_call(ws, dict(vol, id="3"))
     assert len(calls) == 2 and "zaten yaptın" in results()[2] and "C: D:" in results()[2]
-    # komut çalıştırmak tekrar edilebilir (testi düzelttikten sonra yeniden çalıştırmak gibi)
+    # running a command again is fine (like re-running tests after fixing them)
     build = {"id": "4", "name": "run_command", "args": {"command": "npm test"}}
     s._run_call(ws, build)
     s._run_call(ws, {"id": "5", "name": "list_dir", "args": {"path": "."}})
     s._run_call(ws, dict(build, id="6"))
     assert len(calls) == 5
     s._new_turn()
-    s._run_call(ws, dict(vol, id="7"))  # yeni istek: tekrar okunabilir
+    s._run_call(ws, dict(vol, id="7"))  # new request: it can be read again
     assert len(calls) == 6
 
 
@@ -463,7 +463,7 @@ def test_read_only_detection():
 
 
 def test_live_single_turn_closes_right_after_the_answer(monkeypatch):
-    # Seçici mod (Discord): cevap bitince oturum kapanır; arkadaşlara söylenenler Live'a gitmez.
+    # Selective mode (Discord): the session closes when the answer ends; what is said to friends does not go to Live.
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     pcm = base64.b64encode(b"\x01\x00" * 100).decode()
     agent = SimpleNamespace(messages=[{"role": "system", "content": "s"}], ctx=SimpleNamespace(state={}), ui=None,
@@ -493,13 +493,13 @@ def test_think_runs_one_at_a_time_and_drops_stale_answers(monkeypatch):
     s.think_timeout = 60
     s._run_think(ws, {"id": "1", "name": "think", "args": {"question": "D&D nedir"}})
     s._run_think(ws, {"id": "2", "name": "think", "args": {"question": "başka soru"}})
-    assert "hâlâ düşünülüyor" in results()[0]  # ikinci think çalışmadı, model kendisi cevaplasın
+    assert "hâlâ düşünülüyor" in results()[0]  # the second think did not run; the model answers on its own
     gate.set()
     deadline = time.monotonic() + 3
     while len(results()) < 2 and time.monotonic() < deadline:
         time.sleep(0.02)
     assert "cevap" in results()[1] and s._thinking == 0
-    # geç cevap: zaman aşımı mesajı gitti, cevap THINK_STALE'den sonra geldi -> söylenmez
+    # late answer: the timeout message was sent and the answer came after THINK_STALE -> not spoken
     sent = []
     late_ws = SimpleNamespace(send=lambda d: sent.append(json.loads(d)))
     monkeypatch.setattr(live_mod, "THINK_STALE", 0.0)
@@ -511,12 +511,12 @@ def test_think_runs_one_at_a_time_and_drops_stale_answers(monkeypatch):
     deadline = time.monotonic() + 3
     while s._thinking and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert [m for m in sent if "toolResponse" in m]  # "uzun sürüyor" cevabı gitti
-    assert not [m for m in sent if "clientContent" in m]  # dakikalar sonra gelen cevap okunmadı
+    assert [m for m in sent if "toolResponse" in m]  # the "uzun sürüyor" (taking a long time) answer was sent
+    assert not [m for m in sent if "clientContent" in m]  # an answer that arrived minutes later was not read out
 
 
 def test_slow_think_does_not_keep_the_session_open(monkeypatch):
-    # voice.log 25 Ekim 01:46: think 189 sn sürdü, o sürede Live açık kalıp Discord'daki konuşmalara cevap verdi.
+    # voice.log Oct 25 01:46: think took 189 s; during that time Live stayed open and answered Discord conversations.
     s, ws, results = _guard_session()
     s._bg = 0
     gate = threading.Event()
@@ -527,11 +527,11 @@ def test_slow_think_does_not_keep_the_session_open(monkeypatch):
     deadline = time.monotonic() + 2
     while s._bg and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert s._bg == 0 and s._thinking == 0  # zaman aşımında serbest: oturum kapanabilir, yeni soru düşünülebilir
+    assert s._bg == 0 and s._thinking == 0  # freed on timeout: session can close, new question can be asked
     assert "uzun sürüyor" in results()[0]
     gate.set()
     time.sleep(0.2)
-    assert s._bg == 0 and s._thinking == 0  # bitince ikinci kez azaltılmadı
+    assert s._bg == 0 and s._thinking == 0  # not decremented a second time when it finished
 
 
 def test_live_prompt_keeps_simple_questions_off_think():
@@ -541,7 +541,7 @@ def test_live_prompt_keeps_simple_questions_off_think():
 
 
 def test_filler_plays_when_model_calls_a_tool_silently(monkeypatch, tmp_path):
-    # voice.log 28 Ekim: hava durumu sorusunda model hiçbir şey demeden araç çağırdı, 10 sn sessizlik oldu.
+    # voice.log Oct 28: on a weather question the model called a tool without saying anything; 10 s of silence.
     from alice.voice import fillers
     from alice.voice.audio import Audio
 
@@ -560,10 +560,10 @@ def test_filler_plays_when_model_calls_a_tool_silently(monkeypatch, tmp_path):
     logs = []
     s = LiveSession(cfg, agent, log=logs.append, connect=lambda url, **k: ws, out_factory=lambda: out)
     s.names = lambda: []
-    s.FILL_AFTER = 0.05  # araç bundan uzun sürüyor: dolgu çalınır (hemen biten araçta çalınmaz)
+    s.FILL_AFTER = 0.05  # the tool takes longer than this: a filler is played (not for a tool that finishes right away)
     s.converse("Ankara'da hava nasıl", queue.Queue(), threading.Event())
-    assert out.chunks[0] == b"\x05\x00" * 50  # araç sürerken dolgu çalındı
-    assert sum("dolgu" in line for line in logs) == 1  # aynı turda ikinci araçta tekrar çalınmadı
+    assert out.chunks[0] == b"\x05\x00" * 50  # a filler was played while the tool was running
+    assert sum("dolgu" in line for line in logs) == 1  # not played again for a second tool in the same turn
 
 
 def test_no_filler_after_model_already_spoke():
@@ -574,7 +574,7 @@ def test_no_filler_after_model_already_spoke():
     s.fillers = lambda: SimpleNamespace(get=lambda kind, tone="calm": b"pcm")
     out = SimpleNamespace(playing=False, put=played.append)
     s._fill({"spoke": True, "asked": 1.0}, out, {"name": "weather"})
-    s._fill({"spoke": False, "asked": 1.0}, out, {"name": "computer_task"})  # model zaten "başladım" diyecek
+    s._fill({"spoke": False, "asked": 1.0}, out, {"name": "computer_task"})  # the model will say "başladım" itself
     assert played == []
     s._fill({"spoke": False, "asked": 1.0}, out, {"name": "think"})
     assert played == [b"pcm"]
@@ -587,15 +587,15 @@ def test_fillers_generate_in_background_and_do_not_repeat(tmp_path):
     made = []
     f = Fillers("Kore", lambda text, tone="calm": made.append(text) or Audio(text.encode("utf-8")[:20].ljust(20, b"\0"), 24000),
                 tmp_path)
-    assert f.get() is None  # henüz ses yok: beklemeden döner, arka planda üretir
+    assert f.get() is None  # no audio yet: returns without waiting and generates in the background
     _wait(lambda: not f._warming and len(made) == 5)
     a, b = f.get(), f.get()
-    assert a and b and a != b  # aynı cümle art arda gelmez
+    assert a and b and a != b  # the same sentence never comes twice in a row
     assert f.get("think")
 
 
 def test_think_uses_fast_models_before_the_brain_chain():
-    # providers.log 25 Ekim: beyin zincirinin başındaki nvidia:z-ai/glm-5.3 180 sn takıldı; 13 think'in medyanı 189 sn.
+    # providers.log Oct 25: nvidia:z-ai/glm-5.3 (brain chain head) stalled 180 s; median of 13 thinks: 189 s.
     router = SimpleNamespace(role_overrides={},
                              auto_chain=lambda role: ["cerebras:q", "cohere:c", "cf:g", "gemini:l"],
                              chain=lambda role: ["nvidia:glm", "cerebras:q", "gemini:f"])
@@ -614,7 +614,7 @@ def test_auto_screen_sends_frame_only_when_screen_is_mentioned(monkeypatch):
     s = LiveSession(cfg, SimpleNamespace())
     assert s.wants_frame("ekrandaki şarkıya tıkla") and s.wants_frame("şunu aç") and s.wants_frame("bu ne")
     assert not s.wants_frame("Ankara'da hava nasıl") and not s.wants_frame("Merhaba, nasılsın")
-    assert s.wants_frame("", unknown=True)  # ilk cümle sesle gitti, ne dendiği bilinmiyor
+    assert s.wants_frame("", unknown=True)  # the first sentence went out as audio; what was said is unknown
     s.screen = "off"
     assert not s.wants_frame("ekrandaki")
 
@@ -629,7 +629,7 @@ def test_dolgu_cumlesi_kullanicinin_tonuna_uyar(tmp_path):
     f = Fillers("Kore", lambda text, tone="calm": made.append((tone, text)) or Audio(b"\x01\x00" * 10, 24000), tmp_path)
     for text in PHRASES["calm"]["tool"]:
         Audio(b"\x05\x00" * 50, 24000).save(f._file(text))
-    assert f.get("tool", "urgent") is not None  # acil ses henüz yok: sakini çalınır, aciller üretilir
+    assert f.get("tool", "urgent") is not None  # no urgent audio yet: the calm one is played, urgent ones are generated
     _wait(lambda: not f._warming and len(made) == 3)
     assert {t for t, _ in made} == {"urgent"}
     f._last = ""
@@ -638,14 +638,14 @@ def test_dolgu_cumlesi_kullanicinin_tonuna_uyar(tmp_path):
 
 
 def test_live_single_turn_waits_for_model_after_tool_result(monkeypatch):
-    """Canlı kayıt: Discord'da (seçici mod) "kurulumu yap" dendi; model ilk tıklamayla birlikte konuşunca oturum 1 sn
-    sonra kapandı, iş yarıda kaldı. Araç sonucundan sonra modelin turu bitmeden kapanmamalı."""
+    """Live recording: in Discord (selective mode) "kurulumu yap" was said; the model spoke with the first click,
+    the session closed after 1 s, job left half-done. It must stay open until the turn ends after a tool result."""
     monkeypatch.setenv("GEMINI_API_KEY", "k")
 
     class SlowWS(FakeWS):
         def send(self, data):
             msg = json.loads(data)
-            if "toolResponse" in msg:  # model sonucu düşünüyor: devamı 2 sn sonra gelir
+            if "toolResponse" in msg:  # the model is thinking about the result: the rest comes 2 s later
                 self.sent.append(msg)
                 threading.Timer(2.0, lambda: self.inbox.put({"serverContent": {
                     "outputTranscription": {"text": "Kurulum bitti."}, "turnComplete": True}})).start()
@@ -663,4 +663,4 @@ def test_live_single_turn_waits_for_model_after_tool_result(monkeypatch):
                     connect=lambda url, **k: ws, out_factory=FakeOut)
     s.single_turn = True
     s.converse("kurulumu yap", queue.Queue(), threading.Event())
-    assert any("Kurulum bitti." in line for line in logs)  # devamı duyuldu, sonra kapandı
+    assert any("Kurulum bitti." in line for line in logs)  # the rest was heard, then it closed

@@ -1,4 +1,4 @@
-"""Ekran ajanı (Jev + kod): öğe listesi, eylemler (tıkla/yaz/tuş/sürükle), doğrulama, görsel yedek, iz kaydı."""
+"""Screen agent (Jev + code): item list, actions (click/type/key/drag), verification, visual fallback, trace log."""
 
 from __future__ import annotations
 
@@ -12,18 +12,18 @@ from alice.reflex.agent import ScreenAgent, goal_keys
 from alice.reflex.perceive import Item, Screen, build_items, is_goal_echo
 
 
-# ------------------------------------------------------------------------------------------- algı
+# ------------------------------------------------------------------------------------------- perception
 def test_build_items_merges_sources_drops_goal_echo_and_adds_context():
     ax = [Item("", "ax", "button", "Kaydet", (0.8, 0.02, 0.9, 0.06), ref=7),
           Item("", "ax", "Edit", "", (0.1, 0.9, 0.9, 0.95), editable=True, ref=8),
-          Item("", "ax", "button", "", None)]  # adsız ve yazılamaz: atılır
-    ocr = [("Kaydet", (0.81, 0.03, 0.88, 0.05)),  # düğmenin kendi yazısı: ayrı seçenek olmaz
-           ("projeler kısmındaki ilk projeye tıkla", (0.4, 0.3, 0.7, 0.33)),  # kullanıcının mesajı
+          Item("", "ax", "button", "", None)]  # unnamed and not editable: dropped
+    ocr = [("Kaydet", (0.81, 0.03, 0.88, 0.05)),  # the button's own label: not a separate option
+           ("projeler kısmındaki ilk projeye tıkla", (0.4, 0.3, 0.7, 0.33)),  # the user's message
            ("Uydurma bir savunma", (0.02, 0.14, 0.15, 0.16)), ("Sil", (0.2, 0.14, 0.23, 0.16)),
            ("Proje genel olarak", (0.02, 0.2, 0.15, 0.22)), ("Sil", (0.2, 0.2, 0.23, 0.22))]
     items = build_items(ax, ocr, "Projeler kısmındaki ilk projeye tıkla")
     labels = [i.label for i in items]
-    assert "projeler kısmındaki ilk projeye tıkla" not in labels  # hedefin yankısı
+    assert "projeler kısmındaki ilk projeye tıkla" not in labels  # echo of the goal
     assert labels.count("Kaydet") == 1 and next(i for i in items if i.label == "Kaydet").source == "ax+ocr"
     sil = [i for i in items if i.label == "Sil"]
     assert {i.context for i in sil} == {"in the row of 'Uydurma bir savunma'", "in the row of 'Proje genel olarak'"}
@@ -31,12 +31,12 @@ def test_build_items_merges_sources_drops_goal_echo_and_adds_context():
     kaydet = next(i for i in items if i.label == "Kaydet")
     assert kaydet.describe() == "button 'Kaydet' (top-right)"
     assert next(i for i in items if i.label == "Uydurma bir savunma").describe().startswith("text 'Uydurma")
-    assert items[0].editable or "proje" in items[0].label.lower()  # alakalı/yazılabilir olanlar önde
+    assert items[0].editable or "proje" in items[0].label.lower()  # relevant/editable ones first
 
 
 def test_goal_echo_needs_most_words_from_goal():
     assert is_goal_echo("ilk projeye tıkla lütfen", "Projeler kısmındaki ilk projeye tıkla")
-    assert not is_goal_echo("Projeler", "Projeler kısmındaki ilk projeye tıkla")  # kısa: hedefin kendisi olabilir
+    assert not is_goal_echo("Projeler", "Projeler kısmındaki ilk projeye tıkla")  # short: may be the goal itself
     assert not is_goal_echo("Uydurma bir savunma ve hav", "ilk projeye tıkla")
 
 
@@ -50,9 +50,9 @@ def test_goal_keys():
     assert goal_keys("ctrl+shift+n ile gizli pencere aç, sonra F11") == ["ctrl+shift+n", "f11"]
 
 
-# ------------------------------------------------------------------------------------------- ajan
+# ------------------------------------------------------------------------------------------- agent
 class FakeScreen:
-    """İki ekranlı bir uygulama: liste -> proje sayfası. Kartlar sürüklenebilir, alan yazılabilir."""
+    """Two-screen app: list -> project page. Cards can be dragged, the field is editable."""
 
     def __init__(self):
         self.page = "list"
@@ -80,7 +80,7 @@ class FakeScreen:
 
 
 class Brain:
-    """Senaryo: her adımda ne cevaplanacağını sırayla veren sahte Jev."""
+    """Scenario: a fake Jev that answers, step by step, with what to reply at each step."""
 
     supports_images = False
     names = ["fake"]
@@ -90,7 +90,7 @@ class Brain:
         self.calls = []
 
     def decide(self, state, questions, images=None):
-        _validate(questions)  # gerçek motor gibi: tek seçenekli Choice reddedilir
+        _validate(questions)  # like the real engine: a single-option Choice is rejected
         self.calls.append((state, questions, images))
         s = self.steps.pop(0)
         items = {v: k for k, v in questions["item"].criteria.items()} if "item" in questions else {}
@@ -160,15 +160,15 @@ def test_useless_action_is_not_repeated_forever():
 def test_missing_target_uses_screen_or_asks_for_help():
     obs = FakeScreen()
     res = ScreenAgent(obs, Brain([{"action": "click", "missing": 0.9}]), settle=0).run("dişli ikonuna bas")
-    assert res.status == "needs_help" and "bulunamadı" in res.reason  # ekrana bakamıyor
+    assert res.status == "needs_help" and "bulunamadı" in res.reason  # can't look at the screen
 
     obs = FakeScreen()
     obs.image = Image.new("RGB", (1200, 800))
     brain = Brain([{"action": "click", "missing": 0.9, "visible": 0.95}, {"visible": 0.95}, {"done": 0.9}])
     brain.supports_images = True
     res = ScreenAgent(obs, brain, settle=0).run("dişli ikonuna bas ve ayarları aç")
-    assert obs.acts[0][0] == "click_at" and res.status == "done"  # yakından bakılıp tıklandı
-    assert "screen" in brain.calls[0][0] and brain.calls[0][2]  # görüntü de gitti
+    assert obs.acts[0][0] == "click_at" and res.status == "done"  # looked closer, then clicked
+    assert "screen" in brain.calls[0][0] and brain.calls[0][2]  # the image was sent too
 
 
 def test_unsure_action_kind_escalates():
@@ -176,7 +176,7 @@ def test_unsure_action_kind_escalates():
     assert res.status == "needs_help" and "emin değil" in res.reason
 
 
-# ------------------------------------------------------------------------------------------- eylemler
+# ------------------------------------------------------------------------------------------- actions
 def test_desktop_actions_map_to_mouse_keyboard_and_uia(monkeypatch):
     from alice.reflex import observers
     from alice.tools import computer, desktop
@@ -205,8 +205,8 @@ def test_desktop_actions_map_to_mouse_keyboard_and_uia(monkeypatch):
     obs.act("type_text", field, text="ALICE")
     obs.act("press_key", keys="ctrl+s")
     obs.act("drag", txt, drop=dst)
-    assert calls[0] == ("ui", 3, "click", None)  # erişilebilirlik üzerinden
-    assert calls[1] == ("click", (250, 125), {})  # pencere (100,50) + 0.15*1000, 0.15*500
+    assert calls[0] == ("ui", 3, "click", None)  # via accessibility
+    assert calls[1] == ("click", (250, 125), {})  # window (100,50) + 0.15*1000, 0.15*500
     assert calls[2][0] == "doubleClick" and calls[3][0] == "rightClick"
     assert calls[4] == ("ui", 9, "set_text", "ALICE") and calls[5] == ("keys", "ctrl+s")
     assert calls[6] == ("moveTo", (250, 125), {}) and calls[7][0] == "dragTo" and calls[7][1] == (950, 125)
@@ -242,7 +242,7 @@ def test_browser_snapshot_lists_drag_sources_and_drop_targets():
     assert "[draggable=true]" in SNAPSHOT_JS and "[ondrop]" in SNAPSHOT_JS
 
 
-# ------------------------------------------------------------------------------------- gerçek Windows'ta bulunanlar
+# ------------------------------------------------------------------------------------- found on real Windows
 def test_words_match_turkish_capital_i():
     from alice.reflex.perceive import words
 
@@ -250,20 +250,20 @@ def test_words_match_turkish_capital_i():
 
 
 def test_button_named_in_goal_is_not_an_echo():
-    # Unciv ana menüsü: hedef "start a new game" iken "Start new game" düğmesi yankı sanılıp atılıyordu.
+    # Unciv main menu: with goal "start a new game", the "Start new game" button was dropped as an echo.
     assert not is_goal_echo("Start new game", "start a new game")
     items = build_items([], [("Start new game", (0.3, 0.5, 0.5, 0.55)), ("Load game", (0.3, 0.6, 0.5, 0.65))],
                         "start a new game")
     assert items[0].label == "Start new game"
     longer = [("Click on the Start new game button", (0.1, 0.1, 0.5, 0.12))]
     assert build_items([], longer, "click on the start new game button") == []
-    assert len(build_items([], longer, "click on the start new game button", drop_echo=False)) == 1  # oyun penceresi
+    assert len(build_items([], longer, "click on the start new game button", drop_echo=False)) == 1  # game window
 
 
 def test_user_message_echo_is_dropped_even_when_goal_was_rephrased():
     msg = "Şuanda reflex katmanı ile ekrana bakıp projeler kısmındaki ilk projeye tıkla"
     goal = "ALICE uygulamasında Projeler bölümündeki ilk projeye tıkla"
-    assert not is_goal_echo(msg, goal)  # beyin modeli hedefi yeniden yazınca örtüşme %60'ın altında
+    assert not is_goal_echo(msg, goal)  # when the brain model rewrites the goal, overlap stays below 60%
     assert is_goal_echo(msg, goal, (msg,))
     items = build_items([], [(msg, (0.5, 0.3, 0.9, 0.33)), ("Uydurma bir savunma", (0.02, 0.2, 0.2, 0.22))], goal,
                         echoes=(msg,))
@@ -286,13 +286,13 @@ def test_phantom_webview_tab_strip_and_window_union():
 
     doc = [(10, 30, 1300, 870)]
     assert is_phantom_tab("TabItem", "ALICE - Memory usage - 31.8 MB", (14, 30, 40, 70), doc)
-    assert is_phantom_tab("Button", "New Tab", (6, 30, 36, 70), doc)  # sayfadan birkaç piksel taşıyor
-    assert not is_phantom_tab("Button", "New Tab", (6, 0, 36, 25), doc)  # gerçek tarayıcı: şerit sayfanın üstünde
+    assert is_phantom_tab("Button", "New Tab", (6, 30, 36, 70), doc)  # sticks out a few pixels from the page
+    assert not is_phantom_tab("Button", "New Tab", (6, 0, 36, 25), doc)  # real browser: the strip is above the page
     assert not is_phantom_tab("Button", "Kaydet", (14, 30, 40, 70), doc)
-    # Not Defteri + aşağı taşan Kaydet penceresi; ekranın dışı kırpılır.
+    # Notepad + a Save window overflowing downward; the part off-screen is clipped.
     assert window_union([(590, 640, 2130, 1194), (596, 640, 1796, 1360)], (-1920, 0, 3440, 1440)) == \
         (590, 640, 1540, 720)
-    assert window_union([(3000, 1400, 3600, 1600)], (0, 0, 3440, 1440)) is None  # ekranda 40 piksel kaldı
+    assert window_union([(3000, 1400, 3600, 1600)], (0, 0, 3440, 1440)) is None  # only 40 pixels left on screen
     assert window_union([], (0, 0, 10, 10)) is None
 
 
@@ -317,7 +317,7 @@ def test_desktop_screen_drops_webview_body_and_phantom_tabs(monkeypatch):
 def test_drag_that_worked_is_likely_done_not_failed():
     steps = [{"action": "drag", "item": "Yapılacaklar", "drop": "Bitti"}, {"action": "wait", "conf": 0.39, "done": 0.79}]
     res = ScreenAgent(FakeScreen(), Brain(steps), settle=0).run("Yapılacaklar kartını Bitti'ye sürükle")
-    assert res.status == "needs_help"  # FakeScreen sürüklemede ekranı değiştirmiyor: işe yaradığı belli değil
+    assert res.status == "needs_help"  # FakeScreen does not change the screen on drag: unclear whether it worked
 
     class Moves(FakeScreen):
         def act(self, action, item=None, text="", keys="", drop=None):
@@ -345,7 +345,7 @@ def test_type_text_goes_to_the_field_and_is_not_repeated():
     obs = Explorer()
     brain = Brain([{"action": "type_text", "item": "Desktop", "field": "Address Bar"}] * 4)
     res = ScreenAgent(obs, brain, settle=0).run("adres çubuğuna C:\\Users yaz", inputs={"adres": "C:\\Users"})
-    assert obs.acts == [("type_text", "Address Bar", "C:\\Users", "", None)]  # ağaçtaki 'Desktop'a değil
+    assert obs.acts == [("type_text", "Address Bar", "C:\\Users", "", None)]  # not to 'Desktop' in the tree
     assert res.status == "needs_help" and "already contains" in res.reason
 
 
@@ -362,7 +362,7 @@ def test_single_field_or_single_item_is_used_without_asking():
     assert "field" not in brain.calls[0][1] and obs.acts[0][:3] == ("type_text", "Metin düzenleyici", "merhaba")
     assert res.status == "done"
 
-    obs.page = "project"  # ekranda tek öğe: 'item' sorusu da sorulmaz
+    obs.page = "project"  # only one item on screen: the 'item' question is not asked either
     brain = Brain([{"action": "click"}, {"done": 0.95}])
     ScreenAgent(obs, brain, settle=0).run("belgeye tıkla ve bitir")
     assert "item" not in brain.calls[0][1] and obs.acts[-1][:2] == ("click", "Metin düzenleyici")
@@ -402,7 +402,7 @@ def test_trace_has_item_list_confidences_and_result(tmp_path):
 def test_ocr_waits_on_winrt_operation_inside_and_outside_event_loop():
     import asyncio
 
-    class Op:  # IAsyncOperation gibi: coroutine değil, sadece await edilebilir
+    class Op:  # like IAsyncOperation: not a coroutine, only awaitable
         def __await__(self):
             yield from asyncio.sleep(0).__await__()
             return "sonuç"
@@ -420,7 +420,7 @@ def test_set_text_falls_back_to_keyboard_when_field_reverts(monkeypatch):
 
     calls = []
 
-    class Addr:  # Gezgin'in adres çubuğu: yazılanı kabul eder, sonra eski adrese döner
+    class Addr:  # Gezgin (Explorer) address bar: accepts what is typed, then reverts to the old address
         def set_edit_text(self, t):
             calls.append(("set", t))
 
@@ -430,7 +430,7 @@ def test_set_text_falls_back_to_keyboard_when_field_reverts(monkeypatch):
         def click_input(self):
             calls.append(("click",))
 
-    class Doc(Addr):  # değeri okunamıyor: yazılanın tuttuğu varsayılır, iki kez yazılmaz
+    class Doc(Addr):  # value can't be read: assume the typed text stuck, so it is not typed twice
         def get_value(self):
             raise RuntimeError("desen yok")
 
@@ -456,8 +456,8 @@ def test_reflex_refuses_to_type_into_alice_itself(monkeypatch, tmp_path):
     ctx = ToolContext(cwd=tmp_path, config=None, router=object(), decider=object())
     with pytest.raises(ToolError, match="ALICE'in kendisi"):
         Reflex().run(ctx, goal="Not Defteri'ni aç, Ctrl+S'ye bas", target="desktop")
-    observers.DesktopObserver(ctx, None, "ALICE'te ilk projeye tıkla")  # hedef ALICE'in kendisiyse olur
-    observers.DesktopObserver(ctx, "Not Defteri", "merhaba yaz")  # pencere verildiyse olur
+    observers.DesktopObserver(ctx, None, "ALICE'te ilk projeye tıkla")  # fine when the target is ALICE itself
+    observers.DesktopObserver(ctx, "Not Defteri", "merhaba yaz")  # fine when a window is given
 
     ctx.state["agent"] = type("A", (), {"messages": [
         {"role": "system", "content": "s"}, {"role": "user", "content": "ilk projeye tıkla"},
@@ -465,10 +465,10 @@ def test_reflex_refuses_to_type_into_alice_itself(monkeypatch, tmp_path):
     assert _last_user_text(ctx) == ("ilk projeye tıkla",)
     ctx.state["agent"].messages.append({"role": "user", "_display": "ikinci projeye tıkla",
                                         "content": "ikinci projeye tıkla\n\n[hatırlanan] Uydurma bir savunma sanayi"})
-    assert _last_user_text(ctx) == ("ikinci projeye tıkla",)  # hafıza eki yankı sayılmasın
+    assert _last_user_text(ctx) == ("ikinci projeye tıkla",)  # the memory attachment should not count as an echo
 
 
-# ------------------------------------------------------------------------------------------- klavye
+# ------------------------------------------------------------------------------------------- keyboard
 def test_keyboard_typing_combos_and_holding_on_desktop(monkeypatch):
     from alice.reflex import observers
     from alice.tools import computer
@@ -487,14 +487,14 @@ def test_keyboard_typing_combos_and_holding_on_desktop(monkeypatch):
     obs.hold_seconds = 2
     obs.act("hold_key", keys="shift+w")
     obs.act("press_key", keys="ctrl+shift+s")
-    assert calls[0] == ("type", "1234*5678=")  # alan seçmeden öndeki pencereye
+    assert calls[0] == ("type", "1234*5678=")  # to the foreground window, without selecting a field
     assert calls[1:6] == [("keyDown", ("shift",)), ("keyDown", ("w",)), ("sleep", 2), ("keyUp", ("w",)),
-                          ("keyUp", ("shift",))]  # birlikte basılı, ters sırayla bırakılır
-    assert calls[6] == ("hotkey", ("ctrl", "shift", "s"))  # aynı anda
+                          ("keyUp", ("shift",))]  # held down together, released in reverse order
+    assert calls[6] == ("hotkey", ("ctrl", "shift", "s"))  # at the same time
 
 
 def test_symbols_are_sent_as_unicode_not_layout_keys(monkeypatch):
-    """Türkçe Q klavyede pyautogui '1234*5678=' yazınca '*' kayboldu (ABD düzenine göre tuşa basıyor)."""
+    """On a Turkish Q keyboard, pyautogui typing '1234*5678=' lost the '*' (it presses keys per the US layout)."""
     from alice.tools import computer
 
     calls = []
@@ -507,15 +507,15 @@ def test_symbols_are_sent_as_unicode_not_layout_keys(monkeypatch):
     monkeypatch.setattr(computer, "send_unicode", lambda t: calls.append(("unicode", t)) or True)
     computer.type_text("1234*5678=")
     computer.type_text("merhaba 42")
-    assert calls == [("unicode", "1234*5678="), ("write", ("merhaba 42",))]  # harf/rakam her düzende aynı
-    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # Windows dışı: eski yol
+    assert calls == [("unicode", "1234*5678="), ("write", ("merhaba 42",))]  # letters/digits are the same on every layout
+    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # non-Windows: old path
     calls.clear()
     computer.type_text("a*b")
     assert calls == [("write", ("a*b",))]
 
 
 def test_reflex_refuses_wrong_foreground_window(monkeypatch):
-    """Başlık verilmedi, hedef Not Defteri'ni söylüyor ama önde Hesap Makinesi var: 1-10 hesap makinesine yazılmıştı."""
+    """No title; goal names Not Defteri (Notepad) but Hesap Makinesi (Calculator) is in front: 1-10 went into it."""
     import pytest
 
     from alice.reflex import observers
@@ -527,23 +527,23 @@ def test_reflex_refuses_wrong_foreground_window(monkeypatch):
     wins = ["Hesap Makinesi", "*1, Not Defteri", "cizim.png - Paint"]
     goal = "Not Defteri'ne 1'den 10'a kadar sayıları yaz"
     assert named_window(goal, "Hesap Makinesi", wins) == "Not Defteri"
-    assert named_window(goal, "*1, Not Defteri", wins) == ""  # zaten önde
-    assert named_window("1234 çarpı 5678 hesapla", "Hesap Makinesi", wins) == ""  # başka pencere adı yok
+    assert named_window(goal, "*1, Not Defteri", wins) == ""  # already in front
+    assert named_window("1234 çarpı 5678 hesapla", "Hesap Makinesi", wins) == ""  # no other window name
     monkeypatch.setattr(observers, "foreground_title", lambda: "Hesap Makinesi")
     monkeypatch.setattr(observers, "_open_windows", lambda: wins)
     with pytest.raises(ToolError, match="title='Not Defteri'"):
         observers.DesktopObserver(None, None, goal)
-    observers.DesktopObserver(None, "Not Defteri", goal)  # başlık verildiyse sorun yok
+    observers.DesktopObserver(None, "Not Defteri", goal)  # no problem if a title is given
 
 
 def test_long_or_multiline_text_is_pasted(monkeypatch):
-    """Not Defteri'ne 1-10 satır satır tuşlanınca dosyada sadece '9, 10' kalmıştı: çok satırlı metin panodan."""
+    """Line-by-line typing of 1-10 into Notepad left only '9, 10' in the file: multi-line text is pasted instead."""
     import sys
     import types
 
     from alice.tools import computer
 
-    pyperclip = types.ModuleType("pyperclip")  # CI'da isteğe bağlı paket kurulu değil: sahtesi yeter
+    pyperclip = types.ModuleType("pyperclip")  # optional package is not installed on CI: a fake is enough
     monkeypatch.setitem(sys.modules, "pyperclip", pyperclip)
 
     calls, board = [], {"v": "eski pano"}
@@ -556,16 +556,16 @@ def test_long_or_multiline_text_is_pasted(monkeypatch):
     monkeypatch.setattr(computer.time, "sleep", lambda s: None)
     pyperclip.paste = lambda: board["v"]
     pyperclip.copy = lambda t: board.update(v=t) or calls.append(("copy", (t,)))
-    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # testte gerçek girdi gönderilmesin
+    monkeypatch.setattr(computer, "send_unicode", lambda t: False)  # don't send real input during the test
     computer.type_text("1234*5678=")
-    assert calls == [("write", ("1234*5678=",))]  # kısa tek satır: panoya gitmez (hesap makinesi)
+    assert calls == [("write", ("1234*5678=",))]  # short single line: not sent via the clipboard (calculator)
     calls.clear()
     computer.type_text("1\n2\n3")
     assert calls[:2] == [("copy", ("1\n2\n3",)), ("hotkey", ("ctrl", "v"))] and board["v"] == "eski pano"
 
 
 def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
-    """Hesap makinesinde tuşlara tek tek tıklatıp adım sınırına takılıyordu; sonucu okumak için de ayrı tur gerekiyordu."""
+    """Clicked calculator keys one by one and hit the step limit; reading the result needed another turn."""
 
     class Calc(FakeScreen):
         display = "0"
@@ -583,31 +583,31 @@ def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
     obs = Calc()
     brain = Brain([{"done": 0.95}])
     res = ScreenAgent(obs, brain, settle=0).run("1234 çarpı 5678", text="1234*5678=", keys=["ctrl+shift+s"])
-    # Ana model metni verdiyse ilk adımda Jev'e sorulmadan yazılır (Jev "İki" tuşuna tıklamayı seçmişti).
+    # Text given by the main model is typed at step one, without asking Jev (who picked clicking "İki").
     assert res.status == "done" and obs.acts == [("type_keys", None, "1234*5678=", "", None)]
     assert len(brain.calls) == 1 and "type_keys" in brain.calls[0][1]["action"].criteria
-    assert "Press ctrl+shift+s" in brain.calls[0][1]["key"].criteria.values()  # aracın verdiği kombinasyon
+    assert "Press ctrl+shift+s" in brain.calls[0][1]["key"].criteria.values()  # the combination the tool gave
     report = res.report()
     assert "ekranda başa göre çıkan: Gösterim 7.006.652" in report and "kaybolan: Gösterim 0" in report
     assert brain.calls[0][0]["recent_actions"][0].startswith("typed '1234*5678=' on the keyboard -> screen changed")
 
-    # Önceki girdi temizlenir: önceki işlemden kalan "2"nin arkasına yazılmıştı (212345678).
+    # Previous input is cleared: it had been typed after the leftover "2" from the previous action (212345678).
     obs = Calc()
     brain = Brain([{"done": 0.95}])
     ScreenAgent(obs, brain, settle=0).run("1234 çarpı 5678", text="1234*5678=", press_first=["escape"])
     assert obs.acts[:2] == [("press_key", None, "", "escape", None), ("type_keys", None, "1234*5678=", "", None)]
     assert brain.calls[0][0]["recent_actions"][0].startswith("pressed escape, then typed '1234*5678='")
 
-    # Jev kendisi klavyeyle yazmayı seçerse metin hedeften üretilir.
+    # If Jev itself chooses to type on the keyboard, the text is generated from the goal.
     obs = Calc()
     brain = Brain([{"action": "type_keys"}, {"done": 0.95}])
     res = ScreenAgent(obs, brain, text_writer=lambda goal, where: "1234*5678=", settle=0).run("1234 çarpı 5678")
     assert res.status == "done" and obs.acts[0][:3] == ("type_keys", None, "1234*5678=")
 
 
-# ------------------------------------------------------------------------------- harness ilkeleri (jev-mcp gibi)
+# ------------------------------------------------------------------------------- harness principles (like jev-mcp)
 class Panel(FakeScreen):
-    """Üç düğmeli ekran; 'Kaydet' bir şey yapmaz, 'Gönder' gönderir, 'Ayarlar' ayar ekranını açar."""
+    """Three-button screen: 'Kaydet' (Save) does nothing, 'Gönder' (Send) sends, 'Ayarlar' (Settings) opens it."""
 
     def __init__(self):
         super().__init__()
@@ -627,7 +627,7 @@ class Panel(FakeScreen):
 
 
 class ProbBrain:
-    """Her adımda verilen olasılıklarla öğe seçen sahte Jev; ikinci bakış sorusunu da cevaplar."""
+    """Fake Jev picking items by the given probabilities at each step; also answers the second-look question."""
 
     supports_images = False
 
@@ -636,7 +636,7 @@ class ProbBrain:
 
     def decide(self, state, questions, images=None):
         self.calls.append((state, questions))
-        if set(questions) == {"item"}:  # ikinci bakış
+        if set(questions) == {"item"}:  # second look
             pool = questions["item"].criteria
             pick = self.second if self.second in pool else next(iter(pool))
             return Decision({"item": Answer("choice", pick, 0.9, {pick: 0.9})}, "fake", 0.01)
@@ -655,7 +655,7 @@ def test_irreversible_button_needs_confirmation():
     assert res.status == "needs_confirmation" and "Gönder" in res.reason and obs.acts == []
     obs = Panel()
     agent = ScreenAgent(obs, ProbBrain([{"probs": {"i3": 0.95, "i1": 0.05}}, {"done": 0.95}]), settle=0)
-    agent.allow_irreversible = True  # kullanıcı açıkça istedi
+    agent.allow_irreversible = True  # the user explicitly asked for it
     assert agent.run("mesajı gönder").status == "done" and obs.acts == [("click", "Gönder")]
 
 
@@ -664,7 +664,7 @@ def test_candidate_that_did_nothing_is_not_picked_again():
     brain = ProbBrain([{"probs": {"i1": 0.7, "i2": 0.3}}, {"probs": {"i1": 0.7, "i2": 0.3}}, {"done": 0.95}])
     res = ScreenAgent(obs, brain, settle=0).run("ayarları aç")
     assert obs.acts == [("click", "Kaydet"), ("click", "Ayarlar")] and res.status in ("done", "clicked")
-    assert brain.calls[1][0]["tried_here_without_effect"] == ["Button 'Kaydet' (bottom-left)"]  # kodun gerçeği
+    assert brain.calls[1][0]["tried_here_without_effect"] == ["Button 'Kaydet' (bottom-left)"]  # the code's ground truth
 
 
 def test_second_look_when_unsure():
@@ -672,8 +672,8 @@ def test_second_look_when_unsure():
     brain = ProbBrain([{"probs": {"i1": 0.45, "i2": 0.4, "i3": 0.15}}, {"done": 0.95}], second="i2")
     ScreenAgent(obs, brain, settle=0).run("ayarları aç")
     second = [q for _, q in brain.calls if set(q) == {"item"}]
-    assert len(second) == 1 and set(second[0]["item"].criteria) == {"i1", "i2", "i3"}  # en iyi adaylar
-    assert obs.acts == [("click", "Ayarlar")]  # iki bakışın ortalaması
+    assert len(second) == 1 and set(second[0]["item"].criteria) == {"i1", "i2", "i3"}  # the top candidates
+    assert obs.acts == [("click", "Ayarlar")]  # average of the two looks
 
 
 def test_stuck_agent_consults_and_continues_without_the_main_model():
@@ -689,8 +689,8 @@ def test_stuck_agent_consults_and_continues_without_the_main_model():
     assert "(danışma 1) Click the Ayarlar button" in res.log and ("click", "Ayarlar") in obs.acts
     agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
     agent.consult = lambda situation: {"give_up": True}
-    assert agent.run("x").status == "needs_help"  # danışman vazgeçerse ana modele döner
-    # Okuma hedefi: cevap ekranda görünüyorsa danışman cevabı verir, refleks onu hedef sanıp denemez.
+    assert agent.run("x").status == "needs_help"  # if the consultant gives up, control returns to the main model
+    # Read target: if the answer is on screen, the consultant answers; the reflex won't mistake it for a target.
     agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
     agent.consult = lambda situation: {"next": "", "answer": "Off: Night light is off"}
     res = agent.run("gece ışığı açık mı bak")
@@ -698,7 +698,7 @@ def test_stuck_agent_consults_and_continues_without_the_main_model():
 
 
 def test_draw_across_sweeps_the_canvas_not_a_tiny_drag():
-    """Paint'te Jev'in sürükleme kutuları aynı noktayı gösterdi (2 piksel); çizim için alan boydan boya taranır."""
+    """In Paint, Jev's drag boxes pointed at the same spot (2 pixels); the drawing area is scanned edge to edge."""
 
     class Canvas(Panel):
         drags: list = []
@@ -713,16 +713,16 @@ def test_draw_across_sweeps_the_canvas_not_a_tiny_drag():
     obs = Canvas()
     brain = ProbBrain([{"action": "draw_across", "probs": {"i2": 0.9, "i1": 0.1}}, {"done": 0.95}])
     res = ScreenAgent(obs, brain, settle=0).run("tuvale dikdörtgen çiz")
-    assert res.status == "done" and obs.drags == [(0.3, 0.38, 0.7, 0.72)]  # çeyrekten çeyreğe
+    assert res.status == "done" and obs.drags == [(0.3, 0.38, 0.7, 0.72)]  # quarter to quarter
     assert "draw_across" in brain.calls[0][1]["action"].criteria
     obs = Canvas()
     obs.drags = []
     res = ScreenAgent(obs, ProbBrain([{"action": "draw_across", "probs": {"i1": 1.0}}]), settle=0).run("çiz")
-    assert res.status == "needs_help" and obs.drags == []  # düğme alan değil, ekrana bakılamıyor
+    assert res.status == "needs_help" and obs.drags == []  # a button is not an area; the screen can't be read
 
 
 def test_multiline_text_is_not_typed_into_a_one_line_field():
-    """Not Defteri'ne yazılacak 1-10, açık kalmış Kaydet penceresinin dosya adı alanına gitmişti."""
+    """The 1-10 meant for Notepad went into the file name field of a Save dialog that had been left open."""
 
     class Dialog(FakeScreen):
         def screen(self, goal=""):
@@ -734,8 +734,8 @@ def test_multiline_text_is_not_typed_into_a_one_line_field():
     obs = Dialog()
     brain = Brain([{"action": "press_key", "key": "escape"}, {"done": 0.95}])
     ScreenAgent(obs, brain, settle=0).run("1-10 yaz", text="1\n2\n3")
-    assert all(a[0] != "type_keys" for a in obs.acts)  # zorla yazılmadı
-    assert brain.calls[0][0]["keyboard_focus"] == "Edit 'Dosya adı:' in window 'Farklı kaydet'"  # Jev de görüyor
+    assert all(a[0] != "type_keys" for a in obs.acts)  # not forced into the field
+    assert brain.calls[0][0]["keyboard_focus"] == "Edit 'Dosya adı:' in window 'Farklı kaydet'"  # Jev sees it too
     from alice.reflex.agent import wrong_field
 
     assert wrong_field("Edit 'Dosya adı:' in window 'Farklı kaydet'", "1\n2") and not wrong_field("Document 'x'", "1\n2")
@@ -743,7 +743,8 @@ def test_multiline_text_is_not_typed_into_a_one_line_field():
 
 
 def test_text_writer_keeps_all_lines():
-    """Sadece ilk satır alınıyordu: '1'den 10'a alt alta yaz' hedefinde 20 adım boyunca '1, Enter' yazıldı."""
+    """Only the first line was taken: with the goal '1'den 10'a alt alta yaz' (write 1 to 10 line by line),
+    '1, Enter' was typed for 20 steps."""
     from alice.reflex.loop import clean_typed
 
     assert clean_typed("1\n2\n3") == "1\n2\n3"
@@ -752,10 +753,11 @@ def test_text_writer_keeps_all_lines():
 
 
 def test_parked_mouse_is_moved_off_the_corner(monkeypatch):
-    """Fare görev başında köşede bekliyordu; acil durdurma ilk iki görevde her tuşu iptal etti."""
+    """The mouse was parked in the corner at task start; the emergency stop cancelled every key press in the
+    first two tasks."""
     from alice.tools import computer
 
-    real = computer._unpark_mouse  # conftest'in sahtesi değil, gerçeği
+    real = computer._unpark_mouse  # the real one, not conftest's fake
     calls = []
 
     class PG:
@@ -770,19 +772,19 @@ def test_parked_mouse_is_moved_off_the_corner(monkeypatch):
 
     pg = PG()
     monkeypatch.setattr(computer, "_pyautogui", lambda: pg)
-    assert real(500, 400) and calls == [("move", 500, 400, False)] and pg.FAILSAFE  # geçici kapatıp geri açtı
+    assert real(500, 400) and calls == [("move", 500, 400, False)] and pg.FAILSAFE  # temporarily turned off, then back on
     pg.pos = (100, 100)
-    assert not real(500, 400) and len(calls) == 1  # köşede değilse dokunmaz
+    assert not real(500, 400) and len(calls) == 1  # leaves it alone if it isn't in the corner
 
 
-# ------------------------------------------------------------------------------- giriş, tırnak, açık öğe
+# ------------------------------------------------------------------------------- login, quotes, clear item
 def test_quoted_target_is_not_an_echo():
-    # Danışman: 'Click the "Search or start a new Chat" box' -> arama kutusu yankı sayılıp listeden atılıyordu.
+    # Advisor: 'Click the "Search or start a new Chat" box' -> the search box was taken for an echo and dropped.
     goal = 'Click the "Search or start a new Chat" box and type "Que Mal".'
     assert not is_goal_echo("q Search or start a new Chat", goal)
     assert not is_goal_echo("q Şearch or start a new Chat", "Click the “q Şearch or start a new Chat” box")
     assert is_goal_echo("Que Mal isimli kişiye amk mesajını gönder", "WhatsApp'ta Que Mal isimli kişiye “amk” "
-                        "mesajını gönder")  # kullanıcının kendi mesajı hâlâ yankı
+                        "mesajını gönder")  # the user's own message is still an echo
     items = build_items([], [("q Search or start a new Chat", (0.04, 0.11, 0.11, 0.12)), ("Chats", (0.03, 0.06, 0.05, 0.07))],
                         goal)
     assert "q Search or start a new Chat" in [i.label for i in items]
@@ -800,7 +802,7 @@ def test_login_screen_is_left_to_the_user():
     res = ScreenAgent(obs, ProbBrain([{"probs": {"i1": 0.9, "i2": 0.1}}]), settle=0).run(
         "WhatsApp'ta Que Mal isimli kişiye “amk” mesajını gönder")
     assert res.status == "needs_login" and "giriş" in res.reason and obs.acts == []
-    obs = LoginPage()  # kullanıcı açıkça giriş yapmayı istediyse dokunabilir
+    obs = LoginPage()  # if the user explicitly asked to log in, it may touch the page
     res = ScreenAgent(obs, ProbBrain([{"probs": {"i1": 0.9, "i2": 0.1}}, {"done": 0.95}]), settle=0).run(
         "WhatsApp'a telefon numarasıyla giriş yap")
     assert obs.acts and obs.acts[0][1] == "Telefon numarası kullanarak giriş yapın"
@@ -818,7 +820,7 @@ def pytest_fail(msg):
 
 
 class KindSplitBrain(ProbBrain):
-    """Öğe apaçık (0.95), eylem türü kararsız (tıkla 0.35)."""
+    """Item is clear (0.95), action kind is unsure (click 0.35)."""
 
     def decide(self, state, questions, images=None):
         d = super().decide(state, questions, images)
@@ -833,9 +835,9 @@ def test_clear_item_with_unsure_click_is_clicked():
     brain.kind, brain.kind_conf = "click", 0.35
     res = ScreenAgent(obs, brain, settle=0).run("ayarları aç")
     assert obs.acts == [("click", "Ayarlar")] and res.status in ("done", "clicked")
-    for kind, conf, probs in (("click", 0.35, {"i2": 0.6, "i1": 0.4}),  # öğe de kararsız
-                              ("scroll_down", 0.36, {"i2": 0.95, "i1": 0.05}),  # en olası tür tıklama değil
-                              ("click", 0.2, {"i2": 0.95, "i1": 0.05})):  # tıklama çok zayıf
+    for kind, conf, probs in (("click", 0.35, {"i2": 0.6, "i1": 0.4}),  # the item is unsure too
+                              ("scroll_down", 0.36, {"i2": 0.95, "i1": 0.05}),  # the most likely kind is not click
+                              ("click", 0.2, {"i2": 0.95, "i1": 0.05})):  # click is very weak
         obs = Panel()
         brain = KindSplitBrain([{"probs": probs}])
         brain.kind, brain.kind_conf = kind, conf
@@ -843,8 +845,8 @@ def test_clear_item_with_unsure_click_is_clicked():
 
 
 def test_missing_target_window_stops_instead_of_using_the_foreground_one(monkeypatch):
-    """Canlı kayıt (2 Kasım): title='Setup - Sonora version 0.47.0' diye bir pencere yokken refleks öndeki pencereyle
-    (War Thunder - In battle) devam etti; tuşlar oyuna gidebilirdi."""
+    """Live recording (Nov 2): with no window titled 'Setup - Sonora version 0.47.0', the reflex carried on with the
+    foreground window (War Thunder - In battle); the keys could have gone to the game."""
     import pytest
 
     from alice.reflex import observers
@@ -861,8 +863,9 @@ def test_missing_target_window_stops_instead_of_using_the_foreground_one(monkeyp
 
 
 def test_read_only_goal_never_touches_the_screen():
-    """Canlı kayıt (26 Ekim): "Gece ışığı durumunu oku, herhangi bir düğmeye basma" hedefinde Jev 'Off' yazısına
-    tıklamayı seçti. Dokunmayı yasaklayan hedefte hiçbir şeye basılmaz; danışma ekrandakini cevap olarak okur."""
+    """Live recording (Oct 26): goal "Gece ışığı durumunu oku, herhangi bir düğmeye basma" (read the night light
+    status, press no button), Jev chose to click the 'Off' text. With a goal that forbids touching, nothing is
+    pressed; the consult reads what is on screen as the answer."""
     from alice.reflex.agent import no_touch_goal
 
     for g in ("Gece ışığı durumunu oku, herhangi bir düğmeye basma", "hiçbir şeye basıp ayarı değiştirme",
@@ -885,8 +888,8 @@ def test_read_only_goal_never_touches_the_screen():
 
 
 def test_typing_into_a_button_is_refused():
-    """Canlı kayıt (9 Kasım): Chrome'da Google'ın kod kutusu listede yoktu; "361819 yaz" için 'Next' yazısı seçildi,
-    tıklanıp kod hiçbir yere yazılmadan form gönderildi."""
+    """Live recording (Nov 9): in Chrome, Google's code box was not in the list; for "361819 yaz" (type 361819)
+    the 'Next' text was picked, clicked, and the form was submitted without the code being typed anywhere."""
     from alice.reflex.agent import not_a_field
 
     class Page(FakeScreen):
@@ -905,16 +908,16 @@ def test_typing_into_a_button_is_refused():
         "Enter code kutusuna 361819 yaz", inputs={"code": "361819"})
     assert res.status == "needs_help" and obs.acts == [] and "düğme" in res.reason
 
-    obs = Page()  # alanın içindeki yazı seçildiyse eskisi gibi tıklanıp yazılır
+    obs = Page()  # if the text inside the field is picked, it is clicked and typed into as before
     ScreenAgent(obs, Brain([{"action": "type_text", "item": "Enter code"}, {"done": 0.95}]), translate=lambda g: g,
                 settle=0).run("Enter code kutusuna 361819 yaz", inputs={"Enter code": "361819"})
     assert obs.acts and obs.acts[0][:2] == ("type_text", "Enter code")
 
 
 def test_multi_part_goal_is_split_and_each_step_runs_on_its_own():
-    """Canlı kayıt (26 Ekim): "Not Defteri'nde 1'den 10'a yaz ve Farklı Kaydet ile ... kaydet" tek hedef olarak
-    verildi; iş ilerlediği halde "bitti?" %1-6'da kaldı ve adım sınırına kadar tıklandı. Çok parçalı hedef adımlara
-    bölünür, her adım kendi kısa hedefiyle yürür."""
+    """Live recording (Oct 26): "Not Defteri'nde 1'den 10'a yaz ve Farklı Kaydet ile ... kaydet" (write 1-10 in Notepad
+    and save with Save As) was given as one goal; although the work was progressing, "bitti?" (done?) stayed at 1-6%
+    and it kept clicking up to the step limit. A multi-part goal is split into steps, each with its own short goal."""
     from alice.reflex.agent import multi_part_goal
 
     assert multi_part_goal("Not Defteri'nde yeni belge aç, 1'den 10'a kadar yaz ve sonra Farklı Kaydet ile kaydet")
@@ -926,8 +929,8 @@ def test_multi_part_goal_is_split_and_each_step_runs_on_its_own():
 
     goal = "Önce ilk projeyi aç, sonra proje sayfasının açıldığını gör ve ardından orada bekle"
     obs = FakeScreen()
-    brain = Brain([{"action": "click", "item": "Uydurma bir savunma"},  # 1. adım: tıklandı, ekran değişti
-                   {"done": 0.95}])  # 2. adım: zaten olmuş
+    brain = Brain([{"action": "click", "item": "Uydurma bir savunma"},  # step 1: clicked, the screen changed
+                   {"done": 0.95}])  # step 2: already done
     agent = ScreenAgent(obs, brain, translate=lambda g: g, settle=0)
     asked = []
     agent.plan = lambda g: asked.append(g) or ["İlk projeyi aç", "Proje sayfasının açıldığını gör"]
@@ -937,7 +940,7 @@ def test_multi_part_goal_is_split_and_each_step_runs_on_its_own():
     assert "(plan 1/2) İlk projeyi aç" in res.log and "(plan 2/2) Proje sayfasının açıldığını gör" in res.log
     assert obs.acts == [("click", "Uydurma bir savunma", "", "", None)]
 
-    # bir adım yapılamazsa orada durur ve hangisi olduğunu söyler; sonraki adımlara geçilmez
+    # if a step can't be done, it stops there and says which one; later steps are not run
     obs = FakeScreen()
     brain = Brain([{"action": "click", "item": "Uydurma bir savunma"}, {"action": "click", "conf": 0.1}])
     agent = ScreenAgent(obs, brain, translate=lambda g: g, settle=0)
@@ -955,9 +958,9 @@ def test_short_or_keyboard_goals_are_not_planned():
     agent = ScreenAgent(obs, Brain([{"action": "click", "item": "Uydurma bir savunma"}, {"done": 0.95}]),
                         translate=lambda g: g, settle=0)
     agent.plan = boom
-    assert agent.run("İlk projeyi aç").status == "clicked"  # tek iş: fazladan model çağrısı yok
+    assert agent.run("İlk projeyi aç").status == "clicked"  # single task: no extra model call
 
-    # planlayıcı tek adım dönerse ya da hata verirse hedef eskisi gibi tek parça yürür
+    # if the planner returns a single step or fails, the goal runs as one piece, as before
     for plan in (lambda g: ["hepsi tek adım"], lambda g: 1 / 0):
         obs = FakeScreen()
         brain = Brain([{"action": "click", "item": "Uydurma bir savunma"}, {"done": 0.95}])

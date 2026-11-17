@@ -1,4 +1,4 @@
-"""Uçuş uyarılarının sesi önceden önbelleğe alınır: uçuşta (ses buluttan gelirken) anında çalar."""
+"""Flight warning audio is pre-cached: in flight (while audio is still coming from the cloud) it plays instantly."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def test_sabit_uyarilar_kodda_soylenenlerle_ayni():
     items = flight.callouts()
     assert len(items) > 20 and items[0][0].startswith("Yere yaklaşıyorsun")
     for text, _ in items[:4]:
-        assert f'"{text}"' in src  # cümle kodda değişirse önbellektekiyle eşleşmez
+        assert f'"{text}"' in src  # if the sentence changes in the code, it won't match the cached one
 
 
 def test_onceden_uretilir_sinirli_ve_tekrar_uretilmez(tmp_path):
@@ -47,7 +47,7 @@ def test_onceden_uretilir_sinirli_ve_tekrar_uretilmez(tmp_path):
     items = flight.callouts()
     assert sp.prewarm(items, limit=3, background=False) == 3
     assert router.cached(items[0][0], items[0][1]) and not router.cached(items[0][0], "calm")
-    assert sp.prewarm(items, limit=3, background=False) == 3  # ilk üçü önbellekte: sonraki üç
+    assert sp.prewarm(items, limit=3, background=False) == 3  # first three are already cached: the next three
     assert len(eng.made) == 6 and len(set(eng.made)) == 6
 
 

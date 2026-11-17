@@ -1,4 +1,4 @@
-"""Google Drive, Docs ve Sheets bağlantısı: tek girişle birden çok sunucu, iç içe gövde şablonları."""
+"""Google Drive, Docs and Sheets connection: multiple servers behind a single sign-in, nested body templates."""
 
 from __future__ import annotations
 

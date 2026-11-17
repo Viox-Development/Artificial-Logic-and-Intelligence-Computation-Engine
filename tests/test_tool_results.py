@@ -1,4 +1,4 @@
-"""Büyük araç çıktıları diske yazılır; modele başı-sonu ve dosya yolu gider."""
+"""Large tool outputs are written to disk; the model gets the head, the tail and the file path."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _saved_path(shaped: str) -> Path:
 
 
 def test_same_call_id_does_not_overwrite_earlier_output():
-    """Boş ya da tekrarlanan çağrı kimliği (ör. "call_0") önceki çıktının dosyasını ezmesin."""
+    """An empty or repeated call id (e.g. "call_0") must not overwrite an earlier output's file."""
     a = tool_results.shape("A" * 50_000, 2000, "call_0", "run_command")
     b = tool_results.shape("B" * 50_000, 2000, "call_0", "run_command")
     pa, pb = _saved_path(a), _saved_path(b)

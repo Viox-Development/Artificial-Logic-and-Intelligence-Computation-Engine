@@ -1,4 +1,4 @@
-"""KAIROS: kendi seçtiği aralıklarla uyanan arka plan nöbeti."""
+"""KAIROS: a background watch that wakes at intervals it chooses itself."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def make(tmp_path, runner, c=None, policy=None, **kw):
 
 
 def run_sync(k):
-    """tick() iş parçacığını beklesin."""
+    """Wait for the tick() thread."""
     started = k.tick()
     if started:
         k._thread.join(5)
@@ -46,7 +46,7 @@ def run_sync(k):
 def test_first_tick_schedules_then_wakes_and_respects_chosen_sleep(tmp_path):
     prompts = []
     k, clock = make(tmp_path, lambda p: (prompts.append(p) or "sessiz", (45, "sakin")))
-    assert not run_sync(k)  # ilk açılış: biraz sonraya kurulur
+    assert not run_sync(k)  # first start: scheduled for a bit later
     st = kairos.load_state(tmp_path / "k.json")
     assert st["next"] == clock.t + 10 * 60
     clock.t = st["next"]
@@ -54,14 +54,14 @@ def test_first_tick_schedules_then_wakes_and_respects_chosen_sleep(tmp_path):
     st = kairos.load_state(tmp_path / "k.json")
     assert st["next"] == clock.t + 45 * 60 and st["wakes"] == 1
     assert st["history"][-1]["summary"] == "sessiz"
-    assert not run_sync(k)  # vakti gelmedi
+    assert not run_sync(k)  # its time has not come
 
 
 def test_sleep_is_clamped_and_default_when_not_chosen(tmp_path):
     k, clock = make(tmp_path, lambda p: ("bildirim gönderdim", (2, "")))
     kairos.save_state({"next": clock.t}, tmp_path / "k.json")
     run_sync(k)
-    assert kairos.load_state(tmp_path / "k.json")["next"] == clock.t + 20 * 60  # en az 20
+    assert kairos.load_state(tmp_path / "k.json")["next"] == clock.t + 20 * 60  # at least 20
     k.runner = lambda p: ("sessiz", None)
     clock.t += 3600
     kairos.save_state({**kairos.load_state(tmp_path / "k.json"), "next": clock.t}, tmp_path / "k.json")
@@ -75,17 +75,17 @@ def test_blocked_by_mode_quiet_hours_and_daily_limit(tmp_path):
     kairos.save_state({"next": clock.t}, tmp_path / "k.json")
     assert not run_sync(k) and not called
     assert kairos.load_state(tmp_path / "k.json")["skipped"].startswith("mod")
-    # sessiz saatler
+    # quiet hours
     k2, c2 = make(tmp_path / "b", lambda p: (called.append(1) or "x", None), c=cfg(quiet_hours="11:00-13:00"))
     (tmp_path / "b").mkdir()
     kairos.save_state({"next": c2.t}, tmp_path / "b" / "k.json")
     assert not run_sync(k2) and not called
-    # günlük sınır
+    # daily limit
     k3, c3 = make(tmp_path / "c", lambda p: (called.append(1) or "x", None), c=cfg(daily_wakes=2))
     (tmp_path / "c").mkdir()
     kairos.save_state({"next": c3.t, "day": "2026-11-13", "wakes": 2}, tmp_path / "c" / "k.json")
     assert not run_sync(k3) and not called
-    assert kairos.load_state(tmp_path / "c" / "k.json")["next"] > c3.t + 12 * 3600  # yarın sabah
+    assert kairos.load_state(tmp_path / "c" / "k.json")["next"] > c3.t + 12 * 3600  # tomorrow morning
 
 
 def test_forced_wake_ignores_gates_and_disabled_state_wins(tmp_path):
@@ -96,7 +96,7 @@ def test_forced_wake_ignores_gates_and_disabled_state_wins(tmp_path):
     clock.t = kairos.load_state(tmp_path / "k.json")["next"]
     assert run_sync(k) and called
     kairos.save_state({**kairos.load_state(tmp_path / "k.json"), "enabled": False, "next": 0}, tmp_path / "k.json")
-    assert not k.tick()  # durum dosyasındaki kapatma config'i ezer
+    assert not k.tick()  # the off switch in the state file overrides the config
 
 
 def test_runner_error_does_not_break_and_events_logged(tmp_path):
@@ -180,6 +180,6 @@ def test_concurrent_state_writes_do_not_fail_or_leave_temp_files(tmp_path):
         t.start()
     for t in threads:
         t.join()
-    # Ortak "kairos.tmp" ile yazanlardan biri FileNotFoundError alıyordu.
+    # One of the writers sharing "kairos.tmp" got a FileNotFoundError.
     assert errors == [] and kairos.load_state(p)["n"] == 29
     assert [x.name for x in tmp_path.iterdir()] == ["kairos.json"]

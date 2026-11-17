@@ -1,4 +1,4 @@
-"""Ne çalıyor: Windows medya oturumu okunur, tam o uygulama kontrol edilir, parça değişince HUD'da gösterilir."""
+"""Now playing: reads the Windows media session, controls that exact app, and shows track changes on the HUD."""
 
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ def test_watcher_announces_only_track_changes_while_playing():
     shown = []
     track = {"title": "A", "artist": "X", "status": "playing", "app": "Spotify"}
     w = nowplaying.Watcher(shown.append, read=lambda: dict(track))
-    assert not w.tick()  # açılışta zaten çalan şarkı duyurulmaz
-    assert not w.tick()  # aynı şarkı
+    assert not w.tick()  # a song already playing at startup is not announced
+    assert not w.tick()  # same song
     track["title"] = "B"
     assert w.tick() and shown[-1]["title"] == "B"
     track.update(title="C", status="paused")
-    assert not w.tick()  # duraklatılmışken duyurma
+    assert not w.tick()  # do not announce while paused
 
 
 def test_media_tool_controls_the_playing_app_and_reports_result(monkeypatch, tmp_path):
@@ -46,6 +46,6 @@ def test_media_tool_controls_the_playing_app_and_reports_result(monkeypatch, tmp
     assert extras.Media().run(ctx, "next").text == "tamam; şimdi: X – B (Sonora, çalıyor)"
     assert calls == ["next"]
     assert extras.Media().run(ctx, "now").text == "X – B (Sonora, çalıyor)"
-    monkeypatch.setattr(nowplaying, "control", lambda a: False)  # oturum yok: medya tuşuna düşer
+    monkeypatch.setattr(nowplaying, "control", lambda a: False)  # no session: falls back to the media key
     monkeypatch.setattr(media, "key", lambda a, t=1: "tamam")
     assert extras.Media().run(ctx, "play_pause").text == "tamam"

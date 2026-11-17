@@ -1,4 +1,4 @@
-"""alice/cli.py: komut dağıtımı, slash komutları, durum satırı, diff/araç çıktısı biçimi, rol yazma."""
+"""alice/cli.py: command dispatch, slash commands, status line, diff/tool output formatting, role writing."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tests.conftest import make_config
 
 @pytest.fixture
 def out(monkeypatch):
-    """cli.console'u yakalanabilir bir konsolla değiştir; yazılanı döndüren fonksiyon verir."""
+    """Replace cli.console with a capturable console; returns the function that gives back what was written."""
     buf = io.StringIO()
     monkeypatch.setattr(cli, "console", Console(file=buf, width=200, highlight=False, color_system=None))
     return buf.getvalue
@@ -45,7 +45,7 @@ def env(workdir):
     return cfg, router, ctx, _agent(cfg)
 
 
-# ---------------------------------------------------------------- yardımcılar
+# ---------------------------------------------------------------- helpers
 def test_ktok_formats_thousands_and_millions():
     assert cli._ktok(1500) == "1.5k"
     assert cli._ktok(999) == "1.0k"
@@ -86,7 +86,7 @@ def test_print_diff_counts_and_truncates(out):
     text = out()
     assert "x.py +2 -1" in text
     assert "@@ -1,2 +1,2 @@" in text and "-old" in text and "+new" in text and " ctx" in text
-    assert "--- a/x.py" not in text  # başlık satırları gövdede tekrar edilmez
+    assert "--- a/x.py" not in text  # header lines are not repeated in the body
     cli.print_diff("\n".join(f"+l{i}" for i in range(50)), max_lines=10)
     assert "… +40 satır" in out()
 
@@ -160,7 +160,7 @@ def test_tail_renders_last_lines():
     assert "satır 39" in text and "satır 0\n" not in text
 
 
-# --------------------------------------------------------------- slash komutları
+# --------------------------------------------------------------- slash commands
 def test_slash_exit_init_kurul(env):
     cfg, router, ctx, agent = env
     for c in ("/exit", "/quit", "/Q"):
@@ -289,7 +289,7 @@ def test_rewind_prompt_picks_numbered_turn(env, monkeypatch, out):
     agent.rewind = lambda i: (calls.append(i) or ("eski metin", ["f1", "f2"]))
     monkeypatch.setattr(cli.console, "input", lambda prompt="": "3")
     assert cli.rewind_prompt(agent) == ("prefill", "eski metin")
-    assert calls == [1]  # 3. (en eski) kullanıcı mesajı
+    assert calls == [1]  # 3rd (oldest) user message
     text = out()
     assert "1 görünen" in text and "2 (görselli mesaj)" in text and "3 birinci" in text
     assert "ikinci satır" not in text and "2 dosya eski haline" in text
@@ -310,8 +310,8 @@ def test_write_roles_replaces_only_roles_lists(isolated_home):
     path = cli.write_roles({"brain": ["auto", "x:y"], "fast": [], "vision": ["auto"]})
     text = path.read_text(encoding="utf-8")
     assert 'brain = ["auto", "x:y"]' in text and 'vision = ["auto"]' in text
-    assert 'fast = ["auto", "ollama:qwen3:8b"]' in text  # boş öneri: dokunulmaz
-    assert 'fast = "off"' in text and 'voice = "off"' in text  # [thinking] altındaki aynı adlı anahtarlar
+    assert 'fast = ["auto", "ollama:qwen3:8b"]' in text  # empty suggestion: left untouched
+    assert 'fast = "off"' in text and 'voice = "off"' in text  # same-named keys under [thinking]
     from alice.config import tomllib
 
     data = tomllib.loads(text)
@@ -520,10 +520,10 @@ def test_repl_loop_handles_slash_prefill_and_exit(monkeypatch, env, out):
     monkeypatch.setattr(cli, "cleanup", lambda c: None)
     cli.repl(agent, router, ctx, cfg, resume=None)
     assert agent.turns[1] == "selam" and "ALICE.md" in agent.turns[0]
-    assert defaults[-1] == "geri"  # /rewind sonrası istem metni önceden doldurulur
+    assert defaults[-1] == "geri"  # the prompt text is prefilled after /rewind
     from alice import session as sess
 
-    assert sess.list_sessions()  # her turdan sonra kaydedilir
+    assert sess.list_sessions()  # saved after every turn
 
 
 def test_repl_resume_missing_and_eof(monkeypatch, env, out):
@@ -685,8 +685,8 @@ def _fake_app(monkeypatch, ready=True):
     monkeypatch.setattr(server, "AppServer", Server)
     from alice import updater
 
-    # Gerçek güncelleme kontrolü deponun git durumuna bakıyor: test dalı main'den farklıysa "yeni sürüm var"
-    # deyip süreci yeniden başlatıyor ve test işçisini öldürüyordu.
+    # The real update check looks at the repo's git state: if the test branch differs from main, it says
+    # "yeni sürüm var" (a new version is available) and restarts the process, which killed the test worker.
     monkeypatch.setattr(updater, "startup_update", lambda *a, **k: None)
     monkeypatch.setattr(window, "open_window", lambda url, prefer: seen.update(window=(url, prefer)))
     return seen

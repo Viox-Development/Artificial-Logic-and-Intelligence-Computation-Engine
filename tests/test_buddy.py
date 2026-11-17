@@ -1,4 +1,4 @@
-"""BUDDY: kullanıcıya özel, kendi kendine değişen küçük arkadaş."""
+"""BUDDY: a small companion unique to each user that changes on its own."""
 
 from __future__ import annotations
 
@@ -42,10 +42,10 @@ def test_decay_care_and_night_sleep(tmp_path):
     p = tmp_path / "b.json"
     v = buddy.view(path=p, now=t(12))
     assert v["name"] and v["food"] == 80
-    v = buddy.view(path=p, now=t(22))  # 10 saat ilgisiz
+    v = buddy.view(path=p, now=t(22))  # 10 hours without care
     assert v["food"] == 40 and v["happy"] < 80 and v["energy"] == 50
     assert "afiyetle" in buddy.act("feed", path=p, now=t(22))
-    assert "tok" in buddy.act("feed", path=p, now=t(22) + 60)  # yarım saat dolmadı
+    assert "tok" in buddy.act("feed", path=p, now=t(22) + 60)  # half an hour has not passed
     before = buddy.view(path=p, now=t(22))["happy"]
     buddy.act("pet", path=p, now=t(22))
     assert buddy.view(path=p, now=t(22))["happy"] == min(100, before + 15)
@@ -72,7 +72,7 @@ def test_on_turn_feeds_and_sometimes_comments(tmp_path, monkeypatch):
     assert buddy.on_turn(c, r, "selam", "merhaba", path=p, now=t(12), chance=1.0) == "Yine kod mu?"
     v = buddy.view(path=p, now=t(12))
     assert v["xp"] == 1 and v["say"] == "Yine kod mu?"
-    # 8 dakika dolmadan yeni yorum yok, ama yine doyar
+    # no new comment until 8 minutes pass, but it still gets fed
     assert buddy.on_turn(c, r, "a", "b", path=p, now=t(12) + 60, chance=1.0) == ""
     assert buddy.view(path=p, now=t(12) + 60)["xp"] == 2 and r.n == 1
     c.data["buddy"] = {"enabled": False}

@@ -14,7 +14,7 @@ def test_update_state_and_prep_tells_setting_once():
     msg = a.prep_game_update(set(), lambda t, b: told.append(t), st, manifest=m, start=lambda: started.append(1) or True)
     assert "oyun açılınca" in msg and told == ["War Thunder güncellemesi bekliyor"] and not started
     a.prep_game_update(set(), lambda t, b: told.append(t), st, manifest=m)
-    assert len(told) == 1  # aynı sürüm için bir kez söylenir
+    assert len(told) == 1  # told once for the same version
 
 
 def test_prep_starts_steam_silently_when_auto_update_on():
@@ -24,8 +24,8 @@ def test_prep_starts_steam_silently_when_auto_update_on():
     assert started and "arka planda" in msg
     started.clear()
     a.prep_game_update({"steam.exe"}, lambda t, b: None, {}, manifest=m, start=lambda: started.append(1) or True)
-    assert not started  # Steam zaten açık: kendisi indirir
-    assert a.prep_game_update(set(), lambda t, b: None, {}, manifest={**m, "StateFlags": "4"}) == ""  # güncel
+    assert not started  # Steam is already open: it downloads by itself
+    assert a.prep_game_update(set(), lambda t, b: None, {}, manifest={**m, "StateFlags": "4"}) == ""  # up to date
 
 
 def test_steam_manifest_found_in_library(tmp_path):
@@ -46,9 +46,9 @@ def test_quiet_game_turns_dnd_on_in_flight_and_restores(tmp_path):
     wnf = (lambda: state["v"], lambda v: state.update(v=v) or True)
     q = a.QuietGame(wnf=wnf, path=tmp_path / "s.json")
     assert q.mode("flight") and state["v"] == a.DND_ALARMS_ONLY
-    assert q.mode("flight") == ""  # zaten biz açtık
+    assert q.mode("flight") == ""  # we already turned it on
     assert q.mode("normal") and state["v"] == 0
-    state["v"] = 1  # kullanıcının kendi "öncelikli" ayarı: dokunulmaz
+    state["v"] = 1  # the user's own "öncelikli" (priority) setting: must not be touched
     assert q.mode("flight") == "" and state["v"] == 1
     assert q.mode("normal") == "" and state["v"] == 1
 
@@ -57,7 +57,7 @@ def test_quiet_game_does_not_override_user_change(tmp_path):
     state = {"v": 0}
     q = a.QuietGame(wnf=(lambda: state["v"], lambda v: state.update(v=v) or True), path=tmp_path / "s.json")
     q.mode("flight")
-    state["v"] = 0  # kullanıcı maç sırasında kapattı
+    state["v"] = 0  # the user turned it off during the match
     assert q.mode("normal") == "" and state["v"] == 0
     assert "dnd_prev" not in json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
 
@@ -66,8 +66,8 @@ def test_morning_habits_plan_and_ready_line(tmp_path):
     lines = []
     for d in range(1, 6):
         lines.append(f"2026-10-0{d} 07:{10 + d}:00 live [gemini] duyulan: Alice bugün hava nasıl? | cevap: ...")
-        lines.append(f"2026-10-0{d} 07:{20 + d}:00 live [gemini] duyulan: program ne | cevap: ...")  # ilk değil
-    lines.append("2026-10-06 15:00:00 live [gemini] duyulan: hava | cevap: ...")  # öğleden sonra sayılmaz
+        lines.append(f"2026-10-0{d} 07:{20 + d}:00 live [gemini] duyulan: program ne | cevap: ...")  # not the first one
+    lines.append("2026-10-06 15:00:00 live [gemini] duyulan: hava | cevap: ...")  # afternoon ones don't count
     topics, starts = a.morning_habits(lines)
     assert topics == {"hava": 5} and len(starts) == 5
     wanted, at = a.morning_plan(lines)
@@ -75,11 +75,11 @@ def test_morning_habits_plan_and_ready_line(tmp_path):
     m = a.Morning(cfg=None, log=tmp_path / "voice.log", path=tmp_path / "s.json",
                   fetch={"hava": lambda: "İstanbul 14°C, parçalı bulutlu"})
     (tmp_path / "voice.log").write_text("\n".join(lines), encoding="utf-8")
-    assert m.check(datetime(2026, 10, 7, 6, 40)) is None  # henüz erken
+    assert m.check(datetime(2026, 10, 7, 6, 40)) is None  # too early yet
     assert m.check(datetime(2026, 10, 7, 6, 55)) == {"hava": "İstanbul 14°C, parçalı bulutlu"}
-    assert m.check(datetime(2026, 10, 7, 7, 30)) is None  # günde bir
+    assert m.check(datetime(2026, 10, 7, 7, 30)) is None  # once a day
     assert a.ready_line(datetime(2026, 10, 7, 8, 0), tmp_path / "s.json") == "hava: İstanbul 14°C, parçalı bulutlu"
-    assert a.ready_line(datetime(2026, 10, 7, 14, 0), tmp_path / "s.json") == ""  # öğleden sonra eskidi
+    assert a.ready_line(datetime(2026, 10, 7, 14, 0), tmp_path / "s.json") == ""  # stale after the afternoon
     assert a.ready_line(datetime(2026, 10, 8, 8, 0), tmp_path / "s.json") == ""
 
 
@@ -91,8 +91,8 @@ def test_session_lines_use_first_user_message(tmp_path):
 
 
 def test_game_update_prep_does_not_erase_dnd_note_written_meanwhile(tmp_path, monkeypatch):
-    # Oyun öncesi hazırlık sürerken uçuş başlayıp QuietGame dnd_prev yazarsa, hazırlığın kaydı onu silmemeli
-    # (silinirse uçuştan sonra Rahatsız etmeyin açık kalıyordu).
+    # If a flight starts during the pre-game prep and QuietGame writes dnd_prev, the prep's record must not erase it
+    # (if erased, "Rahatsız etmeyin" (Do Not Disturb) would stay on after the flight).
     from types import SimpleNamespace
 
     from alice.core import service
@@ -103,7 +103,7 @@ def test_game_update_prep_does_not_erase_dnd_note_written_meanwhile(tmp_path, mo
     q = a.QuietGame(wnf=(lambda: dnd["v"], lambda v: dnd.update(v=v) or True))
 
     def prep(processes, notify, st, **kw):
-        notify("başlık", "gövde")  # bu sırada başka thread uçuşa geçti
+        notify("başlık", "gövde")  # meanwhile another thread switched to flight
         st["update_told"] = "7"
         return "güncelleme bekliyor"
 

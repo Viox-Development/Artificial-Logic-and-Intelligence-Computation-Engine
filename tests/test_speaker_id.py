@@ -1,4 +1,4 @@
-"""Konuşmacı doğrulama: sadece kullanıcının sesi uyandırır (alice voice enroll)."""
+"""Speaker verification: only the user's voice wakes Alice (alice voice enroll)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from tests.test_voice import FakeAgent, FakeSpeaker, wait_for
 
 
 class FakeEmbedder:
-    """Sesin ilk baytına göre sabit bir vektör: 1 = kullanıcı, 2 = başkası."""
+    """A fixed vector based on the audio's first byte: 1 = user, 2 = someone else."""
 
     def embed(self, pcm, rate=16000):
         return [1.0, 0.0, 0.0] if pcm[:1] == b"\1" else [0.0, 1.0, 0.0]
@@ -35,27 +35,27 @@ class CloudSTT:
 def test_someone_elses_voice_does_not_wake_alice():
     agent = FakeAgent()
     va = VoiceAssistant(agent, FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
-    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=False)  # arkadaşın "Hey Alice" dedi
+    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=False)  # a friend said "Hey Alice"
     time.sleep(0.3)
     assert agent.turns == []
-    va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)  # kullanıcı
+    va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)  # the user
     assert wait_for(lambda: agent.turns == ["saat kaç?"])
 
 
 def test_push_to_talk_and_hush_skip_the_voice_check():
     agent = FakeAgent()
     va = VoiceAssistant(agent, FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
-    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=True, ptt=True)  # tuşa basan kullanıcıdır
+    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=True, ptt=True)  # the user is the one pressing the key
     assert wait_for(lambda: agent.turns == ["saat kaç?"])
     va2 = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=CloudSTT("Alice sus"), speaker_gate=gate())
     va2.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=False)
-    # Açık mikrofonda başkasının sesi yazıya bile dökülmez ("sadece benim sesimi alsın"): susturma da dahil
+    # Open mic: others' voices are never transcribed ("sadece benim sesimi alsın"), muting included
     assert not va2.muted
 
 
 def test_short_or_broken_audio_is_not_rejected():
     g = gate()
-    assert g.check(b"\2\0" * 4000)  # 0,25 sn: karar verilemez, kullanıcı cezalandırılmaz
+    assert g.check(b"\2\0" * 4000)  # 0.25 s: no verdict possible, the user is not penalized
 
     class Boom:
         def embed(self, pcm, rate=16000):
@@ -69,7 +69,7 @@ def test_profile_roundtrip_and_calibrated_threshold(tmp_path):
     close = [[1.0, 0.1, 0.0], [1.0, 0.0, 0.1], [0.9, 0.1, 0.1], [1.0, 0.05, 0.05]]
     prof = sid.save_profile(close, tmp_path / "s.json")
     assert sid.load_profile(tmp_path / "s.json")["samples"] == 4
-    assert prof["threshold"] == sid.THRESHOLD_RANGE[1]  # tutarlı kayıtlar: eşik üst sınırda
+    assert prof["threshold"] == sid.THRESHOLD_RANGE[1]  # consistent recordings: threshold at the upper bound
     noisy = [[1.0, 0.0, 0.0], [0.3, 1.0, 0.0], [0.4, 0.0, 1.0]]
     assert sid.save_profile(noisy, tmp_path / "n.json")["threshold"] == sid.THRESHOLD_RANGE[0]
 
@@ -78,10 +78,10 @@ def test_gate_load_needs_profile_package_and_model(tmp_path, monkeypatch):
     monkeypatch.setattr(sid, "voice_dir", lambda: tmp_path)
     logs = []
     g = sid.SpeakerGate.load(None, log=logs.append)
-    assert g is not None and not g.active and g.check(b"\1\0" * 16000)  # kayıt yok: herkes kabul
+    assert g is not None and not g.active and g.check(b"\1\0" * 16000)  # no profile: everyone accepted
     monkeypatch.setattr(sid, "available", lambda: False)
     sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
-    assert g.check(b"\1\0" * 16000) and g.active  # uygulamadan tanıtılınca yeniden başlatmadan devreye girer
+    assert g.check(b"\1\0" * 16000) and g.active  # once enrolled from the app, it takes effect without a restart
     assert "sherpa-onnx" in logs[-1] and "kontrol edilmedi" in g.last_note
     monkeypatch.setattr(sid, "available", lambda: True)
     assert g.check(b"\1\0" * 16000) and "modeli yok" in logs[-1]
@@ -92,7 +92,7 @@ def test_gate_load_needs_profile_package_and_model(tmp_path, monkeypatch):
     g.check(b"\1\0" * 16000)
     assert g.embedder is not None and not g.last_note
     sid.profile_path().unlink()
-    assert g.check(b"\1\0" * 16000) and not g.active  # profil silinince kontrol kapanır
+    assert g.check(b"\1\0" * 16000) and not g.active  # deleting the profile turns the check off
     assert sid.SpeakerGate.load(SimpleNamespace(data={"voice": {"speaker_check": False}})) is None
 
 
@@ -113,7 +113,7 @@ def test_enroll_command_records_saves_and_verifies(tmp_path, monkeypatch, capsys
             pass
 
     monkeypatch.setattr(audio_mod, "Microphone", lambda: Mic())
-    takes = iter([None] + [Audio(b"\1\0" * 24000, 16000)] * 20)  # ilk cümle duyulmadı, tekrar okundu
+    takes = iter([None] + [Audio(b"\1\0" * 24000, 16000)] * 20)  # first sentence not heard, read again
     monkeypatch.setattr(vcli, "_record_one", lambda mic, vad, seconds=15.0: next(takes))
     assert vcli._enroll(None, []) == 0
     out = capsys.readouterr().out
@@ -122,7 +122,7 @@ def test_enroll_command_records_saves_and_verifies(tmp_path, monkeypatch, capsys
     assert vcli._enroll(None, ["--off"]) == 0 and sid.load_profile() is None
 
 
-# ---- seçici uyanma (Discord'da konuşurken / oyunda)
+# ---- selective wake (talking on Discord / in a game)
 def test_social_watch_reads_mic_users_and_games():
     from alice.voice.social import SocialWatch
 
@@ -143,9 +143,9 @@ def test_social_mode_needs_name_first_and_closes_follow_up():
     agent = FakeAgent()
     social = {"on": "Discord sesli konuşmada"}
     va = VoiceAssistant(agent, FakeSpeaker(), stt=None, social=lambda: social["on"])
-    va.handle_text("Bak şimdi Alice müziği aç", direct=False)  # arkadaşına anlatıyor
+    va.handle_text("Bak şimdi Alice müziği aç", direct=False)  # telling a friend
     va.armed_until = time.monotonic() + 5
-    va.handle_text("peki ya dün?", direct=False)  # takip penceresi kapalı
+    va.handle_text("peki ya dün?", direct=False)  # follow-up window closed
     time.sleep(0.3)
     assert agent.turns == []
     va.handle_text("Alice, müziği aç", direct=False)
@@ -161,13 +161,13 @@ def test_unchecked_wake_is_logged_with_reason(monkeypatch):
     logs = []
     monkeypatch.setattr(va_mod, "voice_log", logs.append)
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
-    assert va._is_user(Audio(b"\2\0" * 4000, 16000))  # 0,25 sn
+    assert va._is_user(Audio(b"\2\0" * 4000, 16000))  # 0.25 s
     assert "kısa ses 0.25 sn" in logs[-1]
 
 
-# ---- uygulamadan "Sesimi tanıt"
+# ---- from the app: "Sesimi tanıt" (introduce my voice)
 class Mic:
-    """Sırayla konuşma/sessizlik kareleri: (kare sayısı, dolu mu)."""
+    """Speech/silence frames in order: (frame count, whether it is loud)."""
 
     def __init__(self, script):
         self.frames = [b"\1\x40" * 480 if loud else b"\0\0" * 480 for n, loud in script for _ in range(n)]
@@ -206,16 +206,16 @@ def test_app_enroll_records_each_sentence_saves_and_tries_out(tmp_path, monkeypa
     monkeypatch.setattr(sid, "available", lambda: True)
     (tmp_path / "models").mkdir()
     sid.model_path().write_bytes(b"x")
-    talk = [(40, True), (40, False)]  # 1,2 sn konuşma + sessizlik
+    talk = [(40, True), (40, False)]  # 1.2 s of speech + silence
     script = [(5, False)] + talk * len(sid.ENROLL_SENTENCES) + talk
     mic = Mic(script)
     s = EnrollSession(mic=lambda: mic, vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=5, got_pause=0)
-    assert s.start()["ok"] and not s.start()["ok"]  # ikinci kez başlatılamaz
+    assert s.start()["ok"] and not s.start()["ok"]  # cannot be started a second time
     s._thread.join(10)
     v = s.view()
-    assert mic.marked  # kayıt sürerken çalışan ALICE uyanmasın
+    assert mic.marked  # a running ALICE must not wake while recording
     assert v["state"] == "done" and v["result"]["recognized"] and v["profile"]["samples"] == len(sid.ENROLL_SENTENCES)
-    assert len(v["takes"]) == len(sid.ENROLL_SENTENCES) and not sid.enrolling()  # işaret kalktı
+    assert len(v["takes"]) == len(sid.ENROLL_SENTENCES) and not sid.enrolling()  # marker cleared
     assert s.remove()["ok"] and sid.load_profile() is None
 
 
@@ -237,7 +237,7 @@ def test_app_enroll_cancel_and_silent_mic(tmp_path, monkeypatch):
     s.cancel()
     s._thread.join(10)
     assert s.view()["state"] == "cancelled" and s.view()["message"] == "iptal edildi"
-    assert s.test()["ok"] is False  # profil yok: denenecek bir şey yok
+    assert s.test()["ok"] is False  # no profile: nothing to try
 
 
 def test_app_enroll_installs_package_and_downloads_with_progress(tmp_path, monkeypatch):
@@ -279,7 +279,7 @@ def test_wake_ignored_while_enrolling(tmp_path, monkeypatch):
 
 
 class NoisyMic(Mic):
-    """Discord/oyun sesi: konuşma bitince de ses var (VAD hep "konuşma" der) ama seviye konuşmanın çok altında."""
+    """Discord/game audio: sound goes on after speech ends (VAD still says "konuşma") but far quieter than speech."""
 
     def __init__(self, talk_frames=60, tail=b"\1\x02"):
         self.frames = [b"\1\x40" * 480] * talk_frames + [tail * 480] * 2000
@@ -298,13 +298,13 @@ def _session(tmp_path, monkeypatch, mic, vad=AlwaysSpeech, **kw):
 
 
 def test_record_ends_when_level_drops_under_background_noise(tmp_path, monkeypatch):
-    # Kullanıcı: "okuyorum sonra öyle kalıyor, algıladı mı algılamadı mı belli değil".
+    # User: "okuyorum sonra öyle kalıyor, algıladı mı algılamadı mı belli değil" (it stays on; unclear if heard)
     s = _session(tmp_path, monkeypatch, NoisyMic())
     mic = NoisyMic()
     t0 = time.monotonic()
     audio = s._record(mic, AlwaysSpeech())
     took = 60 * 0.03
-    assert audio is not None and took <= audio.seconds < took + 1.2  # 7 sn beklemedi
+    assert audio is not None and took <= audio.seconds < took + 1.2  # did not wait 7 s
     assert time.monotonic() - t0 < 5
 
 
@@ -313,7 +313,7 @@ def test_record_caps_take_and_reports_progress(tmp_path, monkeypatch):
 
     monkeypatch.setattr(enroll, "MAX_TAKE", 1.5)
     s = _session(tmp_path, monkeypatch, None)
-    mic = NoisyMic(talk_frames=2000)  # hiç bitmeyen konuşma
+    mic = NoisyMic(talk_frames=2000)  # speech that never ends
     audio = s._record(mic, AlwaysSpeech())
     assert 1.4 <= audio.seconds <= 1.8
     v = s.view()
@@ -331,7 +331,7 @@ def test_done_button_takes_what_was_heard_and_skip_moves_on(tmp_path, monkeypatc
         def read(self):
             self.n += 1
             if self.n == 60:
-                s.done()  # kullanıcı "Okudum"a bastı
+                s.done()  # the user pressed "Okudum" (done reading)
             time.sleep(0.0005)
             return b"\1\x40" * 480
 
@@ -359,7 +359,7 @@ def test_enroll_skip_sentence_continues_to_next(tmp_path, monkeypatch):
     mic = Mic([(5, False)] + talk * (len(sid.ENROLL_SENTENCES) + 1))
     s = _session(tmp_path, monkeypatch, mic, vad=LoudVAD, listen_seconds=5)
     sid.model_path().write_bytes(b"x")
-    s._skip.set()  # ilk cümle atlanır
+    s._skip.set()  # first sentence is skipped
     orig = s._record
     first = []
 
@@ -389,9 +389,9 @@ class CountingSTT(CloudSTT):
 def test_only_users_voice_reaches_stt_short_audio_left_to_wake_check():
     stt = CountingSTT()
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=stt, speaker_gate=gate())
-    va.handle_audio(Audio(bytes([2, 0]) * 16000, 16000), direct=False)  # başkası: yazıya hiç dökülmez
+    va.handle_audio(Audio(bytes([2, 0]) * 16000, 16000), direct=False)  # someone else: never transcribed
     assert stt.calls == 0
-    # 0,55 sn: hızlı söylenen "Alice naber" bu kadar kısa olabiliyor; ses izi karar veremez, uyandırma kontrolüne kalır
+    # 0.55 s: a quick "Alice naber" can be this short; voiceprint can't decide, so it's left to the wake-word check
     va.handle_audio(Audio(bytes([1, 0]) * 8800, 16000), direct=False)
     assert stt.calls == 1
 
@@ -403,12 +403,12 @@ def test_barge_in_waits_for_users_voice():
     va._interrupt = lambda: cut.append(1)
     sp.speaking = True
     va._on_speech_start()
-    assert cut == []  # ses başladı ama kimin olduğu belli değil: susma
+    assert cut == []  # speech started but whose it is unknown: don't stop
     va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=False)
-    assert cut == []  # başkasıydı
+    assert cut == []  # it was someone else's
     va._on_speech_start()
     va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=False)
-    assert cut == [1]  # kullanıcı: şimdi sus
+    assert cut == [1]  # the user: stop now
 
 
 def test_second_ear_finds_missed_wake_word():
@@ -418,7 +418,7 @@ def test_second_ear_finds_missed_wake_word():
         last_seconds = 0.1
 
         def heard(self, audio):
-            return "Ayşe nabe"  # küçük model "Alice naber"i kaçırdı
+            return "Ayşe nabe"  # the small model missed "Alice naber"
 
     class Scribe:
         name = "eleven:scribe_v2"
@@ -440,7 +440,7 @@ def test_second_ear_finds_missed_wake_word():
 
 
 def test_paused_alice_then_naber_joined_for_second_ear():
-    # "Alice" ... "naber" arada duraklayınca iki cümle oluyordu; "Alice" tek başına "Altyazı" diye duyulup atılıyordu
+    # A pause between "Alice" ... "naber" made it two sentences; "Alice" alone was heard as "Altyazı" and dropped
     alice, naber = Audio(bytes([1, 0]) * 6400, 16000), Audio(bytes([1, 0]) * 9600, 16000)
 
     class Gate:
@@ -475,11 +475,11 @@ def test_paused_alice_then_naber_joined_for_second_ear():
     assert agent.turns == []
     va.handle_audio(naber, direct=False)
     assert wait_for(lambda: agent.turns == ["Ne haber?"])
-    assert 1.15 in groq.heard  # 0,4 + 0,15 boşluk + 0,6: iki cümle birlikte dinlendi
+    assert 1.15 in groq.heard  # 0.4 + 0.15 gap + 0.6: both sentences were heard together
 
 
 def test_social_mode_takes_sentence_right_after_bare_wake():
-    # Discord'da "Alice" deyip ALICE "Evet, söyle" dedikten sonra gelen cümle cevapsız kalıyordu
+    # In Discord, after the user said "Alice" and ALICE replied "Evet, söyle", the next sentence went unanswered
     class STT:
         wake_gate = None
 
@@ -493,17 +493,17 @@ def test_social_mode_takes_sentence_right_after_bare_wake():
     va = VoiceAssistant(agent, sp, stt=STT(), speaker_gate=gate(), social=lambda: "Discord sesli konuşmada")
     one = Audio(bytes([1, 0]) * 16000, 16000)
     va.handle_audio(one, direct=False)
-    assert sp.said  # kısa tepki
+    assert sp.said  # short reaction
     va.handle_audio(one, direct=va._armed())
     assert wait_for(lambda: agent.turns == ["Naber?"])
-    va._called_until = 0.0  # pencere kapandı: arkadaşa söylenen cümle gitmez
+    va._called_until = 0.0  # window closed: a sentence said to a friend is not sent
     va.handle_audio(one, direct=va._armed())
     time.sleep(0.2)
     assert agent.turns == ["Naber?"]
 
 
 def test_discord_follow_up_continues_only_for_users_voice():
-    """Discord'da cevaptan sonra "Alice" demeden devam: sadece ses izi kullanıcıya uyan cümle canlı modele gider."""
+    """Discord: after a reply, follow-up without "Alice". Only the user's voiceprint match goes to the live model."""
     from tests.test_voice import FakeLive
 
     class AudioLive(FakeLive):
@@ -519,9 +519,9 @@ def test_discord_follow_up_continues_only_for_users_voice():
     live = AudioLive()
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=NoSTT(), live=live, speaker_gate=gate(),
                         social=lambda: "Discord")
-    va.armed_until = time.monotonic() + 5  # ALICE az önce cevap verdi
-    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=va._armed())  # noqa: SLF001 - arkadaşın sesi
-    va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=va._armed())  # noqa: SLF001 - kullanıcının sesi
+    va.armed_until = time.monotonic() + 5  # ALICE just replied
+    va.handle_audio(Audio(b"\2\0" * 16000, 16000), direct=va._armed())  # noqa: SLF001 - a friend's voice
+    va.handle_audio(Audio(b"\1\0" * 16000, 16000), direct=va._armed())  # noqa: SLF001 - the user's voice
     assert wait_for(lambda: live.texts == [b"\1"])
     va.social_follow = False
-    assert not va._armed()  # noqa: SLF001 - kapatılınca Discord'da yine "Alice" gerekir
+    assert not va._armed()  # noqa: SLF001 - once off, Discord needs "Alice" again

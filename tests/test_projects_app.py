@@ -60,23 +60,23 @@ def test_project_lifecycle_over_api(app):
     assert det["member"]["files"] == ["src/a.py"]
     assert "+x = 1" in client.get(f"/api/project/diff?id={pid}&member=backend").json()["diff"]
     lead = client.get(f"/api/project?id={pid}&member=alice").json()["member"]
-    assert lead["name"] == "alice" and lead["history"]  # yönetici konuşması da görünür
+    assert lead["name"] == "alice" and lead["history"]  # the lead's conversation is visible too
 
-    # kullanıcı düzeltme ister, ajan devam eder, sonra kullanıcı onaylar; tembel yönetici dürtülüp projeyi kapatır
+    # user asks for a revision, agent continues, user approves; a lazy lead is nudged and closes the project
     assert act(client, pid, action="revise", name="backend", text="bir şey daha").json()["ok"]
     wait_for(client, pid, lambda d: d["members"][0]["status"] == "review" and d["members"][0]["reviews"] == 1)
     assert act(client, pid, action="approve", name="backend").json()["ok"]
     d = wait_for(client, pid, lambda d: d["status"] == "done", timeout=20)
     assert d["progress"] == [1, 1] and d["summary"]
 
-    # bitmiş projeye ajan eklenir; proje yeniden açılır
+    # an agent is added to a finished project; the project reopens
     assert act(client, pid, action="add", agent={"name": "tests", "task": "test"}).json()["ok"]
     wait_for(client, pid, lambda d: any(m["name"] == "tests" and m["status"] == "review" for m in d["members"]))
     assert act(client, pid, action="add", agent={"name": "Alice", "task": "x"}).status_code == 400
     assert act(client, pid, action="revert", name="backend").json()["ok"]
     assert not (workdir / "src/a.py").exists()
 
-    # uygulama yeniden açılmış gibi: proje diskten yüklenir (durmuş), sürdürülebilir
+    # as if the app were reopened: the project loads from disk (stopped) and can be resumed
     act(client, pid, action="stop")
     state.ctx.state["teams"].clear()
     d = client.get(f"/api/project?id={pid}").json()
@@ -115,7 +115,7 @@ def test_council_actions_over_api(app):
         {"name": "backend", "task": "a.py yaz"}]}).json()["id"]
     team = state.ctx.state["teams"][pid]
     assert team.council
-    # sahte modeller JSON vermez: kurul oy toplayamaz, karar çekişmeli kalır ve iş incelemede bekler
+    # fake models send no JSON: no council votes, decision stays contested, work waits in review
     wait_for(client, pid, lambda d: d["members"][0]["status"] == "review" and d["members"][0]["council"]
              and d["members"][0]["council"]["state"] == "done" and not d["members"][0]["council_running"], timeout=20)
     det = client.get(f"/api/project?id={pid}&member=backend").json()["member"]
@@ -123,7 +123,7 @@ def test_council_actions_over_api(app):
     r = act(client, pid, action="vote", name="backend", text="approve", agent={"note": "bence iyi"}).json()
     assert r["ok"] and "approve" in r["note"]
     wait_for(client, pid, lambda d: d["members"][0]["status"] == "done")
-    assert act(client, pid, action="council", name="backend").json()["ok"]  # "Kurula sor"
+    assert act(client, pid, action="council", name="backend").json()["ok"]  # "Kurula sor" ("ask the council")
     wait_for(client, pid, lambda d: d["members"][0]["councils_n"] == 2 and not d["members"][0]["council_running"],
              timeout=20)
     assert act(client, pid, action="vote", name="backend", text="belki").status_code == 400
@@ -140,25 +140,25 @@ def test_site_preview_is_sandboxed_and_hides_secrets(app):
     d = client.get(f"/api/project?id={pid}&member=__preview").json()
     assert d["preview"]["entry"] == "site/index.html" and d["preview"]["changed"] > 0
     base = d["preview"]["base"]
-    assert state.token not in base  # sitenin kodu ana anahtarı göremez
-    anon = httpx.Client(base_url=str(client.base_url), timeout=10)  # ana anahtar olmadan
+    assert state.token not in base  # the site's code cannot see the master key
+    anon = httpx.Client(base_url=str(client.base_url), timeout=10)  # without the master key
     r = anon.get(base + "site/index.html")
     assert r.status_code == 200 and "Varyant" in r.text
     assert r.headers["content-security-policy"].startswith("sandbox allow-scripts")
     assert anon.get(base + "site/app.js").headers["content-type"].startswith("text/javascript")
-    assert anon.get(base + "site/").text == r.text  # klasör -> index.html
+    assert anon.get(base + "site/").text == r.text  # folder -> index.html
     for bad in (".env", "site/../.env", "%2e%2e/%2e%2e/etc/passwd"):
         assert anon.get(base + bad).status_code == 404
     assert anon.get(base.replace(state.preview_token, "yanlis") + "site/index.html").status_code == 403
-    assert anon.get(f"/api/state?t={state.preview_token}").status_code == 403  # önizleme anahtarı API açmaz
+    assert anon.get(f"/api/state?t={state.preview_token}").status_code == 403  # the preview key does not open the API
 
 
 def test_deleted_project_is_not_resurrected_by_a_late_save(app):
-    """Silinen proje, kapanmakta olan ajanın geriden gelen kaydıyla geri gelmesin.
+    """A deleted project must not come back through a late save from an agent that is shutting down.
 
-    Windows runner'ında test_project_lifecycle_over_api'yi ara sıra düşüren yarış buydu: delete
-    dosyayı siliyor, hemen ardından çalışan bir save() onu geri yazıyor, sonraki GET 404 yerine
-    200 dönüyordu."""
+    This was the race that occasionally failed test_project_lifecycle_over_api on the Windows runner: delete
+    removes the file, then a save() still running in the background writes it back at once, and the next GET
+    returned 200 instead of 404."""
     state, client, _workdir = app
     pid = client.post("/api/project/create", json={"goal": "Silinecek proje"}).json()["id"]
     team = state.ctx.state["teams"][pid]
@@ -167,7 +167,7 @@ def test_deleted_project_is_not_resurrected_by_a_late_save(app):
     assert act(client, pid, action="delete").json()["ok"]
     assert not team.path().exists()
 
-    team.save()        # geriden gelen kayıt
-    team._changed()    # ve canlı yayın yolu
+    team.save()        # a late save
+    team._changed()    # and the live broadcast path
     assert not team.path().exists()
     assert client.get(f"/api/project?id={pid}").status_code == 404

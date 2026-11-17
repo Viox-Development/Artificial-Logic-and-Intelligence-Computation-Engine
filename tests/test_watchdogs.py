@@ -10,16 +10,16 @@ def test_game_health_waits_two_minutes_names_memory_hog_and_rearms():
     g = GameHealth(st, lambda n: sent.append(n.body) or True)
     t = 1000.0
     st.add("pc.proc.discord.exe.mem_mb", 1843.0, ts=t + 100)
-    st.add("pc.proc.aces.exe.mem_mb", 6000.0, ts=t + 100)  # oyunun kendisi önerilmez
+    st.add("pc.proc.aces.exe.mem_mb", 6000.0, ts=t + 100)  # the game itself is never suggested
     for dt in (0, 60, 121):
         st.add("pc.mem.percent", 96.0, ts=t + dt)
         g.check("flight", t + dt)
     assert sent == ["RAM yüzde 96 dolu, oyun takılabilir. En çok Discord kullanıyor (1.8 GB), kapatabilirsin."]
     st.add("pc.mem.percent", 96.0, ts=t + 400)
     g.check("flight", t + 400)
-    assert len(sent) == 1  # 30 dk dolmadan tekrar yok
+    assert len(sent) == 1  # no repeat before 30 min have passed
     st.add("pc.mem.percent", 80.0, ts=t + 460)
-    g.check("flight", t + 460)  # düştü: yeniden kuruldu ama 10 dk dolmadan yine susar
+    g.check("flight", t + 460)  # dropped: re-armed, but silent again until 10 min pass
     for dt in (500, 621):
         st.add("pc.mem.percent", 97.0, ts=t + dt)
         g.check("flight", t + dt)
@@ -29,14 +29,14 @@ def test_game_health_waits_two_minutes_names_memory_hog_and_rearms():
         g.check("flight", t + dt)
     assert len(sent) == 2
     st.add("pc.gpu.temp", 95.0, ts=t + 900)
-    assert g.check("normal", t + 900) == [] and g.check("normal", t + 1030) == []  # oyun dışında susar
+    assert g.check("normal", t + 900) == [] and g.check("normal", t + 1030) == []  # silent outside gaming
 
 
 def test_game_health_quiet_at_normal_gaming_gpu_temps():
     st = Store(":memory:")
     sent = []
     g = GameHealth(st, lambda n: sent.append(n.body) or True)
-    for dt in range(0, 3600, 15):  # oyunda kart saatlerce 85-90 derecede durur: kritik değil
+    for dt in range(0, 3600, 15):  # during gaming the card sits at 85-90 degrees for hours: not critical
         st.add("pc.gpu.temp", 85.0 + dt % 6, ts=1000.0 + dt)
         g.check("flight", 1000.0 + dt)
     assert sent == []

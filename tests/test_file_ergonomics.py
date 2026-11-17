@@ -1,7 +1,7 @@
-"""Dosya araçları ergonomisi: read_file sembol odaklı okuma, edit hata ipuçları, grep bağlam/limit notları.
+"""File tool ergonomics: read_file symbol-focused reading, edit error hints, grep context/limit notes.
 
-Sembol odaklı okuma agent'ın büyük dosyada satır sayısı okumadan fonksiyonu bulmasını sağlar; hata metinleri de
-bir hata aldığında "dosyayı tekrar oku" demek yerine sorunun ne olduğunu ve aday satırları gösterir."""
+Symbol-focused reading lets the agent locate a function in a large file without reading it line by line;
+error messages also explain what went wrong and show candidate lines, instead of saying "read the file again"."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_read_symbol_unknown_raises(ctx, workdir):
 
 
 def test_symbol_read_covers_exact_block_for_edit(ctx, workdir):
-    """Sembolle okunan blok, edit_file'a birebir kopyalanabilecek içerik verir."""
+    """A block read by symbol gives content that can be copied verbatim into edit_file."""
     (workdir / "m.py").write_text(PY_SRC, encoding="utf-8")
     out = ReadFile().run(ctx, path="m.py", symbol="gamma").text
     body = "\n".join(line.split("\t", 1)[1] for line in out.splitlines()[1:] if "\t" in line)
@@ -96,14 +96,14 @@ def test_edit_missing_old_string_gives_hint(ctx, workdir):
         EditFile().run(ctx, path="m.py", old_string="def alpha(x):\n    y = x + 2", new_string="def alpha(x):")
     msg = str(e.value)
     assert "bulunamadı" in msg and "İPUCU" in msg
-    assert "alpha" in msg  # aday satır gösterilir
+    assert "alpha" in msg  # a candidate line is shown
 
 
 def test_edit_indentation_mismatch_gets_hint(ctx, workdir):
     (workdir / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
     ReadFile().run(ctx, path="m.py")
     with pytest.raises(ToolError) as e:
-        EditFile().run(ctx, path="m.py", old_string="return  1", new_string="return 2")  # iki boşluk
+        EditFile().run(ctx, path="m.py", old_string="return  1", new_string="return 2")  # two spaces
     assert "girinti" in str(e.value) or "boşluk" in str(e.value)
 
 
@@ -143,7 +143,7 @@ def test_multi_edit_nonexisting_edit_suggests_line(ctx, workdir):
         ])
     msg = str(e.value)
     assert "edit 2/2" in msg and "İPUCU" in msg
-    # hiçbir değişiklik yazılmadı
+    # no change was written
     assert "y = x + 1" in (workdir / "m.py").read_text(encoding="utf-8")
 
 
@@ -159,7 +159,7 @@ def test_grep_truncation_note_counts_total(ctx, workdir):
         (workdir / f"f{i}.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     out = Grep().run(ctx, pattern=r"def foo", max_results=3).text
     assert "toplam 10" in out and "offset=3" in out
-    assert "daralt" in out  # path/glob ile daraltma önerisi
+    assert "daralt" in out  # suggestion to narrow with path/glob
 
 
 def test_grep_pagination_consistent(ctx, workdir):
@@ -185,7 +185,7 @@ def test_symbol_param_documented_in_schema():
 
 
 def test_utf16_text_file_reads_and_edit_keeps_encoding(ctx, workdir):
-    # PowerShell `>` UTF-16 yazar: binary sanılmamalı, düzenleme kodlamayı korumalı.
+    # PowerShell `>` writes UTF-16: it must not be mistaken for binary, and editing must keep the encoding.
     f = workdir / "out.txt"
     f.write_bytes("ışık açık\r\nikinci satır\r\n".encode("utf-16"))
     out = ReadFile().run(ctx, path="out.txt").text

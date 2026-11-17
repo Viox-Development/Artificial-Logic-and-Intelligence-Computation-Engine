@@ -1,4 +1,4 @@
-"""ALICE tarayıcı eklentisi: uzaktan hata ayıklama olmadan kullanıcının sekmelerinde çalışma."""
+"""ALICE browser extension: works in the user's own tabs without remote debugging."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def free_port() -> int:
     return port
 
 
-# ------------------------------------------------------------------ eklenti dosyaları
+# ------------------------------------------------------------------ extension files
 def test_extension_manifest_and_snapshot_match_python():
     m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     assert m["manifest_version"] == 3 and m["background"]["service_worker"] == "background.js"
@@ -35,17 +35,18 @@ def test_extension_manifest_and_snapshot_match_python():
         assert (EXT / f).exists()
     js = (EXT / "background.js").read_text(encoding="utf-8")
     assert f"ws://127.0.0.1:{browser_ext.EXT_PORT}{browser_ext.PATH}" in js
-    # Öğe seçicisi ve ID'ler Playwright yoluyla birebir aynı: aynı sayfada aynı [ID]'ler
+    # The element selector and IDs match the Playwright path exactly: the same [ID]s on the same page
     sel = re.compile(r"const sel = ('[^;]+);", re.S)
     norm = lambda s: re.sub(r"'\s*\+\s*'", "", re.sub(r"\s+", " ", s))  # noqa: E731
     assert norm(sel.search(js).group(1)) == norm(sel.search(browser.SNAPSHOT_JS).group(1))
     for fn in ("snapshot", "place", "fill", "click", "select", "key", "scroll", "reveal", "outline", "text"):
-        # sayfaya metin olarak kopyalanır: kısa yöntem "ad(...) {}" orada çalışmıyor, sessizce boş dönüyordu
+        # it is copied into the page as text: the short method form "ad(...) {}" doesn't work
+        # there and silently returned nothing
         assert re.search(rf"\n  {fn}: function \(", js), fn
     assert not re.search(r"\n  \w+\([^)]*\) \{", js.split("const PAGE = {", 1)[1])
 
 
-# ------------------------------------------------------------------ yerel sunucu
+# ------------------------------------------------------------------ local server
 def _fake_extension(port: int, origin: str, handler, ready: threading.Event, stop: threading.Event):
     from websockets.asyncio.client import connect
 
@@ -94,7 +95,7 @@ def test_hub_talks_to_extension_and_rejects_web_pages():
     assert h.call("tabs", tabId=3) == {"echo": "tabs", "params": {"tabId": 3}}
     with pytest.raises(ToolError, match="olmadı"):
         h.call("boom")
-    # Web sayfası (http kökenli) yerel sunucuya bağlanıp tarayıcıyı yönetemesin
+    # A web page (http origin) must not be able to connect to the local server and drive the browser
     from websockets.asyncio.client import connect
     from websockets.exceptions import InvalidStatus
 
@@ -113,9 +114,9 @@ def test_hub_talks_to_extension_and_rejects_web_pages():
     assert not h.connected
 
 
-# ------------------------------------------------------------------ Playwright taklidi
+# ------------------------------------------------------------------ Playwright stand-in
 class FakeHub:
-    """Eklentinin yerine: sekmeler ve sayfa işlevleri bellekte."""
+    """Stands in for the extension: tabs and page functions kept in memory."""
 
     connected = True
 
@@ -124,7 +125,7 @@ class FakeHub:
                       "active": True},
                      {"id": 2, "windowId": 9, "title": "Sonora", "url": "https://sonorahq.org/", "active": False}]
         self.calls: list[tuple[str, dict]] = []
-        self.visible = False  # pencere arkada: sayfa içi olaylara düşülür
+        self.visible = False  # window in the background: falls back to in-page events
         self.elements = {1: {"id": 1, "tag": "a", "role": "", "type": "", "text": "Install", "placeholder": "",
                              "value": "", "href": "#install", "inView": True},
                          2: {"id": 2, "tag": "input", "role": "", "type": "text", "text": "", "placeholder": "Ara",
@@ -175,7 +176,7 @@ class FakeHub:
 def ext(monkeypatch, tmp_path):
     fh = FakeHub()
     monkeypatch.setattr(browser_ext, "_HUB", fh)
-    monkeypatch.setattr(browser_ext, "_os_ok", lambda: False)  # testte gerçek fare/klavye yok
+    monkeypatch.setattr(browser_ext, "_os_ok", lambda: False)  # no real mouse/keyboard in tests
     ctx = ToolContext(cwd=tmp_path, config=make_config({"brain": ["a:m"]}, tool_output_chars=4000))
     return fh, ctx
 
@@ -184,7 +185,7 @@ def test_get_browser_prefers_extension_over_cdp(ext):
     fh, ctx = ext
     b = browser.get_browser(ctx)
     assert isinstance(b, browser_ext.ExtBrowserSession) and b.attached
-    assert b.page.tab_id == 1  # öndeki penceredeki etkin sekme
+    assert b.page.tab_id == 1  # the active tab in the front window
     assert browser.get_browser(ctx) is b
 
 
@@ -193,11 +194,11 @@ def test_browser_tool_works_through_extension(ext):
     tool = browser.Browser()
     r = tool.run(ctx, "goto", url="sonorahq.org/download")
     assert "açıldı" in r.text and "[1] a 'Install'" in r.text
-    assert ("focus", {"tabId": 2}) in fh.calls  # açık Sonora sekmesi kullanıldı, yeni sekme açılmadı
+    assert ("focus", {"tabId": 2}) in fh.calls  # the open Sonora tab was used; no new tab was opened
     assert any(c == "navigate" and p["tabId"] == 2 for c, p in fh.calls)
     r = tool.run(ctx, "type", element_id=2, text="nükleer", submit=True)
     assert ("run", {"tabId": 2, "fn": "fill", "args": [2, "nükleer"]}) in fh.calls
-    assert ("run", {"tabId": 2, "fn": "key", "args": ["Enter"]}) in fh.calls  # pencere arkada: sayfa içi Enter
+    assert ("run", {"tabId": 2, "fn": "key", "args": ["Enter"]}) in fh.calls  # window in background: Enter in page
     tool.run(ctx, "click", element_id=1)
     assert ("run", {"tabId": 2, "fn": "click", "args": [1, "left", 1]}) in fh.calls
     with pytest.raises(ToolError, match="öğe bulunamadı"):
@@ -222,7 +223,7 @@ def test_extension_clicks_with_real_mouse_when_window_is_in_front(ext, monkeypat
     monkeypatch.setattr(browser_ext.time, "sleep", lambda s: None)
     b = browser.get_browser(ctx)
     b.locator(1).click()
-    assert clicks and clicks[0][0] == (60, 115)  # öğenin ekrandaki ortası (sol 10+50, üst 80 araç çubuğu+20+15)
+    assert clicks and clicks[0][0] == (60, 115)  # the element's center on screen (left 10+50, top 80 toolbar+20+15)
     assert not any(c == "run" and p["fn"] == "click" for c, p in fh.calls)
 
 
@@ -276,9 +277,10 @@ def files_server(tmp_path):
 
 
 def test_download_skips_save_as_and_returns_path(ext, files_server, tmp_path, monkeypatch):
-    """Canlı kayıt: Opera'da "her indirmede sor" açık; kurulum bağlantısı tarayıcıda açılınca Farklı Kaydet'te
-    takıldı. Eklentinin downloads.download'u da (saveAs=false, dosya adı verilse bile) aynı pencereyi açıyor.
-    download eylemi dosyayı tarayıcısız, doğrudan İndirilenler'e indirir ve tam yolu döner."""
+    """Live capture: in Opera "her indirmede sor" (ask on every download) was on; when an install link opened in the
+    browser it got stuck on Save As. The extension's downloads.download also opens the same window (saveAs=false, even
+    when a file name is given). The download action saves the file straight to Downloads without the browser and returns
+    the full path."""
     from alice.tools import fetch_file
     from alice.tools.desktop import open_app
 
@@ -304,13 +306,14 @@ def test_download_needing_login_falls_back_to_browser(ext, files_server, tmp_pat
     orig = fh.call
     fh.call = lambda m, _timeout=15.0, **p: ({"file": "", "url": p["url"], "state": "in_progress", "bytes": 0,
                                               "total": 0} if m == "download" else orig(m, _timeout, **p))
-    r = browser.Browser().run(ctx, "download", url=f"{files_server}/login.html")  # sayfa: giriş gerekiyor
+    r = browser.Browser().run(ctx, "download", url=f"{files_server}/login.html")  # page: login required
     assert "kaydetme penceresi açık olabilir" in r.text
 
 
 def test_open_missing_file_says_so_and_lists_lookalikes(tmp_path):
-    """Canlı kayıt: kurulum e.exe adıyla inmişti; ALICE olmayan Sonora-Setup.exe'yi açınca Windows'un "bulunamadı"
-    penceresi çıktı ve reflex orada Enter'a basıp durdu. Artık hata ve klasördeki benzer dosyalar döner."""
+    """Live capture: the install had been saved as e.exe; when ALICE opened the non-existent Sonora-Setup.exe, Windows
+    showed its "bulunamadı" (not found) window, and reflex pressed Enter there and stopped. Now it returns an error and
+    the similar files in the folder."""
     from alice.tools.desktop import open_app
 
     (tmp_path / "e.exe").write_bytes(b"MZ")
@@ -340,10 +343,10 @@ def test_sandbox_hint_only_for_access_errors():
 
 
 def test_hub_pins_first_extension_id_and_rejects_impostors():
-    """Origin'i herhangi bir yerel program `chrome-extension://...` diye gönderebilir: ilk eşlenen eklenti dışındakiler
-    reddedilir, ayardaki kimlikler her zaman kabul edilir."""
+    """Any local program can send an Origin of `chrome-extension://...`: anything other than the first pinned extension
+    is refused; IDs in the settings are always accepted."""
     h = browser_ext.ExtHub(0)
-    assert h._ext_allowed("abc")  # ilk bağlanan eşlenir
+    assert h._ext_allowed("abc")  # the first one to connect gets pinned
     assert browser_ext.read_pinned_id() == "abc"
     assert h._ext_allowed("abc")
     assert not h._ext_allowed("evil")
@@ -352,5 +355,5 @@ def test_hub_pins_first_extension_id_and_rejects_impostors():
     h2 = browser_ext.ExtHub(0, allowed_ids=["cfgid"])
     assert h2._ext_allowed("cfgid") and h2._ext_allowed("abc") and not h2._ext_allowed("evil")
     browser_ext.pin_path().unlink()
-    assert not h2._ext_allowed("other")  # ayarda kimlik varsa ilk gelen eşlenmez
-    assert browser_ext.ExtHub(0)._ext_allowed("other")  # dosya silinince yeniden eşlenir
+    assert not h2._ext_allowed("other")  # if the settings have an ID, the first arrival is not pinned
+    assert browser_ext.ExtHub(0)._ext_allowed("other")  # pinned again once the file is deleted

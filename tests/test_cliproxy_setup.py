@@ -1,4 +1,4 @@
-"""CLIProxyAPI otomatik kurulum testleri: sürüm dosyası seçimi, checksum, config üretimi ve kurulum."""
+"""CLIProxyAPI automatic setup tests: release asset selection, checksum, config generation and install."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def test_ensure_config_creates_keys_and_env(tmp_path, monkeypatch):
     keys = cliproxy_setup.ensure_config()
     assert (home / "config.yaml").exists() and (home / "keys.txt").exists()
     assert keys["api_key"] in (home / "config.yaml").read_text(encoding="utf-8")
-    # ikinci çağrı dokunmaz
+    # a second call leaves it untouched
     again = cliproxy_setup.ensure_config()
     assert again["api_key"] == keys["api_key"]
 
@@ -46,7 +46,7 @@ def test_install_downloads_verifies_and_extracts(tmp_path, monkeypatch):
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr(cliproxy.binary_name(), b"MZfake")
             z.writestr("README.md", "readme")
-    else:  # Linux/Mac sürümü .tar.gz (CI'da zip üretildiği için "file could not be opened" ile düşüyordu)
+    else:  # Linux/Mac builds are .tar.gz (CI failed with "file could not be opened" because it made a zip)
         import tarfile
 
         with tarfile.open(fileobj=buf, mode="w:gz") as t:
@@ -68,8 +68,8 @@ def test_install_downloads_verifies_and_extracts(tmp_path, monkeypatch):
     r = cliproxy_setup.install("v9.9.9")
     assert r["ok"] and (home / cliproxy.binary_name()).read_bytes() == b"MZfake"
     assert (home / "config.yaml").exists()
-    assert "api_key" not in r  # anahtar arayüze dönmez
-    assert "api_key" not in cliproxy_setup.install("v9.9.9")  # kuruluyken de
+    assert "api_key" not in r  # the key is not returned to the UI
+    assert "api_key" not in cliproxy_setup.install("v9.9.9")  # also when already installed
 
 
 def test_extract_rejects_tar_path_traversal(tmp_path):
@@ -117,15 +117,15 @@ def test_install_rejects_bad_checksum(tmp_path, monkeypatch):
 
 
 def test_cliproxy_key_comes_from_proxy_keys_file(tmp_path, monkeypatch):
-    """.env'deki kopya bozulsa da ALICE proxy'nin kabul ettiği anahtarı (keys.txt) gönderir."""
+    """Even if the .env copy is broken, ALICE sends the key the proxy accepts (keys.txt)."""
     from alice.config import ProviderConfig
 
     monkeypatch.setenv("ALICE_HOME", str(tmp_path))
     monkeypatch.setenv("CLIPROXY_API_KEY", "eski-bozuk")
     pc = ProviderConfig("cliproxy", "http://127.0.0.1:8317/v1", api_key_env="CLIPROXY_API_KEY")
-    assert pc.api_keys == ["eski-bozuk"]  # keys.txt yoksa .env
+    assert pc.api_keys == ["eski-bozuk"]  # without keys.txt, the .env value is used
     (tmp_path / "cliproxy").mkdir()
     (tmp_path / "cliproxy" / "keys.txt").write_text("api_key=dogru\nmanagement_key=y\n", encoding="utf-8")
     assert pc.api_keys == ["dogru"]
     other = ProviderConfig("groq", "http://x", api_key_env="CLIPROXY_API_KEY")
-    assert other.api_keys == ["eski-bozuk"]  # yalnız proxy için
+    assert other.api_keys == ["eski-bozuk"]  # only for the proxy

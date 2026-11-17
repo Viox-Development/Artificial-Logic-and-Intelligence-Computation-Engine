@@ -1,5 +1,5 @@
-"""Sağlayıcı katmanının hata dayanıklılığı: Retry-After, HTML hata sayfaları, anahtar maskeleme, bozuk/boş SSE
-parçaları, ağ istisnaları ve ölçüm istemcisinin kapatılması. Ağ yok: httpx.MockTransport."""
+"""Provider layer error resilience: Retry-After, HTML error pages, key masking, malformed/empty SSE
+chunks, network exceptions, and closing the probe client. No network: httpx.MockTransport."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def test_server_retry_after_extends_cooldown():
     r = Router(cfg, provider_factory=lambda pc: {"a": a, "b": b}[pc.name], sleep=lambda s: None, auto_cache={})
     r.chat("brain", [{"role": "user", "content": "x"}])
     left = r.cooldown_until["a:m1"] - time.monotonic()
-    assert 100 < left <= 120.5  # önceden sabit 30 sn (Windows monotonic saati kaba, küçük pay)
+    assert 100 < left <= 120.5  # previously a fixed 30 s (coarse Windows monotonic clock, hence a small margin)
 
 
 def test_server_short_retry_after_keeps_base_cooldown():
@@ -63,7 +63,7 @@ def test_server_short_retry_after_keeps_base_cooldown():
     assert r.cooldown_until["a:m1"] - time.monotonic() > 25
 
 
-# -------------------------------------------------------- yeni durum kodları
+# -------------------------------------------------------- new status codes
 def test_402_is_quota_and_408_is_transient():
     assert classify_error(402, '{"error":{"message":"Insufficient credits"}}').kind == "quota"
     assert classify_error(408, "Request Timeout").kind == "network"
@@ -76,7 +76,7 @@ def test_inline_error_with_string_code_is_classified():
     assert ei.value.kind == "quota" and ei.value.daily
 
 
-# --------------------------------------------------------- HTML hata sayfası
+# --------------------------------------------------------- HTML error page
 CF_PAGE = """<!DOCTYPE html><html><head><title>502 Bad Gateway</title>
 <style>body{font-family:sans-serif;color:#333}</style><script>var x = 1;</script></head>
 <body><h1>502 Bad Gateway</h1><p>cloudflare</p></body></html>"""
@@ -98,7 +98,7 @@ def test_200_html_body_gives_readable_error():
     assert ei.value.kind == "server" and "<" not in str(ei.value)
 
 
-# --------------------------------------------------------------- maskeleme
+# --------------------------------------------------------------- masking
 def test_redact_patterns():
     assert KEY not in redact(f"bad key {KEY}")
     assert "AIza" not in redact("key=AIzaSyA0123456789abcdefghijklmnopqrstuv invalid")
@@ -110,7 +110,7 @@ def test_redact_patterns():
 
 def test_echoed_key_is_redacted_in_provider_errors(monkeypatch):
     custom = "plainkey_without_known_prefix_123"
-    monkeypatch.setenv("ALICE_TEST_FAKE_KEY", custom)  # sahte anahtar, gerçek değil
+    monkeypatch.setenv("ALICE_TEST_FAKE_KEY", custom)  # fake key, not real
     body = f'{{"error":{{"message":"Incorrect API key provided: {custom}"}}}}'
     with pytest.raises(ProviderError) as ei:
         provider(lambda r: httpx.Response(401, text=body), key_env="ALICE_TEST_FAKE_KEY").chat("m", [])
@@ -124,7 +124,7 @@ def test_echoed_key_is_redacted_in_provider_errors(monkeypatch):
 
 
 def test_router_log_redacts_keys(tmp_path, monkeypatch):
-    monkeypatch.setenv("ALICE_TEST_FAKE_KEY", "a-very-secret-key-42")  # sahte anahtar
+    monkeypatch.setenv("ALICE_TEST_FAKE_KEY", "a-very-secret-key-42")  # fake key
     cfg = make_config({"brain": ["a:m1", "b:m2"]}, {
         "a": {"base_url": "http://a", "api_key_env": "ALICE_TEST_FAKE_KEY", "max_input_tokens": 100000},
         "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 100000}})
@@ -138,7 +138,7 @@ def test_router_log_redacts_keys(tmp_path, monkeypatch):
     assert "a-very-secret-key-42" not in log and "zzzzzzzz" not in log and "***" in log
 
 
-# ------------------------------------------------------------ bozuk SSE/JSON
+# ------------------------------------------------------------ malformed SSE/JSON
 def test_stream_survives_malformed_chunks():
     body = sse_raw(
         "data: {not json",
@@ -161,7 +161,7 @@ def test_stream_without_any_chunk_is_an_error():
         with pytest.raises(ProviderError) as ei:
             provider(lambda r, c=content: httpx.Response(200, content=c)).chat_stream("m", [], lambda t: None)
         assert ei.value.kind == "server"
-    # Sadece [DONE] gelen akış sağlayıcının bilinçli boş cevabı: hata değil.
+    # A stream containing only [DONE] is the provider's deliberate empty answer: not an error.
     res = provider(lambda r: httpx.Response(200, content=b"data: [DONE]\n\n")).chat_stream("m", [], lambda t: None)
     assert res.text == ""
 
@@ -191,7 +191,7 @@ def test_list_models_accepts_bare_list_and_rejects_junk():
     assert ei.value.kind == "unreachable"
 
 
-# ------------------------------------------------------------ ağ istisnaları
+# ------------------------------------------------------------ network exceptions
 @pytest.mark.parametrize("exc,kind,needle", [
     (httpx.ReadTimeout(""), "network", "ReadTimeout"),
     (httpx.ConnectTimeout(""), "network", "ConnectTimeout"),
@@ -229,7 +229,7 @@ def test_invalid_url_does_not_escape_as_raw_exception():
     assert ei.value.kind == "unreachable"
 
 
-# ------------------------------------------------------- ölçüm istemcisi
+# ------------------------------------------------------- probe client
 def test_probe_closes_its_http_client(monkeypatch):
     closed: list[bool] = []
     real_close = OpenAICompatProvider.close

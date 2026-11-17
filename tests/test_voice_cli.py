@@ -1,4 +1,4 @@
-"""alice/voice/cli.py: ses komutlarının ayrıştırılması ve dağıtımı (donanım ve ağ sahte)."""
+"""alice/voice/cli.py: parsing and dispatch of voice commands (hardware and network faked)."""
 
 from __future__ import annotations
 
@@ -35,13 +35,13 @@ def _cfg(**voice):
     return Config(data)
 
 
-# ------------------------------------------------------------------- dağıtım
+# ------------------------------------------------------------------- dispatch
 def test_voice_cmd_dispatch(monkeypatch, out):
     seen = []
     for name in ("_run", "_say", "_status"):
         monkeypatch.setattr(vcli, name, lambda cfg, argv, n=name: seen.append((n, argv)) or 0)
     assert vcli.voice_cmd([]) == 0
-    assert vcli.voice_cmd(["--ptt", "<f13>"]) == 0  # bayrakla başlayınca: run
+    assert vcli.voice_cmd(["--ptt", "<f13>"]) == 0  # started with a flag: run
     assert vcli.voice_cmd(["say", "merhaba", "--emotion", "happy"]) == 0
     assert vcli.voice_cmd(["status"]) == 0
     assert seen == [("_run", []), ("_run", ["--ptt", "<f13>"]), ("_say", ["merhaba", "--emotion", "happy"]),
@@ -225,7 +225,7 @@ def test_audition_builds_engines_and_opens_page(monkeypatch, out, tmp_path):
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
     assert vcli._audition(_cfg(), ["--voices", "Aoede, Kore", "--local", "xtts,bilinmez",
                                    "--emotions", "calm, urgent"]) == 0
-    # referans kütüphanesi yok: önce ilk bulut sesinin "sakin" örneği üretilir, yerel motor onu klonlar
+    # no reference library: first render the "sakin" (calm) sample of the first cloud voice; the local engine clones it
     assert runs[0] == (["gemini:Aoede"], ["calm"])
     assert runs[1] == (["gemini:Aoede", "gemini:Kore", "xtts"], ["calm", "urgent"])
     assert opened == [page.as_uri()]

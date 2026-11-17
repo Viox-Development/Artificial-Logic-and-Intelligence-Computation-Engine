@@ -30,9 +30,9 @@ def test_report_says_new_problems_once_then_fixed(tmp_path):
     assert "takvim takibi hata verdi (4 kez" in body and "C: diski %95 dolu" in body
     assert "nvidia:glm" in body and "gemini:ok" not in body
 
-    assert hr.report(None, store, send, now=now + 3600, **kw) is None  # gün dolmadan bakılmaz
-    body = hr.report(None, store, send, now=now + 86400, **kw)  # süren sorun (Gmail) tekrarlanmaz
-    assert body == "Düzelenler: takvim takibi hata verdi, C"  # 24 saati geçen hata ve boşalan disk
+    assert hr.report(None, store, send, now=now + 3600, **kw) is None  # not checked before the day is over
+    body = hr.report(None, store, send, now=now + 86400, **kw)  # the ongoing problem (Gmail) is not repeated
+    assert body == "Düzelenler: takvim takibi hata verdi, C"  # errors older than 24 hours and disk space that was freed
     checks.clear()
     body = hr.report(None, store, send, now=now + 2 * 86400, **kw)
     assert body == "Düzelenler: Gmail, nvidia:glm" and len(sent) == 3
@@ -43,9 +43,9 @@ def test_report_waits_for_morning_and_retries_when_muted(tmp_path):
     kw = dict(doctor_checks=lambda: [Check("Takvim", "fail", "404")], usage={}, path=tmp_path / "st.json")
     sent = []
     assert hr.report(None, store, lambda t, b: True, now=_now(hour=7), **kw) is None
-    assert hr.report(None, store, lambda t, b: False, now=_now(), **kw)  # uçuş modu: susturuldu
+    assert hr.report(None, store, lambda t, b: False, now=_now(), **kw)  # flight mode: muted
     hr.report(None, store, lambda t, b: sent.append(b) or True, now=_now() + 600, **kw)
-    assert sent and "Takvim: 404" in sent[0]  # kontrol tekrarlanmadan aynı rapor gider
+    assert sent and "Takvim: 404" in sent[0]  # the same report goes out without repeating the check
     assert hr.report(None, store, lambda t, b: sent.append(b) or True, now=_now() + 1200, **kw) is None
 
 

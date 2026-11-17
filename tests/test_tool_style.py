@@ -1,7 +1,7 @@
-"""Araç tanımları docs/TOOL-STYLE.md'deki temel kurallara uyuyor mu (Claude Code araçlarının yazım biçimi).
+"""Do tool definitions follow the core rules in docs/TOOL-STYLE.md (the writing style of Claude Code tools).
 
-Model bir aracı ne zaman ve nasıl kullanacağını sadece açıklamasından öğrenir: tek cümlelik, parametresi
-açıklamasız araçlar yanlış ya da hiç kullanılmıyordu."""
+The model learns when and how to use a tool only from its description: one-sentence tools with undescribed
+parameters were used wrongly or not at all."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def test_tool_names_are_unique_snake_case():
 
 
 def test_claude_code_counterparts_exist():
-    """docs/TOOL-STYLE.md'deki eşleme: Claude Code'un temel araçlarının ALICE karşılığı var."""
+    """The mapping in docs/TOOL-STYLE.md: every core Claude Code tool has an ALICE counterpart."""
     names = {t.name for t in TOOLS}
     for n in ("read_file", "write_file", "edit_file", "multi_edit", "glob", "grep", "notebook_edit", "run_command",
               "process_output", "process_stop", "process_wait", "web_fetch", "web_search", "task", "ask_user",

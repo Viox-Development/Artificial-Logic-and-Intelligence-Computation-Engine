@@ -1,4 +1,4 @@
-"""Güncelleyici: gerçek git depolarıyla (uzak taraf yerel bir klasör, ağ yok)."""
+"""Updater: runs against real git repos (the remote side is a local folder, no network)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def repos(tmp_path):
-    """(yerel klon, uzak depo). Uzak tarafa commit atınca yerelde 'güncelleme var' görünür."""
+    """(local clone, remote repo). A commit pushed to the remote makes 'update available' show locally."""
     origin = tmp_path / "origin"
     origin.mkdir()
     git(origin, "init", "-q", "-b", "main")
@@ -48,7 +48,7 @@ def push(origin: Path, msg: str, path: str = "alice/new.py") -> str:
 
 @pytest.fixture
 def offline(monkeypatch):
-    """GitHub API'sine hiç gidilmesin: commit listesi boş, CI 'unknown'."""
+    """Never hit the GitHub API: the commit list is empty and CI is 'unknown'."""
     monkeypatch.setattr(updater, "_api", lambda *a, **k: None)
 
 
@@ -79,8 +79,8 @@ def test_yeni_commit_gorulur_ve_cekilir(repos, monkeypatch, offline):
 
 
 def test_one_gecmis_dalda_guncelleme_yok(repos, monkeypatch, offline):
-    # main'den açılmış dal: SHA farklı ama main zaten içinde. Eskiden her açılışta "yeni sürüm var" deyip boş
-    # çekme + yeniden başlatma döngüsüne giriyordu.
+    # A branch cut from main: the SHA differs, but main is already in it. Previously every launch said
+    # "new version available" and got stuck in an empty-pull + restart loop.
     clone, _ = repos
     point_at(monkeypatch, clone)
     git(clone, "checkout", "-qb", "ozellik")
@@ -124,7 +124,7 @@ def test_kirmizi_ci_otomatik_guncellenmez(repos, monkeypatch):
     assert info.available and info.ci == "red" and not info.can_auto
     ok, _ = updater.apply_update(info, make_config({"brain": ["a:m"]}))
     assert not ok
-    # --force bunu geçer
+    # --force skips this
     ok, msg = updater.apply_update(info, make_config({"brain": ["a:m"]}), force=True)
     assert ok, msg
 
@@ -164,7 +164,7 @@ def test_mode_off_acilista_hic_bakmaz(repos, monkeypatch):
 
 
 def test_notify_modunda_acilis_bekletilmez_ve_cekilmez(repos, monkeypatch, offline):
-    """notify: açılışta ağ turu bile yok (arka plan thread'i bakar), commit kesinlikle çekilmez."""
+    """notify: no network round at startup either (a background thread checks); the commit is never pulled."""
     clone, origin = repos
     point_at(monkeypatch, clone)
     sha = push(origin, "yeni")
@@ -174,8 +174,8 @@ def test_notify_modunda_acilis_bekletilmez_ve_cekilmez(repos, monkeypatch, offli
     cfg = make_config({"brain": ["a:m"]})
     cfg.data["update"] = {"mode": "notify"}
     assert updater.startup_update(cfg) is None
-    assert git(clone, "rev-parse", "HEAD") != sha  # çekilmedi
-    # Arka plandaki kontrol (check) yeni sürümü görür ama kendiliğinden uygulamaz.
+    assert git(clone, "rev-parse", "HEAD") != sha  # not pulled
+    # The background check (check) sees the new version but does not apply it on its own.
     found = real_check(cfg)
     assert found.available and found.remote == sha
     assert git(clone, "rev-parse", "HEAD") != sha
@@ -193,7 +193,7 @@ def test_auto_modunda_ceker_ve_yeniden_baslatir(repos, monkeypatch, offline):
     updater.startup_update(cfg)
     assert git(clone, "rev-parse", "HEAD") == sha
     assert restarts and restarts[0][0][0] == sys.executable
-    assert restarts[0][1] == {"ALICE_RESTARTED": "1"}  # bayrak sadece çocuğun ortamında
+    assert restarts[0][1] == {"ALICE_RESTARTED": "1"}  # the flag is only in the child's environment
 
 
 def test_yeniden_baslatilan_surec_tekrar_kontrol_etmez(repos, monkeypatch):
@@ -242,7 +242,7 @@ def test_env_degiskeni_modu_ezer(monkeypatch):
 
 
 def test_ci_surerken_beklenir(repos, monkeypatch):
-    """CI daha bitmemişse otomatik çekilmez; sonraki kontrolde yeşilse kendiliğinden geçer."""
+    """If CI is still running, no automatic pull; once it is green at a later check, it goes through by itself."""
     clone, origin = repos
     point_at(monkeypatch, clone)
     sha = push(origin, "yeni")
@@ -259,8 +259,8 @@ def test_ci_surerken_beklenir(repos, monkeypatch):
 
 
 def test_merge_sonrasi_hemen_acilista_yeni_surum_gorulur(repos, monkeypatch, offline):
-    """Kullanıcı: 'güncelleme yok diyor, açtım ama'. Eskiden son 10 dakikada 'güncel' dendiyse açılışta hiç
-    bakılmıyordu; merge'den hemen sonra açılan ALICE yeni sürümü görmüyordu."""
+    """User: 'it says there's no update, but I opened it'. Previously, if 'up to date' had been reported in the
+    last 10 minutes, startup never checked; an ALICE opened right after a merge did not see the new version."""
     clone, origin = repos
     point_at(monkeypatch, clone)
     monkeypatch.delenv("ALICE_RESTARTED", raising=False)
@@ -268,13 +268,13 @@ def test_merge_sonrasi_hemen_acilista_yeni_surum_gorulur(repos, monkeypatch, off
     monkeypatch.setattr(updater, "restart", lambda argv=None, delay=0, env=None: restarts.append(argv))
     cfg = make_config({"brain": ["a:m"]})
     cfg.data["update"] = {"mode": "auto"}
-    assert not updater.startup_update(cfg).available  # açıldı: güncel
+    assert not updater.startup_update(cfg).available  # opened: up to date
     sha = push(origin, "az önce merge edildi")
-    updater.startup_update(cfg)  # bir dakika sonra yeniden açıldı
+    updater.startup_update(cfg)  # reopened a minute later
     assert git(clone, "rev-parse", "HEAD") == sha and restarts
 
 
-# ------------------------------------------------------------------------------------------- geri alma
+# ------------------------------------------------------------------------------------------- rollback
 def test_smoke_test_catches_broken_code(tmp_path, monkeypatch):
     (tmp_path / "kirik_mod.py").write_text("def (:\n", encoding="utf-8")
     (tmp_path / "saglam_mod.py").write_text("X = 1\n", encoding="utf-8")
@@ -304,7 +304,7 @@ def test_broken_update_rolls_back_and_is_skipped(repos, monkeypatch, offline):
 
 
 def test_write_state_never_exposes_partial_file(monkeypatch):
-    """Yazma sırasında öbür süreç dosyayı okursa eski tam durumu görmeli (boş/yarım değil)."""
+    """If another process reads the file mid-write, it must see the previous complete state (not empty or partial)."""
     import os
 
     updater.write_state(bad=["abc"], pending_health="def")
@@ -323,8 +323,8 @@ def test_write_state_never_exposes_partial_file(monkeypatch):
 
 
 def test_remote_head_ignores_branches_ending_with_same_name(repos, monkeypatch, offline):
-    """ls-remote "main" deseni "refs/heads/feature/main"i de döndürür; alfabetik önce geldiği için o dalın
-    commit'i yeni sürüm sanılmamalı."""
+    """The ls-remote "main" pattern also matches "refs/heads/feature/main"; since it sorts first alphabetically,
+    that branch's commit must not be mistaken for the new version."""
     clone, origin = repos
     main = git(origin, "rev-parse", "HEAD")
     git(origin, "checkout", "-qb", "feature/main")
@@ -334,7 +334,7 @@ def test_remote_head_ignores_branches_ending_with_same_name(repos, monkeypatch, 
 
 
 def test_forced_update_rollback_keeps_uncommitted_changes(repos, monkeypatch, offline):
-    """--force kirli ağaçta çekip duman testi düşünce geri alma kullanıcının kaydedilmemiş işini silmemeli."""
+    """--force on a dirty tree: if the smoke test fails after pulling, rollback must not wipe uncommitted work."""
     clone, origin = repos
     point_at(monkeypatch, clone)
     old = git(clone, "rev-parse", "HEAD")
@@ -359,8 +359,8 @@ def test_crashing_boots_roll_back(repos, monkeypatch, offline):
     cfg = make_config({"brain": ["a:m"]})
     ok, _ = updater.apply_update(updater.check(cfg), cfg)
     assert ok and git(clone, "rev-parse", "HEAD") == new
-    assert updater.boot_check() == "" and updater.boot_check() == ""  # iki açılış: sayılıyor
-    assert updater.boot_check() == "rolled"  # ikisi de sağlam sayılmadan bitti: geri dön
+    assert updater.boot_check() == "" and updater.boot_check() == ""  # two boots: counted
+    assert updater.boot_check() == "rolled"  # both ended without being counted healthy: roll back
     assert git(clone, "rev-parse", "HEAD") == old
     assert new in updater.read_state()["bad"]
 
@@ -376,12 +376,12 @@ def test_healthy_boot_clears_pending(repos, monkeypatch, offline):
     updater.boot_healthy()
     assert not updater.read_state().get("pending_health")
     for _ in range(4):
-        assert updater.boot_check() == ""  # sağlam sürüm bir daha sorgulanmaz
+        assert updater.boot_check() == ""  # a healthy version is never checked again
 
 
 def test_unauthorized_alice_token_falls_back_to_git_login(monkeypatch, tmp_path):
-    """ALICE'in anahtarı bu özel depoya yetkili değilse (403) git'in kendi kayıtlı girişiyle tekrar denenir;
-    önceden güncelleme "The requested URL returned error: 403" ile düşüyordu."""
+    """If ALICE's key is not authorised for this private repo (403), retry with git's own saved login;
+    previously the update failed with "The requested URL returned error: 403"."""
     runs = []
 
     def fake_run(args, cwd, timeout, env):
@@ -396,11 +396,11 @@ def test_unauthorized_alice_token_falls_back_to_git_login(monkeypatch, tmp_path)
     monkeypatch.setattr(updater, "_git_run", fake_run)
     assert updater._git(["fetch", "origin"], tmp_path) == (0, "abc\trefs/heads/main") and runs == [True, False]
     runs.clear()
-    assert updater._git(["status"], tmp_path)[0] == 0 and runs == [False]  # yerel komuta anahtar verilmez
+    assert updater._git(["status"], tmp_path)[0] == 0 and runs == [False]  # no key is passed to local commands
 
 
 def _exe_install(clone: Path, dest: Path, sha: str) -> Path:
-    """ALICE-Setup.exe'nin kurduğu klasör gibi: kaynak dosyalar var, .git yok, derlendiği commit yazılı."""
+    """Like a folder installed by ALICE-Setup.exe: source files present, no .git, build commit recorded in a file."""
     import shutil
 
     shutil.copytree(clone, dest, ignore=shutil.ignore_patterns(".git"))
@@ -409,10 +409,10 @@ def _exe_install(clone: Path, dest: Path, sha: str) -> Path:
 
 
 def test_exe_kurulumunda_git_gecmisi_yoksa_yeniden_kurulur_ve_guncellenir(repos, monkeypatch, offline, tmp_path):
-    """Canlı kayıt (10 Kasım): exe'den kurulan ALICE "git deposundan kurulmamış" deyip hiç güncellenmiyordu."""
+    """Live log (10 Nov): an ALICE installed from the exe said "not installed from a git repo" and never updated."""
     clone, origin = repos
     app = _exe_install(clone, tmp_path / "ALICE", git(clone, "rev-parse", "HEAD"))
-    (app / ".venv").mkdir()  # kurulumun kendi dosyaları dokunulmadan kalır
+    (app / ".venv").mkdir()  # the installer's own files are left untouched
     monkeypatch.setattr(updater, "REMOTE_URL", origin.as_uri())
     monkeypatch.setattr(updater, "install_root", lambda: app)
     monkeypatch.setattr(updater, "repo_dir", lambda: app if (app / ".git").exists() else None)
@@ -446,7 +446,8 @@ def test_git_yoksa_dogru_sebep_soylenir(repos, monkeypatch, tmp_path):
 
 
 def test_git_kurulumu_acilisi_bekletmez(repos, monkeypatch):
-    """winget Git kurarken (15 dk'ya kadar) `alice app` açılışı donuyordu: kurulum arka planda, beklenmez."""
+    """While winget installed Git (up to 15 min), `alice app` froze at startup.
+    The install now runs in the background and is not awaited."""
     import threading
     import time as _t
 
@@ -466,14 +467,14 @@ def test_git_kurulumu_acilisi_bekletmez(repos, monkeypatch):
     t0 = _t.monotonic()
     info = updater.check(make_config({"brain": ["a:m"]}))
     assert _t.monotonic() - t0 < 3 and "arka planda kuruluyor" in info.error
-    assert updater.ensure_git() is None and len(started) == 1  # ikinci kurulum başlatılmaz
+    assert updater.ensure_git() is None and len(started) == 1  # a second install is not started
     gate.set()
     updater._git_install.join(5)
     assert not updater.git_installing()
 
 
 def test_path_disindaki_git_bulunur(monkeypatch, tmp_path):
-    """winget Git'i yeni kurduysa kurulumun hemen ardından açılan ALICE'in PATH'inde henüz yok."""
+    """If winget just installed Git, an ALICE started right after the install does not have it on PATH yet."""
     exe = tmp_path / "Programs" / "Git" / "cmd" / "git.exe"
     exe.parent.mkdir(parents=True)
     exe.write_text("", encoding="utf-8")
@@ -486,7 +487,7 @@ def test_path_disindaki_git_bulunur(monkeypatch, tmp_path):
 
 
 def test_yeniden_kurulan_depo_ayarlardaki_dalda(repos, tmp_path, monkeypatch):
-    """Review: HEAD hep main'e bağlanıyordu; ayarlarda başka dal seçiliyse otomatik güncelleme duruyordu."""
+    """Review: HEAD was always attached to main; if another branch was selected in settings, auto-update stopped."""
     clone, origin = repos
     app = _exe_install(clone, tmp_path / "ALICE", git(clone, "rev-parse", "HEAD"))
     monkeypatch.setattr(updater, "REMOTE_URL", origin.as_uri())
@@ -496,7 +497,7 @@ def test_yeniden_kurulan_depo_ayarlardaki_dalda(repos, tmp_path, monkeypatch):
 
 
 def test_baska_surec_guncellerken_depo_kurulmaz(repos, monkeypatch, tmp_path):
-    """Review: uygulama ve çekirdek aynı anda kurarsa biri öbürünün yarım .git'ini silebiliyordu."""
+    """Review: if the app and the core installed at the same time, one could delete the other's half-written .git."""
     clone, origin = repos
     app = _exe_install(clone, tmp_path / "ALICE", git(clone, "rev-parse", "HEAD"))
     monkeypatch.setattr(updater, "REMOTE_URL", origin.as_uri())
@@ -505,4 +506,4 @@ def test_baska_surec_guncellerken_depo_kurulmaz(repos, monkeypatch, tmp_path):
     with updater.update_lock():
         info = updater.check(make_config({"brain": ["a:m"]}))
     assert "başka bir ALICE süreci" in info.error and not (app / ".git").exists()
-    assert updater.check(make_config({"brain": ["a:m"]})).error == ""  # kilit bırakılınca kurulur
+    assert updater.check(make_config({"brain": ["a:m"]})).error == ""  # it installs once the lock is released

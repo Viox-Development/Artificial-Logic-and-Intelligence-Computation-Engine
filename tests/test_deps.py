@@ -1,4 +1,4 @@
-"""Eksik paketleri bulup ALICE'in çalıştığı Python'a kurma."""
+"""Finds missing packages and installs them into the Python that runs ALICE."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from alice import deps, updater
 
 
 def test_missing_checks_every_package_of_installed_extras(monkeypatch):
-    """Canlı kayıt: .venv'de "computer" extra'sının mss'i vardı ama OCR paketleri yoktu; tek paketlik tahmin bunu
-    görmüyordu, OCR sessizce kapalı kaldı."""
+    """Live recording: .venv had the "computer" extra's mss but no OCR packages; a single-package guess missed it,
+    so OCR silently stayed off."""
     monkeypatch.setattr(deps, "_pyproject", lambda: {"project": {
         "dependencies": ["httpx>=0.27", "winrt-Windows.Media.Ocr>=2; sys_platform == 'win32'",
                          "tomli>=2; python_version < '3.0'"],
@@ -21,7 +21,7 @@ def test_missing_checks_every_package_of_installed_extras(monkeypatch):
     lack = deps.missing(["computer"])
     if sys.platform == "win32":
         assert lack == {"": ["winrt-Windows.Media.Ocr"], "computer": ["pywinauto"]}
-    else:  # işaret bu platformda geçerli değil: istenmez
+    else:  # the marker does not apply on this platform: not requested
         assert lack == {}
     have |= {"winrt-Windows.Media.Ocr", "pywinauto"}
     assert deps.missing(["computer"]) == {}
