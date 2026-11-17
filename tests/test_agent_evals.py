@@ -128,3 +128,22 @@ def test_runner_end_to_end_with_council(tmp_path, monkeypatch):
                             "runs": rows})
     assert "Does the council help?" in md and "Passed only with the council: fix-pagination" in md
     json.dumps(rows)  # results must be JSON-serialisable
+
+
+def test_run_without_any_model_answer_is_not_a_failure(tmp_path):
+    """Quota used up: the run is marked no_model and left out of the pass rate instead of counting as a failure."""
+    from alice.providers.openai_compat import ProviderError
+    from alice.providers.router import Router
+
+    cfg = make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["a:m"]})
+    fake = FakeProvider("a", lambda *a, **k: ProviderError("quota", "429 quota exceeded"))
+    router = Router(cfg, provider_factory=lambda pc: fake, usage_path=tmp_path / "usage.json", max_wait=0)
+    runner.restrict_models(router, {"*": ["a:m"]})
+    task = next(t for t in TASKS if t.id == "log-top-error")
+    row = runner.run_task(task, cfg, router, runner.Meter(router), runner.Settings(), log=lambda s: None)
+    assert row["no_model"] and not row["passed"] and row["failed_calls"] >= 1
+    assert runner.summarize([row]) == {"runs": 0, "no_model": 1}
+    md = runner.scoreboard({"meta": {"started": "now", "models": "a:m", "tasks": 1, "mode": "auto",
+                                     "alice_version": "x", "commit": "", "python": "3", "platform": "test"},
+                            "runs": [row]})
+    assert "got no answer from any model" in md and "## Failures" not in md

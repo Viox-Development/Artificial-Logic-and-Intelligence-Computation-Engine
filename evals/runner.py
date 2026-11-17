@@ -390,7 +390,10 @@ def run_task(task: Task, cfg: Any, router: Any, meter: Meter, s: Settings, log: 
     checks = run_checks(task, work, reply, ui.tools)
     passed = all(c["ok"] for c in checks) and not error
     m = meter.summary()
-    row = {"task": task.id, "category": task.category, "council": s.council, "passed": passed,
+    # No model ever answered the agent (quota gone, every model too small or down): this says nothing about ALICE,
+    # so the run is reported apart and left out of the pass rate.
+    no_model = m["model_calls"] == 0
+    row = {"task": task.id, "category": task.category, "council": s.council, "passed": passed, "no_model": no_model,
            "checks": checks, "seconds": round(seconds, 1), "steps": m["model_calls"], "tool_calls": len(ui.tools),
            "tools": dict(Counter(ui.tools)), "permission_asks": len(ui.asked), "denied": ui.denied,
            "timed_out": timed_out.is_set(), "error": error, "reply": reply[:2000], "council_review": council, **m}
@@ -404,7 +407,7 @@ def run_task(task: Task, cfg: Any, router: Any, meter: Meter, s: Settings, log: 
         row["workdir"] = str(work)
     else:
         shutil.rmtree(work, ignore_errors=True)
-    mark = "PASS" if passed else "FAIL"
+    mark = "PASS" if passed else ("NO MODEL" if no_model else "FAIL")
     log(f"  {mark} {task.id} [{'council' if s.council else 'plain'}] {seconds:.0f}s, {m['model_calls']} steps, "
         f"{m['tokens_in'] + m['tokens_out']} tok"
         + (f", council {council['decision']}{' + fix' if council['fix_round'] else ''}" if council else "")
@@ -419,10 +422,12 @@ def _ktok(n: float) -> str:
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    skipped = [r for r in rows if r.get("no_model")]
+    rows = [r for r in rows if not r.get("no_model")]
     if not rows:
-        return {}
+        return {"runs": 0, "no_model": len(skipped)} if skipped else {}
     n = len(rows)
-    return {"runs": n, "passed": sum(r["passed"] for r in rows), "pass_rate": round(sum(r["passed"] for r in rows) / n, 3),
+    return {"runs": n, "no_model": len(skipped), "passed": sum(r["passed"] for r in rows), "pass_rate": round(sum(r["passed"] for r in rows) / n, 3),
             "avg_steps": round(sum(r["steps"] for r in rows) / n, 1),
             "avg_tool_calls": round(sum(r["tool_calls"] for r in rows) / n, 1),
             "tokens": sum(r["tokens_in"] + r["tokens_out"] for r in rows),
@@ -447,12 +452,19 @@ def scoreboard(result: dict[str, Any]) -> str:
             "Model switches | Failed model calls |"),
            "|---|---|---|---|---|---|---|---|---|---|"]
     for label, rs in (("council off", plain), ("council on", with_c)):
-        if not rs:
-            continue
         sm = summarize(rs)
+        if not sm.get("runs"):
+            if sm:
+                out.append(f"| {label} | - | - | - | - | - | - | - | - | - |")
+            continue
         out.append(f"| {label} | {sm['passed']}/{sm['runs']} | {sm['pass_rate']:.0%} | {sm['avg_steps']} | "
                    f"{sm['avg_tool_calls']} | {_ktok(sm['tokens'])} | {_ktok(sm['council_tokens'])} | "
                    f"{sm['seconds'] / 60:.1f} min | {sm['model_switches']} | {sm['failed_calls']} |")
+    skipped = [r for r in rows if r.get("no_model")]
+    if skipped:
+        out += ["", f"**{len(skipped)} run(s) got no answer from any model** (quota used up, requests too large for "
+                "every model in the chain, or providers down). They say nothing about ALICE and are not counted "
+                "above; rerun them with another chain: " + ", ".join(sorted({r['task'] for r in skipped})) + "."]
     out += ["", "## Per task", ""]
     both = bool(plain and with_c)
     if both:
@@ -463,26 +475,33 @@ def scoreboard(result: dict[str, Any]) -> str:
             c = on.get(r["task"])
             if not c:
                 continue
-            cr = c.get("council_review") or {}
-            verdict = (f"{cr.get('decision')} ({cr.get('findings')} findings{', fix turn' if cr.get('fix_round') else ''})"
-                       if cr else "-")
+            tok_c = c["tokens_in"] + c["tokens_out"] + c["council_tokens"]
             out.append(f"| {r['task']} | {r['category']} | {_pf(r)} | {_pf(c)} | {r['steps']}/{c['steps']} | "
-                       f"{_ktok(r['tokens_in'] + r['tokens_out'])}/{_ktok(c['tokens_in'] + c['tokens_out'] + c['council_tokens'])} | "
-                       f"{r['seconds']:.0f}s/{c['seconds']:.0f}s | {verdict} |")
-        fixed = [r["task"] for r in plain if not r["passed"] and on.get(r["task"], {}).get("passed")]
-        broke = [r["task"] for r in plain if r["passed"] and r["task"] in on and not on[r["task"]]["passed"]]
-        fix_turns = [c for c in with_c if (c.get("council_review") or {}).get("fix_round")]
+                       f"{_ktok(r['tokens_in'] + r['tokens_out'])}/{_ktok(tok_c)} | "
+                       f"{r['seconds']:.0f}s/{c['seconds']:.0f}s | {_verdict(c)} |")
+        pairs = [(r, on[r["task"]]) for r in plain
+                 if r["task"] in on and not r.get("no_model") and not on[r["task"]].get("no_model")]
+        fixed = [r["task"] for r, c in pairs if not r["passed"] and c["passed"]]
+        broke = [r["task"] for r, c in pairs if r["passed"] and not c["passed"]]
+        counted = [c for _, c in pairs]
+        fix_turns = [c for c in counted if (c.get("council_review") or {}).get("fix_round")]
         useful = [c["task"] for c in fix_turns if c["passed"]]
-        out += ["", "## Does the council help?", "",
-                f"- Pass rate: {summarize(plain)['pass_rate']:.0%} without, {summarize(with_c)['pass_rate']:.0%} with.",
-                f"- Passed only with the council: {', '.join(fixed) or 'none'}.",
-                f"- Passed only without the council: {', '.join(broke) or 'none'}.",
-                f"- The council asked for a fix turn in {len(fix_turns)} of {len(with_c)} runs; "
-                f"{len(useful)} of those ended passing ({', '.join(useful) or '-'}).",
-                f"- Cost: {_ktok(summarize(with_c)['tokens'] + summarize(with_c)['council_tokens'])} tokens with vs "
-                f"{_ktok(summarize(plain)['tokens'])} without; time {summarize(with_c)['seconds'] / 60:.1f} vs "
-                f"{summarize(plain)['seconds'] / 60:.1f} min.",
-                "- One run per task and mode: a single flip can be model noise, look at the totals over several runs."]
+        failed = [c["task"] for c in counted if (c.get("council_review") or {}).get("error")]
+        if pairs:
+            so, sw = summarize([r for r, _ in pairs]), summarize(counted)
+            out += ["", "## Does the council help?", "",
+                    f"- Over the {len(pairs)} task(s) where both runs got a model: passed {so['passed']} without the "
+                    f"council, {sw['passed']} with it.",
+                    f"- Passed only with the council: {', '.join(fixed) or 'none'}.",
+                    f"- Passed only without the council: {', '.join(broke) or 'none'}.",
+                    f"- The council asked for a fix turn in {len(fix_turns)} of {len(counted)} runs; "
+                    f"{len(useful)} of those ended passing ({', '.join(useful) or '-'}).",
+                    f"- The council itself could not finish (model errors) in {len(failed)} run(s)"
+                    + (f": {', '.join(failed)}." if failed else "."),
+                    f"- Cost: {_ktok(sw['tokens'] + sw['council_tokens'])} tokens with vs {_ktok(so['tokens'])} "
+                    f"without; time {sw['seconds'] / 60:.1f} vs {so['seconds'] / 60:.1f} min.",
+                    "- One run per task and mode: a single flip can be model noise, look at the totals over several "
+                    "runs."]
     else:
         out += ["| Task | Category | Result | Steps | Tool calls | Tokens | Time | Models |",
                 "|---|---|---|---|---|---|---|---|"]
@@ -490,7 +509,7 @@ def scoreboard(result: dict[str, Any]) -> str:
             out.append(f"| {r['task']} | {r['category']} | {_pf(r)} | {r['steps']} | {r['tool_calls']} | "
                        f"{_ktok(r['tokens_in'] + r['tokens_out'] + r['council_tokens'])} | {r['seconds']:.0f}s | "
                        f"{', '.join(r['models']) or '-'} |")
-    fails = [r for r in rows if not r["passed"]]
+    fails = [r for r in rows if not r["passed"] and not r.get("no_model")]
     if fails:
         out += ["", "## Failures", ""]
         for r in fails:
@@ -500,11 +519,29 @@ def scoreboard(result: dict[str, Any]) -> str:
     return "\n".join(out) + "\n"
 
 
+def _verdict(c: dict[str, Any]) -> str:
+    cr = c.get("council_review") or {}
+    if not cr:
+        return "-"
+    if cr.get("error"):
+        return "council failed (model errors)"
+    return f"{cr.get('decision')} ({cr.get('findings')} findings{', fix turn' if cr.get('fix_round') else ''})"
+
+
 def _pf(r: dict[str, Any]) -> str:
+    if r.get("no_model"):
+        return "no model"
     return "pass" if r["passed"] else ("**timeout**" if r["timed_out"] else "**fail**")
 
 
+
 # ---------------------------------------------------------------------------------------------------------- CLI
+STOP_AFTER_NO_MODEL = 3  # consecutive runs without any model answer: the chain is used up, stop instead of skimming
+
+
+class ChainExhausted(Exception):
+    pass
+
 def parse_chains(models: str | None, roles: list[str] | None) -> dict[str, list[str]]:
     chains: dict[str, list[str]] = {}
     if models:
@@ -593,6 +630,13 @@ def main(argv: list[str] | None = None) -> int:
     if not brain:
         print("no brain model available; pass --models or configure ALICE first")
         return 2
+    from alice.providers.router import AllProvidersFailed
+
+    try:  # one tiny request first: a dead or empty chain should fail here, not as 28 "failed" tasks
+        router.chat("brain", [{"role": "user", "content": "Reply with the word OK."}], max_tokens=20)
+    except AllProvidersFailed as e:
+        print(f"no model in the chain answered; nothing to evaluate:\n  {e}")
+        return 2
     started = time.strftime("%Y-%m-%d %H:%M")
     out = a.out or RESULTS_DIR / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
@@ -623,6 +667,10 @@ def main(argv: list[str] | None = None) -> int:
                              transcripts=out / "transcripts")
                 rows.append(run_task(t, cfg, router, meter, s))
                 save()  # partial results survive a crash or Ctrl+C
+                if len(rows) >= STOP_AFTER_NO_MODEL and all(r["no_model"] for r in rows[-STOP_AFTER_NO_MODEL:]):
+                    raise ChainExhausted
+    except ChainExhausted:
+        print(f"the last {STOP_AFTER_NO_MODEL} runs got no answer from any model (quota used up?); stopping early")
     except KeyboardInterrupt:
         print("interrupted; writing what finished")
     finally:
