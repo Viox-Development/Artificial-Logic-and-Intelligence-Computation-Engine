@@ -295,6 +295,7 @@ class Router:
         self._subscription_models: list[str] | None = None  # used in tests instead of the proxy's model list
         self._probe_checked = False
         self._clients: dict[str, Any] = {}
+        self._catalog_cache: dict[str, tuple[float, set[str]]] = {}  # sağlayıcı -> (zaman, sohbet modeli ref'leri)
         self.cooldown_until: dict[str, float] = {}
         self.cooldown_kind: dict[str, str] = {}
         self.dead_models: set[str] = set()
@@ -499,6 +500,37 @@ class Router:
         self.config.data.setdefault("agent", {})["hidden_models"] = cur
         return cur
 
+    CATALOG_TTL = 600.0  # canlı katalog önbelleği: menü her açılışta sağlayıcılara gidilmesin
+    CATALOG_TIMEOUT = 8.0  # takılan bir sağlayıcı menüyü dakikalarca tutmasın
+
+    def _catalog_refs(self, name: str) -> set[str]:
+        """Sağlayıcının sohbet modelleri, kısa süre önbellekten. Katalog okunamazsa boş küme: menü ölçülmüş
+        modellerle açılır, hata günlüğe düşer."""
+        import concurrent.futures
+
+        from alice.providers.discovery import _generic, _openrouter
+
+        now = time.monotonic()
+        hit = self._catalog_cache.get(name)
+        if hit and now - hit[0] < self.CATALOG_TTL:
+            return set(hit[1])
+        try:
+            client = self.client(name)
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                models = pool.submit(client.list_models).result(timeout=self.CATALOG_TIMEOUT)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+        except Exception as e:  # noqa: BLE001 - timeout dahil: katalog okunamazsa menü önbellekteki modellerle devam eder
+            self._log(f"katalog okunamadı ({name}): {e}")
+            return set()
+        found = _openrouter(models) if name == "openrouter" else _generic(name, models)
+        if name == "openrouter":
+            found = [f for f in found if ranking.quality(f.ref)]
+        refs = {f.ref for f in found}
+        self._catalog_cache[name] = (now, refs)
+        return refs
+
     def catalog_view(self) -> list[dict[str, Any]]:  # noqa: C901
         """All known models grouped by provider: those that worked in measurement and those written in the chains."""
         res = self.auto_cache.get("results") or {}
@@ -510,21 +542,13 @@ class Router:
                 refs.update(f"{name}:{m}" for m in pc.models)
         if getattr(self, "_real_clients", False):
             # Sabit model listesi yazılmamış her sağlayıcının canlı kataloğu: menü ölçüm önbelleğine bağlı kalmasın,
-            # API'ye sonradan eklenen modeller de görünsün. OpenRouter'ın yüzlerce modeli menüyü boğmasın diye onun
-            # kataloğu sadece ücretsiz ve bilinen ailelerle sınırlı.
-            from alice.providers.discovery import _generic, _openrouter
-
+            # API'ye sonradan eklenen modeller de görünsün. Sonuçlar kısa süre önbellekte tutulur, menü her açılışta
+            # ağa çıkmaz. OpenRouter'ın yüzlerce modeli menüyü boğmasın diye onun kataloğu sadece ücretsiz ve
+            # zekâsı bilinen (QUALITY tablosu ya da LMArena) modellerle sınırlı.
             for name, pc in self.providers_cfg.items():
                 if not pc.enabled or getattr(pc, "models", None) or name in ("ollama", "cliproxy", "chatgpt"):
                     continue
-                try:
-                    models = self.client(name).list_models()
-                except Exception:  # noqa: BLE001 - katalog okunamazsa menü önbellekteki modellerle devam eder
-                    continue
-                found = _openrouter(models) if name == "openrouter" else _generic(name, models)
-                if name == "openrouter":
-                    found = [f for f in found if ranking.quality(f.ref)]
-                refs.update(f.ref for f in found)
+                refs.update(self._catalog_refs(name))
         cp = self.providers_cfg.get("cliproxy")
         if cp is not None and cp.enabled and getattr(self, "_real_clients", False):
             try:  # real model list of the accounts connected to the proxy (Kimi, Antigravity, new accounts)

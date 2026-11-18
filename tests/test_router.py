@@ -286,6 +286,33 @@ def test_catalog_view_lists_live_provider_catalogs():
     assert {m["ref"] for m in view["groq"]["models"]} == {"groq:brand-new-model"}
     assert {m["ref"] for m in view["openrouter"]["models"]} == {"openrouter:deepseek/deepseek-r1:free"}
     assert view["zai"]["models"] == []  # a fixed model list means the live catalog is not asked
+    # the catalog is cached: opening the menu again must not hit the providers a second time
+    for p in (gemini, groq, openrouter):
+        p.list_models = lambda: (_ for _ in ()).throw(AssertionError("katalog önbellekten gelmeliydi"))
+    view = {p["name"]: p for p in r.catalog_view()}
+    assert {m["ref"] for m in view["groq"]["models"]} == {"groq:brand-new-model"}
+
+
+def test_catalog_view_survives_unreadable_catalog():
+    """A provider whose catalog cannot be read (timeout, auth) must not break the menu: it opens with the
+    measured models and the failure is logged instead of swallowed silently. The failure is not cached,
+    so the catalog is tried again on the next open."""
+    cfg = make_config({"brain": ["groq:eski"]}, auto_models=False,
+                      providers={"groq": {"base_url": "https://api.groq.com/openai/v1", "api_key_env": ""}})
+    groq = FakeProvider("groq", [])
+    groq.list_models = lambda: (_ for _ in ()).throw(TimeoutError("timed out"))
+    logs = []
+    cache = {"results": {"groq:eski": {"ok": True, "quality": 60}}}
+    r = router_with(cfg, {"groq": groq}, auto_cache=cache)
+    r._log = logs.append
+    r._real_clients = True
+    view = {p["name"]: p for p in r.catalog_view()}
+    assert {m["ref"] for m in view["groq"]["models"]} == {"groq:eski"}
+    assert any("katalog okunamadı" in x for x in logs)
+    calls = []
+    groq.list_models = lambda: calls.append(1) or (_ for _ in ()).throw(TimeoutError("timed out"))
+    assert {m["ref"] for m in r.catalog_view()[0]["models"]} == {"groq:eski"}
+    assert calls == [1]  # başarısız okuma önbelleğe yazılmaz, sonraki açılışta yeniden denenir
 
 
 def test_catalog_view_explains_provider_with_no_working_model():
