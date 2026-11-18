@@ -20,7 +20,7 @@ class FeaturesPanel:
     def __init__(self, state: Any):
         self.state = state
         self.cfg = state.cfg
-        self.installer = features.Installer(after=self._turn_on)
+        self.installer = features.Installer(after=self._turn_on, turn_off=self._turn_off)
         self.key_test = Job()
 
     # ------------------------------------------------------------------ view
@@ -82,9 +82,10 @@ class FeaturesPanel:
             return self._test(key)
         if action == "key_test":
             return self._test(str(d.get("key", "")))
-        if action == "install":
+        if action in ("install", "apply"):
             ids = [str(i) for i in (d.get("ids") or []) if str(i) in features.BY_ID]
-            return self.installer.start(ids, {"autostart": d.get("autostart", True) is not False})
+            remove = [str(i) for i in (d.get("remove") or []) if str(i) in features.BY_ID]
+            return self.installer.start(ids, {"autostart": d.get("autostart", True) is not False}, remove)
         if action == "open":
             features.set_wizard_state(wizard="pending")
             return {"ok": True}
@@ -131,4 +132,27 @@ class FeaturesPanel:
 
             r = system.action("restart" if read_state().get("running") else "start", {})
             lines.append("core: starting" if r.get("ok") else f"core: {r.get('error')}")
+        return lines
+
+    def _turn_off(self, ids: list[str]) -> list[str]:
+        """Before removing: switch voice and the phone off, take the core out of autostart and stop it."""
+        from alice.config import set_config_value
+        from alice.core.service import read_state
+
+        lines: list[str] = []
+        for section in ("voice", "phone"):
+            if section in ids:
+                self.cfg.data.setdefault(section, {})["enabled"] = False
+                set_config_value(section, "enabled", False)
+                lines.append(f"{section}: off")
+        system = self.state.system
+        if "core" in ids:
+            system.action("autostart", {"on": False})
+            lines.append("core: no longer starts at sign-in")
+            if read_state().get("running"):
+                r = system.action("stop", {})
+                lines.append("core: stopping" if r.get("ok") else f"core: {r.get('error')}")
+        elif {"voice", "phone"} & set(ids) and read_state().get("running"):
+            r = system.action("restart", {})  # voice and the phone live in the core
+            lines.append("core: restarting" if r.get("ok") else f"core: {r.get('error')}")
         return lines

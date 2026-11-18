@@ -26,11 +26,14 @@ const WZ_T = {
     featText: "Everything here is optional. You can add or remove features later in Settings.",
     autostart: "Start the background core when I sign in",
     installed: "Installed",
+    willRemove: "will be removed",
+    removing: "Remove",
+    apply: "Apply changes",
     recommended: "Recommended",
     needs: "needs",
     install: "Install",
     total: "Download",
-    installing: "Installing…",
+    installing: "Applying changes…",
     installDone: "All set",
     installErr: "Something went wrong",
     retry: "Try again",
@@ -68,11 +71,14 @@ const WZ_T = {
     featText: "Hepsi isteğe bağlı. Sonradan Ayarlar'dan ekleyip çıkarabilirsin.",
     autostart: "Oturum açınca arka plan çekirdeği başlasın",
     installed: "Kurulu",
+    willRemove: "kaldırılacak",
+    removing: "Kaldırılacak",
+    apply: "Değişiklikleri uygula",
     recommended: "Önerilen",
     needs: "gerekir:",
     install: "Kur",
     total: "İndirme",
-    installing: "Kuruluyor…",
+    installing: "Değişiklikler uygulanıyor…",
     installDone: "Hazır",
     installErr: "Bir şeyler ters gitti",
     retry: "Tekrar dene",
@@ -97,7 +103,7 @@ async function wzLoad() {
   WZ.data = await api("/api/features");
   if (WZ.data && WZ.data.wizard) WZ.lang = WZ.data.wizard.lang || "en";
   if (!WZ.picked && WZ.data && WZ.data.features) {
-    WZ.picked = new Set(WZ.data.features.filter((f) => f.recommended && !f.installed).map((f) => f.id));
+    WZ.picked = new Set(WZ.data.features.filter((f) => f.installed || f.recommended).map((f) => f.id));
   }
   return WZ.data;
 }
@@ -108,8 +114,8 @@ async function maybeWizard() {
   if (d && d.wizard && d.wizard.pending) openWizard();
 }
 
-function openWizard(step) {
-  WZ.mode = "wizard";
+function openWizard(step, mode) {
+  WZ.mode = mode || "wizard";
   WZ.step = step || 0;
   let box = $("#wizard");
   if (!box) {
@@ -283,37 +289,46 @@ function wzFeatureCards(onChange) {
   const list = el("div", "wz-feats");
   const byId = Object.fromEntries((d.features || []).map((f) => [f.id, f]));
   for (const f of d.features || []) {
-    const card = el("label", "wz-feat" + (f.installed ? " installed" : ""));
+    const on = WZ.picked.has(f.id);
+    const change = on !== f.installed;
+    const card = el("label", "wz-feat" + (change ? (on ? " adding" : " removing") : ""));
     const cb = el("input");
     cb.type = "checkbox";
-    cb.checked = f.installed || WZ.picked.has(f.id);
-    cb.disabled = f.installed;
+    cb.checked = on;
     cb.addEventListener("change", () => {
       if (cb.checked) {
         WZ.picked.add(f.id);
-        for (const n of f.needs || []) if (byId[n] && !byId[n].installed) WZ.picked.add(n);
+        for (const n of f.needs || []) if (byId[n]) WZ.picked.add(n);
       } else {
         WZ.picked.delete(f.id);
-        for (const o of d.features) if ((o.needs || []).includes(f.id)) WZ.picked.delete(o.id);
+        // Nothing can stay on without what it builds on (no voice means no offline speech).
+        let again = true;
+        while (again) {
+          again = false;
+          for (const o of d.features) {
+            if (WZ.picked.has(o.id) && (o.needs || []).some((n) => !WZ.picked.has(n))) { WZ.picked.delete(o.id); again = true; }
+          }
+        }
       }
       onChange();
     });
     const txt = el("div", "wz-feat-txt");
     const title = el("b", "", f.title);
-    if (f.recommended && !f.installed) title.appendChild(el("span", "wz-badge", wt("recommended")));
+    if (f.recommended && !f.installed && !change) title.appendChild(el("span", "wz-badge", wt("recommended")));
     txt.append(title, el("small", "", f.text));
     if ((f.needs || []).length) {
       txt.appendChild(el("small", "wz-needs", `${wt("needs")} ${f.needs.map((n) => (byId[n] || {}).title || n).join(", ")}`));
     }
-    const side = el("span", "wz-size", f.installed ? "✓ " + wt("installed") : `~${f.size_mb} MB`);
+    const side = el("span", "wz-size", change ? (on ? `+ ~${f.size_mb} MB` : wt("willRemove"))
+      : f.installed ? "✓ " + wt("installed") : `~${f.size_mb} MB`);
     card.append(cb, txt, side);
     list.appendChild(card);
     if (f.id === "core" && !f.installed) {
-      const auto = el("label", "wz-sub" + (WZ.picked.has("core") ? "" : " off"));
+      const auto = el("label", "wz-sub" + (on ? "" : " off"));
       const acb = el("input");
       acb.type = "checkbox";
       acb.checked = WZ.autostart;
-      acb.disabled = !WZ.picked.has("core");
+      acb.disabled = !on;
       acb.addEventListener("change", () => { WZ.autostart = acb.checked; });
       auto.append(acb, el("span", "", wt("autostart")));
       list.appendChild(auto);
@@ -322,9 +337,12 @@ function wzFeatureCards(onChange) {
   return list;
 }
 
-function wzPickedSize() {
-  const d = WZ.data || {};
-  return (d.features || []).filter((f) => WZ.picked.has(f.id) && !f.installed).reduce((s, f) => s + f.size_mb, 0);
+function wzChanges() {
+  const fs = (WZ.data || {}).features || [];
+  return {
+    add: fs.filter((f) => WZ.picked.has(f.id) && !f.installed),
+    remove: fs.filter((f) => !WZ.picked.has(f.id) && f.installed),
+  };
 }
 
 function wzFeatures() {
@@ -332,12 +350,19 @@ function wzFeatures() {
   const total = el("small", "wz-total");
   const draw = () => {
     wrap.replaceChildren(wzFeatureCards(draw));
-    const mb = wzPickedSize();
-    total.textContent = mb ? `${wt("total")}: ~${mb >= 1000 ? (mb / 1000).toFixed(1) + " GB" : mb + " MB"}` : "";
-    installBtn.disabled = !mb;
+    const { add, remove } = wzChanges();
+    const mb = add.reduce((s, f) => s + f.size_mb, 0);
+    const parts = [];
+    if (mb) parts.push(`${wt("total")}: ~${mb >= 1000 ? (mb / 1000).toFixed(1) + " GB" : mb + " MB"}`);
+    if (remove.length) parts.push(`${wt("removing")}: ${remove.map((f) => f.title).join(", ")}`);
+    total.textContent = parts.join(" · ");
+    applyBtn.textContent = remove.length ? wt("apply") : wt("install");
+    applyBtn.disabled = !add.length && !remove.length;
   };
-  const installBtn = wzBtn(wt("install"), async () => {
-    const r = await api("/api/features/action", { action: "install", ids: [...WZ.picked], autostart: WZ.autostart });
+  const applyBtn = wzBtn(wt("install"), async () => {
+    const { add, remove } = wzChanges();
+    const r = await api("/api/features/action", { action: "apply", ids: add.map((f) => f.id),
+      remove: remove.map((f) => f.id), autostart: WZ.autostart });
     if (r.ok) { WZ.step = 3; wzDraw(); } else toast(r.error || wt("installErr"));
   }, true);
   draw();
@@ -347,7 +372,7 @@ function wzFeatures() {
     total,
     el("span", "grow"),
     settings ? null : wzBtn(wt("skip"), () => { WZ.step = 4; wzDraw(); }),
-    installBtn,
+    applyBtn,
   ], settings ? 0 : 2);
 }
 
@@ -412,6 +437,6 @@ function wzDone() {
 async function openFeatures() {
   await wzLoad();
   WZ.mode = "settings";
-  WZ.picked = new Set();
-  openWizard(2);
+  WZ.picked = new Set(((WZ.data || {}).features || []).filter((f) => f.installed).map((f) => f.id));
+  openWizard(2, "settings");
 }

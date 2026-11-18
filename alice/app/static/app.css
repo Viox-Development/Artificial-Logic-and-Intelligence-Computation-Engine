@@ -2240,3 +2240,7 @@ details > summary::marker { color: var(--faint); }
 .tl-row .tl-x { white-space: pre-wrap; word-break: break-word; }
 .task-done { margin-top: var(--s4); color: var(--muted); }
 @media (max-width: 760px) { .task-perm { grid-template-columns: 1fr; } .tl-row { grid-template-columns: 44px 1fr; } .tl-row .tl-k { display: none; } }
+.wz-feat.removing { border-color: var(--err); border-style: dashed; }
+.wz-feat.removing .wz-size { color: var(--err); }
+.wz-feat.adding .wz-size { color: var(--accent); }
+.wz-card .btn:disabled { opacity: .45; cursor: default; filter: none; }

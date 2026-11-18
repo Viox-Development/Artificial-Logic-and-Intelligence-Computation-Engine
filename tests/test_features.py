@@ -59,7 +59,7 @@ def _installer(monkeypatch, ok=True, have=()):
 
 def test_installer_runs_pip_once_then_turns_features_on(monkeypatch):
     inst, calls, turned_on = _installer(monkeypatch)
-    assert inst.start(["phone"], {"autostart": False}) == {"ok": True, "ids": ["core", "phone"]}
+    assert inst.start(["phone"], {"autostart": False}) == {"ok": True, "ids": ["core", "phone"], "remove": []}
     inst._thread.join(5)
     v = inst.view()
     assert v["state"] == "done" and v["done"] == ["core", "phone"], v
@@ -153,3 +153,43 @@ def test_phone_counts_as_installed_only_when_switched_on(monkeypatch):
     assert features.installed(phone) and not features.installed(phone, cfg)
     cfg.data.setdefault("phone", {})["enabled"] = True
     assert features.installed(phone, cfg)
+
+
+def test_with_dependents_removes_what_builds_on_a_feature():
+    assert features.with_dependents(["voice"]) == ["voice", "voice_local"]
+    assert features.with_dependents(["core"]) == ["core", "phone"]
+    assert features.with_dependents(["browser", "nope"]) == ["browser"]
+
+
+def test_apply_turns_off_switches_and_uninstalls_packages(monkeypatch):
+    inst, calls, turned_on = _installer(monkeypatch, have={"voice", "voice_local", "computer"})
+    off = []
+    inst.turn_off = lambda ids: off.append(list(ids)) or ["voice: off"]
+    assert inst.start(["browser"], {}, remove=["voice"]) == {"ok": True, "ids": ["browser"],
+                                                             "remove": ["voice", "voice_local"]}
+    inst._thread.join(5)
+    v = inst.view()
+    assert v["state"] == "done" and v["removed"] == ["voice", "voice_local"], v
+    assert off == [["voice", "voice_local"]]
+    uninstall = calls[0]
+    assert uninstall[1:5] == ["-m", "pip", "uninstall", "-y"] and "faster-whisper" in uninstall
+    assert "sounddevice" not in uninstall  # voice is only switched off, its packages stay
+    assert calls[1][-1].endswith("[browser]")
+
+
+def test_remove_only_needs_no_install(monkeypatch):
+    inst, calls, _ = _installer(monkeypatch, have={"computer"})
+    assert inst.start([], {}, remove=["computer"])["ok"]
+    inst._thread.join(5)
+    assert inst.view()["state"] == "done" and len(calls) == 1 and "pyautogui" in calls[0]
+
+
+def test_turn_off_stops_core_and_switches(monkeypatch):
+    p, state = _panel(monkeypatch)
+    monkeypatch.setattr("alice.core.service.read_state", lambda: {"running": True})
+    p.cfg.data.setdefault("voice", {})["enabled"] = True
+    p._turn_off(["voice"])
+    assert p.cfg.data["voice"]["enabled"] is False and [a for a, _ in state.system.calls] == ["restart"]
+    state.system.calls.clear()
+    p._turn_off(["core", "phone"])
+    assert [(a, d) for a, d in state.system.calls] == [("autostart", {"on": False}), ("stop", {})]

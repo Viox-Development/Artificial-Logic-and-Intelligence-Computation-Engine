@@ -36,33 +36,37 @@ class Feature:
     windows_only: bool = False
     recommended: bool = False
     flag: tuple[str, str] | None = None  # config switch that must also be on, e.g. ("phone", "enabled")
+    # Removing: a feature with a switch is just turned off; one without has these pip packages uninstalled.
+    packages: tuple[str, ...] = ()
 
 
 FEATURES: tuple[Feature, ...] = (
     Feature("voice", ("voice",), ("sounddevice", "edge_tts", "webrtcvad", "pynput"), 60,
             {"en": "Voice", "tr": "Ses"},
             {"en": "Talk to ALICE: \"Hey Alice\", push-to-talk and spoken replies.",
-             "tr": "ALICE ile konuş: \"Hey Alice\", bas-konuş ve sesli cevaplar."}, recommended=True),
+             "tr": "ALICE ile konuş: \"Hey Alice\", bas-konuş ve sesli cevaplar."}, recommended=True,
+            flag=("voice", "enabled")),
     Feature("voice_local", ("voice-local",), ("faster_whisper",), 350,
             {"en": "Offline speech recognition", "tr": "Çevrimdışı konuşma tanıma"},
             {"en": "Hears \"Hey Alice\" on this PC instead of the cloud, and keeps working when cloud quota runs out.",
              "tr": "\"Hey Alice\"i buluta göndermeden bu bilgisayarda duyar; bulut kotası bitince de çalışır."},
-            needs=("voice",)),
+            needs=("voice",), packages=("faster-whisper", "openwakeword")),
     Feature("computer", ("computer",), ("mss", "pyautogui"), 40,
             {"en": "Computer control", "tr": "Bilgisayar kontrolü"},
             {"en": "Screenshots, mouse and keyboard, app windows. Also needed for the game and flight coach.",
              "tr": "Ekran görüntüsü, fare ve klavye, uygulama pencereleri. Oyun ve uçuş koçu için de gerekir."},
-            recommended=True),
+            recommended=True, packages=("mss", "pyautogui", "pyperclip", "pygetwindow", "pywinauto")),
     Feature("browser", ("browser",), ("playwright",), 60,
             {"en": "Browser automation", "tr": "Tarayıcı otomasyonu"},
             {"en": "ALICE opens pages, fills forms and reads sites in its own browser window.",
-             "tr": "ALICE kendi tarayıcı penceresinde sayfa açar, form doldurur, siteleri okur."}, recommended=True),
+             "tr": "ALICE kendi tarayıcı penceresinde sayfa açar, form doldurur, siteleri okur."}, recommended=True,
+            packages=("playwright",)),
     Feature("core", ("core",), ("pystray",), 5,
             {"en": "Background core", "tr": "Arka plan çekirdeği"},
             {"en": "Runs in the tray: notifications, scheduled tasks, \"Hey Alice\" and system warnings, "
                    "starting when you sign in.",
              "tr": "Tepside çalışır: bildirimler, zamanlanmış görevler, \"Hey Alice\" ve sistem uyarıları; "
-                   "oturum açınca başlar."}, recommended=True),
+                   "oturum açınca başlar."}, recommended=True, flag=("core", "autostart")),
     Feature("phone", ("home",), ("websockets",), 5,
             {"en": "Phone app", "tr": "Telefon uygulaması"},
             {"en": "Chat, notifications and remote control from your Android phone on the same Wi-Fi.",
@@ -72,12 +76,21 @@ FEATURES: tuple[Feature, ...] = (
 BY_ID = {f.id: f for f in FEATURES}
 
 
+def _switch_on(flag: tuple[str, str], cfg: Any) -> bool:
+    if flag == ("core", "autostart"):  # the core has no config switch: on when it starts at sign-in or is running
+        from alice.core import service
+
+        return service.autostart_path().exists() or bool(service.read_state().get("running"))
+    return bool(cfg.data.get(flag[0], {}).get(flag[1]))
+
+
 def installed(f: Feature, cfg: Any = None) -> bool:
-    """Packages importable and, when given a config, the feature's switch on (the phone shares voice's packages)."""
+    """Packages importable and, when given a config, the feature's switch on (voice and the phone are off until
+    turned on, and the phone shares voice's packages)."""
     if not all(importlib.util.find_spec(m) is not None for m in f.modules):
         return False
     if cfg is not None and f.flag is not None:
-        return bool(cfg.data.get(f.flag[0], {}).get(f.flag[1]))
+        return _switch_on(f.flag, cfg)
     return True
 
 
@@ -148,6 +161,19 @@ def with_needs(ids: list[str]) -> list[str]:
     return [f.id for f in FEATURES if f.id in want]
 
 
+def with_dependents(ids: list[str]) -> list[str]:
+    """Features to remove: the picked ones plus everything built on them (no voice means no offline speech)."""
+    out = set(i for i in ids if i in BY_ID)
+    changed = True
+    while changed:
+        changed = False
+        for f in FEATURES:
+            if f.id not in out and any(n in out for n in f.needs):
+                out.add(f.id)
+                changed = True
+    return [f.id for f in FEATURES if f.id in out]
+
+
 Runner = Callable[[list[str], Callable[[str], None]], int]
 
 
@@ -157,9 +183,10 @@ def run_streaming(cmd: list[str], say: Callable[[str], None]) -> int:
                          errors="replace", creationflags=flags)
     assert p.stdout is not None
     for line in p.stdout:
-        line = line.rstrip()
+        line = line.strip()
         # pip prints a lot; keep the lines that say what is happening.
-        if line.startswith(("Collecting", "Downloading", "Installing", "Successfully", "ERROR", "error")):
+        if line.startswith(("Collecting", "Downloading", "Installing", "Successfully", "Uninstalling", "ERROR",
+                            "error")):
             say(line[:200])
     return p.wait()
 
@@ -168,8 +195,9 @@ class Installer:
     """One background install at a time; the app polls view()."""
 
     def __init__(self, runner: Runner = run_streaming,
-                 after: Callable[[list[str], dict[str, Any]], list[str]] | None = None):
-        self.runner, self.after = runner, after
+                 after: Callable[[list[str], dict[str, Any]], list[str]] | None = None,
+                 turn_off: Callable[[list[str]], list[str]] | None = None):
+        self.runner, self.after, self.turn_off = runner, after, turn_off
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.s: dict[str, Any] = {"state": "idle", "lines": [], "ids": [], "done": [], "error": ""}
@@ -182,20 +210,30 @@ class Installer:
         with self._lock:
             self.s["lines"].append(line)
 
-    def start(self, ids: list[str], opts: dict[str, Any] | None = None) -> dict[str, Any]:
-        ids = with_needs(ids)
-        if not ids:
+    def start(self, ids: list[str], opts: dict[str, Any] | None = None,
+              remove: list[str] | None = None) -> dict[str, Any]:
+        remove = with_dependents(remove or [])
+        ids = [i for i in with_needs(ids) if i not in remove]
+        if not ids and not remove:
             return {"ok": False, "error": "no feature picked"}
         if self._thread is not None and self._thread.is_alive():
             return {"ok": False, "error": "an install is already running"}
         with self._lock:
-            self.s = {"state": "running", "lines": [], "ids": ids, "done": [], "error": "", "started": time.time()}
-        self._thread = threading.Thread(target=self._run, args=(ids, opts or {}), daemon=True, name="alice-features")
+            self.s = {"state": "running", "lines": [], "ids": ids, "remove": remove, "done": [], "removed": [],
+                      "error": "", "started": time.time()}
+        self._thread = threading.Thread(target=self._run, args=(ids, opts or {}, remove), daemon=True,
+                                        name="alice-features")
         self._thread.start()
-        return {"ok": True, "ids": ids}
+        return {"ok": True, "ids": ids, "remove": remove}
 
-    def _run(self, ids: list[str], opts: dict[str, Any]) -> None:
+    def _run(self, ids: list[str], opts: dict[str, Any], remove: list[str] | None = None) -> None:
         try:
+            if remove:
+                self._remove(remove)
+            if not ids:
+                with self._lock:
+                    self.s.update(state="done")
+                return
             todo = [BY_ID[i] for i in ids if not installed(BY_ID[i])]
             extras = [e for f in todo for e in f.extras]
             if extras:
@@ -220,6 +258,20 @@ class Installer:
         except Exception as e:  # noqa: BLE001 - shown in the app
             with self._lock:
                 self.s.update(state="error", error=str(e) or type(e).__name__)
+
+    def _remove(self, remove: list[str]) -> None:
+        """Turn off the switches (voice, phone, core autostart), then uninstall the packages of the others."""
+        if self.turn_off is not None:
+            for line in self.turn_off(remove):
+                self._say(line)
+        pkgs = [p for i in remove for p in BY_ID[i].packages]
+        if pkgs:
+            self._say("pip uninstall " + ", ".join(pkgs))
+            if self.runner([_python(), "-m", "pip", "uninstall", "-y", *pkgs], self._say) != 0:
+                raise RuntimeError("pip uninstall failed (a file may be in use: close ALICE's other windows and retry)")
+            importlib.invalidate_caches()
+        with self._lock:
+            self.s["removed"] = list(remove)
 
 
 def catalog(lang: str = "en", cfg: Any = None) -> list[dict[str, Any]]:
