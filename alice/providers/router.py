@@ -508,6 +508,14 @@ class Router:
         for name, pc in self.providers_cfg.items():
             if not pc.auto and pc.enabled and pc.models:  # paid, manually chosen (Claude API): shown in the menu
                 refs.update(f"{name}:{m}" for m in pc.models)
+        gm = self.providers_cfg.get("gemini")
+        if gm is not None and gm.enabled and getattr(self, "_real_clients", False):
+            try:  # Gemini API'nin canlı kataloğu: menü ölçüm önbelleğine bağlı kalmasın, yeni modeller de görünsün
+                from alice.providers.discovery import _generic
+
+                refs.update(f.ref for f in _generic("gemini", self.client("gemini").list_models()))
+            except Exception:  # noqa: BLE001 - katalog okunamazsa menü önbellekteki modellerle devam eder
+                pass
         cp = self.providers_cfg.get("cliproxy")
         if cp is not None and cp.enabled and getattr(self, "_real_clients", False):
             try:  # real model list of the accounts connected to the proxy (Kimi, Antigravity, new accounts)

@@ -259,6 +259,20 @@ def test_catalog_view_groups_tested_models_by_provider():
     assert view["b"]["models"][0]["tested"] and not view["a"]["models"][1]["tested"]
 
 
+def test_catalog_view_lists_live_gemini_catalog():
+    """The Gemini menu must not stay frozen on measured models: the live API catalog shows new models too."""
+    cfg = make_config({"brain": ["gemini:gemini-2.5-pro"]}, auto_models=False,
+                      providers={"gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                                            "api_key_env": ""}})
+    g = FakeProvider("gemini", [])
+    g.list_models = lambda: [{"id": "models/gemini-2.5-pro"}, {"id": "models/gemini-4-hydrogen"},
+                             {"id": "models/gemini-embedding-001"}]
+    r = router_with(cfg, {"gemini": g})
+    r._real_clients = True
+    view = {p["name"]: p for p in r.catalog_view()}
+    assert {m["ref"] for m in view["gemini"]["models"]} == {"gemini:gemini-2.5-pro", "gemini:gemini-4-hydrogen"}
+
+
 def test_catalog_view_explains_provider_with_no_working_model():
     """If a server added from the UI has no model answering, the card must not stay empty:
     the provider's error must show."""
