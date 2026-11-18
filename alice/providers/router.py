@@ -503,32 +503,66 @@ class Router:
     CATALOG_TTL = 600.0  # canlı katalog önbelleği: menü her açılışta sağlayıcılara gidilmesin
     CATALOG_TIMEOUT = 8.0  # takılan bir sağlayıcı menüyü dakikalarca tutmasın
 
-    def _catalog_refs(self, name: str) -> set[str]:
-        """Sağlayıcının sohbet modelleri, kısa süre önbellekten. Katalog okunamazsa boş küme: menü ölçülmüş
-        modellerle açılır, hata günlüğe düşer."""
+    def _fetch_catalog(self, name: str) -> list[dict[str, Any]]:
+        """Katalog okuması paylaşılan sohbet istemcisinde değil, kısa zaman aşımı olan tek kullanımlık istemcide
+        yapılır: zaman aşımına düşünce istek gerçekten kesilir, arkada sürüklenip sohbet istemcisini meşgul etmez.
+        Sağlayıcının kendi API biçimi kullanılır (Anthropic gibi OpenAI uyumlu olmayanlar dahil)."""
+        from alice.providers.openai_compat import OpenAICompatProvider
+
+        pc = self.providers_cfg[name]
+        if pc.kind == "anthropic":
+            from alice.providers.anthropic_api import AnthropicProvider
+
+            client = AnthropicProvider(pc, timeout=self.CATALOG_TIMEOUT)
+        else:
+            client = OpenAICompatProvider(pc, timeout=self.CATALOG_TIMEOUT)
+        try:
+            return client.list_models()
+        finally:
+            close = getattr(client, "close", None)
+            if close:
+                close()
+
+    def _catalog_refs(self, names: list[str]) -> set[str]:
+        """Sağlayıcıların sohbet modelleri, kısa süre önbellekten. Eksik olanlar paralel okunur; biri okunamazsa
+        menü onun ölçülmüş modelleriyle açılır, hata günlüğe düşer ve sonraki açılışta yeniden denenir."""
         import concurrent.futures
 
         from alice.providers.discovery import _generic, _openrouter
 
         now = time.monotonic()
-        hit = self._catalog_cache.get(name)
-        if hit and now - hit[0] < self.CATALOG_TTL:
-            return set(hit[1])
+        refs: set[str] = set()
+        missing = []
+        for name in names:
+            hit = self._catalog_cache.get(name)
+            if hit and now - hit[0] < self.CATALOG_TTL:
+                refs.update(hit[1])
+            else:
+                missing.append(name)
+        if not missing:
+            return refs
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(missing))
+        futs = {pool.submit(self._fetch_catalog, name): name for name in missing}
         try:
-            client = self.client(name)
-            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            done, not_done = concurrent.futures.wait(futs, timeout=self.CATALOG_TIMEOUT + 2)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        for fut in not_done:
+            name = futs[fut]
+            self._log(f"katalog okunamadı ({name}): zaman aşımı")
+        for fut in done:
+            name = futs[fut]
             try:
-                models = pool.submit(client.list_models).result(timeout=self.CATALOG_TIMEOUT)
-            finally:
-                pool.shutdown(wait=False, cancel_futures=True)
-        except Exception as e:  # noqa: BLE001 - timeout dahil: katalog okunamazsa menü önbellekteki modellerle devam eder
-            self._log(f"katalog okunamadı ({name}): {e}")
-            return set()
-        found = _openrouter(models) if name == "openrouter" else _generic(name, models)
-        if name == "openrouter":
-            found = [f for f in found if ranking.quality(f.ref)]
-        refs = {f.ref for f in found}
-        self._catalog_cache[name] = (now, refs)
+                models = fut.result()
+            except Exception as e:  # noqa: BLE001 - katalog okunamazsa menü ölçülmüş modellerle devam eder
+                self._log(f"katalog okunamadı ({name}): {e}")
+                continue
+            found = _openrouter(models) if name == "openrouter" else _generic(name, models)
+            if name == "openrouter":
+                found = [f for f in found if ranking.quality(f.ref)]
+            got = {f.ref for f in found}
+            self._catalog_cache[name] = (now, got)
+            refs.update(got)
         return refs
 
     def catalog_view(self) -> list[dict[str, Any]]:  # noqa: C901
@@ -545,10 +579,10 @@ class Router:
             # API'ye sonradan eklenen modeller de görünsün. Sonuçlar kısa süre önbellekte tutulur, menü her açılışta
             # ağa çıkmaz. OpenRouter'ın yüzlerce modeli menüyü boğmasın diye onun kataloğu sadece ücretsiz ve
             # zekâsı bilinen (QUALITY tablosu ya da LMArena) modellerle sınırlı.
-            for name, pc in self.providers_cfg.items():
-                if not pc.enabled or getattr(pc, "models", None) or name in ("ollama", "cliproxy", "chatgpt"):
-                    continue
-                refs.update(self._catalog_refs(name))
+            names = [name for name, pc in self.providers_cfg.items()
+                     if pc.enabled and not getattr(pc, "models", None)
+                     and name not in ("ollama", "cliproxy", "chatgpt")]
+            refs.update(self._catalog_refs(names))
         cp = self.providers_cfg.get("cliproxy")
         if cp is not None and cp.enabled and getattr(self, "_real_clients", False):
             try:  # real model list of the accounts connected to the proxy (Kimi, Antigravity, new accounts)
