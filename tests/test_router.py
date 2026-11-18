@@ -259,18 +259,33 @@ def test_catalog_view_groups_tested_models_by_provider():
     assert view["b"]["models"][0]["tested"] and not view["a"]["models"][1]["tested"]
 
 
-def test_catalog_view_lists_live_gemini_catalog():
-    """The Gemini menu must not stay frozen on measured models: the live API catalog shows new models too."""
+def test_catalog_view_lists_live_provider_catalogs():
+    """The menu must not stay frozen on measured models: every provider's live catalog shows new models too.
+    Embed/tts style non-chat models are still filtered out, and OpenRouter only contributes its known families."""
     cfg = make_config({"brain": ["gemini:gemini-2.5-pro"]}, auto_models=False,
                       providers={"gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                                            "api_key_env": ""}})
-    g = FakeProvider("gemini", [])
-    g.list_models = lambda: [{"id": "models/gemini-2.5-pro"}, {"id": "models/gemini-4-hydrogen"},
-                             {"id": "models/gemini-embedding-001"}]
-    r = router_with(cfg, {"gemini": g})
+                                            "api_key_env": ""},
+                                 "groq": {"base_url": "https://api.groq.com/openai/v1", "api_key_env": ""},
+                                 "openrouter": {"base_url": "https://openrouter.ai/api/v1", "api_key_env": ""},
+                                 "zai": {"base_url": "https://api.z.ai/api/paas/v4", "api_key_env": "",
+                                         "models": ["glm-4.7-flash"]}})
+    gemini = FakeProvider("gemini", [])
+    gemini.list_models = lambda: [{"id": "models/gemini-2.5-pro"}, {"id": "models/gemini-4-hydrogen"},
+                                  {"id": "models/gemini-embedding-001"}]
+    groq = FakeProvider("groq", [])
+    groq.list_models = lambda: [{"id": "brand-new-model"}, {"id": "whisper-large"}]
+    openrouter = FakeProvider("openrouter", [])
+    openrouter.list_models = lambda: [
+        {"id": "deepseek/deepseek-r1:free", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "some-vendor/mystery:free", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "openai/gpt-5", "pricing": {"prompt": "1", "completion": "1"}}]
+    r = router_with(cfg, {"gemini": gemini, "groq": groq, "openrouter": openrouter, "zai": FakeProvider("zai", [])})
     r._real_clients = True
     view = {p["name"]: p for p in r.catalog_view()}
     assert {m["ref"] for m in view["gemini"]["models"]} == {"gemini:gemini-2.5-pro", "gemini:gemini-4-hydrogen"}
+    assert {m["ref"] for m in view["groq"]["models"]} == {"groq:brand-new-model"}
+    assert {m["ref"] for m in view["openrouter"]["models"]} == {"openrouter:deepseek/deepseek-r1:free"}
+    assert view["zai"]["models"] == []  # a fixed model list means the live catalog is not asked
 
 
 def test_catalog_view_explains_provider_with_no_working_model():
