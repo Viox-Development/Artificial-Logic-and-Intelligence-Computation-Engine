@@ -295,7 +295,7 @@ class Router:
         self._subscription_models: list[str] | None = None  # used in tests instead of the proxy's model list
         self._probe_checked = False
         self._clients: dict[str, Any] = {}
-        self._catalog_cache: dict[str, tuple[float, set[str]]] = {}  # sağlayıcı -> (zaman, sohbet modeli ref'leri)
+        self._catalog_cache: dict[str, tuple[float, set[str]]] = {}  # provider -> (time, chat model refs)
         self.cooldown_until: dict[str, float] = {}
         self.cooldown_kind: dict[str, str] = {}
         self.dead_models: set[str] = set()
@@ -500,13 +500,13 @@ class Router:
         self.config.data.setdefault("agent", {})["hidden_models"] = cur
         return cur
 
-    CATALOG_TTL = 600.0  # canlı katalog önbelleği: menü her açılışta sağlayıcılara gidilmesin
-    CATALOG_TIMEOUT = 8.0  # takılan bir sağlayıcı menüyü dakikalarca tutmasın
+    CATALOG_TTL = 600.0  # live catalog cache: opening the menu must not hit every provider
+    CATALOG_TIMEOUT = 8.0  # a stuck provider must not hold the menu for minutes
 
     def _fetch_catalog(self, name: str) -> list[dict[str, Any]]:
-        """Katalog okuması paylaşılan sohbet istemcisinde değil, kısa zaman aşımı olan tek kullanımlık istemcide
-        yapılır: zaman aşımına düşünce istek gerçekten kesilir, arkada sürüklenip sohbet istemcisini meşgul etmez.
-        Sağlayıcının kendi API biçimi kullanılır (Anthropic gibi OpenAI uyumlu olmayanlar dahil)."""
+        """The catalog is read on a throwaway client with a short timeout, not on the shared chat client: on a
+        timeout the request is really cut off instead of trailing behind and keeping the chat client busy. The
+        provider's own API style is used (including ones that are not OpenAI-compatible, like Anthropic)."""
         from alice.providers.openai_compat import OpenAICompatProvider
 
         pc = self.providers_cfg[name]
@@ -524,8 +524,8 @@ class Router:
                 close()
 
     def _catalog_refs(self, names: list[str]) -> set[str]:
-        """Sağlayıcıların sohbet modelleri, kısa süre önbellekten. Eksik olanlar paralel okunur; biri okunamazsa
-        menü onun ölçülmüş modelleriyle açılır, hata günlüğe düşer ve sonraki açılışta yeniden denenir."""
+        """The providers' chat models, briefly from cache. Missing ones are read in parallel; if one cannot be
+        read the menu opens with its measured models, the error goes to the log and the next open retries."""
         import concurrent.futures
 
         from alice.providers.discovery import _generic, _openrouter
@@ -549,13 +549,13 @@ class Router:
             pool.shutdown(wait=False, cancel_futures=True)
         for fut in not_done:
             name = futs[fut]
-            self._log(f"katalog okunamadı ({name}): zaman aşımı")
+            self._log(f"catalog unreadable ({name}): timeout")
         for fut in done:
             name = futs[fut]
             try:
                 models = fut.result()
-            except Exception as e:  # noqa: BLE001 - katalog okunamazsa menü ölçülmüş modellerle devam eder
-                self._log(f"katalog okunamadı ({name}): {e}")
+            except Exception as e:  # noqa: BLE001 - an unreadable catalog leaves the menu on the measured models
+                self._log(f"catalog unreadable ({name}): {e}")
                 continue
             found = _openrouter(models) if name == "openrouter" else _generic(name, models)
             if name == "openrouter":
@@ -575,10 +575,11 @@ class Router:
             if not pc.auto and pc.enabled and pc.models:  # paid, manually chosen (Claude API): shown in the menu
                 refs.update(f"{name}:{m}" for m in pc.models)
         if getattr(self, "_real_clients", False):
-            # Sabit model listesi yazılmamış her sağlayıcının canlı kataloğu: menü ölçüm önbelleğine bağlı kalmasın,
-            # API'ye sonradan eklenen modeller de görünsün. Sonuçlar kısa süre önbellekte tutulur, menü her açılışta
-            # ağa çıkmaz. OpenRouter'ın yüzlerce modeli menüyü boğmasın diye onun kataloğu sadece ücretsiz ve
-            # zekâsı bilinen (QUALITY tablosu ya da LMArena) modellerle sınırlı.
+            # Every provider without a fixed model list contributes its live catalog: the menu must not stay tied
+            # to the measurement cache, and models added to the API later must show up too. The results are cached
+            # for a while so the menu does not go to the network on every open. OpenRouter's hundreds of models
+            # would drown the menu, so its catalog is limited to free models with a known score (QUALITY table or
+            # LMArena).
             names = [name for name, pc in self.providers_cfg.items()
                      if pc.enabled and not getattr(pc, "models", None)
                      and name not in ("ollama", "cliproxy", "chatgpt")]

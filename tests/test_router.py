@@ -304,22 +304,22 @@ def test_catalog_view_fetches_catalogs_in_parallel(monkeypatch):
 
     def slow(self, name):
         _time.sleep(0.3)
-        return [{"id": "yeni-model"}]
+        return [{"id": "new-model"}]
 
     monkeypatch.setattr(Router, "_fetch_catalog", slow)
     r = router_with(cfg, {n: FakeProvider(n, []) for n in "abc"})
     r._real_clients = True
     t0 = _time.monotonic()
     view = {p["name"]: p for p in r.catalog_view()}
-    assert _time.monotonic() - t0 < 0.6  # sırayla olsaydı 0.9 sn sürerdi
-    assert all(f"{n}:yeni-model" in {m["ref"] for m in view[n]["models"]} for n in "abc")
+    assert _time.monotonic() - t0 < 0.6  # serially this would take 0.9 s
+    assert all(f"{n}:new-model" in {m["ref"] for m in view[n]["models"]} for n in "abc")
 
 
 def test_catalog_view_survives_unreadable_catalog(monkeypatch):
     """A provider whose catalog cannot be read (timeout, auth) must not break the menu: it opens with the
     measured models and the failure is logged instead of swallowed silently. The failure is not cached,
     so the catalog is tried again on the next open."""
-    cfg = make_config({"brain": ["groq:eski"]}, auto_models=False,
+    cfg = make_config({"brain": ["groq:old"]}, auto_models=False,
                       providers={"groq": {"base_url": "https://api.groq.com/openai/v1", "api_key_env": ""}})
     logs = []
 
@@ -327,17 +327,17 @@ def test_catalog_view_survives_unreadable_catalog(monkeypatch):
         raise TimeoutError("timed out")
 
     monkeypatch.setattr(Router, "_fetch_catalog", fail)
-    cache = {"results": {"groq:eski": {"ok": True, "quality": 60}}}
+    cache = {"results": {"groq:old": {"ok": True, "quality": 60}}}
     r = router_with(cfg, {"groq": FakeProvider("groq", [])}, auto_cache=cache)
     r._log = logs.append
     r._real_clients = True
     view = {p["name"]: p for p in r.catalog_view()}
-    assert {m["ref"] for m in view["groq"]["models"]} == {"groq:eski"}
-    assert any("katalog okunamadı" in x for x in logs)
+    assert {m["ref"] for m in view["groq"]["models"]} == {"groq:old"}
+    assert any("catalog unreadable" in x for x in logs)
     calls = []
     monkeypatch.setattr(Router, "_fetch_catalog", lambda self, name: calls.append(name) or (_ for _ in ()).throw(TimeoutError("timed out")))
-    assert {m["ref"] for m in r.catalog_view()[0]["models"]} == {"groq:eski"}
-    assert calls == ["groq"]  # başarısız okuma önbelleğe yazılmaz, sonraki açılışta yeniden denenir
+    assert {m["ref"] for m in r.catalog_view()[0]["models"]} == {"groq:old"}
+    assert calls == ["groq"]  # a failed read is not cached, so the next open retries it
 
 
 def test_catalog_view_explains_provider_with_no_working_model():
