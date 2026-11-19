@@ -110,6 +110,8 @@ class RunCommand(Tool):
     name = "run_command"
     description = (
         "Shell komutu çalıştırır (Windows: PowerShell 5.1, diğer: bash); çıkış kodu ve stdout+stderr döner.\n"
+        "- Komutlar Windows'ta ekrana siyah CMD/konsol penceresi açmadan tamamen arka planda sessizce (SW_HIDE) çalıştırılır.\n"
+        "- Bu işe özel araçlar varken (git, github, flight, browser, net, desktop, files) dolambaçlı shell yazmak yerine önce load_tools ile o aracı yükle ve kullan.\n"
         "- Dosya okumak/aramak/düzenlemek için komut değil read_file, grep, glob, edit_file kullan.\n"
         "- Pencereli program ya da site açmak için windows action=open; Blender için blender aracı.\n"
         "- Sürekli çalışan işler (sunucu, izleme) için background=true, sonra process_output.\n"

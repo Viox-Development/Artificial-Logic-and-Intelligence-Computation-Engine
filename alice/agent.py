@@ -456,8 +456,8 @@ class Agent:
         for n in sorted(names):
             desc = groups[n][1] if n in groups else ("MCP sunucusu" if n.startswith("mcp:") else "araç")
             parts.append(f"{n} ({desc[:90]})")
-        note = ("[Araç notu: şu araçlar yüklü değil: " + "; ".join(parts) + ". Bu iş için gerekirse önce load_tools "
-                "ile yükle; gerekmiyorsa yükleme.]")
+        note = ("[Araç notu: Bu görev için şu araçlar mevcuttur: " + "; ".join(parts) +
+                ". Geçici betik veya dolambaçlı komutlar yerine bu işe özel araçları kullanmak için ilk adımda load_tools ile yükle.]")
         msg = self.messages[-1]
         content = msg.get("content")
         if isinstance(content, str):
