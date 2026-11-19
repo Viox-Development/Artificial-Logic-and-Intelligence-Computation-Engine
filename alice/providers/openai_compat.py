@@ -253,8 +253,8 @@ class OpenAICompatProvider:
     # this limit a call can hang for hours.
     STREAM_IDLE = 300.0
     # If no first real data (text, thinking, tool) arrives within this many seconds, the model is considered stuck
-    # and the next one is tried. glm-5.3 on NVIDIA kept the connection open without answering for over 5 minutes.
-    FIRST_DATA = 90.0
+    # and the next one is tried.
+    FIRST_DATA = 30.0
 
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
         self.cfg = cfg
@@ -262,7 +262,7 @@ class OpenAICompatProvider:
         # A provider that rejects usage reporting in streams (stream_options.include_usage) with a 400 once
         # is not asked again.
         self._stream_usage = True
-        self._client = client or httpx.Client(timeout=httpx.Timeout(timeout, connect=15.0))
+        self._client = client or httpx.Client(timeout=httpx.Timeout(timeout, connect=8.0))
 
     def close(self) -> None:
         try:
@@ -406,7 +406,7 @@ class OpenAICompatProvider:
         retry = False
         try:
             with self._client.stream("POST", f"{self.cfg.base_url}/chat/completions", headers=self._headers(),
-                                     json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=15.0)) as r:
+                                     json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=8.0)) as r:
                 if r.status_code != 200:
                     r.read()
                     if r.status_code in (400, 422) and "stream_options" in r.text and \

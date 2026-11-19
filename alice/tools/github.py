@@ -57,12 +57,13 @@ def _token_candidates(cfg: Any = None):
     3. the key of the GitHub MCP server in the config,
     4. GITHUB_MODELS_TOKEN.
     """
-    # Priority: gh CLI session (user's preference)
+    # Priority: gh CLI session (user's keyring preference)
     gh = shutil.which("gh")
     if gh:
         try:
+            gh_env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
             r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=10,
-                               creationflags=NO_WINDOW, startupinfo=hidden_startupinfo())
+                               env=gh_env, creationflags=NO_WINDOW, startupinfo=hidden_startupinfo())
             if r.returncode == 0 and r.stdout.strip():
                 yield r.stdout.strip()
         except (OSError, subprocess.SubprocessError):
@@ -131,8 +132,9 @@ def token_source(cfg: Any, token: str | None) -> str:
     gh = shutil.which("gh")
     if gh:
         try:
+            gh_env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
             r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=10,
-                               creationflags=NO_WINDOW, startupinfo=hidden_startupinfo())
+                               env=gh_env, creationflags=NO_WINDOW, startupinfo=hidden_startupinfo())
             if r.returncode == 0 and r.stdout.strip() == token:
                 return "gh CLI (keyring)"
         except (OSError, subprocess.SubprocessError):
