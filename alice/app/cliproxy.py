@@ -202,6 +202,39 @@ def ensure_affinity(path: Any) -> bool:
     return True
 
 
+def ensure_routing_retry(path: Any) -> bool:
+    """Ensure routing.retry and session-affinity-rebind-on: any are configured in config.yaml.
+    When a credential hits quota or rate limits, CLIProxyAPI will automatically try other credentials
+    in the pool (e.g. across multiple Grok or Antigravity accounts)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    changed = False
+    if "session-affinity-rebind-on:" not in text and "routing:" in text:
+        m = re.search(r"(?m)^([ \t]*session-affinity:[^\n]*\n)", text)
+        if m:
+            text = text[:m.end()] + "  session-affinity-rebind-on: \"any\"\n" + text[m.end():]
+            changed = True
+    if "request-retry:" not in text and "routing:" in text:
+        retry_block = (
+            "  retry:\n"
+            "    request-retry: 8\n"
+            "    max-retry-credentials: 0\n"
+            "    max-retry-interval: 10\n"
+        )
+        m = re.search(r"(?m)^routing:[ \t]*\n", text)
+        if m:
+            text = text[:m.end()] + retry_block + text[m.end():]
+            changed = True
+    if changed:
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            return False
+    return changed
+
+
 def start(wait_seconds: float = 8.0) -> dict[str, Any]:
     """If proxy is down, start it in the background (independent of ALICE) and wait until endpoint responds."""
     global _last_start
@@ -221,6 +254,7 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
         if not exe.exists():
             return {"ok": False, "error": f"{binary_name()} bulunamadı"}
         ensure_affinity(s["dir"] / "config.yaml")
+        ensure_routing_retry(s["dir"] / "config.yaml")
         try:
             log = open(s["dir"] / "server.out.log", "ab")  # noqa: SIM115 - child process will write
         except OSError:

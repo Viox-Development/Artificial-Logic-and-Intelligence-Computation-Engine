@@ -12,11 +12,11 @@ def image_to_png_b64(img: Image.Image, max_width: int) -> tuple[str, float]:
     scale = 1.0
     if img.width > max_width:
         scale = img.width / max_width
-        img = img.resize((max_width, round(img.height / scale)), Image.LANCZOS)
+        img = img.resize((max_width, round(img.height / scale)), Image.BILINEAR)
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="PNG", compress_level=4)
     return base64.b64encode(buf.getvalue()).decode("ascii"), scale
 
 

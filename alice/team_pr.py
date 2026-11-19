@@ -22,9 +22,11 @@ IDENT = ["-c", "user.name=ALICE", "-c", "user.email=alice@localhost"]
 def _git(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     from alice.gitsafe import harden
     from alice.tools.github import NO_WINDOW
+    from alice.tools.shell import hidden_startupinfo
 
     return subprocess.run(["git", *harden(args, cwd)], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                          startupinfo=hidden_startupinfo())
 
 
 def prepare(team: Any) -> str:

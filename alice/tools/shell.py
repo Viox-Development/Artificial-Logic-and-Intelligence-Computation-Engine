@@ -27,6 +27,16 @@ IS_WIN = sys.platform == "win32"
 # programs started by a command (Blender, Notepad...) are still visible.
 NO_WINDOW = 0x08000000 if IS_WIN else 0
 
+
+def hidden_startupinfo() -> subprocess.STARTUPINFO | None:
+    """Startup info forcing hidden window on Windows so child processes don't spawn black console windows."""
+    if not IS_WIN:
+        return None
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+    return si
+
 # Patterns that are hard to undo or could break the system. In "auto" mode these ask for approval.
 DANGEROUS = [
     r"\brm\s+(-\w+\s+)*-\w*[rR]",  # recursive delete
@@ -173,6 +183,7 @@ class RunCommand(Tool):
             kwargs: dict[str, Any] = {}
             if IS_WIN:
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW  # type: ignore[attr-defined]
+                kwargs["startupinfo"] = hidden_startupinfo()
             else:
                 kwargs["start_new_session"] = True
             with open(log, "wb") as fh:  # the child process gets its own copy; our handle must not leak
@@ -188,8 +199,11 @@ class RunCommand(Tool):
         # Output goes to a temp file instead of a pipe: if a windowed program the command started (e.g. Blender)
         # inherits the pipes, subprocess.run kept waiting forever even after the timeout.
         with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
+            fg_kw: dict[str, Any] = {"creationflags": NO_WINDOW}
+            if IS_WIN:
+                fg_kw["startupinfo"] = hidden_startupinfo()
             pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, env=env,
-                                   creationflags=NO_WINDOW)
+                                   **fg_kw)
             with track_foreground(ctx, pop):
                 try:
                     returncode = pop.wait(timeout=timeout)

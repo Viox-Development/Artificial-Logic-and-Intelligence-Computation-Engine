@@ -272,13 +272,23 @@ def _read_original(p: Path) -> str | None:
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
+def _startupinfo() -> subprocess.STARTUPINFO | None:
+    if sys.platform != "win32":
+        return None
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0
+    return si
+
+
 def _git(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     # git output is UTF-8: without an explicit encoding, Windows decodes it with the local code page (cp1254), and a
     # a diff or file with "Ğ", "Ş" or emoji raises UnicodeDecodeError and drops the step. No console window either.
     from alice.gitsafe import harden  # so the hook/fsmonitor the sandbox left in .git does not run with ALICE's git
 
     return subprocess.run(["git", "-C", str(cwd), *harden(args, cwd)], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW,
+                          startupinfo=_startupinfo())
 
 
 log = logging.getLogger(__name__)
@@ -1269,7 +1279,7 @@ class Team:
         try:
             pop = subprocess.Popen(self.check, shell=True, cwd=str(cwd or self.cwd), stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-                                   errors="replace", creationflags=_NO_WINDOW)
+                                   errors="replace", creationflags=_NO_WINDOW, startupinfo=_startupinfo())
             try:
                 so, se = pop.communicate(timeout=int(self.parent_ctx.config.agent.get("team_check_timeout", 600)))
                 out, code = (so or "") + (se or ""), pop.returncode

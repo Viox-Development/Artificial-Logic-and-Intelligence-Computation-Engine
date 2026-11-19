@@ -937,6 +937,13 @@ class Router:
         now = time.monotonic()
         low = str(e).lower()
         if e.kind == "quota":
+            if provider == "cliproxy":
+                # The proxy fronts a pool of accounts (e.g. multiple Grok or Antigravity accounts).
+                # Do not lock out the model for 1 hour; use a short cooldown so secondary or recovering accounts can be tried.
+                wait = min(max(float(e.retry_after or 60.0), 30.0), 180.0)
+                self.cooldown_until[ref] = now + wait
+                self.cooldown_kind[ref] = "quota"
+                return
             pc = self.providers_cfg.get(provider)
             daily = getattr(e, "daily", False)
             wait = seconds_until_reset(provider, pc.base_url if pc else "") if daily else COOLDOWNS["quota"]

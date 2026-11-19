@@ -1,6 +1,6 @@
 """Proxy: keep the same conversation on the same account (each account has its own prompt cache)."""
 
-from alice.app.cliproxy import ensure_affinity
+from alice.app.cliproxy import ensure_affinity, ensure_routing_retry
 
 
 def test_adds_affinity_under_routing(tmp_path):
@@ -19,3 +19,13 @@ def test_respects_explicit_setting_and_missing_routing(tmp_path):
     q = tmp_path / "b.yaml"
     q.write_text("port: 8317\n", encoding="utf-8")
     assert ensure_affinity(q) and q.read_text(encoding="utf-8").endswith("routing:\n  session-affinity: true\n")
+
+
+def test_ensure_routing_retry(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text('routing:\n  strategy: "round-robin"\n  session-affinity: true\n', encoding="utf-8")
+    assert ensure_routing_retry(p)
+    text = p.read_text(encoding="utf-8")
+    assert 'session-affinity-rebind-on: "any"' in text
+    assert 'request-retry: 8' in text
+    assert not ensure_routing_retry(p)  # idempotent
