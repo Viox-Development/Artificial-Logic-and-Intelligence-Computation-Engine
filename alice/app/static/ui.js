@@ -3339,6 +3339,40 @@ document.addEventListener("keydown", (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); toggleSide(); }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); }
+  // If input is not focused and user starts typing a character, focus input without losing the keystroke
+  if (!mod && !e.altKey && e.key.length === 1 && $("#palette").hidden && $("#overlay").hidden && $("#menu").hidden) {
+    const active = document.activeElement;
+    if (!active || (!/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && !active.isContentEditable)) {
+      input.focus();
+    }
+  }
+});
+
+// Auto-focus input when the window receives focus or is activated
+window.addEventListener("focus", () => {
+  if ($("#palette").hidden && $("#overlay").hidden && $("#menu").hidden &&
+      !document.querySelector("input:focus, textarea:focus, select:focus, [contenteditable]:focus")) {
+    input.focus();
+  }
+});
+
+document.addEventListener("pointerdown", (e) => {
+  // Clicking anywhere inside the composer (except buttons/inputs) immediately focuses the textarea
+  if (e.target.closest("#composer") && !e.target.closest("button, select, input")) {
+    input.focus();
+    return;
+  }
+  // Clicking empty chat background or scroller area focuses input (unless selecting text or clicking controls)
+  if (e.target.closest("#scroller") &&
+      !e.target.closest("button, a, input, textarea, select, pre, code, .dialog, #menu, .st-chip, .sess, .tab, [contenteditable]")) {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if ((!sel || sel.isCollapsed) && $("#palette").hidden && $("#overlay").hidden && $("#menu").hidden &&
+          !document.querySelector("input:focus, textarea:focus, select:focus")) {
+        input.focus();
+      }
+    }, 0);
+  }
 });
 
 // Kopyala butonları ve linkler (model çıktısı uygulamanın içinde gezinmesin).

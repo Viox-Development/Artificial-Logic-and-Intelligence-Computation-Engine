@@ -76,7 +76,7 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
     If watch is given (window bound to the app in core), the window closes when core shuts down, and switches to the
     new address when core restarts.
 
-    While a game is active (quiet), the window opens minimized to the taskbar and unfocused: popping in front
+    While a game is active (quiet), the window opens minimized to the taskbar: popping in front
     and backgrounding the game caused the user to die in-game."""
     quiet = gaming() if quiet is None else quiet
     if prefer in ("auto", "webview"):
@@ -87,7 +87,7 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
             # an uncatchable .NET error when given a .png; use .ico there.
             icon = Path(__file__).parent / "static" / ("alice.ico" if sys.platform == "win32" else "icon.png")
             win = webview.create_window(title, url, width=1320, height=880, min_size=(820, 560),
-                                        background_color="#16161a", minimized=quiet, focus=not quiet)
+                                        background_color="#16161a", minimized=quiet)
             if watch is not None:
                 _watch(watch, win.destroy, win.load_url)
             kwargs = {"icon": str(icon)} if icon.exists() else {}
