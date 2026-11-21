@@ -138,6 +138,9 @@ say "Installing ALICE (a minute or two) ..."
 "$VPY" -m pip install -q -e "." || die "Package install failed, see the error above."
 
 "$SRC/.venv/bin/alice" init >/dev/null
+# Record this venv as ALICE's Python: the menu launcher and the core's autostart use the recorded one, and an older
+# manual install recorded earlier would otherwise keep opening the old code (or a deleted venv).
+"$VPY" -c "from alice import runtime; runtime.remember()"
 
 if [ "$ALL" = 1 ]; then
     # Everything at once (scripts, developers). Normally the app's setup wizard installs only what you pick.

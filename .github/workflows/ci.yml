@@ -86,7 +86,8 @@ jobs:
           case "$(readlink "$HOME/.local/bin/alice")" in /*) ;; *) echo "relative symlink"; exit 1 ;; esac
           cd / && "$HOME/.local/bin/alice" --version
           bash -s -- --help < "$GITHUB_WORKSPACE/install.sh" | grep -q 'curl -fsSL'
-      # A run from inside a clone installs that clone.
+      # A run from inside a clone installs that clone. The piped install above recorded its own venv first, so this
+      # also checks the launcher follows the newest install instead of a Python recorded earlier.
       - name: install.sh in a clone
         run: bash install.sh
       - name: Check the install
@@ -94,6 +95,7 @@ jobs:
           set -e
           "$HOME/.local/bin/alice" --version
           test "$(readlink "$HOME/.local/bin/alice")" = "$GITHUB_WORKSPACE/.venv/bin/alice"
+          grep -q "^Exec=$GITHUB_WORKSPACE/.venv/bin/python -m alice app" "$HOME/.local/share/applications/alice.desktop"
           test -f "$HOME/.local/share/applications/alice.desktop"
           grep -q -- '-m alice app' "$HOME/.local/share/applications/alice.desktop"
           test -f "$HOME/.alice/config.toml"
