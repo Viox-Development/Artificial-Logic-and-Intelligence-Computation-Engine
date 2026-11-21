@@ -246,6 +246,21 @@ def _transport_error(e: Exception) -> ProviderError:
 # httpx.InvalidURL and StreamError don't subclass HTTPError; they used to escape the router as non-ProviderError.
 _TRANSPORT_ERRORS = (httpx.HTTPError, httpx.InvalidURL, httpx.StreamError)
 
+FIRST_DATA_PER_KTOK = 0.6  # extra seconds of first-data wait per 1k prompt tokens
+FIRST_DATA_MAX = 120.0     # a model silent for two minutes on any prompt is stuck
+
+
+def first_data_limit(base: float, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> float:
+    """Seconds to wait for the first real data. Time to first token grows with the prompt: 30 s is plenty for a short
+    chat but cut 85k-token agent turns mid-prefill, so every long task died with "30 sn'dir ilk cevabı vermedi"."""
+    from alice.providers.router import estimate_tokens
+
+    try:
+        toks = estimate_tokens(messages, tools)
+    except Exception:  # noqa: BLE001 - an odd message shape must not break the call, keep the base limit
+        return base
+    return max(base, min(FIRST_DATA_MAX, base + toks / 1000 * FIRST_DATA_PER_KTOK))
+
 
 class OpenAICompatProvider:
     # The stream is cut off if it sends no real data (text, thinking, tool fragments) for this many seconds. Some
@@ -253,7 +268,8 @@ class OpenAICompatProvider:
     # this limit a call can hang for hours.
     STREAM_IDLE = 300.0
     # If no first real data (text, thinking, tool) arrives within this many seconds, the model is considered stuck
-    # and the next one is tried.
+    # and the next one is tried. The limit grows with the prompt (first_data_limit): a flat 30 s cut healthy Claude
+    # calls through cliproxy at ~85k tokens, which need 30-60 s before the first token.
     FIRST_DATA = 30.0
 
     def __init__(self, cfg: ProviderConfig, timeout: float = 180.0, client: httpx.Client | None = None):
@@ -392,6 +408,7 @@ class OpenAICompatProvider:
         if "openrouter.ai" in self.cfg.base_url:  # usage and cost arrive in the last chunk (project cost tracking)
             body.setdefault("usage", {"include": True})
         t0 = time.monotonic()
+        first_limit = first_data_limit(self.FIRST_DATA, messages, tools)
         text_parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
         announced: set[int] = set()  # calls (completed) already reported via on_call
@@ -406,7 +423,7 @@ class OpenAICompatProvider:
         retry = False
         try:
             with self._client.stream("POST", f"{self.cfg.base_url}/chat/completions", headers=self._headers(),
-                                     json=body, timeout=httpx.Timeout(self.FIRST_DATA, connect=8.0)) as r:
+                                     json=body, timeout=httpx.Timeout(first_limit, connect=8.0)) as r:
                 if r.status_code != 200:
                     r.read()
                     if r.status_code in (400, 422) and "stream_options" in r.text and \
@@ -415,11 +432,15 @@ class OpenAICompatProvider:
                         retry = True
                     else:
                         raise classify_error(r.status_code, r.text, dict(r.headers))
+                # The read timeout (silence between bytes) is first_limit too, so it scales with the prompt: a flat
+                # 30 s raised ReadTimeout on long prompts while the model was still prefilling. It is not raised to
+                # STREAM_IDLE here: httpcore reads it once when the body starts, and a stuck model would then hang
+                # for minutes before the first-data check above could fire.
                 for line in ([] if retry else r.iter_lines()):
                     if cancel and cancel():
                         raise StreamCancelled()
-                    if not got_data and time.monotonic() - t0 > self.FIRST_DATA:
-                        raise ProviderError("network", f"zaman aşımı: model {int(self.FIRST_DATA)} sn'dir ilk "
+                    if not got_data and time.monotonic() - t0 > first_limit:
+                        raise ProviderError("network", f"zaman aşımı: model {int(first_limit)} sn'dir ilk "
                                                        "cevabı vermedi")
                     if time.monotonic() - last_data > self.STREAM_IDLE:
                         raise ProviderError("network", f"akış {int(self.STREAM_IDLE)} sn'dir veri göndermiyor")
