@@ -378,6 +378,18 @@ def test_mic_test_failure_to_open(monkeypatch, out):
     assert "mikrofon açılamadı: aygıt yok" in out()
 
 
+def _clock(*ticks: float):
+    """A fake time.monotonic that walks through ticks, then stays at the last one."""
+    it = iter(ticks)
+    last = [ticks[0]]
+
+    def now() -> float:
+        last[0] = next(it, last[0])
+        return last[0]
+
+    return now
+
+
 def test_mic_test_records_and_transcribes(monkeypatch, out):
     import time as _time
 
@@ -395,8 +407,11 @@ def test_mic_test_records_and_transcribes(monkeypatch, out):
         def read(self):
             return b"\x00\x10" * 160
 
-    clock = iter([0.0, 1.0, 2.0, 6.0, 10.0, 10.5])
-    monkeypatch.setattr(_time, "monotonic", lambda: next(clock))
+    # time.monotonic is global: anything else reading it during the test (rich's live display, a pytest-xdist
+    # worker's background thread) used to exhaust a fixed list and raise StopIteration at random. The clock keeps
+    # returning its last value instead.
+    clock = _clock(0.0, 1.0, 2.0, 6.0, 10.0, 10.5)
+    monkeypatch.setattr(_time, "monotonic", clock)
     monkeypatch.setattr(audio, "Microphone", Mic)
     heard = []
 
@@ -412,8 +427,7 @@ def test_mic_test_records_and_transcribes(monkeypatch, out):
     def fail(a):
         raise stt.STTError("anlaşılmadı")
 
-    clock = iter([0.0, 6.0, 7.0])
-    monkeypatch.setattr(_time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(_time, "monotonic", _clock(0.0, 6.0, 7.0))
     monkeypatch.setattr(stt, "make_stt", lambda cfg: SimpleNamespace(transcribe=fail, last=""))
     assert vcli._test(_cfg(), []) == 1
     assert "anlaşılmadı" in out()
