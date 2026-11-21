@@ -97,7 +97,9 @@ def test_all_keys_waiting_raises_rate_limit_with_wait(pc):
     assert e.value.kind == "rate_limit"
     with pytest.raises(ProviderError) as e:
         pool.chat("m", [])
-    assert "hepsi beklemede" in str(e.value) and 30 < e.value.retry_after <= 40
+    # until - now is float arithmetic on time.monotonic(): with Windows' coarse clock it can come out as
+    # 40.00000000000003 when both reads land on the same tick, so allow that rounding.
+    assert "hepsi beklemede" in str(e.value) and 30 < e.value.retry_after <= 40 + 1e-6
 
 
 def test_other_errors_are_not_retried_on_another_key(pc):
