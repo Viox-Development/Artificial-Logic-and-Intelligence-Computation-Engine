@@ -70,11 +70,15 @@ def _split_exec(v: str) -> list[str]:
 
 
 @pytest.mark.parametrize("path", ['/home/a b/$x/"q"/python', "/home/u/100%/alice/python", "/opt/a\\b/`c`/python",
-                                  "/plain/.venv/bin/python"])
+                                  "/plain/.venv/bin/python", "/odd\nname/a=b/python"])
 def test_desktop_entry_exec_round_trips_through_the_spec(path):
-    f = _fields(window.linux_desktop_entry(PurePosixPath(path), PurePosixPath("/i.png")))
-    # What a desktop environment ends up running must be exactly the venv Python plus "-m alice app".
+    text = window.linux_desktop_entry(PurePosixPath(path), PurePosixPath("/i.png"))
+    f = _fields(text)
+    # What a desktop environment ends up running must be exactly the venv Python plus "-m alice app", and the entry
+    # must keep its line structure (a raw newline in Exec would start a new key).
     assert _split_exec(f["Exec"]) == [path, "-m", "alice", "app"]
+    assert [line.split("=", 1)[0] for line in text.splitlines()[1:]] == \
+        ["Type", "Name", "Comment", "Exec", "Icon", "Terminal", "Categories", "StartupWMClass"]
 
 
 @pytest.mark.parametrize("icon", ["/opt/a\\b/icon.png", "/plain/icon.png"])
@@ -97,9 +101,11 @@ def test_linux_shortcut_goes_to_the_menu_and_desktop(monkeypatch, tmp_path):
     monkeypatch.setattr(window, "_desktop_dir", lambda: home / "Desktop")
     made = window.create_shortcut()
     menu = home / ".local" / "share" / "applications" / "alice.desktop"
-    assert menu in made and (home / "Desktop" / "alice.desktop") in made
+    desk = home / "Desktop" / "alice.desktop"
+    assert menu in made and desk in made
     assert "-m alice app" in menu.read_text(encoding="utf-8")
-    assert menu.stat().st_mode & 0o111  # launchers on the desktop only run when executable
+    assert desk.read_text(encoding="utf-8") == menu.read_text(encoding="utf-8")
+    assert desk.stat().st_mode & 0o111  # GNOME/KDE only run a desktop-folder launcher that is executable
 
 
 @linux_only

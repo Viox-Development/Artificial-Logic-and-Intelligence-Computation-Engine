@@ -152,9 +152,10 @@ def _exec_arg(p: PurePath) -> str:
     """One argument for a Desktop Entry Exec line. The spec unescapes the value twice: first as a string (\\\\ -> \\),
     then as a quoted argument (\\" \\$ \\` \\\\), and a bare % starts a field code, so a literal one is %%."""
     s = str(p).replace("%", "%%")
-    if any(c in s for c in " \t\"'\\$`<>~|&;*?#()"):
+    if any(c in s for c in " \t\n\r=\"'\\$`<>~|&;*?#()"):
         s = '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`") + '"'
-    return s.replace("\\", "\\\\")  # the string-level escape, applied on top of the argument-level one
+    # The string-level escape on top of the argument-level one; a raw newline would end the Exec line.
+    return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
 
 
 def _string_value(p: PurePath) -> str:
