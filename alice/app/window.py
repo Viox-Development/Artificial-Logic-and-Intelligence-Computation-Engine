@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import webbrowser
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable
 
 from alice.config import alice_home
@@ -130,13 +130,72 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
     return "browser"
 
 
-def create_shortcut() -> list[Path]:
-    """Place an ALICE shortcut on the Desktop and Start menu that opens without a console (Windows).
+def _xdg_dir(env: str, default: str) -> Path:
+    v = os.environ.get(env, "").strip()
+    return Path(v) if v else Path.home() / default
 
-    Also finds a Desktop moved to OneDrive. Thanks to the shortcut in the Start menu, it can also be
-    opened by pressing the Windows key and typing "ALICE"."""
+
+def _desktop_dir() -> Path | None:
+    """The user's desktop folder on Linux (localised names like ~/Masaüstü come from user-dirs.dirs)."""
+    try:
+        r = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True, timeout=5, check=False)
+        p = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        p = None
+    if p is None:
+        p = Path.home() / "Desktop"
+    # xdg-user-dir prints $HOME when no desktop is configured: never drop a launcher straight into the home folder.
+    return p if p.is_dir() and p != Path.home() else None
+
+
+def linux_desktop_entry(python: PurePath, icon: PurePath) -> str:
+    """The freedesktop launcher. Exec uses the venv's Python directly so it works without the venv on PATH."""
+    def q(p: PurePath) -> str:
+        s = str(p)
+        return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`") + '"' \
+            if any(c in s for c in ' "\'\\$`') else s
+
+    return ("[Desktop Entry]\nType=Application\nName=ALICE\n"
+            "Comment=Artificial Logic and Intelligence Computation Engine\n"
+            f"Exec={q(python)} -m alice app\nIcon={icon}\nTerminal=false\n"
+            "Categories=Utility;Development;\nStartupWMClass=ALICE\n")
+
+
+def _create_linux_shortcut() -> list[Path]:
+    from alice import runtime
+
+    icon = Path(__file__).parent / "static" / "icon.png"
+    text = linux_desktop_entry(runtime.python(), icon)
+    made = []
+    apps = _xdg_dir("XDG_DATA_HOME", ".local/share") / "applications"
+    apps.mkdir(parents=True, exist_ok=True)
+    targets = [apps / "alice.desktop"]
+    desk = _desktop_dir()
+    if desk is not None:
+        targets.append(desk / "alice.desktop")
+    for p in targets:
+        p.write_text(text, encoding="utf-8")
+        p.chmod(0o755)  # GNOME/KDE only run desktop-folder launchers that are executable
+        made.append(p)
+        if p.parent == desk and shutil.which("gio"):
+            # GNOME also wants the launcher marked trusted, otherwise it shows "Untrusted application launcher".
+            subprocess.run(["gio", "set", str(p), "metadata::trusted", "true"], capture_output=True, check=False,
+                           timeout=5)
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", str(apps)], capture_output=True, check=False, timeout=15)
+    return made
+
+
+def create_shortcut() -> list[Path]:
+    """Place an ALICE shortcut that opens the app without a console.
+
+    Windows: Desktop and Start menu (also finds a Desktop moved to OneDrive; with the Start menu entry it can be opened
+    by pressing the Windows key and typing "ALICE"). Linux: the application menu (~/.local/share/applications) and the
+    desktop folder when there is one."""
+    if sys.platform.startswith("linux"):
+        return _create_linux_shortcut()
     if sys.platform != "win32":
-        raise RuntimeError("kısayol oluşturma şimdilik sadece Windows'ta")
+        raise RuntimeError("kısayol oluşturma şimdilik Windows ve Linux'ta")
     pyw = Path(sys.executable).with_name("pythonw.exe")
     target = pyw if pyw.exists() else Path(sys.executable)
     icon = Path(__file__).parent / "static" / "alice.ico"

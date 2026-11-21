@@ -1217,8 +1217,8 @@ def _dispatch(argv: list[str]) -> int:
 
         return voice_cmd(argv[1:])
     if cmd == "shortcut":
-        TrArgumentParser(prog="alice shortcut", description="Masaüstüne ve Başlat menüsüne ALICE kısayolu koy "
-                         "(Windows).").parse_args(argv[1:])
+        TrArgumentParser(prog="alice shortcut", description="ALICE kısayolu koy: Windows'ta masaüstü ve Başlat menüsü, "
+                         "Linux'ta uygulama menüsü ve masaüstü.").parse_args(argv[1:])
         return shortcut_cmd()
     if cmd == "plugins":
         from alice.plugins import plugins_cmd

@@ -60,3 +60,24 @@ jobs:
         with:
           name: coverage
           path: coverage.xml
+
+  # The Linux install the README tells people to run: install.sh on a clean Ubuntu from the checkout (the same steps the
+  # curl one-liner takes after cloning), then the installed `alice` command and the menu launcher are checked.
+  linux-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: install.sh
+        run: bash install.sh
+      - name: Check the install
+        run: |
+          set -e
+          "$HOME/.local/bin/alice" --version
+          test -f "$HOME/.local/share/applications/alice.desktop"
+          grep -q -- '-m alice app' "$HOME/.local/share/applications/alice.desktop"
+          test -f "$HOME/.alice/config.toml"
+      - name: Re-running install.sh is safe
+        run: bash install.sh --no-shortcut

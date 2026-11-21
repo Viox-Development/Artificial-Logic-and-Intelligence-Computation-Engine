@@ -149,7 +149,23 @@ The script installs Python 3.11 and Git with winget if they are missing, creates
 window, then runs `alice init` and `alice shortcut`. With `-All` it also installs the `computer`, `browser`, `core`,
 `voice`, `home` and `voice-local` extras and downloads Chromium only if neither Chrome nor Edge is installed.
 
-Manual install (also Linux and macOS):
+### Linux
+
+One line, no clone needed (needs Python 3.10+ and Git):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+```
+
+It installs the latest release into `~/.local/share/alice`, puts the `alice` command in `~/.local/bin`, and adds ALICE
+to the application menu. Open it from the menu or with `alice app`; the same setup wizard as on Windows starts on first
+launch, and ALICE keeps itself updated with git. To install every optional feature without the wizard, end the line
+with `bash -s -- --all`. In a clone, run `bash install.sh` (or `bash install.sh --all`) instead.
+
+If Python's `venv` module is missing (Debian/Ubuntu), the script stops and prints the exact `apt` command. The app
+window uses Chrome, Chromium or Edge in app mode and falls back to your default browser.
+
+Manual install (any OS):
 
 ```bash
 python -m venv .venv
@@ -288,7 +304,8 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
 | On-screen HUD, global shortcuts / quick bar | ✅ | ❌ | ❌ |
 | PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
-| Time machine, Steam and flight-sim integration, installer | ✅ | ❌ | ❌ |
+| Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |
+| Time machine, Steam and flight-sim integration | ✅ | ❌ | ❌ |
 
 Bringing Linux and macOS closer to Windows is tracked in
 [#239](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/issues/239); most items

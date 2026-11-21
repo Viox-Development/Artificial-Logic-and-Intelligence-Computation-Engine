@@ -110,7 +110,17 @@ pip install -e ".[all]"
 alice init
 ```
 
-Linux/macOS'ta aynısı, `pip install -e ".[all]"` sonrası `alice init`. Linux'ta pencere listesi için `wmctrl` lazım; UI Automation şimdilik sadece Windows'ta.
+**Linux'ta** tek satır yeterli (Python 3.10+ ve Git lazım, klonlamaya gerek yok):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+```
+
+Son sürümü `~/.local/share/alice`'e kurar, `alice` komutunu `~/.local/bin`'e koyar ve ALICE'i uygulama menüsüne ekler.
+Menüden ya da `alice app` ile açılır; ilk açılışta Windows'taki kurulum sihirbazı gelir, güncellemeleri ALICE git ile
+kendisi çeker. Sihirbazsız her şeyi kurmak için satırın sonunu `bash -s -- --all` yap; klonun içindeysen
+`bash install.sh` yeter. Python'un `venv` modülü eksikse (Debian/Ubuntu) betik durur ve gereken `apt` komutunu yazar.
+Linux'ta pencere listesi için `wmctrl` lazım; UI Automation şimdilik sadece Windows'ta.
 
 Opsiyonel paket grupları (`pip install -e ".[grup]"`, birden fazlası virgülle):
 
