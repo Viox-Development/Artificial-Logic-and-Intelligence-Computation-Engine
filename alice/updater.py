@@ -419,6 +419,12 @@ class UpdateInfo:
         return bool(self.running and self.local and self.running != self.local)
 
     @property
+    def hand_pulled(self) -> bool:
+        """Stale because someone moved the checkout by hand (git pull while developing), not because ALICE's own
+        updater pulled it: apply_update records the commit it moved to as update_to."""
+        return self.stale and read_state().get("update_to") != self.local
+
+    @property
     def can_auto(self) -> bool:
         """Can it be applied without asking?"""
         return self.available and not self.blocked
@@ -446,6 +452,9 @@ class UpdateInfo:
                 "blocked": self.blocked, "error": self.error, "count": len(self.commits), "stale": self.stale,
                 # On another branch on purpose (development): the UI shows it only when checked by hand.
                 "off_branch": bool(self.available and self.on and self.on not in ("HEAD", self.branch)),
+                # Restart needed only because of a manual git pull: the bar stays quiet (dot only) for developers;
+                # an update ALICE pulled itself still shows the "Yeniden başlat" bar to everyone.
+                "hand_pulled": self.hand_pulled,
                 "running": self.running[:7], "tag": self.tag}
 
 

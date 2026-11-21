@@ -1054,11 +1054,12 @@ function renderUpdate(u, manual) {
   const bar = $("#update");
   S.update = u && (u.available || u.stale) ? u : null;
   if (!S.update) { bar.hidden = true; return; }
-  // Depo başka bir daldaysa (geliştirme), kod yalnızca diskte ilerlediyse (elle `git pull`, geliştirirken her
-  // birleştirmede olur: çubuk her seferinde çıkıp rahatsız ediyordu) ya da kullanıcı "Sonra" dediyse çubuk
-  // kendiliğinden çıkmaz; sürüm yazısındaki nokta kalır, "Güncellemeleri denetle" yine gösterir.
-  const staleOnly = !u.available && u.stale;
-  const quiet = !manual && bar.hidden && ((u.available && u.off_branch) || staleOnly || updateDismissed(u));
+  // The bar does not pop up by itself when the repo is on another branch (development), when the code only moved on
+  // disk through a manual `git pull` (while developing that is every merge, and the bar kept nagging), or when the
+  // user said "Sonra"; the dot next to the version stays and "Güncellemeleri denetle" still shows it. An update that
+  // ALICE pulled itself is not hand_pulled, so its "Yeniden başlat" bar still appears for everyone.
+  const handPulled = !u.available && u.stale && u.hand_pulled;
+  const quiet = !manual && bar.hidden && ((u.available && u.off_branch) || handPulled || updateDismissed(u));
   const v0 = $("#ver");
   if (v0 && !v0.querySelector(".up-dot")) v0.appendChild(el("i", "up-dot"));
   if (quiet) return;

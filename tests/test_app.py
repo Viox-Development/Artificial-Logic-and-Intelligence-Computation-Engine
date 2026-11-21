@@ -353,6 +353,19 @@ def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
     assert restarted.wait(2)
 
 
+def test_stale_from_own_update_shows_the_bar_but_a_manual_pull_does_not():
+    """The update bar stays quiet only for a manual git pull (development); when ALICE's updater pulled the code
+    itself (update_to recorded), the restart bar must still show for every user."""
+    from alice import updater
+
+    info = updater.UpdateInfo(repo=None, branch="main", local="b" * 40, remote="b" * 40, running="a" * 40)
+    assert info.stale and info.as_dict()["hand_pulled"]  # nothing recorded: someone moved the checkout by hand
+    updater.write_state(update_to="b" * 40)
+    assert info.stale and not info.as_dict()["hand_pulled"]
+    fresh = updater.UpdateInfo(repo=None, branch="main", local="b" * 40, remote="b" * 40, running="b" * 40)
+    assert not fresh.as_dict()["hand_pulled"]  # not stale at all
+
+
 # ------------------------------------------------------------------ multiple chats at once
 def _hold_turn(state, release):
     """The foreground chat's turn lasts until release arrives (like a long tool); it also ignores Durdur (Stop)."""
