@@ -1054,9 +1054,11 @@ function renderUpdate(u, manual) {
   const bar = $("#update");
   S.update = u && (u.available || u.stale) ? u : null;
   if (!S.update) { bar.hidden = true; return; }
-  // Depo başka bir daldaysa (geliştirme) ya da kullanıcı "Sonra" dediyse çubuk kendiliğinden çıkmaz; sürüm
-  // yazısındaki nokta kalır, "Güncellemeleri denetle" yine gösterir.
-  const quiet = !manual && bar.hidden && ((u.available && u.off_branch) || updateDismissed(u));
+  // Depo başka bir daldaysa (geliştirme), kod yalnızca diskte ilerlediyse (elle `git pull`, geliştirirken her
+  // birleştirmede olur: çubuk her seferinde çıkıp rahatsız ediyordu) ya da kullanıcı "Sonra" dediyse çubuk
+  // kendiliğinden çıkmaz; sürüm yazısındaki nokta kalır, "Güncellemeleri denetle" yine gösterir.
+  const staleOnly = !u.available && u.stale;
+  const quiet = !manual && bar.hidden && ((u.available && u.off_branch) || staleOnly || updateDismissed(u));
   const v0 = $("#ver");
   if (v0 && !v0.querySelector(".up-dot")) v0.appendChild(el("i", "up-dot"));
   if (quiet) return;
