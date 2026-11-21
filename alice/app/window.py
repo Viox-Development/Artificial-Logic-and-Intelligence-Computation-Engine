@@ -113,10 +113,16 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
 
             if watch is not None:
                 _watch(watch, lambda box=box: box["proc"].terminate(), relaunch)
+            # Linux: the app window keeps no passwords, so skip the desktop keyring (without one Chromium printed
+            # "freedesktop_secret_key_provider ... Get(Label) failed" and DBus portal errors into the terminal, which
+            # read like ALICE had crashed). Its own stderr chatter is dropped for the same reason.
+            extra = ["--password-store=basic"] if sys.platform.startswith("linux") else []
+            quiet_io = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL} if sys.platform.startswith("linux") else {}
             while True:
                 box["proc"] = subprocess.Popen([exe, f"--app={box['url']}", "--window-size=1320,880",
                                                 f"--user-data-dir={profile}", "--no-first-run",
-                                                "--no-default-browser-check"] + (["--start-minimized"] if quiet else []))
+                                                "--no-default-browser-check", *extra]
+                                               + (["--start-minimized"] if quiet else []), **quiet_io)
                 box["proc"].wait()
                 if not box["next"]:
                     return "app"

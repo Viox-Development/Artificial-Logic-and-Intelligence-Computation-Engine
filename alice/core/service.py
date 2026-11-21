@@ -584,6 +584,14 @@ class Core:
 
         try:
             info = updater.check(self.cfg, details=False)
+            if info.stale and info.hand_pulled:
+                # The checkout was moved by hand (developing ALICE in the folder it runs from: every branch switch or
+                # pull). Restarting on that cut the user off mid-conversation again and again; the app's dot and
+                # "Yeniden başlat" button leave the moment to them. Only updates ALICE pulled itself restart alone.
+                if getattr(self, "_hand_pull_noted", "") != info.local:
+                    self._hand_pull_noted = info.local
+                    self.store.add_event("core", "Kod elle değişti; yeniden başlatma sana bırakıldı", topic="core")
+                return
             if info.stale:
                 self.store.add_event("core", "Yeni sürüm indirilmiş, çekirdek boşta kalınca yeniden başlayacak",
                                      topic="core")

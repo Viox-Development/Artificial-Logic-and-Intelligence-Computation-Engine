@@ -81,13 +81,26 @@ find_python() {
     return 1
 }
 
-PY="$(find_python)" || die "Python 3.10 or newer was not found. Install it: $(pkg_hint python3 python3-venv python3-pip)"
-say "Python: $PY ($("$PY" -c 'import platform; print(platform.python_version())'))"
-
-# Debian/Ubuntu ship venv without ensurepip; the error otherwise only shows up halfway through.
-if ! "$PY" -c 'import venv, ensurepip' >/dev/null 2>&1; then
-    v="$("$PY" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
-    die "Python's venv module is missing. Install it: $(pkg_hint "python3-venv" "python${v}-venv")"
+# Everything missing is collected first and reported as ONE command: stopping at the first gap made people run the
+# script three times (venv, then git, then ...), and the hint sat after "Install it:" on the same line, so copying the
+# whole line ran "Install" as a command.
+missing=()
+PY="$(find_python)" || PY=""
+if [ -z "$PY" ]; then
+    missing+=(python3 python3-venv python3-pip)
+else
+    say "Python: $PY ($("$PY" -c 'import platform; print(platform.python_version())'))"
+    # Debian/Ubuntu ship venv without ensurepip; otherwise this only shows up halfway through the install.
+    if ! "$PY" -c 'import venv, ensurepip' >/dev/null 2>&1; then
+        v="$("$PY" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+        missing+=(python3-venv "python${v}-venv")
+    fi
+fi
+command -v git >/dev/null 2>&1 || missing+=(git)
+if [ ${#missing[@]} -gt 0 ]; then
+    printf '\n%sALICE needs a few system packages first. Run this, then the install line again:%s\n\n' "$YELLOW" "$RESET" >&2
+    printf '    %s\n\n' "$(pkg_hint "${missing[@]}")" >&2
+    exit 1
 fi
 
 # ------------------------------------------------------------------------------------------------ source
@@ -104,7 +117,6 @@ if [ -n "$script" ] && [ -f "$script" ]; then
 fi
 
 if [ -z "$SRC" ]; then
-    command -v git >/dev/null 2>&1 || die "Git is needed (ALICE also updates itself with it). Install it: $(pkg_hint git)"
     if [ -d "$DIR/.git" ]; then
         say "ALICE is already in $DIR; reinstalling there (its own updater keeps the code current)."
     elif [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then
@@ -127,7 +139,9 @@ if [ -z "$SRC" ]; then
         fi
         say "Downloading ALICE $ref into $DIR ..."
         mkdir -p "$(dirname "$DIR")"
-        git clone -q --depth 1 --branch "$ref" "$REPO_URL" "$DIR" || die "git clone failed (see above)."
+        # advice.detachedHead off: cloning a tag printed a screen of "detached HEAD" advice that looked like an error.
+        git -c advice.detachedHead=false clone -q --depth 1 --branch "$ref" "$REPO_URL" "$DIR" ||
+            die "git clone failed (see above)."
         # A tag checkout is a detached HEAD; put it on "main" like a normal clone, which the updater expects.
         git -C "$DIR" checkout -q -B main
     fi
@@ -141,10 +155,19 @@ if [ ! -x ".venv/bin/python" ]; then
     "$PY" -m venv .venv || die "Could not create the virtual environment (.venv)."
 fi
 VPY="$SRC/.venv/bin/python"
-"$VPY" -m pip install -q --upgrade pip >/dev/null || warn "pip could not upgrade itself; continuing."
+# pip's and the build backend's output (pages of setuptools deprecation boxes) goes to a log, shown only on failure.
+LOG="$SRC/install.log"
+: >"$LOG"
+pip_quiet() {
+    if ! "$VPY" -m pip install -q --disable-pip-version-check "$@" >>"$LOG" 2>&1; then
+        tail -n 25 "$LOG" >&2
+        return 1
+    fi
+}
+pip_quiet --upgrade pip || warn "pip could not upgrade itself; continuing."
 
 say "Installing ALICE (a minute or two) ..."
-"$VPY" -m pip install -q -e "." || die "Package install failed, see the error above."
+pip_quiet -e "." || die "Package install failed (above; full log: $LOG)."
 
 "$SRC/.venv/bin/alice" init >/dev/null
 # Record this venv as ALICE's Python: the menu launcher and the core's autostart use the recorded one, and an older
@@ -154,7 +177,7 @@ say "Installing ALICE (a minute or two) ..."
 if [ "$ALL" = 1 ]; then
     # Everything at once (scripts, developers). Normally the app's setup wizard installs only what you pick.
     say "Installing every optional feature ..."
-    "$VPY" -m pip install -q -e ".[computer,browser,core,voice,home]" ||
+    pip_quiet -e ".[computer,browser,core,voice,home]" ||
         warn "Some optional packages failed; ALICE still runs without them."
     if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1 &&
         ! command -v chromium-browser >/dev/null 2>&1 && ! command -v microsoft-edge >/dev/null 2>&1; then
@@ -172,21 +195,42 @@ BIN="$HOME/.local/bin"
 mkdir -p "$BIN"
 ln -sf "$SRC/.venv/bin/alice" "$BIN/alice"
 
+# ~/.local/bin is on PATH by default on most distros only once it exists at login, so a fresh one is missing from the
+# current shell and from new terminals until the next login. Add it to the shell's rc file once (idempotent marker), so
+# plain `alice` works in the next terminal instead of a long path and a copy-paste PATH line.
+case ":$PATH:" in
+    *":$BIN:"*) on_path=1 ;;
+    *) on_path=0 ;;
+esac
+if [ "$on_path" = 0 ]; then
+    case "${SHELL##*/}" in
+        zsh) rc="$HOME/.zshrc" ;;
+        *) rc="$HOME/.bashrc" ;;
+    esac
+    if ! grep -qs '# added by the ALICE installer' "$rc"; then
+        printf '\n# added by the ALICE installer\ncase ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n' >>"$rc"
+    fi
+fi
+
 if [ "$SHORTCUT" = 1 ] && [ "$(uname -s)" = "Linux" ]; then
-    "$SRC/.venv/bin/alice" shortcut >/dev/null 2>&1 && say "Added ALICE to the application menu." ||
-        warn "Could not add the menu shortcut; run 'alice shortcut' later."
+    if out="$("$SRC/.venv/bin/alice" shortcut 2>&1)"; then
+        say "Added ALICE to the application menu."
+    else
+        warn "Could not add the menu shortcut: $(printf '%s' "$out" | tail -n 1)"
+    fi
 fi
 
 say ""
 say "${GREEN}${BOLD}ALICE is installed.${RESET}"
-case ":$PATH:" in
-    *":$BIN:"*) say "Open it from the application menu, or run: ${BOLD}alice app${RESET}" ;;
-    *)
-        say "Open it from the application menu, or run: ${BOLD}$BIN/alice app${RESET}"
-        warn "$BIN is not on your PATH; add it to use plain 'alice':  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
-        ;;
-esac
+if [ "$on_path" = 1 ]; then
+    say "Open it from the application menu, or run:  ${BOLD}alice app${RESET}"
+else
+    say "Open it from the application menu, or run:  ${BOLD}$BIN/alice app${RESET}"
+    say "(In a new terminal plain ${BOLD}alice app${RESET} works too.)"
+fi
 if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1 &&
     ! command -v chromium-browser >/dev/null 2>&1 && ! command -v microsoft-edge >/dev/null 2>&1; then
-    warn "No Chrome/Chromium/Edge found: the app will open in your default browser. For its own window: $(pkg_hint chromium)"
+    say ""
+    say "Tip: ALICE opens in your default browser. For its own window, install Chromium:"
+    say "    $(pkg_hint chromium)"
 fi

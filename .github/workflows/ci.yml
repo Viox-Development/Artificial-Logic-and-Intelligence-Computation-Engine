@@ -108,3 +108,43 @@ jobs:
           bash install.sh --no-shortcut
           grep -q '"done"' "$HOME/.alice/setup.json"
           "$HOME/.local/bin/alice" --version
+      - name: Output is short and the next terminal finds `alice`
+        run: |
+          set -e
+          out="$(bash install.sh --no-shortcut 2>&1)"
+          echo "$out"
+          # pip/setuptools deprecation boxes go to install.log, not the terminal
+          ! echo "$out" | grep -q 'BuildBackendWarning'
+          grep -q '# added by the ALICE installer' "$HOME/.bashrc"
+          test "$(grep -c '# added by the ALICE installer' "$HOME/.bashrc")" = 1  # idempotent
+          env -i HOME="$HOME" bash -ic 'command -v alice' | grep -q "$HOME/.local/bin/alice"
+
+  # A fresh desktop Ubuntu/Mint: system Python without venv, no git. Every missing package must be named in ONE
+  # copy-pasteable command (people ran the script three times and copied "Install it:" as a command).
+  linux-install-bare:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: Bare system
+        run: apt-get update -qq && apt-get install -y -qq python3 curl >/dev/null
+      - uses: actions/checkout@v7
+      - name: Missing packages are listed once
+        run: |
+          set +e
+          out="$(bash -s < install.sh 2>&1)"; code=$?
+          set -e
+          echo "$out"
+          test "$code" = 1
+          line="$(echo "$out" | grep -E '^ +sudo apt-get install -y ')"
+          echo "$line" | grep -q python3-venv
+          echo "$line" | grep -q ' git'
+          ! echo "$out" | grep -q 'Install it:'
+      - name: After installing them, the same line works
+        run: |
+          apt-get install -y -qq python3-venv python3.12-venv git >/dev/null
+          git config --global --add safe.directory '*'
+          git -C "$GITHUB_WORKSPACE" branch -f ci-install HEAD
+          cd /tmp
+          ALICE_REPO_URL="file://$GITHUB_WORKSPACE" ALICE_REF=ci-install bash -s < "$GITHUB_WORKSPACE/install.sh" 2>&1 | tee out.txt
+          ! grep -q 'ayrık HEAD\|detached HEAD' out.txt
+          "$HOME/.local/bin/alice" --version

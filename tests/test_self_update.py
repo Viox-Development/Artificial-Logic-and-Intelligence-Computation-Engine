@@ -192,11 +192,26 @@ def test_cekirdek_uygulama_aciksa_cekmez(core, at_clone, offline, monkeypatch):
 def test_cekirdek_bayatsa_cekmeden_yeniden_baslamayi_isaretler(core, at_clone, offline, monkeypatch):
     clone, origin = at_clone
     updater.mark_running()
-    push(origin, "yeni")
+    sha = push(origin, "yeni")
     git(clone, "pull", "-q", "--ff-only")   # the app pulled it
+    updater.write_state(update_to=sha)      # apply_update records what it moved to
     monkeypatch.setattr(updater, "apply_update", lambda *a, **k: pytest.fail("çekecek bir şey yok"))
     core.update_job()
     assert core.restart_pending
+
+
+def test_core_does_not_restart_on_a_manual_pull(core, at_clone, offline, monkeypatch):
+    """Developing ALICE in the folder it runs from: a hand `git pull` or branch switch must not restart the core
+    (it cut the user off mid-conversation); the app's restart button leaves it to them."""
+    clone, origin = at_clone
+    updater.mark_running()
+    push(origin, "yeni")
+    git(clone, "pull", "-q", "--ff-only")   # by hand: no update_to recorded
+    monkeypatch.setattr(updater, "apply_update", lambda *a, **k: pytest.fail("çekecek bir şey yok"))
+    core.update_job()
+    core.update_job()
+    assert not core.restart_pending
+    assert len([e for e in core.store.events() if "elle değişti" in str(e)]) <= 1
 
 
 def test_cekirdek_kirli_agacta_cekmez(core, at_clone, offline, monkeypatch):
