@@ -14,17 +14,37 @@ DIR="${XDG_DATA_HOME:-$HOME/.local/share}/alice"
 ALL=0
 SHORTCUT=1
 
+# Embedded, not read from $0: under `curl | bash`, $0 is "bash" and there is no script file to read.
+usage() {
+    cat <<'EOF'
+ALICE setup for Linux (and macOS). One line, no clone needed:
+  curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+Or inside a clone:
+  bash install.sh             # ALICE and the app; the app's setup wizard picks the rest
+  bash install.sh --all       # every optional feature at once, no wizard
+
+Options: --all, --dir <folder> (default ~/.local/share/alice), --no-shortcut
+Environment: ALICE_REF (tag or branch to install; default the latest vX.Y.Z release), ALICE_REPO_URL (clone source)
+EOF
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --all) ALL=1 ;;
         --no-shortcut) SHORTCUT=0 ;;
         --dir) DIR="${2:?--dir needs a folder}"; shift ;;
         --dir=*) DIR="${1#--dir=}" ;;
-        -h|--help) sed -n '2,9p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
 done
+
+# Absolute from here on: the script cds into the install, and ~/.local/bin/alice must not become a relative symlink.
+case "$DIR" in
+    /*) ;;
+    *) DIR="$PWD/$DIR" ;;
+esac
 
 if [ -t 1 ]; then
     BOLD=$'\033[1m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; RESET=$'\033[0m'
@@ -70,11 +90,16 @@ if ! "$PY" -c 'import venv, ensurepip' >/dev/null 2>&1; then
 fi
 
 # ------------------------------------------------------------------------------------------------ source
-# Run from a clone: install that folder. Piped from curl: clone the latest release into $DIR.
+# Run from a clone: install that folder. Piped from curl: clone the latest release into $DIR. Only a real script file
+# counts: piped, BASH_SOURCE is empty and $0 is "bash", and dirname of that is the current folder, which would install
+# whatever ALICE checkout the user happens to be standing in instead of the release.
 SRC=""
-here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
-if [ -n "$here" ] && [ -f "$here/pyproject.toml" ] && grep -q 'name = "alice-harness"' "$here/pyproject.toml"; then
-    SRC="$here"
+script="${BASH_SOURCE[0]:-}"
+if [ -n "$script" ] && [ -f "$script" ]; then
+    here="$(cd "$(dirname "$script")" && pwd)"
+    if [ -f "$here/pyproject.toml" ] && grep -q 'name = "alice-harness"' "$here/pyproject.toml"; then
+        SRC="$here"
+    fi
 fi
 
 if [ -z "$SRC" ]; then

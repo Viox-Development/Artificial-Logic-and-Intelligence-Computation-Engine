@@ -64,6 +64,10 @@ def test_install_sh_parses_and_rejects_unknown_options():
     assert r.returncode == 2 and "unknown option" in r.stderr
     h = subprocess.run(["bash", str(script), "--help"], capture_output=True, text=True)
     assert h.returncode == 0 and "curl -fsSL" in h.stdout and "set -euo" not in h.stdout
+    # Piped (`curl | bash -s -- --help`): $0 is "bash", so help must not depend on reading the script file.
+    p = subprocess.run(["bash", "-s", "--", "--help"], input=script.read_text(encoding="utf-8"), capture_output=True,
+                       text=True)
+    assert p.returncode == 0 and "curl -fsSL" in p.stdout
 
 
 def test_install_sh_is_committed_with_lf_endings():

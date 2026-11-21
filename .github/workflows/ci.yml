@@ -61,21 +61,39 @@ jobs:
           name: coverage
           path: coverage.xml
 
-  # The Linux install the README tells people to run: install.sh on a clean Ubuntu from the checkout (the same steps the
-  # curl one-liner takes after cloning), then the installed `alice` command and the menu launcher are checked.
+  # The Linux install the README tells people to run, on a clean Ubuntu.
   linux-install:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the piped run below clones this repo, so it needs the real history and the PR's commit
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: install.sh
+      # The one-liner path: the script arrives on stdin (`curl ... | bash`), from a folder that is not a clone, and
+      # clones into a relative --dir. Pointed at this checkout so the PR's own code is what gets cloned.
+      - name: Piped install (curl | bash path)
+        run: |
+          set -e
+          git -C "$GITHUB_WORKSPACE" branch -f ci-install HEAD
+          mkdir -p "$RUNNER_TEMP/elsewhere" && cd "$RUNNER_TEMP/elsewhere"
+          ALICE_REPO_URL="file://$GITHUB_WORKSPACE" ALICE_REF=ci-install \
+            bash -s -- --dir piped-alice < "$GITHUB_WORKSPACE/install.sh"
+          test -x "$RUNNER_TEMP/elsewhere/piped-alice/.venv/bin/alice"
+          test "$(git -C "$RUNNER_TEMP/elsewhere/piped-alice" branch --show-current)" = main
+          # ~/.local/bin/alice must be an absolute link that works from anywhere.
+          case "$(readlink "$HOME/.local/bin/alice")" in /*) ;; *) echo "relative symlink"; exit 1 ;; esac
+          cd / && "$HOME/.local/bin/alice" --version
+          bash -s -- --help < "$GITHUB_WORKSPACE/install.sh" | grep -q 'curl -fsSL'
+      # A run from inside a clone installs that clone.
+      - name: install.sh in a clone
         run: bash install.sh
       - name: Check the install
         run: |
           set -e
           "$HOME/.local/bin/alice" --version
+          test "$(readlink "$HOME/.local/bin/alice")" = "$GITHUB_WORKSPACE/.venv/bin/alice"
           test -f "$HOME/.local/share/applications/alice.desktop"
           grep -q -- '-m alice app' "$HOME/.local/share/applications/alice.desktop"
           test -f "$HOME/.alice/config.toml"
