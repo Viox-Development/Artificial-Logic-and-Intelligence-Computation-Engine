@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import itertools
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -29,6 +30,8 @@ from pathlib import Path
 from typing import Any
 
 from alice.config import alice_home
+
+logger = logging.getLogger(__name__)
 
 VIEWPORT = (1280, 800)
 LOG_MAX = 300
@@ -408,17 +411,17 @@ class BuiltinBrowser:
     def frame(self, quality: int = 60, width: int = 0, height: int = 0) -> dict[str, Any]:
         """Screenshot for the panel. When the panel's pixel size is given, the browser viewport is emulated at exactly
         that size: the shot used to be the 1280x800 window while the panel is ~760 wide, so the picture stopped
-        halfway down the panel and the rest stayed as empty white space. The override is set only when the size
-        changes, so the page is not relaid out on every frame."""
+        halfway down the panel and the rest stayed as empty white space. The override is per tab in CDP and is set
+        only when the size or the tab changes, so the page is not relaid out on every frame."""
         conn, tab = self.page()
         if width and height:
             size = (max(320, min(3840, int(width))), max(240, min(2160, int(height))))
-            if size != self._vp:
+            if (tab["id"], size) != self._vp:
                 try:
                     conn.send("Emulation.setDeviceMetricsOverride",
                               {"width": size[0], "height": size[1], "deviceScaleFactor": 1, "mobile": False},
                               timeout=5)
-                    self._vp = size
+                    self._vp = (tab["id"], size)
                 except BrowserError:
                     pass  # an older Chromium without the command: fall back to the window size
         shot = conn.send("Page.captureScreenshot", {"format": "jpeg", "quality": quality}, timeout=10)
@@ -435,7 +438,9 @@ class BuiltinBrowser:
             try:
                 conn.send("Emulation.clearDeviceMetricsOverride", timeout=5)
             except BrowserError:
-                pass
+                # Older Chromium or a dropped connection: nothing to undo, but forget the state so the next frame
+                # re-applies the panel size instead of assuming it is still in effect.
+                logger.debug("could not clear the viewport emulation", exc_info=True)
             self._vp = None
         return conn.send("Page.captureScreenshot", {"format": "png"}, timeout=15).get("data", "")
 
