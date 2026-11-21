@@ -10,6 +10,7 @@
 set -euo pipefail
 
 REPO_URL="${ALICE_REPO_URL:-https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine.git}"
+FIRST_LINUX_RELEASE="v0.3.1"  # the first release with the Linux launcher and this installer
 DIR="${XDG_DATA_HOME:-$HOME/.local/share}/alice"
 ALL=0
 SHORTCUT=1
@@ -115,6 +116,14 @@ if [ -z "$SRC" ]; then
             ref="$(git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null | sed 's#.*refs/tags/##' |
                 grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
             [ -n "$ref" ] || { warn "No release tag found; installing main."; ref="main"; }
+            # Releases before FIRST_LINUX_RELEASE have no Linux launcher (`alice shortcut` was Windows-only), so the
+            # install would finish without a menu entry. Should the newest tag be older (e.g. a mirror that lags
+            # behind), install main instead.
+            if [ "$ref" != main ] &&
+                [ "$(printf '%s\n%s\n' "$ref" "$FIRST_LINUX_RELEASE" | sort -V | head -n 1)" != "$FIRST_LINUX_RELEASE" ]; then
+                warn "Latest release $ref predates Linux support ($FIRST_LINUX_RELEASE); installing main."
+                ref="main"
+            fi
         fi
         say "Downloading ALICE $ref into $DIR ..."
         mkdir -p "$(dirname "$DIR")"
