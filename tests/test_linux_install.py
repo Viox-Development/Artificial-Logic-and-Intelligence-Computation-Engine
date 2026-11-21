@@ -29,10 +29,57 @@ def test_desktop_entry_runs_the_venv_python_without_a_terminal():
     assert f["Icon"] == str(icon) and f["Terminal"] == "false"
 
 
-def test_desktop_entry_quotes_paths_with_spaces_and_specials():
-    f = _fields(window.linux_desktop_entry(PurePosixPath('/home/a b/$x/"q"/python'), PurePosixPath("/i.png")))
-    # Desktop Entry spec: quoted argument, with ", $, ` and \ escaped by a backslash.
-    assert f["Exec"] == '"/home/a b/\\$x/\\"q\\"/python" -m alice app'
+def _unescape_string(v: str) -> str:
+    """Desktop Entry string-level unescape (\\\\ -> \\, \\s -> space, ...), the first of the spec's two passes."""
+    out, i = [], 0
+    while i < len(v):
+        if v[i] == "\\" and i + 1 < len(v):
+            out.append({"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}.get(v[i + 1], "\\" + v[i + 1]))
+            i += 2
+        else:
+            out.append(v[i])
+            i += 1
+    return "".join(out)
+
+
+def _split_exec(v: str) -> list[str]:
+    """The spec's second pass: field codes (%% -> %) and quoted arguments with \\" \\$ \\` \\\\ escapes."""
+    args, cur, quoted, i, s = [], [], False, 0, _unescape_string(v)
+    while i < len(s):
+        c = s[i]
+        if c == "%" and s[i + 1:i + 2] == "%":
+            cur.append("%")
+            i += 2
+            continue
+        if quoted and c == "\\" and s[i + 1:i + 2] in ('"', "$", "`", "\\"):
+            cur.append(s[i + 1])
+            i += 2
+            continue
+        if c == '"':
+            quoted = not quoted
+        elif c == " " and not quoted:
+            if cur:
+                args.append("".join(cur))
+                cur = []
+        else:
+            cur.append(c)
+        i += 1
+    if cur:
+        args.append("".join(cur))
+    return args
+
+
+@pytest.mark.parametrize("path", ['/home/a b/$x/"q"/python', "/home/u/100%/alice/python", "/opt/a\\b/`c`/python",
+                                  "/plain/.venv/bin/python"])
+def test_desktop_entry_exec_round_trips_through_the_spec(path):
+    f = _fields(window.linux_desktop_entry(PurePosixPath(path), PurePosixPath("/i.png")))
+    # What a desktop environment ends up running must be exactly the venv Python plus "-m alice app".
+    assert _split_exec(f["Exec"]) == [path, "-m", "alice", "app"]
+
+
+def test_desktop_entry_escapes_percent_as_a_field_code():
+    f = _fields(window.linux_desktop_entry(PurePosixPath("/home/u/100%/python"), PurePosixPath("/i.png")))
+    assert "100%%" in f["Exec"]
 
 
 @linux_only

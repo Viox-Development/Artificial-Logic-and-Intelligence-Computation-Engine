@@ -149,8 +149,10 @@ if [ "$ALL" = 1 ]; then
         "$VPY" -m playwright install chromium || warn "Chromium could not be downloaded; the browser tools need it."
     fi
 else
-    # The app opens the setup wizard on first start: language, a model, and the features you want.
-    "$VPY" -c "from alice.features import set_wizard_state; set_wizard_state(wizard='pending')"
+    # The app opens the setup wizard on first start: language, a model, and the features you want. Only on a fresh
+    # setup: re-running the script (repair, or the curl line again) must not send a finished wizard back to step one.
+    "$VPY" -c "from alice.features import set_wizard_state, wizard_state
+if not wizard_state().get('wizard'): set_wizard_state(wizard='pending')"
 fi
 
 # The `alice` command, on PATH without activating the venv.

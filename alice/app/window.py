@@ -148,12 +148,18 @@ def _desktop_dir() -> Path | None:
     return p if p.is_dir() and p != Path.home() else None
 
 
+def _exec_arg(p: PurePath) -> str:
+    """One argument for a Desktop Entry Exec line. The spec unescapes the value twice: first as a string (\\\\ -> \\),
+    then as a quoted argument (\\" \\$ \\` \\\\), and a bare % starts a field code, so a literal one is %%."""
+    s = str(p).replace("%", "%%")
+    if any(c in s for c in " \t\"'\\$`<>~|&;*?#()"):
+        s = '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`") + '"'
+    return s.replace("\\", "\\\\")  # the string-level escape, applied on top of the argument-level one
+
+
 def linux_desktop_entry(python: PurePath, icon: PurePath) -> str:
     """The freedesktop launcher. Exec uses the venv's Python directly so it works without the venv on PATH."""
-    def q(p: PurePath) -> str:
-        s = str(p)
-        return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`") + '"' \
-            if any(c in s for c in ' "\'\\$`') else s
+    q = _exec_arg
 
     return ("[Desktop Entry]\nType=Application\nName=ALICE\n"
             "Comment=Artificial Logic and Intelligence Computation Engine\n"

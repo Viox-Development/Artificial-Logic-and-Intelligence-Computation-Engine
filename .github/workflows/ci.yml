@@ -98,4 +98,11 @@ jobs:
           grep -q -- '-m alice app' "$HOME/.local/share/applications/alice.desktop"
           test -f "$HOME/.alice/config.toml"
       - name: Re-running install.sh is safe
-        run: bash install.sh --no-shortcut
+        run: |
+          set -e
+          grep -q '"pending"' "$HOME/.alice/setup.json"
+          # A finished wizard must stay finished when the script runs again (repair, or the curl line once more).
+          "$GITHUB_WORKSPACE/.venv/bin/python" -c "from alice.features import set_wizard_state; set_wizard_state(wizard='done')"
+          bash install.sh --no-shortcut
+          grep -q '"done"' "$HOME/.alice/setup.json"
+          "$HOME/.local/bin/alice" --version
