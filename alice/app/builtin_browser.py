@@ -159,6 +159,62 @@ class CDPPage:
             pass
 
 
+# ------------------------------------------------------------------------------- leftover browser processes
+def _headless_browsers(profile: Path) -> list[tuple[int, int]]:
+    """(debug port, pid) of headless Chromium processes started with this profile and still running. When the app is
+    restarted while the panel browser is open, the old process keeps the profile lock; a new one cannot start with the
+    same --user-data-dir and the panel reported "tarayıcı açılamadı". Reading them back lets us reuse or kill it."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    want = str(profile.resolve()).lower()
+    out = []
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = (p.info.get("name") or "").lower()
+            if name not in ("msedge.exe", "chrome.exe", "chromium.exe"):
+                continue
+            args = [str(a) for a in (p.info.get("cmdline") or [])]
+            if "--headless" not in " ".join(args):
+                continue
+            if not any(a.lower().endswith("--user-data-dir=" + want) for a in args):
+                continue
+            port = 0
+            for a in args:
+                if a.startswith("--remote-debugging-port="):
+                    port = int(a.split("=", 1)[1].strip('"') or 0)
+            if port:
+                out.append((port, p.info["pid"]))
+        except Exception:  # noqa: BLE001 - a process may vanish while we look at it
+            continue
+    return out
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        import psutil
+        return psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _kill_tree(pid: int) -> None:
+    """End a browser we did not start ourselves, with its renderer/utility children (they keep the profile locked)."""
+    try:
+        import psutil
+        proc = psutil.Process(pid)
+        for child in proc.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        proc.kill()
+        proc.wait(5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class BuiltinBrowser:
     def __init__(self, profile: Path | None = None):
         self.profile = profile or alice_home() / "builtin-browser"
@@ -170,6 +226,7 @@ class BuiltinBrowser:
         # Tab connections: the panel's frame requests, the input endpoint and the agent's tool modify them at once.
         # Separate from start()'s lock so it doesn't deadlock when page() calls start().
         self._pages_lock = threading.Lock()
+        self._vp: tuple[int, int] | None = None  # viewport size currently emulated for the panel frames
 
     # --------------------------------------------------------------------------------------------- lifecycle
     @property
@@ -177,8 +234,14 @@ class BuiltinBrowser:
         self.start()
         return f"http://127.0.0.1:{self.port}"
 
+    attached_pid = 0  # pid of a headless browser inherited from an earlier run (we did not start it)
+
     def running(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
+        if self.proc is not None and self.proc.poll() is None:
+            return True
+        if self.attached_pid:
+            return _pid_alive(self.attached_pid)
+        return False
 
     no_sandbox = False  # if the renderer can't start in the sandbox (restricted environment), retry once without it
 
@@ -190,16 +253,32 @@ class BuiltinBrowser:
             if not exe:
                 raise BrowserError("Chromium tabanlı tarayıcı bulunamadı (Edge, Chrome). ALICE_CHROMIUM ile yol ver.")
             self.profile.mkdir(parents=True, exist_ok=True)
-            self._launch(exe)
-            if not self._renders() and not self.no_sandbox:
-                # The browser started but the page-rendering process isn't responding (in some restricted
-                # environments the renderer sandbox can't start): restart once without the sandbox.
-                self._kill()
-                self.no_sandbox = True
+            if not self._adopt_orphan():
                 self._launch(exe)
-            if not self._renders():
-                self._kill()
-                raise BrowserError("yerleşik tarayıcı açıldı ama sayfa çizemiyor")
+                if not self._renders() and not self.no_sandbox:
+                    # The browser started but the page-rendering process isn't responding (in some restricted
+                    # environments the renderer sandbox can't start): restart once without the sandbox.
+                    self._kill()
+                    self.no_sandbox = True
+                    self._launch(exe)
+                if not self._renders():
+                    self._kill()
+                    raise BrowserError("yerleşik tarayıcı açıldı ama sayfa çizemiyor")
+
+    def _adopt_orphan(self) -> bool:
+        """A headless browser left over from an earlier run (the app restarted while it was open) still holds this
+        profile lock, so a fresh process cannot start and the panel said "tarayıcı açılamadı". Such a browser is
+        reused when it answers, and killed when it is a dead shell."""
+        for port, pid in _headless_browsers(self.profile):
+            self.port = port
+            try:
+                self._http("/json/version")
+            except OSError:
+                _kill_tree(pid)
+                continue
+            self.attached_pid = pid
+            return True
+        return False
 
     def _launch(self, exe: str) -> None:
         self.port = _free_port()
@@ -248,6 +327,9 @@ class BuiltinBrowser:
             except subprocess.TimeoutExpired:
                 pass
         self.proc = None
+        if self.attached_pid:
+            _kill_tree(self.attached_pid)
+            self.attached_pid = 0
 
     def stop(self) -> None:
         with self._pages_lock:
@@ -262,6 +344,10 @@ class BuiltinBrowser:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        if self.attached_pid:
+            _kill_tree(self.attached_pid)
+            self.attached_pid = 0
+        self._vp = None  # a new process starts with the plain window size
 
     # ---------------------------------------------------------------------------------------------------- tabs
     def _http(self, path: str, method: str = "GET") -> Any:
@@ -319,8 +405,22 @@ class BuiltinBrowser:
             self.target = ""
 
     # ------------------------------------------------------------------------------------------- frame/input
-    def frame(self, quality: int = 60) -> dict[str, Any]:
+    def frame(self, quality: int = 60, width: int = 0, height: int = 0) -> dict[str, Any]:
+        """Screenshot for the panel. When the panel's pixel size is given, the browser viewport is emulated at exactly
+        that size: the shot used to be the 1280x800 window while the panel is ~760 wide, so the picture stopped
+        halfway down the panel and the rest stayed as empty white space. The override is set only when the size
+        changes, so the page is not relaid out on every frame."""
         conn, tab = self.page()
+        if width and height:
+            size = (max(320, min(3840, int(width))), max(240, min(2160, int(height))))
+            if size != self._vp:
+                try:
+                    conn.send("Emulation.setDeviceMetricsOverride",
+                              {"width": size[0], "height": size[1], "deviceScaleFactor": 1, "mobile": False},
+                              timeout=5)
+                    self._vp = size
+                except BrowserError:
+                    pass  # an older Chromium without the command: fall back to the window size
         shot = conn.send("Page.captureScreenshot", {"format": "jpeg", "quality": quality}, timeout=10)
         m = conn.send("Page.getLayoutMetrics")
         vp = m.get("cssVisualViewport") or m.get("cssLayoutViewport") or {}
@@ -328,7 +428,15 @@ class BuiltinBrowser:
                 "w": int(vp.get("clientWidth") or VIEWPORT[0]), "h": int(vp.get("clientHeight") or VIEWPORT[1])}
 
     def screenshot_png(self) -> str:
+        """Full-page-free PNG for the agent's own vision. The panel's viewport emulation is dropped first so the agent
+        sees the real window, not the panel's crop."""
         conn, _ = self.page()
+        if self._vp is not None:
+            try:
+                conn.send("Emulation.clearDeviceMetricsOverride", timeout=5)
+            except BrowserError:
+                pass
+            self._vp = None
         return conn.send("Page.captureScreenshot", {"format": "png"}, timeout=15).get("data", "")
 
     def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:

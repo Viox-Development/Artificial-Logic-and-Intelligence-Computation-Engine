@@ -58,6 +58,9 @@ class Watch:
     reviewed: list[str] = field(default_factory=list)  # commits that have already been independently reviewed
     status: str = "izleniyor"
     history: list[str] = field(default_factory=list)
+    # Merged/closed: the record stays in the panel ("birleşti"/"kapandı") instead of vanishing, but is no longer
+    # checked. Deleting it made the panel say "izlenen PR yok" right after every merge, which read as a bug.
+    finished: bool = False
 
     @property
     def key(self) -> str:
@@ -422,6 +425,8 @@ def check_all(cfg: Any, notify: Callable[[str, str], Any], api: Any = None,
     reviewer = reviewer or default_reviewer(cfg)
     done = []
     for w in rows:
+        if w.finished:
+            continue  # merged/closed PRs stay on the panel; nothing left to check
         try:
             done += check_one(cfg, w, api, notify, run_fix, getattr(api, "token", token), deliver, reviewer)
         except Exception as e:  # noqa: BLE001 - one PR's error must not stop the others
@@ -438,7 +443,9 @@ def check_one(cfg: Any, w: Watch, api: Any, notify: Callable[[str, str], Any],
     if pr.get("merged") or pr.get("state") != "open":
         what = "birleşti" if pr.get("merged") else "kapandı"
         notify(f"{w.key} {what}", f"'{pr.get('title', '')}' {what}; izleme bitti.")
-        unwatch(w.repo, w.number)
+        # The record stays on the panel as "birleşti"/"kapandı" (finished=True): deleting it made the panel say
+        # "izlenen PR yok" the moment a PR merged, so it could not be seen at all. check_all skips finished rows.
+        _update(w.key, lambda x, what=what: (setattr(x, "finished", True), x.log(f"{what}, izleme bitti")))
         return [f"{w.key}: {what}, izleme bitti"]
     sha = pr["head"]["sha"]
     if sha != w.sha:  # new commit: attempts are reset
@@ -548,7 +555,9 @@ def _maybe_merge(cfg: Any, w: Watch, api: Any, pr: dict[str, Any], notify: Calla
     method = settings(cfg).get("merge_method", "squash")
     api.call("PUT", f"/repos/{w.repo}/pulls/{w.number}/merge", json={"merge_method": method, "sha": pr["head"]["sha"]})
     notify(f"{w.key} birleştirildi", f"CI yeşil, açık konu yok: '{pr.get('title', '')}' {method} ile birleştirildi.")
-    unwatch(w.repo, w.number)
+    # Kept on the panel as "birleşti" (see check_one): the user expects to see the PR they just merged.
+    _update(w.key, lambda x: (setattr(x, "finished", True), setattr(x, "mergeable", True),
+                              x.log("birleştirildi, izleme bitti")))
     return [f"{w.key}: birleştirildi"]
 
 

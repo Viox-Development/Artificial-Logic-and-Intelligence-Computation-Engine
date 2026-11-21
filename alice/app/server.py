@@ -1038,7 +1038,8 @@ class AppState:
             api = None
         for w in watches:
             row = {"repo": w.repo, "number": w.number, "status": w.status, "history": w.history[-5:],
-                   "session": w.session, **{f: getattr(w, f) for f in prwatch.FLAGS}}
+                   "session": w.session, "finished": w.finished,
+                   **{f: getattr(w, f) for f in prwatch.FLAGS}}
             if api is not None:
                 try:
                     row.update(prwatch.live_status(api, w.repo, w.number, cache=not force))
@@ -2493,7 +2494,8 @@ def make_handler(state: AppState):
                     if u.path == "/api/browser/tabs":
                         return self._json({"ok": True, "tabs": [{k: t[k] for k in ("id", "title", "url")}
                                                                 for t in bb.tabs()], "current": bb.current()["id"]})
-                    return self._json(bb.frame(int((q.get("q") or ["60"])[0])))
+                    return self._json(bb.frame(int((q.get("q") or ["60"])[0]),
+                                               int((q.get("w") or ["0"])[0]), int((q.get("h") or ["0"])[0])))
                 except (BrowserError, OSError) as e:
                     return self._json({"ok": False, "error": str(e)[:200]})
             if u.path == "/api/file_preview":

@@ -3478,7 +3478,11 @@ async function bbTick(force) {
   if (!force && document.hidden) return;
   BB.busy = true;
   try {
-    const f = await api("/api/browser/frame?q=55");
+    // The viewport is emulated at the view's own pixel size: the shot then fills the panel exactly instead of being
+    // a 1280x800 picture squeezed into a ~760px column with blank space underneath.
+    const box = BB.img.parentElement ? BB.img.parentElement.getBoundingClientRect() : { width: 0, height: 0 };
+    const w = Math.max(320, Math.round(box.width)), h = Math.max(240, Math.round(box.height));
+    const f = await api(`/api/browser/frame?q=55&w=${w}&h=${h}`);
     if (f && f.ok) {
       BB.frame = f;
       BB.img.src = "data:image/jpeg;base64," + f.b64;
@@ -3589,6 +3593,14 @@ function prCard(w) {
   if (w.mergeable === false) chip("bad", "çakışma var");
   if (chips.childNodes.length) c.appendChild(chips);
   if (w.status) c.appendChild(el("div", "prp-status", w.status));
+  if (w.finished) {  // merged/closed: no behavior switches, only "izlemeyi bırak"
+    const bar = el("div", "prp-acts");
+    const un = el("button", "act", "Kaldır");
+    un.addEventListener("click", () => prAct("unwatch", { repo: w.repo, number: w.number }));
+    bar.append(el("span", "grow"), un);
+    c.appendChild(bar);
+    return c;
+  }
   const flags = el("div", "prp-flags");
   for (const [k, label] of PR_FLAGS) {
     const row = el("div", "prp-flag");

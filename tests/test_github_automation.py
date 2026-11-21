@@ -186,7 +186,11 @@ def test_attempt_limit_and_fork_and_merged(fixer):
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr(fork=True), checks=red), run_fix=run)
     assert not seen["prompts"] and any("düzeltilemiyor" in n for n in notes)
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr(merged=True)), run_fix=run)
-    assert prwatch.load() == [] and any("birleşti" in n for n in notes)
+    rows = prwatch.load()
+    assert any("birleşti" in n for n in notes)
+    # merged PR stays on the panel marked finished instead of disappearing ("izlenen PR yok" bug)
+    assert len(rows) == 1 and rows[0].finished and rows[0].status.endswith("izleme bitti")
+    assert not prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr()), run_fix=run)  # no longer checked
 
 
 def test_auto_merge_only_when_green_and_no_open_threads(fixer):
@@ -199,7 +203,8 @@ def test_auto_merge_only_when_green_and_no_open_threads(fixer):
     api = FakeAPI(pr=pr())
     prwatch.check_all(cfg, lambda t, b: None, api=api, run_fix=run)
     assert any(c[0] == "PUT" and c[1].endswith("/pulls/7/merge") for c in api.calls)
-    assert prwatch.load() == []
+    rows = prwatch.load()
+    assert len(rows) == 1 and rows[0].finished  # stays on the panel as "merged", not deleted
 
 
 def test_watch_tool_with_auto_merge_asks_first():
