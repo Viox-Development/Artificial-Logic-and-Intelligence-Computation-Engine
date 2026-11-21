@@ -157,13 +157,16 @@ def _exec_arg(p: PurePath) -> str:
     return s.replace("\\", "\\\\")  # the string-level escape, applied on top of the argument-level one
 
 
+def _string_value(p: PurePath) -> str:
+    """A Desktop Entry string value: backslash and control characters escaped (\\\\, \\n, \\t, \\r)."""
+    return str(p).replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
+
+
 def linux_desktop_entry(python: PurePath, icon: PurePath) -> str:
     """The freedesktop launcher. Exec uses the venv's Python directly so it works without the venv on PATH."""
-    q = _exec_arg
-
     return ("[Desktop Entry]\nType=Application\nName=ALICE\n"
             "Comment=Artificial Logic and Intelligence Computation Engine\n"
-            f"Exec={q(python)} -m alice app\nIcon={icon}\nTerminal=false\n"
+            f"Exec={_exec_arg(python)} -m alice app\nIcon={_string_value(icon)}\nTerminal=false\n"
             "Categories=Utility;Development;\nStartupWMClass=ALICE\n")
 
 

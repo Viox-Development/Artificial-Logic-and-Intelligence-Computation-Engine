@@ -77,6 +77,12 @@ def test_desktop_entry_exec_round_trips_through_the_spec(path):
     assert _split_exec(f["Exec"]) == [path, "-m", "alice", "app"]
 
 
+@pytest.mark.parametrize("icon", ["/opt/a\\b/icon.png", "/plain/icon.png"])
+def test_desktop_entry_icon_is_an_escaped_string_value(icon):
+    f = _fields(window.linux_desktop_entry(PurePosixPath("/p/python"), PurePosixPath(icon)))
+    assert _unescape_string(f["Icon"]) == icon
+
+
 def test_desktop_entry_escapes_percent_as_a_field_code():
     f = _fields(window.linux_desktop_entry(PurePosixPath("/home/u/100%/python"), PurePosixPath("/i.png")))
     assert "100%%" in f["Exec"]
