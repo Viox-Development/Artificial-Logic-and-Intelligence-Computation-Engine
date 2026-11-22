@@ -34,9 +34,9 @@ def test_remember_writes_typed_note_dedupes_and_profile_shows_index_and_rules():
     types = {n.type for n in notes(m)}
     assert types == {"user", "feedback"}  # a persistent instruction becomes a feedback note
     prof = m.profile()
-    assert "Long-term memory" in prof and "MEMORY.md" in prof and "Note types" in prof
+    assert "Long-term memory" in prof and "MEMORY.md" in prof and "Where a note goes" in prof
     assert f"]({a}.md)" in prof and "sorulmasını" in prof  # index + full text of the feedback note
-    assert m.notes.index_raw().count("\n") == 2
+    assert sum(line.startswith("- [") for line in m.notes.index_raw().splitlines()) == 2
 
 
 def test_search_notes_and_old_conversation():
@@ -427,7 +427,9 @@ def test_dream_merges_fixes_prunes_and_keeps_a_backup():
     assert "user-oyunlar" in names and "user-unciv" not in names and "user-solitaire" not in names
     assert any("Hayat" in n.body for n in notes(m))  # the explicitly requested note was left untouched
     idx = m.notes.index_raw()
-    assert idx.startswith("## Kullanıcı") and "olmayan.md" not in idx and "Hayat" in idx  # missing line was added
+    # The model's proposed index is ignored: it is rebuilt from the notes (no dangling line, no missing note).
+    assert idx.startswith("# Hafıza Dizini") and "olmayan.md" not in idx and "Hayat" in idx
+    assert "](user-oyunlar.md)" in idx
     assert "Unciv'de savaş" in seen[0] and "(kullanıcı istedi)" in seen[0]  # summaries and protection marker reach the model
     assert any("İki oyun notu" in x for x in done) and m.notes.backups()  # backup taken
     assert "Dream:" in m.notes.logs_since(0)

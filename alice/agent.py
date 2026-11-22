@@ -526,10 +526,29 @@ class Agent:
         try:
             voice = str(getattr(self, "memory_channel", "") or "").startswith(("ses", "voice", "live"))
             return self.memory.recall(user_text, cwd=self.ctx.cwd, surfaced=self._memory_surfaced,
-                                      use_model=False if voice or self.role == "voice" else None)
+                                      use_model=False if voice or self.role == "voice" else None,
+                                      context=self._recent_chat_text())
         except Exception:  # noqa: BLE001
             log.debug("hafızadan hatırlama başarısız", exc_info=True)
             return ""
+
+    def _recent_chat_text(self, turns: int = 3, chars: int = 1500) -> str:
+        """The last few user/assistant texts of THIS chat, for recall: "o" or "bizimki" two messages after a person
+        was named still points to that person's note. Tool results, nudges and images are skipped."""
+        out: list[str] = []
+        users = 0
+        for m in reversed(self.messages[1:]):
+            if m.get("_nudge") or m.get("_image"):
+                continue
+            role, content = m.get("role"), m.get("content")
+            if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
+                continue
+            out.append(f"{'Kullanıcı' if role == 'user' else 'ALICE'}: {' '.join(content.split())[:500]}")
+            if role == "user":
+                users += 1
+                if users >= turns:
+                    break
+        return "\n".join(reversed(out))[-chars:]
 
     def _remember_turn(self, user_text: str, reply: str) -> None:
         if self.memory is None or self.is_child:

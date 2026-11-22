@@ -127,13 +127,15 @@ def test_model_still_loads_hinted_group_when_needed(workdir):
 def test_system_prompt_stable_mid_chat_until_user_edits(workdir):
     agent, _, _ = make_agent(["bir", "iki", "üç", "dört"], workdir)
     agent.memory = LongMemory(":memory:", {})
+    agent.memory.save_note("eski", "Kullanıcı Unciv oynar", "user", "Kullanıcı Unciv oynar", source="kullanıcı")
     agent.run_turn("selam")
     system1 = agent.messages[0]["content"]
     agent.memory.save_note("oto", "Kullanıcı çay sever", "user", "Kullanıcı çay sever", source="otomatik")
     agent.run_turn("nasılsın")
     assert agent.messages[0]["content"] == system1  # automatic extraction did not break the chat's cache
 
-    agent.memory.delete_note("oto")
+    # Deleting a note that is in the prompt (not just undoing the automatic one) must reach the open chat.
+    agent.memory.delete_note("eski")
     agent.run_turn("peki")
     assert agent.messages[0]["content"] != system1  # when the user deletes it, an open chat updates too
     agent.reset()

@@ -452,9 +452,11 @@ class LongMemory:
         self.user_edits += 1
 
     def save_note(self, name: str, description: str, type: str, content: str, title: str = "", source: str = "",
-                  scope: str = "genel", cwd: Path | str | None = None) -> tuple[Any, bool]:
+                  scope: str = "genel", cwd: Path | str | None = None, category: str = "",
+                  aliases: list[str] | None = None) -> tuple[Any, bool]:
         b = self.book(scope, cwd)
-        note, new = b.save(name, description, type, content, title=title, source=source)
+        note, new = b.save(name, description, type, content, title=title, source=source, category=category,
+                           aliases=aliases)
         if source in ("kullanıcı", "araç"):  # explicitly saved again in the conversation
             self.unforget(f"{title} {description} {content}")
         if source == "kullanıcı":
@@ -964,7 +966,7 @@ class LongMemory:
 
     def recall(self, query: str, exclude_after: float | None = None, cwd: Path | str | None = None,
                surfaced: set[str] | None = None, use_model: bool | None = None,
-               recent_tools: tuple[str, ...] = ()) -> str:
+               recent_tools: tuple[str, ...] = (), context: str = "") -> str:
         """Memory note to add to the user's message (may be empty): all notes that will really help this message
         (at most 5; ones already shown in this chat are skipped) and strongly matching chat summaries. Old turns
         are not added one by one; the model finds them itself with search_chats / recent_chats."""
@@ -983,7 +985,8 @@ class LongMemory:
             # Short messages like "selam naber" or "hava nasıl": if no note shares a word with them, the model call
             # (a ~1 s wait at the start of every message) is wasted; no note was being picked anyway.
             chooser = None
-        picked = select_relevant(clean, notes, chooser, limit=5, recent_tools=recent_tools) if notes else []
+        picked = select_relevant(clean, notes, chooser, limit=5, recent_tools=recent_tools,
+                                 context=clean_user_text(context) if context else "") if notes else []
         sums = [h for h in self.search(clean, limit=4, facts=False, exclude_after=exclude_after)
                 if isinstance(h.item, Summary) and h.score >= 0.6][:2]
         if not picked and not sums:
@@ -1210,8 +1213,12 @@ class LongMemory:
         # when relevant.
         always, used = [], 0
         shown: set[str] = set()  # notes shown in full in the prompt; recall must not repeat them
+        all_notes = [n for b in books for n in b.scan()]
         for typ in ("feedback", "user"):
-            for n in sorted((n for b in books for n in b.scan() if n.type == typ), key=lambda n: -n.modified):
+            # New notes carry a category instead of a type: profile/preferences ("you") count as the user notes.
+            pick = (lambda n: n.type == "feedback") if typ == "feedback" else \
+                (lambda n: n.type != "feedback" and (n.type == "user" or n.category == "you"))
+            for n in sorted((n for n in all_notes if pick(n)), key=lambda n: -n.modified):
                 if " ".join(n.body.split()) == " ".join(n.description.split()):
                     continue  # one-sentence note: the full text is already on its index line
                 block = n.render(limit=700)
@@ -1227,8 +1234,6 @@ class LongMemory:
         # Recent turns are included only if they are recent: yesterday's last sentences were slipping into a new
         # chat as "kaldığımız yer" (where we left off), and ALICE took the user's new, unrelated message for a
         # continuation of yesterday's conversation.
-        cutoff = time.time() - RECENT_TURNS_HOURS * 3600
-        eps = [e for e in self.recent(recent) if e.ts >= cutoff]
         sums = self.summaries(4, within_days=10)
         due = self.due_followups()
         parts.append("This chat is a NEW, separate conversation. The past conversations below are background only: do "
@@ -1244,9 +1249,6 @@ class LongMemory:
             parts.append("Follow-ups due now: bring each up ONCE at a natural moment (a greeting or a pause is fine), "
                          "briefly, in your own words; then call memory action=done id=<n>. Unfinished threads: offer "
                          "to continue.\n" + "\n".join(f"- {f.line()}" for f in due))
-        if eps:
-            parts.append("Last turns of earlier chats from the past few hours (other chats or voice, not this "
-                         "conversation):\n" + "\n".join(f"- {e.line(width=160)}" for e in eps))
         return "\n\n".join(parts)
 
     def export_markdown(self, cwd: Path | str | None = None) -> str:
@@ -1365,10 +1367,20 @@ class LongMemory:
             content = str(s.get("content") or s.get("body") or "").strip()
             desc = str(s.get("description") or "").strip()
             typ = str(s.get("type") or "")
-            if typ not in TYPES or not (content or desc) or len(content) > 6000:
+            if typ and typ not in TYPES:  # a made-up type ("secret") is a broken answer, not a category save
                 continue
-            if typ == "user" and ephemeral(desc):  # a path, a test or a one-off task: not info about the user
+            # The prompts now ask for a category (you/people/areas/topics) instead of a type; an answer with
+            # neither used to be dropped, which would have silently stopped every automatic save.
+            cat = str(s.get("category") or "").strip().lower()
+            if not cat and typ:
+                cat = {"feedback": "you", "project": "areas", "reference": "topics"}.get(typ, "")
+            if not (content or desc) or len(content) > 6000:
                 continue
+            if typ in ("user", "") and cat in ("", "general") and ephemeral(desc):  # a path, a test, a one-off task
+                continue
+            raw_al = s.get("aliases") or []
+            aliases = [str(a).strip() for a in (raw_al.split(",") if isinstance(raw_al, str) else raw_al)
+                       if str(a).strip()] if isinstance(raw_al, (list, str)) else []
             try:
                 target = book or self.book(str(s.get("scope") or "genel"), cwd)
             except ValueError:
@@ -1384,7 +1396,8 @@ class LongMemory:
             try:
                 note, new = target.save(key, desc, typ, content,
                                         title=str(s.get("title") or ""),
-                                        source=(old.source if old is not None and old.source else source))
+                                        source=(old.source if old is not None and old.source else source),
+                                        category=cat, aliases=aliases)
             except (MemoryFull, ValueError) as e:
                 done.append(f"kaydedilemedi ({e})"[:160])
                 continue

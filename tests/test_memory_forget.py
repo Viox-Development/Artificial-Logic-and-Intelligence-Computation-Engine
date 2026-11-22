@@ -56,7 +56,9 @@ def test_profile_keeps_old_turns_out_and_marks_chat_as_new():
     assert "küfürlü" not in prof  # yesterday's last turn is not carried into the new chat as "kaldığımız yer"
     assert "NEW, separate conversation" in prof
     m.record("az önce sesle sorduğum soru buydu", "cevap", "ses")
-    assert "az önce sesle" in m.profile() and "not this conversation" in m.profile()
+    # Even recent turns of other chats stay out of the prompt now; the model looks them up when needed.
+    assert "az önce sesle" not in m.profile() and "recent_chats" in m.profile()
+    assert "az önce sesle" in m.recent_chats(1)
 
 
 def test_deleting_open_chat_removes_memory_and_is_not_saved_again(app):  # noqa: F811
