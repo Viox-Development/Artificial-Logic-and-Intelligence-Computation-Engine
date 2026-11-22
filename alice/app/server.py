@@ -1417,6 +1417,7 @@ class AppState:
                 "scope": b.scope, "root": str(b.root), "current": b.root in roots,
                 "label": "Genel" if b.scope == "genel" else b.root.parent.name,
                 "notes": [{"key": n.key, "name": n.name, "title": n.title, "type": n.type,
+                           "category": getattr(n, "category", "general"),
                            "type_tr": TYPE_TR.get(n.type, n.type or "?"), "description": n.description,
                            "body": n.body, "age": age_text(n.modified), "source": n.source,
                            "old": bool(OLD_ROLE_RX.search(f"{n.description}\n{n.body}"))} for n in notes],
@@ -1436,6 +1437,7 @@ class AppState:
                          "episodes": len(old["episodes"]),
                          "examples": [e.reply[:140] for e in old["episodes"][-3:]] + [s.text[:140] for s in old["summaries"][-2:]]},
             "text": mem.export_markdown(),
+            "instructions": (alice_home() / "instructions.md").read_text(encoding="utf-8") if (alice_home() / "instructions.md").exists() else "",
         }
 
     def memory_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
@@ -1452,6 +1454,12 @@ class AppState:
             except Exception as e:  # noqa: BLE001 - no model / quota error
                 return {"ok": False, "error": f"toparlanamadı: {e}"}
             return {"ok": True, "done": done}
+        if action == "save_instructions":
+            from alice.config import alice_home
+            p = alice_home() / "instructions.md"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(d.get("text") or ""), encoding="utf-8")
+            return {"ok": True}
         if action == "forget":
             gone = mem.delete_note(str(d.get("key") or d.get("id") or ""), cwd)
             return {"ok": gone is not None}

@@ -120,6 +120,12 @@ def build_system_prompt(cwd: Path, personality: bool = True) -> str:
         extras.append(f"# Your personality (from {alice_home() / 'personality.md'})\nThis defines who you are: identity, "
                       "character, how you address the user, tone, length and humor. It takes precedence over the "
                       f"generic self-description above; stay in this character.\n{body[:6000]}")
+    # Core User Instructions (Claude-style Instructions: who the user is, global preferences)
+    inst_path = alice_home() / "instructions.md"
+    if inst_path.is_file():
+        inst_body = inst_path.read_text(encoding="utf-8", errors="replace").strip()
+        if inst_body:
+            extras.append(f"# User Instructions (from {inst_path})\n{inst_body[:4000]}")
     for p in (alice_home() / "ALICE.md", cwd / "ALICE.md", cwd / "CLAUDE.md", cwd / "AGENTS.md"):
         if p.is_file():
             body = p.read_text(encoding="utf-8", errors="replace").strip()

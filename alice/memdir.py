@@ -186,6 +186,7 @@ class Note:
     source: str = ""
     scope: str = "genel"
     title: str = ""
+    category: str = "general"
 
     @property
     def key(self) -> str:
@@ -247,12 +248,20 @@ class NoteBook:
         return self.root / INDEX
 
     def path_for(self, name: str) -> Path:
-        return self.root / f"{name}.md"
+        # Check subdirectories if not found in root directly
+        root_path = self.root / f"{name}.md"
+        if root_path.exists():
+            return root_path
+        for sub in ("people", "areas", "topics"):
+            sub_p = self.root / sub / f"{name}.md"
+            if sub_p.exists():
+                return sub_p
+        return root_path
 
     def stamp(self) -> float:
         """Latest modification time in the folder (a cheap check to know when to refresh the system prompt)."""
         try:
-            times = [self.root.stat().st_mtime] + [p.stat().st_mtime for p in self.root.glob("*.md")]
+            times = [self.root.stat().st_mtime] + [p.stat().st_mtime for p in self.root.rglob("*.md")]
         except OSError:
             return 0.0
         return max(times) if times else 0.0
@@ -277,15 +286,24 @@ class NoteBook:
                     scope=self.scope, title=meta.get("title", "") or meta.get("name", "") or name)
 
     def scan(self) -> list[Note]:
-        """All notes, newest first (at most MAX_NOTES)."""
+        """All notes, newest first (at most MAX_NOTES). Supports subdirectories (people/, areas/, topics/)."""
         if not self.root.is_dir():
             return []
         out = []
-        for p in self.root.glob("*.md"):
-            if p.name == INDEX or p.name.startswith("."):
+        for p in self.root.rglob("*.md"):
+            if p.name == INDEX or p.name.startswith(".") or any(part.startswith(".") or part in ("logs", "trash") for part in p.parts):
                 continue
             n = self._load(p)
             if n is not None:
+                # Category from parent directory if in a subdirectory
+                try:
+                    rel_parts = p.relative_to(self.root).parts
+                    if len(rel_parts) > 1:
+                        n.category = rel_parts[0]
+                    else:
+                        n.category = "you" if n.name in ("preferences", "profile") else "general"
+                except ValueError:
+                    n.category = "general"
                 out.append(n)
         out.sort(key=lambda n: n.modified, reverse=True)
         return out[:MAX_NOTES]

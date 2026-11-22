@@ -2109,6 +2109,27 @@ function memoryPane(pane, data) {
     box.append(l, b);
     pane.appendChild(box);
   }
+  // Instructions (Özel Kullanıcı Talimatları - Claude tarzı her konuşmaya doğrudan enjekte edilen metin)
+  const instBox = el("div", "list-row");
+  instBox.style.cssText = "flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 16px;";
+  const instHead = el("div", "l");
+  instHead.append(el("b", "", "Özel Talimatlar & Kimlik (Instructions)"),
+    el("small", "", "Her konuşmanın başında modele doğrudan verilir (adın, rolün, temel dil tercihin). Yalnızca senin yerel cihazında saklanır, git reposuna gitmez."));
+  const instArea = el("textarea", "input");
+  instArea.style.cssText = "width: 100%; min-height: 80px; font-family: monospace; font-size: 13px; resize: vertical;";
+  instArea.value = d.instructions || "";
+  const instSaveBtn = el("button", "btn primary", "Talimatları Kaydet");
+  instSaveBtn.style.alignSelf = "flex-end";
+  instSaveBtn.addEventListener("click", () => {
+    instSaveBtn.disabled = true;
+    api("/api/memory/action", { action: "save_instructions", text: instArea.value }).then((r) => {
+      instSaveBtn.disabled = false;
+      toast(r && r.ok ? "Talimatlar kaydedildi" : "kaydedilemedi");
+    });
+  });
+  instBox.append(instHead, instArea, instSaveBtn);
+  pane.appendChild(instBox);
+
   // Dream: günde bir (yeterince konuşma birikince) kendiliğinden; buradan şimdi de çalıştırılabilir.
   const dr = d.dream || {};
   const dbox = el("div", "list-row");
@@ -2131,14 +2152,33 @@ function memoryPane(pane, data) {
 
   const f = el("input"); f.type = "text"; f.placeholder = "Notlarda ara"; f.className = "set-filter";
   pane.appendChild(f);
+
+  // Claude memory categories tabs/sections
+  const CAT_TITLES = {
+    you: "👤 You (Kullanıcı & Tercihler)",
+    people: "👥 People (İnsanlar & Çapraz Bağlar)",
+    areas: "🌐 Areas (Projeler & Hayat Alanları)",
+    topics: "💡 Topics (Donanım & İlgi Alanları)",
+    general: "📝 Genel Notlar"
+  };
+
   const lists = [];
   for (const book of d.books || []) {
     const notes = book.notes || [];
     if (!notes.length && book.scope !== "genel") continue;
     pane.appendChild(el("div", "sec", `${book.label} (${notes.length})` + (book.scope === "proje" && book.current ? " · bu sohbetin projesi" : "")));
+    
+    // Group notes by category (Claude style)
+    const byCat = { you: [], people: [], areas: [], topics: [], general: [] };
+    for (const n of notes) {
+      const c = (n.category || "general").toLowerCase();
+      if (byCat[c]) byCat[c].push(n);
+      else byCat.general.push(n);
+    }
+
     const list = el("div");
     pane.appendChild(list);
-    lists.push([list, notes]);
+    lists.push([list, notes, byCat]);
     if ((book.backups || []).length) {
       const row = el("div", "list-row");
       const sel = el("select");
@@ -2158,11 +2198,28 @@ function memoryPane(pane, data) {
   }
   const draw = () => {
     const q = f.value.toLocaleLowerCase("tr");
-    for (const [list, notes] of lists) {
+    for (const [list, notes, byCat] of lists) {
       list.replaceChildren();
-      const shown = notes.filter((x) => !q || (x.title + " " + x.description + " " + x.body).toLocaleLowerCase("tr").includes(q));
-      if (!shown.length) list.appendChild(el("p", "", notes.length ? "Eşleşen yok." : "Henüz not yok."));
-      for (const x of shown) list.appendChild(noteRow(x, notes, draw));
+      if (q) {
+        // Flat search filtered view
+        const shown = notes.filter((x) => (x.title + " " + x.description + " " + x.body).toLocaleLowerCase("tr").includes(q));
+        if (!shown.length) list.appendChild(el("p", "", "Eşleşen yok."));
+        for (const x of shown) list.appendChild(noteRow(x, notes, draw));
+      } else {
+        // Categorized view (You, People, Areas, Topics, General)
+        let totalShown = 0;
+        for (const [cat, catNotes] of Object.entries(byCat)) {
+          if (!catNotes.length) continue;
+          totalShown += catNotes.length;
+          const catHeader = el("h3", "mem-cat-head", CAT_TITLES[cat] || cat);
+          catHeader.style.cssText = "margin: 14px 0 6px 0; font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px;";
+          list.appendChild(catHeader);
+          for (const x of catNotes) {
+            list.appendChild(noteRow(x, notes, draw));
+          }
+        }
+        if (!totalShown) list.appendChild(el("p", "", "Henüz not yok."));
+      }
     }
   };
   f.addEventListener("input", draw);
