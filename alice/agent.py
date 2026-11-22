@@ -1817,6 +1817,7 @@ class Agent:
         ref = str(ref)
         if ref.startswith("cliproxy:"):
             return CACHE_LONG_S
+        # (cliproxy-claude: kind = "anthropic", so the session's latched TTL below decides.)
         try:
             pc = self.router.providers_cfg.get(ref.split(":", 1)[0])
         except Exception:  # noqa: BLE001

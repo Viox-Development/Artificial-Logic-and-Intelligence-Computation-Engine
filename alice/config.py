@@ -1040,7 +1040,8 @@ class ProviderConfig:
         with others."""
         if self.key_override:
             return [self.key_override]
-        if self.name == "cliproxy":
+        if self.name == "cliproxy" or self.name.startswith("cliproxy-"):
+            # cliproxy-claude: the same proxy's native Claude endpoint (kind = "anthropic"), same local key.
             # Local proxy only accepts the key from its own config.yaml; ALICE generated it along with keys.txt.
             # When the copy in .env somehow changed, all subscription models returned "Invalid API key" (Nov 13).
             local = cliproxy_local_key()

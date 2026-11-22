@@ -1066,6 +1066,9 @@ class AppState:
         ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
                or self.router.first_available("brain") or "")
         provider, _, model = ref.partition(":")
+        pc = self.router.providers_cfg.get(provider)
+        if pc is not None and getattr(pc, "kind", "") == "anthropic":
+            provider = "anthropic"  # same levels as the Claude API (e.g. cliproxy's native Claude endpoint)
         levels, kind = thinking.levels_for(provider, model) if ref else (list(thinking.LEVELS), "graded")
         if ref in getattr(self.router, "no_thinking", set()):
             levels, kind = ["default"], "none"  # model rejected the setting (learned at runtime)

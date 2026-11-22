@@ -875,8 +875,11 @@ class Router:
                                       gemini=is_gemini(pc))
                 client = self.client(p)
                 # If the model lacks the selected level, use the nearest supported one (survives a model switch).
-                level = thinking.fit(self.thinking_level(role), thinking.levels_for(p, model)[0])
-                think = {} if ref in self.no_thinking else thinking.params(p, model, level)
+                # Thinking rules follow the API format, not the provider's name: a second Claude endpoint
+                # ([providers.cliproxy-claude] kind = "anthropic") speaks output_config.effort like the Claude API.
+                tp = "anthropic" if pc.kind == "anthropic" else p
+                level = thinking.fit(self.thinking_level(role), thinking.levels_for(tp, model)[0])
+                think = {} if ref in self.no_thinking else thinking.params(tp, model, level)
                 extra = {**think, **(self.config.model_extra(ref) or {})}  # hand-written model settings come first
                 if gemini_extra and is_gemini(pc):  # e.g. reasoning_effort: only settings Gemini understands
                     extra.update(gemini_extra)
@@ -1017,7 +1020,7 @@ class Router:
         now = time.monotonic()
         low = str(e).lower()
         if e.kind == "quota":
-            if provider == "cliproxy":
+            if provider == "cliproxy" or provider.startswith("cliproxy-"):
                 # The proxy fronts a pool of accounts (e.g. multiple Antigravity, Claude, or Grok accounts).
                 # On the first quota hit, use a brief pause (5s) to allow CLIProxy's round-robin / failover
                 # to switch to another available account in the pool. If consecutive errors accumulate,
@@ -1050,7 +1053,7 @@ class Router:
             # A model believed to support images rejected one: don't send it images this session, move to the next.
             self.no_vision.add(ref)
             return
-        if e.kind == "auth" and provider == "cliproxy":
+        if e.kind == "auth" and (provider == "cliproxy" or provider.startswith("cliproxy-")):
             # The proxy fronts many services and accounts: when the Claude login dropped, ChatGPT and
             # Antigravity models were also shut off for the whole session. Now only this one is skipped for a while.
             self.cooldown_until[ref] = now + 900
