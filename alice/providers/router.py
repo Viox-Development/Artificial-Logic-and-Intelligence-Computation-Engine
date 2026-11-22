@@ -955,9 +955,15 @@ class Router:
         low = str(e).lower()
         if e.kind == "quota":
             if provider == "cliproxy":
-                # The proxy fronts a pool of accounts (e.g. multiple Grok or Antigravity accounts).
-                # Do not lock out the model for 1 hour; use a short cooldown so secondary or recovering accounts can be tried.
-                wait = min(max(float(e.retry_after or 60.0), 30.0), 180.0)
+                # The proxy fronts a pool of accounts (e.g. multiple Antigravity, Claude, or Grok accounts).
+                # On the first quota hit, use a brief pause (5s) to allow CLIProxy's round-robin / failover
+                # to switch to another available account in the pool. If consecutive errors accumulate,
+                # back off exponentially (up to 180s) indicating all accounts in the pool are exhausted.
+                n = self.strikes.get(ref, 1)
+                if n <= 1 and not e.retry_after:
+                    wait = 5.0  # quick failover to sibling credential in proxy pool
+                else:
+                    wait = min(max(float(e.retry_after or (30.0 * 2 ** min(n - 1, 3))), 15.0), 180.0)
                 self.cooldown_until[ref] = now + wait
                 self.cooldown_kind[ref] = "quota"
                 return
