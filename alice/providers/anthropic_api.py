@@ -25,6 +25,7 @@ from alice.providers.openai_compat import (ChatResult, ProviderError, StreamCanc
                                            redact_binary)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+CONTEXT_EDIT_BETA = "context-management-2025-06-27"
 # Models that support server-side fallback (not Haiku).
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -248,6 +249,15 @@ def from_message(msg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
            else getattr(cc, "ephemeral_1h_input_tokens", 0)) if cc is not None else 0
     if isinstance(w1h, (int, float)) and w1h:
         usage["cache_write_1h_tokens"] = int(w1h)
+    # Server-side context editing: how many tokens of old tool results the server cleared on this request.
+    cm = getattr(msg, "context_management", None)
+    applied = (cm.get("applied_edits") if isinstance(cm, dict) else getattr(cm, "applied_edits", None)) if cm else None
+    cleared = 0
+    for e in applied or []:
+        v = e.get("cleared_input_tokens") if isinstance(e, dict) else getattr(e, "cleared_input_tokens", 0)
+        cleared += int(v or 0) if isinstance(v, (int, float)) else 0
+    if cleared:
+        usage["context_cleared_tokens"] = cleared
     return out, usage
 
 
@@ -314,9 +324,25 @@ class AnthropicProvider:
             out_cfg["effort"] = effort
         if out_cfg:
             kw["output_config"] = out_cfg
+        betas: list[str] = []
         if model in FALLBACK_MODELS:
-            kw["betas"] = [FALLBACK_BETA]
+            betas.append(FALLBACK_BETA)
             kw["fallbacks"] = "default"
+        edit = (extra or {}).get("_context_edit")
+        if isinstance(edit, dict) and tools:
+            # Server-side context editing (public counterpart of Claude Code's internal cache_edits): old tool results
+            # are cleared on the server, ALICE's local history stays as it is. clear_at_least keeps a clearing big
+            # enough to be worth the cache rewrite it causes.
+            betas.append(CONTEXT_EDIT_BETA)
+            kw["context_management"] = {"edits": [{
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": int(edit.get("trigger", 100_000))},
+                "keep": {"type": "tool_uses", "value": int(edit.get("keep", 6))},
+                "clear_at_least": {"type": "input_tokens", "value": int(edit.get("clear_at_least", 20_000))},
+                **({"exclude_tools": list(edit["exclude_tools"])} if edit.get("exclude_tools") else {}),
+            }]}
+        if betas:
+            kw["betas"] = betas
         return kw
 
     def _error(self, e: Exception) -> ProviderError:

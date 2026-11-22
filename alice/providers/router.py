@@ -161,6 +161,8 @@ def is_gemini(pc: ProviderConfig) -> bool:
 
 
 _ACCEPTS: dict[tuple[Any, str], bool] = {}
+# Request fields that change the provider's prompt cache key (thinking / effort settings of every provider).
+CACHE_KEY_SETTINGS = ("reasoning_effort", "output_config", "reasoning", "chat_template_kwargs", "thinking")
 
 
 def _accepts(fn: Any, name: str) -> bool:
@@ -878,11 +880,31 @@ class Router:
                 extra = {**think, **(self.config.model_extra(ref) or {})}  # hand-written model settings come first
                 if gemini_extra and is_gemini(pc):  # e.g. reasoning_effort: only settings Gemini understands
                     extra.update(gemini_extra)
+                latch = (cache or {}).get("latch")
+                if isinstance(latch, dict) and ref in self.no_thinking:
+                    latch.pop(ref, None)  # the model rejected the thinking settings: never put them back
+                elif isinstance(latch, dict):
+                    # Sticky effort: the thinking/effort settings are part of the prompt cache key (Claude renders them
+                    # into the prompt; changing output_config.effort invalidates the message cache, on some models the
+                    # tool and system cache too). Once a conversation has sent them to a model, it keeps sending the
+                    # same values to that model, even if routing moves the turn to a role with another level. The agent
+                    # clears the latch when the user changes the level or the conversation is compacted.
+                    keys = [k for k in CACHE_KEY_SETTINGS if k in extra or k in latch.get(ref, {})]
+                    if ref in latch:
+                        for k in keys:
+                            if k in latch[ref]:
+                                extra[k] = latch[ref][k]
+                            else:
+                                extra.pop(k, None)
+                    else:
+                        latch[ref] = {k: extra[k] for k in keys if k in extra}
                 if cache and pc.kind == "anthropic":
                     if cache.get("ttl"):
                         extra["_cache_ttl"] = cache["ttl"]
                     if cache.get("mode"):
                         extra["_cache_mode"] = cache["mode"]
+                    if cache.get("context_edit"):
+                        extra["_context_edit"] = cache["context_edit"]
                 # Request settings that are part of the cache key (for the cache break detector).
                 self.last_settings[role] = {k: v for k, v in extra.items() if not str(k).startswith("_")}
                 out = max(max_tokens, self.out_floor.get(ref, 0)) if max_tokens else None

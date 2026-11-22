@@ -112,7 +112,8 @@ def test_main_call_sends_cache_hint(workdir):
 
     agent.router.chat = chat
     agent.run_turn("selam")
-    assert seen["cache"] == {"ttl": "1h", "mode": "write"}
+    assert {k: seen["cache"][k] for k in ("ttl", "mode")} == {"ttl": "1h", "mode": "write"}
+    assert seen["cache"]["latch"] is agent._effort_latch()
 
 
 # ------------------------------------------------------------------------------------------------ break detector
@@ -173,6 +174,83 @@ def test_detector_model_switch_is_reported_but_expected(tmp_path):
     d.before(_msgs(), TOOLS, "b:x")
     brk = d.after(0, "b:x", 300)
     assert brk.expected and brk.reasons == ["model değişti: a:m -> b:x"]
+
+
+# ------------------------------------------------------------------------------------------------ sticky effort
+def _router_with_levels():
+    from alice.providers.router import Router
+    from tests.conftest import FakeProvider, make_config
+
+    cfg = make_config({"brain": ["anthropic:claude-sonnet-5-5"], "fast": ["anthropic:claude-sonnet-5-5"]},
+                      providers={"anthropic": {"base_url": "https://api.anthropic.com", "api_key_env": "",
+                                               "kind": "anthropic", "max_input_tokens": 200000}})
+    cfg.data["thinking"] = {"brain": "high", "fast": "low"}
+    prov = FakeProvider("anthropic", lambda *a, **k: "ok")
+    return Router(cfg, provider_factory=lambda pc: prov, sleep=lambda s: None), prov
+
+
+def test_effort_latched_per_model_across_roles():
+    router, prov = _router_with_levels()
+    latch: dict = {}
+    router.chat("brain", [{"role": "user", "content": "a"}], cache={"latch": latch})
+    router.chat("fast", [{"role": "user", "content": "b"}], cache={"latch": latch})
+    efforts = [c["extra"]["reasoning_effort"] for c in prov.calls]
+    assert efforts == ["high", "high"]  # same model, same conversation: the cache key does not change
+    router.chat("fast", [{"role": "user", "content": "c"}])  # no latch (side call): its own level
+    assert prov.calls[-1]["extra"]["reasoning_effort"] == "low"
+
+
+def test_effort_latch_resets_when_user_changes_level(workdir):
+    agent, _, _ = make_agent(["a"], workdir)
+    m = agent._effort_latch()
+    m["x:y"] = {"reasoning_effort": "high"}
+    assert agent._effort_latch() is m
+    agent.router.thinking_overrides["brain"] = "low"
+    assert agent._effort_latch() == {}
+    agent._effort_latch()["x:y"] = {"reasoning_effort": "low"}
+    agent.reset()
+    assert agent._effort_latch() == {}
+
+
+def test_effort_latch_can_be_turned_off(workdir):
+    agent, _, _ = make_agent(["a"], workdir, cache_sticky_effort=False)
+    assert "latch" not in agent._cache_hint()
+    assert "latch" not in agent._cache_hint("read_only")
+
+
+# ------------------------------------------------------------------------------------------------ context editing
+def test_context_editing_request_and_usage():
+    from alice.config import ProviderConfig
+    from alice.providers.anthropic_api import CONTEXT_EDIT_BETA, AnthropicProvider
+
+    p = AnthropicProvider(ProviderConfig(name="claude", base_url="https://api.anthropic.com", kind="anthropic"))
+    tools = [{"type": "function", "function": {"name": "read_file", "description": "", "parameters": {}}}]
+    kw = p._params("claude-sonnet-5-5", [{"role": "user", "content": "u"}], tools, None, None,
+                   {"_context_edit": {"keep": 4, "exclude_tools": ["memory"]}}, stream=True)
+    assert CONTEXT_EDIT_BETA in kw["betas"]
+    edit = kw["context_management"]["edits"][0]
+    assert edit["type"] == "clear_tool_uses_20250919" and edit["keep"] == {"type": "tool_uses", "value": 4}
+    assert edit["exclude_tools"] == ["memory"] and edit["clear_at_least"]["value"] == 20000
+    kw = p._params("claude-sonnet-5-5", [{"role": "user", "content": "u"}], None, None, None,
+                   {"_context_edit": {}}, stream=True)
+    assert "context_management" not in kw  # no tools: nothing to clear
+    u = NS(input_tokens=1, output_tokens=1, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    msg = NS(content=[], usage=u, context_management=NS(applied_edits=[NS(cleared_input_tokens=5000)]))
+    assert from_message(msg)[1]["context_cleared_tokens"] == 5000
+
+
+def test_context_editing_hint_and_local_trim_skipped(workdir):
+    agent, _, _ = make_agent(["a"], workdir, context_editing={"keep": 3})
+    assert agent._cache_hint()["context_edit"] == {"keep": 3}
+    assert "context_edit" not in agent._cache_hint("read_only")
+    agent2, _, _ = make_agent(["a"], workdir)
+    assert "context_edit" not in agent2._cache_hint()
+
+
+def test_router_passes_context_edit_only_to_claude():
+    router, prov = _router_with_levels()
+    router.chat("brain", [{"role": "user", "content": "a"}], cache={"context_edit": {"keep": 2}})
+    assert prov.calls[-1]["extra"]["_context_edit"] == {"keep": 2}
 
 
 # ------------------------------------------------------------------------------------------------ compaction

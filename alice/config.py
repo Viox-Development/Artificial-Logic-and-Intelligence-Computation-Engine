@@ -79,6 +79,12 @@ cache_ttl = "auto"
 # Beklenmeyen önbellek kırılmalarını (system prompt / araç / geçmiş değişti) sohbette de göster. Kayıt her zaman
 # ~/.alice/logs/cache_breaks.log'a yazılır.
 cache_break_notice = false
+# Bir sohbette bir modele gönderilen düşünme/effort ayarı o sohbet boyunca o modele aynı gider (yönlendirme turu başka
+# seviyeli bir role taşısa bile): effort değişimi Claude'da önbelleği bozar. Seviyeyi elle değiştirince hemen geçerli olur.
+cache_sticky_effort = true
+# Claude API'de eski araç sonuçlarını sunucu tarafında temizle (context editing beta'sı); ALICE kendi geçmişini
+# kısaltmaz. true ya da { trigger = 100000, keep = 6, clear_at_least = 20000, exclude_tools = ["memory"] }.
+context_editing = false
 # Proje ajanları, yönetici ve kurul üyeleri için üst sınır: her adım bütün konuşmayı yeniden gönderdiği için sınırsız
 # bağlam bir projede on milyonlarca token yakar. 0 = sınır yok.
 team_compact_at = 128000

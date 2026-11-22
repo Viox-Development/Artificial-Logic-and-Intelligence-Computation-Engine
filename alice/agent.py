@@ -1768,7 +1768,31 @@ class Agent:
         return self._cache_ttl_latched
 
     def _cache_hint(self, mode: str = "write") -> dict[str, Any]:
-        return {"ttl": self._cache_ttl_choice(), "mode": mode}
+        hint: dict[str, Any] = {"ttl": self._cache_ttl_choice(), "mode": mode}
+        if mode == "write" and self.config.agent.get("cache_sticky_effort", True):
+            hint["latch"] = self._effort_latch()
+        ce = self.config.agent.get("context_editing", False)
+        if mode == "write" and ce:
+            # [agent] context_editing = true (or a table with trigger/keep/clear_at_least/exclude_tools): old tool
+            # results are cleared on the Claude API server instead of ALICE rewriting its history.
+            hint["context_edit"] = dict(ce) if isinstance(ce, dict) else {}
+        return hint
+
+    def _effort_latch(self) -> dict[str, dict[str, Any]]:
+        """Per-model thinking/effort settings first sent in this conversation (router keeps resending them, see
+        Router.chat). Reset when the user picks another level, so the new level takes effect at once; also reset by
+        compaction, which rewrites the prefix anyway."""
+        try:
+            levels = (dict(self.router.thinking_overrides), dict(self.config.data.get("thinking", {}) or {}))
+        except Exception:  # noqa: BLE001
+            levels = None
+        if levels != self.__dict__.get("_effort_levels"):
+            self.__dict__["_effort_levels"] = levels
+            self.__dict__["_effort_latch_map"] = {}
+        return self.__dict__.setdefault("_effort_latch_map", {})
+
+    def _reset_effort_latch(self) -> None:
+        self.__dict__["_effort_latch_map"] = {}
 
     def _cache_ttl(self, ref: str | None = None) -> float:
         """Son modelin prompt önbelleği kaç sn yaşar. cliproxy Claude'a 1 saatlik önbellek yazıyor; Claude API'de
@@ -1799,6 +1823,14 @@ class Agent:
             return CACHE_LONG_S
         return CACHE_COLD_S
 
+    def _on_claude_api(self) -> bool:
+        try:
+            ref = self.router.last_ref.get(self.role) or self.router.first_available(self.role) or ""
+            pc = self.router.providers_cfg.get(str(ref).split(":", 1)[0])
+        except Exception:  # noqa: BLE001
+            return False
+        return pc is not None and getattr(pc, "kind", "") == "anthropic"
+
     # ---------------------------------------------------------- cache break detection
     def _cache_before(self) -> None:
         try:
@@ -1818,6 +1850,10 @@ class Agent:
 
                 self.cache_breaks.pending.settings = _sha({"s": self.router.last_settings.get(self.role),
                                                            "ttl": self._cache_ttl_latched})
+            cleared = int((res.usage or {}).get("context_cleared_tokens") or 0)
+            if cleared:
+                self.cache_breaks.expect(f"sunucu eski araç sonuçlarını temizledi ({cleared:,} token)")
+                self.stats["context_cleared"] = self.stats.get("context_cleared", 0) + cleared
             brk = self.cache_breaks.after(cached_tokens(res.usage or {}), ref, self._cache_ttl(ref))
             if brk is not None and not brk.expected:
                 self.stats["cache_breaks"] = self.stats.get("cache_breaks", 0) + 1
@@ -1845,6 +1881,8 @@ class Agent:
         todo = [i for i in idx[:-KEEP_OUTPUTS] if len(self.messages[i]["content"]) > OLD_OUTPUT_CHARS * 1.5]
         if not todo:
             return
+        if self.config.agent.get("context_editing", False) and self._on_claude_api():
+            return  # the Claude API server clears old tool results itself (context editing): history stays intact
         self.cache_breaks.expect("eski araç çıktıları kısaltıldı")
         for i in todo:
             c = self.messages[i]["content"]
@@ -1960,6 +1998,7 @@ class Agent:
                 return False
             summary = (res.text or "").strip()
         self.cache_breaks.expect("konuşma özetlendi")
+        self._reset_effort_latch()  # the prefix is rewritten anyway: the current level can take over
         if not _valid_summary(summary):
             # Model özet yerine araç çağrısı metni ya da dökümün kopyasını döndürdü (11 Kasım: "<tool calls>…" ve
             # "-> git({…}) [tool] …" özet diye kabul edildi, ALICE işin ne olduğunu unuttu). Böyle bir "özet"
@@ -2053,3 +2092,5 @@ class Agent:
     def reset(self) -> None:
         self.messages = self.messages[:1]
         self._last_turn_role = None
+        self._reset_effort_latch()
+        self.cache_breaks.reset()
