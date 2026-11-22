@@ -35,12 +35,13 @@ class TodoWrite(Tool):
 
 class Memory(Tool):
     name = "memory"
-    description = ("Kalıcı hafıza: kullanıcıya ve işlerine dair NOTLAR (her biri ayrı dosya; kurallar ve MEMORY.md "
-                   "dizini sistem isteminde) ve geçmiş konuşmalar.\n"
-                   "- save: not yaz ya da aynı adla güncelle (name, type, description, content; scope=proje yalnız bu "
-                   "depoya özgü olanlar). Benzer not varsa onu güncelle. 'Hatırla' denince hemen save, 'unut' "
-                   "denince delete.\n"
-                   "- read: name ile notun tamamı (dizindeki bir not işe yarayacaksa oku); name yoksa hepsi.\n"
+    description = ("Kalıcı hafıza: kullanıcı ve hayatındaki insanlar, alanlar, konular hakkında NOTLAR (her biri ayrı "
+                   "dosya; dizini sistem isteminde) ve geçmiş konuşmalar.\n"
+                   "- save: not yaz ya da aynı adla güncelle. category: you (profile/preferences), people (kişi başına "
+                   "bir not, adıyla), areas (süregelen proje/staj/topluluk), topics (ilgi, donanım, araç). Kişilerde "
+                   "takma adları aliases'a yaz, ilgili notları içerikte [[ad]] ile bağla. Benzer not varsa onu "
+                   "güncelle. 'Hatırla' denince hemen save, 'unut' denince delete.\n"
+                   "- read: name ya da takma adla notun tamamı ('gravity' -> efe); name yoksa hepsi.\n"
                    "- Kullanıcı geçmişe değinince ('geçen sefer', 'dün konuştuğumuz') önce bak: search_chats (konu), "
                    "recent_chats (zaman, after/before). Bulamazsan uydurma.\n"
                    "- log: uzun işte not etmeye değeri bugünün günlüğüne ekle. dream: hafızayı şimdi toparla. "
@@ -53,13 +54,18 @@ class Memory(Tool):
                    "description": "save | read | delete | list (notlar) | search (notlarda ara) | log (günlüğe ekle) | "
                    "dream (toparla) | restore (yedeğe dön; backup boşsa yedekleri listeler) | search_chats | "
                    "recent_chats | followup | followups | done. add/update/forget eski adlar (save/delete)."},
-        "name": {"type": "string", "description": "Notun kısa adı (kebab-case, ör. 'feedback-testler'); read/delete/"
-                 "save için. Başka kapsamdaki not: 'proje:ad'."},
-        "type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "save: tür."},
-        "description": {"type": "string", "description": "save: tek satır, belirgin açıklama (hatırlamada bu satıra "
-                        "bakılarak seçilir)."},
-        "content": {"type": "string", "description": "save: notun gövdesi (markdown). feedback/project için: kural ya "
-                    "da bilgi, sonra '**Neden:**' ve '**Nasıl uygulanır:**' satırları. Göreli tarihleri mutlak yaz."},
+        "name": {"type": "string", "description": "Notun kısa adı (kebab-case; kişide adı: 'efe', alanda 'staj'); "
+                 "read/delete/save için. read'de takma ad da olur. Başka kapsamdaki not: 'proje:ad'."},
+        "category": {"type": "string", "description": "save: you | people | areas | topics (ya da uygun başka bir "
+                     "klasör adı). Var olan not yerinde kalır; farklı category verilirse oraya taşınır."},
+        "aliases": {"type": "array", "items": {"type": "string"}, "description": "save: takma adlar, kullanıcı adları, "
+                    "farklı yazılışlar (kişilerde önemli: ['gravity'])."},
+        "type": {"type": "string", "enum": ["user", "feedback", "project", "reference"],
+                 "description": "Eski alan, isteğe bağlı; category kullan."},
+        "description": {"type": "string", "description": "save: tek satır. Kişide: 'Ad (\"takma ad\") — kullanıcıya "
+                        "ne olduğu, nereden, bağlı kişiler; read when Ad or takma ad comes up'. Hatırlama buna bakar."},
+        "content": {"type": "string", "description": "save: notun tamamı (markdown, kısa maddeler). İlgili notları "
+                    "[[ad]] ile bağla. Göreli tarihleri mutlak yaz. Güncellemede eski içeriği birleştirip tam yaz."},
         "title": {"type": "string", "description": "save: dizinde görünecek kısa başlık (boşsa ad)."},
         "scope": {"type": "string", "enum": ["genel", "proje"], "description": "save: genel (varsayılan) ya da "
                   "proje (yalnız şu anki git deposunda geçerli)."},
@@ -90,7 +96,8 @@ class Memory(Tool):
             scope: str | None = None, note: str | None = None, kind: str | None = None, id: int | str | None = None,  # noqa: A002
             query: str | None = None, backup: str | None = None, text: str | None = None, due: str | None = None,
             followup_kind: str | None = None, n: int | None = None, after: str | None = None,
-            before: str | None = None) -> ToolResult:
+            before: str | None = None, category: str | None = None,
+            aliases: list[str] | str | None = None) -> ToolResult:
         from alice.memdir import MemoryFull
         from alice.memory import _day_start, _parse_day, shared_memory
 
@@ -105,12 +112,17 @@ class Memory(Tool):
                 if action == "save" or content:
                     if not (content or description):
                         raise ToolError("save için content (ve description) gerekli")
-                    if not type:
-                        raise ToolError("save için type gerekli: user, feedback, project ya da reference")
-                    rec, new = mem.save_note(name or title or description or "", description or "", type,
+                    cat = category or {"user": "", "feedback": "you", "project": "areas",
+                                       "reference": "topics"}.get(type or "", "")
+                    if (name or "").strip().lower() in ("profile", "preferences"):
+                        cat = "you"
+                    al = [a.strip() for a in (aliases.split(",") if isinstance(aliases, str) else aliases or [])
+                          if str(a).strip()]
+                    rec, new = mem.save_note(name or title or description or "", description or "", type or "",
                                              content or description or "", title=title or "", source="araç",
-                                             scope=scope or "genel", cwd=cwd)
-                    return ToolResult(f"{'kaydedildi' if new else 'güncellendi'}: {rec.key} ({rec.path})")
+                                             scope=scope or "genel", cwd=cwd, category=cat, aliases=al)
+                    where = rec.rel if hasattr(rec, "rel") else rec.path
+                    return ToolResult(f"{'kaydedildi' if new else 'güncellendi'}: {rec.key} ({where})")
                 if action == "update" and (name or id is not None):
                     return ToolResult("güncellendi" if mem.update(str(name or id), note or "", cwd) else "not yok")
                 if not note:
@@ -137,8 +149,15 @@ class Memory(Tool):
             if name:
                 _, rec = mem.find_note(name, cwd)
                 if rec is None:
+                    for b in mem.books(cwd):  # a nickname ("gravity") reads the person's note
+                        rec = b.resolve_alias(name)
+                        if rec is not None:
+                            break
+                if rec is None:
                     raise ToolError(f"not yok: {name} (memory action=list ile bak)")
-                return ToolResult(f"{rec.render(limit=8000)}\n\n(dosya: {rec.path})")
+                links = ", ".join(f"[[{x}]]" for x in rec.links)
+                return ToolResult(f"{rec.render(limit=8000)}\n\n(dosya: {rec.path}"
+                                  + (f"; bağlı notlar: {links}" if links else "") + ")")
             return ToolResult(mem.export_markdown(cwd))
         if action == "list":
             lines = []

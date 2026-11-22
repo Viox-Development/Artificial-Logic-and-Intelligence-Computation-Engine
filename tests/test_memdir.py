@@ -22,7 +22,9 @@ def test_note_round_trip_keeps_hash_and_colon_in_values(tmp_path):
     assert "modified" in meta and "created" in meta and body.startswith("Kural.")
     again = b.get("feedback-testler")
     assert again.description == note.description and again.title == "Testler"
-    assert b.index_raw().strip() == "- [Testler](feedback-testler.md) — C# testleri: yalnız ilgili olanlar #önemli"
+    idx = b.index_raw()
+    assert idx.startswith("# Hafıza Dizini")  # the index is generated from the notes, with a heading
+    assert "- [Testler](feedback-testler.md) — C# testleri: yalnız ilgili olanlar #önemli" in idx.splitlines()
     _, new2 = b.save("feedback-testler", "güncel", "feedback", "Yeni kural.")
     assert not new2 and b.index_raw().count("feedback-testler.md") == 1  # line updated in place
 
@@ -34,18 +36,22 @@ def test_sanitize_neutralizes_prompt_tags_and_invisible_chars():
     assert slugify("Kullanıcının Çayı Şekersiz!") == "kullanicinin-cayi-sekersiz"
 
 
-def test_index_limit_refuses_instead_of_truncating(tmp_path):
+def test_index_limit_refuses_instead_of_truncating(tmp_path, monkeypatch):
+    # The index is built from the notes, so the limit is reached with real notes (a small limit keeps it fast):
+    # heading + blank line + section heading + 7 notes = 10 lines.
+    monkeypatch.setattr(memdir, "MAX_INDEX_LINES", 10)
     b = NoteBook(tmp_path / "m")
-    b.ensure()
-    b.index_path.write_text("\n".join(f"- [n{i}](n{i}.md) — x" for i in range(MAX_INDEX_LINES)) + "\n",
-                            encoding="utf-8")
+    for i in range(7):
+        b.save(f"n{i}", f"not {i}", "user", "gövde")
     with pytest.raises(MemoryFull, match="sınırı aşılacaktı"):
         b.save("yeni-not", "açıklama", "user", "gövde")
     assert not b.path_for("yeni-not").exists()  # nothing was written
-    b.index_path.write_text("\n".join(f"- [n{i}](n{i}.md) — x" for i in range(MAX_INDEX_LINES + 30)) + "\n",
-                            encoding="utf-8")
+    for i in range(7, 12):  # notes added by hand past the limit: the prompt shows the start and says why
+        (b.root / f"n{i}.md").write_text(f"---\nname: n{i}\ndescription: not {i}\n---\n\ngövde\n", encoding="utf-8")
+    b.index_path.write_text(b.build_index(), encoding="utf-8")
     shown = b.index_for_prompt()
-    assert "UYARI" in shown and f"ilk {MAX_INDEX_LINES} satırı" in shown and b.near_limit()
+    assert "UYARI" in shown and "ilk 10 satırı" in shown and b.near_limit()
+    assert MAX_INDEX_LINES == 200  # the real limit is unchanged
 
 
 def test_index_heals_missing_and_dangling_lines(tmp_path):
@@ -155,7 +161,7 @@ def test_books_of_the_same_folder_share_one_lock_and_lose_no_index_lines(tmp_pat
         t.start()
     for t in threads:
         t.join()
-    assert len(NoteBook(root).index_raw().strip().splitlines()) == 75
+    assert sum(line.startswith("- [") for line in NoteBook(root).index_raw().splitlines()) == 75
 
 
 def test_hand_added_file_with_spaces_can_be_read_updated_and_deleted(tmp_path):

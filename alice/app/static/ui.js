@@ -2293,6 +2293,8 @@ function memoryPane(pane, data) {
   };
   f.addEventListener("input", draw);
   draw();
+  // Raw turns are no longer injected into the prompt, but they are still kept for search_chats / recent_chats,
+  // so the pane keeps the block that lets the user see and delete them.
   historyBlock(pane, d);
   if ((d.followups || []).length) {
     pane.appendChild(el("div", "sec", "Takipler (sonra sorulacak / hatırlatılacak)"));
