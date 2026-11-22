@@ -221,24 +221,25 @@ class WebFetch(Tool):
     name = "web_fetch"
     untrusted = True
     parallel_safe = True
-    description = ("Bir URL'yi arka planda indirir ve okunabilir Markdown döndürür: menü/reklam/footer atılır, başlık, "
-                   "liste, tablo ve kod korunur, bağlantılar metin⟨n⟩ olarak numaralanıp sonda listelenir. JSON düzenlenir, "
-                   "PDF metne çevrilir (ekranda bir şey açmaz). Site engellerse ya da sayfa JavaScript ile yükleniyorsa "
-                   "kendiliğinden gizli bir tarayıcıda açılır.\n"
-                   "- prompt verirsen sayfanın soruyla ilgili bölümleri seçilir ve küçük bir model sadece istediğin "
-                   "bilgiyi döndürür; uzun sayfalarda çok daha az token.\n"
-                   "- Uzun sayfa kesilirse start ile devamını oku. Bir siteyi birden çok sayfa gezerek araştırmak için "
-                   "web_crawl.\n"
-                   "- Giriş gerektiren sayfalar ya da tıklama/form için browser. API çağrısı (POST, başlık) için "
-                   "http_request.")
+    description = ("Fetches a URL in the background and returns readable Markdown: menus, ads, and footers are stripped, "
+                   "headings, lists, tables, and code are preserved, and links are numbered as text⟨n⟩ and listed at the end. "
+                   "JSON is pretty-printed and PDFs are converted to text (nothing opens on screen). If a site blocks plain "
+                   "requests or renders via JavaScript, it automatically falls back to a stealth browser.\n"
+                   "- Pass prompt to select relevant sections and extract only the requested info with a small model, "
+                   "using far fewer tokens on long pages.\n"
+                   "- If a long page is truncated, pass start to read the rest. To explore a site across multiple pages, "
+                   "use web_crawl.\n"
+                   "- For pages requiring login, clicking, or forms, use browser. For API calls (POST, custom headers), "
+                   "use http_request.")
     parameters = obj({
-        "url": {"type": "string", "description": "Tam adres, ör. 'https://tr.wikipedia.org/wiki/Ankara'."},
-        "prompt": {"type": "string", "description": "Sayfadan ne öğrenmek istediğin, ör. 'kurulum adımları' ya da "
-                   "'fiyat ve stok durumu'. Verilmezse sayfanın metni döner."},
-        "start": {"type": "integer", "description": "Metnin bu karakterinden itibaren göster (kesilen sayfanın "
-                  "devamı için). Varsayılan 0."},
-        "raw": {"type": "boolean", "description": "true: HTML'i metne çevirmeden döndür. Varsayılan false."},
+        "url": {"type": "string", "description": "Full URL, e.g. 'https://tr.wikipedia.org/wiki/Ankara'."},
+        "prompt": {"type": "string", "description": "What you want to learn from the page, e.g. 'installation steps' or "
+                   "'price and availability'. If omitted, returns the page text."},
+        "start": {"type": "integer", "description": "Character offset to start reading from (to continue a truncated page). "
+                  "Default 0."},
+        "raw": {"type": "boolean", "description": "true: return raw HTML without converting to text. Default false."},
     }, ["url"])
+
     risk = NETWORK
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -394,17 +395,18 @@ class WebSearch(Tool):
     name = "web_search"
     untrusted = True
     parallel_safe = True
-    description = ("İnternette arar ve sonuçların başlık, URL ve özetini döndürür; ekranda bir şey açmaz. "
-                   "Güncel bilgi, haber, fiyat ya da bilmediğin bir şey sorulunca kullan; ayrıntı için sonra web_fetch "
-                   "(prompt ile). Bir siteyle sınırlamak için allowed_domains. Kullanıcı aramayı tarayıcıda görmek "
-                   "isterse windows action=navigate kullan.")
+    description = ("Searches the web and returns result titles, URLs, and snippets without opening anything on screen. "
+                   "Use for current information, news, prices, or unfamiliar topics; follow up with web_fetch (with prompt) "
+                   "for details.\n"
+                   "- Restrict results to specific sites with allowed_domains.\n"
+                   "- If the user wants to view the search in their browser, use windows action=navigate.")
     parameters = obj({
-        "query": {"type": "string", "description": "Arama ifadesi, ör. 'Ankara hava durumu yarın'."},
-        "max_results": {"type": "integer", "description": "En fazla sonuç. Varsayılan 8."},
-        "allowed_domains": {"type": "array", "items": {"type": "string", "description": "Alan adı."},
-                            "description": "Sadece bu sitelerden sonuç, ör. [\"docs.python.org\"]."},
-        "blocked_domains": {"type": "array", "items": {"type": "string", "description": "Alan adı."},
-                            "description": "Bu sitelerden gelen sonuçları çıkar."},
+        "query": {"type": "string", "description": "Search query, e.g. 'Ankara weather tomorrow'."},
+        "max_results": {"type": "integer", "description": "Maximum number of results to return. Default 8."},
+        "allowed_domains": {"type": "array", "items": {"type": "string", "description": "Domain name."},
+                            "description": "Only include results from these sites, e.g. [\"docs.python.org\"]."},
+        "blocked_domains": {"type": "array", "items": {"type": "string", "description": "Domain name."},
+                            "description": "Exclude results from these sites."},
     }, ["query"])
 
     risk = NETWORK
@@ -527,23 +529,25 @@ def _json_arg(name: str, v: Any) -> Any:
 class HttpRequest(Tool):
     name = "http_request"
     untrusted = True
-    description = ("Herhangi bir HTTP isteği yapar (GET/POST/PUT/PATCH/DELETE): REST API çağırma, webhook, JSON gönderme, "
-                   "dosya indirme. Sadece bir sayfayı okumak için web_fetch daha iyi.\n"
-                   "- Gizli anahtarları yazma; başlıkta '${env:AD}' kullan, ALICE ortam değişkeninden doldurur.\n"
-                   "- save_to verilirse yanıt gövdesi o dosyaya kaydedilir (dosya indirme).")
+    description = ("Makes an HTTP request (GET/POST/PUT/PATCH/DELETE) for calling REST APIs, triggering webhooks, sending JSON, "
+                   "or downloading files. Use web_fetch instead when you only need to read a web page.\n"
+                   "- Do not hardcode secrets; use '${env:NAME}' in headers or the URL and ALICE will expand it from environment variables.\n"
+                   "- Pass save_to to save the response body directly to a file (file download).")
     parameters = obj({
-        "url": {"type": "string", "description": "Tam adres, ör. 'https://api.github.com/repos/a/b'."},
+        "url": {"type": "string", "description": "Full URL, e.g. 'https://api.github.com/repos/a/b'."},
         "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-                   "description": "HTTP yöntemi. Varsayılan GET."},
-        "headers": {"type": "string", "description": "İstek başlıkları JSON nesnesi olarak, ör. "
+                   "description": "HTTP method. Default GET."},
+        "headers": {"type": "string", "description": "Request headers as a JSON object string, e.g. "
                     "'{\"Authorization\": \"Bearer ${env:TOKEN}\"}'."},
-        "params": {"type": "string", "description": "URL sorgu parametreleri JSON nesnesi olarak, ör. '{\"q\": \"ankara\"}'."},
-        "json": {"type": "string", "description": "JSON gövde metni, ör. '{\"ad\": \"x\"}' (Content-Type otomatik "
-                 "application/json)."},
-        "body": {"type": "string", "description": "Ham metin gövde (json yerine)."},
-        "save_to": {"type": "string", "description": "Yanıtı bu dosyaya kaydet, ör. 'indirilenler/kurulum.exe'."},
-        "timeout": {"type": "integer", "description": "Saniye cinsinden zaman aşımı. Varsayılan 30."},
+        "params": {"type": "string", "description": "URL query parameters as a JSON object string, e.g. '{\"q\": \"ankara\"}'."},
+        "json": {"type": "string", "description": "JSON request body string, e.g. '{\"name\": \"x\"}' (sets Content-Type to "
+                 "application/json automatically)."},
+        "body": {"type": "string", "description": "Raw text request body (used instead of json)."},
+        "save_to": {"type": "string", "description": "Save the response body to this file path (absolute or relative to the "
+                    "working directory), e.g. 'downloads/setup.exe'."},
+        "timeout": {"type": "integer", "description": "Timeout in seconds. Default 30."},
     }, ["url"])
+
     risk = NETWORK
 
     def risk_for(self, args: dict[str, Any]) -> str:
