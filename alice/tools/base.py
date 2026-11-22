@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -184,3 +185,81 @@ def truncate(text: str, limit: int) -> str:
     head = int(limit * 0.6)
     tail = limit - head
     return f"{text[:head]}\n\n... [{len(text) - limit} karakter kesildi] ...\n\n{text[-tail:]}"
+
+
+# Lines worth keeping from the cut middle of a long command output: errors, failures, tracebacks, summaries.
+_SIGNAL = re.compile(r"\b(?:error|errors|fail(?:ed|ure|s)?|exception|traceback|fatal|panic|denied|not found|"
+                     r"cannot|could not|unable to|warning|assert(?:ion)?|exit code|timed? ?out|hata|başarısız)\b|"
+                     r"\b\w*(?:Error|Exception|Warning)\b:|"  # ValueError:, KeyError:, DeprecationWarning:
+                     r"^(?:E |FAILED |ERROR |  File \")|^\s*\^+\s*$", re.I)
+_REPEAT_MIN = 4
+
+
+def _collapse_repeats(lines: list[str]) -> list[str]:
+    """Runs of near-identical lines (progress bars, "Downloading x...", the same warning 300 times) become one line
+    plus a count; that alone usually brings a long install or build log under the limit without losing anything."""
+    out: list[str] = []
+    i = 0
+    # Numbers are ignored (counters, percentages, line numbers), the rest of the line must match exactly; a signal
+    # line (an error) never joins a run, so "FAILED" between 700 "PASSED" lines stays visible.
+    norm = lambda s: re.sub(r"\d+", "#", s.strip())  # noqa: E731
+    while i < len(lines):
+        j = i + 1
+        if lines[i].strip() and not _SIGNAL.search(lines[i]):
+            while j < len(lines) and norm(lines[j]) == norm(lines[i]):
+                j += 1
+        if j - i >= _REPEAT_MIN:
+            out += [lines[i], f"    ... (benzer {j - i - 2} satır daha) ...", lines[j - 1]]
+        else:
+            out += lines[i:j]
+        i = j
+    return out
+
+
+def smart_truncate(text: str, limit: int, failed: bool = False) -> str:
+    """Cut a long command output so the useful parts survive.
+
+    1. Repeated lines are collapsed first (often enough on its own).
+    2. Then head + tail are kept as before, but the tail gets more room when the command failed (the error and the
+       summary are at the end), and lines from the cut middle that look like errors/failures/warnings are kept with
+       their line numbers, so a failing test in the middle of a 3000-line pytest run is not lost.
+    The full output is still saved to a file by the caller."""
+    if len(text) <= limit:
+        return text
+    lines = _collapse_repeats(text.splitlines())
+    squeezed = "\n".join(lines)
+    if len(squeezed) <= limit:
+        return squeezed
+    if limit <= 0:
+        return f"... [{len(text)} karakter kesildi] ..."
+    head_n = int(limit * (0.3 if failed else 0.45))
+    tail_n = int(limit * (0.45 if failed else 0.35))
+    sig_n = limit - head_n - tail_n
+    head, tail = squeezed[:head_n], squeezed[-tail_n:]
+    # Middle lines with a signal, deduplicated, numbered so the model can read around them in the saved file.
+    start_line = head.count("\n")
+    middle = squeezed[head_n:len(squeezed) - tail_n].splitlines()
+    picked: list[str] = []
+    seen: set[str] = set()
+    used = 0
+    for k, line in enumerate(middle):
+        # The line right after a signal line is usually its message ("Traceback" -> the frame/exception line).
+        follows = k > 0 and _SIGNAL.search(middle[k - 1]) and line.strip()
+        if not _SIGNAL.search(line) and not follows:
+            continue
+        key = re.sub(r"\d+", "#", line.strip())[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        row = f"{start_line + k + 1:>6}| {line[:300]}"
+        if used + len(row) + 1 > sig_n:
+            break
+        picked.append(row)
+        used += len(row) + 1
+    cut = len(squeezed) - head_n - tail_n
+    mid = f"\n\n... [{cut} karakter kesildi"
+    if picked:
+        mid += f"; aradan {len(picked)} önemli satır (satır no ile):]\n" + "\n".join(picked) + "\n[...]\n\n"
+    else:
+        mid += "] ...\n\n"
+    return head + mid + tail

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from alice.tools.base import DANGER, EXEC, Tool, ToolContext, ToolError, ToolResult, obj, truncate
+from alice.tools.base import DANGER, EXEC, Tool, ToolContext, ToolError, ToolResult, obj, smart_truncate, truncate
 
 IS_WIN = sys.platform == "win32"
 # Commands run from the windowless core (pythonw) must not each open a black console window. Windowed
@@ -78,7 +78,13 @@ def shell_argv(command: str) -> list[str]:
         # before, the ~110-character prefix shifted the char position, so the model looked for the error in
         # the wrong place (seen often with gh/jq commands in the 2026-11-13 session). -EncodedCommand was tried,
         # but Windows PowerShell 5.1 wraps stderr in CLIXML that can't be read with it; -Command keeps plain text.
-        setup = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8"
+        # PSDefaultParameterValues: in Windows PowerShell 5.1 `>`, Out-File and Set-Content wrote UTF-16 LE
+        # (bytes FF FE); every JSON or text file a command produced then failed to load in Python and git saw
+        # binary. With this they write UTF-8 (5.1 adds a BOM, which utf-8-sig readers and git handle).
+        setup = ("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; "
+                 "$PSDefaultParameterValues['Out-File:Encoding']='utf8'; "
+                 "$PSDefaultParameterValues['Set-Content:Encoding']='utf8'; "
+                 "$PSDefaultParameterValues['Add-Content:Encoding']='utf8'")
         return [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", setup + "\n" + command]
     sh = shutil.which("bash") or "/bin/sh"
     return [sh, "-lc", command]
@@ -90,11 +96,48 @@ def shell_name() -> str:
     return "bash" if shutil.which("bash") else "sh"
 
 
+# GitHub tokens that ALICE itself loaded from its .env: gh prefers GITHUB_TOKEN / GH_TOKEN over the user's own
+# `gh auth login` session, so a narrow token kept in .env for the github tool turned every `gh pr create` in a
+# command into "Resource not accessible by personal access token". Commands get the user's real gh login instead.
+_GH_ENV = ("GITHUB_TOKEN", "GH_TOKEN")
+
+
 def _env() -> dict[str, str]:
+    from alice.config import LOADED_ENV_KEYS
+
     env = dict(os.environ)
+    for k in _GH_ENV:
+        if k in LOADED_ENV_KEYS:
+            env.pop(k, None)
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
     return env
+
+
+# Windows PowerShell 5.1 wraps every stderr line of a native program (git's "Switched to branch", gh progress,
+# pip warnings) in a red ErrorRecord block when stderr is merged with 2>&1:
+#   git : Switched to a new branch 'x'
+#   At line:2 char:81
+#   + ... git checkout -b x 2>&1 ...
+#   +     ~~~~~~~~~~~~~~~~
+#       + CategoryInfo          : NotSpecified: (...) [], RemoteException
+#       + FullyQualifiedErrorId : NativeCommandError
+# The message is kept; the five lines of noise that made a normal git command look like a failure are dropped.
+_NATIVE_NOISE = re.compile(
+    r"^(?P<msg>[^\r\n]*)\r?\n(?:At line:\d+ char:\d+\r?\n)(?:\+[^\r\n]*\r?\n){1,3}"
+    r"(?:[ \t]+\+ (?:CategoryInfo|FullyQualifiedErrorId)[^\r\n]*\r?\n?){1,2}", re.M)
+
+
+def clean_ps_noise(text: str) -> str:
+    if "NativeCommandError" not in text:
+        return text
+
+    def keep(m: re.Match) -> str:
+        msg = m.group("msg")
+        # "git : message" -> "message" (the program name prefix PowerShell adds)
+        return re.sub(r"^[\w.-]+(?:\.exe)? : ", "", msg) + "\n"
+
+    return _NATIVE_NOISE.sub(keep, text)
 
 
 @dataclass
@@ -109,43 +152,48 @@ class BgProc:
 class RunCommand(Tool):
     name = "run_command"
     description = (
-        "Shell komutu çalıştırır (Windows: PowerShell 5.1, diğer: bash); çıkış kodu ve stdout+stderr döner.\n"
-        "- Komutlar arka planda sessizce çalışır, ekrana konsol penceresi açılmaz.\n"
-        "- Dosya, git, ağ veya arayüz işleri için önce ilgili özel araçları tercih et (load_tools).\n"
-        "- Dosya okumak/aramak/düzenlemek için komut değil read_file, grep, glob, edit_file kullan.\n"
-        "- Pencereli program ya da site açmak için windows action=open; Blender için blender aracı.\n"
-        "- Sürekli çalışan işler (sunucu, izleme) için background=true, sonra process_output.\n"
-        "- Birbirinden bağımsız komutları AYNI cevapta ayrı ayrı iste: aynı anda çalışırlar (toplam süre en uzun "
-        "komut kadar olur). Biri diğerinin sonucuna muhtaçsa (klasör oluştur + içinde çalış, kur + kullan) ayrı "
-        "çağrı yapma, tek komutta ';' ile sırala.\n"
-        "- PowerShell 5.1'de '&&' yok: komutları ';' ile ayır. Boşluklu yolları tırnak içine al.\n"
-        "- Çıktı sınıra sığmazsa kesilir ama tamamı geçici bir dosyaya yazılır; sonuçta dosya yolu verilir, "
-        "gerekirse oradan oku."
+        "Shell komutu çalıştırır (Windows: PowerShell 5.1, diğer: bash); çıkış kodu ve stdout+stderr döner. "
+        "Penceresiz, arka planda çalışır.\n"
+        "- Dosya okuma/arama/düzenleme için read_file, grep, glob, edit_file; pencereli program için windows "
+        "action=open; git, ağ, arayüz işleri için ilgili özel araçlar.\n"
+        "- Sunucu/izleme gibi sürekli işler: background=true, sonra process_output.\n"
+        "- Bağımsız komutları aynı cevapta ayrı çağrılar olarak iste (paralel çalışır); birbirine bağlı olanları "
+        "tek komutta ';' ile sırala (5.1'de '&&' yok).\n"
+        "- Python kodu için command yerine python ver: kod olduğu gibi gider, tırnak kaçışı gerekmez. Girdi için stdin.\n"
+        "- Uzun çıktıda tekrarlanan satırlar birleşir, hata satırları ortadan da korunur; tamamı bir dosyaya yazılır."
     )
     parameters = obj({
-        "command": {"type": "string", "description": "Çalıştırılacak komut, ör. 'git status' ya da 'python -m pytest -q'."},
+        "command": {"type": "string", "description": "Çalıştırılacak komut, ör. 'git status' ya da 'python -m pytest -q'. "
+                    "python verildiyse boş bırak."},
+        "python": {"type": "string", "description": "Çalıştırılacak Python kodu (çok satırlı olabilir). PowerShell'den "
+                   "geçmez, tırnaklar bozulmaz. Örn: \"import json; print(json.load(open('a.json'))['x'])\"."},
+        "stdin": {"type": "string", "description": "Komutun ya da Python kodunun standart girdisine verilecek metin."},
         "cwd": {"type": "string", "description": "Komutun çalışacağı klasör. Varsayılan: çalışma klasörü."},
         "timeout": {"type": "integer", "description": "Saniye; dolunca komut öldürülür. Varsayılan 120, en fazla 1800."},
         "background": {"type": "boolean", "description": "true: beklemeden arka planda başlat ve pid döndür. "
                        "Varsayılan false."},
         "unsandboxed": {"type": "boolean", "description": "Sadece komut sandbox yüzünden başarısız olduysa ve "
                         "proje dışına yazması gerçekten gerekiyorsa true (kullanıcıya her zaman sorulur)."},
-    }, ["command"])
+    }, [])
     risk = EXEC
 
     def risk_for(self, args: dict[str, Any]) -> str:
         if args.get("unsandboxed"):
             return DANGER  # leaving the sandbox always requires approval
-        return DANGER if is_dangerous(args.get("command", "")) else EXEC
+        text = str(args.get("command") or "") + "\n" + str(args.get("python") or "")
+        return DANGER if is_dangerous(text) else EXEC
 
     def summary(self, args: dict[str, Any]) -> str:
-        return args.get("command", "")[:300]
+        if args.get("python") and not args.get("command"):
+            first = next((ln for ln in str(args["python"]).splitlines() if ln.strip()), "")
+            return f"python: {first[:280]}"
+        return str(args.get("command", ""))[:300]
 
     def parallel_for(self, ctx: ToolContext, args: dict[str, Any]) -> bool:
         # Commands that need approval (dangerous, outside the sandbox) are already asked about one by one;
         # the rest can run side by side.
         return (bool(ctx.config.agent.get("parallel_commands", True)) and not args.get("unsandboxed")
-                and not is_dangerous(str(args.get("command", ""))))
+                and self.risk_for(args) != DANGER)
 
     def exclusive_key(self, args: dict[str, Any]) -> str:
         command = str(args.get("command", ""))
@@ -153,12 +201,31 @@ class RunCommand(Tool):
             return "kurulum"
         return "git" if _GIT_RX.search(command) else ""
 
-    def run(self, ctx: ToolContext, command: str, cwd: str | None = None, timeout: int = 120,
-            background: bool = False, unsandboxed: bool = False) -> ToolResult:
+    def run(self, ctx: ToolContext, command: str = "", cwd: str | None = None, timeout: int = 120,
+            background: bool = False, unsandboxed: bool = False, python: str = "", stdin: str = "") -> ToolResult:
         wd = ctx.resolve(cwd) if cwd else ctx.cwd
         if not wd.is_dir():
             raise ToolError(f"klasör yok: {wd}")
-        argv = shell_argv(command)
+        if (command is not None and not isinstance(command, str)) or (python is not None and not isinstance(python, str)):
+            raise ToolError("geçersiz parametre: command ve python metin olmalı")
+        command, python = command or "", python or ""
+        if python and command:
+            raise ToolError("command ya da python'dan yalnız birini ver")
+        if not python and not command.strip():
+            raise ToolError("eksik zorunlu parametre: command (ya da python)")
+        if python:
+            # The code goes to the interpreter on stdin, never through a shell: no quoting, no $ or backslash
+            # mangling, multi-line works. `py -c "..."` through PowerShell broke on nearly every non-trivial snippet.
+            from alice import runtime
+
+            if stdin:
+                raise ToolError("python ile stdin birlikte verilemez: kod zaten stdin'den okunuyor; girdiyi kodun "
+                                "içine yaz ya da dosyadan oku")
+            argv = [str(runtime.python()), "-X", "utf8", "-"]
+            stdin = python
+            command = "python -"
+        else:
+            argv = shell_argv(command)
         env = _env()
         from alice import sandbox
 
@@ -178,6 +245,8 @@ class RunCommand(Tool):
         # the sandbox it kicks in), a warning is added to the result.
         git_before = gitsafe.snapshot(wd) if boxed and not background else None
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
+        if background and stdin:
+            raise ToolError("arka plan sürecine stdin/python verilemez; kodu bir dosyaya yazıp dosyayı çalıştır")
         if background:
             # The name used to be a timestamp: two processes started in the same millisecond wrote to one file
             # and their output got mixed.
@@ -200,12 +269,16 @@ class RunCommand(Tool):
         timeout = max(1, min(int(timeout), 1800))
         # Output goes to a temp file instead of a pipe: if a windowed program the command started (e.g. Blender)
         # inherits the pipes, subprocess.run kept waiting forever even after the timeout.
-        with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
+        with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe, tempfile.TemporaryFile() as fi:
             fg_kw: dict[str, Any] = {"creationflags": NO_WINDOW}
             if IS_WIN:
                 fg_kw["startupinfo"] = hidden_startupinfo()
-            pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, env=env,
-                                   **fg_kw)
+            if stdin:
+                # A file, not a pipe, for the same reason as stdout: nothing can block on a full pipe buffer.
+                fi.write(stdin.encode("utf-8"))
+                fi.seek(0)
+            pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=fi if stdin else subprocess.DEVNULL,
+                                   env=env, **fg_kw)
             with track_foreground(ctx, pop):
                 try:
                     returncode = pop.wait(timeout=timeout)
@@ -226,6 +299,8 @@ class RunCommand(Tool):
             fe.seek(0)
             out = fo.read().decode("utf-8", errors="replace")
             err = fe.read().decode("utf-8", errors="replace")
+        if IS_WIN:
+            out, err = clean_ps_noise(out), clean_ps_noise(err)
         if timed_out:
             return ToolResult(f"ZAMAN AŞIMI ({timeout} sn). Uzun işler için background=true kullan. Pencereli bir "
                               "program açıyorsan run_command yerine windows action=open kullan; Blender için blender aracını "
@@ -235,7 +310,7 @@ class RunCommand(Tool):
         body = out
         if err.strip():
             body += ("\n[stderr]\n" if out.strip() else "[stderr]\n") + err
-        body = truncate(body.strip(), limit) or "(çıktı yok)"
+        body = smart_truncate(body.strip(), limit, failed=returncode != 0) or "(çıktı yok)"
         if len(out) + len(err) > limit:
             # So truncated output is not lost: the full output is written to a temp file the model can read.
             # mkstemp opens the file as 0600 on POSIX; write_bytes would leave it 0644 and expose the output to

@@ -439,9 +439,10 @@ def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:
 
 class AskUser(Tool):
     name = "ask_user"
-    description = ("Kullanıcıya tıklanabilir seçeneklerle soru sorar ve cevabını bekler (uygulamada kart, terminalde "
-                   "numaralı liste). Sadece gerçekten kullanıcının vermesi gereken bir kararda kullan (iki makul yol, "
-                   "eksik bilgi); varsayılanı belli işlerde sorma. Önerdiğin seçeneği ilk sıraya koy. Kullanıcı "
+    description = ("İşin ORTASINDA, cevap gelmeden devam edemediğinde kullanıcıya tıklanabilir seçeneklerle soru sorar "
+                   "ve cevabı BEKLER (uygulamada kart, terminalde numaralı liste). Örnek: iki makul yol var ve seçim "
+                   "sonucu değiştiriyor, ya da gereken bir bilgi (hangi hesap, hangi klasör) eksik. İş BİTTİYSE ve "
+                   "sadece sonraki adımı önereceksen bu değil next_step. Önerdiğin seçeneği ilk sıraya koy; kullanıcı "
                    "listede olmayan bir cevap da yazabilir.")
     parameters = obj({
         "question": {"type": "string", "description": "Tek, net soru."},
@@ -603,13 +604,13 @@ class NextStep(Tool):
 
     name = "next_step"
     parallel_safe = True
-    description = ("Birkaç adımlık bir işi bitirince, son cevabından HEMEN ÖNCE çağır: sohbetin altında kısa bir özet "
-                   "kutusu çıkar; kullanıcının vermesi gereken bir karar ya da yapması gereken bir adım varsa tek bir "
-                   "soru ve 1-3 düğme ekle (düğmeye basınca o metin kullanıcının cevabı olarak gelir). ask_user gibi "
-                   "beklemez, tur biter.\n"
-                   "- Kısa sorulara, sohbete, tek adımlık işlere çağırma.\n"
+    description = ("İş BİTTİĞİNDE, son cevabından hemen önce çağrılır: sohbetin altına kısa bir özet kutusu koyar; "
+                   "istersen sonraki adım için tek bir soru ve 1-3 düğme ekler. BEKLEMEZ, tur biter; kullanıcı "
+                   "düğmeye basarsa o metin yeni mesajı olarak gelir. Devam etmek için cevaba ihtiyacın varsa bu "
+                   "değil ask_user.\n"
+                   "- Birkaç adımlı işlerin sonunda kullan; kısa sorular ve sohbet için gerek yok.\n"
                    "- recap: şu an ne durumda, ne yapılmadı/doğrulanmadı (2-3 kısa cümle).\n"
-                   "- question yalnız gerçekten kullanıcıya kalan bir karar varsa; önerdiğin seçenek ilk düğme.")
+                   "- question: kullanıcıya kalan tek karar; önerdiğin seçenek ilk düğme.")
     parameters = obj({
         "recap": {"type": "string", "description": "2-3 kısa cümle: ne değişti, ne durumda, ne eksik/doğrulanmadı."},
         "question": {"type": "string", "description": "Kullanıcıya kalan tek karar (en fazla 100 karakter). Yoksa boş."},

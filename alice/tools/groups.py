@@ -331,8 +331,9 @@ def catalog(tools: dict[str, Tool]) -> str:
         lines.append(f"- {g} ({', '.join(shown)}): {_clip(desc, 90)}" if desc else f"- {g} ({', '.join(shown)})")
     if not lines:
         return ""
-    return ("# Yüklenebilir araçlar\nBunların tanımı her istekte gönderilmiyor. Kullanıcının sözleri çoğu zaman "
-            "gerekeni kendiliğinden açar; gereken araç elinde yoksa önce load_tools ile aç (grup ya da araç adı):\n"
+    return ("# Yüklenebilir araçlar\nBunların tanımı her istekte gönderilmiyor ama adıyla doğrudan çağırabilirsin: "
+            "çalışır ve tanımı sonraki isteklerden itibaren eklenir. Parametrelerini önce görmek istersen load_tools "
+            "(grup ya da araç adı):\n"
             + "\n".join(lines))
 
 

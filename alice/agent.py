@@ -445,6 +445,20 @@ class Agent:
         enabled: set[str] = self.ctx.state.setdefault("tool_groups", set())
         enabled |= {n for n in recent_tools(self.messages[:-1]) if n in self.tools} - enabled
 
+    def _autoload(self, name: str) -> None:
+        """A real tool called by name runs even if its group was not loaded (the model knows it from the catalog).
+        Open its group too, so the full definition (parameters, rules) is sent from the next request on; the model
+        no longer has to spend a turn on load_tools first."""
+        from alice.tools.groups import CORE, group_of
+
+        if name in CORE:
+            return
+        enabled: set[str] = self.ctx.state.setdefault("tool_groups", set())
+        g = group_of(name)
+        key = g or name
+        if key not in enabled:
+            enabled.add(key)
+
     def _hint_groups(self, names: set[str]) -> None:
         """Add tool groups that are not loaded but may be needed to the last user message as a note."""
         from alice.tools.groups import all_groups
@@ -1353,6 +1367,8 @@ class Agent:
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(f"bilinmeyen araç '{name}'. Mevcut araçlar: {', '.join(self.tools)}", is_error=True)
+        if not quiet:
+            self._autoload(name)
         try:
             args = parse_args(call["function"].get("arguments"))
         except json.JSONDecodeError as e:
