@@ -310,7 +310,8 @@ class OpenAICompatProvider:
         if response_format is not None:
             body["response_format"] = response_format
         if extra:
-            body.update(extra)
+            # "_cache_ttl"/"_cache_mode" are ALICE's own hints for the Claude client; never sent to an API.
+            body.update({k: v for k, v in extra.items() if not str(k).startswith("_")})
         return body
 
     def chat(

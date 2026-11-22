@@ -1,0 +1,441 @@
+"""Prompt cache v2: TTL latch, read-only/none markers, static/dynamic system split, cache-break detection and the
+compaction that shares the main thread's cached prefix."""
+from __future__ import annotations
+
+from types import SimpleNamespace as NS
+
+from alice.prompts import build_system_prompt
+from alice.providers.anthropic_api import from_message, mark_cache
+from alice.providers.prompt_cache import DYNAMIC_HEADING, CacheBreakDetector, split_system
+from tests.test_agent import make_agent
+
+EPH = {"type": "ephemeral"}
+EPH1H = {"type": "ephemeral", "ttl": "1h"}
+
+
+def _kw(system="kurallar"):
+    return {"system": system, "messages": [
+        {"role": "user", "content": "selam"},
+        {"role": "assistant", "content": [{"type": "text", "text": "x"}]},
+        {"role": "user", "content": [{"type": "text", "text": "devam"}]}]}
+
+
+# ------------------------------------------------------------------------------------------------ markers
+def test_ttl_1h_on_every_marker():
+    kw = _kw()
+    mark_cache(kw, ttl="1h")
+    assert kw["system"][0]["cache_control"] == EPH1H
+    assert kw["messages"][-1]["content"][-1]["cache_control"] == EPH1H
+
+
+def test_system_split_into_static_and_dynamic_blocks():
+    kw = _kw(f"statik kurallar\n\n{DYNAMIC_HEADING}\n- Date: bugün")
+    mark_cache(kw)
+    assert [b["text"].split("\n")[0] for b in kw["system"]] == ["statik kurallar", DYNAMIC_HEADING]
+    assert all(b["cache_control"] == EPH for b in kw["system"])
+    markers = sum("cache_control" in b for m in kw["messages"] for b in (m["content"] if isinstance(m["content"], list) else []))
+    assert markers == 1  # system 2 + messages 1 = 3, under the limit of 4
+
+
+def test_read_only_marks_second_to_last_and_none_marks_nothing():
+    kw = _kw()
+    mark_cache(kw, mode="read_only")
+    assert "cache_control" not in kw["messages"][-1]["content"][-1]
+    assert kw["messages"][-2]["content"][-1]["cache_control"] == EPH
+    kw = _kw()
+    mark_cache(kw, mode="none")
+    assert kw["system"] == "kurallar" and kw["messages"][-1]["content"][-1].get("cache_control") is None
+
+
+def test_provider_reads_cache_hints_from_extra():
+    from alice.config import ProviderConfig
+    from alice.providers.anthropic_api import AnthropicProvider
+
+    p = AnthropicProvider(ProviderConfig(name="claude", base_url="https://api.anthropic.com", kind="anthropic"))
+    kw = p._params("claude-sonnet-5-5", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+                   None, None, None, {"_cache_ttl": "1h", "_cache_mode": "write"}, stream=True)
+    assert kw["system"][0]["cache_control"] == EPH1H
+    assert not any(k.startswith("_") for k in kw)
+
+
+def test_openai_body_drops_private_hints():
+    from alice.providers.openai_compat import OpenAICompatProvider
+
+    body = OpenAICompatProvider._body("m", [], None, None, None, None, {"_cache_ttl": "1h", "reasoning_effort": "low"})
+    assert body.get("reasoning_effort") == "low" and "_cache_ttl" not in body
+
+
+def test_usage_keeps_1h_writes_apart():
+    u = NS(input_tokens=10, output_tokens=5, cache_read_input_tokens=100, cache_creation_input_tokens=50,
+           cache_creation=NS(ephemeral_1h_input_tokens=50, ephemeral_5m_input_tokens=0))
+    _, usage = from_message(NS(content=[], usage=u))
+    assert usage["cache_creation_input_tokens"] == 50 and usage["cache_write_1h_tokens"] == 50
+    assert usage["prompt_tokens"] == 160
+
+
+# ------------------------------------------------------------------------------------------------ system prompt
+def test_system_prompt_has_no_clock_and_dynamic_part_is_last(workdir):
+    text = build_system_prompt(workdir)
+    static, dynamic = split_system(text)
+    assert dynamic.startswith(DYNAMIC_HEADING) and "Working directory:" in dynamic
+    assert "Working directory:" not in static and "# Safety" in static
+    import re
+    assert not re.search(r"Date: .*\d{2}:\d{2}", text)  # the minute changed the prompt of every new chat
+
+
+def test_clock_rides_on_user_message_not_on_tool_guess(workdir):
+    agent, provs, _ = make_agent(["tamam"], workdir)
+    agent.run_turn("selam")
+    user = [m for m in agent.messages if m["role"] == "user"][-1]
+    assert "[saat " in user["content"] and user["_display"] == "selam"
+
+
+# ------------------------------------------------------------------------------------------------ TTL latch
+def test_ttl_latched_for_the_session(workdir):
+    agent, _, _ = make_agent(["a", "b"], workdir)
+    assert agent._cache_ttl_choice() == "1h"
+    agent.config.agent["cache_ttl"] = "5m"  # changing the setting mid-chat does not flip it
+    assert agent._cache_ttl_choice() == "1h"
+    child = agent.spawn_child() if hasattr(agent, "spawn_child") else None
+    if child is not None:
+        assert child._cache_ttl_choice() == "5m"
+
+
+def test_main_call_sends_cache_hint(workdir):
+    agent, provs, _ = make_agent(["tamam"], workdir)
+    seen = {}
+    orig = agent.router.chat
+
+    def chat(role, messages, **kw):
+        seen.setdefault("cache", kw.get("cache"))
+        return orig(role, messages, **kw)
+
+    agent.router.chat = chat
+    agent.run_turn("selam")
+    assert {k: seen["cache"][k] for k in ("ttl", "mode")} == {"ttl": "1h", "mode": "write"}
+    assert seen["cache"]["latch"] is agent._effort_latch()
+
+
+# ------------------------------------------------------------------------------------------------ break detector
+def _msgs(system="s", n=3):
+    return [{"role": "system", "content": system}] + [{"role": "user", "content": f"m{i}"} for i in range(n)]
+
+
+TOOLS = [{"type": "function", "function": {"name": "read_file", "description": "oku", "parameters": {}}}]
+
+
+def test_detector_names_system_prompt_change(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs("eski"), TOOLS, "a:m")
+    assert d.after(50000, "a:m", 300) is None
+    d.before(_msgs("yeni system"), TOOLS, "a:m")
+    brk = d.after(1000, "a:m", 300)
+    assert brk and not brk.expected and any("system prompt" in r for r in brk.reasons)
+    assert brk.diff_path and (tmp_path / "cache_breaks.log").exists() and d.unexpected == 1
+
+
+def test_detector_names_changed_tool_and_history(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs(), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    tools2 = [{"type": "function", "function": {"name": "read_file", "description": "OKU!", "parameters": {}}}]
+    msgs = _msgs()
+    msgs[2]["content"] = "değişti"
+    d.before(msgs, tools2, "a:m")
+    brk = d.after(500, "a:m", 300)
+    assert any("araç şeması değişti: read_file" in r for r in brk.reasons)
+    assert any("2. mesajdan" in r for r in brk.reasons)
+
+
+def test_detector_expected_and_ttl_and_small_drops(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs(), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.expect("konuşma özetlendi")
+    d.before(_msgs(n=1), TOOLS, "a:m")
+    brk = d.after(100, "a:m", 300)
+    assert brk.expected and "konuşma özetlendi" in brk.reasons and d.unexpected == 0
+    # small drop: ignored
+    d.before(_msgs(n=1), TOOLS, "a:m")
+    d.after(5000, "a:m", 300)
+    d.before(_msgs(n=1), TOOLS, "a:m")
+    assert d.after(4000, "a:m", 300) is None
+    # nothing changed, only time passed: TTL
+    d.before(_msgs(n=1), TOOLS, "a:m")
+    d.pending.at += 1000
+    brk = d.after(0, "a:m", 300)
+    assert brk and any("TTL" in r for r in brk.reasons)
+
+
+def test_detector_model_switch_is_reported_but_expected(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs(), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.before(_msgs(), TOOLS, "b:x")
+    brk = d.after(0, "b:x", 300)
+    assert brk.expected and brk.reasons == ["model değişti: a:m -> b:x"]
+
+
+# ------------------------------------------------------------------------------------------------ sticky effort
+def _router_with_levels():
+    from alice.providers.router import Router
+    from tests.conftest import FakeProvider, make_config
+
+    cfg = make_config({"brain": ["anthropic:claude-sonnet-5-5"], "fast": ["anthropic:claude-sonnet-5-5"]},
+                      providers={"anthropic": {"base_url": "https://api.anthropic.com", "api_key_env": "",
+                                               "kind": "anthropic", "max_input_tokens": 200000}})
+    cfg.data["thinking"] = {"brain": "high", "fast": "low"}
+    prov = FakeProvider("anthropic", lambda *a, **k: "ok")
+    return Router(cfg, provider_factory=lambda pc: prov, sleep=lambda s: None), prov
+
+
+def test_effort_latched_per_model_across_roles():
+    router, prov = _router_with_levels()
+    latch: dict = {}
+    router.chat("brain", [{"role": "user", "content": "a"}], cache={"latch": latch})
+    router.chat("fast", [{"role": "user", "content": "b"}], cache={"latch": latch})
+    efforts = [c["extra"]["reasoning_effort"] for c in prov.calls]
+    assert efforts == ["high", "high"]  # same model, same conversation: the cache key does not change
+    router.chat("fast", [{"role": "user", "content": "c"}])  # no latch (side call): its own level
+    assert prov.calls[-1]["extra"]["reasoning_effort"] == "low"
+
+
+def test_effort_latch_resets_when_user_changes_level(workdir):
+    agent, _, _ = make_agent(["a"], workdir)
+    m = agent._effort_latch()
+    m["x:y"] = {"reasoning_effort": "high"}
+    assert agent._effort_latch() is m
+    agent.router.thinking_overrides["brain"] = "low"
+    assert agent._effort_latch() == {}
+    agent._effort_latch()["x:y"] = {"reasoning_effort": "low"}
+    agent.reset()
+    assert agent._effort_latch() == {}
+
+
+def test_effort_latch_can_be_turned_off(workdir):
+    agent, _, _ = make_agent(["a"], workdir, cache_sticky_effort=False)
+    assert "latch" not in agent._cache_hint()
+    assert "latch" not in agent._cache_hint("read_only")
+
+
+# ------------------------------------------------------------------------------------------------ context editing
+def test_context_editing_request_and_usage():
+    from alice.config import ProviderConfig
+    from alice.providers.anthropic_api import CONTEXT_EDIT_BETA, AnthropicProvider
+
+    p = AnthropicProvider(ProviderConfig(name="claude", base_url="https://api.anthropic.com", kind="anthropic"))
+    tools = [{"type": "function", "function": {"name": "read_file", "description": "", "parameters": {}}}]
+    kw = p._params("claude-sonnet-5-5", [{"role": "user", "content": "u"}], tools, None, None,
+                   {"_context_edit": {"keep": 4, "exclude_tools": ["memory"]}}, stream=True)
+    assert CONTEXT_EDIT_BETA in kw["betas"]
+    edit = kw["context_management"]["edits"][0]
+    assert edit["type"] == "clear_tool_uses_20250919" and edit["keep"] == {"type": "tool_uses", "value": 4}
+    assert edit["exclude_tools"] == ["memory"] and edit["clear_at_least"]["value"] == 20000
+    kw = p._params("claude-sonnet-5-5", [{"role": "user", "content": "u"}], None, None, None,
+                   {"_context_edit": {}}, stream=True)
+    assert "context_management" not in kw  # no tools: nothing to clear
+    u = NS(input_tokens=1, output_tokens=1, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    msg = NS(content=[], usage=u, context_management=NS(applied_edits=[NS(cleared_input_tokens=5000)]))
+    assert from_message(msg)[1]["context_cleared_tokens"] == 5000
+
+
+def test_context_editing_hint_and_local_trim_skipped(workdir):
+    agent, _, _ = make_agent(["a"], workdir, context_editing={"keep": 3})
+    assert agent._cache_hint()["context_edit"] == {"keep": 3}
+    assert "context_edit" not in agent._cache_hint("read_only")
+    agent2, _, _ = make_agent(["a"], workdir)
+    assert "context_edit" not in agent2._cache_hint()
+
+
+def test_router_passes_context_edit_only_to_claude():
+    router, prov = _router_with_levels()
+    router.chat("brain", [{"role": "user", "content": "a"}], cache={"context_edit": {"keep": 2}})
+    assert prov.calls[-1]["extra"]["_context_edit"] == {"keep": 2}
+
+
+# ------------------------------------------------------------------------------------------------ review follow-ups
+def test_detector_reuses_message_hashes_and_shrinks_big_strings(tmp_path, monkeypatch):
+    from alice.providers import prompt_cache as pc
+
+    calls = {"n": 0}
+    orig = pc._msg_key
+
+    def counting(m):
+        calls["n"] += 1
+        return orig(m)
+
+    monkeypatch.setattr(pc, "_msg_key", counting)
+    d = CacheBreakDetector(log_dir=tmp_path)
+    msgs = _msgs(n=50)
+    d.before(msgs, TOOLS, "a:m")
+    d.before(msgs + [{"role": "user", "content": "yeni"}], TOOLS, "a:m")
+    assert calls["n"] == 51  # 50 once + only the new one
+    big = "A" * 3_000_000
+    assert len(str(pc._lite({"content": big}))) < 2000
+    assert orig({"content": big}) != orig({"content": big + "B"})
+
+
+def test_diff_masks_memory_section(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs("kurallar\n<memory>\nHayat'ın gizli notu\n</memory>"), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.before(_msgs("kurallar v2\n<memory>\nbaşka not\n</memory>"), TOOLS, "a:m")
+    brk = d.after(0, "a:m", 300)
+    text = open(brk.diff_path, encoding="utf-8").read()
+    assert "gizli notu" not in text and "başka not" not in text and "kurallar v2" in text
+    # only memory changed: no diff file at all
+    d.before(_msgs("kurallar v2\n<memory>\nüçüncü not\n</memory>"), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.before(_msgs("kurallar v2\n<memory>\ndördüncü\n</memory>"), TOOLS, "a:m")
+    assert d.after(0, "a:m", 300).diff_path == ""
+
+
+def test_cache_after_refreshes_settings_and_counts_cleared(workdir):
+    agent, _, _ = make_agent(["a"], workdir)
+    agent.router.last_settings[agent.role] = {"reasoning_effort": "low"}
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 40000}))
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 39000}))
+    assert agent.stats.get("cache_breaks", 0) == 0
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 100, "context_cleared_tokens": 30000}))
+    assert agent.stats["context_cleared"] == 30000 and agent.stats.get("cache_breaks", 0) == 0
+    assert agent.cache_breaks.breaks[-1].expected
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 40000}))
+    agent._cache_before()
+    agent.router.last_settings[agent.role] = {"reasoning_effort": "high"}  # what this call really sent
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 0}))
+    assert agent.stats["cache_breaks"] == 1
+    assert any("istek ayarları" in r for r in agent.cache_breaks.breaks[-1].reasons)
+
+
+def test_cache_ttl_for_claude_api(workdir):
+    providers = {"claude": {"base_url": "https://api.anthropic.com", "api_key_env": "", "kind": "anthropic",
+                            "max_input_tokens": 200000},
+                 "a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 100000},
+                 "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 100000}}
+    agent, _, _ = make_agent(["x"], workdir, providers=providers)
+    assert agent._cache_ttl("claude:claude-sonnet-5-5") > 3000 and agent._cache_ttl("a:m") == 300
+    agent2, _, _ = make_agent(["x"], workdir, providers=providers, cache_ttl="5m")
+    assert agent2._cache_ttl("claude:claude-sonnet-5-5") == 300
+
+
+def _compacting_agent(workdir, shared):
+    def script(model, messages, tools, **kw):
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            return shared()
+        if str(messages[0]["content"]).startswith("Summarize"):
+            return "ÖZET: transcript yolu"
+        return "cevap " + "x" * 400
+
+    return make_agent(script, workdir, compact_at_tokens=400)[0]
+
+
+def test_shared_summary_error_falls_back(workdir):
+    from alice.providers.router import AllProvidersFailed
+
+    agent = _compacting_agent(workdir, lambda: "kullanılmaz")
+    orig = agent.router.chat
+
+    def chat(role, messages, **kw):
+        # Only the cache-sharing summary fails (a provider error would also put the single fake model in cooldown
+        # and take the transcript path down with it, which is not what is tested here).
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            raise AllProvidersFailed(role, ["a:m: 500"])
+        return orig(role, messages, **kw)
+
+    agent.router.chat = chat
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert any("ÖZET: transcript yolu" in str(m.get("content")) for m in agent.messages)
+
+
+def test_shared_summary_invalid_text_falls_back(workdir):
+    agent = _compacting_agent(workdir, lambda: "[assistant] a\n[tool] b\n[user] c\n[assistant] d\n[tool] e")
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert any("ÖZET: transcript yolu" in str(m.get("content")) for m in agent.messages)
+
+
+def test_shared_summary_cancel_is_not_swallowed(workdir):
+    import pytest
+
+    from alice.agent import Cancelled
+
+    agent, _, _ = make_agent(["a"], workdir)
+    agent.messages += [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"},
+                       {"role": "user", "content": "u2"}]
+
+    def cancel(*a, **k):
+        raise Cancelled
+
+    agent._interruptible = cancel
+    with pytest.raises(Cancelled):
+        agent._shared_summary(3, 2000)
+
+
+def test_shared_summary_does_not_touch_main_settings(workdir):
+    agent = _compacting_agent(workdir, lambda: "ÖZET: paylaşılan")
+    agent.router.last_settings[agent.role] = {"marker": 1}
+    agent.messages += [{"role": "user", "content": "u1 " * 300}, {"role": "assistant", "content": "a1"},
+                       {"role": "user", "content": "u2"}]
+    assert agent._shared_summary(3, 2000) == "ÖZET: paylaşılan"
+    assert agent.router.last_settings[agent.role] == {"marker": 1}
+
+
+# ------------------------------------------------------------------------------------------------ compaction
+def test_compaction_shares_the_cached_prefix(workdir):
+    calls = []
+
+    def script(model, messages, tools, **kw):
+        calls.append({"messages": messages, "tools": tools, "extra": kw.get("extra")})
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            return "ÖZET: kullanıcı dosyalarla uğraşıyor"
+        return "cevap " + "x" * 400
+
+    agent, _, ui = make_agent(script, workdir, compact_at_tokens=400)
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    summary_calls = [c for c in calls if str(c["messages"][-1].get("content") or "").startswith("Summarize")]
+    assert summary_calls, "özet ana konuşmanın üstünden istenmeli"
+    c = summary_calls[0]
+    # same system prompt and tools as the main thread: the provider can read the whole history from the cache
+    assert c["messages"][0]["role"] == "system" and c["messages"][0]["content"] == agent.messages[0]["content"]
+    assert c["tools"]
+    assert not any(str(m.get("content")).startswith("Summarize") for m in c["messages"][:1])
+    assert any("ÖZET" in str(m.get("content")) for m in agent.messages)
+
+
+def test_compaction_falls_back_to_transcript_when_model_calls_tools(workdir):
+    from tests.conftest import tool_call
+
+    def script(model, messages, tools, **kw):
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            return tool_call("read_file", {"path": "x"})  # ignores the instruction
+        if str(messages[0]["content"]).startswith("Summarize"):
+            return "ÖZET: transcript yolu"
+        return "cevap " + "x" * 400
+
+    agent, _, _ = make_agent(script, workdir, compact_at_tokens=400)
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert any("ÖZET: transcript yolu" in str(m.get("content")) for m in agent.messages)
+    assert not any(m.get("tool_calls") and m["tool_calls"][0]["function"]["name"] == "read_file"
+                   for m in agent.messages)
+
+
+def test_compaction_shared_cache_can_be_turned_off(workdir):
+    seen = []
+
+    def script(model, messages, tools, **kw):
+        seen.append(str(messages[-1].get("content") or "")[:9])
+        if str(messages[0]["content"]).startswith("Summarize"):
+            return "ÖZET: eski yol"
+        return "cevap " + "x" * 400
+
+    agent, _, _ = make_agent(script, workdir, compact_at_tokens=400, compact_shared_cache=False)
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert "Summarize" not in seen and any("ÖZET: eski yol" in str(m.get("content")) for m in agent.messages)

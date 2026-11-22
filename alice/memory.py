@@ -1734,9 +1734,10 @@ def make_extractor(options: dict[str, Any], router, role: str | None = None) -> 
     def extract(prompt: str) -> str:
         msgs = [{"role": "user", "content": prompt}]
         try:
-            res = router.chat(role, msgs, temperature=0, max_tokens=1600, response_format={"type": "json_object"})
+            res = router.chat(role, msgs, temperature=0, max_tokens=1600, response_format={"type": "json_object"},
+                              cache={"mode": "none"})
         except Exception:  # noqa: BLE001 - some models reject response_format
-            res = router.chat(role, msgs, temperature=0, max_tokens=1600)
+            res = router.chat(role, msgs, temperature=0, max_tokens=1600, cache={"mode": "none"})
         return res.message.get("content") or ""
 
     return extract

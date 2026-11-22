@@ -103,7 +103,8 @@ def test_older_summary_is_not_cut_to_2500_chars_in_the_next_summary(workdir):
             return "YENİ ÖZET"
         return "cevap " + "x" * 400
 
-    agent, _, _ = make_agent(script, workdir, compact_at_tokens=400)
+    # Transcript path (the cache-sharing summary sends the older summary verbatim anyway).
+    agent, _, _ = make_agent(script, workdir, compact_at_tokens=400, compact_shared_cache=False)
     agent.messages.append({"role": "user", "content": f"{SUMMARY_HEAD}\n" + "eski bilgi " * 600 + "SON_SATIR"})
     agent.messages.append({"role": "assistant", "content": "tamam"})
     for i in range(3):

@@ -161,6 +161,8 @@ def is_gemini(pc: ProviderConfig) -> bool:
 
 
 _ACCEPTS: dict[tuple[Any, str], bool] = {}
+# Request fields that change the provider's prompt cache key (thinking / effort settings of every provider).
+CACHE_KEY_SETTINGS = ("reasoning_effort", "output_config", "reasoning", "chat_template_kwargs", "thinking")
 
 
 def _accepts(fn: Any, name: str) -> bool:
@@ -313,6 +315,7 @@ class Router:
         self.max_wait = max_wait
         self.on_event = on_event or (lambda s: None)
         self.last_ref: dict[str, str] = {}
+        self.last_settings: dict[str, dict[str, Any]] = {}
         self.role_overrides: dict[str, list[str]] = {}
         self.log_path: Path | None = (usage_path.parent if usage_path else alice_home()) / "logs" / "providers.log"
         self.auto_cache: dict[str, Any] = ranking.load_cache() if auto_cache is None else auto_cache
@@ -829,9 +832,12 @@ class Router:
         response_format: dict[str, Any] | None = None,
         stream: "StreamSink | None" = None,
         gemini_extra: dict[str, Any] | None = None,
+        cache: dict[str, Any] | None = None,
     ) -> ChatResult:
         """If stream is given, the reply flows piece by piece into stream.on_delta. If a model fails mid-stream,
-        stream.on_reset() is called and the next model starts over."""
+        stream.on_reset() is called and the next model starts over.
+        cache: prompt cache hints for clients that place markers themselves (Claude API): {"ttl": "5m"|"1h",
+        "mode": "write"|"read_only"|"none"}. Other providers ignore them."""
         if not self._probe_checked:
             # With real providers, model measurements older than a day are refreshed in the background.
             self._probe_checked = True
@@ -869,11 +875,41 @@ class Router:
                                       gemini=is_gemini(pc))
                 client = self.client(p)
                 # If the model lacks the selected level, use the nearest supported one (survives a model switch).
-                level = thinking.fit(self.thinking_level(role), thinking.levels_for(p, model)[0])
-                think = {} if ref in self.no_thinking else thinking.params(p, model, level)
+                # Thinking rules follow the API format, not the provider's name: a second Claude endpoint
+                # ([providers.cliproxy-claude] kind = "anthropic") speaks output_config.effort like the Claude API.
+                tp = "anthropic" if pc.kind == "anthropic" else p
+                level = thinking.fit(self.thinking_level(role), thinking.levels_for(tp, model)[0])
+                think = {} if ref in self.no_thinking else thinking.params(tp, model, level)
                 extra = {**think, **(self.config.model_extra(ref) or {})}  # hand-written model settings come first
                 if gemini_extra and is_gemini(pc):  # e.g. reasoning_effort: only settings Gemini understands
                     extra.update(gemini_extra)
+                latch = (cache or {}).get("latch")
+                if isinstance(latch, dict) and ref in self.no_thinking:
+                    latch.pop(ref, None)  # the model rejected the thinking settings: never put them back
+                elif isinstance(latch, dict):
+                    # Sticky effort: the thinking/effort settings are part of the prompt cache key (Claude renders them
+                    # into the prompt; changing output_config.effort invalidates the message cache, on some models the
+                    # tool and system cache too). Once a conversation has sent them to a model, it keeps sending the
+                    # same values to that model, even if routing moves the turn to a role with another level. The agent
+                    # clears the latch when the user changes the level or the conversation is compacted.
+                    keys = [k for k in CACHE_KEY_SETTINGS if k in extra or k in latch.get(ref, {})]
+                    if ref in latch:
+                        for k in keys:
+                            if k in latch[ref]:
+                                extra[k] = latch[ref][k]
+                            else:
+                                extra.pop(k, None)
+                    else:
+                        latch[ref] = {k: extra[k] for k in keys if k in extra}
+                if cache and pc.kind == "anthropic":
+                    if cache.get("ttl"):
+                        extra["_cache_ttl"] = cache["ttl"]
+                    if cache.get("mode"):
+                        extra["_cache_mode"] = cache["mode"]
+                    if cache.get("context_edit"):
+                        extra["_context_edit"] = cache["context_edit"]
+                # Request settings that are part of the cache key (for the cache break detector).
+                self.last_settings[role] = {k: v for k, v in extra.items() if not str(k).startswith("_")}
                 out = max(max_tokens, self.out_floor.get(ref, 0)) if max_tokens else None
                 kw = dict(tools=tools, temperature=temperature, max_tokens=out,
                           response_format=response_format, extra=extra or None)
@@ -984,7 +1020,7 @@ class Router:
         now = time.monotonic()
         low = str(e).lower()
         if e.kind == "quota":
-            if provider == "cliproxy":
+            if provider == "cliproxy" or provider.startswith("cliproxy-"):
                 # The proxy fronts a pool of accounts (e.g. multiple Antigravity, Claude, or Grok accounts).
                 # On the first quota hit, use a brief pause (5s) to allow CLIProxy's round-robin / failover
                 # to switch to another available account in the pool. If consecutive errors accumulate,
@@ -1017,7 +1053,7 @@ class Router:
             # A model believed to support images rejected one: don't send it images this session, move to the next.
             self.no_vision.add(ref)
             return
-        if e.kind == "auth" and provider == "cliproxy":
+        if e.kind == "auth" and (provider == "cliproxy" or provider.startswith("cliproxy-")):
             # The proxy fronts many services and accounts: when the Claude login dropped, ChatGPT and
             # Antigravity models were also shut off for the whole session. Now only this one is skipped for a while.
             self.cooldown_until[ref] = now + 900

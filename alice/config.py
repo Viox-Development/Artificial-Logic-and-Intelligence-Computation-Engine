@@ -70,6 +70,21 @@ grounding_model = "gemini-flash-latest"
 # Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %80'i
 # (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).
 compact_at_tokens = "auto"
+# Özet isteği konuşmanın kendisinin üstüne eklenir: geçmiş prompt önbelleğinden okunur, baştan ödenmez.
+# false: eski yol (geçmiş ayrı bir döküm olarak yeniden gönderilir).
+compact_shared_cache = true
+# Claude API prompt önbelleği süresi: "auto" (ana sohbet 1h, alt ajanlar 5m), "5m" ya da "1h". Oturum boyunca sabit
+# kalır; sohbet ortasında 5m/1h arasında gidip gelmek de önbelleği bozar.
+cache_ttl = "auto"
+# Beklenmeyen önbellek kırılmalarını (system prompt / araç / geçmiş değişti) sohbette de göster. Kayıt her zaman
+# ~/.alice/logs/cache_breaks.log'a yazılır.
+cache_break_notice = false
+# Bir sohbette bir modele gönderilen düşünme/effort ayarı o sohbet boyunca o modele aynı gider (yönlendirme turu başka
+# seviyeli bir role taşısa bile): effort değişimi Claude'da önbelleği bozar. Seviyeyi elle değiştirince hemen geçerli olur.
+cache_sticky_effort = true
+# Claude API'de eski araç sonuçlarını sunucu tarafında temizle (context editing beta'sı); ALICE kendi geçmişini
+# kısaltmaz. true ya da { trigger = 100000, keep = 6, clear_at_least = 20000, exclude_tools = ["memory"] }.
+context_editing = false
 # Proje ajanları, yönetici ve kurul üyeleri için üst sınır: her adım bütün konuşmayı yeniden gönderdiği için sınırsız
 # bağlam bir projede on milyonlarca token yakar. 0 = sınır yok.
 team_compact_at = 128000
@@ -1025,7 +1040,8 @@ class ProviderConfig:
         with others."""
         if self.key_override:
             return [self.key_override]
-        if self.name == "cliproxy":
+        if self.name == "cliproxy" or self.name.startswith("cliproxy-"):
+            # cliproxy-claude: the same proxy's native Claude endpoint (kind = "anthropic"), same local key.
             # Local proxy only accepts the key from its own config.yaml; ALICE generated it along with keys.txt.
             # When the copy in .env somehow changed, all subscription models returned "Invalid API key" (Nov 13).
             local = cliproxy_local_key()

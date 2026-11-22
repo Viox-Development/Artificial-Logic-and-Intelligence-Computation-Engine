@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
-from alice.config import Config
+from alice.config import Config, alice_home
 from alice.decider import Decider
 from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
@@ -372,6 +372,12 @@ class Agent:
         self.output_limit = int(a.get("tool_output_chars", 12000))
         self.keep_images = int(a.get("keep_images", 2))
         self._last_call_at = 0.0  # moment the last model call finished (monotonic): has the cache gone cold
+        # Prompt cache TTL for the Claude API, latched for the whole session: flipping between 5m and 1h mid-chat
+        # also rewrites the cache (Claude Code latches it for the same reason). Decided on the first model call.
+        self._cache_ttl_latched: str | None = None
+        from alice.providers.prompt_cache import CacheBreakDetector
+
+        self.cache_breaks = CacheBreakDetector(log_dir=None if is_child else alice_home() / "logs")
         self.stream = bool(a.get("stream", True))
         # If, while working with tools, it stops before the job is done (saying "şimdi testleri çalıştıracağım" ("now I'll
         # run the tests") and going silent, leaving an unfinished step in the todo list), it is reminded to continue at
@@ -575,7 +581,10 @@ class Agent:
 
                 profile = "\n\n".join(b for b in (mem.profile(cwd=self.ctx.cwd), projects.brief(self.config))
                                        if b)
-                self.messages[0]["content"] = with_memory(self.messages[0]["content"], profile)
+                new = with_memory(self.messages[0]["content"], profile)
+                if new != self.messages[0]["content"]:
+                    self.cache_breaks.expect("hafıza bölümü yenilendi")
+                self.messages[0]["content"] = new
                 self._memory_version = version
         except Exception:  # noqa: BLE001 - a memory error must not stop the conversation
             log.debug("hafıza profili yenilenemedi", exc_info=True)
@@ -807,6 +816,12 @@ class Agent:
             guard.clear(self.ctx)  # the user's new message: external content read in the previous turn does not restrict this turn
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
+        guess_text = content_text[len(PLAN_NOTE):] if content_text.startswith(PLAN_NOTE) else content_text
+        if not self.is_child and self.role != "voice" and self.config.agent.get("message_clock", True):
+            # The time used to sit in the system prompt and changed it in every new chat (prompt cache rewritten);
+            # now it rides at the end of the user's message, which is new anyway. Not used for tool guessing:
+            # the word "saat" opened the automation group.
+            content_text += time.strftime("\n\n[saat %H:%M]")
         content: Any = content_text
         if images:
             content = [{"type": "text", "text": content_text}] + [
@@ -823,7 +838,7 @@ class Agent:
         self._reopen_recent_tools()
         # Guess tools from what the user wrote, not from ALICE's own plan-mode note ("adım adım", "ekrana dokunan"
         # in it opened the plan tools and the computer tool on every plan-mode turn).
-        self._enable_groups_for(content_text[len(PLAN_NOTE):] if content_text.startswith(PLAN_NOTE) else content_text)
+        self._enable_groups_for(guess_text)
         final = ""
         steps = max_steps or self.max_steps
         self.busy = True
@@ -857,9 +872,11 @@ class Agent:
                 sent = len(self.messages)
                 sink.first_at = 0.0
                 t_call = time.monotonic()
+                specs = self._specs()
+                self._cache_before(specs)
                 try:
-                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=self._specs(),
-                                              stream=sink if self.stream else None)
+                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=specs,
+                                              stream=sink if self.stream else None, cache=self._cache_hint())
                 except AllProvidersFailed as e:
                     # Kalan modellerin bağlamı konuşmaya yetmiyorsa: o modele sığacak kadar özetle, bir kez daha dene.
                     room = fits_after_compact(e.errors)
@@ -869,9 +886,12 @@ class Agent:
                         raise
                     self.ui.stream_start()
                     sent = len(self.messages)
-                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=self._specs(),
-                                              stream=sink if self.stream else None)
+                    specs = self._specs()
+                    self._cache_before(specs)
+                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=specs,
+                                              stream=sink if self.stream else None, cache=self._cache_hint())
                 self._count_call(res, t_call, sink.first_at)
+                self._cache_after(res)
                 msg = res.message
                 _sanitize_calls(msg)
                 if getattr(self, "_lean", False) and self._roomy(res):
@@ -1180,7 +1200,7 @@ class Agent:
                 # Thinking models (Cerebras qwen, step) spent the 400 tokens reasoning, so the reply came back empty.
                 box["res"] = self.router.chat(str(self.config.agent.get("verify_role", "fast")),
                                               [{"role": "user", "content": prompt}], temperature=0, max_tokens=1200,
-                                              stream=_Quiet())
+                                              stream=_Quiet(), cache={"mode": "none"})
             except Exception as e:  # noqa: BLE001 - includes cancellation (StreamCancelled)
                 box["err"] = e
 
@@ -1730,7 +1750,8 @@ class Agent:
             f"Task: {task[:800]}")}]
         parts += [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}} for b in images]
         try:
-            res = self.router.chat("vision", [{"role": "user", "content": parts}], max_tokens=1500)
+            res = self.router.chat("vision", [{"role": "user", "content": parts}], max_tokens=1500,
+                                   cache={"mode": "none"})  # one-shot: a cache write would never be read
             return res.text
         except (AllProvidersFailed, KeyError) as e:
             return f"(görüntü açıklanamadı: {str(e)[:200]})"
@@ -1738,9 +1759,47 @@ class Agent:
     def _cache_cold(self) -> bool:
         return bool(self._last_call_at) and time.monotonic() - self._last_call_at > self._cache_ttl()
 
+    def _cache_ttl_choice(self) -> str:
+        """Claude API cache TTL for this session: "5m" or "1h", latched on first use.
+        [agent] cache_ttl = "auto" (default): 1h for the main conversation (a personal assistant often waits more than
+        5 minutes between messages; one cache hit after a break pays back the 2x write), 5m for sub-agents, whose steps
+        follow each other within seconds. "5m"/"1h" force it."""
+        if self._cache_ttl_latched is None:
+            v = str(self.config.agent.get("cache_ttl", "auto") or "auto").lower()
+            self._cache_ttl_latched = v if v in ("5m", "1h") else ("5m" if self.is_child else "1h")
+        return self._cache_ttl_latched
+
+    def _cache_hint(self, mode: str = "write") -> dict[str, Any]:
+        hint: dict[str, Any] = {"ttl": self._cache_ttl_choice(), "mode": mode}
+        if mode == "write" and self.config.agent.get("cache_sticky_effort", True):
+            hint["latch"] = self._effort_latch()
+        ce = self.config.agent.get("context_editing", False)
+        if mode == "write" and ce:
+            # [agent] context_editing = true (or a table with trigger/keep/clear_at_least/exclude_tools): old tool
+            # results are cleared on the Claude API server instead of ALICE rewriting its history.
+            hint["context_edit"] = dict(ce) if isinstance(ce, dict) else {}
+        return hint
+
+    def _effort_latch(self) -> dict[str, dict[str, Any]]:
+        """Per-model thinking/effort settings first sent in this conversation (router keeps resending them, see
+        Router.chat). Reset when the user picks another level, so the new level takes effect at once; also reset by
+        compaction, which rewrites the prefix anyway."""
+        try:
+            levels = (dict(self.router.thinking_overrides), dict(self.config.data.get("thinking", {}) or {}))
+        except Exception:  # noqa: BLE001
+            levels = None
+        if levels != self.__dict__.get("_effort_levels"):
+            self.__dict__["_effort_levels"] = levels
+            self.__dict__["_effort_latch_map"] = {}
+        return self.__dict__.setdefault("_effort_latch_map", {})
+
+    def _reset_effort_latch(self) -> None:
+        self.__dict__["_effort_latch_map"] = {}
+
     def _cache_ttl(self, ref: str | None = None) -> float:
-        """Son modelin prompt önbelleği kaç sn yaşar. cliproxy Claude'a 1 saatlik önbellek yazıyor; diğerleri ~5 dk.
-        Önbellek gerçekten soğumadan geçmişi kısaltmak (5. dakikada) hâlâ sıcak olan önbelleği boşa yakıyordu."""
+        """Son modelin prompt önbelleği kaç sn yaşar. cliproxy Claude'a 1 saatlik önbellek yazıyor; Claude API'de
+        oturumun TTL'i (cache_ttl); diğerleri ~5 dk. Önbellek gerçekten soğumadan geçmişi kısaltmak (5. dakikada) hâlâ
+        sıcak olan önbelleği boşa yakıyordu."""
         if ref is None:
             try:
                 ref = self.router.last_ref.get(self.role) or ""
@@ -1755,12 +1814,62 @@ class Agent:
             m = 0.0
         if m > 0:
             return m * 60
-        return CACHE_LONG_S if str(ref).startswith("cliproxy:") else CACHE_COLD_S
+        ref = str(ref)
+        if ref.startswith("cliproxy:"):
+            return CACHE_LONG_S
+        # (cliproxy-claude: kind = "anthropic", so the session's latched TTL below decides.)
+        try:
+            pc = self.router.providers_cfg.get(ref.split(":", 1)[0])
+        except Exception:  # noqa: BLE001
+            pc = None
+        if pc is not None and getattr(pc, "kind", "") == "anthropic" and self._cache_ttl_choice() == "1h":
+            return CACHE_LONG_S
+        return CACHE_COLD_S
+
+    def _on_claude_api(self) -> bool:
+        try:
+            ref = self.router.last_ref.get(self.role) or self.router.first_available(self.role) or ""
+            pc = self.router.providers_cfg.get(str(ref).split(":", 1)[0])
+        except Exception:  # noqa: BLE001
+            return False
+        return pc is not None and getattr(pc, "kind", "") == "anthropic"
+
+    # ---------------------------------------------------------- cache break detection
+    def _cache_before(self, specs: list[dict[str, Any]] | None = None) -> None:
+        try:
+            ref = self.router.last_ref.get(self.role) or ""
+            settings = {"s": self.router.last_settings.get(self.role), "ttl": self._cache_ttl_latched}
+            self.cache_breaks.before(self.messages, self._specs() if specs is None else specs, ref, settings)
+        except Exception:  # noqa: BLE001 - diagnostics must never break a turn
+            log.debug("cache snapshot alınamadı", exc_info=True)
+
+    def _cache_after(self, res: ChatResult) -> None:
+        try:
+            ref = f"{res.provider}:{res.model}"
+            # The snapshot was taken before the call, when last_settings still held the previous call's values:
+            # refresh the settings part with what this call really sent.
+            if self.cache_breaks.pending is not None:
+                from alice.providers.prompt_cache import _sha
+
+                self.cache_breaks.pending.settings = _sha({"s": self.router.last_settings.get(self.role),
+                                                           "ttl": self._cache_ttl_latched})
+            cleared = int((res.usage or {}).get("context_cleared_tokens") or 0)
+            if cleared:
+                self.cache_breaks.expect(f"sunucu eski araç sonuçlarını temizledi ({cleared:,} token)")
+                self.stats["context_cleared"] = self.stats.get("context_cleared", 0) + cleared
+            brk = self.cache_breaks.after(cached_tokens(res.usage or {}), ref, self._cache_ttl(ref))
+            if brk is not None and not brk.expected:
+                self.stats["cache_breaks"] = self.stats.get("cache_breaks", 0) + 1
+                if self.config.agent.get("cache_break_notice", False):
+                    self.ui.info(brk.text())
+        except Exception:  # noqa: BLE001
+            log.debug("cache karşılaştırması yapılamadı", exc_info=True)
 
     def _prune_images(self) -> None:
         idx = [i for i, m in enumerate(self.messages) if m.get("_image")]
         if len(idx) <= self.keep_images + IMAGE_SLACK and not (self._cache_cold() and len(idx) > self.keep_images):
             return  # her yeni ekran görüntüsünde budamak önbelleği her adımda bozuyordu: topluca buda
+        self.cache_breaks.expect("eski ekran görüntüleri budandı")
         for i in idx[:-self.keep_images] if self.keep_images else idx:
             self.messages[i] = {"role": "user", "content": "[eski ekran görüntüsü yer kazanmak için kaldırıldı]", "_image": False}
 
@@ -1773,6 +1882,11 @@ class Agent:
             return
         idx = [i for i, m in enumerate(self.messages) if m["role"] == "tool" and isinstance(m.get("content"), str)]
         todo = [i for i in idx[:-KEEP_OUTPUTS] if len(self.messages[i]["content"]) > OLD_OUTPUT_CHARS * 1.5]
+        if not todo:
+            return
+        if self.config.agent.get("context_editing", False) and self._on_claude_api():
+            return  # the Claude API server clears old tool results itself (context editing): history stays intact
+        self.cache_breaks.expect("eski araç çıktıları kısaltıldı")
         for i in todo:
             c = self.messages[i]["content"]
             if len(c) > OLD_OUTPUT_CHARS * 1.5:
@@ -1858,28 +1972,36 @@ class Agent:
                     m["content"] = truncate(m["content"], 3000)
                     changed = True
             return changed and bool(limit)
-        transcript = []
-        for m in strip_images(old):
-            if m.get("_error"):
-                continue  # sağlayıcı hata metni konuşmanın parçası değil
-            c = m.get("content") or ""
-            if m.get("tool_calls"):
-                c += "\n" + "\n".join(f"-> {tc['function']['name']}({tc['function']['arguments'][:400]})" for tc in m["tool_calls"])
-            # Önceki özet kırpılmaz: 2500 karaktere kesilince her yeni özetlemede eski bağlamın çoğu kayboluyordu.
-            keep = 12000 if isinstance(c, str) and c.startswith(SUMMARY_HEAD) else 2500
-            transcript.append(f"[{m['role']}] {truncate(c, keep)}")
         self.ui.info("context büyüdü, özetleniyor...")
-        try:
-            res: ChatResult = self.router.chat("brain", [
-                {"role": "system", "content": COMPACT_PROMPT},
-                # Özet isteği de modele sığmalı: dar bağlamda dökümün sonu (karakter ≈ 3 token) gönderilir.
-                {"role": "user", "content": "\n\n".join(transcript)[-(int(limit * 2.4) if limit else
-                                                                       max(120000, self.compact_at * 2)):]},
-            ], max_tokens=summary_tokens)
-        except AllProvidersFailed as e:
-            self.ui.info(f"özetleme başarısız: {e}")
-            return False
-        summary = (res.text or "").strip()
+        # First try: ask for the summary on top of the conversation itself (same system, tools and messages as the
+        # main thread, the instruction appended at the end). The whole history is then read from the prompt cache
+        # instead of being sent again as one fresh transcript at full input price. Narrow models (limit) keep the
+        # transcript path: the full history does not fit them anyway.
+        summary = "" if limit else self._shared_summary(cut, summary_tokens)
+        if not summary:
+            transcript = []
+            for m in strip_images(old):
+                if m.get("_error"):
+                    continue  # sağlayıcı hata metni konuşmanın parçası değil
+                c = m.get("content") or ""
+                if m.get("tool_calls"):
+                    c += "\n" + "\n".join(f"-> {tc['function']['name']}({tc['function']['arguments'][:400]})" for tc in m["tool_calls"])
+                # Önceki özet kırpılmaz: 2500 karaktere kesilince her yeni özetlemede eski bağlamın çoğu kayboluyordu.
+                keep = 12000 if isinstance(c, str) and c.startswith(SUMMARY_HEAD) else 2500
+                transcript.append(f"[{m['role']}] {truncate(c, keep)}")
+            try:
+                res: ChatResult = self.router.chat("brain", [
+                    {"role": "system", "content": COMPACT_PROMPT},
+                    # Özet isteği de modele sığmalı: dar bağlamda dökümün sonu (karakter ≈ 3 token) gönderilir.
+                    {"role": "user", "content": "\n\n".join(transcript)[-(int(limit * 2.4) if limit else
+                                                                           max(120000, self.compact_at * 2)):]},
+                ], max_tokens=summary_tokens, cache={"mode": "none"})
+            except AllProvidersFailed as e:
+                self.ui.info(f"özetleme başarısız: {e}")
+                return False
+            summary = (res.text or "").strip()
+        self.cache_breaks.expect("konuşma özetlendi")
+        self._reset_effort_latch()  # the prefix is rewritten anyway: the current level can take over
         if not _valid_summary(summary):
             # Model özet yerine araç çağrısı metni ya da dökümün kopyasını döndürdü (11 Kasım: "<tool calls>…" ve
             # "-> git({…}) [tool] …" özet diye kabul edildi, ALICE işin ne olduğunu unuttu). Böyle bir "özet"
@@ -1911,6 +2033,41 @@ class Agent:
             except Exception:  # noqa: BLE001 - kayıt hatası özetlemeyi geri almasın
                 log.debug("on_step hata verdi", exc_info=True)
         return True
+
+    def _shared_summary(self, cut: int, summary_tokens: int) -> str:
+        """Summary request that shares the main thread's cached prefix (see _maybe_compact). "" if it is turned off
+        ([agent] compact_shared_cache = false), fails, or the model answers with tool calls instead of a summary."""
+        if not self.config.agent.get("compact_shared_cache", True):
+            return ""
+        keep = self.messages[cut]
+        head = str(keep.get("_display") or keep.get("content") or "")[:160].replace("\n", " ")
+        ask = (COMPACT_PROMPT + "\n\nThis is an internal context-management step, not a user request: do NOT call any "
+               "tools, answer only with the summary text. Cover everything above up to the "
+               f"{keep['role']} message that begins with: \"{head}\" — that message and everything after it is kept "
+               "verbatim, so summarize only what comes before it.")
+        msgs = list(self.messages) + [{"role": "user", "content": ask}]
+        hint = self._cache_hint("read_only")
+        if self.config.agent.get("cache_sticky_effort", True):
+            hint["latch"] = self._effort_latch()  # same effort as the main thread, or its cache is not read
+        # Side call: it must not move the main thread's routing/settings bookkeeping used by the break detector.
+        saved = (dict(self.router.last_settings),)
+        t0 = time.monotonic()
+        try:
+            res: ChatResult = self._interruptible(self.router.chat, self.role, msgs, tools=self._specs(),
+                                                  max_tokens=max(summary_tokens, 4000), cache=hint)
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 - falls back to the transcript summary
+            log.debug("önbellekli özetleme başarısız: %s", e)
+            return ""
+        finally:
+            self.router.last_settings.clear()
+            self.router.last_settings.update(saved[0])
+        self._count_call(res, t0, 0.0)
+        text = (res.text or "").strip()
+        if res.message.get("tool_calls") and not _valid_summary(text):
+            return ""
+        return text if _valid_summary(text) else ""
 
     def _roomy(self, res: ChatResult) -> bool:
         try:
@@ -1946,3 +2103,5 @@ class Agent:
     def reset(self) -> None:
         self.messages = self.messages[:1]
         self._last_turn_role = None
+        self._reset_effort_latch()
+        self.cache_breaks.reset()
