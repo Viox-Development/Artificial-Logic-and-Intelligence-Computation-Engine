@@ -8,6 +8,7 @@ Smaller request = fits more free models, faster, and less confusing. `python -m 
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -353,7 +354,8 @@ class LoadTools(Tool):
 
     description = ("Şu an tanımı yüklü olmayan araçları açar (sistem talimatındaki 'Yüklenebilir araçlar' listesi); "
                    "bir sonraki adımdan itibaren kullanılabilirler. Gereken araç yüklü değilse 'yapamam' demeden önce "
-                   "bunu çağır. Grup adı ya da araç adı verilebilir; MCP için 'mcp:<sunucu>', hepsi için 'all'.")
+                   "bunu çağır. Grup adı ya da araç adı verilebilir; MCP için 'mcp:<sunucu>'. Yalnız gereken "
+                   "grupları iste ('all' kabul edilmez).")
 
     parameters = obj({"groups": {"type": "array", "items": {"type": "string"},
                                  "description": "Grup ya da araç adları, ör. [\"desktop\", \"youtube\"]."}}, ["groups"])
@@ -368,7 +370,13 @@ class LoadTools(Tool):
         # If a tool name was given, open its group (the model might write the tool name from the list).
         groups = [group_of(g) or g if g not in known else g for g in groups]
         groups = ["mcp:" + g if g in servers else g for g in groups]
-        wanted = known if "all" in groups else set(groups)
+        if any(str(g).strip().lower() in ("all", "*", "hepsi") for g in groups):
+            # Bütün grupları açmak araç listesini birkaç kat büyütüyor, istemi şişiriyor ve önbelleği baştan
+            # yazdırıyordu. Gereken grubu seçsin.
+            raise ToolError("'all' kabul edilmiyor: bütün araçları açmak her isteği şişirir. İşin için gereken "
+                            f"grupları tek tek iste. Gruplar: {', '.join(groups_)}"
+                            + (f"; MCP: {', '.join('mcp:' + s for s in servers)}" if servers else ""))
+        wanted = set(groups)
         unknown = wanted - known
         if unknown:
             raise ToolError(f"bilinmeyen grup: {', '.join(sorted(unknown))}. Gruplar: {', '.join(groups_)}")
@@ -376,7 +384,17 @@ class LoadTools(Tool):
         enabled |= wanted
         names = sorted(n for g in wanted if g in groups_ for n in groups_[g][0])
         names += sorted(g for g in wanted if g.startswith("mcp:"))
-        return ToolResult(f"açıldı: {', '.join(names)}")
+        text = f"açıldı: {', '.join(names)}"
+        agent = ctx.state.get("agent")
+        deferred = agent.deferred_tools() if agent is not None and hasattr(agent, "deferred_tools") else set()
+        if deferred:
+            # Önbellek sıcak: tanımlar araç listesine sonra girer (listeyi değiştirmek bütün konuşmayı önbelleğe
+            # yeniden yazdırır). Model parametreleri buradan görüp aracı adıyla çağırabilir.
+            specs = [agent.tools[n].spec()["function"] for n in sorted(deferred) if n in agent.tools]
+            text += ("\nTanımlar (araçlar adıyla çağrılabilir):\n"
+                     + "\n".join(json.dumps({"name": s.get("name"), "description": s.get("description"),
+                                             "parameters": s.get("parameters")}, ensure_ascii=False) for s in specs))
+        return ToolResult(text)
 
 
 TOOLS: list[Any] = [LoadTools()]

@@ -184,6 +184,8 @@ def clean_messages(messages: list[dict[str, Any]], gemini: bool = False) -> list
     (otherwise Gemini 3 rejects the request with 400)."""
     out = []
     for m in messages:
+        if m.get("_error") or m.get("_display_only"):
+            continue  # provider error shown to the user ("Seçtiğin model cevap veremedi…"): not part of the conversation
         m2 = {k: v for k, v in m.items() if not k.startswith("_")}
         if m.get("tool_calls"):
             calls = []
@@ -696,6 +698,32 @@ class Router:
         except OSError:
             pass
 
+    def _log_cache(self, role: str, ref: str, usage: dict[str, Any] | None, messages: list[dict[str, Any]],
+                   tools: list[dict[str, Any]] | None) -> None:
+        """One line per successful request in ~/.alice/logs/cache.log: how much of the prompt was read from / written
+        to the cache. providers.log only kept errors, so prefix breaks (whole context rewritten) were invisible.
+        Columns: time role ref prompt cached write msgs tools tools_hash system_hash."""
+        if self.log_path is None:
+            return
+        try:
+            import hashlib
+
+            u = usage or {}
+            prompt = int(u.get("prompt_tokens") or u.get("input_tokens") or 0)
+            names = ",".join(str((t.get("function") or t).get("name") or "") for t in tools or [])
+            sys0 = messages[0].get("content") if messages and messages[0].get("role") == "system" else ""
+            h = lambda s: hashlib.sha1(str(s).encode("utf-8", "replace")).hexdigest()[:8]  # noqa: E731
+            path = self.log_path.parent / "cache.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > 2_000_000:
+                path.replace(path.with_suffix(".log.1"))
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {role} {ref} prompt={prompt} "
+                        f"cached={cached_tokens(u)} write={cache_write_tokens(u)} msgs={len(messages)} "
+                        f"tools={len(tools or [])} th={h(names)} sh={h(sys0)}\n")
+        except (OSError, TypeError, ValueError, AttributeError):
+            pass
+
     def client(self, provider: str) -> Any:
         if provider not in self._clients:
             from alice.providers.keypool import client_for
@@ -914,6 +942,7 @@ class Router:
                     failed.append(f"{ref} ({e.status or e.kind})")
                     continue
                 self.usage.record(ref, res.usage, ok=True)
+                self._log_cache(role, ref, res.usage, msgs, tools)
                 self.strikes.pop(ref, None)
                 if self._real_clients:
                     ttft = first[0] - t_start if first[0] else 0.0
