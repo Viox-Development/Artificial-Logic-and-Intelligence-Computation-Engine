@@ -579,7 +579,8 @@ class Router:
         refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
         refs.update(r for chain in self.role_overrides.values() for r in chain)  # mark chosen model
         for name, pc in self.providers_cfg.items():
-            if not pc.auto and pc.enabled and pc.models:  # paid, manually chosen (Claude API): shown in the menu
+            # Paid/manual models (Claude API) and user-added custom providers (e.g. 'evren') with an explicit models list
+            if (not pc.auto or pc.custom) and pc.enabled and pc.models:
                 refs.update(f"{name}:{m}" for m in pc.models)
         if getattr(self, "_real_clients", False):
             # Every provider without a fixed model list contributes its live catalog: the menu must not stay tied

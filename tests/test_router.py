@@ -259,6 +259,23 @@ def test_catalog_view_groups_tested_models_by_provider():
     assert view["b"]["models"][0]["tested"] and not view["a"]["models"][1]["tested"]
 
 
+def test_catalog_view_includes_custom_provider_models():
+    """User-added custom providers (e.g. 'evren' or local servers) with an explicit models list
+    must show their models in catalog_view even when auto=true."""
+    cfg = make_config({"brain": ["a:m1"]}, auto_models=False,
+                      providers={"evren": {"base_url": "https://api.evren.ai/v1", "api_key_env": "EVREN_KEY",
+                                           "models": ["evren-large-3", "evren-fast-1"], "custom": True, "auto": True}})
+    import os
+    os.environ["EVREN_KEY"] = "fake-key"
+    try:
+        r = router_with(cfg, {"a": FakeProvider("a", []), "evren": FakeProvider("evren", [])})
+        view = {p["name"]: p for p in r.catalog_view()}
+        assert "evren" in view
+        assert {m["ref"] for m in view["evren"]["models"]} == {"evren:evren-large-3", "evren:evren-fast-1"}
+    finally:
+        os.environ.pop("EVREN_KEY", None)
+
+
 def test_catalog_view_lists_live_provider_catalogs(monkeypatch):
     """The menu must not stay frozen on measured models: every provider's live catalog shows new models too.
     Embed/tts style non-chat models are still filtered out, and OpenRouter only contributes its known families."""
