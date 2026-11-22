@@ -211,7 +211,7 @@ def _sanitize_calls(msg: dict[str, Any]) -> None:
             fn["arguments"] = "{}" if args is None else json.dumps(args, ensure_ascii=False)
 
 
-# Old fixed summarization limit. Since it is still written in old config.toml files, it counts as "auto" (based on the model's window).
+# Summarization limit used when no model is known yet (auto mode without a ref).
 LEGACY_COMPACT_AT = 48000
 PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiştiren, komut çalıştıran ya da ekrana "
              "dokunan araçlar reddedilecek. İşi incele, sonra adım adım net bir uygulama planı yaz ve kullanıcının "
@@ -231,13 +231,20 @@ CUTOFF_NOTE = ("Cevabın çıktı sınırına takılıp yarıda kesildi. Tam kal
                "ve özür dilemeden devam et.")
 KEEP_OUTPUTS = 6  # the last this-many tool outputs stay in full
 OLD_OUTPUT_CHARS = 1200  # long older ones are shortened to this many characters
-# Changing a message in the history invalidates the provider's prompt cache from that point on. Trimming is not done
-# at every step, but in batches and only when needed: if the cache has already gone cold (this many seconds after the
-# last request), or the context has passed half of the summarization threshold and enough old outputs piled up to trim.
+# Changing a message in the history invalidates the provider's prompt cache from that point on. Old outputs are
+# trimmed only once the cache has already gone cold (this many seconds after the last request); while it is warm the
+# history is never rewritten (the earlier "batch of 8 once past half the threshold" rule rewrote nearly the whole
+# conversation into the cache every ~8 steps). A growing conversation is handled by summarization instead.
 CACHE_COLD_S = 300
 CACHE_LONG_S = 55 * 60  # cliproxy writes a 1-hour cache; leave a small margin before it expires
-TRIM_BATCH = 8
 IMAGE_SLACK = 3  # screenshots are pruned in bulk once there are keep_images + this many
+# "auto" summarization: at most this many tokens, even on 1M-window models. Every step resends the whole conversation;
+# at 80% of a 1M window (800K; cliproxy is configured with max_input_tokens = 1000000) a single step of a long chat
+# cost as much as a whole short chat and burned the subscription quota. [agent] compact_max_tokens, 0 = no cap.
+AUTO_COMPACT_MAX = 120_000
+# Tools whose definitions are sent at once even with a warm cache (plan mode must always be able to exit).
+ALWAYS_SEND = frozenset({"exit_plan_mode", "todo_write"})
+SUMMARY_HEAD = "[Önceki konuşmanın özeti]"
 NUDGE_PREFIX = "[devam kontrolü] "
 # If the end of the reply says "I will do it" ("yapacağım"), the work is unfinished.
 _PROMISE_RX = re.compile(
@@ -264,6 +271,31 @@ def _valid_summary(text: str) -> bool:
     return echoed < 4
 
 
+def _is_request(m: dict[str, Any]) -> bool:
+    """A message the user really wrote (not a reminder, a summary or a screenshot note)."""
+    c = m.get("_display") or m.get("content")
+    if isinstance(c, list):
+        c = next((p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"), "")
+    return (m.get("role") == "user" and not m.get("_nudge") and not m.get("_image") and isinstance(c, str)
+            and bool(c.strip()) and not c.startswith(SUMMARY_HEAD))
+
+
+RUNNING_HEAD = "## Süren iş: kullanıcının son isteği (birebir)"
+
+
+def _last_request(messages: list[dict[str, Any]]) -> str:
+    for m in reversed(messages):
+        c = m.get("content")
+        if m.get("role") == "user" and isinstance(c, str) and c.startswith(SUMMARY_HEAD) and RUNNING_HEAD in c:
+            return c.split(RUNNING_HEAD, 1)[1].strip()  # an earlier summary already carried it: carry it on
+        if _is_request(m):
+            c = m.get("_display") or m.get("content")
+            if isinstance(c, list):
+                c = next((p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"), "")
+            return str(c).strip()
+    return ""
+
+
 def _fallback_summary(old: list[dict[str, Any]]) -> str:
     """Summary without a model: what the user wrote in order (shortened), touched files and the last assistant reply."""
     asks, files, last = [], [], ""
@@ -274,7 +306,7 @@ def _fallback_summary(old: list[dict[str, Any]]) -> str:
                 asks.append("(daha eski özet) " + _clip(c[len("[Önceki konuşmanın özeti]"):].strip(), 1500))
             else:
                 asks.append(_clip(m.get("_display") or c, 600))
-        elif m.get("role") == "assistant":
+        elif m.get("role") == "assistant" and not m.get("_error"):
             if isinstance(c, str) and c.strip():
                 last = c
             for tc in m.get("tool_calls") or []:
@@ -399,8 +431,36 @@ class Agent:
         # for everything after that point in the list.
         order: list[str] = self.__dict__.setdefault("_spec_order", [])
         by = {t.name: t for t in tools}
-        order.extend(n for n in by if n not in order)
+        new = [n for n in by if n not in order]
+        if new and order and not self.__dict__.get("_flush_tools") and self._defer_new_tools():
+            # Önbellek sıcak: araç listesi isteğin en başında (Claude'da sistem isteminden de önce), tek bir yeni araç
+            # bütün konuşmayı önbelleğe yeniden yazdırıyordu. Yeni açılan araçlar listeye önbellek soğuyunca ya da
+            # özetlemeden sonra toplu girer; o zamana kadar adıyla çağrılınca çalışırlar, tanımları load_tools
+            # sonucunda (konuşmanın sonunda, önbelleği bozmadan) modele gider.
+            keep = [n for n in new if n in ALWAYS_SEND]
+            self.__dict__["_deferred_tools"] = {n for n in new if n not in keep}
+            order.extend(keep)
+        else:
+            order.extend(new)
+            self.__dict__["_deferred_tools"] = set()
+            self.__dict__.pop("_flush_tools", None)
         return [by[n].spec() for n in order if n in by]
+
+    DEFER_TOOLS_TOKENS = 20000  # bundan kısa konuşmada önbelleği yeniden yazmak ucuz: tanım hemen gönderilir
+
+    def _defer_new_tools(self) -> bool:
+        """Yeni açılan araçların tanımı listeye eklenmeden mi bekletilsin? Önbellek sıcak, konuşma başlamış ve büyükse.
+        Özetlemeden hemen sonra bekletilmez: konuşma zaten yeniden yazılıyor."""
+        if not self._cache_warm() or self._cache_cold():
+            return False
+        lp = self._last_prompt
+        size = lp[0] if lp and lp[0] > 0 else estimate_tokens(self.messages)
+        return size >= int(self.config.agent.get("defer_tools_tokens", self.DEFER_TOOLS_TOKENS) or 0)
+
+    def deferred_tools(self) -> set[str]:
+        """Açık ama tanımı henüz araç listesine girmemiş araçlar (önbellek sıcakken bekletilenler)."""
+        self.tool_specs()
+        return set(self.__dict__.get("_deferred_tools") or ())
 
     def _cache_warm(self) -> bool:
         """If the tool list changes, is the cached conversation wasted? After the first request of a chat, yes: the tool
@@ -581,8 +641,10 @@ class Agent:
             return
         from alice.tools.groups import catalog
 
-        text = catalog(self.tools)
         system = self.messages[0]["content"]
+        if "\n\n# Yüklenebilir araçlar\n" in system and self._defer_new_tools():
+            return  # sistem istemi önbellekte: liste (ör. yeni bağlanan MCP sunucusu) önbellek soğuyunca güncellenir
+        text = catalog(self.tools)
         body = _CATALOG_RX.sub("", system)
         new = body + ("\n\n" + text if text else "")
         if new != system:
@@ -602,13 +664,15 @@ class Agent:
         if routed:
             self.role = routed
         self._turn_blocked = False
+        self._turn_error = False
         try:
             final = self._run_turn(user_text, max_steps, images, recall)
         finally:
             self._last_turn_role = self.role  # so the next turn's routing can stay on the model with the warm cache
             self.role = old_role
         if not self._turn_blocked:  # a message blocked by a hook must not be written to memory as an empty turn
-            self._remember_turn(user_text, final)
+            # A provider error text is not ALICE's answer: memory keeps only what the user said.
+            self._remember_turn(user_text, "" if self._turn_error else final)
         return final
 
     ROUTE_ROLES = {"strong": "route-strong", "light": "route-light"}
@@ -631,7 +695,8 @@ class Agent:
             return None if sticky == "brain" else sticky
         prev = ""
         for m in reversed(self.messages[1:]):
-            if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip():
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip() \
+                    and not m.get("_error"):
                 prev = m["content"]
                 break
         r = jev_route.route(self.config, user_text, prev, log=log)
@@ -874,8 +939,11 @@ class Agent:
             why = "; ".join(" ".join(x.split())[:140] for x in e.errors[:4])
             head = ("Seçtiğin model cevap veremedi, iş yarıda kaldı (elle seçildiği için başka modele geçmedim)."
                     if getattr(e, "pinned", False) else "Sıradaki hiçbir model cevap veremedi, iş yarıda kaldı.")
+            # Bu metin yalnız kullanıcı için: modele giden geçmişe ve hafızaya ALICE cevabı olarak girmez (_error).
+            # Önceden her sonraki istekte modele gidiyor, yer kaplıyor ve modeli "hata verdim" diye yanıltıyordu.
+            self._turn_error = True
             return self._halt(f"{head}\n\nNeden: {why}\n\nModel menüsünden başka bir model seçip ya da biraz bekleyip "
-                              "\"devam et\" yazarsan kaldığım yerden sürdürürüm.") or final
+                              "\"devam et\" yazarsan kaldığım yerden sürdürürüm.", error=True) or final
         except Exception:
             # Beklenmeyen hata: cevapsız tool_calls geçmişte kalırsa sonraki her tur sağlayıcıdan 400 alır.
             sink.dead = True
@@ -995,14 +1063,18 @@ class Agent:
             self._enable_groups_for(text)
         return bool(items)
 
-    def _halt(self, text: str) -> str:
+    def _halt(self, text: str, error: bool = False) -> str:
         """Tur cevap verilemeden bittiğinde (model yok, adım sınırı) bunu sohbete asistan mesajı olarak yaz: ekranda ve
-        kayıtta görünür, sonraki turda model de işin yarıda kaldığını bilir. Alt ajanlarda ve seste yalnız bilgi."""
+        kayıtta görünür, sonraki turda model de işin yarıda kaldığını bilir. Alt ajanlarda ve seste yalnız bilgi.
+        error=True: sağlayıcı hatası; ekranda görünür ama modele gönderilmez (_error, bkz. router.clean_messages)."""
         if self.is_child or self.role == "voice":
             self.ui.info(text)
             return ""
         try:
-            self.messages.append({"role": "assistant", "content": text, "_notice": True})
+            msg: dict[str, Any] = {"role": "assistant", "content": text, "_notice": True}
+            if error:
+                msg["_error"] = True
+            self.messages.append(msg)
             self.ui.stream_start()
             self.ui.stream_delta(text)
             self.ui.stream_end(text, "")
@@ -1655,6 +1727,15 @@ class Agent:
                 ref = self.router.last_ref.get(self.role) or ""
             except Exception:  # noqa: BLE001
                 ref = ""
+        # Doğrulanmadı: cliproxy'nin 1 saatlik önbellek yazdığı varsayılıyor (yanlışsa prefix bozulmaz, yalnız soğuk
+        # önbellekte kırpma fırsatı kaçar). ~/.alice/logs/cache.log'da uzun aradan sonraki "write=" bunu gösterir;
+        # [agent] cache_ttl_minutes ile elle verilebilir.
+        try:
+            m = float((getattr(self.config, "agent", None) or {}).get("cache_ttl_minutes") or 0)
+        except (TypeError, ValueError, AttributeError):
+            m = 0.0
+        if m > 0:
+            return m * 60
         return CACHE_LONG_S if str(ref).startswith("cliproxy:") else CACHE_COLD_S
 
     def _prune_images(self) -> None:
@@ -1664,16 +1745,15 @@ class Agent:
         for i in idx[:-self.keep_images] if self.keep_images else idx:
             self.messages[i] = {"role": "user", "content": "[eski ekran görüntüsü yer kazanmak için kaldırıldı]", "_image": False}
 
-    def _shrink_old_outputs(self) -> None:
+    def _shrink_old_outputs(self, force: bool = False) -> None:
         """Eski araç çıktılarını kısalt: son KEEP_OUTPUTS sonuç olduğu gibi kalır, öncekilerin uzunları başı ve sonuyla
-        kısaltılır. Uzun bir işte okunan dosyalar, listeler, sayfalar her adımda baştan gönderiliyor ve bağlamı
-        dolduruyordu; model onların özünü zaten kullandı, gerekirse tekrar okur."""
+        kısaltılır. Yalnız önbellek zaten soğuduysa, tek seferde topluca: sıcak önbellekte geçmişin ortasındaki bir
+        mesajı değiştirmek o noktadan sonraki her şeyi önbelleğe yeniden yazdırıyor (22 Kasım ölçümü: sıcak önbellekte
+        her ~8 adımda bir, 3. mesajdan itibaren bütün konuşma). Büyüyen konuşmayı özetleme toparlar."""
+        if not force and not self._cache_cold():
+            return
         idx = [i for i, m in enumerate(self.messages) if m["role"] == "tool" and isinstance(m.get("content"), str)]
         todo = [i for i in idx[:-KEEP_OUTPUTS] if len(self.messages[i]["content"]) > OLD_OUTPUT_CHARS * 1.5]
-        if not todo:
-            return
-        if not self._cache_cold() and (len(todo) < TRIM_BATCH or self.context_tokens() < self.compact_at * 0.5):
-            return  # önbellek sıcak ve bağlam rahat: geçmişi değiştirme
         for i in todo:
             c = self.messages[i]["content"]
             if len(c) > OLD_OUTPUT_CHARS * 1.5:
@@ -1683,12 +1763,23 @@ class Agent:
     # -------------------------------------------------------------- context
     @property
     def compact_at(self) -> int:
-        """Özetleme sınırı. "auto": kullanılan modelin bağlam penceresinin %80'i (GLM 5.3 ve Gemini'de ~840K,
-        Groq gibi dar ücretsiz katmanlarda sağlayıcı sınırı). Sayı yazılırsa o kullanılır."""
+        """Özetleme sınırı. "auto": kullanılan modelin bağlam penceresinin %80'i, ama en fazla AUTO_COMPACT_MAX
+        ([agent] compact_max_tokens; Groq gibi dar katmanlarda sağlayıcı sınırı). Sayı yazılırsa o kullanılır."""
         v = self._compact_cfg
         cap = self.compact_cap or 10**9
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) > 0 and int(v) != LEGACY_COMPACT_AT:
+        if isinstance(v, str) and v.strip().isdigit():
+            v = int(v.strip())
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) > 0:
+            # Elle yazılan sayıya uyulur. Eskiden 48000 "eski varsayılan" sayılıp yok sayılıyordu: config.toml'da
+            # compact_at_tokens = 48000 yazan kullanıcıda konuşma 1M pencerenin %80'ine (800K) kadar özetlenmedi,
+            # istek başına ~233K token gitti (22 Kasım ölçümü).
             return min(int(v), cap)
+        try:
+            auto_max = int(self.config.agent.get("compact_max_tokens", AUTO_COMPACT_MAX))
+        except (TypeError, ValueError):
+            auto_max = AUTO_COMPACT_MAX
+        if auto_max > 0:
+            cap = min(cap, max(16000, auto_max))
         try:
             ref = self.router.last_ref.get(self.role) or self.router.first_available(self.role)
         except KeyError:
@@ -1750,10 +1841,14 @@ class Agent:
             return changed and bool(limit)
         transcript = []
         for m in strip_images(old):
+            if m.get("_error"):
+                continue  # sağlayıcı hata metni konuşmanın parçası değil
             c = m.get("content") or ""
             if m.get("tool_calls"):
                 c += "\n" + "\n".join(f"-> {tc['function']['name']}({tc['function']['arguments'][:400]})" for tc in m["tool_calls"])
-            transcript.append(f"[{m['role']}] {truncate(c, 2500)}")
+            # Önceki özet kırpılmaz: 2500 karaktere kesilince her yeni özetlemede eski bağlamın çoğu kayboluyordu.
+            keep = 12000 if isinstance(c, str) and c.startswith(SUMMARY_HEAD) else 2500
+            transcript.append(f"[{m['role']}] {truncate(c, keep)}")
         self.ui.info("context büyüdü, özetleniyor...")
         try:
             res: ChatResult = self.router.chat("brain", [
@@ -1777,10 +1872,17 @@ class Agent:
                 self.on_compact(old)  # arayüz eski mesajları göstermeye devam etsin (oturum arşivi)
             except Exception:  # noqa: BLE001 - arşiv yazılamadı diye özetleme durmasın
                 log.debug("on_compact hata verdi", exc_info=True)
-        head = [self.messages[0], {"role": "user", "content": f"[Önceki konuşmanın özeti]\n{summary}"}]
+        ask = _last_request(old) if not any(_is_request(m) for m in self.messages[cut:]) else ""
+        if ask:
+            # Kesme bir asistan adımından yapıldı (uzun araç zinciri): kullanıcının süren isteği yalnız özette kalıyor,
+            # model özetin yorumuna göre çalışıyordu. Birebir eklenir.
+            summary += f"\n\n{RUNNING_HEAD}\n{_clip(ask, 4000)}"
+        head = [self.messages[0], {"role": "user", "content": f"{SUMMARY_HEAD}\n{summary}"}]
         if self.messages[cut]["role"] == "user":  # roller sırayla gitsin
             head.append({"role": "assistant", "content": "Özeti aldım, kaldığım yerden devam ediyorum."})
         self.messages = head + self.messages[cut:]
+        self.__dict__["_flush_tools"] = True  # konuşma önbelleğe zaten yeniden yazılacak: bekleyen araçlar şimdi girsin
+        self._shrink_old_outputs(force=True)  # aynı sebeple: kalan eski çıktılar şimdi kırpılır, ayrı bir kırılma olmaz
         self.checkpoints.clear()  # mesaj indeksleri değişti, eski geri sarma noktaları geçersiz
         if self.on_step is not None:
             # Hemen kaydet: arşive yazılan mesajlar oturum dosyasında da kalırsa (tur burada hata verir ya da ALICE

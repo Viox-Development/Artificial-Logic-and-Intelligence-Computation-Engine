@@ -161,8 +161,11 @@ def with_memory(system: str, profile: str) -> str:
 
 
 COMPACT_PROMPT = """Summarize the conversation so far so that work can continue seamlessly in a fresh context. Include:
-1. The user's requests and goals (verbatim if short), and constraints/preferences they stated.
-2. What has been done: files created/changed (paths), commands run and their important results, UI state reached.
-3. Current state of the task, open problems, errors still unresolved.
+1. The user's requests and goals (verbatim if short), and constraints/preferences they stated. Quote the most recent
+   request verbatim.
+2. What has been done: files created/changed (full paths), branches/worktrees, commands run and their important
+   results, UI state reached.
+3. Current state of the task: what is unfinished or half-done, open problems, errors still unresolved.
 4. The exact next steps.
+If the transcript starts with an earlier summary, carry its still-relevant facts over; do not drop them.
 Be dense and factual. Write in the user's language."""

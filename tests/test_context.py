@@ -43,10 +43,10 @@ def _cfg(**agent):
 
 
 def test_compact_at_follows_model_window():
-    a = _agent(_cfg(compact_at_tokens="auto"))
+    a = _agent(_cfg(compact_at_tokens="auto", compact_max_tokens=0))
     assert a.compact_at == int(1_048_576 * 0.8)
-    # A 48000 in old config.toml files also counts as "auto".
-    assert _agent(_cfg(compact_at_tokens=48000)).compact_at == int(1_048_576 * 0.8)
+    # A hand-written 48000 is respected (it used to be treated as "auto" and the chat grew to 800K).
+    assert _agent(_cfg(compact_at_tokens=48000)).compact_at == 48000
     # Any other manually written number is kept as is.
     assert _agent(_cfg(compact_at_tokens=200000)).compact_at == 200000
 
