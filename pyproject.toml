@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alice-harness"
-version = "0.3.1"
+version = "0.3.2"
 description = "ALICE: Artificial Logic and Intelligence Computation Engine. Ücretsiz API modelleriyle çalışan, bilgisayarı yönetebilen ajan harness."
 readme = "README.md"
 requires-python = ">=3.10"
