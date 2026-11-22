@@ -199,12 +199,14 @@ class WebCrawl(Tool):
     def summary(self, args: dict[str, Any]) -> str:
         return f"{args.get('url', '')} ({str(args.get('query', ''))[:60]})"
 
-    def run(self, ctx: ToolContext, url: str, query: str, max_pages: int = 12, max_depth: int = 3) -> ToolResult:
+    def run(self, ctx: ToolContext, url: str = "", query: str = "", max_pages: int = 12, max_depth: int = 3,
+            **kwargs: Any) -> ToolResult:
         if "://" not in url:
             url = "https://" + url
-        max_pages = max(1, min(int(max_pages or 12), 40))
+        max_pages = max(1, min(int(12 if max_pages is None else max_pages), 40))
         t0 = time.monotonic()
-        out = crawl(url, query, max_pages=max_pages, max_depth=max(0, min(int(max_depth or 3), 6)),
+        depth_val = max(0, min(int(3 if max_depth is None else max_depth), 6))
+        out = crawl(url, query, max_pages=max_pages, max_depth=depth_val,
                     cancelled=getattr(ctx, "cancelled", lambda: False))
         pages: list[_PageResult] = out["pages"]
         ok = [p for p in pages if not p.error]

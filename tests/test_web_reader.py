@@ -228,6 +228,13 @@ def test_crawl_tool_formats_a_digest(monkeypatch, workdir):
     assert "sayfa okundu" in out and "https://d.test/cancel" in out and "⟨" not in out
 
 
+def test_crawl_max_depth_zero_only_visits_root(monkeypatch, workdir):
+    _with_site(monkeypatch, SITE)
+    ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
+    out = crawl.WebCrawl().run(ctx, url="https://d.test/", query="cancel", max_depth=0).text
+    assert "1 sayfa okundu" in out
+
+
 def test_crawl_reports_when_nothing_could_be_read(monkeypatch, workdir):
     _with_site(monkeypatch, {})
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))

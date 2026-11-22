@@ -333,6 +333,7 @@ class _Tab:
             try:
                 _http(f"/json/close/{self.id}")
             except OSError:
+                # Tab or renderer process may already be terminated; closing is best-effort.
                 pass
 
 
