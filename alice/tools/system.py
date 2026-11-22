@@ -131,6 +131,12 @@ class ProcessKill(Tool):
         return DANGER if n in PROTECTED or not (pid or n) else EXEC
 
     def run(self, ctx: ToolContext, pid: int | None = None, name: str | None = None) -> ToolResult:
+        # Also handle ALICE's own background processes smoothly: if the model passed a bg_proc PID,
+        # terminate it through process_stop logic rather than failing.
+        bg_procs = ctx.state.get("bg_procs") or {}
+        if pid and int(pid) in bg_procs:
+            from alice.tools.shell import ProcessStop
+            return ProcessStop().run(ctx, pid=int(pid))
         targets = []
         if pid:
             try:

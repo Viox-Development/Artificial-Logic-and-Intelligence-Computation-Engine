@@ -883,17 +883,25 @@ class Windows(Tool):
 class UIElements(Tool):
     name = "ui_elements"
     description = ("Windows: öndeki (ya da title verilen) masaüstü penceresinin düğme, alan ve menü gibi öğelerini "
-                   "[ID] ile listeler (UI Automation); sonra ui_act ile ID üzerinden tıkla/yaz. Koordinat tahmini "
-                   "yerine bunu kullan. Liste her çağrıda yenilenir. Web sayfaları için browser daha iyi; liste boş "
-                   "ya da işe yaramazsa (oyunlar, Blender) computer_task kullan.")
+                   "[ID] ile listeler (UI Automation); sonra ui_act ile ID üzerinden tıkla/yaz. İstersen doğrudan action "
+                   "vererek tek çağrıda listeleme ve tıklama yapabilirsin (ör. action='click', element_id=3). "
+                   "Koordinat tahmini yerine bunu kullan.")
     parameters = obj({
         "title": {"type": "string", "description": "Pencere başlığından bir parça. Boş: öndeki pencere."},
         "limit": {"type": "integer", "description": "En fazla öğe. Varsayılan 150."},
+        "action": {"type": "string", "enum": ["click", "double_click", "right_click", "focus", "set_text", "type",
+                                              "toggle", "expand", "collapse", "select"],
+                   "description": "Öğede hemen işlem yap (boşsa sadece listeler)."},
+        "element_id": {"type": "integer", "description": "İşlem yapılacak öğenin ID'si (action verilmişse)."},
+        "text": {"type": "string", "description": "set_text veya type için metin."},
     })
 
-    def run(self, ctx: ToolContext, title: str | None = None, limit: int = 150) -> ToolResult:
+    def run(self, ctx: ToolContext, title: str | None = None, limit: int = 150,
+            action: str | None = None, element_id: int | None = None, text: str | None = None) -> ToolResult:
         from alice.tools.computer import as_number
 
+        if action and element_id is not None:
+            return ToolResult(ui_act(ctx, element_id, action, text))
         limit = max(1, min(as_number(150 if limit is None else limit, "limit", int), 500))
         t, items = collect_ui_elements(ctx, title, limit)
         return ToolResult(format_ui(t, items))

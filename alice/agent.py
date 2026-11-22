@@ -1568,16 +1568,46 @@ class Agent:
         # stop() araçların başlattığı komutları öldürür, böylece bekleyen araç da hemen döner.
         if not self._take_desktop(tool):
             return ToolResult("durduruldu (kullanıcı kesti)", is_error=True)
+        t0 = time.monotonic()
         try:
-            return tool.run(self.ctx, **args)
+            res = tool.run(self.ctx, **args)
         except ToolError as e:
-            return ToolResult(str(e), is_error=True)
+            res = ToolResult(str(e), is_error=True)
         except TypeError as e:
-            return ToolResult(unknown_params(tool, args) or f"geçersiz parametre: {e}", is_error=True)
+            res = ToolResult(unknown_params(tool, args) or f"geçersiz parametre: {e}", is_error=True)
         except KeyboardInterrupt:
             raise
         except Exception as e:  # noqa: BLE001 - araç hatası ajanı düşürmesin, modele dönsün
-            return ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+            res = ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+        dur = time.monotonic() - t0
+        self._log_tool_call(tool.name, args, res, dur)
+        return res
+
+    def _log_tool_call(self, name: str, args: dict[str, Any], res: ToolResult, dur: float) -> None:
+        """Log tool execution for diagnostics and telemetry."""
+        try:
+            from alice.config import alice_home
+            log_dir = alice_home() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "tools.log"
+            summary_args = {}
+            for k, v in args.items():
+                s = str(v)
+                summary_args[k] = s if len(s) < 120 else s[:117] + "..."
+            entry = {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "tool": name,
+                "args": summary_args,
+                "dur": round(dur, 3),
+                "ok": not res.is_error,
+                "len": len(res.text or "")
+            }
+            if res.is_error:
+                entry["err"] = (res.text or "")[:150]
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     def _take_desktop(self, tool: Tool) -> bool:
         """Uygulamada aynı anda birden çok sohbet çalışabilir; ekranı/tarayıcıyı süren araç sırayla kullanılır
