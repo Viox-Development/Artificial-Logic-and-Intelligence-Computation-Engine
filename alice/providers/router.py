@@ -438,12 +438,18 @@ class Router:
 
     SUBSCRIPTION_ORDER = ("claude", "codex", "antigravity")
     SUBSCRIPTION_PER_GROUP = 2
+    # Antigravity accounts expose models from multiple families (Gemini, Claude, GPT) under a single
+    # subscription; allow more models from that group so the best of each family can enter the chain.
+    SUBSCRIPTION_ANTIGRAVITY_PER_GROUP = 4
 
     def subscription_chain(self) -> list[str]:
         """Models from the subscription proxy (CLIProxyAPI) head the main model's automatic order: Claude first,
         then ChatGPT, then Antigravity ([agent] subscription_order). The proxy itself switches between accounts of
         the same service; if all of a service's accounts are full or failing, the next service is used. The few
-        strongest models of each service are taken; a service with no usable account is skipped."""
+        strongest models of each service are taken; a service with no usable account is skipped.
+
+        Antigravity accounts may also serve Claude & GPT models under their own quota; these are grouped under
+        "antigravity" (not "claude"/"codex") so they use the correct limits and account switching."""
         cp = self.providers_cfg.get("cliproxy")
         if cp is None or not cp.enabled or not (self._real_clients or self._subscription_models is not None):
             return []
@@ -470,7 +476,8 @@ class Router:
             # Those above the threshold come first. So the service is not left out of the order entirely,
             # the remaining slots are filled with its best models.
             good = [r for r in refs if picker.quality(r) >= floor]
-            out += (good + [r for r in refs if r not in good])[:self.SUBSCRIPTION_PER_GROUP]
+            per = self.SUBSCRIPTION_ANTIGRAVITY_PER_GROUP if gid == "antigravity" else self.SUBSCRIPTION_PER_GROUP
+            out += (good + [r for r in refs if r not in good])[:per]
         return out
 
     def _cached_dead(self) -> set[str]:
@@ -572,7 +579,8 @@ class Router:
         refs: set[str] = {r for r, v in res.items() if v.get("ok") or v.get("ever_ok")}
         refs.update(r for chain in self.role_overrides.values() for r in chain)  # mark chosen model
         for name, pc in self.providers_cfg.items():
-            if not pc.auto and pc.enabled and pc.models:  # paid, manually chosen (Claude API): shown in the menu
+            # Paid/manual models (Claude API) and user-added custom providers (e.g. 'evren') with an explicit models list
+            if (not pc.auto or pc.custom) and pc.enabled and pc.models:
                 refs.update(f"{name}:{m}" for m in pc.models)
         if getattr(self, "_real_clients", False):
             # Every provider without a fixed model list contributes its live catalog: the menu must not stay tied
@@ -639,16 +647,22 @@ class Router:
 
     @staticmethod
     def _split_proxy(out: list[dict[str, Any]], hidden: set[str] | None = None) -> list[dict[str, Any]]:
-        """Split the Claude Code proxy's models by provider (Claude, ChatGPT, Kimi, Gemini...) instead of one single
-        "cliproxy" pile. If the proxy has a ChatGPT account, the group of the direct ChatGPT login is not shown in the
-        menu: the same account used to appear under two separate "ChatGPT" headings,
-        half under one and half under the other."""
+        """Split the Claude Code proxy's models by provider (Claude, ChatGPT, Kimi, Gemini, Antigravity...)
+        instead of one single "cliproxy" pile. If the proxy has a standalone ChatGPT (codex) account, the group
+        of the direct ChatGPT login is not shown in the menu: the same account used to appear under two separate
+        "ChatGPT" headings, half under one and half under the other.
+
+        Antigravity accounts may expose Claude & GPT models under Antigravity's own quota; model_group() uses
+        the owned_by mapping to attribute those to the "antigravity" group, so they are not mixed with separate
+        Claude/ChatGPT subscriptions."""
         idx = next((i for i, e in enumerate(out) if e["name"] == "cliproxy"), None)
         if idx is None or not out[idx]["models"]:
             return out
         from alice.app.cliproxy import model_group
 
         proxy = out.pop(idx)
+        # Only hide the direct ChatGPT login group when a standalone codex subscription exists
+        # (not when Claude/GPT models come from Antigravity).
         if any(model_group(row["model"])[0] == "codex" for row in proxy["models"]):
             out[:] = [e for e in out if e["name"] != "chatgpt"]
             idx = min(idx, len(out))
@@ -942,9 +956,15 @@ class Router:
         low = str(e).lower()
         if e.kind == "quota":
             if provider == "cliproxy":
-                # The proxy fronts a pool of accounts (e.g. multiple Grok or Antigravity accounts).
-                # Do not lock out the model for 1 hour; use a short cooldown so secondary or recovering accounts can be tried.
-                wait = min(max(float(e.retry_after or 60.0), 30.0), 180.0)
+                # The proxy fronts a pool of accounts (e.g. multiple Antigravity, Claude, or Grok accounts).
+                # On the first quota hit, use a brief pause (5s) to allow CLIProxy's round-robin / failover
+                # to switch to another available account in the pool. If consecutive errors accumulate,
+                # back off exponentially (up to 180s) indicating all accounts in the pool are exhausted.
+                n = self.strikes.get(ref, 1)
+                if n <= 1 and not e.retry_after:
+                    wait = 5.0  # quick failover to sibling credential in proxy pool
+                else:
+                    wait = min(max(float(e.retry_after or (30.0 * 2 ** min(n - 1, 3))), 15.0), 180.0)
                 self.cooldown_until[ref] = now + wait
                 self.cooldown_kind[ref] = "quota"
                 return

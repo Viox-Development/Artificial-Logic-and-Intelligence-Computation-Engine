@@ -202,6 +202,25 @@ def test_live_models_reads_proxy_list_and_skips_non_chat(monkeypatch):
     assert cliproxy.live_models(fetch=down) == ["claude-opus-5-5", "kimi-k3"]  # last known list
 
 
+def test_live_models_tracks_owned_by(monkeypatch):
+    """Antigravity accounts expose Claude & GPT models; owned_by must be preserved for model_group()."""
+    monkeypatch.setitem(cliproxy._models_cache, "at", 0.0)
+    data = [
+        {"id": "gemini-3.8-flash", "owned_by": "antigravity"},
+        {"id": "claude-sonnet-4-6-thinking", "owned_by": "antigravity"},
+        {"id": "claude-opus-4-6-thinking", "owned_by": "antigravity"},
+        {"id": "gpt-oss-120b-medium", "owned_by": "antigravity"},
+        {"id": "claude-opus-5-5", "owned_by": "claude"},
+        {"id": "gpt-6.1-terra", "owned_by": "codex"},
+    ]
+    cliproxy.live_models(fetch=lambda: data)
+    owners = cliproxy.model_owners()
+    assert owners["gemini-3.8-flash"] == "antigravity"
+    assert owners["claude-sonnet-4-6-thinking"] == "antigravity"
+    assert owners["gpt-oss-120b-medium"] == "antigravity"
+    assert owners["claude-opus-5-5"] == "claude"
+
+
 def test_tidy_models_keeps_two_newest_per_family_and_drops_old_generations():
     ids = ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-20250514", "claude-3-7-sonnet-20250219",
            "claude-3-5-haiku", "claude-sonnet-5-5", "kimi-k3", "kimi-k2.8", "kimi-k2.6", "kimi-k2.7-code",
@@ -215,6 +234,26 @@ def test_model_group():
     assert cliproxy.model_group("kimi-k3") == ("kimi", "Kimi", "cliproxy:kimi-*")
     assert cliproxy.model_group("gpt-6-luna")[0] == "codex"
     assert cliproxy.model_group("mystery-1")[0] == "other"
+
+
+def test_model_group_antigravity_owned(monkeypatch):
+    """Claude & GPT models served by Antigravity must be grouped under 'antigravity', not 'claude'/'codex'."""
+    monkeypatch.setitem(cliproxy._models_cache, "owners", {
+        "claude-sonnet-4-6-thinking": "antigravity",
+        "claude-opus-4-6-thinking": "antigravity",
+        "gpt-oss-120b-medium": "antigravity",
+        "gemini-3.8-flash": "antigravity",
+        "claude-opus-5-5": "claude",
+        "gpt-6.1-terra": "codex",
+    })
+    # Antigravity-owned Claude/GPT models -> antigravity group
+    assert cliproxy.model_group("claude-sonnet-4-6-thinking")[0] == "antigravity"
+    assert cliproxy.model_group("claude-opus-4-6-thinking")[0] == "antigravity"
+    assert cliproxy.model_group("gpt-oss-120b-medium")[0] == "antigravity"
+    assert cliproxy.model_group("gemini-3.8-flash")[0] == "antigravity"
+    # Standalone Claude/ChatGPT subscriptions -> their own groups
+    assert cliproxy.model_group("claude-opus-5-5")[0] == "claude"
+    assert cliproxy.model_group("gpt-6.1-terra")[0] == "codex"
 
 
 def test_quota_shows_fullest_window_and_resets_stale_ones():

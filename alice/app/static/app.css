@@ -1891,6 +1891,10 @@ details > summary::marker { color: var(--faint); }
 .tl-chips .chip-btn.on { background: var(--text); color: var(--bg); border-color: var(--text); }
 .tl-chips .chip-btn.on .n { color: color-mix(in srgb, var(--bg) 65%, transparent); }
 .tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: var(--s2); }
+.tl-mcp-group { margin-bottom: var(--s3); background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--rad); padding: var(--s2); }
+.tl-mcp-group summary { font-weight: 600; font-size: 0.85rem; cursor: pointer; color: var(--text-muted); padding: var(--s1) var(--s2); user-select: none; }
+.tl-mcp-group summary:hover { color: var(--text); }
+.tl-mcp-group[open] summary { margin-bottom: var(--s2); border-bottom: 1px solid var(--border-subtle); }
 .tool-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); padding: var(--s3); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tc-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
 .tc-head svg { width: 15px; height: 15px; color: var(--muted); }

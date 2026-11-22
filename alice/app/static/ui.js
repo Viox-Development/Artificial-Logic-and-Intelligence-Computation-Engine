@@ -98,40 +98,53 @@ function thinkMenu() {
     }
   }, "right");
 }
+let _modelsMenuCache = null;
 async function modelMenu(anchor) {
-  const all = await api("/api/models/all");
-  const provs = (all && all.providers) || [];
-  const pinned = all ? all.pinned : (S.status.brain_pinned ? S.status.brain_chain[0] : null);
-  openMenu(anchor instanceof Element ? anchor : $("#modelBtn"), (m) => {
-    m.appendChild(el("div", "menu-title", "Ana model"));
-    menuItem(m, IC.spark, "Otomatik", "Zincirdeki ilk uygun model, limit dolunca sıradakine geçer",
-      () => pinModel("reset"), !pinned);
-    // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
-    for (const p of provs) {
-      const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
-      if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
-        // giriş var ama liste henüz yok: boş geçme, nedenini söyle
-        m.appendChild(el("div", "menu-title", "chatgpt"));
-        menuItem(m, null, p.loading ? "Model listesi okunuyor…" : "Model listesi alınamadı",
-          p.loading ? "birkaç saniye sonra menüyü tekrar aç" : (p.error || "").slice(0, 120) + " · Kurulum'dan elle ekleyebilirsin",
-          () => showSettings("setup"));
-        continue;
+  // Önbellekte model listesi varsa menüyü gecikmesiz (0ms) anında aç.
+  // Arka planda /api/models/all ile taze veriyi çek.
+  const render = (all) => {
+    const provs = (all && all.providers) || [];
+    const pinned = all ? all.pinned : (S.status.brain_pinned ? S.status.brain_chain[0] : null);
+    openMenu(anchor instanceof Element ? anchor : $("#modelBtn"), (m) => {
+      m.appendChild(el("div", "menu-title", "Ana model"));
+      menuItem(m, IC.spark, "Otomatik", "Zincirdeki ilk uygun model, limit dolunca sıradakine geçer",
+        () => pinModel("reset"), !pinned);
+      // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
+      for (const p of provs) {
+        const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
+        if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
+          // giriş var ama liste henüz yok: boş geçme, nedenini söyle
+          m.appendChild(el("div", "menu-title", "chatgpt"));
+          menuItem(m, null, p.loading ? "Model listesi okunuyor…" : "Model listesi alınamadı",
+            p.loading ? "birkaç saniye sonra menüyü tekrar aç" : (p.error || "").slice(0, 120) + " · Kurulum'dan elle ekleyebilirsin",
+            () => showSettings("setup"));
+          continue;
+        }
+        if (!rows.length && p.enabled && !p.hidden && p.error) {
+          // Eklendi ama hiçbir modeli cevap vermiyor (kota, bakiye, yetki): sessizce kaybolmasın, nedenini söyle.
+          m.appendChild(el("div", "menu-title", provLabel(p)));
+          menuItem(m, null, "Modeller çalışmıyor", p.error.slice(0, 160), () => showSettings("models"));
+          continue;
+        }
+        if (!rows.length) continue;
+        m.appendChild(el("div", "menu-title", provLabel(p) + (p.note ? " · limit " + p.note : "")));
+        for (const x of rows) {
+          menuItem(m, null, x.model, x.status === "hazır" ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
+        }
       }
-      if (!rows.length && p.enabled && !p.hidden && p.error) {
-        // Eklendi ama hiçbir modeli cevap vermiyor (kota, bakiye, yetki): sessizce kaybolmasın, nedenini söyle.
-        m.appendChild(el("div", "menu-title", provLabel(p)));
-        menuItem(m, null, "Modeller çalışmıyor", p.error.slice(0, 160), () => showSettings("models"));
-        continue;
-      }
-      if (!rows.length) continue;
-      m.appendChild(el("div", "menu-title", provLabel(p) + (p.note ? " · limit " + p.note : "")));
-      for (const x of rows) {
-        menuItem(m, null, x.model, x.status === "hazır" ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
-      }
-    }
-    m.appendChild(el("div", "menu-sep"));
-    menuItem(m, IC.list, "Modelleri yönet", "Sağlayıcı ya da model gizle/göster, durumları gör", () => showSettings("models"));
-  }, "right", anchor instanceof Element);
+      m.appendChild(el("div", "menu-sep"));
+      menuItem(m, IC.list, "Modelleri yönet", "Sağlayıcı ya da model gizle/göster, durumları gör", () => showSettings("models"));
+    }, "right", anchor instanceof Element);
+  };
+
+  if (_modelsMenuCache) {
+    render(_modelsMenuCache);
+    api("/api/models/all").then((data) => { if (data) _modelsMenuCache = data; });
+  } else {
+    const all = await api("/api/models/all");
+    if (all) _modelsMenuCache = all;
+    render(all);
+  }
 }
 async function hideModel(name, hidden, label) {
   const r = await api("/api/models/hide", { name, hidden });
@@ -146,6 +159,10 @@ const PROV_LABEL = { gemini: "Google Gemini", openrouter: "OpenRouter", groq: "G
   zai: "Z.ai", ollama: "Ollama (yerel)", chatgpt: "ChatGPT hesabı", cliproxy: "Claude Code proxy" };
 /* Sağlayıcının görünen adı. Proxy modelleri sağlayıcı sağlayıcı gruplanır (Claude, Kimi...): onlar kendi etiketini getirir. */
 function provLabel(p) { return p.label || PROV_LABEL[p.name] || p.name; }
+// Sağlayıcı kartlarının açık/kapalı durumunu saklar; bir ayar değiştiğinde sayfa yenilense bile
+// kullanıcının açık bıraktığı sağlayıcılar hatırlanır, ilk sıradaki zorla açılmaz.
+const _modelsOpenSet = new Set();
+
 function modelsPage(pane, data) {
   const all = data.all || { providers: [] };
   pane.append(el("h2", "", "Modeller"),
@@ -173,9 +190,24 @@ function modelsPage(pane, data) {
   hero.appendChild(think);
   pane.appendChild(hero);
 
-  // Sağlayıcılar
-  const provs = (all.providers || []).slice().sort((a, b) => (b.enabled - a.enabled) || (b.models.length - a.models.length));
-  const ready = provs.filter((p) => p.enabled && !p.hidden).length;
+  // Sağlayıcılar: Akıllı sıralama
+  // 1. Hazır ve açık modelleri olanlar en üstte
+  // 2. Hazır ama modelleri hata verenler
+  // 3. Anahtar bekleyenler (kapalı olanlar)
+  // 4. Kullanıcının gizlediği sağlayıcılar en altta
+  const provRank = (p) => {
+    if (p.hidden) return 4;
+    if (p.enabled && p.models.length && !p.error) return 1;
+    if (p.enabled && p.error) return 2;
+    if (!p.enabled) return 3;
+    return 3;
+  };
+  const provs = (all.providers || []).slice().sort((a, b) => {
+    const rA = provRank(a), rB = provRank(b);
+    if (rA !== rB) return rA - rB;
+    return (b.models.length - a.models.length) || provLabel(a).localeCompare(provLabel(b));
+  });
+  const ready = provs.filter((p) => p.enabled && !p.hidden && p.models.length && !p.error).length;
   const sh = el("div", "mp-sec");
   sh.append(el("div", "sec", `Sağlayıcılar · ${ready}/${provs.length} hazır`));
   const f = el("input"); f.type = "search"; f.placeholder = "Model ara";
@@ -183,7 +215,7 @@ function modelsPage(pane, data) {
   pane.appendChild(sh);
   const grid = el("div", "prov-grid");
   pane.appendChild(grid);
-  const openSet = new Set(provs.filter((p) => p.enabled && !p.hidden && p.models.length).map((p) => p.name).slice(0, 1));
+  const openSet = _modelsOpenSet;
   const draw = () => {
     grid.replaceChildren();
     const q = f.value.trim().toLowerCase();
@@ -191,7 +223,9 @@ function modelsPage(pane, data) {
       const rows = p.models.filter((x) => !q || x.ref.toLowerCase().includes(q));
       if (q && !rows.length) continue;
       const failing = p.enabled && !p.hidden && !p.models.length && !!p.error;
-      const st = p.hidden ? "hidden" : failing ? "off" : p.enabled ? "ok" : "off";
+      // 0/0 model açık olan sağlayıcılar hazır görünmemeli
+      const hasModels = p.models.length > 0;
+      const st = p.hidden ? "hidden" : failing ? "off" : (p.enabled && hasModels) ? "ok" : "off";
       const card = el("div", "prov-card " + st + (openSet.has(p.name) || q ? " open" : ""));
       const head = el("div", "pc-head");
       const name = el("div", "pc-name");
@@ -199,9 +233,10 @@ function modelsPage(pane, data) {
       name.append(el("b", "", provLabel(p)),
         el("small", "", failing ? "modeller cevap vermiyor: " + p.error.slice(0, 200) :
           st === "ok" ? `${shown}/${p.models.length} model açık` : st === "hidden" ? "gizli" :
+          !hasModels && p.enabled ? "model yok" :
           p.name === "chatgpt" ? "giriş yapılmamış" : `${p.key || "anahtar"} yok`));
       const pill = el("span", "pill " + (st === "ok" ? "done" : ""),
-        failing ? "hata" : st === "ok" ? "hazır" : st === "hidden" ? "gizli" : "bekliyor");
+        failing ? "hata" : st === "ok" ? "hazır" : st === "hidden" ? "gizli" : !hasModels && p.enabled ? "model yok" : "bekliyor");
       head.append(name, pill);
       card.appendChild(head);
       const acts = el("div", "pc-acts");
@@ -807,9 +842,11 @@ const TOOL_CATS = [
   ["Hafıza ve otomasyon", /^(memory|feedback|rules|schedule|feeds|notes|report|metrics|action_log|weather)/],
   ["Ev, telefon, medya", /^(wifi|android|tv|samsung|media|youtube|spotify|discord|steam|phone|modem|home|whatsapp|gmail|calendar)/],
   ["Oyun ve uçuş", /^(flight|dcs|war|sim|game)/],
+  ["MCP Araçları", /^mcp__/],
 ];
 const RISK_LABEL = { read: "okur", write: "yazar", exec: "komut", computer: "ekran", network: "ağ", send: "gönderir", danger: "tehlikeli" };
 function toolCat(name) {
+  if (name.startsWith("mcp__")) return "MCP Araçları";
   for (const [c, re] of TOOL_CATS) if (re.test(name)) return c;
   return "Diğer";
 }
@@ -840,18 +877,50 @@ function toolsPage(pane, tools) {
     for (const t of rows) { const c = toolCat(t.name); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(t); }
     for (const [c, list] of groups) {
       if (cur === "Hepsi") box.appendChild(el("div", "sec", `${c} · ${list.length}`));
-      const grid = el("div", "tool-grid");
-      for (const t of list) {
-        const card = el("div", "tool-card");
-        const [, icon] = verbFor(t.name);
-        const h = el("div", "tc-head");
-        h.append(svg(icon), el("b", "", t.name), el("span", "risk " + t.risk, RISK_LABEL[t.risk] || t.risk));
-        const desc = el("p", "", t.description);
-        desc.title = t.description;
-        card.append(h, desc);
-        grid.appendChild(card);
+      // MCP Araçları çok fazla olduğunda sunucu bazında alt gruplara ayır
+      if (c === "MCP Araçları" && list.length > 6) {
+        const byServer = new Map();
+        for (const t of list) {
+          const parts = t.name.split("__");
+          const srv = parts.length >= 3 ? parts[1] : "mcp";
+          if (!byServer.has(srv)) byServer.set(srv, []);
+          byServer.get(srv).push(t);
+        }
+        for (const [srv, srvTools] of byServer) {
+          const det = el("details", "tl-mcp-group");
+          // Arama yapılıyorsa veya filtre aktifse otomatik açık olsun
+          if (q || cur === "MCP Araçları") det.open = true;
+          const sum = el("summary", "", `${srv.toUpperCase()} (${srvTools.length} araç)`);
+          det.appendChild(sum);
+          const grid = el("div", "tool-grid");
+          for (const t of srvTools) {
+            const card = el("div", "tool-card");
+            const [, icon] = verbFor(t.name);
+            const h = el("div", "tc-head");
+            const displayName = t.name.replace(/^mcp__.*?__/, "");
+            h.append(svg(icon), el("b", "", displayName), el("span", "risk " + t.risk, RISK_LABEL[t.risk] || t.risk));
+            const desc = el("p", "", t.description);
+            desc.title = t.name + ": " + t.description;
+            card.append(h, desc);
+            grid.appendChild(card);
+          }
+          det.appendChild(grid);
+          box.appendChild(det);
+        }
+      } else {
+        const grid = el("div", "tool-grid");
+        for (const t of list) {
+          const card = el("div", "tool-card");
+          const [, icon] = verbFor(t.name);
+          const h = el("div", "tc-head");
+          h.append(svg(icon), el("b", "", t.name), el("span", "risk " + t.risk, RISK_LABEL[t.risk] || t.risk));
+          const desc = el("p", "", t.description);
+          desc.title = t.description;
+          card.append(h, desc);
+          grid.appendChild(card);
+        }
+        box.appendChild(grid);
       }
-      box.appendChild(grid);
     }
     if (!rows.length) box.appendChild(el("p", "", "Eşleşen araç yok."));
   };

@@ -71,7 +71,7 @@ def settings() -> dict[str, Any]:
 
 MODELS_TTL = 120.0  # s
 _SKIP_MODELS = ("image", "embedding", "codex-auto-review", "tts")
-_models_cache: dict[str, Any] = {"at": 0.0, "ids": []}
+_models_cache: dict[str, Any] = {"at": 0.0, "ids": [], "owners": {}}
 
 
 def live_models(fetch: Any = None) -> list[str]:
@@ -97,13 +97,34 @@ def live_models(fetch: Any = None) -> list[str]:
             data = fetch()
         ids = sorted({str(m.get("id") or "") for m in data if isinstance(m, dict)} - {""})
         _models_cache["ids"] = [i for i in ids if not any(k in i.lower() for k in _SKIP_MODELS)]
+        # Track which credential/provider owns each model: Antigravity exposes Claude & GPT models
+        # under its own account limits; without this mapping they were grouped with separate Claude/ChatGPT
+        # subscriptions and their quota/account switching was wrong.
+        owners: dict[str, str] = {}
+        for m in data:
+            if isinstance(m, dict):
+                mid = str(m.get("id") or "")
+                owner = str(m.get("owned_by") or "")
+                if mid and owner:
+                    owners[mid] = owner
+        _models_cache["owners"] = owners
     except Exception:  # noqa: BLE001 - proxy is down: menu should still open
         pass
     return list(_models_cache["ids"])
 
 
+def model_owners() -> dict[str, str]:
+    """model ID -> credential/provider that owns it (e.g. "antigravity", "claude"). Populated by live_models().
+    Antigravity accounts serve Claude & GPT models under Antigravity's own quota; this mapping lets model_group()
+    attribute them correctly instead of mixing them with separate Claude/ChatGPT subscriptions."""
+    return dict(_models_cache.get("owners") or {})
+
+
 # UI groups for proxy models: (prefix, group ID, label). Also used as an ID hide pattern:
 # hiding "cliproxy:kimi-*" hides all Kimi models.
+# NOTE: Antigravity accounts also serve Claude & GPT models under Antigravity's own limits.
+# model_group() uses the credential owner from /v1/models to attribute those correctly;
+# prefix-based grouping is the fallback when no owner info is available.
 GROUPS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("claude-",), "claude", "Claude (abonelik)"),
     (("gpt-", "codex", "o3", "o4"), "codex", "ChatGPT (abonelik)"),
@@ -112,9 +133,22 @@ GROUPS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("grok-",), "xai", "xAI Grok"),
 )
 
+# Credential owner values (from /v1/models owned_by) that map to the antigravity group.
+# When an Antigravity account serves a Claude or GPT model, the proxy reports owned_by as one of these.
+_ANTIGRAVITY_OWNERS = ("antigravity", "google", "google-antigravity")
+
 
 def model_group(model: str) -> tuple[str, str, str]:
-    """(group ID, label, hide pattern) - e.g. kimi-k3 -> ("kimi", "Kimi", "cliproxy:kimi-*")."""
+    """(group ID, label, hide pattern) - e.g. kimi-k3 -> ("kimi", "Kimi", "cliproxy:kimi-*").
+
+    Antigravity accounts expose Claude & GPT models under Antigravity's own quota and limits (separate from
+    standalone Claude/ChatGPT subscriptions). The owned_by field from /v1/models identifies the credential
+    provider; when it indicates Antigravity, the model is grouped under "antigravity" regardless of its name
+    prefix. This prevents incorrect quota tracking and account switching."""
+    owners = _models_cache.get("owners") or {}
+    owner = owners.get(model, "").lower()
+    if owner in _ANTIGRAVITY_OWNERS:
+        return "antigravity", "Antigravity", "cliproxy:antigravity-*"
     low = model.lower()
     for prefixes, gid, label in GROUPS:
         if low.startswith(prefixes):
