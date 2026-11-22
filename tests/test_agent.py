@@ -8,6 +8,13 @@ from alice.tools.base import Tool, ToolResult
 from tests.conftest import FakeProvider, make_config, rm_rf, tool_call
 
 
+def is_summary_request(messages) -> bool:
+    """Compaction request, either path: the transcript summary (system = COMPACT_PROMPT) or the cache-sharing one
+    (the instruction is the last user message, the conversation above it unchanged)."""
+    return (str(messages[0]["content"]).startswith("Summarize")
+            or str(messages[-1].get("content") or "").startswith("Summarize"))
+
+
 def make_agent(script, workdir, mode="auto", approve="y", providers=None, **agent_cfg):
     cfg = make_config({"brain": ["a:m"], "fast": ["a:m"], "vision": ["b:v"]}, providers=providers, **agent_cfg)
     provs = {"a": FakeProvider("a", script), "b": FakeProvider("b", ["bir buton var (100,200)"])}
@@ -113,7 +120,7 @@ def test_images_attached_when_brain_has_vision(workdir):
 
 def test_compaction_summarizes_old_turns(workdir):
     def script(model, messages, tools, **kw):
-        if messages[0]["content"].startswith("Summarize"):
+        if is_summary_request(messages):
             return "ÖZET: kullanıcı dosyalarla uğraşıyor"
         return "cevap " + "x" * 400
 
@@ -248,7 +255,7 @@ def test_long_tool_chain_is_compacted_to_fit_a_small_model(workdir):
     seen = {"summary_chars": 0}
 
     def script(model, messages, tools, **kw):
-        if messages[0]["content"].startswith("Summarize"):
+        if is_summary_request(messages):
             seen["summary_chars"] = len(messages[1]["content"])
             return "ÖZET: dosyalar okundu"
         return "bitti"
@@ -312,7 +319,7 @@ def test_compacted_messages_are_kept_in_the_session_archive(workdir):
     from alice.app.server import display_history
 
     def script(model, messages, tools, **kw):
-        if messages[0]["content"].startswith("Summarize"):
+        if is_summary_request(messages):
             return "ÖZET: kullanıcı dosyalarla uğraşıyor"
         return "cevap " + "x" * 400
 

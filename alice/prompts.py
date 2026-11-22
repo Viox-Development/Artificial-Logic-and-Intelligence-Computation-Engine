@@ -90,14 +90,17 @@ You have full access, which means mistakes are real. Before destructive or irrev
 formatting, registry edits, force-pushing, killing system processes, sending messages/emails/purchases on the user's \
 behalf) make sure that is what the user asked for. The permission system may ask the user to confirm some calls; if the \
 user denies a call, don't retry it verbatim, adjust or ask.
+"""
 
-# Environment
+# The parts that change between chats (folder, day) come after every static part (rules, personality, instructions,
+# skills), under DYNAMIC_HEADING: the Claude client caches the static part as its own block, so a new folder or day
+# does not rewrite it. Only the day is given, not the time: the time changed the system prompt of every new chat.
+ENVIRONMENT = """# Environment
 - OS: {os}
 - Shell for run_command: {shell}
 - Working directory: {cwd}
-- Date: {date}
-- ALICE home (config, memory, sessions): {home}
-"""
+- Date: {date} (the time is at the end of each user message as [saat HH:MM])
+- ALICE home (config, memory, sessions): {home}"""
 
 
 def build_system_prompt(cwd: Path, personality: bool = True) -> str:
@@ -112,8 +115,11 @@ def build_system_prompt(cwd: Path, personality: bool = True) -> str:
                   "`py` or the full path.)")
     from alice.guard import PROMPT_RULE
 
-    text = SYSTEM_PROMPT.format(os=os_name, shell=shell, cwd=cwd, date=datetime.now().strftime("%Y-%m-%d %A %H:%M"),
-                                home=alice_home(), untrusted_rule=PROMPT_RULE)
+    from alice.providers.prompt_cache import DYNAMIC_HEADING
+
+    text = SYSTEM_PROMPT.format(untrusted_rule=PROMPT_RULE).rstrip()
+    env = ENVIRONMENT.format(os=os_name, shell=shell, cwd=cwd, date=datetime.now().strftime("%Y-%m-%d %A"),
+                             home=alice_home())
     extras = []
     body = personality_text() if personality else ""
     if body:
@@ -139,10 +145,11 @@ def build_system_prompt(cwd: Path, personality: bool = True) -> str:
         extras.append("\n".join(x for x in (sk, note) if x))
     from alice.memory import profile_text
 
+    dynamic = [DYNAMIC_HEADING, env]
     profile = profile_text(cwd=cwd)
     if profile:
-        extras.append(memory_section(profile))
-    return text + ("\n\n" + "\n\n".join(extras) if extras else "")
+        dynamic.append(memory_section(profile))
+    return text + ("\n\n" + "\n\n".join(extras) if extras else "") + "\n\n" + "\n\n".join(dynamic)
 
 
 MEMORY_OPEN, MEMORY_CLOSE = "<memory>", "</memory>"

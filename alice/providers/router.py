@@ -313,6 +313,7 @@ class Router:
         self.max_wait = max_wait
         self.on_event = on_event or (lambda s: None)
         self.last_ref: dict[str, str] = {}
+        self.last_settings: dict[str, dict[str, Any]] = {}
         self.role_overrides: dict[str, list[str]] = {}
         self.log_path: Path | None = (usage_path.parent if usage_path else alice_home()) / "logs" / "providers.log"
         self.auto_cache: dict[str, Any] = ranking.load_cache() if auto_cache is None else auto_cache
@@ -829,9 +830,12 @@ class Router:
         response_format: dict[str, Any] | None = None,
         stream: "StreamSink | None" = None,
         gemini_extra: dict[str, Any] | None = None,
+        cache: dict[str, Any] | None = None,
     ) -> ChatResult:
         """If stream is given, the reply flows piece by piece into stream.on_delta. If a model fails mid-stream,
-        stream.on_reset() is called and the next model starts over."""
+        stream.on_reset() is called and the next model starts over.
+        cache: prompt cache hints for clients that place markers themselves (Claude API): {"ttl": "5m"|"1h",
+        "mode": "write"|"read_only"|"none"}. Other providers ignore them."""
         if not self._probe_checked:
             # With real providers, model measurements older than a day are refreshed in the background.
             self._probe_checked = True
@@ -874,6 +878,13 @@ class Router:
                 extra = {**think, **(self.config.model_extra(ref) or {})}  # hand-written model settings come first
                 if gemini_extra and is_gemini(pc):  # e.g. reasoning_effort: only settings Gemini understands
                     extra.update(gemini_extra)
+                if cache and pc.kind == "anthropic":
+                    if cache.get("ttl"):
+                        extra["_cache_ttl"] = cache["ttl"]
+                    if cache.get("mode"):
+                        extra["_cache_mode"] = cache["mode"]
+                # Request settings that are part of the cache key (for the cache break detector).
+                self.last_settings[role] = {k: v for k, v in extra.items() if not str(k).startswith("_")}
                 out = max(max_tokens, self.out_floor.get(ref, 0)) if max_tokens else None
                 kw = dict(tools=tools, temperature=temperature, max_tokens=out,
                           response_format=response_format, extra=extra or None)

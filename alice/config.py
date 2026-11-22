@@ -70,6 +70,15 @@ grounding_model = "gemini-flash-latest"
 # Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %80'i
 # (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).
 compact_at_tokens = "auto"
+# Özet isteği konuşmanın kendisinin üstüne eklenir: geçmiş prompt önbelleğinden okunur, baştan ödenmez.
+# false: eski yol (geçmiş ayrı bir döküm olarak yeniden gönderilir).
+compact_shared_cache = true
+# Claude API prompt önbelleği süresi: "auto" (ana sohbet 1h, alt ajanlar 5m), "5m" ya da "1h". Oturum boyunca sabit
+# kalır; sohbet ortasında 5m/1h arasında gidip gelmek de önbelleği bozar.
+cache_ttl = "auto"
+# Beklenmeyen önbellek kırılmalarını (system prompt / araç / geçmiş değişti) sohbette de göster. Kayıt her zaman
+# ~/.alice/logs/cache_breaks.log'a yazılır.
+cache_break_notice = false
 # Proje ajanları, yönetici ve kurul üyeleri için üst sınır: her adım bütün konuşmayı yeniden gönderdiği için sınırsız
 # bağlam bir projede on milyonlarca token yakar. 0 = sınır yok.
 team_compact_at = 128000

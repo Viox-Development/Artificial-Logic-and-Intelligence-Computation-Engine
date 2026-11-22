@@ -163,29 +163,63 @@ def to_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 _CACHEABLE = {"text", "tool_result", "image", "document"}
+CACHE_MODES = ("write", "read_only", "none")
 
 
-def mark_cache(kw: dict[str, Any]) -> None:
-    """Two markers for the prompt cache: the system text (a prefix together with the tool definitions) and the last
-    block of the last message. So each step only processes what was newly added; the history is read from the cache
-    (much cheaper and faster)."""
-    eph = {"type": "ephemeral"}
+def _markable(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("type") in _CACHEABLE and (
+        block.get("type") != "text" or bool(str(block.get("text") or "").strip()))
+
+
+def _mark_message(m: dict[str, Any], eph: dict[str, Any]) -> bool:
+    content = m.get("content")
+    if isinstance(content, str):
+        if content.strip():
+            m["content"] = [{"type": "text", "text": content, "cache_control": eph}]
+            return True
+        return False
+    if isinstance(content, list) and content and _markable(content[-1]):
+        content[-1] = {**content[-1], "cache_control": eph}
+        return True
+    return False
+
+
+def mark_cache(kw: dict[str, Any], ttl: str = "5m", mode: str = "write") -> None:
+    """Prompt cache markers (at most 4 per request; we use up to 3).
+
+    - system: split at DYNAMIC_HEADING into a static and a dynamic block, a marker on each. Tools come before system
+      in Claude's prefix, so the static marker covers the tool list too. When only the dynamic tail (date, cwd,
+      memory) changes, the static part is still read from the cache.
+    - messages: exactly one marker. mode="write": on the last block (the next step reads everything up to here).
+      mode="read_only": on the second-to-last message, so a one-off side call (a fork, a compaction summary) reads the
+      shared prefix but does not pay to write its own tail. mode="none": no markers at all (tiny one-shot calls).
+    ttl: "5m" (default, writes cost 1.25x input) or "1h" (writes 2x, survives breaks of up to an hour).
+    """
+    from alice.providers.prompt_cache import split_system
+
+    if mode == "none":
+        if isinstance(kw.get("system"), str) and not kw["system"].strip():
+            kw.pop("system")
+        return
+    eph: dict[str, Any] = {"type": "ephemeral"}
+    if ttl == "1h":
+        eph["ttl"] = "1h"
     system = kw.get("system")
     if isinstance(system, str) and system.strip():
-        kw["system"] = [{"type": "text", "text": system, "cache_control": eph}]
+        static, dynamic = split_system(system)
+        blocks = [{"type": "text", "text": static, "cache_control": dict(eph)}] if static.strip() else []
+        if dynamic.strip():
+            blocks.append({"type": "text", "text": dynamic, "cache_control": dict(eph)})
+        kw["system"] = blocks
     msgs = kw.get("messages") or []
     if not msgs:
         return
-    last = msgs[-1]
-    content = last.get("content")
-    if isinstance(content, str):
-        if content.strip():
-            last["content"] = [{"type": "text", "text": content, "cache_control": eph}]
-    elif isinstance(content, list) and content:
-        block = content[-1]
-        if isinstance(block, dict) and block.get("type") in _CACHEABLE and (block.get("type") != "text"
-                                                                            or str(block.get("text") or "").strip()):
-            content[-1] = {**block, "cache_control": eph}
+    if mode == "read_only":
+        for m in reversed(msgs[:-1]):
+            if _mark_message(m, dict(eph)):
+                return
+        return
+    _mark_message(msgs[-1], dict(eph))
 
 
 def from_message(msg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -205,9 +239,16 @@ def from_message(msg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     prompt = (u.input_tokens or 0) + (getattr(u, "cache_read_input_tokens", 0) or 0) + written
     # Tokens written to the cache are reported separately: the router's usage counter (cache_write_tokens) reads this
     # name. They used to be dropped, so cache writes (more expensive than normal input) always showed 0 on the Claude API.
-    return out, {"prompt_tokens": prompt, "completion_tokens": u.output_tokens or 0,
-                 "cached_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
-                 "cache_creation_input_tokens": written}
+    usage = {"prompt_tokens": prompt, "completion_tokens": u.output_tokens or 0,
+             "cached_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+             "cache_creation_input_tokens": written}
+    # 1-hour writes cost 2x input, 5-minute writes 1.25x: kept apart so the cost estimate stays right.
+    cc = getattr(u, "cache_creation", None)
+    w1h = (cc.get("ephemeral_1h_input_tokens") if isinstance(cc, dict)
+           else getattr(cc, "ephemeral_1h_input_tokens", 0)) if cc is not None else 0
+    if isinstance(w1h, (int, float)) and w1h:
+        usage["cache_write_1h_tokens"] = int(w1h)
+    return out, usage
 
 
 class AnthropicProvider:
@@ -263,7 +304,9 @@ class AnthropicProvider:
         t = to_tools(tools)
         if t:
             kw["tools"] = t
-        mark_cache(kw)
+        ttl = str((extra or {}).get("_cache_ttl") or "5m")
+        mode = str((extra or {}).get("_cache_mode") or "write")
+        mark_cache(kw, ttl=ttl if ttl in ("5m", "1h") else "5m", mode=mode if mode in CACHE_MODES else "write")
         if not model.startswith(("claude-3", "claude-haiku-4")):
             kw["thinking"] = {"type": "adaptive", "display": "summarized"}
         effort = (extra or {}).get("reasoning_effort") or ((extra or {}).get("output_config") or {}).get("effort")
