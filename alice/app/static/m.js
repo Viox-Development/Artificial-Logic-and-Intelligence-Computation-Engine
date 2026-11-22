@@ -538,15 +538,33 @@ function stepEnd(id, name, isErr) {
 function closeSteps() { if (S.steps) { updateSteps(S.steps); S.steps = null; } }
 function finishSteps() { showTyping(false); closeSteps(); }
 
-async function loadHistory() {
-  const h = await api("/api/history?sid=" + encodeURIComponent(S.sid || ""));
-  const items = Array.isArray(h) ? h : (h.messages || []);
+let allHistoryItems = [];
+let historyRenderCount = 80;
+
+function renderHistoryBatch(items) {
   const msgs = $("#msgs");
   if (!msgs) return;
   msgs.replaceChildren();
   S.steps = null;
   if (!items.length) { emptyChat(); return; }
-  for (const it of items.slice(-80)) {
+  
+  if (items.length > historyRenderCount) {
+    const moreBtn = el("button", "pill-btn", `Önceki mesajları yükle (${items.length - historyRenderCount})`);
+    moreBtn.style.margin = "8px auto 16px auto";
+    moreBtn.style.display = "block";
+    moreBtn.addEventListener("click", () => {
+      const prevScrollHeight = $("#chatScroll") ? $("#chatScroll").scrollHeight : 0;
+      historyRenderCount += 80;
+      renderHistoryBatch(items);
+      if ($("#chatScroll")) {
+        $("#chatScroll").scrollTop = $("#chatScroll").scrollHeight - prevScrollHeight;
+      }
+    });
+    msgs.appendChild(moreBtn);
+  }
+
+  const slice = items.slice(-historyRenderCount);
+  for (const it of slice) {
     if (it.type === "user") { closeSteps(); addUser(it.text, it.images); }
     else if (it.type === "assistant") { closeSteps(); if (it.text) addNode(el("div", "a")).innerHTML = md(it.text); }
     else if (it.type === "tool") { stepStart(null, it.name, it.summary); stepEnd(null, it.name, it.is_error); }
@@ -555,6 +573,13 @@ async function loadHistory() {
   if (S.steps) { S.steps._t1 = 0; updateSteps(S.steps); S.steps = null; }
   $$(".steps", msgs).forEach((b) => { b._t1 = 0; updateSteps(b); });
   if (S.busy) showTyping(true);
+}
+
+async function loadHistory() {
+  const h = await api("/api/history?sid=" + encodeURIComponent(S.sid || ""));
+  allHistoryItems = Array.isArray(h) ? h : (h.messages || []);
+  historyRenderCount = 80;
+  renderHistoryBatch(allHistoryItems);
   stick(true);
 }
 async function send() {

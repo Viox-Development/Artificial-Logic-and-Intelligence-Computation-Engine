@@ -810,6 +810,11 @@ class Grep(Tool):
                          f"offset={offset + max_results} ile devam et"
                          + (", ya da path/glob ile aramayı daralt" if base.is_dir() else "")
                          + ")")
+        # Grep: reading matches and their surrounding context lines counts as reading the file,
+        # so the model can edit the matched lines without an extra read_file step if the file is unchanged.
+        for f in {ctx.resolve(ln.split(":", 1)[0]) for ln in page if ":" in ln}:
+            if f.is_file():
+                mark_read(ctx, f)
         return _with_note(body, note)
 
     @staticmethod
@@ -881,7 +886,10 @@ class Grep(Tool):
                 text = _read_text(f).replace("\r\n", "\n")  # CRLF: multiline "\\n" patterns match Windows files too
             except OSError:
                 continue
-            shown = str(f.relative_to(base) if base.is_dir() else f)
+            try:
+                shown = str(f.relative_to(ctx.cwd))
+            except ValueError:
+                shown = str(f.relative_to(base) if base.is_dir() else f)
             lines = text.splitlines()
             if multiline:
                 starts = sorted({text.count("\n", 0, m.start()) for m in rx.finditer(text)})

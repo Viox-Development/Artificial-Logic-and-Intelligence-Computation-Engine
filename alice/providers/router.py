@@ -920,11 +920,15 @@ class Router:
                 return res
 
             # All failed. Wait only if a model is paused briefly by a rate limit.
+            # Pinned models (e.g. pinned_brain) or proxy pools should wait longer rather than bailing immediately.
+            is_pinned = role in self.role_overrides and role in self.config.roles
             waits = [u - time.monotonic() for r, u in self.cooldown_until.items()
-                     if r in chain and self.cooldown_kind.get(r) == "rate_limit"]
+                     if r in chain and self.cooldown_kind.get(r) in ("rate_limit", "quota")]
             waits = [w for w in waits if w > 0]
             attempts += 1
-            if waits and min(waits) <= self.max_wait and attempts <= 3:
+            max_attempts = 5 if is_pinned else 3
+            wait_limit = max(self.max_wait, 60.0) if is_pinned else self.max_wait
+            if waits and min(waits) <= wait_limit and attempts <= max_attempts:
                 w = min(waits) + 0.5
                 self.on_event(f"tüm modeller meşgul, {w:.0f} sn bekleniyor")
                 self.sleep(w)

@@ -50,6 +50,18 @@ class MCPServer:
         self.args = list(args or [])
         # Fill "${AD}" values from the environment: the token should go in .env, not config.toml.
         self.env = {k: os.path.expandvars(str(v)) for k, v in (env or {}).items()}
+        # For GitHub MCP: if GITHUB_PERSONAL_ACCESS_TOKEN is missing or points to a non-existent/narrow token,
+        # fallback to the active gh CLI session token so commands don't hit 403 Forbidden.
+        if name == "github" or "github" in self.command.lower():
+            current_tok = self.env.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+            if not current_tok or current_tok.startswith("${"):
+                try:
+                    from alice.tools.github import github_token
+                    tok = github_token()
+                    if tok:
+                        self.env["GITHUB_PERSONAL_ACCESS_TOKEN"] = tok
+                except Exception:
+                    pass
         self.timeout = timeout
         self.proc: subprocess.Popen | None = None
         self._id = 0
