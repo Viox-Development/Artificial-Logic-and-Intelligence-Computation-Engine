@@ -182,3 +182,19 @@ def test_note_named_memory_does_not_overwrite_the_index(tmp_path):
     note, _ = b.save("memory", "ALICE'in hafızası hakkında", "reference", "Hafıza notu.")
     assert note.name == "memory-not" and b.get("Memory!") is not None
     assert "](kahve.md)" in b.index_raw() and {n.name for n in b.scan()} == {"kahve", "memory-not"}
+
+
+def test_backup_and_restore_cover_category_folders(tmp_path):
+    # Nov 22: backup() globbed only the root, so people/areas/topics notes were never backed up and a restore
+    # could not bring a deleted person note back.
+    b = NoteBook(tmp_path)
+    b.save("profile", "who the user is", "", "- student")
+    b.save("nehir", "a friend", "", "- close friend", category="people")
+    stamp = b.backup().name
+    b.delete("nehir")
+    b.save("later", "added after the backup", "", "- x", category="topics")
+    assert b.get("nehir") is None
+    b.restore(stamp)
+    n = b.get("nehir")
+    assert n is not None and n.category == "people" and n.path.parent.name == "people"
+    assert b.get("later") is None and b.get("profile") is not None

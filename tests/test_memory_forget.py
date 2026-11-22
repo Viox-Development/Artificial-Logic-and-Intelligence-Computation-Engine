@@ -86,11 +86,14 @@ def test_memory_tab_lists_and_forgets_history(app):  # noqa: F811
     e1 = m.record("hafıza sekmesinden silinecek tur", "tamam", "yazı")
     m.record("kalacak olan ikinci tur burada", "peki", "yazı")
     view = client.get("/api/memory").json()
-    assert {x["id"] for x in view["episodes"]} >= {e1}
+    # Turns are no longer listed on the Memory page: only a count, a clear button and the on/off switch.
+    assert "episodes" not in view and view["history"]["episodes"] == 2 and view["chat_history"] is True
     assert client.post("/api/memory/action", json={"action": "forget_episode", "id": e1}).json()["ok"]
     assert e1 not in {e.id for e in m.recent(10)}
     r = client.post("/api/memory/action", json={"action": "forget_history"}).json()
     assert r["ok"] and r["episodes"] == 1 and m.recent(10) == []
+    assert client.post("/api/memory/action", json={"action": "chat_history", "on": False}).json() == {"ok": True, "on": False}
+    assert m.chat_history is False and m.record("artık saklanmayacak tur", "tamam") is None
 
 
 def test_recall_skips_model_for_small_talk_and_notes_already_in_prompt():

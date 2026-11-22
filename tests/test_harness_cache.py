@@ -70,7 +70,7 @@ def test_hand_written_48000_is_respected():
 def test_auto_compaction_has_a_fixed_ceiling():
     a = _agent(_cfg(compact_at_tokens="auto"))
     assert a.compact_at == AUTO_COMPACT_MAX <= 120_000  # the model window (1M) alone would give ~840K
-    assert _agent(_cfg(compact_at_tokens="auto", compact_max_tokens=0)).compact_at == int(1_048_576 * 0.8)
+    assert _agent(_cfg(compact_at_tokens="auto", compact_max_tokens=0)).compact_at == int(1_048_576 * 0.6)
     assert _agent(_cfg(compact_at_tokens="auto", compact_max_tokens=60000)).compact_at == 60000
 
 
