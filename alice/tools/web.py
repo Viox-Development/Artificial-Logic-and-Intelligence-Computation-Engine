@@ -9,6 +9,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -16,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from alice.tools import reader, stealth
 from alice.tools.base import NETWORK, Tool, ToolContext, ToolError, ToolResult, obj, truncate
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
@@ -131,30 +133,104 @@ def _paginate(body: str, start: int, limit: int) -> str:
 
 
 def _extract(ctx: ToolContext, url: str, text: str, prompt: str) -> str | None:
-    """Like Claude Code's WebFetch: pass the page to a small model and extract only the requested info. None if no model."""
+    """Like Claude Code's WebFetch: pass the page to a small model and extract only the requested info. None if no model.
+    The model gets the BM25-selected parts of the page (crawl4ai's BM25 filter), not its first 60k characters: on a
+    long page the answer used to sit past the cut."""
     if ctx.router is None:
         return None
+    focus = reader.bm25_select(text, prompt, budget=24000) if len(text) > 24000 else text
     msgs = [{"role": "system", "content": "You extract information from a web page. Answer only from the page content "
-             "below, concisely, in the language of the request. Quote exact numbers, names and code. If the page does "
-             "not contain the answer, say so."},
-            {"role": "user", "content": f"Request: {prompt}\n\nURL: {url}\n\nPage content:\n{text[:60000]}"}]
+             "below, concisely, in the language of the request. Quote exact numbers, names and code. Links appear as "
+             "text⟨n⟩ with the URLs listed at the end; cite a URL when it helps. If the page does not contain the "
+             "answer, say so."},
+            {"role": "user", "content": f"Request: {prompt}\n\nURL: {url}\n\nPage content:\n{focus}"}]
     try:
         return ctx.router.chat("fast", msgs, temperature=0, max_tokens=1500).text.strip() or None
-    except Exception:  # noqa: BLE001 - if there is no model or it crashes, fall back to the raw text
+    except Exception:  # noqa: BLE001 - if there is no model or it crashes, fall back to the selected text
         return None
+
+
+# ------------------------------------------------------------------------------------- fetch ladder
+# crawl4ai's escalation: a plain request first (fast, no browser), then a real stealth browser when the answer is a
+# block page, a challenge or an empty JavaScript shell. Only an explicit raw=True skips the browser.
+BOT_UA = ("ALICE/1.0 (+https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine; "
+          "personal assistant fetching a page for its user)")
+# Sites that refuse a faked browser UA but welcome an honest client (Wikimedia's robot policy asks for exactly this).
+HONEST_UA_HOSTS = ("wikipedia.org", "wikimedia.org", "wiktionary.org", "wikidata.org", "mediawiki.org")
+
+
+@dataclass
+class Fetched:
+    status: int
+    url: str
+    ctype: str
+    body: bytes
+    text: str
+    via: str = "http"  # http | browser
+    note: str = ""     # why the browser was used, shown to the model
+
+
+def _headers(url: str) -> dict[str, str]:
+    host = (urlparse(url).hostname or "").lower()
+    ua = BOT_UA if host.endswith(HONEST_UA_HOSTS) else UA
+    return {"User-Agent": ua, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
+
+
+def fetch_page(url: str, allow_browser: bool = True, timeout: float = 30) -> Fetched:
+    """Plain HTTP; if the response is a block/challenge/empty JS shell, render it in the stealth browser."""
+    try:
+        r = httpx.get(url, headers=_headers(url), follow_redirects=True, timeout=timeout)
+    except httpx.HTTPError as e:
+        # A dead host or refused connection will not work in a browser either; only a reset/timeout (often a WAF
+        # dropping non-browser clients) is worth a browser attempt.
+        if not allow_browser or isinstance(e, (httpx.ConnectError, httpx.InvalidURL, httpx.UnsupportedProtocol)):
+            raise ToolError(f"indirilemedi: {e}") from e
+        r = None
+        why = f"indirilemedi: {e}"
+    if r is not None:
+        ctype = r.headers.get("content-type", "").lower()
+        f = Fetched(r.status_code, str(r.url), ctype, r.content, r.text if _looks_textual(ctype, r.content) else "")
+        if "html" not in ctype or not allow_browser:
+            return f
+        why = reader.detect_block(r.status_code, f.text)
+        if not why:
+            return f
+    if not stealth.available():
+        if r is None:
+            raise ToolError(why)
+        return f
+    try:
+        out = stealth.render(url)
+    except stealth.RenderError as e:
+        if r is None:
+            raise ToolError(f"{why}; tarayıcıyla da açılamadı ({e})") from e
+        f.note = f"[düz istek: {why}; tarayıcıyla açma da başarısız: {e}]"
+        return f
+    html_text = out["html"]
+    # The browser's own error page ("can't reach this page") is not the site.
+    if out["url"].startswith(("chrome-error:", "edge-error:", "about:")):
+        if r is None:
+            raise ToolError(f"{why}; tarayıcı da siteye ulaşamadı")
+        return f
+    return Fetched(out["status"], out["url"], "text/html; charset=utf-8", html_text.encode("utf-8", "replace"),
+                   html_text, via="browser", note=f"[sayfa gerçek tarayıcıyla açıldı: {why}]")
 
 
 class WebFetch(Tool):
     name = "web_fetch"
     untrusted = True
     parallel_safe = True
-    description = ("Bir URL'yi arka planda indirir ve okunabilir metin döndürür: HTML asıl içeriğe çevrilir, JSON "
-                   "düzenlenir, PDF metne çevrilir (ekranda bir şey açmaz).\n"
-                   "- prompt verirsen sayfayı küçük bir model okur ve sadece istediğin bilgiyi döndürür; uzun sayfalarda "
-                   "çok daha az token.\n"
-                   "- Uzun sayfa kesilirse start ile devamını oku.\n"
-                   "- Kullanıcıya siteyi açmak için windows action=navigate; giriş gerektiren ya da JavaScript ile "
-                   "yüklenen sayfalar (Gmail, YouTube) için browser. API çağrısı (POST, başlık) için http_request.")
+    description = ("Bir URL'yi arka planda indirir ve okunabilir Markdown döndürür: menü/reklam/footer atılır, başlık, "
+                   "liste, tablo ve kod korunur, bağlantılar metin⟨n⟩ olarak numaralanıp sonda listelenir. JSON düzenlenir, "
+                   "PDF metne çevrilir (ekranda bir şey açmaz). Site engellerse ya da sayfa JavaScript ile yükleniyorsa "
+                   "kendiliğinden gizli bir tarayıcıda açılır.\n"
+                   "- prompt verirsen sayfanın soruyla ilgili bölümleri seçilir ve küçük bir model sadece istediğin "
+                   "bilgiyi döndürür; uzun sayfalarda çok daha az token.\n"
+                   "- Uzun sayfa kesilirse start ile devamını oku. Bir siteyi birden çok sayfa gezerek araştırmak için "
+                   "web_crawl.\n"
+                   "- Giriş gerektiren sayfalar ya da tıklama/form için browser. API çağrısı (POST, başlık) için "
+                   "http_request.")
     parameters = obj({
         "url": {"type": "string", "description": "Tam adres, ör. 'https://tr.wikipedia.org/wiki/Ankara'."},
         "prompt": {"type": "string", "description": "Sayfadan ne öğrenmek istediğin, ör. 'kurulum adımları' ya da "
@@ -176,37 +252,52 @@ class WebFetch(Tool):
         key = ("fetch", url, raw)
         hit = cache_get(key)
         if hit is None:
-            try:
-                r = httpx.get(url, headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
-            except httpx.HTTPError as e:
-                raise ToolError(f"indirilemedi: {e}") from e
-            ctype = r.headers.get("content-type", "").lower()
-            if "pdf" in ctype or (not ctype and str(r.url).lower().endswith(".pdf")):
-                body = _pdf_text(r.content)
-            elif not _looks_textual(ctype, r.content):
+            f = fetch_page(url, allow_browser=not raw)
+            ctype = f.ctype
+            refs = ""
+            if "pdf" in ctype or (not ctype and f.url.lower().endswith(".pdf")):
+                body = _pdf_text(f.body)
+            elif not f.text and not _looks_textual(ctype, f.body):
                 # Images, zip, exe...: r.text used to return a pile of meaningless characters and flood the context.
-                body = (f"[ikili içerik: {ctype or 'türü belirtilmemiş'}, {len(r.content)} bayt - metin olarak "
+                body = (f"[ikili içerik: {ctype or 'türü belirtilmemiş'}, {len(f.body)} bayt - metin olarak "
                         "gösterilemez. İndirmek için run_command (ör. Invoke-WebRequest -OutFile) kullan.]")
             else:
-                body = r.text
+                body = f.text
                 if not raw and "html" in ctype:
-                    body = html_to_text(body, main_only=True)
+                    page = reader.to_markdown(body, f.url)
+                    title = f"# {page.title}\n\n" if page.title and not page.markdown.lstrip().startswith("# ") else ""
+                    body = title + (page.markdown or html_to_text(f.text, main_only=True))
+                    refs = reader.references(page.links)
+                    if f.note:
+                        body = f.note + "\n\n" + body
                 elif not raw and "json" in ctype:
                     try:
                         body = json.dumps(json.loads(body), ensure_ascii=False, indent=1)
                     except ValueError:
                         pass
-            hit = (r.status_code, str(r.url), body)
-            if r.status_code < 400:
+            hit = (f.status, f.url, body, refs)
+            if f.status < 400:
                 cache_put(key, hit)  # only successful downloads; failed pages may be retried
-        status, final_url, body = hit
+        status, final_url, body, refs = hit
         head = f"HTTP {status} {final_url}\n\n"
         if prompt and status < 400:
-            answer = _extract(ctx, final_url, body, prompt)
+            answer = _extract(ctx, final_url, body + refs, prompt)
             if answer:
                 return ToolResult(head + answer)
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
-        return ToolResult(head + _paginate(body, start, limit), is_error=status >= 400)
+        shown = _paginate(body, start, limit)
+        # The link list belongs to what is shown: only the numbers that appear in this slice of the page.
+        tail = reader.references([(u, t) if i in reader.used_links(shown) else ("", "")
+                                  for i, (u, t) in enumerate(_links_of(refs), 1)], reader.used_links(shown)) if refs else ""
+        return ToolResult(head + shown + tail, is_error=status >= 400)
+
+
+def _links_of(refs: str) -> list[tuple[str, str]]:
+    """Parse a references() block back into (url, text) by number (the cache stores the rendered block)."""
+    out: dict[int, tuple[str, str]] = {}
+    for m in re.finditer(r"^⟨(\d+)⟩ (\S+)(?: — (.*))?$", refs, re.M):
+        out[int(m.group(1))] = (m.group(2), m.group(3) or "")
+    return [out.get(i, ("", "")) for i in range(1, max(out, default=0) + 1)]
 
 
 _TEXT_CTYPE = ("text/", "json", "xml", "javascript", "ecmascript", "html", "yaml", "toml", "csv",

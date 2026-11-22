@@ -508,7 +508,8 @@ Büyük bir iş (büyük bir kod tabanında birden çok modül, backend + fronte
 | Dosya yönetimi | `file_ops`: taşı, kopyala, klasör aç, sil (silinenler `~/.alice/trash` altına gider, geri alınabilir) |
 | Grep modları | `grep`: `output_mode` (content, files_with_matches, count), `context` satırları, `multiline`, `offset` ile sayfalama |
 | PDF ve Jupyter okuma | `read_file` PDF'i (`pages` ile) metin, `.ipynb`'yi hücre ve çıktılarıyla okur |
-| WebFetch | `web_fetch`: asıl içerik (`<main>`/`<article>`), JSON düzenleme, PDF; `prompt` ile sayfayı küçük model özetler, `start` ile devamı |
+| WebFetch | `web_fetch`: akıllı budama (menü/reklam/footer atılır), Markdown, numaralı linkler, JSON/PDF; site engellerse veya JS gerekiyorsa gizli tarayıcı yedeği; `prompt` ile BM25 odaklı küçük model özeti |
+| WebCrawl | `web_crawl` (net grubu): bir siteyi çok sayfalı gezerek araştırma, en alakalı linki önce açma, doymada durma, robots.txt |
 | WebSearch | `web_search`: önce Google (Gemini grounding, `GEMINI_API_KEY`): kaynaklı, güncel özet. Kota dolar ya da hata verirse DuckDuckGo, Bing; `BRAVE_SEARCH_API_KEY` varsa Brave; `allowed_domains`/`blocked_domains` |
 | HTTP istekleri | `http_request` (net grubu): REST API, webhook, dosya indirme; başlıkta `${env:AD}` ile anahtar modele görünmez |
 | Paralel araç çağrıları | Model tek cevapta birkaç okuma/arama isterse (`read_file`, `grep`, `glob`, `list_dir`, `web_search`, `web_fetch`, salt okuma MCP araçları) aynı anda çalışır; sonuçlar sırayla modele döner |

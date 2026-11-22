@@ -97,8 +97,11 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
                 "bağlı servisler: Spotify, Steam, Discord, YouTube, eklediğin API'lar",
                 r"spotify|müzik|şark[ıi]|parça|çal\b|duraklat|steam|oyun kütüphanesi|discord|sunucu|kanal|"
                 r"abone|izlenme|playlist|çalma listesi"),
-    "net": ({"http_request"}, "REST API çağırma, webhook, JSON gönderme, URL'den dosya indirme",
-            r"\bapi\b|endpoint|webhook|\bjson\b|\brest\b|http isteği|post isteği|istek at|indir|download|curl"),
+    "net": ({"http_request", "web_crawl"}, "REST API çağırma, webhook, JSON gönderme, URL'den dosya indirme; bir "
+            "siteyi birden çok sayfa gezerek araştırma (web_crawl)",
+            r"\bapi\b|endpoint|webhook|\bjson\b|\brest\b|http isteği|post isteği|istek at|indir|download|curl|"
+            r"crawl|tara\b|siteyi (gez|tara|araştır)|dokümantasyon|docs?\b|belgelerinde|sitede (ara|bul)|"
+            r"birkaç sayfa|tüm sayfa"),
     "team": ({"team", "council"}, "büyük işleri otonom ajan projesine bölme ve inceleme kurulu (uzmanlar "
              "tartışıp oylar)",
              r"takım|ekip|paralel|aynı anda|ajanlar|ajan çağır|orkestra|alt ajan|subagent|multi.?agent|büyük (iş|proje|"

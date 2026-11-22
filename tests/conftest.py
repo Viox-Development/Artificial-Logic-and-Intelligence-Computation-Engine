@@ -11,6 +11,21 @@ from alice.providers.openai_compat import ChatResult, ProviderError, normalize_m
 
 
 @pytest.fixture(autouse=True)
+def no_real_browser(monkeypatch):
+    """Tests never start a real browser: web_fetch escalates blocked/empty pages to the stealth renderer, and a fake
+    response in a test used to open real Edge windows ("Example Domain", "can't reach this page") on the desktop.
+    Tests that exercise the renderer patch stealth.render themselves."""
+    from alice.tools import stealth
+
+    monkeypatch.setattr(stealth, "available", lambda: False)
+
+    def no_render(*a, **k):
+        raise stealth.RenderError("tests do not start a browser")
+
+    monkeypatch.setattr(stealth, "render", no_render)
+
+
+@pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "alice-home"
     monkeypatch.setenv("ALICE_HOME", str(home))
