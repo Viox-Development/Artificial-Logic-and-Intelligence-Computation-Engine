@@ -41,9 +41,31 @@ def _sha(obj: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+_LONG = 4096  # strings longer than this (base64 images, big tool outputs) are hashed by length + head + tail
+
+
+def _lite(v: Any) -> Any:
+    """A cheap stand-in for hashing: long strings shrink to length + head + tail. Screenshots are several MB of
+    base64; serializing them in full before every step made the diagnostics cost O(steps x history)."""
+    if isinstance(v, str):
+        return v if len(v) <= _LONG else f"<{len(v)}:{v[:512]}…{v[-512:]}>"
+    if isinstance(v, dict):
+        return {k: _lite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_lite(x) for x in v]
+    return v
+
+
 def _msg_key(m: dict[str, Any]) -> str:
     # Only what the provider sees; ALICE's own bookkeeping keys (_image, _nudge, _display...) are ignored.
-    return _sha({k: v for k, v in m.items() if not str(k).startswith("_")})
+    return _sha(_lite({k: v for k, v in m.items() if not str(k).startswith("_")}))
+
+
+def _mask_memory(text: str) -> str:
+    """The memory section holds personal notes about the user: never copied into diff files on disk."""
+    import re
+
+    return re.sub(r"<memory>.*?</memory>", "<memory>[gizlendi]</memory>", text, flags=re.S)
 
 
 @dataclass
@@ -83,6 +105,17 @@ class CacheBreakDetector:
     expected: list[str] = field(default_factory=list)
     breaks: list[CacheBreak] = field(default_factory=list)
     unexpected: int = 0
+    # id(message) -> (message object, key). Messages are replaced, not edited in place, when ALICE changes history
+    # (pruning, trimming build new dicts), so the identity check is enough; the object is kept to make id() safe.
+    _keys: dict[int, tuple[Any, str]] = field(default_factory=dict)
+
+    def _key(self, m: dict[str, Any]) -> str:
+        hit = self._keys.get(id(m))
+        if hit is not None and hit[0] is m:
+            return hit[1]
+        k = _msg_key(m)
+        self._keys[id(m)] = (m, k)
+        return k
 
     def expect(self, reason: str) -> None:
         """ALICE is about to change the prefix on purpose (compaction, pruning, memory refresh)."""
@@ -104,8 +137,11 @@ class CacheBreakDetector:
         for t in tools or []:
             fn = t.get("function") if isinstance(t.get("function"), dict) else t
             specs[str(fn.get("name") or "?")] = _sha(t)
-        self.pending = Snapshot(system, _sha(system), specs, ref, _sha(settings or {}),
-                                [_msg_key(m) for m in messages[1:]], time.monotonic())
+        keys = [self._key(m) for m in messages[1:]]
+        live = {id(m) for m in messages[1:]}
+        if len(self._keys) > len(live) * 2 + 64:  # drop entries of messages no longer in the history
+            self._keys = {i: v for i, v in self._keys.items() if i in live}
+        self.pending = Snapshot(system, _sha(system), specs, ref, _sha(settings or {}), keys, time.monotonic())
 
     def after(self, cached: int, ref: str, ttl_s: float) -> CacheBreak | None:
         """Compare the answer's cache read with the previous one. Returns the break, if there was one."""
@@ -172,6 +208,9 @@ class CacheBreakDetector:
     def _write_diff(self, before: str, after: str) -> str:
         if self.log_dir is None:
             return ""
+        before, after = _mask_memory(before), _mask_memory(after)
+        if before == after:
+            return ""  # only the memory section changed: nothing to show without exposing it
         try:
             d = self.log_dir / "cache-breaks"
             d.mkdir(parents=True, exist_ok=True)

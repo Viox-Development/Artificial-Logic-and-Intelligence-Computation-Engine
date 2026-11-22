@@ -872,9 +872,10 @@ class Agent:
                 sent = len(self.messages)
                 sink.first_at = 0.0
                 t_call = time.monotonic()
-                self._cache_before()
+                specs = self._specs()
+                self._cache_before(specs)
                 try:
-                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=self._specs(),
+                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=specs,
                                               stream=sink if self.stream else None, cache=self._cache_hint())
                 except AllProvidersFailed as e:
                     # Kalan modellerin bağlamı konuşmaya yetmiyorsa: o modele sığacak kadar özetle, bir kez daha dene.
@@ -885,8 +886,9 @@ class Agent:
                         raise
                     self.ui.stream_start()
                     sent = len(self.messages)
-                    self._cache_before()
-                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=self._specs(),
+                    specs = self._specs()
+                    self._cache_before(specs)
+                    res = self._interruptible(self.router.chat, self.role, list(self.messages), tools=specs,
                                               stream=sink if self.stream else None, cache=self._cache_hint())
                 self._count_call(res, t_call, sink.first_at)
                 self._cache_after(res)
@@ -1832,11 +1834,11 @@ class Agent:
         return pc is not None and getattr(pc, "kind", "") == "anthropic"
 
     # ---------------------------------------------------------- cache break detection
-    def _cache_before(self) -> None:
+    def _cache_before(self, specs: list[dict[str, Any]] | None = None) -> None:
         try:
             ref = self.router.last_ref.get(self.role) or ""
             settings = {"s": self.router.last_settings.get(self.role), "ttl": self._cache_ttl_latched}
-            self.cache_breaks.before(self.messages, self._specs(), ref, settings)
+            self.cache_breaks.before(self.messages, self._specs() if specs is None else specs, ref, settings)
         except Exception:  # noqa: BLE001 - diagnostics must never break a turn
             log.debug("cache snapshot alınamadı", exc_info=True)
 
@@ -2043,16 +2045,24 @@ class Agent:
                f"{keep['role']} message that begins with: \"{head}\" — that message and everything after it is kept "
                "verbatim, so summarize only what comes before it.")
         msgs = list(self.messages) + [{"role": "user", "content": ask}]
+        hint = self._cache_hint("read_only")
+        if self.config.agent.get("cache_sticky_effort", True):
+            hint["latch"] = self._effort_latch()  # same effort as the main thread, or its cache is not read
+        # Side call: it must not move the main thread's routing/settings bookkeeping used by the break detector.
+        saved = (dict(self.router.last_settings),)
+        t0 = time.monotonic()
         try:
             res: ChatResult = self._interruptible(self.router.chat, self.role, msgs, tools=self._specs(),
-                                                  max_tokens=max(summary_tokens, 4000),
-                                                  cache=self._cache_hint("read_only"))
+                                                  max_tokens=max(summary_tokens, 4000), cache=hint)
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001 - falls back to the transcript summary
             log.debug("önbellekli özetleme başarısız: %s", e)
             return ""
-        self._count_call(res, time.monotonic(), 0.0)
+        finally:
+            self.router.last_settings.clear()
+            self.router.last_settings.update(saved[0])
+        self._count_call(res, t0, 0.0)
         text = (res.text or "").strip()
         if res.message.get("tool_calls") and not _valid_summary(text):
             return ""

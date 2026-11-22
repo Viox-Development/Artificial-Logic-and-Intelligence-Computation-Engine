@@ -253,6 +253,138 @@ def test_router_passes_context_edit_only_to_claude():
     assert prov.calls[-1]["extra"]["_context_edit"] == {"keep": 2}
 
 
+# ------------------------------------------------------------------------------------------------ review follow-ups
+def test_detector_reuses_message_hashes_and_shrinks_big_strings(tmp_path, monkeypatch):
+    from alice.providers import prompt_cache as pc
+
+    calls = {"n": 0}
+    orig = pc._msg_key
+
+    def counting(m):
+        calls["n"] += 1
+        return orig(m)
+
+    monkeypatch.setattr(pc, "_msg_key", counting)
+    d = CacheBreakDetector(log_dir=tmp_path)
+    msgs = _msgs(n=50)
+    d.before(msgs, TOOLS, "a:m")
+    d.before(msgs + [{"role": "user", "content": "yeni"}], TOOLS, "a:m")
+    assert calls["n"] == 51  # 50 once + only the new one
+    big = "A" * 3_000_000
+    assert len(str(pc._lite({"content": big}))) < 2000
+    assert orig({"content": big}) != orig({"content": big + "B"})
+
+
+def test_diff_masks_memory_section(tmp_path):
+    d = CacheBreakDetector(log_dir=tmp_path)
+    d.before(_msgs("kurallar\n<memory>\nHayat'ın gizli notu\n</memory>"), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.before(_msgs("kurallar v2\n<memory>\nbaşka not\n</memory>"), TOOLS, "a:m")
+    brk = d.after(0, "a:m", 300)
+    text = open(brk.diff_path, encoding="utf-8").read()
+    assert "gizli notu" not in text and "başka not" not in text and "kurallar v2" in text
+    # only memory changed: no diff file at all
+    d.before(_msgs("kurallar v2\n<memory>\nüçüncü not\n</memory>"), TOOLS, "a:m")
+    d.after(40000, "a:m", 300)
+    d.before(_msgs("kurallar v2\n<memory>\ndördüncü\n</memory>"), TOOLS, "a:m")
+    assert d.after(0, "a:m", 300).diff_path == ""
+
+
+def test_cache_after_refreshes_settings_and_counts_cleared(workdir):
+    agent, _, _ = make_agent(["a"], workdir)
+    agent.router.last_settings[agent.role] = {"reasoning_effort": "low"}
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 40000}))
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 39000}))
+    assert agent.stats.get("cache_breaks", 0) == 0
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 100, "context_cleared_tokens": 30000}))
+    assert agent.stats["context_cleared"] == 30000 and agent.stats.get("cache_breaks", 0) == 0
+    assert agent.cache_breaks.breaks[-1].expected
+    agent._cache_before()
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 40000}))
+    agent._cache_before()
+    agent.router.last_settings[agent.role] = {"reasoning_effort": "high"}  # what this call really sent
+    agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 0}))
+    assert agent.stats["cache_breaks"] == 1
+    assert any("istek ayarları" in r for r in agent.cache_breaks.breaks[-1].reasons)
+
+
+def test_cache_ttl_for_claude_api(workdir):
+    providers = {"claude": {"base_url": "https://api.anthropic.com", "api_key_env": "", "kind": "anthropic",
+                            "max_input_tokens": 200000},
+                 "a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 100000},
+                 "b": {"base_url": "http://b", "api_key_env": "", "max_input_tokens": 100000}}
+    agent, _, _ = make_agent(["x"], workdir, providers=providers)
+    assert agent._cache_ttl("claude:claude-sonnet-5-5") > 3000 and agent._cache_ttl("a:m") == 300
+    agent2, _, _ = make_agent(["x"], workdir, providers=providers, cache_ttl="5m")
+    assert agent2._cache_ttl("claude:claude-sonnet-5-5") == 300
+
+
+def _compacting_agent(workdir, shared):
+    def script(model, messages, tools, **kw):
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            return shared()
+        if str(messages[0]["content"]).startswith("Summarize"):
+            return "ÖZET: transcript yolu"
+        return "cevap " + "x" * 400
+
+    return make_agent(script, workdir, compact_at_tokens=400)[0]
+
+
+def test_shared_summary_error_falls_back(workdir):
+    from alice.providers.router import AllProvidersFailed
+
+    agent = _compacting_agent(workdir, lambda: "kullanılmaz")
+    orig = agent.router.chat
+
+    def chat(role, messages, **kw):
+        # Only the cache-sharing summary fails (a provider error would also put the single fake model in cooldown
+        # and take the transcript path down with it, which is not what is tested here).
+        if str(messages[-1].get("content") or "").startswith("Summarize"):
+            raise AllProvidersFailed(role, ["a:m: 500"])
+        return orig(role, messages, **kw)
+
+    agent.router.chat = chat
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert any("ÖZET: transcript yolu" in str(m.get("content")) for m in agent.messages)
+
+
+def test_shared_summary_invalid_text_falls_back(workdir):
+    agent = _compacting_agent(workdir, lambda: "[assistant] a\n[tool] b\n[user] c\n[assistant] d\n[tool] e")
+    for i in range(6):
+        agent.run_turn(f"mesaj {i} " + "y" * 300)
+    assert any("ÖZET: transcript yolu" in str(m.get("content")) for m in agent.messages)
+
+
+def test_shared_summary_cancel_is_not_swallowed(workdir):
+    import pytest
+
+    from alice.agent import Cancelled
+
+    agent, _, _ = make_agent(["a"], workdir)
+    agent.messages += [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"},
+                       {"role": "user", "content": "u2"}]
+
+    def cancel(*a, **k):
+        raise Cancelled
+
+    agent._interruptible = cancel
+    with pytest.raises(Cancelled):
+        agent._shared_summary(3, 2000)
+
+
+def test_shared_summary_does_not_touch_main_settings(workdir):
+    agent = _compacting_agent(workdir, lambda: "ÖZET: paylaşılan")
+    agent.router.last_settings[agent.role] = {"marker": 1}
+    agent.messages += [{"role": "user", "content": "u1 " * 300}, {"role": "assistant", "content": "a1"},
+                       {"role": "user", "content": "u2"}]
+    assert agent._shared_summary(3, 2000) == "ÖZET: paylaşılan"
+    assert agent.router.last_settings[agent.role] == {"marker": 1}
+
+
 # ------------------------------------------------------------------------------------------------ compaction
 def test_compaction_shares_the_cached_prefix(workdir):
     calls = []
