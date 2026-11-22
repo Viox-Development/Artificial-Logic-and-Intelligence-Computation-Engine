@@ -666,43 +666,44 @@ class Browser(Tool):
     name = "browser"
     untrusted = True
     description = (
-        "Kullanıcının kendi açık tarayıcısında (Opera vb., kendi girişleriyle) web sayfalarıyla çalışır: siteye "
-        "gitme, sayfayı okuma, tıklama, form doldurma. Her sitede aynı şekilde çalışır.\n"
-        "- Akış: goto ya da snapshot ile öğe listesini al, sonra click/type ile ID üzerinden işlem yap. ID'ler her "
-        "snapshot'ta yenilenir; sayfa değişince eski ID'yi kullanma.\n"
-        "- goto, site zaten bir sekmede açıksa o sekmeyi kullanır; yeni sekme açmaz.\n"
-        "- Sayfanın içeriğini okumak için text, görsel düzen için screenshot.\n"
-        "- Kullanıcıya sayfadaki bir yeri göstermek için highlight (ekranda çerçevelenir).\n"
-        "- Dosya/kurulum indirmek için download url=<dosya bağlantısı>: kaydetme penceresi çıkmaz, tam yolu döner; "
-        "kurulumu o yolla aç. Dosya bağlantısını goto ile açma.\n"
-        "- 'Bağlanılamıyor' derse ayrı pencere açma: windows switch_tab/navigate + ui_act ile çalış.\n"
-        "- Ekrandaki bir şeye tek tıklama/yazma için reflex daha hızlı; birçok adımlı iş için run_plan."
+        "Interacts with web pages in the user's open browser (Opera, Chrome, Edge, etc., preserving active logins): "
+        "navigating, reading pages, clicking, and filling forms across any site.\n"
+        "- Workflow: call goto or snapshot to get the list of interactive elements with [ID], then interact by ID via "
+        "click/type/select. IDs refresh on every snapshot; do not reuse stale IDs after the page changes.\n"
+        "- goto reuses an already open tab for that site instead of opening a new one.\n"
+        "- Use text to read page text and screenshot to inspect visual layout.\n"
+        "- Use highlight to frame an element on screen for the user.\n"
+        "- Use download url=<file_url> to download files or installers without a save dialog; returns the full saved path. "
+        "Do not open file links with goto.\n"
+        "- If connection fails, do not open a separate window; fall back to windows (switch_tab/navigate) + ui_act.\n"
+        "- For a single click or text entry on screen, reflex is faster; for multi-step tasks, use run_plan."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["goto", "snapshot", "click", "type", "select", "press", "scroll", "back",
                                               "text", "screenshot", "eval", "tabs", "switch_tab", "highlight", "download",
                                               "downloads",
                                               "close"],
-                   "description": "goto: url'ye git | snapshot: tıklanabilir öğeleri [ID] ile listele | click: "
-                   "element_id'ye tıkla | type: element_id alanına text yaz (submit=true Enter'a basar) | select: "
-                   "açılır listede text seçeneğini seç | press: keys tuşuna bas | scroll: amount piksel kaydır | "
-                   "back: geri | text: sayfanın düz metni | screenshot: sayfa görüntüsü | eval: js çalıştır | tabs: açık "
-                   "sekmeler | switch_tab: index'li sekmeye geç | highlight: element_id'yi kullanıcıya göster (text "
-                   "etiket olur) | download: url'deki dosyayı İndirilenler'e indir (kaydetme penceresi açılmaz, "
-                   "bitene kadar bekler, dosyanın tam yolunu döner) | downloads: son indirmeler (dosya, durum) | close. "
-                   "goto/click/type/press/scroll sonrası güncel "
-                   "snapshot otomatik döner."},
-        "url": {"type": "string", "description": "goto için adres, ör. 'https://mail.google.com' ya da 'github.com'."},
-        "element_id": {"type": "integer", "description": "click/type/select/highlight için son snapshot'taki [ID]."},
-        "text": {"type": "string", "description": "type için yazılacak metin; select için seçeneğin görünen adı; "
-                 "highlight için çerçevenin kısa etiketi."},
-        "submit": {"type": "boolean", "description": "type sonrası Enter'a bas (arama kutuları için). Varsayılan false."},
-        "keys": {"type": "string", "description": "press için tuş, ör. 'Enter', 'Escape', 'Control+A'."},
-        "amount": {"type": "integer", "description": "scroll için piksel; pozitif aşağı, negatif yukarı. Varsayılan 600."},
-        "js": {"type": "string", "description": "eval için JavaScript ifadesi, ör. 'document.title'."},
-        "index": {"type": "integer", "description": "switch_tab için tabs çıktısındaki sekme numarası (0'dan başlar)."},
-        "separate": {"type": "boolean", "description": "Ayrı ALICE penceresi aç. Sadece kullanıcı açıkça isterse."},
+                   "description": "goto: navigate to url | snapshot: list interactive elements with [ID] | click: "
+                   "click element_id | type: type text into element_id (submit=true presses Enter) | select: "
+                   "choose option text in a dropdown | press: press keys | scroll: scroll by amount pixels | "
+                   "back: go back | text: plain text of the page | screenshot: capture page screenshot | eval: run js "
+                   "expression | tabs: list open tabs | switch_tab: switch to tab at index | highlight: highlight "
+                   "element_id for the user (text sets the label) | download: download file at url to Downloads (no save "
+                   "dialog, waits until complete, returns full file path) | downloads: list recent downloads (file, "
+                   "status) | close: close browser session. goto/click/type/press/scroll automatically return an "
+                   "updated snapshot."},
+        "url": {"type": "string", "description": "Target URL for goto or download, e.g. 'https://mail.google.com' or 'github.com'."},
+        "element_id": {"type": "integer", "description": "Element [ID] from the latest snapshot for click/type/select/highlight."},
+        "text": {"type": "string", "description": "Text to enter for type; visible option label for select; "
+                 "short frame label for highlight."},
+        "submit": {"type": "boolean", "description": "Press Enter after typing (useful for search boxes). Default false."},
+        "keys": {"type": "string", "description": "Key or shortcut for press, e.g. 'Enter', 'Escape', 'Control+A'."},
+        "amount": {"type": "integer", "description": "Pixels to scroll for scroll; positive scrolls down, negative scrolls up. Default 600."},
+        "js": {"type": "string", "description": "JavaScript expression or function for eval, e.g. 'document.title'."},
+        "index": {"type": "integer", "description": "Tab index from tabs output for switch_tab (0-based)."},
+        "separate": {"type": "boolean", "description": "Open a separate ALICE browser window. Only use when the user explicitly asks for it."},
     }, ["action"])
+
     risk = COMPUTER
 
     def risk_for(self, args: dict[str, Any]) -> str:
