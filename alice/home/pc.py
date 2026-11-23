@@ -1,11 +1,15 @@
 """The computer itself: lock, sleep, screen off, power plan, monitor brightness, Wake-on-LAN info.
 
-Windows-only; on other systems it returns an understandable error.
+Windows: Win32 calls, powercfg, DDC/CI and WMI. Linux: loginctl, systemctl, the display server's DPMS command
+(xset on X11; KDE, GNOME, Sway and Hyprland on Wayland), powerprofilesctl and brightnessctl, whichever is installed.
+Elsewhere, or when the needed tool is missing, it returns an understandable error.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import sys
 
 from alice.home.net import run
@@ -16,6 +20,10 @@ PLAN_ALIASES = {
     "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": ("yüksek performans", "performans", "high performance", "performance"),
     "a1841308-3bc4-4ac8-ba48-0d6b2e1bf3f2": ("güç tasarrufu", "tasarruf", "power saver", "saver"),
     "e9a42b02-d5df-448d-aa00-03f14749eb61": ("nihai performans", "ultimate performance", "ultimate"),
+    # Linux power-profiles-daemon profiles (their names are fixed, so they serve as the "guid").
+    "balanced": ("dengeli", "balanced"),
+    "performance": ("yüksek performans", "performans", "high performance", "performance"),
+    "power-saver": ("güç tasarrufu", "tasarruf", "power saver", "saver"),
 }
 
 
@@ -24,8 +32,81 @@ def _windows() -> None:
         raise RuntimeError("bu işlem şimdilik yalnız Windows'ta çalışıyor")
 
 
+def _linux() -> bool:
+    """True on Linux, False on Windows; any other system gets an understandable error."""
+    if sys.platform == "win32":
+        return False
+    if sys.platform.startswith("linux"):
+        return True
+    raise RuntimeError("bu işlem şimdilik yalnız Windows'ta ve Linux'ta çalışıyor")
+
+
+def _need(tool: str, package: str = "") -> str:
+    exe = shutil.which(tool)
+    if not exe:
+        raise RuntimeError(f"{tool} bulunamadı" + (f": {package} kur" if package else ""))
+    return exe
+
+
+def _check(r, what: str) -> str:
+    if r.returncode != 0:
+        raise RuntimeError(f"{what}: " + ((r.stderr or r.stdout or "").strip() or f"çıkış kodu {r.returncode}"))
+    return r.stdout or ""
+
+
+def _linux_lock() -> str:
+    tried = []
+    for cmd in (["loginctl", "lock-session"], ["xdg-screensaver", "lock"]):
+        exe = shutil.which(cmd[0])
+        if not exe:
+            continue
+        r = run([exe, *cmd[1:]])
+        if r.returncode == 0:
+            return "bilgisayar kilitlendi"
+        tried.append(f"{cmd[0]}: " + ((r.stderr or r.stdout or "").strip() or f"çıkış kodu {r.returncode}"))
+    if not tried:
+        raise RuntimeError("kilitlemek için loginctl (systemd) ya da xdg-screensaver gerekli")
+    raise RuntimeError("bilgisayar kilitlenemedi: " + "; ".join(tried))
+
+
+def _dpms_commands() -> list[tuple[list[str], str]]:
+    """Screen-off commands for the running display server, most specific first: [(command, how it comes back)]."""
+    env = os.environ
+    desktop = (env.get("XDG_CURRENT_DESKTOP") or "").upper()
+    wayland = bool(env.get("WAYLAND_DISPLAY")) or env.get("XDG_SESSION_TYPE") == "wayland"
+    input_wakes = "fare ya da klavye açar"
+    out: list[tuple[list[str], str]] = []
+    if env.get("SWAYSOCK"):
+        out.append((["swaymsg", "output * power off"], "açmak için: swaymsg 'output * power on'"))
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        out.append((["hyprctl", "dispatch", "dpms", "off"], "açmak için: hyprctl dispatch dpms on"))
+    if wayland and "KDE" in desktop:
+        out.append((["kscreen-doctor", "--dpms", "off"], input_wakes))
+    if wayland and "GNOME" in desktop:
+        out.append((["busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                     "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "1"],
+                    input_wakes))
+    if env.get("DISPLAY") and not wayland:
+        out.append((["xset", "dpms", "force", "off"], input_wakes))
+    return out
+
+
+def _linux_monitor_off() -> str:
+    cands = _dpms_commands()
+    for cmd, back in cands:
+        exe = shutil.which(cmd[0])
+        if exe:
+            _check(run([exe, *cmd[1:]]), "ekran kapatılamadı")
+            return f"ekran kapatıldı ({back})"
+    if not cands:
+        raise RuntimeError("ekranı kapatma bu masaüstünde desteklenmiyor "
+                           "(X11, KDE, GNOME, Sway ya da Hyprland gerekli)")
+    raise RuntimeError("ekranı kapatmak için şunlardan biri gerekli: " + ", ".join(c[0][0] for c in cands))
+
+
 def lock() -> str:
-    _windows()
+    if _linux():
+        return _linux_lock()
     import ctypes
 
     ctypes.windll.user32.LockWorkStation()  # type: ignore[attr-defined]
@@ -33,7 +114,8 @@ def lock() -> str:
 
 
 def monitor_off() -> str:
-    _windows()
+    if _linux():
+        return _linux_monitor_off()
     import ctypes
 
     # SendMessage can hang while broadcasting; PostMessage does not wait. SC_MONITORPOWER, 2 = off.
@@ -42,7 +124,11 @@ def monitor_off() -> str:
 
 
 def suspend(hibernate: bool = False) -> str:
-    _windows()
+    if _linux():
+        exe = _need("systemctl", "systemd")
+        what = "hazırda bekletilemedi (swap ya da çekirdek ayarı eksik olabilir)" if hibernate else "uyku başlatılamadı"
+        _check(run([exe, "hibernate" if hibernate else "suspend"]), what)
+        return "hazırda bekletmeye geçiyor" if hibernate else "uyku moduna geçiyor"
     import ctypes
 
     ok = ctypes.windll.powrprof.SetSuspendState(bool(hibernate), True, False)  # type: ignore[attr-defined]
@@ -87,8 +173,22 @@ def find_plan(plans: list[dict], wanted: str) -> dict | None:
     return None
 
 
+PROFILE_LINE = re.compile(r"^(\*)?\s*([A-Za-z][\w-]*):\s*$")
+
+
+def parse_profiles(text: str) -> list[dict]:
+    """`powerprofilesctl list` output → [{guid, name, active}]; the profile name is used as the guid."""
+    out = []
+    for line in text.splitlines():
+        if m := PROFILE_LINE.match(line):
+            out.append({"guid": m.group(2), "name": m.group(2), "active": bool(m.group(1))})
+    return out
+
+
 def plans() -> list[dict]:
-    _windows()
+    if _linux():
+        exe = _need("powerprofilesctl", "power-profiles-daemon")
+        return parse_profiles(_check(run([exe, "list"]), "güç profilleri okunamadı"))
     return parse_plans(run(["powercfg", "/list"]).stdout)
 
 
@@ -97,6 +197,10 @@ def set_plan(wanted: str) -> str:
     p = find_plan(all_plans, wanted)
     if not p:
         raise RuntimeError(f"'{wanted}' adında güç planı yok. Var olanlar: " + ", ".join(x["name"] for x in all_plans))
+    if _linux():
+        exe = _need("powerprofilesctl", "power-profiles-daemon")
+        _check(run([exe, "set", p["guid"]]), "güç profili değiştirilemedi")
+        return f"güç planı: {p['name']}"
     r = run(["powercfg", "/setactive", p["guid"]])
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip() or "güç planı değiştirilemedi")
@@ -156,14 +260,46 @@ def _wmi_brightness(level: int | None) -> str:
     return f"dahili ekran %{out.split()[0]}" if level is None else f"dahili ekran %{level}"
 
 
+def parse_backlights(text: str) -> list[dict]:
+    """`brightnessctl --list --machine-readable` → backlight devices [{device, percent}] (LEDs are skipped)."""
+    out = []
+    for line in text.splitlines():
+        parts = line.strip().split(",")
+        if len(parts) >= 5 and parts[1] == "backlight":
+            pct = parts[3].rstrip("%")
+            out.append({"device": parts[0], "percent": int(pct) if pct.isdigit() else None})
+    return out
+
+
+def _linux_brightness(level: int | None, monitor: int | None) -> str:
+    exe = _need("brightnessctl", "brightnessctl")
+    devs = parse_backlights(_check(run([exe, "--list", "--machine-readable"]), "parlaklık okunamadı"))
+    if not devs:
+        raise RuntimeError("ekran arka ışığı bulunamadı "
+                           "(harici monitörlerin parlaklığı DDC/CI ister: ddcutil)")
+    lines = []
+    for i, d in enumerate(devs, 1):
+        if monitor and i != monitor:
+            continue
+        if level is None:
+            lines.append(f"{i}. {d['device']}: %{d['percent']}" if d["percent"] is not None else f"{i}. {d['device']}")
+        else:
+            _check(run([exe, "--device", d["device"], "set", f"{level}%"]), "parlaklık ayarlanamadı")
+            lines.append(f"{i}. {d['device']}: %{level}")
+    if not lines:
+        raise RuntimeError(f"{monitor}. ekran yok; {len(devs)} ekran var")
+    return "\n".join(lines)
+
+
 def brightness(level: int | None = None, monitor: int | None = None) -> str:
     """If level is None, read it; otherwise set it to 0-100. monitor: 1-based index; if empty, all monitors."""
-    _windows()
+    if level is not None:
+        level = max(0, min(100, int(level)))
+    if _linux():
+        return _linux_brightness(level, monitor)
     import ctypes
     from ctypes import wintypes
 
-    if level is not None:
-        level = max(0, min(100, int(level)))
     mons = _physical_monitors()
     lines = []
     try:

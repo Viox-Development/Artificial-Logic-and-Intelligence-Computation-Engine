@@ -270,7 +270,7 @@ def test_risk_levels():
 @pytest.mark.skipif(__import__("sys").platform == "win32", reason="Windows dışı davranış")
 def test_windows_only_actions_fail_clearly_elsewhere(tmp_path):
     with pytest.raises(ToolError, match="Windows"):
-        PC().run(_ctx(tmp_path, {}), action="plans")
+        PC().run(_ctx(tmp_path, {}), action="wol_info")
     with pytest.raises(ToolError, match="Windows"):
         Wifi().run(_ctx(tmp_path, {}), action="status")
 
