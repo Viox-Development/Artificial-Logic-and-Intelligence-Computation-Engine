@@ -118,7 +118,7 @@ _FEEDBACK = re.compile(
     r"güzel olmuş|guzel olmus|eline sağlık|eline saglik|böyle devam|boyle devam|doğru yaptın|dogru yaptin|"
     r"beğendim|begendim|istemiyorum|isterim|tercih|don'?t|stop|exactly|perfect|keep doing)\b", re.I)
 
-DIGEST_BAD_TRIES = 3  # modelin kullanılamaz özet cevabı aynı konuşmada bu kadar olursa konuşma atlanır
+DIGEST_BAD_TRIES = 3  # skip a conversation after this many unusable summary answers from the model
 
 
 class _BadDigest(ValueError):
@@ -951,7 +951,7 @@ class LongMemory:
         if not self.chat_history:
             return HISTORY_OFF
         hits = self.search(query, limit=30, facts=False, min_score=0.2)
-        picked: list[tuple[float, float]] = []  # (puan, tur zamanı)
+        picked: list[tuple[float, float]] = []  # (score, turn time)
         for h in hits:
             ts = h.item.ts if isinstance(h.item, Episode) else h.item.start
             if (after is not None and ts < after) or (before is not None and ts >= before):
@@ -1792,13 +1792,13 @@ def attach_memory(agent, channel: str) -> Any:
     if mem is not None:
         agent.ctx.state["memory"] = mem
         agent.refresh_memory(force=True)
-        mem.maybe_digest()  # dünkü konuşma hâlâ özetlenmediyse arka planda
+        mem.maybe_digest()  # if yesterday's conversation is still not summarized, do it in the background
         mem.index_soon()
     return mem
 
 
 def profile_text(home: Path | None = None, cwd: Path | str | None = None) -> str:
-    """Sistem istemi için profil (hafıza dosyası yoksa boş; dosya yaratmaz)."""
+    """Profile for the system prompt (empty if there is no memory file; does not create one)."""
     home = home or alice_home()
     if not any((home / x).exists() for x in ("memory.db", "memory.md", "memory")):
         return ""
