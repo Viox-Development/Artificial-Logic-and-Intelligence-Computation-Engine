@@ -154,9 +154,10 @@ def test_parallel_read_only_calls(workdir):
                                 "function": {"name": "write_file", "arguments": '{"path": "x.txt", "content": "1"}'}}]}
     agent, _, ui = make_agent([calls, "bitti"], workdir)
     agent.tools["slow_read"] = SlowRead()
-    t0 = time.monotonic()
     agent.run_turn("oku")
-    assert time.monotonic() - t0 < 1.0 and seen["max"] == 4  # 4 x 0.3 s in sequence would take 1.2 s
+    # All 4 reads were running at the same moment. (A wall-clock limit for the whole turn failed on the slow Windows
+    # runner: 1.28 s against 1.0 s, though the calls did run in parallel.)
+    assert seen["max"] == 4
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_msgs] == ["c0", "c1", "c2", "c3", "w"]  # order is kept
     assert [m["content"] for m in tool_msgs[:4]] == [f"sonuç {n}" for n in range(4)]
