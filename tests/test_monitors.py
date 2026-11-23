@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 import time
@@ -56,9 +58,74 @@ def test_run_none_on_failure_or_error(monkeypatch):
     assert _run(["t"]) is None
 
 
-def test_foreground_process_none_off_windows(monkeypatch):
-    monkeypatch.setattr(monitors.sys, "platform", "linux")
+def test_foreground_process_none_on_unsupported_systems(monkeypatch):
+    monkeypatch.setattr(monitors.sys, "platform", "darwin")
     assert foreground_process() is None
+
+
+# ---------------------------------------------------------------- Linux foreground window
+LINUX_ENV = ("SWAYSOCK", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP",
+             "DISPLAY")
+
+
+@pytest.fixture
+def desktop(monkeypatch):
+    """Fake Linux desktop: set env vars, the installed tools and each command's output."""
+    monkeypatch.setattr(monitors.sys, "platform", "linux")
+    calls = []
+
+    def make(env, outputs):
+        for k in LINUX_ENV:
+            monkeypatch.delenv(k, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        tools = {cmd.split()[0] for cmd in outputs}
+        monkeypatch.setattr(monitors.shutil, "which", lambda n: f"/usr/bin/{n}" if n in tools else None)
+
+        def run(cmd, timeout=5):
+            calls.append(" ".join(cmd))
+            return next((out for k, out in outputs.items() if " ".join(cmd).startswith(k)), None)
+
+        monkeypatch.setattr(monitors, "_run", run)
+        return calls
+    return make
+
+
+SWAY_TREE = json.dumps({"nodes": [{"nodes": [{"focused": False, "pid": 11, "nodes": []},
+                                              {"nodes": [], "floating_nodes": [{"focused": True, "pid": 42}]}]}]})
+
+
+@pytest.mark.parametrize("env,outputs", [
+    ({"DISPLAY": ":0"}, {"xdotool getactivewindow": "42\n"}),
+    ({"DISPLAY": ":0"}, {"xprop -root": "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3a00007\n",
+                         "xprop -id 0x3a00007": "_NET_WM_PID(CARDINAL) = 42\n"}),
+    ({"SWAYSOCK": "/run/sway", "WAYLAND_DISPLAY": "wayland-1"}, {"swaymsg -t get_tree": SWAY_TREE}),
+    ({"HYPRLAND_INSTANCE_SIGNATURE": "x", "WAYLAND_DISPLAY": "wayland-1"},
+     {"hyprctl activewindow": json.dumps({"class": "kitty", "pid": 42})}),
+    ({"XDG_CURRENT_DESKTOP": "KDE", "WAYLAND_DISPLAY": "wayland-0"}, {"kdotool getactivewindow": "42\n"}),
+    ({"XDG_CURRENT_DESKTOP": "ubuntu:GNOME", "XDG_SESSION_TYPE": "wayland"},
+     {"gdbus call": "(true, '42')\n"}),
+])
+def test_linux_foreground_pid_per_desktop(desktop, env, outputs):
+    desktop(env, outputs)
+    assert monitors.linux_foreground_pid() == 42
+
+
+def test_linux_foreground_pid_unknown_cases(desktop):
+    desktop({"XDG_CURRENT_DESKTOP": "GNOME", "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"},
+            {"gdbus call": "(false, '')\n", "xdotool getactivewindow": "99\n"})
+    assert monitors.linux_foreground_pid() is None  # GNOME refuses Eval; XWayland's answer is not trusted
+    desktop({"DISPLAY": ":0"}, {"xprop -root": "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0\n"})
+    assert monitors.linux_foreground_pid() is None
+    desktop({"HYPRLAND_INSTANCE_SIGNATURE": "x"}, {"hyprctl activewindow": "not json"})
+    assert monitors.linux_foreground_pid() is None
+
+
+def test_foreground_process_on_linux_names_the_process(desktop, monkeypatch):
+    desktop({"DISPLAY": ":0"}, {"xdotool getactivewindow": f"{os.getpid()}\n"})
+    assert foreground_process() == psutil.Process(os.getpid()).name()
+    desktop({"DISPLAY": ":0"}, {"xdotool getactivewindow": "999999999\n"})
+    assert foreground_process() is None  # the process is gone
 
 
 # ---------------------------------------------------------------- PCMonitor
