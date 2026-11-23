@@ -12,7 +12,7 @@ from tests.conftest import tool_call
 from tests.test_council import finding, js, role_of
 from tests.test_team import make, steps, who
 
-LEAD_SYS = "projesinin yöneticisisin"
+LEAD_SYS = "and the lead of the project"
 
 
 def is_lead(messages) -> bool:
@@ -341,7 +341,7 @@ def test_stuck_member_is_restarted_on_next_model_and_usage_is_counted(workdir):
 def test_design_projects_get_a_design_direction_step(workdir):
     agent, _, ctx = make(lambda *a, **k: "tamam", workdir)
     web = Team(ctx, "Savunma firması için çok sayfalı web sitesi", council=False)
-    assert "DESIGN.md" in web.lead_brief() and "şablon" in web.lead_brief()
+    assert "DESIGN.md" in web.lead_brief() and "template" in web.lead_brief()
     assert "DESIGN.md" not in Team(ctx, "Ödeme servisini yeniden düzenle", council=False).lead_brief()
     (workdir / "DESIGN.md").write_text("Renk: kömür + sinyal turuncusu. Yazı: IBM Plex.", encoding="utf-8")
     m = web.add({"name": "sayfalar", "task": "about.html yaz"})

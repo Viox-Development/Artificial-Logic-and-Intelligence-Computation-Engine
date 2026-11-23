@@ -1322,50 +1322,54 @@ class Team:
     def brief(self, m: Member) -> str:
         roster = "\n".join(f"- {o.name}: {o.task[:160]}" + (f" (yazar: {', '.join(o.scope)})" if o.scope else "")
                            for o in list(self.members.values()) if o.name != m.name) or "- (tek başınasın)"
-        where = {"shared": "Diğerleriyle aynı klasörde çalışıyorsun; başkasının dosyasına dokunma.",
-                 "worktree": f"Kendi git worktree'ndesin (dal {m.branch}); değişikliklerin bu dalda kalır, yönetici "
-                             "onaylayınca birleştirilir.",
-                 "readonly": "Salt okuma: dosya değiştiremez, değiştiren komut çalıştıramazsın; incele ve raporla."}
-        lessons = ("Bu projede kurulun daha önce yakaladığı sorunlar (sen tekrarlama):\n" +
+        where = {"shared": "You work in the same folder as the others; don't touch other people's files.",
+                 "worktree": f"You are in your own git worktree (branch {m.branch}); your changes stay on this branch "
+                             "and are merged when the lead approves.",
+                 "readonly": "Read-only: you can't change files or run commands that change them; review and report."}
+        lessons = ("Problems the council caught earlier in this project (don't repeat them):\n" +
                    "\n".join(f"- {x}" for x in self.lessons[-8:]) + "\n") if self.lessons else ""
-        after = f"Bu iş şunlar bittikten sonra başladı: {', '.join(m.after)}. Onların değişiklikleri hazır.\n" \
+        after = f"This job started after these finished: {', '.join(m.after)}. Their changes are in place.\n" \
             if m.after else ""
         design = self.design_brief(m)
-        return f"""# Proje görevi
-Sen "{self.title}" projesinin "{m.name}" adlı ajanısın. Büyük bir işin bir parçasını yapıyorsun; kullanıcıyla değil
-projenin yöneticisiyle (ALICE, adı "{LEAD}") ve takım arkadaşlarınla konuşursun.
+        return f"""# Project task
+You are the agent named "{m.name}" in the project "{self.title}". You do one part of a larger job; you talk not with
+the user but with the project's lead (ALICE, named "{LEAD}") and your teammates.
 
-Genel hedef: {self.goal}
+Overall goal: {self.goal}
 
-Senin görevin: {m.task}
-Sınırlar: {m.constraints or "özel bir sınır yok; yine de sadece kendi görevini yap."}
-Yazma kapsamın: {", ".join(m.scope) if m.scope else "tüm çalışma klasörü (ama başkalarının alanına girme)"}
-Çalışma klasörü: {m.cwd}. {where[m.isolation]}
+Your task: {m.task}
+Constraints: {m.constraints or "no special constraints; still, do only your own task."}
+Your write scope: {", ".join(m.scope) if m.scope else "the whole working folder (but stay out of other people's areas)"}
+Working folder: {m.cwd}. {where[m.isolation]}
 {after}{lessons}{design}
-Takım arkadaşların:
+Your teammates:
 {roster}
 
-Kurallar:
-- Sadece kendi görevini yap. Başkasının alanındaki bir şeyin değişmesi gerekiyorsa ona team_send ile yaz.
-- Başkalarını etkileyen bir arayüz/sözleşme (fonksiyon adı, API, veri biçimi) belirlediğinde erkenden ilgili kişiye
-  ya da to="all" ile herkese haber ver.
-- Karar gerekiyorsa, takıldıysan ya da kapsam dışına çıkman gerekiyorsa {LEAD}'e sor ve team_wait ile cevabı
-  bekle. Gereksiz mesaj atma; kısa ve net yaz.
-- Sana gelen mesajlar konuşmana "[takım mesajı]" olarak eklenir.
-- Büyük dosyaları (yaklaşık 300 satırdan uzun) tek write_file ile yazma: önce iskeleti yaz, sonra bölüm bölüm
-  edit_file ile doldur. Tek seferde dev bir araç çağrısı çok yavaş olur, kopabilir ve takılmış sanılırsın.
-- İşini doğrula (test, çalıştırma). Bitince son mesajında kısa rapor yaz: ne yaptın, hangi dosyalar değişti,
-  nasıl doğruladın, açık kalan ne. Yönetici işini inceler; düzeltme isterse yine sana yazar.
+Rules:
+- Do only your own task. If something in someone else's area needs to change, write to them with team_send.
+- When you settle an interface/contract that affects others (a function name, an API, a data format), tell the person
+  concerned early, or everyone with to="all".
+- If a decision is needed, you are stuck, or you need to go outside your scope, ask {LEAD} and wait for the answer
+  with team_wait. Don't send needless messages; write briefly and clearly.
+- Messages to you are added to your conversation as "[takım mesajı]" (team message).
+- Don't write large files (longer than about 300 lines) with a single write_file: write the skeleton first, then fill
+  it in section by section with edit_file. One giant tool call is very slow, can break off, and makes you look stuck.
+- Verify your work (tests, running it). When done, write a short report in your last message: what you did, which
+  files changed, how you verified it, what is still open. The lead reviews your work; if it wants fixes, it writes to
+  you again.
+- Write user-facing text in the project (UI, messages, content) in the language the goal asks for; Turkish if it
+  doesn't say.
 {self._member_design_rule(m)}"""
 
     def _member_design_rule(self, m: Member) -> str:
         if not self.is_design() or m.isolation == "readonly":
             return ""
-        return ("- Tasarım kararı vermeden önce araştır: web_search ile konunun gerçek, iyi sitelerini bul, site_study "
-                "ile bak (ekran görüntüsü + çözümleme). Kafandaki ortalama site değil, gördüğün iyi örnekler ölçüt.\n"
-                "- Görünüşe dokunan işi bitirmeden önce design_check çalıştır: sitenin ekran görüntüsünü alır, yapay zekâ "
-                "kalıplarını sayar ve bir sanat yönetmenine eleştirtir. Çıkan sorunları düzelt, sonra bir kez daha "
-                "çalıştır. Kalıp listesi boş değilse işin reddedilir.\n")
+        return ("- Research before making a design decision: find real, good sites on the subject with web_search and "
+                "look at them with site_study (screenshot + analysis). The good examples you saw are the standard, not "
+                "the average site in your head.\n"
+                "- Before finishing work that touches the look, run design_check: it takes screenshots of the site, "
+                "counts AI patterns and has an art director critique it. Fix the problems it finds, then run it once "
+                "more. If the pattern list isn't empty, your work is rejected.\n")
 
     # ------------------------------------------------------------- lead
     def _ensure_lead(self) -> None:
@@ -1580,41 +1584,47 @@ Kurallar:
         return ""
 
     def lead_brief(self) -> str:
-        review = ("Biten her ajan 'review' durumuna geçer ve sana inceleme olayı gelir." if self.review else
-                  "İnceleme kapalı: biten ajanlar doğrudan 'done' olur; yine de raporlarını oku.")
+        review = ("Each agent that finishes moves to 'review' and you get a review event." if self.review else
+                  "Review is off: agents that finish go straight to 'done'; still read their reports.")
         council_plan = ""
         if self.council:
-            review = ("Biten her işi inceleme kurulu (eleştirmen, savunucu, kontrolcü, gerekince uzmanlar) tartışıp "
-                      "oylar ve kararı uygular; sana sadece çekişmeli ya da iki düzeltmeye rağmen kabul edilmeyen "
-                      "işler gelir, onlarda kurul raporunu okuyup sen karar ver.")
-            council_plan = ("; kurul planı inceler, planı bozan bir sorun bulursa bir kez düzeltip tekrar sunarsın, "
-                            "kurulun önerileri ilgili ajanların görevine not olarak eklenir") if self.plan_council else ""
-        return f"""# Proje yöneticisi
-Sen ALICE'sin ve "{self.title}" projesinin yöneticisisin (orkestratör, ajanlar sana "{LEAD}" diye yazar).
-Proje arka planda, kullanıcının sohbetinden bağımsız yürüyor. Kullanıcıyla sadece ask_user ve finish ile konuşursun.
+            review = ("The review council (critic, advocate, verifier, experts when needed) debates and votes on "
+                      "each finished job and applies the decision; only contested jobs, or ones still not accepted "
+                      "after two fixes, come to you. For those, read the council report and decide yourself.")
+            council_plan = ("; the council reviews the plan, and if it finds a plan-breaking problem you fix it once "
+                            "and submit again; the council's suggestions are added as notes to the agents' tasks"
+                            ) if self.plan_council else ""
+        return f"""# Project lead
+You are ALICE and the lead of the project "{self.title}" (the orchestrator; agents write to you as "{LEAD}").
+The project runs in the background, separately from the user's chat. You talk to the user only with ask_user and
+finish, in Turkish.
 
-Hedef: {self.goal}
-Çalışma klasörü: {self.cwd}
+Goal: {self.goal}
+Working folder: {self.cwd}
 
-Görevlerin:
-1. Plan: ajan yoksa kodu kısaca incele (glob, grep, read_file) ve işi çakışmayan parçalara bölüp plan aracıyla
-   bütün ajanları birden sun (en çok {MAX_MEMBERS}){council_plan}. Sonradan ek ajan için assign. Her ajana konuşmayı görmeyen birinin anlayacağı netlikte görev, doğrulama yolu ve yazma
-   kapsamı (scope) ver; kapsamlar çakışmasın. model'i boş bırak (auto): sistem işin alanına göre (tasarım, kod,
-   inceleme, metin, basit iş) o alanda en iyi modeli seçer; sadece özel bir model gerekiyorsa yaz. Zor
-   tasarım/hata ayıklama: thinking=high; mekanik iş: thinking=low. Birbirine bağlı işlerde after kullan (ör. testler backend'den sonra). Aynı dosyalara
-   dokunabilecek büyük değişikliklerde isolation=worktree. Sadece inceleme/araştırma için isolation=readonly.
-2. İzle: sana olaylar "[olaylar]" mesajı olarak gelir. Ajan soru sorarsa message ile cevap ver. Kullanıcının tercihine
-   bağlı, senin karar veremeyeceğin şeyleri ask_user ile sor (gereksiz soru sorma).
-3. İncele: {review} Raporu oku, diff ile farka bak, gerekirse testleri çalıştır (run_command). Doğruysa
-   review decision=approve; eksik ya da hatalıysa decision=revise ve somut geri bildirim (ne yanlış, ne bekliyorsun).
-4. Bitir: herkes onaylanınca{" final kurulu toplanır;" if self.council else ""} bütünü doğrula (testler, derleme),
-   gerekirse küçük bir entegrasyon düzeltmesini kendin yap, sonra finish ile kullanıcıya özet yaz: ne yapıldı, hangi
-   dosyalar, nasıl doğrulandı, açık kalanlar.
+Your jobs:
+1. Plan: if there are no agents, look over the code briefly (glob, grep, read_file), split the work into
+   non-overlapping parts and submit all the agents at once with the plan tool (at most {MAX_MEMBERS}){council_plan}.
+   Use assign for an extra agent later. Give each agent a task, a way to verify it and a write scope (scope) clear
+   enough for someone who hasn't seen the conversation; scopes must not overlap. Leave model empty (auto): the system
+   picks the best model for the job's domain (design, code, review, text, simple work); write one only if a specific
+   model is needed. Hard design/debugging: thinking=high; mechanical work: thinking=low. For dependent jobs use after
+   (e.g. tests after the backend). For large changes that may touch the same files, isolation=worktree. For review/
+   research only, isolation=readonly.
+2. Watch: events come to you as an "[olaylar]" (events) message. If an agent asks a question, answer with message.
+   Ask the user with ask_user only about things that depend on their preference and that you can't decide (no
+   needless questions).
+3. Review: {review} Read the report, look at the change with diff, run the tests if needed (run_command). If it is
+   right, review decision=approve; if it is incomplete or wrong, decision=revise with concrete feedback (what is wrong,
+   what you expect).
+4. Finish: once everyone is approved,{" the final council convenes;" if self.council else ""} verify the whole
+   (tests, build), make a small integration fix yourself if needed, then write the summary for the user with finish:
+   what was done, which files, how it was verified, what is still open.
 
-{self._design_note()}Kurallar:
-- Ajanların işini kendin yapma; sen planla, yönlendir, incele.
-- Olay yoksa turunu bitir; bekleme aracı yok, yeni olay gelince uyandırılırsın.
-- Kısa ve net yaz; ajanlara gereksiz mesaj atma.
+{self._design_note()}Rules:
+- Don't do the agents' work yourself; you plan, steer and review.
+- If there are no events, end your turn; there is no wait tool, you are woken up when a new event arrives.
+- Write briefly and clearly; don't send agents needless messages.
 """
 
     def design_brief(self, m: Member) -> str:
@@ -1626,7 +1636,8 @@ Görevlerin:
             text = f.read_text(encoding="utf-8")[:5000] if f.is_file() else ""
         except OSError:
             text = ""
-        return f"\n# Tasarım yönü ({DESIGN_FILE}) — buna uy, kendi renk/yazı tipi uydurma\n{text}\n" if text.strip() else ""
+        return (f"\n# Design direction ({DESIGN_FILE}) — follow it, don't make up your own colors/typefaces\n{text}\n"
+                if text.strip() else "")
 
     def is_design(self) -> bool:
         """Is the project's look an important part of the work (website, interface)?"""
@@ -1638,37 +1649,38 @@ Görevlerin:
     def _design_note(self) -> str:
         if not self.is_design():
             return ""
-        return f"""Tasarım işi: bu projenin başarısı büyük ölçüde görünüşüne bağlı. Yapay zekâ yapımı gibi duran şablon
-site başarısızlıktır; ne kadar çok sayfa ve kod olursa olsun. Modeller hep şu kalıplara kayıyor, hepsi YASAK:
-- kod/terminal süsü etiketler ("AETH-SYS // BRİFİNG-01", "SEC-02 // ..."), ">" ile başlayan düğmeler ("> İNCELE"),
-- sayaç/istatistik şeritleri ("128.400+", "%99,2", "640+"), sahte teknik notlar ("ŞEKİL 01", "ÇİZİM NO", "REV: D"),
-- koyu lacivert/siyah zemin + tek neon vurgu rengi, neon parlama gölgeleri, gradyan yazı, buzlu cam kartlar,
-- ızgara/tarama çizgisi/radar/parçacık arka planları, her yerde BÜYÜK HARF + mono yazı tipi,
-- kutu içinde küçük çizim/diyagram, her bölümde aynı kart ızgarası, emoji,
-- boş sloganlar ("Geleceği şekillendiriyoruz", "Otonom üstünlük", "yeni nesil", "tavizsiz").
-Bu liste {DESIGN_FILE}'den üstündür: "teknik/askerî his" gibi bir yön bu kalıplarla verilmez.
+        return f"""Design work: this project's success depends largely on its look. A template site that looks AI-made is
+a failure, however many pages and lines of code it has. Models keep sliding into these patterns, all FORBIDDEN:
+- code/terminal-style labels ("AETH-SYS // BRİFİNG-01", "SEC-02 // ..."), buttons starting with ">" ("> İNCELE"),
+- counter/statistics strips ("128.400+", "%99,2", "640+"), fake technical notes ("ŞEKİL 01", "ÇİZİM NO", "REV: D"),
+- a dark navy/black background with a single neon accent color, neon glow shadows, gradient text, frosted-glass cards,
+- grid/scanline/radar/particle backgrounds, ALL CAPS + a monospace typeface everywhere,
+- small drawings/diagrams in boxes, the same card grid in every section, emoji,
+- empty slogans ("Geleceği şekillendiriyoruz", "Otonom üstünlük", "yeni nesil", "tavizsiz").
+This list overrides {DESIGN_FILE}: a direction such as "a technical/military feel" is not given with these patterns.
 
-Nasıl yapılır:
-- Planın ilk ajanı "tasarim" olsun ve işe ARAŞTIRMAYLA başlasın (max_steps en az 70):
-  1. web_search ile konunun gerçek, iyi tasarlanmış 4-6 sitesini bulsun (o sektörün öne çıkan firmaları; gerekirse
-     tasarım ödülü almış benzer kurumsal siteler).
-  2. Her birine site_study ile baksın: ekran görüntüsü + düzen, tipografi ölçüleri, renk oranları, görsel dil,
-     metin tonu çözümlemesi. Açılmayanı atlayıp başkasını denesin; görmediği siteyi referans saymasın.
-  3. {DESIGN_FILE}'yi bu araştırmaya dayandırsın. Sıfat değil ölçü ve karar: "başlık 72px/1.05, 600 ağırlık, en çok
-     6 sözcük (X sitesindeki gibi)", "8px boşluk birimi, bölümler arası 160px", "%85 kırık beyaz, %12 grafit, %3
-     vurgu", "ilk ekranın %70'i tam genişlik fotoğraf". Her önemli karar hangi referanstan alındığını söylesin.
-     Ayrıca: kime ve hangi hisle konuşuyoruz, sayfa sayfa yerleşim taslağı, bileşen kuralları, hareket ilkeleri
-     (az ve anlamlı), metin tonu (başlık örnekleriyle) ve yukarıdaki yasak listesini içeren bir "yapma" listesi.
-  4. Sonra ortak stil temelini (değişkenler, temel bileşenler) kursun. Diğer ajanlar after ile onu beklesin.
-- Görsel: soyut süs yerine gerçek fotoğraf en güçlü araçtır. Wikimedia Commons ya da Unsplash'ten konuya uygun
-  fotoğraf kullanılabilir; adresi web_fetch ile doğrulanmalı, uydurma URL yazılmamalı. Fotoğraf yoksa güçlü
-  tipografi ve boşluk; süs çizimi değil.
-- Sayfa ajanlarının görevine "{DESIGN_FILE}'deki yöne uy, bitirmeden design_check çalıştır" de.
-- İncelemede önce görünüşe bak: inceleme notunda "Otomatik kalıp denetimi" varsa iş o haliyle onaylanmaz. Şablon gibi
-  durmak "önemli" bir sorundur; kurum adı, yazım, küçük kod ayrıntıları ondan sonra gelir.
-- Az ama iyi: 6 vasat sayfa yerine 3 iyi sayfa daha değerlidir. Ajan sayısını işe göre tut.
-
-"""
+How to do it:
+- Make the first agent of the plan "tasarim" and have it start with RESEARCH (max_steps at least 70):
+  1. Find 4-6 real, well-designed sites on the subject with web_search (leading firms in that sector; if needed,
+     award-winning corporate sites of a similar kind).
+  2. Look at each with site_study: screenshot + analysis of layout, typographic sizes, color proportions, visual
+     language and tone of the text. Skip one that won't open and try another; don't count a site it hasn't seen as a
+     reference.
+  3. Base {DESIGN_FILE} on this research. Measures and decisions, not adjectives: "heading 72px/1.05, weight 600, at
+     most 6 words (as on site X)", "8px spacing unit, 160px between sections", "85% off-white, 12% graphite, 3%
+     accent", "70% of the first screen is a full-width photo". Each important decision says which reference it came
+     from. Also: who we are speaking to and with what feeling, a page-by-page layout sketch, component rules, motion
+     principles (little and meaningful), text tone (with example headings) and a "don't" list that includes the
+     forbidden list above.
+  4. Then set up the shared style base (variables, base components). The other agents wait for it with after.
+- Images: a real photo is the strongest tool, not abstract decoration. Photos that fit the subject can come from
+  Wikimedia Commons or Unsplash; the address must be checked with web_fetch, never a made-up URL. Without photos, use
+  strong typography and space, not decorative drawings.
+- Tell the page agents in their tasks: "follow the direction in {DESIGN_FILE}, run design_check before finishing".
+- When reviewing, look at the appearance first: if the review note has "Otomatik kalıp denetimi" (automatic pattern
+  check), the work is not approved as it is. Looking like a template is a "major" problem; the company name, spelling
+  and small code details come after it.
+- Less but good: 3 good pages are worth more than 6 mediocre ones. Keep the number of agents in line with the job."""
 
     # ----------------------------------------------------------------- status
     def status_text(self) -> str:

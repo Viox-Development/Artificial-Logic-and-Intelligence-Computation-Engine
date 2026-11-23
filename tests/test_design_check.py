@@ -149,7 +149,7 @@ def test_site_study_saves_references_and_feeds_comparisons(workdir, monkeypatch)
     m = web.add({"name": "tasarim", "task": "DESIGN.md yaz"})
     a = web._make_agent(m)
     assert "site_study" in a.tools and "site_study" in web.brief(m)
-    assert "ARAŞTIRMAYLA" in web.lead_brief() and "site_study" in web.lead_brief()
+    assert "RESEARCH" in web.lead_brief() and "site_study" in web.lead_brief()
     png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 2000).decode()
     seen = {}
     monkeypatch.setattr(site, "reachable", lambda url, timeout=12.0: (True, "https://www.saab.com/"))

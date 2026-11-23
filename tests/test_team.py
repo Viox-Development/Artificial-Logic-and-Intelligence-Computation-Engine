@@ -27,10 +27,10 @@ class Team(_Team):
 
 def who(messages) -> str:
     sys = messages[0]["content"]
-    if "projesinin yöneticisisin" in sys:
+    if "and the lead of the project" in sys:
         return "lead"
     for name in NAMES:
-        if f'"{name}" adlı ajanı' in sys:
+        if f'agent named "{name}"' in sys:
             return name
     return "alice"
 
@@ -148,8 +148,8 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     assert "def add" in team.diff("backend")
     # agent prompt: no personality, has the task and the team list
     sys = team.members["tests"].agent.messages[0]["content"]
-    assert "Senin görevin: tests/test_api.py" in sys and "- backend:" in sys and "Your personality" not in sys
-    assert "backend" in sys.split("Bu iş şunlar bittikten sonra başladı:")[1].splitlines()[0]
+    assert "Your task: tests/test_api.py" in sys and "- backend:" in sys and "Your personality" not in sys
+    assert "backend" in sys.split("This job started after these finished:")[1].splitlines()[0]
     # the late-joining agent was announced to the earlier one
     backend_users = [str(m["content"]) for m in team.members["backend"].agent.messages if m["role"] == "user"]
     assert any("yeni ajan katıldı: tests" in c for c in backend_users) or \
