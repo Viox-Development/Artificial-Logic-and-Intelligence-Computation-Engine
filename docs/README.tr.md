@@ -220,6 +220,8 @@ Araçlar `connect` grubunda: her isteğe eklenmiyorlar, mesajda servis adı geç
 
 ## Akışlar: ALICE'in kendi haber vermesi
 
+> English: [guide/feeds.md](guide/feeds.md)
+
 Asistan sorulunca cevap verir, Jarvis olanı söyler. Çekirdek servis zaten bilgisayarı izliyordu (kurallar: "GPU uzun süre ısınırsa söyle"); artık bağlı servisleri de izliyor. Ama her yeni mesajı söyleyen bir asistan beş dakikada susturulur, o yüzden asıl iş **neyin söylenmeye değer olduğu**. `~/.alice/feeds.toml`:
 
 ```toml
@@ -278,6 +280,8 @@ alice feeds --test discord_genel    # şimdi yokla: her öğe için ✓/✗ ve n
 İlk turda hiçbir şey bildirilmiyor (o anki öğeler "görüldü" işaretleniyor), yoksa akışı kurduğun anda son 15 mesaj peş peşe düşerdi. Bir turda en fazla 5 bildirim gidiyor, gerisi "3 yeni öğe daha" diye toplanıyor. Bildirimler mod politikasından geçiyor: uçuş ya da sessiz moddayken susturulup kaydediliyor. Sesli mod açıksa bildirim sesle de söyleniyor. Bağlantılar'ın altında akışlar ve özet bekleyen öğe sayısı görünüyor.
 
 ## Uygulama tarifleri: hangi işi hangi yoldan
+
+> English: [guide/apps.md](guide/apps.md)
 
 Aynı işi üç yoldan yapabiliyor: resmî API (hızlı, güvenilir), uygulamanın derin bağlantısı (`steam://rungameid/...`) ve tarayıcı/arayüz otomasyonu (her yerde çalışır ama yavaş). Hangisinin doğru olduğunu her seferinde modelin tahmin etmesi yerine `alice/apps.toml` içine yazdım:
 
