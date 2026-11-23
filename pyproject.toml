@@ -83,3 +83,9 @@ ignore = ["B905"]
 
 [tool.ruff.lint.per-file-ignores]
 "alice/**/__init__.py" = ["F401"]
+
+[tool.pyright]
+# Type checking, one package at a time (#229). CI runs `pyright`; add a package here once it passes.
+include = ["alice/core"]
+typeCheckingMode = "basic"
+pythonVersion = "3.10"

@@ -83,7 +83,7 @@ def core_cmd(argv: list[str]) -> int:
         shared = getattr(host, "state", None)
         phone = _start_phone(cfg, core, shared) if cfg.data.get("phone", {}).get("enabled") and \
             "--once" not in argv else None
-        if phone is not None and shared is not None:
+        if phone is not None and shared is not None and host is not None:
             host.publish()  # phone changed the shared state key: desktop address also changed
         quick = _start_quick(cfg, shared) if cfg.data.get("quick", {}).get("enabled", True) and \
             "--once" not in argv else None

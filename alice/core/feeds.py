@@ -58,7 +58,7 @@ from typing import Any, Callable
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover
-    import tomli as tomllib
+    import tomli as tomllib  # pyright: ignore[reportMissingImports] - only installed on 3.10
 
 from alice.config import alice_home
 from alice.core.conditions import Condition, check, haystack, parse_condition
@@ -269,7 +269,7 @@ class FeedMonitor:
 
     def __init__(self, notify: Callable[[Notification], Any] | None = None,
                  run_agent: Callable[[str], str] | None = None, cfg: Any = None,
-                 fetch: Callable[[Feed], list[Any]] | None = None, emit: Callable[[str], None] | None = None,
+                 fetch: Callable[[Feed], list[Any]] | None = None, emit: Callable[[str], object] | None = None,
                  decider: Any = None, clock: Callable[[], float] | None = None):
         self.notify = notify
         self.run_agent = run_agent
