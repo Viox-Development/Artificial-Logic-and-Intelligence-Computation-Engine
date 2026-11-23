@@ -262,17 +262,34 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
         # Close browsers that got their image but did not exit or timed out, so the temp profile can be deleted.
         # Killing only the parent was not enough: on Windows Chrome's child processes (renderer, crashpad) kept
         # files in the profile open and the temp folder cleanup failed (WinError 32).
-        from alice.tools.shell import kill_tree
-
         for proc in procs:
             if proc.poll() is None:
-                kill_tree(proc.pid)
+                _kill_children(proc)
+                proc.kill()
             try:
                 proc.wait(5)
             except subprocess.TimeoutExpired:
                 pass
         _kill_profile_procs(tmp)
     return out
+
+
+def _kill_children(proc) -> None:
+    """Kill the browser's child processes (renderer, crashpad) before the parent, so none is orphaned."""
+    import psutil
+
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    try:
+        children = psutil.Process(pid).children(recursive=True)
+    except psutil.Error:
+        return  # the parent already exited: _kill_profile_procs catches what it left behind
+    for child in children:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass  # the child already exited
 
 
 def _kill_profile_procs(folder: str) -> int:
