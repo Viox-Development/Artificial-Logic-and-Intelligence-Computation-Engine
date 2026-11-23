@@ -2306,7 +2306,28 @@ def make_handler(state: AppState):
             return data if isinstance(data, dict) else {}
 
         def _deny(self) -> None:
+            self._drain()
             self._send(403, b"forbidden", "text/plain")
+
+        def _drain(self) -> None:
+            """Read and drop an unread request body before answering early. Closing the socket with body bytes
+            still unread makes the OS send a TCP reset instead of a normal close, and on Windows the reset discards
+            the response the client was about to read (WinError 10053/10054: flaky
+            test_foreign_origin_is_denied_even_with_token). Bodies over MAX_BODY are not read."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return
+            if not 0 < n <= MAX_BODY:
+                return
+            try:
+                while n > 0:
+                    chunk = self.rfile.read(min(n, 65536))
+                    if not chunk:
+                        break
+                    n -= len(chunk)
+            except OSError:
+                pass  # the client went away: nothing to answer
 
         def _preview(self, path: str) -> None:
             """/preview/<preview key>/<project>/<path>: serve the site in the project folder in sandbox."""

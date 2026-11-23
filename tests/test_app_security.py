@@ -62,6 +62,33 @@ def test_foreign_origin_is_denied_even_with_token(app):
     assert client.get("/static/app.js", headers={"Origin": "null"}).status_code == 200
 
 
+def test_denied_post_body_is_drained_so_the_403_is_not_reset(app):
+    """The 403 for a forbidden Origin used to be sent without reading the request body. Closing a socket with unread
+    bytes sends a TCP reset; on Windows the reset discards the 403 before the client reads it (WinError 10053, flaky
+    test_foreign_origin_is_denied_even_with_token). The body is read first now, so the close is a clean FIN."""
+    import errno
+    import socket
+    import sys
+    import time
+
+    state, srv, client = app
+    body = b"x" * 300_000  # larger than the handler's read buffer, so it stays unread in the kernel
+    s = socket.create_connection(("127.0.0.1", srv.httpd.server_address[1]), timeout=10)
+    try:
+        s.sendall(b"POST /api/stop HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example\r\n"
+                  b"X-Alice-Token: " + state.token.encode() + b"\r\nContent-Type: application/json\r\n"
+                  b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        time.sleep(0.3)  # let the server answer and close
+        data = b""
+        while chunk := s.recv(4096):
+            data += chunk
+        assert data.startswith(b"HTTP/1.0 403")
+        if sys.platform.startswith("linux"):  # a reset leaves an error on the socket (EPIPE/ECONNRESET)
+            assert errno.errorcode.get(s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)) is None
+    finally:
+        s.close()
+
+
 def test_bad_bodies_get_clean_4xx(app):
     state, srv, client = app
     tok = {"X-Alice-Token": state.token, "Host": "127.0.0.1", "Content-Type": "application/json"}
