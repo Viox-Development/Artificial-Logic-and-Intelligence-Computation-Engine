@@ -42,7 +42,7 @@ def test_council_retries_once_when_json_missing(workdir):
         role = role_of(messages)
         if role == "critic":
             asked["n"] += 1
-            if "sadece o JSON bloğunu" in str(messages[-1]["content"]):
+            if "give only that JSON block" in str(messages[-1]["content"]):
                 return js(vote="approve", reason="tamam")
             return "Bence iş iyi, sorun görmedim."  # forgot the JSON
         return js(vote="approve")

@@ -60,29 +60,30 @@ class Role:
 
 ROLES: dict[str, Role] = {
     "critic": Role("critic", "eleştirmen", (
-        "Acımasız ama kanıtlı eleştirmensin. İşteki hataları, eksikleri, gözden kaçmış durumları, riskleri ve kötü "
-        "tasarımı bul. Hiçbir şeyi hoş görme, övgü yazma. Ama her bulgu kanıtlı olmalı: dosya:satır, alıntı ya da "
-        "tekrar adımı. Kanıtsız bulgu yazma; kontrolcü onu çürütür ve oyun sayılmaz.")),
+        "You are a harsh but evidence-based critic. Find the bugs, gaps, missed cases, risks and bad design in the "
+        "work. Let nothing slide and write no praise. But every finding needs evidence: file:line, a quote or steps to "
+        "reproduce. Don't write findings without evidence; the verifier refutes them and your vote doesn't count.")),
     "advocate": Role("advocate", "savunucu", (
-        "Savunucusun. İşin güçlü yanlarını ve doğru kararlarını ortaya koy; abartılı ya da yanlış eleştirileri kanıtla "
-        "çürüt, kurulun işi gereksiz yere reddetmesini engelle. Ama gerçek hataları inkâr etme, dürüst ol.")),
+        "You are the advocate. Bring out the work's strengths and right decisions; refute exaggerated or wrong "
+        "criticism with evidence, and keep the council from rejecting the work needlessly. But don't deny real bugs; "
+        "be honest.")),
     "verifier": Role("verifier", "kontrolcü", (
-        "Tarafsız kontrolcüsün. Taraf tutmazsın: iddiaları kendin kontrol edersin (dosyayı oku, gerekirse testleri "
-        "ya da kodu çalıştır) ve her bulgu için doğrulandı/çürütüldü/belirsiz dersin. Dosya değiştirme, kalıcı bir şey "
-        "yapma.")),
+        "You are the neutral verifier. You take no side: you check the claims yourself (read the file, run the tests "
+        "or the code if needed) and say confirmed/refuted/unclear for each finding. Don't change files or do anything "
+        "lasting.")),
     "security": Role("security", "güvenlik", (
-        "Güvenlik uzmanısın. Güvenlik açıklarına, gizli bilgi (anahtar, şifre) sızıntısına, doğrulanmamış girdiye, "
-        "tehlikeli komut/yol kullanımına, yetki hatalarına bak."), True,
+        "You are the security expert. Look for vulnerabilities, leaks of secrets (keys, passwords), unvalidated "
+        "input, dangerous use of commands/paths, and permission mistakes."), True,
         r"auth|token|şifre|password|secret|anahtar|key|izin|permission|güvenlik|security|shell|exec|komut|sql|"
         r"crypto|şifrele|login|giriş|cookie|session|upload|path|yol|http|request|input|girdi|\.env"),
     "performance": Role("performance", "performans", (
-        "Performans uzmanısın. Yavaşlığa, gereksiz döngülere ve tekrarlı işlere, bellek kullanımına, ağ/disk "
-        "çağrılarına, ölçeklenmeye ve maliyete bak."), True,
+        "You are the performance expert. Look at slowness, needless loops and repeated work, memory use, network/disk "
+        "calls, scaling and cost."), True,
         r"performans|performance|hız|yavaş|slow|speed|cache|önbellek|döngü|loop|sorgu|query|bellek|memory|async|"
         r"thread|paralel|büyük|ölçek|scale|optimiz|batch|stream"),
     "ux": Role("ux", "kullanıcı gözü", (
-        "Kullanıcı gözüsün. Kullanıcı açısından anlaşılır mı, kullanışlı mı, hata mesajları ve metinler iyi mi, "
-        "arayüz tutarlı mı, erişilebilir mi diye bak."), True,
+        "You are the user's eye. Check, from the user's side, whether it is clear and usable, whether error messages "
+        "and texts are good, and whether the interface is consistent and accessible."), True,
         r"arayüz|ui\b|ux|ekran|buton|düğme|button|css|html|\.js\b|jsx|tsx|sayfa|page|mesaj|metin|text|kullanıcı|"
         r"user|tasarım|design|form|dialog|pencere|menü"),
 }
@@ -93,11 +94,13 @@ ROLE_DOMAIN = {"critic": "review", "advocate": "review", "verifier": "review", "
 
 
 # Plan council: with no code yet, it does not hunt for implementation details; it checks the plan's steps.
-PLAN_AREAS = {"kapsam": "hedefin tamamı karşılanıyor mu, büyük bir parça eksik mi",
-              "bölme": "iş anlamlı ve çakışmayan parçalara bölünmüş mü, yazma kapsamları çakışıyor mu",
-              "sıra": "bağımlılıklar ve sıra doğru mu (önce temel, sonra üstüne kurulanlar)",
-              "doğrulama": "her parça nasıl doğrulanacak belli mi",
-              "risk": "yaklaşımda işi baştan bozacak bir seçim var mı (yanlış teknoloji, imkânsız varsayım)"}
+# The keys are data (stored findings and scores use them); the values are the model's instructions.
+PLAN_AREAS = {"kapsam": "scope: is the whole goal covered, or is a large part missing",
+              "bölme": "split: is the work divided into meaningful, non-overlapping parts; do write scopes overlap",
+              "sıra": "order: are the dependencies and the order right (foundations first, then what builds on them)",
+              "doğrulama": "verification: is it clear how each part will be verified",
+              "risk": "risk: does the approach have a choice that breaks the work from the start (wrong technology, "
+                      "an impossible assumption)"}
 PLAN_BLOCKING = ("kapsam", "bölme", "sıra", "risk", "tasarım")
 PLAN_MAX_FINDINGS = 5
 _AREA_ALIASES = {"kapsam": "kapsam", "scope": "kapsam", "coverage": "kapsam", "bölme": "bölme", "bolme": "bölme",
@@ -437,37 +440,48 @@ class Council:
         areas = "\n".join(f"- {k}: {v}" for k, v in PLAN_AREAS.items())
         return f"""
 
-# Plan incelemesi
-Henüz kod yok; bir PLANI inceliyorsun. Soru şu: bu plan uygulanırsa hedefe doğru adımlarla ulaşılır mı?
-Bakılacaklar:
+# Plan review
+There is no code yet; you are reviewing a PLAN. The question is: if this plan is carried out, does it reach the goal
+in the right steps?
+What to look at (the area key comes first):
 {areas}
-Yasak: uygulama ayrıntıları. Güvenlik açıkları, erişilebilirlik ayrıntıları, performans, kod tarzı, kütüphane
-seçiminin inceliği ve "planda X yazmıyor" türü eksikler ajanın işi yaparken zaten halledeceği şeylerdir; bunları
-bulgu olarak yazma (kod yazılınca iş kurulu bakar). Bir şey ancak planı bozuyorsa bulgudur.
-Kanıt olarak planın ilgili maddesini (ajan adı ve görevinden alıntı) ya da proje klasöründe gördüğün şeyi yaz.
-Her bulgunun alanını (area) ve ilgili ajanı (agent; bütün planı ilgilendiriyorsa "genel") belirt.
-"critical" kullanma: planda en fazla "major" (planı bozan) ya da "minor" (ajana not olarak eklenecek öneri) olur.
-En fazla {PLAN_MAX_FINDINGS} bulgu yaz; en önemlileri."""
+Off limits: implementation details. Security holes, accessibility details, performance, code style, the finer points
+of library choice and "the plan doesn't say X" gaps are things the agent handles anyway while doing the work; don't
+write them as findings (the work council looks once code is written). Something is a finding only if it breaks the
+plan.
+As evidence, give the relevant item of the plan (a quote of the agent's name and task) or what you saw in the project
+folder.
+Give each finding's area (area, one of the keys above) and the agent it concerns (agent; "genel" if it concerns the
+whole plan).
+Don't use "critical": in a plan a finding is at most "major" (breaks the plan) or "minor" (a suggestion added to the
+agent as a note).
+Write at most {PLAN_MAX_FINDINGS} findings; the most important ones."""
 
     def brief(self, role: str) -> str:
         r = ROLES[role]
         others = ", ".join(ROLES[x].title for x in self.roles if x != role)
-        return f"""# İnceleme kurulu
-Kurul rolün: {r.title}. {r.focus}
-Kuruldaki diğer roller: {others}. Karar gerekçeli ağırlıklı oylamayla verilir; doğrulanmış kritik bulgu reddettirir.
-İnceleme türü: {KIND_TR.get(self.kind, self.kind)}. Çalışma klasörü: {self.cwd}
+        return f"""# Review council
+Your council role: {r.title} ({r.key}). {r.focus}
+The other roles on the council: {others}. The decision is made by a reasoned, weighted vote; a confirmed critical
+finding forces a rejection.
+Review kind: {self.kind}. Working folder: {self.cwd}
 
-Kısa ve somut yaz. Araçlarla kodu ve dosyaları kendin incele; tahmin yürütme. Dosya değiştirme.
-Önce büyük resme bak: iş hedefi karşılıyor mu, kullanıcı sonuçtan memnun kalır mı? Önem derecesini dürüst ver:
-- critical: iş bozuk ya da güvensiz (çalışmıyor, veri kaybı, güvenlik açığı).
-- major: hedefi ciddi biçimde karşılamıyor (eksik sayfa/özellik, kırık akış, şablon gibi duran tasarım).
-- minor: iyileştirme ve ayrıntı (kod tarzı, küçük kenar durumları, mikro optimizasyon). Küçük ayrıntı işi durdurmaz.
-Bütün metinleri (başlık, kanıt, düzeltme, şart, gerekçe) Türkçe yaz; malzeme İngilizce olsa da İngilizce yazma. Aynı şeyi başka sözcüklerle tekrar etme; başka bir üyenin bulgusuyla aynıysa yeni bulgu açma.
-Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy.""" + (
-            f"\n\n# Projenin inceleme kuralları (REVIEW.md)\n{self.rules}" if self.rules else "") + (
-            "\n\n# Bu projede daha önce yakalanan sorunlar (tekrarlanmış mı bak)\n" +
+Write briefly and concretely. Inspect the code and files yourself with the tools; don't guess. Don't change files.
+Look at the big picture first: does the work meet the goal, will the user be happy with the result? Rate severity
+honestly:
+- critical: the work is broken or unsafe (doesn't run, data loss, a security hole).
+- major: it seriously misses the goal (a missing page/feature, a broken flow, a design that looks like a template).
+- minor: improvements and details (code style, small edge cases, micro-optimizations). A small detail doesn't stop the
+  work.
+Write all texts (title, evidence, fix, condition, reason) in Turkish, the user's language, even if the material is in
+English. Don't repeat the same thing in other words; if it is the same as another member's finding, don't open a new
+one.
+Always end your last message with the requested JSON block inside ```json ... ```.""" + (
+            f"\n\n# The project's review rules (REVIEW.md)\n{self.rules}" if self.rules else "") + (
+            "\n\n# Problems caught earlier in this project (check whether they came back)\n" +
             "\n".join(f"- {x}" for x in self.lessons) if self.lessons else "") + (
-            f"\n\nProjenin kontrol komutu: `{self.check}` (çıktısı incelenen malzemede; gerekirse yeniden çalıştır)."
+            f"\n\nThe project's check command: `{self.check}` (its output is in the material under review; run it "
+            "again if needed)."
             if self.check and role == "verifier" else "") + (self.plan_brief() if self.kind == "plan" else "")
 
     # --------------------------------------------------------------- flow
@@ -510,13 +524,14 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             raise CouncilStopped()
         images = list(self.images.values()) if role == "ux" else None
         if images:
-            prompt += ("\n\nEkte sitenin ekran görüntüleri var (" + ", ".join(self.images) + "). Koda ek olarak "
-                       "görünüşü de değerlendir: görsel hiyerarşi, boşluklar, tipografi, renk, tutarlılık, telefonda "
-                       "taşma/kırılma, şablon gibi ya da 'yapay zekâ yapımı' duran yerler. Görselden gördüğün sorunu "
-                       "kanıt olarak hangi görüntüde nerede olduğunu yazarak ver.")
+            prompt += ("\n\nScreenshots of the site are attached (" + ", ".join(self.images) + "). Besides the code, "
+                       "judge the look too: visual hierarchy, spacing, typography, color, consistency, overflow/breaking "
+                       "on a phone, parts that look like a template or 'made by AI'. For a problem you see in an "
+                       "image, give as evidence which image it is in and where.")
             if any(k.startswith("referans") for k in self.images):
-                prompt += ("\n\n'referans-' ile başlayan görüntüler ekibin örnek aldığı gerçek siteler. Bizim siteyi "
-                           "onlarla karşılaştır: aynı kalitede mi? Değilse aradaki en büyük farkı 'major' bulgu yaz.")
+                prompt += ("\n\nImages starting with 'referans-' are real sites the team took as references. "
+                           "Compare our site with them: is it of the same quality? If not, write the biggest "
+                           "difference as a 'major' finding.")
         act = self.activity.setdefault(role, {})
         act.update(state="working", last="", vote="")
         self._tick(force=True)
@@ -529,8 +544,9 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
             raise
         if not parse_block(text) and text.strip():
             # Weak models sometimes forget the JSON: ask once, for the format only.
-            again = agent.run_turn("Cevabının sonunda istenen JSON bloğu yoktu. Kararını değiştirmeden şimdi sadece o "
-                                   "JSON bloğunu ```json ... ``` içinde ver.", max_steps=1) or ""
+            again = agent.run_turn("Your answer didn't end with the requested JSON block. Without changing your "
+                                   "decision, now give only that JSON block inside ```json ... ```.",
+                                   max_steps=1) or ""
             if parse_block(again):
                 text = text.rstrip() + "\n\n" + again
         self.transcript.append({"round": self.round, "role": role, "text": text})
@@ -578,31 +594,32 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
         prev = ""
         if self.previous:
             confirmed = [f for f in self.previous.get("findings", []) if f.get("status") != "refuted"]
-            prev = "\n\n# Önceki kurulun bulguları (düzeltildi mi kontrol et)\n" + "\n".join(
-                f"- [{f['id']}] ({SEV_TR.get(f['severity'], f['severity'])}) {f['title']}: {f.get('fix', '')}"
-                for f in confirmed) + ("\nŞartlar: " + "; ".join(self.previous.get("conditions", []))
+            prev = "\n\n# The previous council's findings (check whether they were fixed)\n" + "\n".join(
+                f"- [{f['id']}] ({f['severity']}) {f['title']}: {f.get('fix', '')}"
+                for f in confirmed) + ("\nConditions: " + "; ".join(self.previous.get("conditions", []))
                                        if self.previous.get("conditions") else "")
-        return f"# İncelenen\n{self.subject}\n\n{self.context[:24000]}{prev}"
+        return f"# Under review\n{self.subject}\n\n{self.context[:24000]}{prev}"
 
     def _round1(self) -> None:
         self.round = 1
         self._set_phase("Plan inceleniyor" if self.kind == "plan" else "Bağımsız inceleme")
         reviewers = [r for r in self.roles if r != "verifier"] or ["critic"]
-        ask = ("Önceki bulgular düzeltildi mi kontrol et; sadece hâlâ duran ya da yeni çıkan ciddi sorunları yaz."
-               if self.kind == "recheck" else "Bağımsız incele (diğer rollerin ne dediğini görmüyorsun).")
-        fmt = ('{"vote": "approve|conditional|reject", "reason": "kısa gerekçe", "findings": [{"severity": '
-               '"critical|major|minor", "title": "...", "evidence": "dosya:satır, alıntı ya da tekrar adımı", "fix": '
-               '"ne yapılmalı"}], "conditions": ["şartlı onaysa: şunlar düzelirse olur"]}')
+        ask = ("Check whether the previous findings were fixed; write only serious problems that still stand or are "
+               "new." if self.kind == "recheck" else
+               "Review independently (you don't see what the other roles said).")
+        fmt = ('{"vote": "approve|conditional|reject", "reason": "short reason", "findings": [{"severity": '
+               '"critical|major|minor", "title": "...", "evidence": "file:line, a quote or steps to reproduce", '
+               '"fix": "what should be done"}], "conditions": ["if conditional: it is fine once these are fixed"]}')
         if self.kind == "plan":
-            ask = ("Bu planın düzeltilmiş hali. Önceki kurulun engelleyici bulguları giderildi mi, ona bak; yeni bulguyu "
-                   "ancak yeni planın getirdiği, planı bozan bir sorunsa yaz." if self.previous else
-                   "Planı bağımsız incele (diğer rollerin ne dediğini görmüyorsun).")
-            fmt = ('{"vote": "approve|conditional|reject", "reason": "kısa gerekçe", "scores": {"kapsam": 1-5, '
+            ask = ("This is the corrected version of the plan. Check whether the previous council's blocking findings "
+                   "were resolved; write a new finding only if it is a plan-breaking problem the new plan brought in."
+                   if self.previous else "Review the plan independently (you don't see what the other roles said).")
+            fmt = ('{"vote": "approve|conditional|reject", "reason": "short reason", "scores": {"kapsam": 1-5, '
                    '"bölme": 1-5, "sıra": 1-5, "doğrulama": 1-5, "risk": 1-5}, "findings": [{"severity": "major|minor", '
-                   '"area": "kapsam|bölme|sıra|doğrulama|risk|tasarım", "agent": "ilgili ajan adı ya da genel", '
-                   '"title": "...", "evidence": "planın ilgili maddesi", "fix": "plana ne eklenmeli/değişmeli"}], '
-                   '"conditions": ["..."]}')
-        texts = self._parallel(reviewers, lambda r: f"{self._material()}\n\n{ask}\nSonunda şu biçimde JSON ver:\n{fmt}")
+                   '"area": "kapsam|bölme|sıra|doğrulama|risk|tasarım", "agent": "the agent\'s name or genel", '
+                   '"title": "...", "evidence": "the relevant item of the plan", "fix": "what to add to/change in the '
+                   'plan"}], "conditions": ["..."]}')
+        texts = self._parallel(reviewers, lambda r: f"{self._material()}\n\n{ask}\nAt the end give JSON in this form:\n{fmt}")
         n = len(self.findings)
         for role, text in texts.items():
             data = parse_block(text)
@@ -629,34 +646,36 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
 
     def _findings_text(self, with_status: bool = True) -> str:
         if not self.findings:
-            return "(bulgu yok)"
+            return "(no findings)"
         rows = []
         for f in self.findings:
-            st = f" — kontrolcü: {STATUS_TR[f.status]}{' (' + f.check + ')' if f.check else ''}" if with_status else ""
-            rows.append(f"[{f.id}] {ROLES[f.by].title}, {SEV_TR[f.severity]}: {f.title}\n  kanıt: {f.evidence}"
-                        f"\n  öneri: {f.fix}{st}")
+            st = f" — verifier: {f.status}{' (' + f.check + ')' if f.check else ''}" if with_status else ""
+            rows.append(f"[{f.id}] {f.by}, {f.severity}: {f.title}\n  evidence: {f.evidence}"
+                        f"\n  fix: {f.fix}{st}")
         return "\n".join(rows)
 
     def _verify(self) -> None:
         self.round = max(self.round, 1)
         self._set_phase("Kontrolcü bulguları doğruluyor")
-        fmt = ('{"checks": [{"id": "F1", "status": "confirmed|refuted|unclear", "note": "ne denedin, ne gördün"}], '
+        fmt = ('{"checks": [{"id": "F1", "status": "confirmed|refuted|unclear", "note": "what you tried, what you saw"}], '
                '"findings": [{"severity": "...", "title": "...", "evidence": "...", "fix": "..."}], '
                '"vote": "approve|conditional|reject", "reason": "..."}')
-        how = ("Her bulguyu kendin doğrula (dosyayı oku, gerekirse testleri/kodu çalıştır). Kendi bulduğun kesin "
-               "sorunları (ör. kırılan test) findings'e ekle.")
+        how = ("Verify each finding yourself (read the file, run the tests/code if needed). Add definite problems you "
+               "find yourself (e.g. a failing test) to findings.")
         if self.kind == "plan":
-            how = ("Her bulguyu plana ve proje klasörüne bakarak doğrula. Bir bulgu ancak plan böyle uygulanırsa hedefe "
-                   "ulaşılamayacağını ya da işin bozulacağını gösteriyorsa 'confirmed'dır. 'Planda yazmıyor' tek başına "
-                   "doğrulama değildir: ajan bunu görevinin doğal parçası olarak zaten yapacaksa 'refuted', ajana not "
-                   "olarak eklenmesi yeterliyse 'unclear' de ve severity'yi 'minor'a indir. Uygulama ayrıntısıysa "
-                   "(güvenlik, erişilebilirlik, performans, kod tarzı) 'refuted'. Her check'e gerekirse "
-                   '"severity": "major|minor" ekleyebilirsin.')
-            fmt = fmt.replace('"note": "ne denedin, ne gördün"}', '"note": "neden", "severity": "minor (düşürmek için)"}')
+            how = ("Verify each finding against the plan and the project folder. A finding is 'confirmed' only if it "
+                   "shows that, carried out this way, the plan can't reach the goal or the work will break. 'The plan "
+                   "doesn't say it' alone is not a confirmation: if the agent will do it anyway as a natural part of "
+                   "its task, say 'refuted'; if adding it to the agent as a note is enough, say 'unclear' and lower "
+                   "severity to 'minor'. If it is an implementation detail (security, accessibility, performance, code "
+                   "style), 'refuted'. You can add "
+                   '"severity": "major|minor" to any check if needed.')
+            fmt = fmt.replace('"note": "what you tried, what you saw"}',
+                              '"note": "why", "severity": "minor (to lower it)"}')
             fmt = fmt.replace('"findings": [{"severity": "...",', '"findings": [{"severity": "major|minor", "area": "...", '
                               '"agent": "...",')
-        text = self._ask("verifier", f"{self._material()}\n\n# Diğer rollerin bulguları\n"
-                         f"{self._findings_text(with_status=False)}\n\n{how} Sonunda şu biçimde JSON ver:\n{fmt}")
+        text = self._ask("verifier", f"{self._material()}\n\n# The other roles' findings\n"
+                         f"{self._findings_text(with_status=False)}\n\n{how} At the end give JSON in this form:\n{fmt}")
         data = parse_block(text)
         self._apply_checks(data)
         v = self.votes.setdefault("verifier", Vote("verifier", "?", 1.0))
@@ -705,17 +724,18 @@ Son mesajının sonuna mutlaka istenen JSON bloğunu ```json ... ``` içinde koy
         """One debate round. Returns False if nobody changed their view (the debate ends)."""
         self.round += 1
         self._set_phase(f"Tartışma turu {self.round}", everyone=True)
-        positions = "\n".join(f"- {ROLES[v.role].title}: {VOTE_TR.get(v.last, 'oy yok')}. {v.reason}"
+        positions = "\n".join(f"- {v.role}: {v.last or 'no vote'}. {v.reason}"
                               for v in self.votes.values())
         fmt = ('{"vote": "approve|conditional|reject", "reason": "...", "conditions": ["..."], "stances": [{"id": '
-               '"F1", "stance": "agree|disagree", "note": "kanıtınla"}], "checks": [{"id": "F1", "status": '
-               '"confirmed|refuted|unclear", "note": "sadece kontrolcü"}]}')
+               '"F1", "stance": "agree|disagree", "note": "with your evidence"}], "checks": [{"id": "F1", "status": '
+               '"confirmed|refuted|unclear", "note": "verifier only"}]}')
         before = {r: v.last for r, v in self.votes.items()}
         texts = self._parallel(self.roles, lambda r: (
-            f"{self._material()}\n\n# Bulgular ve kontrolcünün sonuçları\n{self._findings_text()}\n\n# Oylar\n{positions}"
-            f"\n\nTartışma turu {self.round}. Yeni bulgu ekleme. Katılmadığın bulgulara kanıtla itiraz et, ikna olduysan "
-            f"oyunu değiştir. " + ("Tartışmalı bulguları yeniden doğrula. " if r == "verifier" else "") +
-            f"Sonunda şu biçimde JSON ver:\n{fmt}"))
+            f"{self._material()}\n\n# Findings and the verifier's results\n{self._findings_text()}\n\n# Votes\n"
+            f"{positions}\n\nDebate round {self.round}. Don't add new findings. Object with evidence to findings you "
+            f"disagree with; if you were convinced, change your vote. " +
+            ("Verify the disputed findings again. " if r == "verifier" else "") +
+            f"At the end give JSON in this form:\n{fmt}"))
         by_id = {f.id: f for f in self.findings}
         for role, text in texts.items():
             data = parse_block(text)

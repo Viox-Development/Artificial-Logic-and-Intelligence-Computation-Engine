@@ -11,7 +11,7 @@ from tests.test_team import make, since_user, steps
 def role_of(messages) -> str:
     sys = messages[0]["content"]
     for key, r in ROLES.items():
-        if f"Kurul rolün: {r.title}." in sys:
+        if f"Your council role: {r.title} " in sys:
             return key
     return ""
 
@@ -64,13 +64,13 @@ def council_script(state):
     def run(model, messages, tools, **kw):
         role = role_of(messages)
         prompt = str(messages[1]["content"])
-        state.setdefault("calls", []).append((role, "debate" if "Tartışma turu" in prompt else "first"))
+        state.setdefault("calls", []).append((role, "debate" if "Debate round" in prompt else "first"))
         if role == "critic":
-            if "Tartışma turu" in prompt:
+            if "Debate round" in prompt:
                 return js(vote="reject", reason="hâlâ ret", stances=[{"id": "F1", "stance": "agree", "note": "kanıt"}])
             return js(vote="reject", reason="hata var", findings=[finding(state.get("sev", "major"))])
         if role == "advocate":
-            if "Tartışma turu" in prompt:
+            if "Debate round" in prompt:
                 return js(vote="conditional", reason="ikna oldum", conditions=["sıfır kontrolü"])
             return js(vote="approve", reason="iş iyi")
         if role == "verifier":
@@ -155,7 +155,7 @@ def project_script(state):
                           findings=[] if ok else [finding("critical", "test ajanı yok")])
             if "Projenin tamamı" in prompt:
                 return js(vote="approve", reason="bütün iyi")
-            fixed = "kontrol eklendi" in prompt or "Önceki kurulun bulguları" in prompt
+            fixed = "kontrol eklendi" in prompt or "The previous council's findings" in prompt
             if role == "critic":
                 return js(vote="approve") if fixed else js(vote="reject", findings=[finding("critical")])
             if role == "verifier":
@@ -285,11 +285,11 @@ def test_plan_council_blocks_only_plan_breaking_issues_and_routes_notes(workdir)
     assert plans[0]["rubric"]["bölme"] == 2 and plans[0]["rubric"]["kapsam"] >= 4
     assert "Kurul notu: sayfalar tarayıcıda açılıp bakılsın" in team.members["web"].constraints
     sys_prompt, material = next((s, p) for r, s, p in state["prompts"] if r == "critic")
-    assert "Plan incelemesi" in sys_prompt and "Yasak: uygulama ayrıntıları" in sys_prompt
+    assert "Plan review" in sys_prompt and "Off limits: implementation details" in sys_prompt
     assert "Proje klasörü" in material and "index.html" in material and "DESIGN.md" in material
     # The work review can also arrive as soon as the agent starts: look at the last *plan* review.
-    second = [p for r, s, p in state["prompts"] if r == "critic" and "Plan incelemesi" in s][-1]
-    assert "Önceki kurulun bulguları" in second  # the corrected plan is reviewed against the earlier one
+    second = [p for r, s, p in state["prompts"] if r == "critic" and "Plan review" in s][-1]
+    assert "The previous council's findings" in second  # the corrected plan is reviewed against the earlier one
     assert team.plan_rejects == 0
 
 
