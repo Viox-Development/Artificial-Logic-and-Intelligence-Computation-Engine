@@ -16,13 +16,14 @@ from alice.tools.shell import IS_WIN, NO_WINDOW, kill_tree
 class AppState(Tool):
     name = "app_state"
     parallel_safe = True
-    description = ("ALICE uygulamasının ve ajanın güncel durumunu teşhis eder: aktif mod, yüklenen araç grupları, "
-                   "arka plan süreçleri, oturum bilgileri ve yapılandırma özetleri.\n"
-                   "- 'Neden çalışıyor görünüyor', 'Hangi moddayım', 'Arka planda ne çalışıyor' gibi durumlarda kullanılır.\n"
-                   "- Sistemin genel CPU/RAM durumu için bu değil system_info veya process_list kullanılmalıdır.")
+    description = ("Diagnoses the current state of the ALICE app and agent: active mode, loaded tool groups, "
+                   "background processes, session info and configuration summaries.\n"
+                   "- Use it for questions like 'why does it look busy', 'which mode am I in', 'what is running in "
+                   "the background'.\n"
+                   "- For the system's overall CPU/RAM, use system_info or process_list instead.")
     parameters = obj({
         "section": {"type": "string", "enum": ["all", "mode", "tools", "processes", "config", "service"],
-                    "description": "Hangi bölüme odaklanılacağı. Varsayılan 'all'."}
+                    "description": "Which section to focus on. Default 'all'."}
     })
     risk = READ
 
@@ -80,13 +81,13 @@ class AppState(Tool):
 class ServiceDiagnose(Tool):
     name = "service_diagnose"
     parallel_safe = True
-    description = ("ALICE çekirdek servisini ve arka plan süreçlerini teşhis eder, hataları ve logları raporlar.\n"
-                   "- Çekirdek çalışıyor mu, en son ne zaman çöktü veya hangi hataları verdi sorularına yanıt arar.\n"
-                   "- Arka plan süreçlerinin (PID verilerek) loglarını görüntüler. Genel sistem süreçleri için process_list kullan.")
+    description = ("Diagnoses the ALICE core service and background processes, and reports errors and logs.\n"
+                   "- Answers whether the core is running, when it last crashed and which errors it gave.\n"
+                   "- Shows the logs of background processes (by PID). For general system processes use process_list.")
     parameters = obj({
-        "service": {"type": "string", "description": "Teşhis edilecek servis adı ('core', 'bg_procs') veya PID.",
+        "service": {"type": "string", "description": "Service name to diagnose ('core', 'bg_procs') or a PID.",
                     "default": "all"},
-        "tail_lines": {"type": "integer", "description": "Loglardan kaç satır gösterilecek. Varsayılan 50.", "default": 50}
+        "tail_lines": {"type": "integer", "description": "How many log lines to show. Default 50.", "default": 50}
     })
     risk = READ
 
@@ -156,14 +157,16 @@ class ServiceDiagnose(Tool):
 class TestRun(Tool):
     name = "test_run"
     parallel_safe = False
-    description = ("Test çalıştırma aracı: pytest, unittest veya özel test komutlarını çalıştırır, sonuçları özetler.\n"
-                   "- Hataları gürültüden (noise/geçen testler) ayırarak sadece kritik kırılmaları ve özet satırını raporlar.\n"
-                   "- Standart shell komutları çalıştırmak için bunu değil run_command kullan; bu sadece testler içindir.")
+    description = ("Test runner: runs pytest, unittest or a custom test command and summarizes the results.\n"
+                   "- Separates failures from noise (passing tests) and reports only the real breakages and the "
+                   "summary line.\n"
+                   "- To run ordinary shell commands use run_command, not this; this is only for tests.")
     parameters = obj({
-        "command": {"type": "string", "description": "Çalıştırılacak test komutu (varsayılan: pytest).", "default": "pytest"},
-        "path": {"type": "string", "description": "Test edilecek dosya veya klasör yolu."},
-        "filter_noise": {"type": "boolean", "description": "Test gürültüsünü (geçen testler vb.) filtrele, sadece özet ve hataları göster. Varsayılan true.", "default": True},
-        "timeout": {"type": "integer", "description": "Zaman aşımı (saniye). Varsayılan 120.", "default": 120}
+        "command": {"type": "string", "description": "Test command to run (default: pytest).", "default": "pytest"},
+        "path": {"type": "string", "description": "File or folder path to test."},
+        "filter_noise": {"type": "boolean", "description": "Filter out test noise (passing tests etc.) and show only "
+                                                           "the summary and failures. Default true.", "default": True},
+        "timeout": {"type": "integer", "description": "Timeout in seconds. Default 120.", "default": 120}
     })
     risk = EXEC
 

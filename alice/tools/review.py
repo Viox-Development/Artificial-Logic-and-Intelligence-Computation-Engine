@@ -10,28 +10,29 @@ from alice.tools.base import READ, WRITE, Tool, ToolContext, ToolError, ToolResu
 class CodeReview(Tool):
     name = "code_review"
     description = (
-        "Değişikliği bu konuşmadan BAĞIMSIZ bir inceleyiciye inceletir: konuşmayı görmeyen, yalnız okuma araçları "
-        "olan ayrı bir ajan farkı ve ilgili kodu okur, gerçek hataları somut bozulma senaryosuyla bulur; ikinci bir "
-        "ajan her bulguyu kodda doğrular, çürütülenler atılır. Kendi yazdığın kodu bitirince, PR açmadan önce ya da "
-        "kullanıcı 'incele/review et' deyince kullan.\n"
-        "target=local: çalışma klasöründeki değişiklikler (ana daldan ayrıldığı noktadan beri, commit'lenmemişler "
-        "dahil). target=pr: GitHub PR'ı (number). post=true: bulguları PR'a satır yorumlarıyla inceleme olarak yaz.\n"
-        "Bulguları kendin düzeltmeden önce kullanıcıya göster; gerçek olduğundan emin olmadığın bulguyu uygulama.")
+        "Has the change reviewed by a reviewer INDEPENDENT of this conversation: a separate agent that cannot see the "
+        "conversation and has only read tools reads the diff and the related code, and finds real bugs with a "
+        "concrete failure scenario; a second agent verifies each finding in the code, and refuted ones are dropped. "
+        "Use it when you finish code you wrote, before opening a PR, or when the user says 'review this'.\n"
+        "target=local: changes in the working folder (since it branched off the main branch, uncommitted ones "
+        "included). target=pr: a GitHub PR (number). post=true: write the findings to the PR as a review with line "
+        "comments.\n"
+        "Show the findings to the user before fixing them yourself; don't apply a finding you are not sure is real.")
     parameters = obj({
-        "target": {"type": "string", "enum": ["local", "pr"], "description": "Ne incelenecek. number verilirse pr."},
-        "number": {"type": "integer", "description": "target=pr: PR numarası."},
-        "repo": {"type": "string", "description": "target=pr: 'sahip/depo'. Boşsa çalışma klasörünün origin'i."},
-        "base": {"type": "string", "description": "target=local: karşılaştırılacak dal (ör. origin/main). Boşsa "
-                 "deponun ana dalı."},
+        "target": {"type": "string", "enum": ["local", "pr"], "description": "What to review. If number is given, pr."},
+        "number": {"type": "integer", "description": "target=pr: PR number."},
+        "repo": {"type": "string", "description": "target=pr: 'owner/repo'. Empty: the working folder's origin."},
+        "base": {"type": "string", "description": "target=local: branch to compare against (e.g. origin/main). Empty: "
+                                                  "the repo's main branch."},
         "focus": {"type": "string", "enum": ["bugs", "security", "performance", "tests", "docs", "all", "deep"],
-                  "description": "bugs (varsayılan): doğruluk hataları. security: güvenlik. performance: ölçülebilir "
-                                 "yavaşlık/kaynak sızıntısı. tests: test edilmeyen yollar, hiçbir şeyi sınamayan "
-                                 "testler. docs: artık yanlış olan yorum/doküman. all: bugs+security tek ajanda. "
-                                 "deep: bugs, security, performance, tests ayrı ajanlarla aynı anda (daha pahalı; "
-                                 "büyük değişiklik ya da PR öncesi). .github/workflows değişirse iş akışı güvenlik "
-                                 "kuralları her odakta kendiliğinden denetlenir."},
-        "post": {"type": "boolean", "description": "target=pr: bulguları PR'a inceleme olarak yaz."},
-        "verify": {"type": "boolean", "description": "Bulguları ayrı bir ajanla doğrula. Varsayılan true."},
+                  "description": "bugs (default): correctness bugs. security: security. performance: measurable "
+                                 "slowness/resource leaks. tests: untested paths, tests that check nothing. docs: "
+                                 "comments/docs that are now wrong. all: bugs+security in one agent. deep: bugs, "
+                                 "security, performance and tests with separate agents at the same time (more "
+                                 "expensive; for big changes or before a PR). If .github/workflows changes, the "
+                                 "workflow security rules are checked automatically with every focus."},
+        "post": {"type": "boolean", "description": "target=pr: write the findings to the PR as a review."},
+        "verify": {"type": "boolean", "description": "Verify the findings with a separate agent. Default true."},
     }, [])
     risk = READ
     parallel_safe = False
