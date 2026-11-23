@@ -19,6 +19,7 @@ import functools
 import hashlib
 import json
 import os
+import queue
 import secrets
 import socket
 import threading
@@ -26,7 +27,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -862,20 +863,45 @@ class ChatGPTProvider(OpenAICompatProvider):
         aborted = [""]  # why the watchdog stopped the stream, if it did: "first" (no first data) or "cancel"
         stop = threading.Event()
 
-        def watch(r: httpx.Response) -> None:
-            """Applies the first-data limit and cancel even while silent: closes the socket to wake the read."""
-            while not stop.wait(self.WATCH_TICK):
-                if cancel is not None and cancel():
-                    aborted[0] = "cancel"
-                elif not got_data and time.monotonic() - t0 > self.FIRST_DATA:
-                    aborted[0] = "first"
-                else:
-                    continue
-                _abort_stream(r)
-                return
-
         def first_timeout() -> ProviderError:
             return ProviderError("network", f"zaman aşımı: model {int(self.FIRST_DATA)} sn'dir ilk cevabı vermedi")
+
+        def lines(r: httpx.Response) -> Iterator[str]:
+            """The stream's lines, read in another thread so the first-data limit and cancel apply even while the
+            server is silent. Closing the socket wakes a blocked read on Linux and Windows but not on macOS, so this
+            loop does not wait for the read: it gives up at once and leaves the reader to end on its own."""
+            q: queue.Queue[Any] = queue.Queue()
+            end = object()
+
+            def pump() -> None:
+                try:
+                    for ln in r.iter_lines():
+                        if stop.is_set():
+                            return
+                        q.put(ln)
+                except BaseException as e:  # noqa: BLE001 - handed to the reading thread
+                    q.put(e)
+                else:
+                    q.put(end)
+
+            threading.Thread(target=pump, daemon=True, name="alice-chatgpt-read").start()
+            while True:
+                try:
+                    item = q.get(timeout=self.WATCH_TICK)
+                except queue.Empty:
+                    if cancel is not None and cancel():
+                        aborted[0] = "cancel"
+                    elif not got_data and time.monotonic() - t0 > self.FIRST_DATA:
+                        aborted[0] = "first"
+                    else:
+                        continue
+                    _abort_stream(r)  # wakes the reader where the OS allows it
+                    raise (StreamCancelled() if aborted[0] == "cancel" else first_timeout()) from None
+                if item is end:
+                    return
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
 
         try:
             # Read timeout for the headers is the first-data limit; in the body (between chunks) it is STREAM_READ.
@@ -891,8 +917,7 @@ class ChatGPTProvider(OpenAICompatProvider):
                 tm = r.request.extensions.get("timeout")
                 if isinstance(tm, dict):
                     tm["read"] = self.STREAM_READ  # httpcore takes its body read timeout from here
-                threading.Thread(target=watch, args=(r,), daemon=True, name="alice-chatgpt-watch").start()
-                for line in r.iter_lines():
+                for line in lines(r):
                     if cancel and cancel():
                         raise StreamCancelled()
                     if not got_data and time.monotonic() - t0 > self.FIRST_DATA:
