@@ -699,12 +699,12 @@ class VoiceAssistant:
             return True
         thr = float(getattr(gate, "threshold", 0.0))
         cached = getattr(self, "_score", None)
-        if cached is not None and cached[0] is audio:  # id() değil: serbest kalan sesin id'si yenisine geçiyor
-            score = cached[1]  # bu ses az önce ölçüldü
+        if cached is not None and cached[0] is audio:  # not id(): a freed Audio's id gets reused by the next one
+            score = cached[1]  # this audio was just scored
         else:
             gate.check(audio.pcm, audio.rate)
             if not getattr(gate, "active", True):
-                return True  # henüz ses tanıtılmadı: herkes kabul, kayıt da yok
+                return True  # no voice enrolled yet: everyone is accepted, nothing is logged
             score = float(gate.last_score)
             self._score = (audio, score)
             note = getattr(gate, "last_note", "")
@@ -719,9 +719,9 @@ class VoiceAssistant:
         return wake and score >= thr - self.GRAY
 
     def _scan_wake(self, gate, audio: Audio, head: str, step: float = 2.0, limit: int = 5) -> tuple[Audio, str]:
-        """Cümlenin başı konuşma değilse (oyun/müzik sesiyle başlayan uzun kayıt) "Hey Alice" ileride olabilir:
-        sonraki pencerelere bak, bulursa kaydı oradan başlat. Başta gerçek konuşma varsa (başkasıyla konuşma)
-        bakılmaz, yani normal sohbet ek iş çıkarmaz."""
+        """If the sentence does not start with speech (a long recording starting with game/music sound), "Hey Alice"
+        may come later: look at the next windows and, if found, start the recording from there. If there is real
+        speech at the start (talking to someone else), it does not look further, so normal chat costs no extra work."""
         head_s = getattr(gate, "HEAD_SECONDS", 2.5)
         start = step
         for _ in range(limit):
@@ -733,13 +733,13 @@ class VoiceAssistant:
                 voice_log(f"uyandırma kaydın {start:.0f}. saniyesinde bulundu: {text}")
                 return part, text
             if text and text.strip():
-                break  # orada gerçek konuşma var ama uyandırma yok
+                break  # there is real speech there, but no wake word
             start += min(step, head_s)
         return audio, head
 
     def _full_text(self, audio: Audio) -> tuple[str, float] | None:
-        """Kısa cümlede uyandırma kontrolü ve Live'a gidecek yazı için TEK yerel geçiş (iki ayrı geçiş ~0,5 sn
-        kaybettiriyordu). Uzun cümlede ya da yazı yolu kapalıysa None: eski baş kontrolü yapılır."""
+        """For a short sentence, ONE local pass for both the wake check and the text sent to Live (two separate passes
+        cost ~0.5 s). For a long sentence, or with the text path off, None: the old head check is done."""
         gate = getattr(self.stt, "wake_gate", None)
         if (gate is None or not hasattr(gate, "transcribe") or self.live_text_min is None
                 or audio.seconds > self.full_text_max):
@@ -754,8 +754,9 @@ class VoiceAssistant:
         return r
 
     def _local_text(self, audio: Audio):
-        """İlk cümleyi Live bağlanırken yerelde (GPU) ad ipuçlarıyla yazıya dök. Döküm güvenilirse Live'a ses
-        yerine bu yazı gider. Dönen fonksiyon sonucu bekler (en çok live_text_wait sn)."""
+        """Transcribe the first sentence locally (GPU) with name hints while Live connects. If the transcript is
+        reliable, this text goes to Live instead of the audio. The returned function waits for the result (at most
+        live_text_wait s)."""
         gate = getattr(self.stt, "wake_gate", None)
         if gate is None or not hasattr(gate, "transcribe") or self.live_text_min is None:
             return None
@@ -770,7 +771,7 @@ class VoiceAssistant:
             box["r"] = gate.transcribe(audio, whisper_prompt((names() if names else [])[:12]))
 
         if pre[0] is not None:
-            box["r"] = pre[0]  # uyandırma kontrolünde zaten yazıya döküldü
+            box["r"] = pre[0]  # already transcribed during the wake check
             t = threading.Thread(target=lambda: None)
         else:
             t = threading.Thread(target=run, daemon=True, name="alice-live-text")
@@ -799,7 +800,7 @@ class VoiceAssistant:
         return self.live is not None and self.live.available and time.monotonic() > self._live_down
 
     def _converse_live(self, text: str, audio: Audio | None = None) -> bool:
-        """Live oturumu aç ve sessizliğe kadar konuş. Açılamazsa False (eski yola dönülür)."""
+        """Open a Live session and talk until silence. False if it cannot be opened (falls back to the old path)."""
         from alice.voice.live import LiveError
 
         if audio is None:
@@ -807,23 +808,23 @@ class VoiceAssistant:
         q: queue.Queue = self._live_q or queue.Queue()
         self._live_q = q
         if hasattr(self.live, "single_turn"):
-            self.live.single_turn = bool(self.social())  # Discord'da/oyunda: tek cevap, sonra kapan
+            self.live.single_turn = bool(self.social())  # in Discord/a game: one answer, then close
         try:
             if audio is not None:
                 social = bool(self.social())
-                follow = self._pre_text[1]  # "Alice" dedi, ALICE tepki verdi: bu cümlede "Alice" geçmesi beklenmez
-                # Seçici modda ilk cümle hep sesle gider: oyun altında yerel döküm saniyelerce bekletiyor (ölçülen
-                # 7,1 sn), metin gidince de Gemini kendi kulağıyla "Alice"i doğrulayamıyordu.
-                # ChatGPT Realtime sesi kendisi duyar: yerel dökümü (≤1,5 sn) bekleyip ses yerine metin gönderme.
+                follow = self._pre_text[1]  # they said "Alice" and ALICE reacted: this sentence is not expected to contain "Alice"
+                # In selective mode the first sentence always goes as audio: under a game the local transcript took seconds
+                # (7.1 s measured), and when text was sent Gemini could not confirm "Alice" with its own ear.
+                # ChatGPT Realtime hears the audio itself: don't wait for the local transcript (≤1.5 s) to send text.
                 hint = None if social or getattr(self.live, "prefers_audio", False) is True else self._local_text(audio)
                 self._pre_text = (None, False)
                 extra: dict[str, Any] = {"hint": hint} if hint else {}
                 if getattr(audio, "ended", None):
-                    extra["ended"] = audio.ended  # uçtan uca gecikme: kullanıcının sustuğu an
+                    extra["ended"] = audio.ended  # end-to-end latency: the moment the user stopped talking
                 if social and follow and getattr(self.live, "prefers_audio", False) is True:
-                    extra["check_addressed"] = True  # Discord devamı: Jev "ALICE'e mi söylendi" desin
+                    extra["check_addressed"] = True  # Discord follow-up: let Jev decide "was this said to ALICE"
                 if social and not follow:
-                    extra["need_wake"] = True  # seçici mod: Gemini de "Alice" duymalı (bkz. LiveSession)
+                    extra["need_wake"] = True  # selective mode: Gemini must hear "Alice" too (see LiveSession)
                 self.live.converse("", q, self.stop_event, first_audio=audio.resample(16000).pcm, **extra)
             else:
                 self.live.converse(text, q, self.stop_event)
@@ -831,7 +832,7 @@ class VoiceAssistant:
         except LiveError as e:
             voice_log(f"live açılamadı, eski yola dönülüyor: {e}")
             if e.limited:
-                # Kota dolu: her 5 dakikada aynı İngilizce hatayı göstermek yerine bir saat normal sesli yol.
+                # Quota exhausted: instead of showing the same English error every 5 minutes, use the normal voice path for an hour.
                 self._live_down = time.monotonic() + LIVE_LIMIT_WAIT
                 self.emit("Gemini canlı ses kotası doldu; bir saat normal sesli yolla (STT + model + TTS) devam ediyorum.")
             else:
@@ -843,36 +844,36 @@ class VoiceAssistant:
             if getattr(self.live, "hushed", False) is True:
                 self._hush("canlı konuşmada")
             else:
-                # Pencere son konuşmadan (Alice'in ya da kullanıcının) itibaren sayılır; Live zaten o kadar sessizlikten
-                # sonra kapandıysa ek süre kalmaz, yeniden "Alice" gerekir.
+                # The window counts from the last speech (Alice's or the user's); if Live already closed after that much
+                # silence, no time is left and "Alice" is needed again.
                 last = getattr(self.live, "last_active", None)
                 base = last if isinstance(last, (int, float)) and last > 0 else time.monotonic()
-                # Arkadaşa söylenmiş cümle (Jev) yeni bir takip penceresi açmasın.
+                # A sentence said to a friend (Jev) must not open a new follow-up window.
                 self.armed_until = 0.0 if getattr(self.live, "declined", False) is True else base + self.live_follow
 
-    UTTER_MAX_AGE = 8.0  # sn: bundan eski cümle, arkasında yenisi varsa atlanır; "Alice"siz devam da sayılmaz
-    UTTER_HARD_AGE = 20.0  # sn: bundan eskisi her durumda atlanır (artık cevaplamanın anlamı yok)
+    UTTER_MAX_AGE = 8.0  # s: an older sentence is skipped if a newer one is queued behind it; it also no longer counts as a follow-up without "Alice"
+    UTTER_HARD_AGE = 20.0  # s: anything older is always skipped (no point answering anymore)
 
     def _utter_worker(self) -> None:
         while True:
             audio, direct, started, ptt, queued = self._utter_q.get()
             age = time.monotonic() - queued
             if not ptt and not self._awaiting_answer and age > self.UTTER_MAX_AGE:
-                # Oyunda Whisper yavaşlayınca sıradaki tek cümle de atılıyor, içindeki "Alice" duyulmuyordu (iki
-                # günde 59 cümle, çoğu 20 sn altı). Arkasından yenisi gelmediyse dinlenir, ama artık takip penceresi
-                # dolmuştur: sadece açıkça "Alice" denmişse cevap verilir.
+                # In games, when Whisper slowed down, even a single queued sentence was dropped and the "Alice" in it was
+                # never heard (59 sentences in two days, most under 20 s). If no newer one follows, it is processed, but
+                # the follow-up window has expired: it is answered only if "Alice" was said explicitly.
                 if age > self.UTTER_HARD_AGE or not self._utter_q.empty():
                     voice_log(f"eski cümle atlandı ({age:.1f} sn sırada bekledi, {audio.seconds:.1f} sn ses)")
                     continue
                 direct, started = False, None
             try:
                 self.handle_audio(audio, direct, started, ptt)
-            except Exception as e:  # noqa: BLE001 - tek cümle dinlemeyi bozmasın, ama izi kalsın
+            except Exception as e:  # noqa: BLE001 - one sentence must not break listening, but leave a trace
                 voice_log(f"cümle işlenemedi ({type(e).__name__}): {e}")
 
     def _announce(self, text: str) -> None:
-        """Canlı konuşma kapandıktan sonra biten işin sonucu: Adada göster, susturulmadıysa söyle ("Alice sus"
-        denince sonuç kapalı bağlantıya gidip kayboluyordu)."""
+        """Result of a job that finished after the live conversation closed: show it on the island and say it unless
+        hushed (after "Alice sus" (Alice, be quiet) the result went to the closed connection and was lost)."""
         voice_log(f"arka plan sonucu konuşma dışında iletildi: {text[:200]}")
         try:
             from alice.hud import views
@@ -884,7 +885,8 @@ class VoiceAssistant:
             self.speaker.say(text, "calm")
 
     def _corrected(self, text: str) -> None:
-        """Kullanıcı az önceki uyanmayı düzeltti ("sana demedim", "yanlış anladın"): korpus o cümleyi etiketler."""
+        """The user corrected the last wake-up ("sana demedim" (I wasn't talking to you), "yanlış anladın" (you
+        misunderstood)): the corpus labels that sentence."""
         if not self._last_wake_at or time.monotonic() - self._last_wake_at > 120:
             return
         hook = getattr(self, "on_correct", None)
@@ -895,12 +897,12 @@ class VoiceAssistant:
                 voice_log(f"korpus düzeltmesi yazılamadı: {e}")
 
     def _hud(self, state: str | None, detail: str = "") -> None:
-        """Sesli hal Adada (klasik yol da: eskiden sadece Live gösteriyordu)."""
+        """Voice state on the island (the classic path too: it used to be shown only for Live)."""
         try:
             from alice.hud import views
 
             views.voice_state(state, detail)
-        except Exception:  # noqa: BLE001 - HUD hatası konuşmayı bozmasın
+        except Exception:  # noqa: BLE001 - a HUD error must not break the conversation
             pass
 
     def _worker(self) -> None:
@@ -908,7 +910,7 @@ class VoiceAssistant:
             job = self._jobs.get()
             try:
                 self._handle_job(job)
-            except Exception as e:  # noqa: BLE001 - tek bir iş (STT, CUDA, ağ) sesli asistanı kalıcı susturmasın
+            except Exception as e:  # noqa: BLE001 - one job (STT, CUDA, network) must not silence the voice assistant for good
                 self._busy.clear()
                 voice_log(f"iş hatası ({type(e).__name__}): {e}")
                 self.emit(f"hata: {e}")
@@ -916,23 +918,24 @@ class VoiceAssistant:
     LIVE_Q_ORPHAN = 20.0  # sn
 
     def _tune_live_gate(self) -> None:
-        """ALICE canlı konuşmada konuşurken kendi sesi ve gürültü sözünü kesmesin: VAD eşiği yükselir (eskiden sadece
-        klasik yolda vardı; kesmelerin ~%21'inde duyulan metin boştu). Discord/oyunda ayrıca kesen sesin kullanıcıya
-        ait olduğu doğrulanır."""
+        """While ALICE speaks in a live conversation, its own voice and noise must not interrupt it: the VAD threshold
+        goes up (this used to exist only on the classic path; in ~21% of interruptions the heard text was empty). In
+        Discord/games the interrupting voice is also verified to be the user's."""
         gate = self.live_gate
         playing = bool(getattr(self.live, "playing", False))
         gate.vad.boost = 2.5 if playing else 1.0
-        # ALICE konuşurken araya giren ses kullanıcının mı (ses izi)? Doğrulanırsa canlı model susar (barge_ok).
-        # Eskiden sadece Discord/oyunda doğrulanıyor, ChatGPT oturumu da konuşurken gelen her kareyi atıyordu:
-        # kullanıcı ALICE'in sözünü hiç kesemiyordu (7 Kasım). Yankı (ALICE'in sesi) ses izinden geçemez.
+        # Is the voice cutting in while ALICE speaks the user's (voice print)? If verified, the live model goes quiet
+        # (barge_ok). It used to be verified only in Discord/games, and the ChatGPT session dropped every frame
+        # arriving while it spoke: the user could never interrupt ALICE (7 November). Echo (ALICE's own voice)
+        # cannot pass the voice print.
         verify = playing and self._gate_ready() and (self.barge_in or bool(self.social()))
         gate.verify = (lambda pcm: self.speaker_gate.check(pcm, 16000)) if verify else None
 
     def _handle_job(self, job) -> None:
-        started = time.monotonic()  # konuşma bitti, iş sıraya girdi: buradan ilk sese kadar gecikme sayılır
+        started = time.monotonic()  # speech ended and the job is queued: latency is counted from here to the first sound
         audio = job if isinstance(job, Audio) else None
         if audio is not None:
-            # Live açılamazsa eski yol: önce yazıya çevir.
+            # If Live cannot be opened, the old path: transcribe first.
             if self._live_ready():
                 self._busy.set()
                 try:
@@ -942,8 +945,8 @@ class VoiceAssistant:
                     voice_log(f"live hatası: {e}")
                 finally:
                     self._busy.clear()
-            # Uyanınca açılan kuyruğu yalnızca canlı konuşma boşaltır. Live bu arada "hazır değil"e döndüyse (az önce
-            # hata verdi) kuyruk açık kalıyor, her mikrofon karesi oraya gidiyor ve ALICE hiçbir şey duymuyordu.
+            # Only the live conversation drains the queue opened on wake-up. If Live went back to "not ready" meanwhile
+            # (it just errored), the queue stayed open, every mic frame went there and ALICE heard nothing.
             self._live_q = None
             try:
                 text = strip_wake(self.stt.transcribe(audio)) or ""
@@ -976,7 +979,7 @@ class VoiceAssistant:
         reply = ""
         old_role = getattr(self.agent, "role", "brain")
         if self.smart_route and old_role == "voice" and needs_thinking(text):
-            self.agent.role = "brain"  # bu tur için: biraz geç başlar ama doğru ve dolu cevap verir
+            self.agent.role = "brain"  # for this turn: starts a bit later but gives a correct, complete answer
             voice_log("düşünmesi gereken soru: beyin modeline gidiyor")
         expect = getattr(self.speaker, "expect", None)
         if callable(expect):
@@ -1000,7 +1003,7 @@ class VoiceAssistant:
         self.speaker.wait(120)
         self._hud(None)
         if callable(expect):
-            expect(None)  # cevapta hiç ses olmadıysa sonraki bildirim yanlışlıkla ölçülmesin
+            expect(None)  # if the answer had no audio, don't measure the next notification by mistake
         self._note_cut()
         if not self.muted:
             self.armed_until = time.monotonic() + self.follow_up
@@ -1012,8 +1015,8 @@ class VoiceAssistant:
                        model=", ".join(dict.fromkeys(self.ui.models)))
 
     def _note_cut(self) -> None:
-        """Söz kesildiyse söylenemeyen kısmı cevabın altına not et: "devam et" deyince model oradan sürdürsün,
-        baştan anlatmasın (model cevabın tamamını söylediğini sanıyordu)."""
+        """If ALICE was interrupted, note the unspoken part under the answer: on "devam et" (go on) the model continues
+        from there instead of starting over (the model thought it had said the whole answer)."""
         cut, self._cut = self._cut, None
         msgs = getattr(self.agent, "messages", None)
         if not cut or not isinstance(msgs, list):
@@ -1030,7 +1033,7 @@ class VoiceAssistant:
             last["content"] = last["content"].rstrip() + "\n\n" + note
             voice_log(f"söz kesildi, söylenemeyen kısım not edildi: {unheard[:120]}")
 
-    # ------------------------------------------------------------------ döngü
+    # ------------------------------------------------------------------ loop
     def run(self) -> None:
         self.ui.ask = self.ask_yes_no
         ptt = PushToTalk(self.ptt_key) if self.ptt_key else None
@@ -1041,7 +1044,7 @@ class VoiceAssistant:
             if opened is not None:
                 cm, mic = opened
                 try:
-                    while True:  # beklenmedik bir hata dinlemeyi kalıcı öldürmesin: kaydet, toparlan, sürdür
+                    while True:  # an unexpected error must not kill listening for good: log it, recover, continue
                         try:
                             self._listen(mic, ptt, wake)
                             break
@@ -1057,9 +1060,9 @@ class VoiceAssistant:
                 ptt.stop()
 
     def _open_mic(self, retry: float = 5.0):
-        """Mikrofonu aç. Aygıt yoksa/meşgulse yığın dökümüyle ölmek yerine (çekirdekte ses iş parçacığı sessizce
-        bitiyordu) bir kez anlaşılır mesaj ver ve aralıklarla yeniden dene; takılınca dinlemeye başlar.
-        Paket eksikse (sounddevice) denemenin anlamı yok: None."""
+        """Open the microphone. If the device is missing/busy, instead of dying with a stack trace (in the core the
+        audio thread ended silently), give one clear message and retry at intervals; listening starts once it is
+        plugged in. If the package (sounddevice) is missing there is no point retrying: None."""
         warned = False
         while not self.stop_event.is_set():
             try:
@@ -1070,7 +1073,7 @@ class VoiceAssistant:
                 self.emit(f"mikrofon kullanılamıyor ({getattr(e, 'name', None) or e} kurulu değil): "
                           "pip install 'alice-harness[voice]'")
                 return None
-            except Exception as e:  # noqa: BLE001 - PortAudioError, OSError: aygıt yok/meşgul
+            except Exception as e:  # noqa: BLE001 - PortAudioError, OSError: device missing/busy
                 if not warned:
                     warned = True
                     voice_log(f"mikrofon açılamadı, {retry:.0f} sn'de bir yeniden denenecek: {e}")
@@ -1086,7 +1089,7 @@ class VoiceAssistant:
         mic_down: list[float] = []
 
         def mic_failed(e: Exception) -> None:
-            """Kulaklık çıkarıldı/kapandı: dinlemeyi öldürme, bekle ve yeniden açmayı dene."""
+            """The headset was unplugged/turned off: don't kill listening, wait and try to reopen."""
             if not mic_down:
                 voice_log(f"mikrofon okunamadı, yeniden deneniyor: {e}")
                 self.emit("mikrofon okunamıyor; tekrar deniyorum")
@@ -1106,7 +1109,7 @@ class VoiceAssistant:
                     self._interrupt()
                     try:
                         audio = ptt.record(mic)
-                    except Exception as e:  # noqa: BLE001 - bas-konuş sırasında mikrofon düştü: döngü ölmesin
+                    except Exception as e:  # noqa: BLE001 - the mic dropped during push-to-talk: the loop must not die
                         mic_failed(e)
                         continue
                     self._utter_q.put((audio, True, None, True, time.monotonic()))
@@ -1122,15 +1125,15 @@ class VoiceAssistant:
                         voice_log(f"mikrofon yeniden açıldı: {getattr(mic, 'name', '')}")
                     except Exception as e:  # noqa: BLE001
                         voice_log(f"mikrofon yeniden açılamadı: {e}")
-                # Bir kez oku: Live kapanırken başka iş parçacığı None yapabiliyor; kontrol ile put arasında olunca
-                # dinleme döngüsü çöküyor ve ALICE yeniden başlatılana kadar hiç duymuyordu (2026-11-02).
+                # Read it once: another thread can set it to None while Live closes; when that happened between the check
+                # and the put, the listening loop crashed and ALICE heard nothing until restarted (2026-11-02).
                 live_q = self._live_q
                 if (live_q is not None and not self._busy.is_set()
                         and time.monotonic() - self._live_q_at > self.LIVE_Q_ORPHAN):
-                    # Kuyruk açıldı ama onu boşaltacak konuşma hiç başlamadı: mikrofon kalıcı sağır kalmasın.
+                    # The queue was opened but the conversation that drains it never started: the mic must not stay deaf.
                     voice_log("canlı konuşma kuyruğu sahipsiz kaldı, mikrofon normale döndü")
                     self._live_q = live_q = None
-                if live_q is not None:  # canlı konuşmada mikrofon (gürültü süzülerek) Live'a
+                if live_q is not None:  # in a live conversation the mic goes to Live (noise filtered)
                     if self.live_gate is not None:
                         self._tune_live_gate()
                     for f in (self.live_gate.feed(frame) if self.live_gate is not None else [frame]):
@@ -1141,25 +1144,25 @@ class VoiceAssistant:
                     self.muted = False
                     self.armed_until = time.monotonic() + self.follow_up
                     self.emit("uyandım")
-                # ALICE konuşurken kendi sesini konuşma sanmasın.
+                # ALICE must not mistake its own voice for speech while it talks.
                 self.vad.boost = 2.5 if self.speaker.speaking else 1.0
                 yield frame
 
         gate = getattr(self.stt, "wake_gate", None)
         if gate is not None and hasattr(gate, "warm_up"):
             gate.warm_up()
-        # preroll 20 kare (0,6 sn): konuşma algılanmadan hemen önce söylenen kısık "Alice" de cümleye girsin
+        # preroll 20 frames (0.6 s): a quiet "Alice" said right before speech is detected still makes it into the sentence
         for audio in utterances(frames(), self.vad, stop=self.stop_event.is_set, end_silence=self.end_silence,
                                 on_start=self._on_speech_start, preroll=20):
             if self._social_skip():
                 continue
             started = self._speech_at or None
             direct = self._armed(started)
-            audio.ended = time.monotonic()  # gecikme kullanıcının sustuğu andan ölçülsün
+            audio.ended = time.monotonic()  # latency is measured from the moment the user stopped talking
             self._utter_q.put((audio, direct, started, False, time.monotonic()))
 
     def _social_skip(self) -> bool:
-        """Discord/oyun: açık mikrofondan gelen cümle ALICE'e gitmez (sadece bas-konuş)."""
+        """Discord/games: sentences from the open mic don't go to ALICE (push-to-talk only)."""
         why = self.social() if self.social_ptt else ""
         if why and why != self._social_noted:
             voice_log(f"{why}: mikrofon ALICE'e kapalı, sadece bas-konuş ({self.ptt_key})")
@@ -1167,13 +1170,13 @@ class VoiceAssistant:
         return bool(why)
 
     def _mic_health(self, frame: bytes) -> bool:
-        """Mikrofon tamamen sessizse (sessize alınmış, kapalı kulaklık) ALICE hiçbir şey duymaz ve kimse nedenini
-        bilmez. 15 sn boyunca hiç ses yoksa bir kez söyle ve kaydet; ses geri gelince de kaydet."""
+        """If the mic is completely silent (muted, headset off), ALICE hears nothing and nobody knows why. If there is
+        no sound at all for 15 s, say so once and log it; log it again when sound comes back."""
         """Döner: mikrofon akışı yeniden açılmalı mı (dijital sessizlik sürüyor; her 15 sn'de bir dener)."""
         now = time.monotonic()
         if not hasattr(self, "_mic_silent_since"):
             self._mic_silent_since, self._mic_warned, self._mic_retry = now, False, now
-        if any(frame):  # tek bir sıfırdan farklı örnek bile yeter: dijital sessizlik değil
+        if any(frame):  # a single non-zero sample is enough: it is not digital silence
             if self._mic_warned:
                 voice_log("mikrofondan ses geliyor yine")
             self._mic_silent_since, self._mic_warned, self._mic_retry = now, False, now
@@ -1194,14 +1197,15 @@ class VoiceAssistant:
 
 
 def _gate_time(gate) -> str:
-    """Uyandırma kontrolünün süresi; modeli beklediyse ayrıca ("base 1.20sn, 0.80 bekleme")."""
+    """How long the wake check took, plus the model wait if there was one ("base 1.20sn, 0.80 bekleme")."""
     total, wait = float(getattr(gate, "last_seconds", 0) or 0), float(getattr(gate, "last_wait", 0) or 0)
     extra = f", {wait:.2f} bekleme" if isinstance(getattr(gate, "last_wait", None), (int, float)) and wait >= 0.1 else ""
     return f"{getattr(gate, 'model_name', '?')} {total:.2f}sn{extra}"
 
 
 def live_text_options(v: dict[str, Any]) -> dict[str, Any]:
-    """[voice] live_text_min: ilk cümlenin yerel dökümüne güven eşiği (boş/false = hep ses gönder)."""
+    """[voice] live_text_min: confidence threshold for the local transcript of the first sentence (empty/false =
+    always send audio)."""
     m = v.get("live_text_min", -0.7)
     return {"live_text_min": None if m in ("", False, None) else float(m),
             "live_text_wait": float(v.get("live_text_wait", 1.5)),
@@ -1212,10 +1216,10 @@ def live_text_options(v: dict[str, Any]) -> dict[str, Any]:
 
 
 def make_live(cfg, agent):
-    """[voice] mode = "live" ise canlı konuşma oturumu.
+    """The live conversation session when [voice] mode = "live".
 
-    live_backend = "auto": önce ChatGPT Realtime (yerel Claude Code proxy'si üzerinden; ses kalitesi en iyi),
-    olmazsa Gemini Live. "chatgpt": yalnız ChatGPT. "gemini": yalnız Gemini."""
+    live_backend = "auto": ChatGPT Realtime first (through the local Claude Code proxy; best voice quality),
+    otherwise Gemini Live. "chatgpt": ChatGPT only. "gemini": Gemini only."""
     v = cfg.data.get("voice", {})
     if str(v.get("mode", "live")) != "live":
         return None
@@ -1228,7 +1232,7 @@ def make_live(cfg, agent):
             if rt.available:
                 voice_log(f"canlı konuşma: ChatGPT realtime ({rt.model})")
                 return rt
-        except Exception as e:  # noqa: BLE001 - gerçek zamanlı uç yoksa Gemini'ye düş
+        except Exception as e:  # noqa: BLE001 - no realtime endpoint: fall back to Gemini
             voice_log(f"ChatGPT realtime kullanılamıyor: {e}")
         if backend != "auto":
             return None
@@ -1239,7 +1243,7 @@ def make_live(cfg, agent):
 
 
 def build_voice_agent(cfg, inner_ui=None, speaker: Speaker | None = None, cwd=None):
-    """Sesli konuşma için ajan: normal araçlar + ses talimatı."""
+    """Agent for voice conversations: the normal tools + voice instructions."""
     from pathlib import Path
 
     from alice.agent import Agent
