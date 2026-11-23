@@ -59,7 +59,28 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         with:
           name: coverage
-          path: coverage.xml
+          path: |
+            coverage.xml
+            .coverage
+          include-hidden-files: true
+
+  # Coverage badge (#228): on every push to main, python-coverage-comment-action stores the coverage rate, an SVG
+  # badge and the HTML report on the repo's own `python-coverage-comment-action-data` branch, with the built-in
+  # token. No external service or secret. Pull requests don't get coverage comments.
+  coverage-badge:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push to the coverage data branch
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: coverage
+      - uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
 
   # The Linux install the README tells people to run, on a clean Ubuntu.
   linux-install:
