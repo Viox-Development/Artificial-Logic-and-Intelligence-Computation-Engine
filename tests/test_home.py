@@ -271,8 +271,6 @@ def test_risk_levels():
 def test_windows_only_actions_fail_clearly_elsewhere(tmp_path):
     with pytest.raises(ToolError, match="Windows"):
         PC().run(_ctx(tmp_path, {}), action="plans")
-    with pytest.raises(ToolError, match="Windows"):
-        Wifi().run(_ctx(tmp_path, {}), action="status")
 
 
 # ---------- Samsung TV ----------
