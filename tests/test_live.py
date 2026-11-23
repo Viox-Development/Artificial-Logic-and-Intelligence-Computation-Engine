@@ -537,7 +537,7 @@ def test_slow_think_does_not_keep_the_session_open(monkeypatch):
 def test_live_prompt_keeps_simple_questions_off_think():
     from alice.voice.live import LIVE_PROMPT
 
-    assert "destitute ne demek" in LIVE_PROMPT and "think ÇAĞIRMA" in LIVE_PROMPT
+    assert "destitute ne demek" in LIVE_PROMPT and "DON'T call think" in LIVE_PROMPT
 
 
 def test_filler_plays_when_model_calls_a_tool_silently(monkeypatch, tmp_path):

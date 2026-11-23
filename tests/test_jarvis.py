@@ -332,12 +332,12 @@ def test_live_setup_declares_think_and_history():
     setup = s._setup("m")["setup"]
     assert THINK_DECL in setup["tools"][0]["functionDeclarations"]
     text = setup["systemInstruction"]["parts"][0]["text"]
-    assert "Az önceki konuşma" in text and "yarınki sınavı" in text and "Ne zaman think" in text
+    assert "# Recent conversation" in text and "yarınki sınavı" in text and "When to think" in text
     s.think = False
     s._history = [(time.time() - 7200, "eski", "")]
     setup = s._setup("m")["setup"]
     assert THINK_DECL not in setup["tools"][0]["functionDeclarations"]
-    assert "Az önceki konuşma" not in setup["systemInstruction"]["parts"][0]["text"]
+    assert "# Recent conversation" not in setup["systemInstruction"]["parts"][0]["text"]
 
 
 # ----------------------------------------------------------------------------------------- provider
