@@ -12,15 +12,17 @@ from alice.tools.base import DANGER, READ, SEND, Tool, ToolContext, ToolError, T
 class PermissionsTool(Tool):
     name = "permissions"
     description = (
-        "İzin kuralları. suggest: kullanıcının daha önce hep onayladığı (en az 3 kez, hiç reddetmediği) işlerden "
-        "'artık sormadan yap' kuralları önerir; tehlikeli ve başkasına giden işler önerilmez. apply: kullanıcı "
-        "açıkça seçtiği kuralları bu projenin izin listesine ekler. list: bu projede geçerli kurallar.\n"
-        "Önerileri önce kullanıcıya göster; hangilerini uygulayacağına o karar versin, kendin apply yapma.")
+        "Permission rules. suggest: proposes 'do it without asking from now on' rules from actions the user always "
+        "approved before (at least 3 times, never refused); dangerous and outward actions are not suggested. apply: "
+        "adds the rules the user explicitly chose to this project's allow list. list: the rules in effect in this "
+        "project.\n"
+        "Show the suggestions to the user first; let them decide which to apply, don't apply them yourself.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["suggest", "apply", "list"], "description": "Yapılacak iş."},
-        "rules": {"type": "array", "items": {"type": "string", "description": "Kural, ör. run_command(npm test*)."},
-                  "description": "apply: eklenecek kurallar (suggest çıktısından, kullanıcının seçtikleri)."},
-        "everywhere": {"type": "boolean", "description": "suggest: yalnız bu projedeki değil bütün sorulanlara bak."},
+        "action": {"type": "string", "enum": ["suggest", "apply", "list"], "description": "What to do."},
+        "rules": {"type": "array", "items": {"type": "string", "description": "Rule, e.g. run_command(npm test*)."},
+                  "description": "apply: rules to add (from the suggest output, the ones the user chose)."},
+        "everywhere": {"type": "boolean", "description": "suggest: look at everything asked, not only in this "
+                                                         "project."},
     }, ["action"])
     risk = READ
 
@@ -62,16 +64,16 @@ class PermissionsTool(Tool):
 class Share(Tool):
     name = "share"
     description = (
-        "Bir dosyayı (rapor, sayfa, markdown, kod) bağlantıyla paylaşılabilir yapar: kullanıcının GitHub hesabında "
-        "gizli bir Gist olarak yayınlar (bağlantıyı bilen görür, aramada çıkmaz). Markdown ve kod GitHub'da "
-        "doğrudan görünür; HTML için ayrıca tarayıcıda açılan bir önizleme adresi verilir.\n"
-        "Dışarıya içerik yayınlar: yalnız kullanıcı paylaşmak istediğinde kullan; gizli bilgi (anahtar, parola, "
-        "kişisel veri) içeren dosyayı paylaşma.")
+        "Makes a file (report, page, markdown, code) shareable by link: publishes it as a secret Gist on the user's "
+        "GitHub account (anyone with the link can see it; it doesn't show up in search). Markdown and code show "
+        "directly on GitHub; for HTML a preview address that opens in the browser is also given.\n"
+        "It publishes content outside: use it only when the user wants to share; don't share a file with secrets "
+        "(keys, passwords, personal data).")
     parameters = obj({
         "paths": {"type": "array", "items": {"type": "string", "description": "Dosya yolu."},
-                  "description": "Paylaşılacak dosyalar (en fazla 10, her biri 1 MB'a kadar)."},
-        "title": {"type": "string", "description": "Kısa açıklama (Gist başlığı)."},
-        "public": {"type": "boolean", "description": "Herkese açık Gist (aramada çıkar). Varsayılan false (gizli)."},
+                  "description": "Files to share (at most 10, up to 1 MB each)."},
+        "title": {"type": "string", "description": "Short description (Gist title)."},
+        "public": {"type": "boolean", "description": "Public Gist (shows up in search). Default false (secret)."},
     }, ["paths"])
     risk = SEND
 
