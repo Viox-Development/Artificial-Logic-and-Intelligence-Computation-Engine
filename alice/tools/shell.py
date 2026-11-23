@@ -152,28 +152,30 @@ class BgProc:
 class RunCommand(Tool):
     name = "run_command"
     description = (
-        "Shell komutu çalıştırır (Windows: PowerShell 5.1, diğer: bash); çıkış kodu ve stdout+stderr döner. "
-        "Penceresiz, arka planda çalışır.\n"
-        "- Dosya okuma/arama/düzenleme için read_file, grep, glob, edit_file; pencereli program için windows "
-        "action=open; git, ağ, arayüz işleri için ilgili özel araçlar.\n"
-        "- Sunucu/izleme gibi sürekli işler: background=true, sonra process_output.\n"
-        "- Bağımsız komutları aynı cevapta ayrı çağrılar olarak iste (paralel çalışır); birbirine bağlı olanları "
-        "tek komutta ';' ile sırala (5.1'de '&&' yok).\n"
-        "- Python kodu için command yerine python ver: kod olduğu gibi gider, tırnak kaçışı gerekmez. Girdi için stdin.\n"
-        "- Uzun çıktıda tekrarlanan satırlar birleşir, hata satırları ortadan da korunur; tamamı bir dosyaya yazılır."
+        "Runs a shell command (Windows: PowerShell 5.1, others: bash) and returns the exit code and stdout+stderr. "
+        "Runs without a window, in the background.\n"
+        "- To read/search/edit files use read_file, grep, glob, edit_file; for a program with a window use windows "
+        "action=open; for git, network and UI work use the matching dedicated tools.\n"
+        "- For long-running work such as servers or watchers: background=true, then process_output.\n"
+        "- Ask for independent commands as separate calls in the same reply (they run in parallel); chain dependent "
+        "ones in one command with ';' (5.1 has no '&&').\n"
+        "- For Python code pass python instead of command: the code goes through as is, no quote escaping needed. "
+        "Use stdin for input.\n"
+        "- In long output repeated lines are merged and error lines are kept even from the middle; the full output "
+        "is written to a file."
     )
     parameters = obj({
-        "command": {"type": "string", "description": "Çalıştırılacak komut, ör. 'git status' ya da 'python -m pytest -q'. "
-                    "python verildiyse boş bırak."},
-        "python": {"type": "string", "description": "Çalıştırılacak Python kodu (çok satırlı olabilir). PowerShell'den "
-                   "geçmez, tırnaklar bozulmaz. Örn: \"import json; print(json.load(open('a.json'))['x'])\"."},
-        "stdin": {"type": "string", "description": "Komutun ya da Python kodunun standart girdisine verilecek metin."},
-        "cwd": {"type": "string", "description": "Komutun çalışacağı klasör. Varsayılan: çalışma klasörü."},
-        "timeout": {"type": "integer", "description": "Saniye; dolunca komut öldürülür. Varsayılan 120, en fazla 1800."},
-        "background": {"type": "boolean", "description": "true: beklemeden arka planda başlat ve pid döndür. "
-                       "Varsayılan false."},
-        "unsandboxed": {"type": "boolean", "description": "Sadece komut sandbox yüzünden başarısız olduysa ve "
-                        "proje dışına yazması gerçekten gerekiyorsa true (kullanıcıya her zaman sorulur)."},
+        "command": {"type": "string", "description": "Command to run, e.g. 'git status' or 'python -m pytest -q'. "
+                    "Leave empty when python is given."},
+        "python": {"type": "string", "description": "Python code to run (can be multi-line). It does not go through "
+                   "PowerShell, so quotes stay intact. E.g. \"import json; print(json.load(open('a.json'))['x'])\"."},
+        "stdin": {"type": "string", "description": "Text to pass to the standard input of the command or Python code."},
+        "cwd": {"type": "string", "description": "Folder the command runs in. Default: the working folder."},
+        "timeout": {"type": "integer", "description": "Seconds; the command is killed when it runs out. Default 120, at most 1800."},
+        "background": {"type": "boolean", "description": "true: start in the background without waiting and return the pid. "
+                       "Default false."},
+        "unsandboxed": {"type": "boolean", "description": "true only if the command failed because of the sandbox and "
+                        "really needs to write outside the project (the user is always asked)."},
     }, [])
     risk = EXEC
 
@@ -359,16 +361,16 @@ def _ps_hint(command: str, err: str) -> str:
 class ProcessOutput(Tool):
     name = "process_output"
     parallel_safe = True
-    description = ("Arka planda çalışan süreçlerin (run_command background=true) durumunu (çalışıyor / bitti + çıkış kodu) ve "
-                   "çıktısının sonunu gösterir; hemen döner, beklemez.\n"
-                   "- pid verilmezse ALICE'in başlattığı bütün arka plan süreçlerini listeler.\n"
-                   "- Bir sürecin bitmesini ya da çıktısında bir satır (\"ready\", \"error\") görünmesini beklemek için bunu "
-                   "tekrar tekrar çağırma; process_wait kullan.\n"
-                   "- ALICE'in başlatmadığı programlar için process_list.")
+    description = ("Shows the status (running / finished + exit code) and the end of the output of background "
+                   "processes (run_command background=true); returns at once, does not wait.\n"
+                   "- Without a pid, lists every background process ALICE started.\n"
+                   "- Don't call this over and over to wait for a process to finish or for a line (\"ready\", "
+                   "\"error\") to appear in its output; use process_wait.\n"
+                   "- For programs ALICE did not start, use process_list.")
     parameters = obj({
-        "pid": {"type": "integer", "description": "run_command'ın döndürdüğü pid. Boş: tüm arka plan süreçleri."},
-        "tail_chars": {"type": "integer", "description": "Çıktının sonundan kaç karakter. Varsayılan 4000; "
-                       "0: çıktı yok, yalnız durum."},
+        "pid": {"type": "integer", "description": "pid returned by run_command. Empty: all background processes."},
+        "tail_chars": {"type": "integer", "description": "How many characters from the end of the output. Default 4000; "
+                       "0: no output, status only."},
     })
 
     def run(self, ctx: ToolContext, pid: int | None = None, tail_chars: int = 4000) -> ToolResult:
@@ -393,11 +395,11 @@ class ProcessOutput(Tool):
 
 class ProcessStop(Tool):
     name = "process_stop"
-    description = ("ALICE'in run_command(background=true) ile başlattığı bir süreci, alt süreçleriyle birlikte "
-                   "durdurur ve son çıktısını döndürür.\n"
-                   "- İşi biten sunucu/izleme süreçlerini açık bırakma; bitince bununla kapat.\n"
-                   "- ALICE'in başlatmadığı programlar (kullanıcının açtığı uygulamalar) için process_kill kullan.")
-    parameters = obj({"pid": {"type": "integer", "description": "run_command'ın döndürdüğü pid."}}, ["pid"])
+    description = ("Stops a process ALICE started with run_command(background=true), together with its child "
+                   "processes, and returns its last output.\n"
+                   "- Don't leave finished server/watcher processes running; close them with this when done.\n"
+                   "- For programs ALICE did not start (apps the user opened), use process_kill.")
+    parameters = obj({"pid": {"type": "integer", "description": "pid returned by run_command."}}, ["pid"])
 
     risk = EXEC
 
@@ -554,19 +556,22 @@ class ProcessWait(Tool):
 
     name = "process_wait"
     parallel_safe = True
-    description = ("Arka plandaki bir süreç bitene ya da çıktısında aranan desen görünene kadar bekler, sonra "
-                   "eşleşen satırları (ya da bitiş kodunu) ve çıktının sonunu döndürür.\n"
-                   "- \"Sunucu hazır olunca\", \"derleme bitince\", \"testler bitince\" gibi beklemeler için. "
-                   "process_output'u döngüde çağırmak ya da run_command ile sleep yazmak yerine bunu kullan.\n"
-                   "- pattern hem başarıyı hem hatayı yakalasın: ör. 'ready|listening|error|Traceback'. Sadece "
-                   "başarıyı ararsan süreç çöktüğünde zaman aşımına kadar boşuna beklersin.\n"
-                   "- Desen verilmezse süreç bitene kadar bekler. Sadece bu çağrıdan SONRA gelen çıktıya bakılır.\n"
-                   "- Zaman aşımında süreç durdurulmaz; durum ve çıktı döner, istersen tekrar bekle.")
+    description = ("Waits until a background process finishes or a pattern appears in its output, then returns "
+                   "the matching lines (or the exit code) and the end of the output.\n"
+                   "- For waits like \"when the server is ready\", \"when the build finishes\", \"when the tests "
+                   "finish\". Use this instead of calling process_output in a loop or writing sleep with "
+                   "run_command.\n"
+                   "- Make pattern catch both success and failure: e.g. 'ready|listening|error|Traceback'. If you "
+                   "only look for success, you wait in vain until the timeout when the process crashes.\n"
+                   "- Without a pattern it waits until the process finishes. Only output that arrives AFTER this call "
+                   "is checked.\n"
+                   "- On timeout the process is not stopped; the status and output are returned, and you can wait "
+                   "again.")
     parameters = obj({
-        "pid": {"type": "integer", "description": "run_command(background=true)'ın döndürdüğü pid."},
-        "pattern": {"type": "string", "description": "Çıktıda beklenen düzenli ifade (büyük/küçük harf duyarsız), "
-                    "ör. 'Local:.*http|error'. Boş: süreç bitene kadar bekle."},
-        "timeout": {"type": "integer", "description": "En fazla kaç saniye beklensin. Varsayılan 60, en fazla 600."},
+        "pid": {"type": "integer", "description": "pid returned by run_command(background=true)."},
+        "pattern": {"type": "string", "description": "Regular expression expected in the output (case-insensitive), "
+                    "e.g. 'Local:.*http|error'. Empty: wait until the process finishes."},
+        "timeout": {"type": "integer", "description": "Maximum seconds to wait. Default 60, at most 600."},
     }, ["pid"])
 
     def summary(self, args: dict[str, Any]) -> str:
