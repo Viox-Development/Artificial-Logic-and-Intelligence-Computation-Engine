@@ -360,24 +360,24 @@ class ScreenAgent:
         return res
 
     def _plan_parts(self, goal: str) -> list[str]:
-        """Hedef birkaç iş içeriyorsa sıralı kısa adımları; değilse (ya da planlanamadıysa) boş liste. Oyun
-        oturumunda (hamle + yansıtma kendi düzeniyle çalışır) ve okuma hedefinde planlanmaz."""
+        """If the goal holds several tasks, the ordered short steps; otherwise (or if no plan could be made) an empty
+        list. No plan in a game session (moves + reflection run on their own schedule) or for a reading goal."""
         if (self.plan is None or self.track_changes or self.stop_after_change or not multi_part_goal(goal)
                 or no_touch_goal(goal)):
             return []
         try:
             parts = [" ".join(str(p).split()) for p in (self.plan(goal) or [])]
-        except Exception:  # noqa: BLE001 - plan çıkarılamadıysa eski yol: hedef tek parça denenir
+        except Exception:  # noqa: BLE001 - no plan: the old path, the goal is tried as one piece
             return []
         parts = [p for p in parts if p][:PLAN_MAX_PARTS]
         return parts if len(parts) >= 2 else []
 
     def _run_plan(self, goal: str, parts: list[str], max_steps: int, inputs: dict[str, str],
                   notes: Any) -> ReflexResult:
-        """Çok parçalı hedefi adım adım yürüt. İzlerde uzun hedeflerin "bitti?" yargısı iş bittiği halde %1-6'da
-        kalıyor, refleks adım sınırına kadar tıklamaya devam ediyordu ("1'den 10'a yaz ve kaydet": 20 adım, 26 Ekim);
-        tek işlik hedeflerde ise yargı doğru çalışıyor. Her adım kendi kısa hedefiyle yürür ve ayrı doğrulanır; biri
-        yapılamazsa orada durulur ve hangisinde kalındığı söylenir."""
+        """Run a multi-part goal step by step. In the traces, the "done?" verdict for long goals stayed at 1-6% even
+        after the work was done, and reflex kept clicking until the step limit ("1'den 10'a yaz ve kaydet" (type 1 to
+        10 and save): 20 steps, 26 October); for single-task goals the verdict works. Each step runs with its own
+        short goal and is verified separately; if one cannot be done it stops there and says where it stopped."""
         log: list[str] = []
         used = 0
         unsure: list[int] = []
@@ -396,8 +396,8 @@ class ScreenAgent:
             if res.status in ("done", "clicked", "likely_done", "acted"):
                 continue
             if res.status == "max_steps" and any("(ekran değişti)" in line for line in res.log):
-                # Adımın eylemleri ekranı değiştirdi ama "bitti" denmedi: emin olunamadan sıradakine geçilir, sonuçta
-                # bu da söylenir.
+                # The step's actions changed the screen but "done" was not said: move on to the next one without being
+                # sure, and say so in the result.
                 unsure.append(n)
                 continue
             where = f"planın {n}. adımı ({n}/{len(parts)}) yapılamadı: {part} - {res.reason}"
@@ -410,9 +410,9 @@ class ScreenAgent:
 
     def _consult_loop(self, goal: str, max_steps: int, inputs: dict[str, str], notes: Any,
                       res: ReflexResult) -> ReflexResult:
-        """Takılınca içeriden danış (jev-mcp'nin consult'u): ana modele tam bir tur harcatıp yeni refleks başlatmak
-        yerine kısa bir istemle sıradaki somut adımı sor, onu yap, asıl hedefe devam et. Genel sınavda sürenin çoğu
-        needs_help -> ana model turu -> yeni refleks döngüsündeydi."""
+        """When stuck, consult from the inside (like jev-mcp's consult): instead of spending a full main-model turn and
+        starting a new reflex, ask for the next concrete step with a short prompt, do it, and continue with the real
+        goal. In the general exam most of the time went into the needs_help -> main model turn -> new reflex loop."""
         if self.consult is None:
             return res
         log, steps = list(res.log), res.steps
@@ -423,12 +423,12 @@ class ScreenAgent:
                          "on_screen": [i.describe(False) for i in (self.last.items if self.last else [])][:40]}
             try:
                 advice = self.consult(situation) or {}
-            except Exception:  # noqa: BLE001 - danışma olmazsa ana modele dönülür
+            except Exception:  # noqa: BLE001 - if consulting fails, fall back to the main model
                 break
             answer = " ".join(str(advice.get("answer") or "").split())
             if answer:
-                # Hedef bir şeyi okumaktı ve ekranda görünüyor (Gece ışığı: "Off"): danışman sıradaki adım yerine
-                # cevabı "adım" diye dönünce refleks onu hedef gibi denemişti.
+                # The goal was to read something and it is on screen (Night light: "Off"): when the adviser returned the
+                # answer as a "step" instead of the next step, reflex had tried it as if it were the goal.
                 log.append(f"(danışma {n}) ekranda: {answer}")
                 return ReflexResult("done", steps, f"ekranda görülen: {answer}", log, res.title, res.location)
             hint = " ".join(str(advice.get("next") or "").split())
@@ -456,11 +456,11 @@ class ScreenAgent:
         keys = list(dict.fromkeys(list(KEYS) + goal_keys(goal) + [k.lower().replace(" ", "")
                                                                    for k in getattr(self, "_extra_keys", [])]))
         log: list[str] = []
-        history: list[str] = []  # Jev'e giden okunur geçmiş
-        tried: dict[str, int] = {}  # eylem -> ekran değiştirmeden kaç kez denendi
-        visits: dict[tuple[str, ...], int] = {}  # (ekran imzası, eylem) -> kaç kez yapıldı
-        dead: dict[str, set[str]] = {}  # ekran imzası -> o ekranda bir şey değiştirmeyen öğeler
-        last_item = ""  # son eylemin öğesi (işe yaramazsa dead'e girer)
+        history: list[str] = []  # readable history sent to Jev
+        tried: dict[str, int] = {}  # action -> how many times it was tried without changing the screen
+        visits: dict[tuple[str, ...], int] = {}  # (screen signature, action) -> how many times it was done
+        dead: dict[str, set[str]] = {}  # screen signature -> elements that changed nothing on that screen
+        last_item = ""  # the last action's element (goes into dead if it did nothing)
         scr = Screen("", "")
         last_sig = ""
         start_items: list[Item] | None = None
@@ -471,7 +471,7 @@ class ScreenAgent:
         for step in range(1, max_steps + 1):
             try:
                 scr = self.obs.screen(goal)
-            except Exception:  # noqa: BLE001 - UIA bazen geçici zaman aşımı veriyor (0x80131505): bir kez daha dene
+            except Exception:  # noqa: BLE001 - UIA sometimes gives a transient timeout (0x80131505): try once more
                 time.sleep(SCREEN_RETRY)
                 try:
                     scr = self.obs.screen(goal)
@@ -480,17 +480,17 @@ class ScreenAgent:
             self.last = scr
             sig = scr.signature()
             if history and last_sig and not history[-1].endswith(("changed", "on screen")):
-                # Son eylem işe yaradı mı? Jev bunu okunur geçmişte görür; aynı boşa eylem üçüncü kez yapılmaz.
+                # Did the last action work? Jev sees this in the readable history; the same useless action is not done a third time.
                 did = history[-1]
                 changed = sig != last_sig or image_changed(prev_image, scr.image)
                 if changed:
                     history[-1] += " -> screen changed"
-                    log[-1] += " (ekran değişti)"  # beyin modeli de görsün: ör. Ctrl+S Kaydet penceresini açtı
+                    log[-1] += " (ekran değişti)"  # let the brain model see it too: e.g. Ctrl+S opened the Save dialog
                 else:
                     history[-1] += " -> nothing changed on screen"
                     log[-1] += " (ekran değişmedi)"
                 if self.track_changes:
-                    # Yansıtmanın kanıtı: bu eylemden sonra ne çıktı, ne kayboldu (kod biliyor, model uydurmasın).
+                    # Evidence for reflection: what appeared and what disappeared after this action (the code knows; the model must not make it up).
                     self.evidence.append({"action": history[-1], "changed": changed,
                                           **screen_changes(prev_items, scr.items),
                                           "changed_places": changed_places(prev_image, scr.image) if changed else []})
@@ -499,7 +499,7 @@ class ScreenAgent:
                                         "doğrulanacak", log, scr.title, scr.location)
                 if not changed:
                     if last_item:
-                        # Bu ekranda işe yaramadı: aynı ekranda bir daha seçilmez, sıradaki aday denenir (jev-mcp gibi).
+                        # It did nothing on this screen: it is not picked again on the same screen, the next candidate is tried (like jev-mcp).
                         dead.setdefault(last_sig, set()).add(last_item)
                     tried[did] = tried.get(did, 0) + 1
                     if tried[did] >= 2:
@@ -513,10 +513,10 @@ class ScreenAgent:
             if start_items is None:
                 start_items, start_image = scr.items, scr.image
             if step == 1 and getattr(self, "_keyboard_text", "") and not wrong_field(scr.focused, self._keyboard_text):
-                # Ana model "bunu klavyeyle yaz" dediyse karar Jev'in değil: Hesap Makinesi'nde text='2^20=' verildiği
-                # halde Jev "İki" tuşuna tıklamayı seçmişti. Önce yazılır, Jev kalanından devam eder.
+                # If the main model said "type this with the keyboard", the decision is not Jev's: in Calculator, with
+                # text='2^20=' given, Jev had chosen to click the "İki" (Two) key. Type first; Jev continues from there.
                 try:
-                    # Önce temizle: Hesap Makinesi'nde önceki işlemden kalan "2"nin arkasına yazılmıştı (212345678).
+                    # Clear first: in Calculator it had been typed after the "2" left over from the previous calculation (212345678).
                     for k in getattr(self, "_press_first", []):
                         self.obs.act("press_key", None, keys=k)
                     self.obs.act("type_keys", None, text=self._keyboard_text)
@@ -535,13 +535,13 @@ class ScreenAgent:
             state: dict[str, Any] = {"goal": en, "window": scr.title, "items": {i.key: i.describe() for i in scr.items},
                                      "recent_actions": history[-6:] or ["none yet"]}
             if scr.focused:
-                state["keyboard_focus"] = scr.focused  # kodun bildiği gerçek: yazılan metin nereye gider
+                state["keyboard_focus"] = scr.focused  # a fact the code knows: where typed text goes
             if dead.get(sig):
-                # Kodun bildiği gerçek (typesafe-computer-use: "actions already tried on the current screen").
+                # A fact the code knows (typesafe-computer-use: "actions already tried on the current screen").
                 state["tried_here_without_effect"] = sorted(dead[sig])
             if self.track_changes and history:
-                # "Bitti mi?" için kodun bildiği gerçek: turun başından beri ekranda ne değişti. Tur sayacı, yıl, kaynak
-                # sayıları her oyunda burada görünür; oyuna özel kural yazmak gerekmez.
+                # A fact the code knows for "done?": what changed on screen since the turn started. The turn counter, year
+                # and resource counts show up here in every game; no game-specific rule is needed.
                 state["changes_since_start"] = screen_changes(start_items, scr.items)
             note_text = notes(scr) if callable(notes) else notes
             if note_text:
@@ -554,7 +554,7 @@ class ScreenAgent:
                 state["screen"] = SCREEN_REF
                 images = {SCREEN_REF: prepare_image(scr.image)}
                 if self.track_changes and history and start_image is not None:
-                    # Önce/sonra (Cradle, EFR): yazısız değişimi (kart açıldı, birim yürüdü) Jev görerek kıyaslasın.
+                    # Before/after (Cradle, EFR): let Jev compare changes without text (a card opened, a unit moved) by looking.
                     state["screen_at_start"] = START_REF
                     images[START_REF] = prepare_image(start_image)
                     compare = ("screen_at_start", "screen")
@@ -570,7 +570,7 @@ class ScreenAgent:
             except DeciderError as e:
                 if images is None:
                     return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, scr.title, scr.location)
-                self.visual = False  # görsel istek reddedildi: bu çalışmada görselsiz devam
+                self.visual = False  # the image request was refused: continue without images for this run
                 self.emit(f"görsel karar olmadı, görselsiz devam: {e}")
                 see = False
                 state.pop("screen", None)
@@ -583,7 +583,7 @@ class ScreenAgent:
             ms = (time.monotonic() - t0) * 1000
             a = d.answers
             act, done, missing = a["action"], a["done"].value, a["missing"].value
-            if "changed_as_asked" in a:  # görerek kıyas: istenen değişiklik oldu mu (kod iki yargıdan birini yeter sayar)
+            if "changed_as_asked" in a:  # visual comparison: did the wanted change happen (the code counts either verdict as enough)
                 done = max(done, a["changed_as_asked"].value)
             item = _pick(a, "item", scr.items)
             if item is not None and "item" in a:
@@ -608,8 +608,8 @@ class ScreenAgent:
             if missing >= MISSING_MIN and choice in ("click", "double_click", "right_click", "type_text", "drag"):
                 choice = (VISUAL_DRAG if choice == "drag" and "drag_source" in a else VISUAL_ACTION) if see else ""
             if choice in TOUCHING and no_touch_goal(goal, en):
-                # Okuma hedefi ("durumu oku, hiçbir şeye basma"): Jev yine de 'Off' yazısına tıklamayı seçiyordu
-                # (26 Ekim, Gece ışığı). Dokunulmaz; danışma ekranda görüneni cevap olarak okur.
+                # A reading goal ("durumu oku, hiçbir şeye basma" = read the state, press nothing): Jev still chose to click
+                # the 'Off' text (26 October, Night light). Nothing is touched; consulting reads what is on screen as the answer.
                 return ReflexResult("needs_help", step - 1, "hedef ekrana dokunmayı yasaklıyor; hiçbir şeye "
                                     "basılmadı, ekrandakiler okunabilir", log, scr.title, scr.location)
             if choice == VISUAL_DRAG:
@@ -628,7 +628,7 @@ class ScreenAgent:
                 res = self._visual_click(step, scr, en, a, log, history)
                 if isinstance(res, ReflexResult):
                     if res.status == "needs_help" and done >= LIKELY_DONE_MIN and history                             and history[-1].endswith("screen changed"):
-                        # Kart çekildi (görsel kıyas 0.8), Jev sıradaki tıklanacak şeyi bulamadı: "yapılamadı" değil.
+                        # A card was drawn (visual comparison 0.8) and Jev found nothing else to click: that is not "could not do it".
                         return ReflexResult("likely_done", step - 1, f"son eylem ekranı değiştirdi, büyük ihtimalle "
                                             f"bitti (bitti? {done:.2f})", log, scr.title, scr.location)
                     return res
@@ -642,23 +642,24 @@ class ScreenAgent:
                                     f"(listede yok? {missing:.2f})", log, scr.title, scr.location)
             if (act.confidence < KIND_MIN or choice == "wait") and done >= LIKELY_DONE_MIN and history \
                     and history[-1].endswith("screen changed"):
-                # Sürükleme işe yaradı (dosya klasöre girdi) ama "bitti?" 0.79'da kaldı ve sıradaki eylemden emin
-                # değil: "yapılamadı" demek yanlış olurdu.
+                # The drag worked (the file went into the folder) but "done?" stayed at 0.79 and Jev is unsure of the
+                # next action: saying "could not do it" would be wrong.
                 return ReflexResult("likely_done", step - 1, f"son eylem ekranı değiştirdi, büyük ihtimalle bitti "
                                     f"(bitti? {done:.2f})", log, scr.title, scr.location)
-            # Öğe apaçık, tür kararsız: WhatsApp'ta arama kutusu 0.95 ile seçildi ama tıkla/yaz/kaydır oyu bölündü
-            # (tıkla 0.35) ve pes edildi. En olası tür tıklamaysa tıklanır (geri alınamaz düğme kapısı yine geçerli).
+            # The element is clear but the action type is not: in WhatsApp the search box was picked with 0.95, but the
+            # click/type/scroll vote split (click 0.35) and it gave up. If click is the likeliest type, it clicks (the
+            # irreversible-button gate still applies).
             clear_click = (choice == "click" and item is not None and "item" in a
                            and a["item"].confidence >= ITEM_CLEAR and act.confidence >= KIND_FLOOR)
             if act.confidence < KIND_MIN and not clear_click:
                 return ReflexResult("needs_help", step - 1, f"ne yapılacağından emin değil (güven {act.confidence:.2f}"
                                     f", en olası: {choice})", log, scr.title, scr.location)
             if choice == "type_text":
-                # Yazılacak yer ayrı sorulur: "item" sorusunda Jev Gezgin'in sol ağacındaki 'Desktop'u seçip oraya
-                # "yazdırıyordu" (tıklandı, Masaüstü açıldı).
+                # Where to type is asked separately: on the "item" question Jev picked 'Desktop' in Explorer's left tree
+                # and "typed" there (it was clicked and the Desktop opened).
                 item = _pick(a, "field", [i for i in scr.items if i.editable]) or item
                 if item is not None and not_a_field(item):
-                    # Listede yazı alanı yok ve seçilen şey bir düğme: tıklanıp yazılırsa form boş gönderilir.
+                    # There is no text field in the list and the chosen element is a button: clicking and typing would submit an empty form.
                     return ReflexResult("needs_help", step - 1, f"yazılacak alan listede yok ('{item.label[:40]}' bir "
                                         "düğme, alan değil); alanı kendin tıklayıp metni text= ile klavyeden yazdır",
                                         log, scr.title, scr.location)
@@ -667,16 +668,17 @@ class ScreenAgent:
                 return ReflexResult("needs_help", step - 1, "ekranda seçilecek öğe yok", log, scr.title, scr.location)
             if choice in ("click", "double_click", "drag") and item is not None and not self.allow_irreversible \
                     and RISKY_RX.search(item.label):
-                # Geri alınamaz olabilecek adım: kullanıcının açık isteği olmadan yapılmaz (jev-mcp'nin güvenlik
-                # kapısı gibi; karar kodda). Solitaire'in gizlilik onayı başka araçla kabul edilmişti.
+                # A step that may be irreversible is not done without the user's explicit request (like jev-mcp's safety
+                # gate; the decision is in code). Solitaire's privacy consent had been accepted through another tool.
                 return ReflexResult("needs_confirmation", step - 1, f"'{item.label[:60]}' geri alınamaz bir iş yapabilir "
                                     "(gönderme, ödeme, silme, onay/kabul)", log, scr.title, scr.location)
             if choice in ("click", "double_click", "type_text") and item is not None and login_item(item, goal, en):
                 return ReflexResult("needs_login", step - 1, f"giriş ekranı: '{item.label[:60]}' kullanıcının "
                                     "girişini istiyor", log, scr.title, scr.location)
             drop = _pick(a, "drop", scr.items) if choice == "drag" else None
-            # Aynı ekranda aynı eylem üçüncü kez: döngü. Unciv'de 'Pick a tech!' ile 'Close' arasında 15 adım gidip
-            # geldi; her tıklama ekranı değiştirdiği için "ekran değişmedi" koruması yakalamıyordu.
+            # The same action on the same screen a third time: a loop. In Unciv it went back and forth between 'Pick a
+            # tech!' and 'Close' for 15 steps; since every click changed the screen, the "screen did not change" guard
+            # did not catch it.
             move = (sig, image_key(scr.image), choice, item.describe(False) if needs_item and item else "",
                     drop.describe(False) if drop else "", str(a["key"].value) if choice == "press_key" else "")
             visits[move] = visits.get(move, 0) + 1
@@ -688,8 +690,8 @@ class ScreenAgent:
                 if choice == "type_text":
                     text = self._text_for(item, en, inputs)
                     if already_has(item.value, text):
-                        # Aynı yolu adres çubuğuna tekrar tekrar yazıyordu. Eylem yapılmaz; ekran değişmeyeceği için
-                        # tekrar sayacına da girer.
+                        # It kept typing the same path into the address bar. The action is not done; since the screen will not
+                        # change, it also counts toward the repeat counter.
                         history.append(f"did not type: {item.describe(False)} already contains '{text[:40]}'")
                         log.append(f"{step}. yazılmadı: alan zaten '{text[:40]}' içeriyor")
                         continue
