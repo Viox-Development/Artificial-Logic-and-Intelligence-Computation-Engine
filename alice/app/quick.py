@@ -52,7 +52,7 @@ def select_region():
     """Dim the screen, let the user select a region with mouse. Returns PIL image of selected region (Esc = None)."""
     import tkinter as tk
 
-    import mss
+    from alice.tools.imaging import screen_capture
     from PIL import Image, ImageEnhance, ImageTk
 
     if sys.platform == "win32":
@@ -62,7 +62,7 @@ def select_region():
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
         except (OSError, AttributeError):
             pass
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as s:
+    with screen_capture() as s:
         mon = s.monitors[0]  # all monitors
         shot = s.grab(mon)
         full = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")

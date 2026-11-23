@@ -203,9 +203,9 @@ class LiveError(Exception):
 def monitor_layout() -> str:
     """A short description, e.g. '1: ana, 3440x1440, sağda; 2: 3440x1440, solda' (1: main, right; 2: left)."""
     try:
-        import mss
+        from alice.tools.imaging import screen_capture
 
-        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+        with screen_capture() as sct:
             mons = sct.monitors[1:]
     except Exception:  # noqa: BLE001
         return "bilinmiyor"
@@ -238,13 +238,13 @@ def screen_frame(max_width: int = 1280) -> str | None:
     try:
         import io
 
-        import mss
+        from alice.tools.imaging import screen_capture
         from PIL import Image
 
         from alice.tools.computer import _dpi_aware
 
         _dpi_aware()
-        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+        with screen_capture() as sct:
             mon = sct.monitors[1]
             try:
                 import ctypes

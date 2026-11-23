@@ -189,7 +189,7 @@ _local = threading.local()
 def grab_region(region: tuple[int, int, int, int]):
     """Only this small region of the screen (x, y, width, height) -> RGB array. The mss object is opened once per
     thread: reopening it on every frame was eating 12% of a core."""
-    import mss
+    from alice.tools.imaging import screen_capture
     import numpy as np
 
     sct = getattr(_local, "sct", None)
@@ -197,7 +197,7 @@ def grab_region(region: tuple[int, int, int, int]):
         from alice.tools.computer import _dpi_aware
 
         _dpi_aware()
-        sct = _local.sct = mss.MSS() if hasattr(mss, "MSS") else mss.mss()
+        sct = _local.sct = screen_capture()
     x, y, w, h = region
     shot = sct.grab({"left": x, "top": y, "width": w, "height": h})
     return np.frombuffer(shot.bgra, dtype=np.uint8).reshape(h, w, 4)[..., 2::-1]  # BGRA -> RGB
@@ -293,13 +293,13 @@ def region_of(cfg: dict[str, Any]) -> tuple[int, int, int, int] | None:
 
 # ---------------------------------------------------------------------- command
 def _full_screenshot():
-    import mss
+    from alice.tools.imaging import screen_capture
     import numpy as np
 
     from alice.tools.computer import _dpi_aware
 
     _dpi_aware()
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+    with screen_capture() as sct:
         shot = sct.grab(sct.monitors[0])
         left, top = sct.monitors[0]["left"], sct.monitors[0]["top"]
     return np.asarray(shot)[..., [2, 1, 0]], (left, top)
