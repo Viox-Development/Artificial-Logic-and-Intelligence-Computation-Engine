@@ -229,7 +229,7 @@ class GeminiTTS:
             self.formats_file.parent.mkdir(parents=True, exist_ok=True)
             self.formats_file.write_text(json.dumps(self.bad), encoding="utf-8")
         except OSError:
-            pass
+            pass  # remembered in memory for this run only
 
     def formats_for(self, model: str) -> list[str]:
         bad = self.bad.get(model, [])
@@ -281,7 +281,7 @@ class GeminiTTS:
             try:
                 rate = int(mime.split("rate=")[1].split(";")[0])
             except ValueError:
-                pass
+                pass  # malformed rate: keep the default
         return "ok", Audio(base64.b64decode(part["data"]), rate).polish()
 
     def synth(self, text: str, emotion: str = "calm") -> Audio:
@@ -467,7 +467,7 @@ class XTTS:
 
                 torch.cuda.empty_cache()
             except ImportError:
-                pass
+                pass  # no torch: no CUDA cache to free
         finally:
             self._lock.release()
 
@@ -522,7 +522,7 @@ class Chatterbox:
             if r.status_code == 200 and r.json().get("device") == "cuda":
                 self.client.post(self.base + "/release", timeout=10)
         except (httpx.HTTPError, ValueError):
-            pass
+            pass  # server not reachable: nothing to release
 
     def ensure_server(self) -> None:
         with self._lock:
@@ -579,7 +579,7 @@ class Chatterbox:
             try:
                 audio = self.trim(audio, text)
             except Exception:
-                pass
+                pass  # keep the untrimmed audio
         return audio.polish()
 
 
@@ -748,7 +748,7 @@ class SpeechCache:
             try:
                 f.unlink()
             except OSError:
-                pass
+                pass  # already gone or locked; it is overwritten next time
             return None
 
     def put(self, engine: str, emotion: str, text: str, audio: Audio) -> None:
@@ -766,7 +766,7 @@ class SpeechCache:
                 for old in files[: max(0, len(files) - self.max_files)]:
                     old.unlink()
         except OSError:
-            pass
+            pass  # cache cleanup is retried on a later write
 
 
 class TTSRouter:

@@ -157,7 +157,7 @@ class Player:
 
                 sd.stop()
             except Exception:
-                pass
+                pass  # playback may already have stopped
         elif self.backend == "winsound":
             import winsound
 
@@ -199,7 +199,7 @@ class Player:
             try:
                 os.unlink(path)
             except OSError:
-                pass
+                pass  # temporary file; leaving it behind is harmless
 
 
 # -------------------------------------------------------------------- microphone

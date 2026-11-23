@@ -55,7 +55,7 @@ def add_cuda_dlls() -> None:
             try:
                 os.add_dll_directory(str(d))  # type: ignore[attr-defined]
             except OSError:
-                pass
+                pass  # missing or unusable folder: CUDA DLLs are looked up elsewhere
             os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
 
 

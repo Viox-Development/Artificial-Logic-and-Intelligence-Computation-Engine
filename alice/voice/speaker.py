@@ -98,7 +98,7 @@ class Speaker:
                 else:
                     kept.append(item)
         except queue.Empty:
-            pass
+            pass  # queue drained
         for item in kept:
             self._synth_q.put(item)
         if dropped:
@@ -132,7 +132,7 @@ class Speaker:
                     item = q.get_nowait()
                     pending.append((item[0], item[1]))
             except queue.Empty:
-                pass
+                pass  # queue drained
         self.player.stop()
         rest = [t for g, t in pending if g == gen and isinstance(t, str)]
         self.last_cut = {"playing": playing, "pending": rest} if playing or rest else None
@@ -215,14 +215,14 @@ class Speaker:
                     break
                 text, n = f"{text} {item[1]}", n + 1
         except queue.Empty:
-            pass
+            pass  # no more sentences to merge
         if held:  # put back without breaking the order
             rest = []
             try:
                 while True:
                     rest.append(self._synth_q.get_nowait())
             except queue.Empty:
-                pass
+                pass  # queue drained
             for item in held + rest:
                 self._synth_q.put(item)
         return text, n

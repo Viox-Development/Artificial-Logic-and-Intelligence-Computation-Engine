@@ -105,7 +105,7 @@ def _locked(base: Path, wait: float = 10.0):
                         lock.unlink(missing_ok=True)
                         continue
                 except OSError:
-                    pass
+                    pass  # lock vanished or unreadable; try again
                 if time.monotonic() > deadline:
                     raise TimeoutError("korpus manifesti kilitli") from None
                 time.sleep(0.05)

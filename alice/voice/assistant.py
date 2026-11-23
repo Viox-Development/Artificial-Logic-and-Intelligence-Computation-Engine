@@ -226,7 +226,7 @@ def voice_log(line: str) -> None:
         with p.open("a", encoding="utf-8") as f:
             f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
     except OSError:
-        pass
+        pass  # logging must not break the assistant
 
 
 def trim_history(messages: list[dict[str, Any]], keep_turns: int) -> list[dict[str, Any]]:

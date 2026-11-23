@@ -38,7 +38,7 @@ def record(kind: str, seconds: float, **extra: Any) -> None:
                 rows = load(KEEP_DAYS)
                 path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     except OSError:
-        pass
+        pass  # latency stats are optional; never break a turn
 
 
 def load(days: float = 7) -> list[dict[str, Any]]:
@@ -95,7 +95,7 @@ def weekly_report(now: float | None = None) -> str:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps({"last": now}), encoding="utf-8")
         except OSError:
-            pass
+            pass  # the marker is retried on the next start
         return ""
     if now - last < 7 * 86400:
         return ""
@@ -103,5 +103,5 @@ def weekly_report(now: float | None = None) -> str:
     try:
         marker.write_text(json.dumps({"last": now}), encoding="utf-8")
     except OSError:
-        pass
+        pass  # report again next time
     return text

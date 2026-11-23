@@ -383,7 +383,7 @@ class AudioOut:
             while True:
                 self.q.get_nowait()
         except queue.Empty:
-            pass
+            pass  # queue drained
         self.busy_until = 0.0
 
     dead: Exception | None = None
