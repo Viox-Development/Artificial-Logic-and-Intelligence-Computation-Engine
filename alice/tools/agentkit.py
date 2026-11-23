@@ -39,15 +39,18 @@ def _run(argv: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
 # ---------------------------------------------------------------------------------------------------- notify
 class Notify(Tool):
     name = "notify"
-    description = ("Kullanıcıya bildirim gönderir (masaüstü bildirimi ya da ALICE'in ekran kartı; oyun/uçuş gibi "
-                   "modlarda mod kuralına göre susturulabilir ve kaydedilir).\n"
-                   "- Uzun bir iş bittiğinde ya da kullanıcının dönmesi gereken bir şey olduğunda (onay bekleyen adım, "
-                   "kırmızı CI, bitmiş indirme) ve kullanıcı muhtemelen başka bir şeyle meşgulken kullan.\n"
-                   "- Kullanıcı zaten sohbette seninle konuşuyorsa kullanma; cevabın yeter. Her adımda bildirim atma.")
+    description = ("Sends the user a notification (a desktop notification or ALICE's on-screen card; in modes such as "
+                   "game/flight it may be silenced by the mode rule and is logged).\n"
+                   "- Use it when a long job finishes or something needs the user back (a step awaiting approval, red "
+                   "CI, a finished download) and the user is probably busy with something else.\n"
+                   "- Don't use it if the user is already chatting with you; your answer is enough. Don't notify at "
+                   "every step.")
     parameters = obj({
-        "title": {"type": "string", "description": "Kısa başlık, ör. 'Testler bitti'."},
-        "body": {"type": "string", "description": "Bir iki cümle: ne oldu, kullanıcıdan ne bekleniyor."},
-        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Önem; varsayılan info."},
+        "title": {"type": "string", "description": "Short title, e.g. 'Tests finished'."},
+        "body": {"type": "string", "description": "One or two sentences: what happened, what is expected from the "
+                                                  "user."},
+        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Importance; default "
+                                                                                            "info."},
     }, ["title"])
     risk = READ
     parallel_safe = True
@@ -73,12 +76,12 @@ class Notify(Tool):
 # ---------------------------------------------------------------------------------------------------- plan mode
 class EnterPlanMode(Tool):
     name = "enter_plan_mode"
-    description = ("Kendini plan moduna alır: dosya yazma ve komut çalıştırma kapanır, sadece okuyup araştırırsın; "
-                   "plan hazır olunca exit_plan_mode ile kullanıcının onayına sunarsın.\n"
-                   "- Birçok dosyaya dokunacak, mimari karar gerektiren ya da birden çok makul yolu olan büyük bir "
-                   "işe BAŞLAMADAN önce kullan: önce kod tabanını incele, sonra planı sun.\n"
-                   "- Küçük, açık işlerde (tek dosya düzeltmesi, belirgin bir hata), sorulara ve araştırmaya kullanma.")
-    parameters = obj({"reason": {"type": "string", "description": "Neden plan gerekiyor (tek cümle)."}})
+    description = ("Puts you in plan mode: writing files and running commands are turned off and you only read and "
+                   "research; when the plan is ready, present it for the user's approval with exit_plan_mode.\n"
+                   "- Use it BEFORE starting a big job that will touch many files, needs an architectural decision or "
+                   "has several reasonable ways: first study the code base, then present the plan.\n"
+                   "- Don't use it for small, clear jobs (a one-file fix, an obvious bug), questions or research.")
+    parameters = obj({"reason": {"type": "string", "description": "Why a plan is needed (one sentence)."}})
     risk = READ
 
     def run(self, ctx: ToolContext, reason: str = "") -> ToolResult:
@@ -98,14 +101,14 @@ class EnterPlanMode(Tool):
 class McpResources(Tool):
     name = "mcp_resources"
     untrusted = True  # resource content comes from outside
-    description = ("Bağlı MCP sunucularının kaynaklarını (dosya, belge, şema, kayıt) listeler ve okur.\n"
-                   "- list: bütün sunucuların (ya da server verilirse birinin) kaynakları: uri, ad, tür.\n"
-                   "- read: uri ile kaynağın içeriği. Sunucu birden çoksa server ver.")
+    description = ("Lists and reads the resources (files, documents, schemas, records) of connected MCP servers.\n"
+                   "- list: the resources of all servers (or of one if server is given): uri, name, type.\n"
+                   "- read: a resource's content by uri. If there are several servers, pass server.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["list", "read"], "description": "list: kaynakları listele | "
-                   "read: uri ile oku."},
-        "server": {"type": "string", "description": "MCP sunucusunun adı (config'teki)."},
-        "uri": {"type": "string", "description": "read: kaynağın uri'si (list çıktısından)."},
+        "action": {"type": "string", "enum": ["list", "read"], "description": "list: list resources | read: read by "
+                                                                              "uri."},
+        "server": {"type": "string", "description": "Name of the MCP server (as in the config)."},
+        "uri": {"type": "string", "description": "read: the resource's uri (from the list output)."},
     }, ["action"])
     risk = READ
     parallel_safe = True
@@ -319,24 +322,23 @@ def _diagnose(path: Path, root: Path) -> tuple[str, list[str]]:
 
 class CodeIntel(Tool):
     name = "code_intel"
-    description = ("Kodu anlama ve doğrulama (dil sunucusu gerektirmez).\n"
-                   "- diagnostics: dosya(lar)daki hata ve uyarılar: Python (sözdizimi, ruff, varsa pyright), "
-                   "TS/JS (projede tsc varsa tip hataları, yoksa node --check), Go (go vet), Rust (cargo check), "
-                   "JSON/TOML. Bir dosyayı düzenledikten sonra, testten önce hızlı kontrol için.\n"
-                   "- symbols: bir dosyadaki sınıf/fonksiyon/sabitler ve satırları (büyük dosyada nereye bakacağını "
-                   "bulmak için, tamamını okumadan).\n"
-                   "- definition: bir sembolün (fonksiyon, sınıf, tip) tanımlandığı yer(ler).\n"
-                   "- references: sembolün kullanıldığı yerler (yeniden adlandırma/değişiklikten önce etkiyi görmek "
-                   "için).")
+    description = ("Understanding and checking code (no language server needed).\n"
+                   "- diagnostics: errors and warnings in file(s): Python (syntax, ruff, pyright if available), TS/JS "
+                   "(type errors if the project has tsc, otherwise node --check), Go (go vet), Rust (cargo check), "
+                   "JSON/TOML. For a quick check after editing a file, before the tests.\n"
+                   "- symbols: classes/functions/constants in a file and their lines (to find where to look in a big "
+                   "file without reading all of it).\n"
+                   "- definition: where(s) a symbol (function, class, type) is defined.\n"
+                   "- references: where a symbol is used (to see the impact before a rename/change).")
     parameters = obj({
         "action": {"type": "string", "enum": ["diagnostics", "symbols", "definition", "references"],
-                   "description": "diagnostics: hata/uyarılar | symbols: dosyanın sembolleri | definition: "
-                   "sembolün tanımı | references: kullanıldığı yerler."},
+                   "description": "diagnostics: errors/warnings | symbols: the file's symbols | definition: a "
+                                  "symbol's definition | references: where it is used."},
         "paths": {"type": "array", "items": {"type": "string"}, "description": "diagnostics/symbols: dosyalar "
                   "(en fazla 10)."},
-        "symbol": {"type": "string", "description": "definition/references: sembol adı."},
-        "root": {"type": "string", "description": "definition/references: aranacak klasör (varsayılan çalışma "
-                 "klasörü)."},
+        "symbol": {"type": "string", "description": "definition/references: symbol name."},
+        "root": {"type": "string", "description": "definition/references: folder to search (default: the working "
+                                                  "folder)."},
     }, ["action"])
     risk = READ
 
@@ -401,10 +403,12 @@ class Advisor(Tool):
     """Consult a stronger model: it sees the whole conversation, uses no tools, and gives short, concrete advice."""
 
     name = "advisor"
-    description = ("Daha güçlü bir modele (danışman) danış. Zor bir karar, takıldığın bir hata, emin olmadığın bir plan "
-                   "ya da işi bitirmeden önce son kontrol için kullan. Danışman bu konuşmanın tamamını görür, araç "
-                   "kullanmaz; somut tavsiye verir. question: neyi sorduğun ve neden emin olmadığın.")
-    parameters = obj({"question": {"type": "string", "description": "Danışmana soru: durum, seçenekler, kuşkun."}},
+    description = ("Consults a stronger model (the advisor). Use it for a hard decision, a bug you are stuck on, a "
+                   "plan you are unsure of, or a final check before finishing a job. The advisor sees this whole "
+                   "conversation, uses no tools and gives concrete advice. question: what you are asking and why you "
+                   "are unsure.")
+    parameters = obj({"question": {"type": "string", "description": "Question for the advisor: the situation, the "
+                                                                    "options, your doubt."}},
                      ["question"])
     risk = READ
 

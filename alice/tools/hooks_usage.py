@@ -10,30 +10,32 @@ from alice.tools.base import DANGER, EXEC, READ, WRITE, Tool, ToolContext, ToolE
 class HooksTool(Tool):
     name = "hooks"
     description = (
-        "Kullanıcının hook'larını yönetir: belli anlarda kendiliğinden çalışan kabuk komutları (Claude Code hook'ları "
-        "gibi). 'her dosya düzenlemesinden sonra ruff çalıştır', 'iş bitince testleri koş, kırıksa devam et', "
-        "'her mesajda git durumunu ekle' gibi istekler için.\n"
-        "Olaylar: PostToolUse (araçtan sonra; çıkış kodu 2 = stderr sana geri bildirim), PreToolUse (araçtan önce; 2 = "
-        "engelle), Stop (cevap bitince; 2 = devam et), UserPromptSubmit (her mesajda; stdout mesaja eklenir), "
-        "SessionStart (ilk mesajda; stdout bağlama eklenir). matcher: araç adı regex'i (ör. "
-        "'edit_file|write_file|multi_edit'). Komutta $ALICE_TOOL_PATH (aracın yol argümanı), $ALICE_TOOL, $ALICE_CWD "
-        "kullanılabilir; olay JSON'u stdin'den gelir.\n"
-        "action: list | add (event, command, matcher, timeout, on_failure) | remove (index) | test (index: hook'u örnek olayla "
-        "bir kez çalıştırıp sonucu gösterir). Hook kalıcıdır ve her sohbette çalışır: eklemeden önce kullanıcıya ne "
-        "yapacağını söyle.")
+        "Manages the user's hooks: shell commands that run by themselves at certain moments (like Claude Code hooks). "
+        "For requests like 'run ruff after every file edit', 'run the tests when done and continue if they're "
+        "broken', 'add the git status to every message'.\n"
+        "Events: PostToolUse (after a tool; exit code 2 = stderr fed back to you), PreToolUse (before a tool; 2 = "
+        "block), Stop (when the answer ends; 2 = continue), UserPromptSubmit (on every message; stdout is added to "
+        "the message), SessionStart (on the first message; stdout is added to the context). matcher: tool name regex "
+        "(e.g. 'edit_file|write_file|multi_edit'). The command can use $ALICE_TOOL_PATH (the tool's path argument), "
+        "$ALICE_TOOL, $ALICE_CWD; the event JSON comes on stdin.\n"
+        "action: list | add (event, command, matcher, timeout, on_failure) | remove (index) | test (index: run the "
+        "hook once with a sample event and show the result). A hook is permanent and runs in every conversation: tell "
+        "the user what it will do before adding it.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["list", "add", "remove", "test"], "description": "Yapılacak işlem."},
+        "action": {"type": "string", "enum": ["list", "add", "remove", "test"], "description": "The operation to "
+                                                                                               "perform."},
         "event": {"type": "string", "enum": ["PostToolUse", "PreToolUse", "Stop", "UserPromptSubmit",
-                                              "SessionStart"], "description": "add: hook'un çalışacağı an."},
-        "command": {"type": "string", "description": "Çalışacak kabuk komutu. PostToolUse komutu stdout'a "
-                                                     "{\"updatedToolOutput\": \"...\"} yazarsa araç çıktısı onunla "
-                                                     "değişir (ör. sırları gizleme)."},
-        "matcher": {"type": "string", "description": "PreToolUse/PostToolUse: araç adı regex'i; boş = her araç."},
-        "timeout": {"type": "number", "description": "saniye (varsayılan 30)"},
+                                              "SessionStart"], "description": "add: the moment the hook runs."},
+        "command": {"type": "string", "description": "Shell command to run. If a PostToolUse command writes "
+                                                     "{\"updatedToolOutput\": \"...\"} to stdout, the tool output is "
+                                                     "replaced with it (e.g. to hide secrets)."},
+        "matcher": {"type": "string", "description": "PreToolUse/PostToolUse: tool name regex; empty = every tool."},
+        "timeout": {"type": "number", "description": "seconds (default 30)"},
         "on_failure": {"type": "string", "enum": ["ignore", "block"],
-                       "description": "add: hook'un kendisi bozulursa (zaman aşımı/çalışmazsa) ne olsun. Denetim "
-                                      "yapan PreToolUse hook'larında 'block' (bozulunca araç geçmesin)."},
-        "index": {"type": "integer", "description": "remove/test: list'teki sıra numarası."},
+                       "description": "add: what happens if the hook itself breaks (times out/doesn't run). For "
+                                      "checking PreToolUse hooks use 'block' (if it breaks, the tool doesn't go "
+                                      "through)."},
+        "index": {"type": "integer", "description": "remove/test: the number from list."},
     }, ["action"])
     risk = READ
 
@@ -92,10 +94,10 @@ def _k(n: float) -> str:
 
 class Usage(Tool):
     name = "usage"
-    description = ("Bu oturumda tokenların nereye gittiğini döker: model başına çağrı, girdi (önbellekten gelen "
-                   "dahil), çıktı ve süre; araç başına bağlama eklenen çıktı; bağlamın şu anki dağılımı (sistem istemi, "
-                   "araç tanımları, mesajlar). 'tokenlarım nereye gitti', 'neden bu kadar harcadı', 'kullanımı göster' "
-                   "deyince kullan.")
+    description = ("Breaks down where tokens went in this session: calls, input (including from the cache), output "
+                   "and time per model; output added to the context per tool; how the context is split right now "
+                   "(system prompt, tool definitions, messages). Use it for 'where did my tokens go', 'why did it "
+                   "spend so much', 'show the usage'.")
     parameters = obj({}, [])
     risk = READ
 

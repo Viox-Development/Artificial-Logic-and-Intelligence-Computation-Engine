@@ -165,6 +165,21 @@ with `bash -s -- --all`. In a clone, run `bash install.sh` (or `bash install.sh 
 If Python's `venv` module is missing (Debian/Ubuntu), the script stops and prints the exact `apt` command. The app
 window uses Chrome, Chromium or Edge in app mode and falls back to your default browser.
 
+### macOS
+
+The test suite runs on macOS in CI; the desktop-control features are less complete than on Windows (see Platform
+support). Install Python 3.10+ and Git first (`brew install python git`, or the python.org installer), then run the
+same line as on Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+```
+
+It installs into `~/.local/share/alice` and puts `alice` in `~/.local/bin`; there is no app menu entry, so start it with
+`alice app`. Give your terminal (or the app that runs ALICE) these permissions in System Settings > Privacy & Security
+when macOS asks: **Accessibility** for mouse, keyboard and global shortcuts, **Screen Recording** for screenshots, and
+**Microphone** for voice. Commands run in the `sandbox-exec` sandbox.
+
 Manual install (any OS):
 
 ```bash
@@ -186,8 +201,9 @@ Optional extras (`pip install -e ".[extra1,extra2]"`):
 | `voice-local` | local Whisper and openWakeWord ("Hey Alice") |
 | `voice-xtts` | local XTTS v2 voice |
 | `home` | smart home and TV connections |
+| `timeline` | time machine encryption on Linux/macOS (OS keyring) |
 | `claude` | official Anthropic SDK |
-| `all` | `computer`, `browser`, `app`, `core`, `voice`, `home`, `claude` |
+| `all` | `computer`, `browser`, `app`, `core`, `voice`, `home`, `claude`, `timeline` |
 | `dev` | pytest, pytest-xdist, ruff |
 
 If a command needs a missing extra, ALICE tells you which one to install instead of printing a traceback.
@@ -298,7 +314,7 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | untested |
+| Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | ✅ (tested in CI) |
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
 | UI elements by ID (`ui_elements` / `ui_act`) | ✅ UI Automation | ✅ AT-SPI (needs PyGObject: `sudo apt install python3-gi gir1.2-atspi-2.0`) | ❌ |

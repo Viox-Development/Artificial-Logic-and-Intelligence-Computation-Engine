@@ -16,20 +16,22 @@ from alice.tools.base import READ, WRITE, Tool, ToolContext, ToolError, ToolResu
 class Session(Tool):
     name = "session"
     description = (
-        "Bir işi AYRI bir sohbette başlatır; o sohbet kendi başına çalışır, bitince sonucu bu sohbete bildirir. "
-        "Kullanıcı 'bunu ayrı yap / arkada yap / paralel başlat' derse ya da konuşma başka konuya geçerken yarım "
-        "kalan işi devretmek için (action=handoff). Bu turda sonucuna ihtiyacın olan küçük işler için kullanma "
-        "(onlar için task).\n"
-        "action=start: prompt (eksiksiz görev: ne, nerede, bitince ne olmalı), title. fork=true: yeni sohbet bu "
-        "konuşmanın geçmişini de alır (iş burada öğrenilenlere dayanıyorsa). action=handoff: süren işi kalan "
-        "planla devret (fork'lu), sonra kullanıcının yeni isteğine dön. action=list: başlattığın oturumlar ve "
-        "durumları. action=message: id'li oturuma ek talimat gönder.")
+        "Starts a job in a SEPARATE conversation; it runs on its own and reports its result to this one when done. "
+        "Use it when the user says 'do this separately / in the background / start it in parallel', or to hand off "
+        "unfinished work when the conversation moves on to another topic (action=handoff). Not for small jobs whose "
+        "result you need this turn (use task for those).\n"
+        "action=start: prompt (the complete task: what, where, what should be true when done), title. fork=true: the "
+        "new conversation also gets this conversation's history (if the job builds on what was learned here). "
+        "action=handoff: hand off the ongoing work with the remaining plan (forked), then go back to the user's new "
+        "request. action=list: the sessions you started and their status. action=message: send extra instructions to "
+        "the session with id.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["start", "handoff", "list", "message"], "description": "Yapılacak iş."},
-        "prompt": {"type": "string", "description": "start/handoff/message: görev ya da talimat metni."},
-        "title": {"type": "string", "description": "start/handoff: kısa başlık (kenar çubuğunda görünür)."},
-        "fork": {"type": "boolean", "description": "start: bu konuşmanın geçmişini yeni sohbete ver. Varsayılan false."},
-        "id": {"type": "string", "description": "message: oturum kimliği (list çıktısından)."},
+        "action": {"type": "string", "enum": ["start", "handoff", "list", "message"], "description": "What to do."},
+        "prompt": {"type": "string", "description": "start/handoff/message: the task or instruction text."},
+        "title": {"type": "string", "description": "start/handoff: short title (shown in the sidebar)."},
+        "fork": {"type": "boolean", "description": "start: give this conversation's history to the new conversation. "
+                                                   "Default false."},
+        "id": {"type": "string", "description": "message: session id (from the list output)."},
     }, ["action"])
     risk = WRITE
 

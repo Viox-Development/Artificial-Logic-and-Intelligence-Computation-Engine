@@ -448,3 +448,17 @@ def test_list_dir_known_folders_and_newest(tmp_path, monkeypatch):
     assert files.ListDir().run(ctx, path="downloads").text.splitlines()[1].startswith("eski.zip")  # by name
     (tmp_path / "OneDrive" / "Desktop").mkdir(parents=True)
     assert files.known_folder("Masaüstü") == tmp_path / "OneDrive" / "Desktop"
+
+
+def test_macos_resolved_system_paths_count_as_system(monkeypatch):
+    """macOS: /etc and /var are links into /private, and callers resolve paths first, so '/etc/hosts' is checked as
+    '/private/etc/hosts'. It was not recognized and auto mode allowed writing it (found by the macOS CI job)."""
+    from pathlib import PurePosixPath  # macOS paths, also when CI runs this test on Windows
+
+    from alice import permissions
+
+    monkeypatch.setattr(permissions.sys, "platform", "darwin")
+    for p in ("/private/etc/hosts", "/private/etc/cron.d/x", "/private/var/db/x", "/etc/hosts", "/System/x"):
+        assert permissions.is_system_path(PurePosixPath(p)), p
+    for p in ("/private/var/folders/x/project/a.txt", "/Users/me/project/a.txt", "/private/etcetera"):
+        assert not permissions.is_system_path(PurePosixPath(p)), p

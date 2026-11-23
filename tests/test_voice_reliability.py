@@ -652,3 +652,31 @@ def test_player_cli_backend_plays_and_stops(monkeypatch):
     none = audio.Player.__new__(audio.Player)
     none._stop, none._proc, none.backend = threading.Event(), None, "none"
     assert not none.available and none.play(Audio(b"\0\0", 16000)) is False
+
+
+@pytest.mark.parametrize("path,claimed", [("/synth", "too_big"), ("/yok", "exact")])
+def test_tts_server_drains_the_body_before_an_early_answer(server, path, claimed):
+    """An early 413/404 used to close the socket with the body unread; the OS then sends a TCP reset, which on
+    Windows discards the response before the client reads it (WinError 10053, flaky on Windows CI)."""
+    import errno
+    import socket
+    import sys
+    import time
+
+    from alice.voice import tts_server
+
+    port, _ = server
+    body = b"x" * 200_000  # larger than the handler's read buffer: it stays unread in the kernel otherwise
+    length = tts_server.MAX_BODY + 1 if claimed == "too_big" else len(body)
+    s = socket.create_connection(("127.0.0.1", port), timeout=10)
+    try:
+        s.sendall(f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {length}\r\n\r\n".encode() + body)
+        time.sleep(0.6)  # let the server answer and close
+        data = b""
+        while chunk := s.recv(4096):
+            data += chunk
+        assert data.split(b" ")[1] in (b"413", b"404")
+        if sys.platform.startswith("linux"):  # a reset leaves an error on the socket (EPIPE/ECONNRESET)
+            assert errno.errorcode.get(s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)) is None
+    finally:
+        s.close()

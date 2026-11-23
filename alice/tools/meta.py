@@ -9,16 +9,18 @@ from alice.tools.base import COMPUTER, READ, WRITE, Tool, ToolContext, ToolError
 
 class TodoWrite(Tool):
     name = "todo_write"
-    description = ("Çok adımlı bir işte planı ve ilerlemeyi yapılacaklar listesinde tutar; kullanıcı listeyi canlı görür.\n"
-                   "- 3 ya da daha fazla adımlı işlerde, kullanıcı birden çok şey istediğinde ya da iş uzun sürecekse kullan. "
-                   "Tek adımlık işlerde ve sohbette kullanma.\n"
-                   "- Her çağrıda listenin TAMAMINI gönder. Aynı anda tek bir in_progress olsun; bir adım biter bitmez done yap, "
-                   "birkaçını sona biriktirme.\n"
-                   "- Bir adım gerçekten bitmediyse (test geçmedi, hata kaldı) done yapma; engeli yeni bir adım olarak ekle.")
-    parameters = obj({"todos": {"type": "array", "description": "Güncel listenin tamamı.", "items": obj({
-        "content": {"type": "string", "description": "Adım, emir kipinde kısa cümle, ör. 'Testleri çalıştır'."},
+    description = ("Keeps the plan and progress of a multi-step job in a todo list; the user sees the list live.\n"
+                   "- Use it for jobs with 3 or more steps, when the user asks for several things, or when the job "
+                   "will take long. Don't use it for single-step jobs or chat.\n"
+                   "- Send the WHOLE list on every call. Keep only one in_progress at a time; mark a step done as "
+                   "soon as it is finished, don't save several up for the end.\n"
+                   "- If a step isn't really finished (a test failed, an error remains), don't mark it done; add the "
+                   "blocker as a new step.")
+    parameters = obj({"todos": {"type": "array", "description": "The whole current list.", "items": obj({
+        "content": {"type": "string", "description": "The step, a short sentence in the imperative, e.g. 'Run the "
+                                                     "tests'."},
         "status": {"type": "string", "enum": ["pending", "in_progress", "done"],
-                   "description": "pending: başlamadı | in_progress: şu an yapılan | done: bitti."}},
+                   "description": "pending: not started | in_progress: being done now | done: finished."}},
         ["content", "status"])}}, ["todos"])
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -35,51 +37,60 @@ class TodoWrite(Tool):
 
 class Memory(Tool):
     name = "memory"
-    description = ("Kalıcı hafıza: kullanıcı ve hayatındaki insanlar, alanlar, konular hakkında NOTLAR (her biri ayrı "
-                   "dosya; dizini sistem isteminde) ve geçmiş konuşmalar.\n"
-                   "- save: not yaz ya da aynı adla güncelle. category: you (profile/preferences), people (kişi başına "
-                   "bir not, adıyla), areas (süregelen proje/staj/topluluk), topics (ilgi, donanım, araç). Kişilerde "
-                   "takma adları aliases'a yaz, ilgili notları içerikte [[ad]] ile bağla. Benzer not varsa onu "
-                   "güncelle. 'Hatırla' denince hemen save, 'unut' denince delete.\n"
-                   "- read: name ya da takma adla notun tamamı ('gravity' -> efe); name yoksa hepsi.\n"
-                   "- Kullanıcı geçmişe değinince ('geçen sefer', 'dün konuştuğumuz') önce bak: search_chats (konu), "
-                   "recent_chats (zaman, after/before). Bulamazsan uydurma.\n"
-                   "- log: uzun işte not etmeye değeri bugünün günlüğüne ekle. dream: hafızayı şimdi toparla. "
-                   "restore: Dream yedeğine dön.\n"
-                   "- followup: ileride sorulacak/hatırlatılacak şey (due); sorunca done.")
+    description = ("Long-term memory: NOTES about the user and the people, areas and topics in their life (one file "
+                   "each; the index is in the system prompt) and past conversations.\n"
+                   "- save: write a note or update the one with that name. category: you (profile/preferences), "
+                   "people (one note per person, by name), areas (ongoing project/internship/community), topics "
+                   "(interests, hardware, tools). Put a person's nicknames in aliases; link related notes with "
+                   "[[name]]. Update a similar note instead of adding one. 'Remember' -> save now; 'forget' -> "
+                   "delete.\n"
+                   "- read: a whole note by name or nickname ('gravity' -> efe); no name: all.\n"
+                   "- When the user refers to the past ('last time', 'yesterday'), look first: search_chats (topic), "
+                   "recent_chats (time, after/before). Don't make it up.\n"
+                   "- log: add to today's journal. dream: tidy up memory now. restore: back to a Dream backup.\n"
+                   "- followup: something to ask/remind of later (due); done once asked.")
     parameters = obj({
         "action": {"type": "string", "enum": ["save", "read", "delete", "list", "search", "log", "dream", "restore",
                                               "search_chats", "recent_chats", "followup", "followups", "done",
                                               "add", "update", "forget"],
-                   "description": "save | read | delete | list (notlar) | search (notlarda ara) | log (günlüğe ekle) | "
-                   "dream (toparla) | restore (yedeğe dön; backup boşsa yedekleri listeler) | search_chats | "
-                   "recent_chats | followup | followups | done. add/update/forget eski adlar (save/delete)."},
-        "name": {"type": "string", "description": "Notun kısa adı (kebab-case; kişide adı: 'efe', alanda 'staj'); "
-                 "read/delete/save için. read'de takma ad da olur. Başka kapsamdaki not: 'proje:ad'."},
-        "category": {"type": "string", "description": "save: you | people | areas | topics (ya da uygun başka bir "
-                     "klasör adı). Var olan not yerinde kalır; farklı category verilirse oraya taşınır."},
-        "aliases": {"type": "array", "items": {"type": "string"}, "description": "save: takma adlar, kullanıcı adları, "
-                    "farklı yazılışlar (kişilerde önemli: ['gravity'])."},
+                   "description": "save | read | delete | list (notes) | search (search notes) | log (add to the "
+                                  "journal) | dream (tidy up) | restore (go back to a backup; lists the backups if "
+                                  "backup is empty) | search_chats | recent_chats | followup | followups | done. "
+                                  "add/update/forget are old names (save/delete)."},
+        "name": {"type": "string", "description": "Short name of the note (kebab-case; a person's name: 'efe', an "
+                                                  "area: 'staj'); for read/delete/save. read also accepts a nickname. "
+                                                  "A note in another scope: 'project:name'."},
+        "category": {"type": "string", "description": "save: you | people | areas | topics (or another suitable "
+                                                      "folder name). An existing note stays where it is; a different "
+                                                      "category moves it there."},
+        "aliases": {"type": "array", "items": {"type": "string"}, "description": "save: nicknames, user names, other "
+                                                                                 "spellings (important for people: "
+                                                                                 "['gravity'])."},
         "type": {"type": "string", "enum": ["user", "feedback", "project", "reference"],
-                 "description": "Eski alan, isteğe bağlı; category kullan."},
-        "description": {"type": "string", "description": "save: tek satır. Kişide: 'Ad (\"takma ad\") — kullanıcıya "
-                        "ne olduğu, nereden, bağlı kişiler; read when Ad or takma ad comes up'. Hatırlama buna bakar."},
-        "content": {"type": "string", "description": "save: notun tamamı (markdown, kısa maddeler). İlgili notları "
-                    "[[ad]] ile bağla. Göreli tarihleri mutlak yaz. Güncellemede eski içeriği birleştirip tam yaz."},
-        "title": {"type": "string", "description": "save: dizinde görünecek kısa başlık (boşsa ad)."},
-        "scope": {"type": "string", "enum": ["genel", "proje"], "description": "save: genel (varsayılan) ya da "
-                  "proje (yalnız şu anki git deposunda geçerli)."},
-        "note": {"type": "string", "description": "log/followup için metin; add için tek cümle."},
-        "kind": {"type": "string", "description": "add için eski tür adı (preference, fact, person...)."},
-        "id": {"type": "integer", "description": "done için takibin numarası."},
-        "query": {"type": "string", "description": "search, search_chats ya da forget için arama ifadesi."},
-        "backup": {"type": "string", "description": "restore: dönülecek yedek (YYYYMMDD-HHMMSS)."},
-        "due": {"type": "string", "description": "followup için gün, YYYY-MM-DD. kind=open ise boş."},
+                 "description": "Old field, optional; use category."},
+        "description": {"type": "string", "description": "save: one line. For a person: 'Name (\"nickname\") — who "
+                                                         "they are to the user, where from, related people; read when "
+                                                         "Name or nickname comes up'. Recall looks at this."},
+        "content": {"type": "string", "description": "save: the whole note (markdown, short bullets). Link related "
+                                                     "notes with [[name]]. Write relative dates as absolute ones. "
+                                                     "When updating, merge the old content and write it in full."},
+        "title": {"type": "string", "description": "save: short title shown in the index (empty: the name)."},
+        "scope": {"type": "string", "enum": ["genel", "proje"], "description": "save: global (default) or project "
+                                                                               "(only valid in the current git "
+                                                                               "repository)."},
+        "note": {"type": "string", "description": "Text for log/followup; one sentence for add."},
+        "kind": {"type": "string", "description": "Old kind name for add (preference, fact, person...)."},
+        "id": {"type": "integer", "description": "Number of the follow-up, for done."},
+        "query": {"type": "string", "description": "Search phrase for search, search_chats or forget."},
+        "backup": {"type": "string", "description": "restore: the backup to go back to (YYYYMMDD-HHMMSS)."},
+        "due": {"type": "string", "description": "Day for followup, YYYY-MM-DD. Empty if kind=open."},
         "followup_kind": {"type": "string", "enum": ["ask", "remind", "open"],
-                          "description": "followup türü: ask sonra sor | remind o gün hatırlat | open yarım kalan iş."},
-        "n": {"type": "integer", "description": "recent_chats için kaç konuşma (varsayılan 5, en çok 20)."},
-        "after": {"type": "string", "description": "search_chats/recent_chats: bu günden (YYYY-MM-DD, dahil) sonrası."},
-        "before": {"type": "string", "description": "search_chats/recent_chats: bu günden (YYYY-MM-DD) öncesi."},
+                          "description": "Follow-up type: ask ask later | remind remind on that day | open unfinished "
+                                         "work."},
+        "n": {"type": "integer", "description": "How many conversations for recent_chats (default 5, at most 20)."},
+        "after": {"type": "string", "description": "search_chats/recent_chats: from this day on (YYYY-MM-DD, "
+                                                   "inclusive)."},
+        "before": {"type": "string", "description": "search_chats/recent_chats: before this day (YYYY-MM-DD)."},
     }, ["action"])
     risk = WRITE
 
@@ -217,26 +228,27 @@ class Memory(Tool):
 
 class Task(Tool):
     name = "task"
-    description = ("Kendi temiz bağlamıyla çalışan bir alt ajan başlatır; bağımsız bir işi (araştırma, büyük bir "
-                   "klasörde arama, uzun bir alt görev) yapar ve sadece sonucunu döndürür. Konuşmayı çok sayıda ara "
-                   "çıktıyla doldurmamak için. Alt ajan bu konuşmayı görmez: prompt'a gereken her şeyi yaz. Bir iki "
-                   "araç çağrısıyla bitecek işlerde kullanma.\n"
-                   "- Paralel: birbirinden bağımsız işler için aynı cevapta birden çok task çağır; aynı anda çalışırlar.\n"
-                   "- background=true: alt ajan arka planda çalışır, sen ve kullanıcı sohbete devam edersiniz; bitince "
-                   "sonucu '[Alt ajan aN ...]' mesajıyla gelir. Sonuca hemen ihtiyacın yoksa ya da iş uzunsa kullan. "
-                   "Sonucu gelmeden ne bulduğunu tahmin etme.\n"
-                   "- id: daha önce çalışmış alt ajana (aN) yeni mesaj; okuduklarını ve bulduklarını hatırlar, baştan "
-                   "araştırmaz. Aynı konuda ek soru için yeni alt ajan yerine bunu kullan.\n"
-                   "- Durum ve durdurma: subagents aracı (list/stop). Kullanıcı yan paneldeki Ajanlar sekmesinden izler.")
+    description = ("Starts a subagent with its own clean context for an independent job (research, a search in a big "
+                   "folder, a long subtask); only its result comes back, so the conversation doesn't fill up. It does "
+                   "not see this conversation: put everything it needs in prompt. Not for one- or two-call jobs.\n"
+                   "- Parallel: for independent jobs call several tasks in the same reply.\n"
+                   "- background=true: it runs while you and the user keep chatting; the result arrives as an '[Alt "
+                   "ajan aN ...]' message. Use it when you don't need the result right away or the job is long. Don't "
+                   "guess its result.\n"
+                   "- id: a new message to a subagent that already ran (aN); it remembers what it found. Use it for "
+                   "follow-up questions on the same topic instead of a new subagent.\n"
+                   "- Status and stopping: the subagents tool (list/stop); the user follows them in the Agents tab.")
     parameters = obj({
-        "prompt": {"type": "string", "description": "Alt ajana eksiksiz görev: ne yapacak, nerede, ne döndürecek. "
-                   "id verildiyse: ona yazılacak yeni mesaj."},
-        "agent": {"type": "string", "description": "Kullanıcının tanımladığı özel alt ajanın adı (sistem istemindeki "
-                  "'Custom subagents' listesi). Boş: genel alt ajan."},
-        "name": {"type": "string", "description": "Ekranda görünecek kısa ad, ör. 'test taraması'."},
-        "background": {"type": "boolean", "description": "Arka planda çalıştır; sonuç bitince mesaj olarak gelir."},
-        "id": {"type": "string", "description": "Devam ettirilecek alt ajan (aN). Boş: yeni alt ajan."},
-        "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 40 (özel ajanda kendi sınırı)."},
+        "prompt": {"type": "string", "description": "The complete task for the subagent: what to do, where, what to "
+                                                    "return. With id: the new message to send it."},
+        "agent": {"type": "string", "description": "Name of a custom subagent the user defined (the 'Custom "
+                                                   "subagents' list in the system prompt). Empty: a general subagent."},
+        "name": {"type": "string", "description": "Short name shown on screen, e.g. 'test sweep'."},
+        "background": {"type": "boolean", "description": "Run in the background; the result arrives as a message when "
+                                                         "done."},
+        "id": {"type": "string", "description": "Subagent to continue (aN). Empty: a new subagent."},
+        "max_steps": {"type": "integer", "description": "Maximum steps. Default 40 (a custom agent has its own "
+                                                        "limit)."},
     }, ["prompt"])
     risk = READ  # each of the sub-agent's own tool calls goes through its own permission check
 
@@ -272,23 +284,24 @@ class Task(Tool):
 
 class AgentDefs(Tool):
     name = "agent_defs"
-    description = ("Özel alt ajan tanımlarını yönetir (task aracında agent=<ad> ile çağrılanlar; Claude Code'daki "
-                   ".claude/agents gibi). 'Bana bir test yazıcı ajan tanımla', 'inceleyici ajanın talimatını değiştir', "
-                   "'hangi ajanlarım var' için.\n"
-                   "- save: name, description (ne zaman kullanılacağı, tek cümle), prompt (ajanın sistem talimatı: "
-                   "rolü, nasıl çalışacağı, ne döndüreceği), tools (boş: hepsi; salt okuma ajanı için ör. read_file, "
-                   "grep, glob, list_dir, git), model (brain, fast ya da sağlayıcı:model), max_steps, where (user: her "
-                   "projede, project: yalnız bu projede).\n- list | delete (name).")
+    description = ("Manages custom subagent definitions (called with agent=<name> in the task tool; like "
+                   ".claude/agents in Claude Code). For 'define a test-writer agent for me', 'change the reviewer "
+                   "agent's instructions', 'which agents do I have'.\n"
+                   "- save: name, description (when to use it, one sentence), prompt (the agent's system "
+                   "instructions: its role, how it works, what it returns), tools (empty: all; for a read-only agent "
+                   "e.g. read_file, grep, glob, list_dir, git), model (brain, fast or provider:model), max_steps, "
+                   "where (user: in every project, project: only in this project).\n"
+                   "- list | delete (name).")
     parameters = obj({
-        "action": {"type": "string", "enum": ["list", "save", "delete"], "description": "Yapılacak iş."},
-        "name": {"type": "string", "description": "Ajan adı: küçük harf, rakam, - ve _, ör. 'test-yazici'."},
-        "description": {"type": "string", "description": "save: ne yapar, ne zaman çağrılmalı (tek cümle)."},
-        "prompt": {"type": "string", "description": "save: ajanın sistem talimatı."},
-        "tools": {"type": "array", "items": {"type": "string"}, "description": "save: izinli araçlar; boş: hepsi."},
-        "model": {"type": "string", "description": "save: brain, fast ya da sağlayıcı:model; boş: ana ajanınki."},
-        "max_steps": {"type": "integer", "description": "save: en fazla adım (varsayılan 40)."},
-        "where": {"type": "string", "enum": ["user", "project"], "description": "save: user (varsayılan) ya da "
-                  "project."},
+        "action": {"type": "string", "enum": ["list", "save", "delete"], "description": "What to do."},
+        "name": {"type": "string", "description": "Agent name: lowercase letters, digits, - and _, e.g. "
+                                                  "'test-writer'."},
+        "description": {"type": "string", "description": "save: what it does and when to call it (one sentence)."},
+        "prompt": {"type": "string", "description": "save: the agent's system instructions."},
+        "tools": {"type": "array", "items": {"type": "string"}, "description": "save: allowed tools; empty: all."},
+        "model": {"type": "string", "description": "save: brain, fast or provider:model; empty: the main agent's."},
+        "max_steps": {"type": "integer", "description": "save: maximum steps (default 40)."},
+        "where": {"type": "string", "enum": ["user", "project"], "description": "save: user (default) or project."},
     }, ["action"])
     risk = READ
 
@@ -318,8 +331,9 @@ class AgentDefs(Tool):
 
 class SubagentsTool(Tool):
     name = "subagents"
-    description = ("Bu sohbetin alt ajanlarını (task ile başlatılanlar) listeler ya da durdurur. 'Arkadaki ajanlar ne "
-                   "durumda', 'şu ajanı durdur' için. Sonuç bekliyorsan sorma: bitince mesajı kendiliğinden gelir.")
+    description = ("Lists or stops this conversation's subagents (the ones started with task). For 'how are the "
+                   "background agents doing', 'stop that agent'. If you are waiting for a result, don't ask: its "
+                   "message arrives by itself when done.")
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "stop"], "description": "list: durumlar | stop: id'yi durdur."},
         "id": {"type": "string", "description": "stop: alt ajan (aN)."},
@@ -344,41 +358,44 @@ class SubagentsTool(Tool):
 class Reflex(Tool):
     name = "reflex"
     description = (
-        "Ekranda/tarayıcıda bir hedefi Jev'le hızlıca yapar (adım ~1 sn): ekranı okur, her adımda eylemi seçer: "
-        "tıklama, sağ/çift tık, alana yazma, pencereye klavyeyle yazma, tuş ya da kombinasyon (ctrl+shift+s), tuşu "
-        "basılı tutma, sürükle-bırak, kaydırma. Sonuçta ekranın başa göre değişen yazıları da gelir.\n"
-        "- Kullan: 'Impossible şarkısına tıkla', 'Ayarlar > Gizlilik'i aç', 'kartı sağdaki sütuna sürükle'.\n"
-        "- Klavye işi tek adımdır: hesap makinesinde tuşlara tıklatma, text='1234*5678=', press_first=['escape'] "
-        "ver; kombinasyonları keys'e yaz.\n"
-        "- Uygulama açmaz: önce app/windows aracıyla aç, sonra title ver (boşsa öndeki pencere).\n"
-        "- En iyi tek işlik hedefte çalışır: uzun işi kısa hedeflere böl, her biri için ayrı çağır; kuralları, "
-        "stratejiyi notes'a yaz.\n"
-        "- Sonuç 'needs_help' ise nedenine bak; hedefi değiştir, notes'a bilgi ekle ya da kalanı kendin yap.\n"
-        "- TypeSafe anahtarı varsa listede olmayan şeyleri (ikon, oyun taşı) ekran görüntüsünden de bulabilir."
+        "Does a goal on the screen/in the browser quickly with Jev (~1 s per step): reads the screen and picks an "
+        "action each step: click, right/double click, type into a field, type into the window, a key or combo "
+        "(ctrl+shift+s), hold a key, drag and drop, scroll. The result includes the text that changed on screen.\n"
+        "- Use it for: 'click the song Impossible', 'open Settings > Privacy', 'drag the card to the right column'.\n"
+        "- Keyboard work is one step: don't click calculator keys; pass text='1234*5678=', press_first=['escape']; "
+        "combos go in keys.\n"
+        "- It doesn't open apps: open with the app/windows tool first, then pass title (empty: foreground window).\n"
+        "- Best on single-task goals: split long jobs into short goals, one call each; put rules/strategy in notes.\n"
+        "- On 'needs_help', read the reason: change the goal, add to notes, or do the rest yourself.\n"
+        "- With a TypeSafe key it also finds things not in the list (icons, game pieces) from a screenshot."
     )
     parameters = obj({
-        "goal": {"type": "string", "description": "Kısa ve somut hedef, ekranda göründüğü adlarla, ör. 'ekrandaki "
-                 "Impossible şarkısına tıkla'."},
+        "goal": {"type": "string", "description": "Short, concrete goal using the names as they appear on screen, "
+                                                  "e.g. 'click the song Impossible on screen'."},
         "target": {"type": "string", "enum": ["browser", "desktop"],
-                   "description": "browser: kullanıcının tarayıcısında öndeki sekme | desktop: masaüstü penceresi."},
-        "url": {"type": "string", "description": "browser için: önce bu adrese git. Boş: öndeki sekmede kal."},
-        "title": {"type": "string", "description": "desktop için pencere başlığından bir parça. Boş: öndeki pencere."},
+                   "description": "browser: the front tab in the user's browser | desktop: a desktop window."},
+        "url": {"type": "string", "description": "For browser: go to this address first. Empty: stay on the front "
+                                                 "tab."},
+        "title": {"type": "string", "description": "For desktop: part of the window title. Empty: the foreground "
+                                                   "window."},
         "inputs": {"type": "object", "additionalProperties": {"type": "string"},
-                   "description": "Doldurulacak alanlar: alan adından parça -> yazılacak metin, ör. {\"ara\": \"lofi\"}."},
-        "notes": {"type": "string", "description": "Karar motoruna bağlam: kurallar, strateji, ekranda neyin ne "
-                  "olduğu, kaçınılacaklar (kısa, tercihen İngilizce)."},
-        "text": {"type": "string", "description": "Pencereye klavyeyle yazılacak metin (alan seçmeden), ör. "
-                 "'1234*5678='."},
-        "keys": {"type": "array", "items": {"type": "string", "description": "Tuş ya da kombinasyon, ör. 'shift+w'."},
-                 "description": "Seçeneklere eklenecek tuşlar/kombinasyonlar (aynı anda basılır)."},
-        "press_first": {"type": "array", "items": {"type": "string", "description": "Tuş, ör. 'escape'."},
-                        "description": "text yazılmadan önce basılacak tuşlar: önceki girdiyi temizlemek için "
-                                       "(hesap makinesinde 'escape', alanda 'ctrl+a')."},
-        "hold_seconds": {"type": "number", "description": "Tuş basılı tutulacaksa kaç saniye. Varsayılan 1."},
-        "allow_irreversible": {"type": "boolean", "description": "Sadece kullanıcı açıkça istediyse true: gönder, "
-                               "öde, sil, satın al, onayla/kabul gibi geri alınamaz düğmelere basılabilir. Varsayılan "
-                               "false: refleks böyle bir düğmede durur (needs_confirmation)."},
-        "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 20."},
+                   "description": "Fields to fill: part of the field name -> text to type, e.g. {\"search\": "
+                                  "\"lofi\"}."},
+        "notes": {"type": "string", "description": "Context for the decision engine: rules, strategy, what is what on "
+                                                   "screen, things to avoid (short, preferably in English)."},
+        "text": {"type": "string", "description": "Text to type into the window with the keyboard (without picking a "
+                                                  "field), e.g. '1234*5678='."},
+        "keys": {"type": "array", "items": {"type": "string", "description": "Key or combination, e.g. 'shift+w'."},
+                 "description": "Keys/combinations to add to the options (pressed together)."},
+        "press_first": {"type": "array", "items": {"type": "string", "description": "Key, e.g. 'escape'."},
+                        "description": "Keys to press before typing text: to clear previous input ('escape' in a "
+                                       "calculator, 'ctrl+a' in a field)."},
+        "hold_seconds": {"type": "number", "description": "How many seconds to hold a key down. Default 1."},
+        "allow_irreversible": {"type": "boolean", "description": "true only if the user explicitly asked: then "
+                                                                 "irreversible buttons such as send, pay, delete, "
+                                                                 "buy, confirm/accept may be pressed. Default false: "
+                                                                 "reflex stops at such a button (needs_confirmation)."},
+        "max_steps": {"type": "integer", "description": "Maximum steps. Default 20."},
     }, ["goal", "target"])
     risk = COMPUTER
 
@@ -458,16 +475,17 @@ def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:
 
 class AskUser(Tool):
     name = "ask_user"
-    description = ("İşin ORTASINDA, cevap gelmeden devam edemediğinde kullanıcıya tıklanabilir seçeneklerle soru sorar "
-                   "ve cevabı BEKLER (uygulamada kart, terminalde numaralı liste). Örnek: iki makul yol var ve seçim "
-                   "sonucu değiştiriyor, ya da gereken bir bilgi (hangi hesap, hangi klasör) eksik. İş BİTTİYSE ve "
-                   "sadece sonraki adımı önereceksen bu değil next_step. Önerdiğin seçeneği ilk sıraya koy; kullanıcı "
-                   "listede olmayan bir cevap da yazabilir.")
+    description = ("In the MIDDLE of a job, when you can't continue without an answer, asks the user a question with "
+                   "clickable options and WAITS for the answer (a card in the app, a numbered list in the terminal). "
+                   "Example: there are two reasonable ways and the choice changes the result, or a needed piece of "
+                   "information (which account, which folder) is missing. If the job is DONE and you only want to "
+                   "suggest the next step, use next_step, not this. Put the option you recommend first; the user can "
+                   "also type an answer that is not in the list.")
     parameters = obj({
         "question": {"type": "string", "description": "Tek, net soru."},
-        "options": {"type": "array", "items": {"type": "string", "description": "Seçenek: kısa etiket, istersen "
-                    "' — ' ile açıklama."}, "description": "2-5 seçenek."},
-        "multi": {"type": "boolean", "description": "Birden fazla seçilebilsin mi? Varsayılan false."},
+        "options": {"type": "array", "items": {"type": "string", "description": "Option: short label, optionally ' — "
+                                                                                "' and a description."}, "description": "2-5 options."},
+        "multi": {"type": "boolean", "description": "Can several be chosen? Default false."},
     }, ["question", "options"])
     risk = READ
 
@@ -489,12 +507,13 @@ class AskUser(Tool):
 
 class SkillTool(Tool):
     name = "skill"
-    description = ("Kullanıcının ALICE'e öğrettiği bir skill'in (adım adım talimat + yardımcı dosyalar) içeriğini yükler ve "
-                   "döndürür.\n"
-                   "- Sistem istemindeki 'Skills' listesinde açıklaması işe uyan bir skill varsa, işe başlamadan ÖNCE bunu çağır "
-                   "ve dönen talimatlara göre çalış.\n"
-                   "- Sadece listede yazan adları kullan; ad uydurma. Aynı turda zaten yüklediysen tekrar çağırma.")
-    parameters = obj({"name": {"type": "string", "description": "Skill adı (listede yazan)."}}, ["name"])
+    description = ("Loads and returns the content of a skill the user taught ALICE (step-by-step instructions + "
+                   "helper files).\n"
+                   "- If a skill in the 'Skills' list of the system prompt has a description that fits the job, call "
+                   "this BEFORE starting the job and work by the instructions it returns.\n"
+                   "- Use only names in the list; don't make names up. If you already loaded it this turn, don't call "
+                   "it again.")
+    parameters = obj({"name": {"type": "string", "description": "Skill name (as written in the list)."}}, ["name"])
     risk = READ
     parallel_safe = True
 
@@ -512,14 +531,16 @@ class SkillTool(Tool):
 
 class Projects(Tool):
     name = "projects"
-    description = ("Kullanıcının bilgisayarındaki projeler (git depoları, Unity, Python, Node, .NET...): listele, ada/"
-                   "konuya göre bul, bir projenin ayrıntısı (yol, diller, son commitler, klasör içeriği, README). "
-                   "'Unity projem', 'oyunum', 'ALICE reposu' gibi sözlerde hangi klasör olduğunu buradan öğren.")
+    description = ("Projects on the user's computer (git repositories, Unity, Python, Node, .NET...): list them, find "
+                   "them by name/topic, or get a project's details (path, languages, recent commits, folder contents, "
+                   "README). For phrases like 'my Unity project', 'my game', 'the ALICE repo', find out here which "
+                   "folder it is.")
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "find", "info", "rescan"],
-                   "description": "list: en son çalışılanlar | find: query'ye uyanlar | info: query'deki projenin "
-                   "ayrıntısı | rescan: diski yeniden tara (yeni proje eklendiyse)."},
-        "query": {"type": "string", "description": "find/info için proje adı ya da konu, ör. 'fps', 'alice', 'unity'."},
+                   "description": "list: most recently worked on | find: those matching query | info: details of the "
+                                  "project in query | rescan: scan the disk again (if a new project was added)."},
+        "query": {"type": "string", "description": "Project name or topic for find/info, e.g. 'fps', 'alice', "
+                                                   "'unity'."},
     }, ["action"])
     risk = READ
 
@@ -548,14 +569,15 @@ class Projects(Tool):
 
 class Feedback(Tool):
     name = "feedback"
-    description = ("Kullanıcı az önceki bir cevabını beğenmediğini söylerse ('bu cevap kötüydü', 'saçmaladın', 'öyle deme', "
-                   "'yanlış anladın') çağır: istek ve cevap test setine kaydedilir, sonraki güncellemelerde denenir. "
-                   "Kullanıcıya kısaca kabul ettiğini söyle (özür kalıbı yok); ne yapmamanı istiyorsa memory'ye de "
-                   "tercih olarak ekle.")
+    description = ("Call this if the user says they didn't like one of your recent answers ('that answer was bad', "
+                   "'you talked nonsense', 'don't say it like that', 'you misunderstood'): the request and answer are "
+                   "saved to the test set and tried in later updates. Tell the user briefly that you took it on board "
+                   "(no apology formula); if they want you to stop doing something, also add it to memory as a "
+                   "preference.")
     parameters = obj({
-        "say": {"type": "string", "description": "Beğenilmeyen cevaptan önce kullanıcının söylediği istek, kendi sözleriyle."},
-        "reply": {"type": "string", "description": "Senin verdiğin, beğenilmeyen cevap."},
-        "note": {"type": "string", "description": "Kullanıcının ne dediği / neyin yanlış olduğu."},
+        "say": {"type": "string", "description": "The user's request before the disliked answer, in their own words."},
+        "reply": {"type": "string", "description": "The answer you gave that was disliked."},
+        "note": {"type": "string", "description": "What the user said / what was wrong."},
     }, ["note"])
     risk = READ
 
@@ -576,18 +598,19 @@ class SendFile(Tool):
 
     name = "send_file"
     parallel_safe = True
-    description = ("Ürettiğin ya da bulduğun dosyaları kullanıcıya sohbette kart olarak gösterir (ad, boyut, Aç ve "
-                   "Klasörde göster düğmeleri); görseller sohbette önizlenir.\n"
-                   "- Kullanıcının görmek isteyeceği bir sonuç ürettiğinde kullan: rapor, grafik, dışa aktarılan "
-                   "belge, ekran görüntüsü, derlenmiş program.\n"
-                   "- Ara dosyaları, geçici çıktıları ya da hâlâ üzerinde çalıştığın dosyanın her sürümünü gönderme; "
-                   "anlamlı ölçüde değişmedikçe aynı dosyayı tekrar gönderme.\n"
-                   "- Dosya önceden diskte olmalı; bu araç dosya oluşturmaz (önce write_file vb.).")
+    description = ("Shows files you produced or found to the user as cards in the chat (name, size, Open and Show in "
+                   "folder buttons); images are previewed in the chat.\n"
+                   "- Use it when you produce a result the user will want to see: a report, a chart, an exported "
+                   "document, a screenshot, a built program.\n"
+                   "- Don't send intermediate files, temporary output or every version of a file you are still "
+                   "working on; don't send the same file again unless it changed meaningfully.\n"
+                   "- The file must already be on disk; this tool doesn't create files (write_file etc. first).")
     parameters = obj({
-        "paths": {"type": "array", "items": {"type": "string"}, "description": "Gösterilecek dosyaların yolları; "
-                  "mutlak ya da çalışma klasörüne göre. En fazla 10."},
-        "caption": {"type": "string", "description": "Kartın üstünde tek satırlık not, ör. 'Hata 42. satırda'. "
-                    "Dosya kendini anlatıyorsa boş bırak."},
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "Paths of the files to show, absolute "
+                                                                               "or relative to the working folder. At "
+                                                                               "most 10."},
+        "caption": {"type": "string", "description": "One-line note above the card, e.g. 'The error is on line 42'. "
+                                                     "Leave empty if the file speaks for itself."},
     }, ["paths"])
     risk = READ
 
@@ -623,18 +646,20 @@ class NextStep(Tool):
 
     name = "next_step"
     parallel_safe = True
-    description = ("İş BİTTİĞİNDE, son cevabından hemen önce çağrılır: sohbetin altına kısa bir özet kutusu koyar; "
-                   "istersen sonraki adım için tek bir soru ve 1-3 düğme ekler. BEKLEMEZ, tur biter; kullanıcı "
-                   "düğmeye basarsa o metin yeni mesajı olarak gelir. Devam etmek için cevaba ihtiyacın varsa bu "
-                   "değil ask_user.\n"
-                   "- Birkaç adımlı işlerin sonunda kullan; kısa sorular ve sohbet için gerek yok.\n"
-                   "- recap: şu an ne durumda, ne yapılmadı/doğrulanmadı (2-3 kısa cümle).\n"
-                   "- question: kullanıcıya kalan tek karar; önerdiğin seçenek ilk düğme.")
+    description = ("Called when the job is DONE, right before your last answer: puts a short recap box under the "
+                   "chat; optionally adds one question about the next step and 1-3 buttons. It does NOT wait; the "
+                   "turn ends; if the user presses a button, that text arrives as their new message. If you need an "
+                   "answer to continue, use ask_user, not this.\n"
+                   "- Use it at the end of multi-step jobs; not needed for short questions and chat.\n"
+                   "- recap: where things stand now, what was not done/verified (2-3 short sentences).\n"
+                   "- question: the one decision left to the user; the option you recommend is the first button.")
     parameters = obj({
-        "recap": {"type": "string", "description": "2-3 kısa cümle: ne değişti, ne durumda, ne eksik/doğrulanmadı."},
-        "question": {"type": "string", "description": "Kullanıcıya kalan tek karar (en fazla 100 karakter). Yoksa boş."},
-        "options": {"type": "array", "items": {"type": "string", "description": "Düğme metni (1-4 kelime)."},
-                    "description": "question'ın cevapları; önerilen ilk sırada. En fazla 3."},
+        "recap": {"type": "string", "description": "2-3 short sentences: what changed, where things stand, what is "
+                                                   "missing/unverified."},
+        "question": {"type": "string", "description": "The one decision left to the user (at most 100 characters). "
+                                                      "Empty if none."},
+        "options": {"type": "array", "items": {"type": "string", "description": "Button text (1-4 words)."},
+                    "description": "Answers to question; the recommended one first. At most 3."},
     }, ["recap"])
     risk = READ
 
@@ -650,16 +675,17 @@ class ExitPlanMode(Tool):
     """Equivalent of ExitPlanMode in Claude Code: presents the plan prepared in plan mode for approval."""
 
     name = "exit_plan_mode"
-    description = ("Plan modunda hazırladığın uygulama planını kullanıcıya onay için sunar. Onaylanırsa plan modu "
-                   "kapanır ve dosya yazma, komut çalıştırma serbest kalır; reddedilirse kullanıcının notuyla planı "
-                   "düzelt.\n"
-                   "- Sadece plan modundayken ve kod/dosya değişikliği gerektiren bir işin planı hazır olduğunda "
-                   "kullan. Araştırma, soru cevaplama ya da sadece okuma işleri için kullanma.\n"
-                   "- Planda neyin, hangi dosyalarda, hangi sırayla değişeceğini ve nasıl doğrulanacağını yaz. "
-                   "\"Plan uygun mu?\" diye ayrıca ask_user ile sorma; bu araç zaten onay ister.\n"
-                   "- Belirsiz bir tercih varsa önce ask_user ile netleştir, sonra planı sun.")
+    description = ("Presents the implementation plan you prepared in plan mode to the user for approval. If approved, "
+                   "plan mode ends and writing files and running commands are allowed; if rejected, fix the plan with "
+                   "the user's note.\n"
+                   "- Use it only in plan mode, when the plan for a job that needs code/file changes is ready. Don't "
+                   "use it for research, answering questions or read-only work.\n"
+                   "- In the plan, say what will change, in which files, in what order, and how it will be verified. "
+                   "Don't also ask \"is the plan OK?\" with ask_user; this tool already asks for approval.\n"
+                   "- If there is an unclear choice, settle it with ask_user first, then present the plan.")
     parameters = obj({
-        "plan": {"type": "string", "description": "Uygulama planı (Markdown): adımlar, değişecek dosyalar, doğrulama."},
+        "plan": {"type": "string", "description": "The implementation plan (Markdown): steps, files that will change, "
+                                                  "verification."},
     }, ["plan"])
     risk = READ
 

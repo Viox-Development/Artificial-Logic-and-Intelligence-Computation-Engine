@@ -25,25 +25,27 @@ def _store(ctx: ToolContext):
 class Metrics(Tool):
     name = "metrics"
     parallel_safe = False  # sqlite connection is shared in ctx.state
-    description = ("Çekirdeğin kaydettiği GEÇMİŞ ölçümler ve olaylar: bilgisayar (pc.*), uçuş (dcs.*), saat/nabız "
-                   "(watch.hr) gibi. 'Dün DCS'te GPU kaç dereceydi', 'son 2 saatte CPU' gibi sorular için. Şu anki "
-                   "durum için system_info. Anahtarı bilmiyorsan önce action=keys.\n"
-                   "Ör. dün uçuşta GPU sıcaklığı: action=stats key=pc.gpu.temp since=dün until=bugün mode=flight.")
+    description = ("PAST measurements and events recorded by the core: computer (pc.*), flight (dcs.*), watch/heart "
+                   "rate (watch.hr) and so on. For questions like 'how hot was the GPU in DCS yesterday', 'CPU over "
+                   "the last 2 hours'. For the current state use system_info. If you don't know the key, use "
+                   "action=keys first.\n"
+                   "E.g. GPU temperature during yesterday's flight: action=stats key=pc.gpu.temp since=yesterday "
+                   "until=today mode=flight.")
     parameters = obj({
         "action": {"type": "string", "enum": ["status", "health", "keys", "stats", "series", "events", "modes"],
-                   "description": "status: çekirdek çalışıyor mu, hangi mod | health: ALICE'in bileşenlerinde (takvim, "
-                   "Gmail, modeller, disk, tekrarlayan hatalar) şu an bozuk olan var mı ('sağlığın nasıl', 'bir sorun "
-                   "var mı') | keys: pattern'e uyan anahtarlar | stats: "
-                   "key için en düşük/ortalama/en yüksek | series: key'in zaman içindeki değerleri | events: olay "
-                   "günlüğü | modes: modların açık olduğu zaman aralıkları."},
-        "key": {"type": "string", "description": "stats/series için anahtar, ör. 'pc.gpu.temp'; stats'ta glob olabilir "
-                "('pc.disk.*.percent')."},
-        "pattern": {"type": "string", "description": "keys için glob, ör. 'pc.*'. Varsayılan '*'."},
-        "since": {"type": "string", "description": "Başlangıç: '15m', '2h', '3d' (şu andan geriye), 'dün', 'bugün' "
-                  "ya da ISO tarih."},
-        "until": {"type": "string", "description": "Bitiş, since ile aynı biçim. Boş: şimdi."},
+                   "description": "status: is the core running, which mode | health: is anything in ALICE's "
+                                  "components (calendar, Gmail, models, disk, recurring errors) broken right now "
+                                  "('how are you doing', 'is something wrong') | keys: keys matching pattern | stats: "
+                                  "min/avg/max for key | series: key's values over time | events: the event log | "
+                                  "modes: time ranges when modes were on."},
+        "key": {"type": "string", "description": "Key for stats/series, e.g. 'pc.gpu.temp'; stats also takes a glob "
+                                                 "('pc.disk.*.percent')."},
+        "pattern": {"type": "string", "description": "Glob for keys, e.g. 'pc.*'. Default '*'."},
+        "since": {"type": "string", "description": "Start: '15m', '2h', '3d' (back from now), 'yesterday', 'today' or "
+                                                   "an ISO date."},
+        "until": {"type": "string", "description": "End, same format as since. Empty: now."},
         "mode": {"type": "string", "enum": ["normal", "dev", "flight", "quiet"],
-                 "description": "Sadece bu mod açıkken alınan ölçümler (flight = DCS/War Thunder)."},
+                 "description": "Only measurements taken while this mode was on (flight = DCS/War Thunder)."},
     }, ["action"])
 
     def run(self, ctx: ToolContext, action: str, key: str | None = None, pattern: str = "*",
@@ -97,32 +99,35 @@ class Metrics(Tool):
 
 class Rules(Tool):
     name = "rules"
-    description = ("Ölçüme bağlı uyarı kuralları: 'GPU 85 dereceyi geçerse', 'nabzım 10 dakika 120'nin üstünde "
-                   "kalırsa beni uyar'. Çekirdek ölçümleri izler, koşul sağlanınca bildirir. Belirli bir SAATTE "
-                   "hatırlatma ya da iş için schedule kullan. Metrik anahtarını bilmiyorsan önce metrics action=keys.")
+    description = ("Alert rules tied to measurements: 'warn me if the GPU goes over 85 degrees', 'if my heart rate "
+                   "stays above 120 for 10 minutes'. The core watches the measurements and notifies when the "
+                   "condition holds. For a reminder or job at a set TIME use schedule. If you don't know the metric "
+                   "key, use metrics action=keys first.")
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "add", "remove", "enable", "disable"],
                    "description": "list | add: yeni kural (metric, op, threshold, message gerekli) | "
                    "remove/enable/disable: id'li kural."},
-        "id": {"type": "string", "description": "remove/enable/disable için kural numarası (list çıktısından)."},
-        "metric": {"type": "string", "description": "İzlenecek anahtar ya da glob, ör. 'pc.gpu.temp', "
-                   "'pc.disk.*.percent', 'watch.hr'."},
-        "op": {"type": "string", "enum": [">", ">=", "<", "<=", "==", "!="], "description": "Karşılaştırma."},
-        "threshold": {"type": "number", "description": "Eşik değer, ör. 85."},
-        "duration": {"type": "number", "description": "Koşulun kesintisiz sürmesi gereken saniye. Varsayılan 0."},
-        "cooldown": {"type": "number", "description": "Tekrar uyarmadan önce beklenecek saniye. Varsayılan 1800."},
-        "message": {"type": "string", "description": "Bildirim metni; {value}, {key}, {match}, {threshold} yer "
-                    "tutucuları kullanılabilir, ör. 'GPU {value} derece!'."},
-        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Önem. Varsayılan warn."},
-        "topic": {"type": "string", "description": "Konu etiketi, ör. 'pc', 'flight', 'health'. Varsayılan pc."},
+        "id": {"type": "string", "description": "Rule number for remove/enable/disable (from the list output)."},
+        "metric": {"type": "string", "description": "Key or glob to watch, e.g. 'pc.gpu.temp', 'pc.disk.*.percent', "
+                                                    "'watch.hr'."},
+        "op": {"type": "string", "enum": [">", ">=", "<", "<=", "==", "!="], "description": "Comparison."},
+        "threshold": {"type": "number", "description": "Threshold value, e.g. 85."},
+        "duration": {"type": "number", "description": "Seconds the condition must hold without a break. Default 0."},
+        "cooldown": {"type": "number", "description": "Seconds to wait before warning again. Default 1800."},
+        "message": {"type": "string", "description": "Notification text; the placeholders {value}, {key}, {match}, "
+                                                     "{threshold} can be used, e.g. 'GPU {value} degrees!'."},
+        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Importance. Default "
+                                                                                            "warn."},
+        "topic": {"type": "string", "description": "Topic label, e.g. 'pc', 'flight', 'health'. Default pc."},
         "modes": {"type": "array", "items": {"type": "string"},
-                  "description": "Sadece bu modlarda çalışsın, ör. [\"flight\"]. Boş: her modda."},
-        "confirm": {"type": "string", "description": "Yanlış alarm riski varsa uyarmadan önce hızlı modele sorulacak "
-                    "evet/hayır sorusu."},
+                  "description": "Only active in these modes, e.g. [\"flight\"]. Empty: every mode."},
+        "confirm": {"type": "string", "description": "If false alarms are likely, a yes/no question to ask the fast "
+                                                     "model before warning."},
         "rule_action": {"type": "string", "enum": ["notify", "agent"],
-                        "description": "notify: sadece bildir (varsayılan) | agent: ALICE prompt'taki işi yapsın."},
-        "prompt": {"type": "string", "description": "rule_action=agent için ALICE'in yapacağı işin tarifi."},
-        "description": {"type": "string", "description": "Kullanıcının kendi cümlesi, ör. 'GPU ısınırsa söyle'."},
+                        "description": "notify: only notify (default) | agent: ALICE does the job in prompt."},
+        "prompt": {"type": "string", "description": "For rule_action=agent, a description of the job ALICE should do."},
+        "description": {"type": "string", "description": "The user's own sentence, e.g. 'tell me if the GPU gets "
+                                                         "hot'."},
     }, ["action"])
     risk = WRITE
 
@@ -158,29 +163,32 @@ class Rules(Tool):
 
 class Schedule(Tool):
     name = "schedule"
-    description = ("Belirli saatlerde ya da tekrarlı çalışan görevler: 'her sabah 8'de hava durumunu söyle', 'her "
-                   "pazar gece projelerimi yedekle', 'yarın 17:00'de bana toplantıyı hatırlat'. O saatte ALICE "
-                   "prompt'taki işi gözetimsiz yapar. Kurmadan önce ne zaman ve ne yapılacağını kullanıcıya söyle. "
-                   "Ölçüme bağlı uyarılar (sıcaklık, nabız) için rules kullan.")
+    description = ("Jobs that run at set times or repeat: 'tell me the weather every morning at 8', 'back up my "
+                   "projects every Sunday night', 'remind me of the meeting tomorrow at 17:00'. At that time ALICE "
+                   "does the job in prompt unattended. Tell the user when and what will happen before setting it up. "
+                   "For measurement-based alerts (temperature, heart rate) use rules.")
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "add", "remove", "run_now"],
-                   "description": "list | add: yeni görev (cron ve prompt gerekli) | remove: id'li görevi sil | "
-                   "run_now: id'li görevi hemen çalıştır."},
-        "id": {"type": "string", "description": "remove/run_now için görev numarası (list çıktısından)."},
-        "cron": {"type": "string", "description": "5 alanlı cron: dakika saat gün ay haftanın-günü (0 = pazar). "
-                 "Ör. '0 8 * * *' her gün 08:00, '30 22 * * 0' pazar 22:30, '0 17 11 10 *' 11 Ekim 17:00."},
-        "prompt": {"type": "string", "description": "O saatte yapılacak işin eksiksiz tarifi; konuşmayı görmeyen "
-                   "birinin anlayacağı gibi yaz."},
-        "description": {"type": "string", "description": "Kısa ad, ör. 'sabah hava durumu'."},
-        "catch_up": {"type": "boolean", "description": "Bilgisayar kapalıyken kaçırılırsa açılışta yap. Varsayılan true."},
-        "once": {"type": "boolean", "description": "Tek seferlik iş ('5 dakika sonra ara', 'yarın 17:00'de hatırlat'): "
-                 "true ver, cron'a tam dakika/saat/gün/ay yaz. Çalışınca kendiliğinden silinir; tekrarlanan işlerde "
-                 "false (varsayılan)."},
-        "notify": {"type": "boolean", "description": "Bitince sonucu bildir. Varsayılan true."},
-        "project": {"type": "string", "description": "add: o saatte prompt yerine bu proje şablonunu otonom proje "
-                    "olarak başlat ('her pazartesi bağımlılık güncelleme projesini çalıştır'). Şablonlar Projeler "
-                    "sayfasında kaydedilir. prompt verilirse hedefe ek not olur."},
-        "cwd": {"type": "string", "description": "project: çalışma klasörü; boş: şablondaki."},
+                   "description": "list | add: a new job (cron and prompt required) | remove: delete the job with id "
+                                  "| run_now: run the job with id right now."},
+        "id": {"type": "string", "description": "Job number for remove/run_now (from the list output)."},
+        "cron": {"type": "string", "description": "5-field cron: minute hour day month day-of-week (0 = Sunday). E.g. "
+                                                  "'0 8 * * *' every day at 08:00, '30 22 * * 0' Sunday 22:30, '0 17 "
+                                                  "11 10 *' 11 October 17:00."},
+        "prompt": {"type": "string", "description": "A complete description of the job to do at that time; write it "
+                                                    "so someone who hasn't seen the conversation understands it."},
+        "description": {"type": "string", "description": "Short name, e.g. 'morning weather'."},
+        "catch_up": {"type": "boolean", "description": "If missed while the computer was off, do it at startup. "
+                                                       "Default true."},
+        "once": {"type": "boolean", "description": "One-off job ('call in 5 minutes', 'remind me tomorrow at 17:00'): "
+                                                   "pass true and put the exact minute/hour/day/month in cron. It "
+                                                   "deletes itself after running; false (default) for repeating jobs."},
+        "notify": {"type": "boolean", "description": "Report the result when done. Default true."},
+        "project": {"type": "string", "description": "add: at that time, start this project template as an autonomous "
+                                                     "project instead of prompt ('run the dependency update project "
+                                                     "every Monday'). Templates are saved on the Projects page. If "
+                                                     "prompt is given, it is added to the goal as a note."},
+        "cwd": {"type": "string", "description": "project: working folder; empty: the template's."},
     }, ["action"])
     risk = DANGER
 
@@ -262,47 +270,56 @@ def _obj_arg(name: str, v: Any) -> dict[str, Any]:
 class Feeds(Tool):
     name = "feeds"
     description = (
-        "Bağlı servisleri arka planda izleyip önemli bir şey olunca haber veren akışlar: 'Discord genel kanalında "
-        "bana mention gelirse söyle', 'Ahmet Steam'de oyuna girince haber ver', 'DCS kanalına video gelince "
-        "söyle', 'gece rahatsız etme, sabah özet geç'. Ölçüm eşiği (GPU sıcaklığı) için rules, belirli saat için "
-        "schedule.\n"
-        "- Önce connectors: hangi bağlantı hazır, eylemleri ve alanları ne.\n"
-        "- add öncesi test_action ile örnek öğeleri gör; title/body şablonunda ve when koşulunda alan adlarını "
-        "oradan al ({author.username} gibi iç içe yazılır).\n"
-        "- Yeni öğe için mode=new; bir alanın değişmesi için (oyuna girdi, çevrimiçi oldu) mode=change + watch.\n"
-        "- Gereksiz bildirimi önle: when ile süz, quiet ile geceyi sustur, acil olanı escalate ile işaretle."
+        "Feeds that watch connected services in the background and tell you when something important happens: 'tell "
+        "me if I get a mention in the Discord general channel', 'let me know when Ahmet starts a game on Steam', "
+        "'tell me when a video comes to the DCS channel', 'don't disturb me at night, give me a summary in the "
+        "morning'. For a measurement threshold (GPU temperature) use rules; for a set time, schedule.\n"
+        "- First connectors: which connection is ready, its actions and fields.\n"
+        "- Before add, see sample items with test_action; take field names for the title/body templates and the when "
+        "condition from there (nested as {author.username}).\n"
+        "- For new items mode=new; for a field changing (started a game, came online) mode=change + watch.\n"
+        "- Avoid needless notifications: filter with when, silence the night with quiet, mark urgent ones with "
+        "escalate."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "connectors", "test_action", "add", "test", "remove",
                                               "enable", "disable"],
-                   "description": "list: akışlar | connectors: bağlantılar ve eylemleri | test_action: bir "
-                   "bağlantı eylemini şimdi çağır, örnek öğeleri göster | add: yeni akış | test: tanımlı akışı "
-                   "yokla, her öğe geçti mi neden | remove/enable/disable: name'li akış."},
-        "name": {"type": "string", "description": "Akış adı (add, test, remove, enable, disable), ör. 'ahmet_oyun'."},
-        "connector": {"type": "string", "description": "Bağlantı adı, ör. 'discord', 'steam', 'youtube_api'."},
-        "connector_action": {"type": "string", "description": "Bağlantının eylemi, ör. 'messages', 'profile'."},
-        "args": {"type": "string", "description": "Eylem parametreleri JSON metni, ör. '{\"channel_id\": \"123\"}'."},
-        "every_minutes": {"type": "number", "description": "Yoklama aralığı, dakika. Varsayılan 10, en az 1."},
+                   "description": "list: feeds | connectors: connections and their actions | test_action: call a "
+                                  "connection action now and show sample items | add: a new feed | test: poll a "
+                                  "defined feed, whether and why each item passed | remove/enable/disable: the feed "
+                                  "with name."},
+        "name": {"type": "string", "description": "Feed name (add, test, remove, enable, disable), e.g. 'ahmet_game'."},
+        "connector": {"type": "string", "description": "Connection name, e.g. 'discord', 'steam', 'youtube_api'."},
+        "connector_action": {"type": "string", "description": "The connection's action, e.g. 'messages', 'profile'."},
+        "args": {"type": "string", "description": "Action parameters as JSON text, e.g. '{\"channel_id\": \"123\"}'."},
+        "every_minutes": {"type": "number", "description": "Polling interval in minutes. Default 10, at least 1."},
         "mode": {"type": "string", "enum": ["new", "change"],
-                 "description": "new: listeye yeni giren öğe | change: watch'taki alan değişince."},
-        "watch": {"type": "array", "items": {"type": "string", "description": "Alan adı."},
-                  "description": "mode=change için izlenecek alanlar, ör. [\"gameextrainfo\"]."},
-        "id_field": {"type": "string", "description": "Öğeyi ayırt eden alan. Varsayılan 'id' (Steam'de 'steamid')."},
-        "title": {"type": "string", "description": "Bildirim başlığı şablonu, ör. '{personaname} oyuna girdi'."},
-        "body": {"type": "string", "description": "Bildirim gövdesi şablonu, ör. '{content}'. change modunda "
-                 "{prev.alan} eski değer, {changed} değişen alanlar."},
-        "when": {"type": "string", "description": "Hangi öğe bildirime değer, JSON: any/all/none (kelime listesi), "
-                 "regex, fields (alan -> değer ya da liste, \"*\" boş değil), min/max (sayısal), ask (anlama göre "
-                 "evet/hayır sorusu). Ör. '{\"any\": [\"alice\"], \"none\": [\"bot\"]}'."},
-        "escalate": {"type": "string", "description": "Bu koşul tutarsa önem critical (sessiz saatte de söylenir), "
-                     "when ile aynı biçim."},
-        "quiet": {"type": "string", "description": "Biriktirilecek saatler, ör. '23:00-08:00'; bitince özet gelir."},
-        "digest_minutes": {"type": "number", "description": "Tek tek değil bu aralıkla özet. 0: kapalı."},
-        "cooldown_minutes": {"type": "number", "description": "Bir bildirimden sonra gelenleri bu süre topla."},
-        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Önem. Varsayılan info."},
-        "agent": {"type": "string", "description": "Doluysa bildirim gidince ALICE uyanıp bu işi yapar (özetle, "
-                  "kontrol et). Gözetimsiz çalıştığı için onay ister."},
-        "description": {"type": "string", "description": "Kullanıcının kendi cümlesi (kayıtta not olarak durur)."},
+                 "description": "new: an item newly in the list | change: when a field in watch changes."},
+        "watch": {"type": "array", "items": {"type": "string", "description": "Field name."},
+                  "description": "Fields to watch for mode=change, e.g. [\"gameextrainfo\"]."},
+        "id_field": {"type": "string", "description": "The field that identifies an item. Default 'id' ('steamid' on "
+                                                      "Steam)."},
+        "title": {"type": "string", "description": "Notification title template, e.g. '{personaname} started a game'."},
+        "body": {"type": "string", "description": "Notification body template, e.g. '{content}'. In change mode "
+                                                  "{prev.field} is the old value, {changed} the changed fields."},
+        "when": {"type": "string", "description": "Which item is worth a notification, JSON: any/all/none (word "
+                                                  "lists), regex, fields (field -> value or list, \"*\" not empty), "
+                                                  "min/max (numeric), ask (a yes/no question by meaning). E.g. "
+                                                  "'{\"any\": [\"alice\"], \"none\": [\"bot\"]}'."},
+        "escalate": {"type": "string", "description": "If this condition holds, importance is critical (said even in "
+                                                      "quiet hours); same format as when."},
+        "quiet": {"type": "string", "description": "Hours to hold notifications, e.g. '23:00-08:00'; a summary comes "
+                                                   "when they end."},
+        "digest_minutes": {"type": "number", "description": "A summary at this interval instead of one by one. 0: "
+                                                            "off."},
+        "cooldown_minutes": {"type": "number", "description": "After a notification, collect what comes in for this "
+                                                              "long."},
+        "severity": {"type": "string", "enum": ["info", "warn", "critical"], "description": "Importance. Default "
+                                                                                            "info."},
+        "agent": {"type": "string", "description": "If set, ALICE wakes up when the notification goes out and does "
+                                                   "this job (summarize, check). It asks for approval because it runs "
+                                                   "unattended."},
+        "description": {"type": "string", "description": "The user's own sentence (kept as a note in the record)."},
     }, ["action"])
     risk = WRITE
 
@@ -443,13 +460,14 @@ def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[st
 class ActionLog(Tool):
     name = "action_log"
     parallel_safe = True
-    description = ("ALICE'in kullanıcı adına başkalarına gönderdiği şeylerin kaydını döndürür (Discord/WhatsApp mesajı, DM, "
-                   "e-posta): gönderilen, kullanıcının reddettiği, plan modunda engellenen ve başarısız olan.\n"
-                   "- 'Bugün kime ne yazdın?', 'benim adıma ne gönderdin?', 'mesaj gitti mi?' sorularında kullan.\n"
-                   "- Sadece kaydı okur; bir şey göndermez ya da geri almaz.")
+    description = ("Returns the log of what ALICE sent to others on the user's behalf (Discord/WhatsApp messages, "
+                   "DMs, emails): sent, refused by the user, blocked in plan mode, and failed.\n"
+                   "- Use it for 'who did you write to today and what?', 'what did you send on my behalf?', 'did the "
+                   "message go out?'.\n"
+                   "- It only reads the log; it doesn't send or undo anything.")
     parameters = obj({
-        "limit": {"type": "integer", "description": "En fazla kaç kayıt. Varsayılan 20."},
-        "hours": {"type": "number", "description": "Sadece son bu kadar saat. Boş: hepsi."},
+        "limit": {"type": "integer", "description": "Maximum entries. Default 20."},
+        "hours": {"type": "number", "description": "Only the last this many hours. Empty: all."},
     })
     risk = READ
 

@@ -360,17 +360,21 @@ def _find_symbol_range(lines: list[str], symbol: str) -> tuple[int, int]:
 class ReadFile(Tool):
     name = "read_file"
     parallel_safe = True
-    description = ("Bir dosyanın içeriğini satır numaralarıyla okur; görseller görüntü, PDF metin, .ipynb hücre olarak döner.\n"
-                   "- Düzenlemeden önce dosyayı oku; edit_file'a buradan birebir kopyala (satır no hariç).\n"
-                   "- Büyük dosyada grep ile yeri bul, sonra offset/limit veya symbol ile oku.\n"
-                   "- symbol verilirse (ör. 'my_func'), dosyadaki o tanımın bulunduğu blok okunur.")
+    description = ("Reads a file's contents with line numbers; images come back as images, PDFs as text, .ipynb as "
+                   "cells.\n"
+                   "- Read a file before editing it; copy from here into edit_file exactly (without the line "
+                   "numbers).\n"
+                   "- In a big file, find the place with grep, then read with offset/limit or symbol.\n"
+                   "- With symbol (e.g. 'my_func'), the block of that definition in the file is read.")
     parameters = obj({
-        "path": {"type": "string", "description": "Dosya yolu; mutlak ya da çalışma klasörüne göre, ör. 'src/main.py'."},
-        "offset": {"type": "integer", "description": "Okumaya başlanacak satır (1'den başlar). Varsayılan 1."},
-        "limit": {"type": "integer", "description": "Okunacak en fazla satır. Varsayılan 2000."},
-        "symbol": {"type": "string", "description": "Okunacak sembol/fonksiyon/sınıf adı. Verilirse o blok okunur."},
-        "pages": {"type": "string", "description": "Sadece PDF: okunacak sayfalar, ör. '3' ya da '1-5'. Varsayılan: "
-                  "hepsi (büyük PDF'te sayfa ver)."},
+        "path": {"type": "string", "description": "File path, absolute or relative to the working folder, e.g. "
+                                                  "'src/main.py'."},
+        "offset": {"type": "integer", "description": "Line to start reading at (starts at 1). Default 1."},
+        "limit": {"type": "integer", "description": "Maximum lines to read. Default 2000."},
+        "symbol": {"type": "string", "description": "Name of the symbol/function/class to read. If given, that block "
+                                                    "is read."},
+        "pages": {"type": "string", "description": "PDF only: pages to read, e.g. '3' or '1-5'. Default: all (give "
+                                                   "pages for a big PDF)."},
     }, ["path"])
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -421,16 +425,18 @@ class ReadFile(Tool):
 
 class WriteFile(Tool):
     name = "write_file"
-    description = ("Yeni dosya oluşturur ya da var olan dosyanın TAMAMINI verilen içerikle değiştirir; eksik klasörler "
-                   "açılır. Sonuçta oluşturuldu/güncellendi ve satır sayısı döner.\n"
-                   "- Var olan dosyada küçük değişiklik için bunu değil edit_file/multi_edit kullan; tüm dosyayı yeniden "
-                   "yazmak hem yavaş hem riskli.\n"
-                   "- Var olan bir dosyanın üzerine yazmadan önce read_file ile oku; bu oturumda okunmamış ya da "
-                   "okunduktan sonra değişmiş dosyanın üzerine yazma reddedilir.\n"
-                   "- Kullanıcı istemedikçe belge/README gibi yeni dosyalar üretme; var olanı düzenlemeyi tercih et.")
+    description = ("Creates a new file or replaces the WHOLE of an existing file with the given content; missing "
+                   "folders are created. Returns created/updated and the line count.\n"
+                   "- For a small change to an existing file use edit_file/multi_edit, not this; rewriting the whole "
+                   "file is slow and risky.\n"
+                   "- Read an existing file with read_file before overwriting it; overwriting a file not read in this "
+                   "session, or changed after it was read, is refused.\n"
+                   "- Don't create new files such as docs/READMEs unless the user asks; prefer editing an existing "
+                   "one.")
     parameters = obj({
-        "path": {"type": "string", "description": "Yazılacak dosyanın yolu; mutlak ya da çalışma klasörüne göre."},
-        "content": {"type": "string", "description": "Dosyanın yeni içeriğinin tamamı."},
+        "path": {"type": "string", "description": "Path of the file to write, absolute or relative to the working "
+                                                  "folder."},
+        "content": {"type": "string", "description": "The whole new content of the file."},
     }, ["path", "content"])
     risk = WRITE
 
@@ -522,20 +528,21 @@ def _similar_hint(text: str, old: str) -> str:
 
 class EditFile(Tool):
     name = "edit_file"
-    description = ("Var olan bir dosyada birebir metin değiştirir ve değişikliğin farkını (diff) gösterir.\n"
-                   "- Önce read_file ile oku: bu oturumda okunmamış ya da okunduktan sonra diskte değişmiş dosyada "
-                   "düzenleme reddedilir.\n"
-                   "- old_string dosyada tam olarak (girinti ve boşluklar dahil) ve tek bir kez geçmeli; read_file "
-                   "çıktısından satır numarası ve sekme olmadan kopyala. Birden fazla geçiyorsa daha fazla bağlam "
-                   "ekle ya da replace_all=true ver.\n"
-                   "- Aynı dosyada birden fazla değişiklik için multi_edit, yeni dosya için write_file kullan.")
+    description = ("Replaces exact text in an existing file and shows the diff of the change.\n"
+                   "- Read it with read_file first: editing a file not read in this session, or changed on disk after "
+                   "it was read, is refused.\n"
+                   "- old_string must appear in the file exactly (indentation and spaces included) and only once; "
+                   "copy it from the read_file output without the line number and tab. If it appears more than once, "
+                   "add more context or pass replace_all=true.\n"
+                   "- For several changes in the same file use multi_edit; for a new file use write_file.")
     parameters = obj({
-        "path": {"type": "string", "description": "Düzenlenecek dosyanın yolu."},
-        "old_string": {"type": "string", "description": "Değiştirilecek metin; read_file çıktısından birebir, satır "
-                       "numarası olmadan. Tek olması için gerekirse önceki/sonraki satırları da ekle."},
-        "new_string": {"type": "string", "description": "Yerine yazılacak metin; old_string'den farklı olmalı."},
-        "replace_all": {"type": "boolean", "description": "true: old_string'in geçtiği her yeri değiştir (ör. yeniden "
-                        "adlandırma). Varsayılan false."},
+        "path": {"type": "string", "description": "Path of the file to edit."},
+        "old_string": {"type": "string", "description": "Text to replace, exactly as in the read_file output, without "
+                                                        "line numbers. Add the lines before/after if needed to make "
+                                                        "it unique."},
+        "new_string": {"type": "string", "description": "Text to put in its place; must differ from old_string."},
+        "replace_all": {"type": "boolean", "description": "true: replace every occurrence of old_string (e.g. a "
+                                                          "rename). Default false."},
     }, ["path", "old_string", "new_string"])
     risk = WRITE
 
@@ -558,19 +565,19 @@ class EditFile(Tool):
 
 class MultiEdit(Tool):
     name = "multi_edit"
-    description = ("Tek dosyada birden fazla değişikliği tek seferde yapar ve toplam farkı gösterir.\n"
-                   "- edits sırayla uygulanır (her biri bir öncekinin sonucuna); biri bile başarısız olursa dosyaya "
-                   "HİÇBİR şey yazılmaz.\n"
-                   "- Her edit edit_file kurallarına uyar: old_string birebir ve tek olmalı ya da replace_all=true. "
-                   "Önceki bir edit'in değiştirdiği metni sonraki edit'te arama.\n"
-                   "- Önce read_file ile oku (okunmamış ya da sonradan değişmiş dosya reddedilir). Yeni dosya için "
-                   "write_file kullan.")
+    description = ("Makes several changes in one file at once and shows the combined diff.\n"
+                   "- edits are applied in order (each on the result of the previous one); if even one fails, NOTHING "
+                   "is written to the file.\n"
+                   "- Each edit follows the edit_file rules: old_string must be exact and unique, or "
+                   "replace_all=true. Don't search a later edit for text an earlier edit changed.\n"
+                   "- Read it with read_file first (an unread or since-changed file is refused). For a new file use "
+                   "write_file.")
     parameters = obj({
-        "path": {"type": "string", "description": "Düzenlenecek dosyanın yolu."},
-        "edits": {"type": "array", "minItems": 1, "description": "Sırayla uygulanacak değişiklikler.", "items": obj({
-            "old_string": {"type": "string", "description": "Değiştirilecek metin (birebir)."},
-            "new_string": {"type": "string", "description": "Yerine yazılacak metin."},
-            "replace_all": {"type": "boolean", "description": "Her geçtiği yeri değiştir. Varsayılan false."},
+        "path": {"type": "string", "description": "Path of the file to edit."},
+        "edits": {"type": "array", "minItems": 1, "description": "Changes to apply in order.", "items": obj({
+            "old_string": {"type": "string", "description": "Text to replace (exact)."},
+            "new_string": {"type": "string", "description": "Text to put in its place."},
+            "replace_all": {"type": "boolean", "description": "Replace every occurrence. Default false."},
         }, ["old_string", "new_string"])},
     }, ["path", "edits"])
     risk = WRITE
@@ -641,16 +648,17 @@ def _when(ts: float) -> str:
 class ListDir(Tool):
     name = "list_dir"
     parallel_safe = True
-    description = ("Bir klasördeki dosya ve alt klasörleri boyut ve türleriyle listeler (alt klasörlerin içine inmez). "
-                   "'İndirilenler', 'Masaüstü', 'Belgeler' gibi adları doğrudan path olarak ver. 'Son indirdiğim dosya' "
-                   "gibi sorular için sort=newest (en yeni önce, tarihle). Klasör içeriği için run_command kullanma. "
-                   "Desene göre dosya aramak için glob, içerik aramak için grep kullan.")
+    description = ("Lists the files and subfolders of a folder with their sizes and types (does not go into "
+                   "subfolders). Pass names like 'Downloads', 'Desktop', 'Documents' (or 'İndirilenler', 'Masaüstü', "
+                   "'Belgeler') directly as path. For questions like 'the file I downloaded last' use sort=newest "
+                   "(newest first, with dates). Don't use run_command for folder contents. To find files by pattern "
+                   "use glob; to search contents use grep.")
     parameters = obj({
-        "path": {"type": "string", "description": "Klasör yolu ya da 'İndirilenler', 'Masaüstü', 'Belgeler'. "
-                 "Varsayılan: çalışma klasörü."},
-        "sort": {"type": "string", "enum": ["name", "newest"], "description": "name (varsayılan) ya da newest: "
-                 "en son değişen önce, tarihleriyle."},
-        "limit": {"type": "integer", "description": "En fazla kaç öğe (varsayılan 500; newest için 30)."},
+        "path": {"type": "string", "description": "Folder path, or 'Downloads', 'Desktop', 'Documents'. Default: the "
+                                                  "working folder."},
+        "sort": {"type": "string", "enum": ["name", "newest"], "description": "name (default) or newest: most "
+                                                                              "recently changed first, with dates."},
+        "limit": {"type": "integer", "description": "Maximum items (default 500; 30 for newest)."},
     })
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -686,13 +694,14 @@ class ListDir(Tool):
 class Glob(Tool):
     name = "glob"
     parallel_safe = True
-    description = ("Adı desene uyan dosya ve klasörleri bulur; en son değiştirilen önce, en fazla 300 sonuç. Dosyanın "
-                   "İÇİNDE metin aramak için grep kullan. Kurulu bir programı bulmak için bunu değil windows action=find "
-                   "kullan. Kullanıcı klasörü ya da disk kökü gibi büyük yerlerde '**' arama yavaştır; dar bir path ver.")
+    description = ("Finds files and folders whose names match a pattern; most recently changed first, at most 300 "
+                   "results. To search for text INSIDE files use grep. To find an installed program use windows "
+                   "action=find, not this. '**' searches in big places such as the user folder or a drive root are "
+                   "slow; give a narrow path.")
     parameters = obj({
-        "pattern": {"type": "string", "description": "Glob deseni, path'e göre: '**/*.py' (her derinlik), '*.txt' "
-                    "(sadece o klasör), 'src/**/test_*.py'."},
-        "path": {"type": "string", "description": "Aramanın başlayacağı klasör. Varsayılan: çalışma klasörü."},
+        "pattern": {"type": "string", "description": "Glob pattern, relative to path: '**/*.py' (any depth), '*.txt' "
+                                                     "(that folder only), 'src/**/test_*.py'."},
+        "path": {"type": "string", "description": "Folder to start the search in. Default: the working folder."},
     }, ["pattern"])
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -734,29 +743,30 @@ class Glob(Tool):
 class Grep(Tool):
     name = "grep"
     parallel_safe = True
-    description = ("Dosyaların içinde düzenli ifade (regex) arar (ripgrep varsa onu kullanır). Kodda/metinde bir şeyin "
-                   "nerede geçtiğini bulmak için run_command'da grep/findstr yerine bunu kullan; dosya ADI için glob.\n"
-                   "- output_mode: content 'dosya:satır:metin' satırları (varsayılan), files_with_matches sadece dosya "
-                   "adları (önce hangi dosyalar diye bakmak için en ucuzu), count dosya başına eşleşme sayısı.\n"
-                   "- context ile eşleşmenin etrafındaki satırları da gör; multiline ile satırlar arası desen ara.\n"
-                   "- Çok sonuç varsa: önce files_with_matches ile dosyaları daralt, sonra path ile tek dosyaya "
-                   "bak; ya da offset ile sonraki sayfayı oku. max_results her sayfada gösterilen satır sayısıdır.\n"
-                   "- Hem kod hem metin aramalarında glob='*.py' gibi dosya filtresi sonucu çok hızlandırır.")
+    description = ("Searches inside files with a regular expression (uses ripgrep if available). Use this instead of "
+                   "grep/findstr in run_command to find where something appears in code/text; for file NAMES use "
+                   "glob.\n"
+                   "- output_mode: content gives 'file:line:text' lines (default), files_with_matches only file names "
+                   "(the cheapest way to see which files first), count the number of matches per file.\n"
+                   "- Use context to see lines around each match; multiline for patterns across lines.\n"
+                   "- With many results: narrow the files with files_with_matches first, then look at one file with "
+                   "path; or read the next page with offset. max_results is the number of lines shown per page.\n"
+                   "- A file filter such as glob='*.py' speeds up both code and text searches a lot.")
     parameters = obj({
-        "pattern": {"type": "string", "description": "Regex, ör. 'def \\w+_test' ya da 'TODO'. Özel karakterleri "
-                    "(. ( [ {) birebir aramak için kaçır."},
-        "path": {"type": "string", "description": "Aranacak klasör ya da dosya. Varsayılan: çalışma klasörü."},
-        "glob": {"type": "string", "description": "Sadece bu desene uyan dosyalar, ör. '*.py' ya da '*.{ts,tsx}'."},
+        "pattern": {"type": "string", "description": "Regex, e.g. 'def \\w+_test' or 'TODO'. Escape special "
+                                                     "characters (. ( [ {) to search for them literally."},
+        "path": {"type": "string", "description": "Folder or file to search. Default: the working folder."},
+        "glob": {"type": "string", "description": "Only files matching this pattern, e.g. '*.py' or '*.{ts,tsx}'."},
         "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"],
-                        "description": "content (satırlar, varsayılan), files_with_matches (dosya adları), count."},
-        "context": {"type": "integer", "description": "content modunda her eşleşmenin önünde ve arkasında gösterilecek "
-                    "satır sayısı. Varsayılan 0."},
-        "ignore_case": {"type": "boolean", "description": "Büyük/küçük harf duyarsız ara. Varsayılan false."},
-        "multiline": {"type": "boolean", "description": "true: desen satır sonlarını aşabilir ('.' satır sonunu da "
-                      "kapsar). Varsayılan false."},
-        "max_results": {"type": "integer", "description": "En fazla sonuç satırı (sayfa büyüklüğü). "
-                        "Varsayılan 200; az sonuç için düşür, çok sonuç için offset ile sayfa sayfa geç."},
-        "offset": {"type": "integer", "description": "İlk bu kadar sonuç satırını atla (sayfalama). Varsayılan 0."},
+                        "description": "content (lines, default), files_with_matches (file names), count."},
+        "context": {"type": "integer", "description": "In content mode, lines to show before and after each match. "
+                                                      "Default 0."},
+        "ignore_case": {"type": "boolean", "description": "Case-insensitive search. Default false."},
+        "multiline": {"type": "boolean", "description": "true: the pattern can span line ends ('.' matches line ends "
+                                                        "too). Default false."},
+        "max_results": {"type": "integer", "description": "Maximum result lines (page size). Default 200; lower it "
+                                                          "for few results, page through many results with offset."},
+        "offset": {"type": "integer", "description": "Skip this many result lines first (paging). Default 0."},
     }, ["pattern"])
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -950,18 +960,19 @@ def _same_file(a: Path, b: Path) -> bool:
 
 class FileOps(Tool):
     name = "file_ops"
-    description = ("Dosya ve klasör yönetimi: taşı/yeniden adlandır (move), kopyala (copy), sil (delete), klasör aç "
-                   "(mkdir). run_command'da move/copy/del/rm yerine bunu kullan: Windows/Linux farkı yok ve silinenler "
-                   "kalıcı silinmez, ALICE çöp klasörüne taşınır (geri alınabilir).\n"
-                   "- Birden fazla dosya için paths listesi ver; destination o zaman bir klasör olmalı.\n"
-                   "- Hedef varsa üzerine yazmaz; overwrite=true ver.")
+    description = ("File and folder management: move/rename (move), copy, delete and create a folder (mkdir). Use "
+                   "this instead of move/copy/del/rm in run_command: it works the same on Windows and Linux, and "
+                   "deleted items are not removed for good but moved to ALICE's trash folder (can be undone).\n"
+                   "- For several files give a paths list; destination must then be a folder.\n"
+                   "- Does not overwrite an existing target; pass overwrite=true.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["move", "copy", "delete", "mkdir"], "description": "Yapılacak işlem."},
-        "path": {"type": "string", "description": "Kaynak dosya/klasör (mkdir'de açılacak klasör)."},
+        "action": {"type": "string", "enum": ["move", "copy", "delete", "mkdir"], "description": "The operation to "
+                                                                                                 "perform."},
+        "path": {"type": "string", "description": "Source file/folder (for mkdir, the folder to create)."},
         "paths": {"type": "array", "items": {"type": "string", "description": "Kaynak yol."},
                   "description": "Birden fazla kaynak (path yerine)."},
-        "destination": {"type": "string", "description": "move/copy hedefi: yeni yol ya da içine konacak klasör."},
-        "overwrite": {"type": "boolean", "description": "Hedef varsa üzerine yaz. Varsayılan false."},
+        "destination": {"type": "string", "description": "move/copy target: a new path, or a folder to put it in."},
+        "overwrite": {"type": "boolean", "description": "Overwrite the target if it exists. Default false."},
     }, ["action"])
     risk = WRITE
 
@@ -1068,20 +1079,24 @@ class FileOps(Tool):
 
 class NotebookEdit(Tool):
     name = "notebook_edit"
-    description = ("Jupyter defterinde (.ipynb) tek bir hücreyi değiştirir, araya yeni hücre ekler ya da siler; diğer hücrelere "
-                   "ve çıktılarına dokunmaz.\n"
-                   "- Önce read_file ile oku: hücre numaraları (0'dan başlar) oradadır.\n"
-                   "- Değiştirilen kod hücresinin eski çıktısı silinir; hücre çalıştırılmaz.\n"
-                   "- .ipynb dosyasını edit_file ya da write_file ile düzenleme: defterin JSON yapısı bozulur.")
+    description = ("Changes one cell of a Jupyter notebook (.ipynb), inserts a new cell or deletes one; other cells "
+                   "and their outputs are left alone.\n"
+                   "- Read it with read_file first: the cell numbers (starting at 0) are there.\n"
+                   "- A changed code cell loses its old output; the cell is not run.\n"
+                   "- Don't edit an .ipynb with edit_file or write_file: that breaks the notebook's JSON structure.")
     parameters = obj({
-        "path": {"type": "string", "description": ".ipynb dosyasının yolu."},
-        "cell": {"type": "integer", "description": "Hücre numarası (0'dan başlar). insert'te yeni hücre bu numaraya girer "
-                 "(hücre sayısı = sona ekle)."},
-        "mode": {"type": "string", "enum": ["replace", "insert", "delete"], "description": "replace: hücrenin içeriğini "
-                 "değiştir | insert: yeni hücre ekle | delete: hücreyi sil. Varsayılan replace."},
-        "source": {"type": "string", "description": "Hücrenin yeni içeriği (replace/insert)."},
-        "cell_type": {"type": "string", "enum": ["code", "markdown"], "description": "insert için hücre türü; replace'te "
-                      "verilirse tür de değişir. Varsayılan code."},
+        "path": {"type": "string", "description": "Path of the .ipynb file."},
+        "cell": {"type": "integer", "description": "Cell number (starts at 0). For insert the new cell goes at this "
+                                                   "number (cell count = append at the end)."},
+        "mode": {"type": "string", "enum": ["replace", "insert", "delete"], "description": "replace: change the "
+                                                                                           "cell's content | insert: "
+                                                                                           "add a new cell | delete: "
+                                                                                           "delete the cell. Default "
+                                                                                           "replace."},
+        "source": {"type": "string", "description": "The cell's new content (replace/insert)."},
+        "cell_type": {"type": "string", "enum": ["code", "markdown"], "description": "Cell type for insert; if given "
+                                                                                     "with replace, the type changes "
+                                                                                     "too. Default code."},
     }, ["path", "cell"])
     risk = WRITE
 
