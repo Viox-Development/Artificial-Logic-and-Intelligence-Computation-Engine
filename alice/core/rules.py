@@ -281,12 +281,13 @@ class RuleEngine:
 
     def _act(self, f: Firing) -> None:
         r = f.rule
-        if r.action == "agent" and self.run_agent is not None:
+        run_agent = self.run_agent
+        if r.action == "agent" and run_agent is not None:
             # An agent turn can take minutes: don't make the core turn (monitoring, tasks, status file) wait.
             def work() -> None:
                 prompt = f"{r.prompt}\n\n(Bu görevi şu uyarı tetikledi: {f.text})"
                 try:
-                    body = self.run_agent(prompt)
+                    body = run_agent(prompt)
                 except Exception as e:  # noqa: BLE001 - even if the agent crashes, the alert must not be lost
                     body = f"{f.text}\n(araştırma başarısız: {e})"
                 try:

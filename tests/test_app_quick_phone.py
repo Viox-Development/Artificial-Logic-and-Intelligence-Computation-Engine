@@ -227,6 +227,7 @@ def test_start_hotkeys_without_pynput(fake_server, monkeypatch):
 def test_start_hotkeys_registers_nonempty_and_runs_in_thread(fake_server, monkeypatch):
     qb, _ = make_qb(fake_server, {"region_hotkey": ""})
     monkeypatch.setattr("alice.hotkeys.IS_WIN", False)
+    monkeypatch.setattr("alice.hotkeys.pynput_problem", lambda: "")  # as on an X11 desktop
     made = []
 
     class GlobalHotKeys:
@@ -297,6 +298,7 @@ def test_quick_cmd_prints_and_stops(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "A aç" in out and made[0].opened == 1 and made[0].stopped
     QB.ok = False
+    QB.hotkey_problem = "pynput yok"  # the real reason is shown (pynput missing, Wayland, no display)
     assert quick.quick_cmd([]) == 0
     out = capsys.readouterr().out
     assert "pynput yok" in out and "http://q" in out and made[1].opened == 0 and made[1].stopped
