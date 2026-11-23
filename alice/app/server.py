@@ -106,7 +106,7 @@ class EventBus:
             try:
                 q.put_nowait(event)
             except queue.Full:
-                pass
+                pass  # a slow subscriber misses this event; it gets the next state
 
 
 class AppUI:
@@ -467,7 +467,7 @@ class Chat:
                     sess.save_checkpoints(self.sid, cps)
                     self._ckpt_sig = sig
                 except OSError:
-                    pass
+                    pass  # checkpoints are saved again on the next change
             self._title_once()
 
     def switch_to(self, sid: str, messages: list[dict[str, Any]] | None = None) -> None:
@@ -578,7 +578,7 @@ class SessionsAPI:
         try:
             sess.set_meta(sid, title=title)
         except OSError:
-            pass
+            pass  # the title is set again on the next save
         parent.ctx.state.setdefault("linked_sessions", []).append(sid)
         ok, err = app.send(prompt, sid=sid)
         if not ok:
@@ -771,7 +771,7 @@ class AppState:
         try:
             self.chat.save()  # show in sidebar even if its first step has not finished
         except OSError:
-            pass
+            pass  # saved again after the first step
         return ""
 
     def _swap_in(self, chat: Chat, old_busy: bool) -> None:
@@ -806,7 +806,7 @@ class AppState:
             if start is None:
                 start = end - 7 * 86400
         except (OSError, ValueError, TypeError, AttributeError):
-            pass
+            pass  # unreadable file: keep the defaults
         self.deleted_sids.add(sid)
         f.unlink(missing_ok=True)
         sess.archive_path(sid).unlink(missing_ok=True)
@@ -2157,7 +2157,7 @@ class AppState:
                 try:
                     chat.save()
                 except OSError:
-                    pass
+                    pass  # saving is best effort when the turn ends
                 # If turn ended before taking an incoming message (error, step limit), do not lose message: start
                 # a new turn in the same chat. Must decide before chat closes: when background chat closed in _finished,
                 # jobs queued to it never ran. Pending messages are discarded if user clicked Stop.
@@ -2198,7 +2198,7 @@ class AppState:
             alice_home().mkdir(parents=True, exist_ok=True)
             (alice_home() / "last_cwd").write_text(str(path), encoding="utf-8")
         except OSError:
-            pass
+            pass  # remembering the folder is a convenience
         from alice.app.folders import remember_dir
 
         remember_dir(path)
@@ -2227,7 +2227,7 @@ class AppState:
         try:  # statistics, subagents, and rewind checkpoints as well (saving without extra wiped them)
             self.chat.save()
         except OSError:
-            pass
+            pass  # saved again on the next turn
         return {"text": text, "restored": restored}
 
 
@@ -2246,7 +2246,7 @@ def log_error() -> None:
         with open(alice_home() / "app.log", "a", encoding="utf-8") as f:
             f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}\n")
     except OSError:
-        pass
+        pass  # logging an error must not raise another one
 
 
 # ----------------------------------------------------------------------- HTTP
@@ -2359,14 +2359,14 @@ def make_handler(state: AppState):
             try:
                 self._json({"ok": False, "error": "sunucu hatası (ayrıntı app.log'da)"}, 500)
             except OSError:
-                pass
+                pass  # the client is gone; nothing to answer
 
         # --------------------------------------------------------------- GET
         def do_GET(self) -> None:  # noqa: N802
             try:
                 self._get()
             except (BrokenPipeError, ConnectionResetError):
-                pass
+                pass  # the client closed the connection
             except Exception:  # noqa: BLE001 - connection should not drop without a response
                 self._fail()
 
@@ -2641,7 +2641,7 @@ def make_handler(state: AppState):
                         self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
+                pass  # the client closed the event stream
             finally:
                 state.bus.unsubscribe(q)
 
@@ -2680,7 +2680,7 @@ def make_handler(state: AppState):
                         with f.open("a", encoding="utf-8") as fh:
                             fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {str(d.get('text', ''))[:1500]}\n")
                     except OSError:
-                        pass
+                        pass  # logging must not break the request
                     return self._json({"ok": True})
                 if p == "/api/watch":
                     if state.watch_store is None:
@@ -2938,7 +2938,7 @@ def make_handler(state: AppState):
                                 if origin_repo(state.ctx.cwd) == repo:
                                     local = str(repo_root(state.ctx.cwd))
                             except ToolError:
-                                pass
+                                pass  # not a git repository: no local path
                             note = prwatch.watch(repo, number, local, session=state.sid)
                         elif p == "/api/prs/unwatch":
                             note = prwatch.unwatch(repo, number)
@@ -3066,7 +3066,7 @@ def make_handler(state: AppState):
                         try:
                             set_config_value("agent", "pinned_brain", pin)  # persist across restarts
                         except OSError:
-                            pass
+                            pass  # pinned for this run only
                     return self._json({"ok": True})
             except BadRequest as e:
                 return self._json({"ok": False, "error": str(e)}, e.code)

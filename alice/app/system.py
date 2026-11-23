@@ -72,16 +72,16 @@ def stop_core(wait: float = STOP_WAIT, sleep: Callable[[float], None] = time.sle
         p.terminate()
         p.wait(5)
     except (psutil.Error, KeyError, ValueError, TypeError):
-        pass
+        pass  # not running or already gone
     try:
         service.state_path().unlink()
     except OSError:
-        pass
+        pass  # already gone
     service.release_lock_of(st.get("pid"))
     try:
         service.stop_path().unlink()
     except OSError:
-        pass
+        pass  # already gone
     return True
 
 

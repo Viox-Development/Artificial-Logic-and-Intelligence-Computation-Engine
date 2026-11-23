@@ -62,7 +62,7 @@ def mark_restarting() -> None:
     try:
         restarting_path().write_text(str(time.time()), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the window then waits for the new address without the marker
 
 
 def restarting() -> bool:
@@ -100,7 +100,7 @@ def revive_crashed(start: Callable[[], bool] | None = None) -> bool:
     try:
         service.state_path().unlink()
     except OSError:
-        pass
+        pass  # stale state file; overwritten on the next start
     mark_restarting()
     try:
         return bool((start or service.start_detached)())
@@ -196,7 +196,7 @@ class AppHost:
             info_path().write_text(json.dumps({"url": self.server.url, "pid": os.getpid()}), encoding="utf-8")
             restarting_path().unlink(missing_ok=True)
         except OSError:
-            pass
+            pass  # the window finds the server by port instead
 
     @property
     def busy(self) -> bool:
@@ -213,7 +213,7 @@ class AppHost:
             if data.get("pid") == os.getpid():
                 info_path().unlink()
         except (OSError, ValueError, AttributeError):
-            pass
+            pass  # already gone or written by another process
         if server is not None:
             try:
                 server.stop()

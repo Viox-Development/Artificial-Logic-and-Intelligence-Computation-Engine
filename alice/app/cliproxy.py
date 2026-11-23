@@ -57,14 +57,14 @@ def settings() -> dict[str, Any]:
         if m:
             port = int(m.group(1))
     except OSError:
-        pass
+        pass  # no config yet: default port
     key = ""
     try:
         for line in (h / "keys.txt").read_text(encoding="utf-8", errors="replace").splitlines():
             if line.startswith("management_key="):
                 key = line.split("=", 1)[1].strip()
     except OSError:
-        pass
+        pass  # no keys file yet: no management key
     return {"dir": h, "port": port, "key": key,
             "installed": (h / binary_name()).exists()}
 

@@ -36,7 +36,7 @@ def screen_size() -> tuple[int, int]:
             u = ctypes.windll.user32  # type: ignore[attr-defined]
             return u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         except (OSError, AttributeError):
-            pass
+            pass  # user32 unavailable: use the fallback size
     return 1920, 1080
 
 
@@ -61,7 +61,7 @@ def select_region():
 
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
         except (OSError, AttributeError):
-            pass
+            pass  # not Windows or already set: keep the default
     with screen_capture() as s:
         mon = s.monitors[0]  # all monitors
         shot = s.grab(mon)
@@ -113,7 +113,7 @@ def read_clipboard() -> str:
 
         return pyperclip.paste() or ""
     except Exception:
-        pass
+        pass  # no clipboard access: start empty
     try:
         import tkinter as tk
 
@@ -276,7 +276,7 @@ def quick_cmd(argv: list[str]) -> int:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C: shut down quietly
     finally:
         qb.stop()
     return 0

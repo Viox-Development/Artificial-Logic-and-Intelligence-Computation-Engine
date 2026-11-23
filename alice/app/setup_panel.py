@@ -447,7 +447,7 @@ class SetupPanel:
         try:
             open_file(path)
         except OSError:
-            pass
+            pass  # the file is created; the user can open it themselves
         return {"ok": True, "path": str(path)}
 
     def _plugin_folder(self, d: dict[str, Any]) -> dict[str, Any]:

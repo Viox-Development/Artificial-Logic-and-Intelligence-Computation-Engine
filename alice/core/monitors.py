@@ -185,7 +185,7 @@ def _private_ws_reader() -> Callable[[int], int | None] | None:
         if read(os.getpid()):  # unsupported on older Windows (returns zero/failure): fall back to rss
             _PRIVATE_READER = read
     except (OSError, AttributeError, ImportError):
-        pass
+        pass  # fall back to rss
     return _PRIVATE_READER
 
 

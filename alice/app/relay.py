@@ -56,7 +56,7 @@ def save_settings(url: str, key: str) -> None:
     try:
         p.chmod(0o600)
     except OSError:
-        pass
+        pass  # Windows: chmod is not supported; the file is in the user's folder
     _hide(p)
 
 
@@ -306,7 +306,7 @@ def relay_cmd(argv: list[str]) -> int:
         try:
             settings_path().unlink()
         except OSError:
-            pass
+            pass  # already off
         print("Uzaktan erişim kapatıldı (yeniden başlatınca geçerli).")
         return 0
     s = settings()

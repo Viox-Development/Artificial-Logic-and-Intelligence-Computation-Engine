@@ -555,7 +555,7 @@ class Core:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(seen, ensure_ascii=False), encoding="utf-8")
         except OSError:
-            pass
+            pass  # saved again on the next check
         try:
             self.store.add_event("error", f"{name} hata verdi", repr(e)[:300], "warn", "core")
         except Exception:  # noqa: BLE001
@@ -638,7 +638,7 @@ class Core:
         try:
             state_path().unlink()
         except OSError:
-            pass
+            pass  # already gone
         updater.restart([sys.executable, "-m", "alice", *sys.argv[1:]], env={"ALICE_RESTARTED": "1"})
 
     def _task_notify(self, title: str, body: str, severity: str = "info", kind: str = "task") -> None:
@@ -747,7 +747,7 @@ class Core:
             try:
                 state_path().unlink()
             except OSError:
-                pass
+                pass  # already gone
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -768,7 +768,7 @@ def acquire_lock() -> bool:
             if "alice" in cmd and "core" in cmd:
                 return False
     except (OSError, ValueError):
-        pass
+        pass  # unreadable process: treat it as not ours
     lock.write_text(str(os.getpid()))
     return True
 
@@ -779,7 +779,7 @@ def release_lock() -> None:
         if lock.read_text().strip() == str(os.getpid()):
             lock.unlink()
     except (OSError, ValueError):
-        pass
+        pass  # already gone or held by another process
 
 
 def release_lock_of(pid: Any) -> None:
@@ -789,7 +789,7 @@ def release_lock_of(pid: Any) -> None:
         if pid and lock.read_text().strip() == str(pid):
             lock.unlink()
     except (OSError, ValueError):
-        pass
+        pass  # already gone or held by another process
 
 
 # ------------------------------------------------------------ system tray
@@ -905,7 +905,7 @@ def enable_crash_log() -> None:
         faulthandler.enable(f, all_threads=True)
         _crash_file = f  # must stay open: faulthandler holds the file handle
     except (OSError, ValueError, RuntimeError):
-        pass
+        pass  # crash logging is optional
     try:
         print(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} çekirdek başladı (pid {os.getpid()})", file=sys.stderr,
               flush=True)

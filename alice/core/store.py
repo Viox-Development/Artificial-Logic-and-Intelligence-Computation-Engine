@@ -94,7 +94,7 @@ def parse_time(value: str | float | None, now: float | None = None) -> float | N
     try:
         return float(s)
     except ValueError:
-        pass
+        pass  # not a number: try the other formats below
     try:
         return datetime.fromisoformat(value.strip()).timestamp()
     except ValueError as e:
@@ -115,7 +115,7 @@ class Store:
             # after a checkpoint, trim it to 16 MB
             self._db.execute("PRAGMA journal_size_limit=16777216")
         except sqlite3.DatabaseError:
-            pass
+            pass  # older SQLite: the WAL just isn't trimmed
 
     def close(self) -> None:
         with self._lock:

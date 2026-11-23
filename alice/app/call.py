@@ -317,7 +317,7 @@ class CallManager:
             try:
                 chat.save()
             except OSError:
-                pass
+                pass  # the chat is saved again at the end of the call
             self.publish({"type": "call_turn_done", "id": c.id, "turn": turn, "end": end})
 
         chat.run(run)
@@ -339,7 +339,7 @@ class CallManager:
             try:
                 chat.save()
             except OSError:
-                pass
+                pass  # the chat is saved again at the end of the call
             chat.close()
         self.publish({"type": "call_end", "id": c.id, "reason": why, "outbound": c.outbound,
                       "text": c.reason or c.opening})
@@ -448,7 +448,7 @@ class CallManager:
             try:
                 c.chat.save()
             except (OSError, AttributeError):
-                pass
+                pass  # saving is best effort when the call ends
 
         threading.Thread(target=run, daemon=True, name="alice-call-live").start()
         threading.Thread(target=self._mic_check, args=(c,), daemon=True, name="alice-call-mic").start()
@@ -491,7 +491,7 @@ class CallManager:
                 try:
                     c.mic.get_nowait()
                 except queue.Empty:
-                    pass
+                    pass  # already drained by the reader
         return {"ok": True}
 
     def interrupt(self, cid: str) -> dict[str, Any]:
