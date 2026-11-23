@@ -689,3 +689,30 @@ def test_cancel_during_silence_stops_promptly(monkeypatch):
         assert time.monotonic() - t < 3
     finally:
         srv.close()
+
+
+@pytest.mark.parametrize("case", ["cancel", "first"])
+def test_cancel_and_first_data_limit_do_not_wait_for_the_read(monkeypatch, case):
+    """On macOS closing the socket does not wake a read blocked in another thread, so cancel and the first-data
+    limit waited for STREAM_READ. Simulated here by an abort that wakes nothing."""
+    from alice.providers import chatgpt as mod
+    from alice.providers.openai_compat import StreamCancelled
+
+    monkeypatch.setattr(mod, "_abort_stream", lambda r: None)
+    events = [(0, _delta("a")), (10, _delta("b")), (0, _DONE)] if case == "cancel" else \
+        [(0, {"type": "response.created"}), (10, _delta("late"))]
+    srv = _SlowSSE(events)
+    try:
+        p = _fast_provider(srv.url, monkeypatch)
+        t = time.monotonic()
+        if case == "cancel":
+            with pytest.raises(StreamCancelled):
+                p.chat_stream("gpt-5.5", [{"role": "user", "content": "x"}], lambda d: None,
+                              cancel=lambda: time.monotonic() - t > 0.3)
+        else:
+            with pytest.raises(ProviderError) as ei:
+                p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
+            assert ei.value.kind == "network"
+        assert time.monotonic() - t < 3
+    finally:
+        srv.close()
