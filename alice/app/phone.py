@@ -63,7 +63,7 @@ def token(new: bool = False) -> str:
     try:
         p.chmod(0o600)
     except OSError:
-        pass
+        pass  # Windows: chmod is not supported; the file is in the user's folder
     _hide(p)
     return t
 
@@ -87,7 +87,7 @@ def _relay_log(line: str) -> None:
         with (alice_home() / "relay.log").open("a", encoding="utf-8") as f:
             f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
     except OSError:
-        pass
+        pass  # logging must not break the relay
 
 
 COOKIE = "alice_phone"
@@ -230,7 +230,7 @@ def print_qr(console, text: str) -> None:
         for row in qr.get_matrix():
             console.print("".join("██" if c else "  " for c in row))
     except ImportError:
-        pass
+        pass  # no qrcode package: the link printed above is enough
 
 
 def phone_cmd(argv: list[str]) -> int:
@@ -254,7 +254,7 @@ def phone_cmd(argv: list[str]) -> int:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C: shut down quietly
     finally:
         ps.stop()
     return 0

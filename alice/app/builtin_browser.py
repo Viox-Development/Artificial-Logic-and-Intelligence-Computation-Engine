@@ -89,7 +89,7 @@ class CDPPage:
             try:
                 self.send(m, timeout=5)
             except BrowserError:
-                pass
+                pass  # an older browser may lack the domain; the page still works
 
     def _read(self) -> None:
         try:
@@ -328,7 +328,7 @@ class BuiltinBrowser:
             try:
                 self.proc.wait(5)
             except subprocess.TimeoutExpired:
-                pass
+                pass  # already killed; the OS reaps it
         self.proc = None
         if self.attached_pid:
             _kill_tree(self.attached_pid)
@@ -394,7 +394,7 @@ class BuiltinBrowser:
         try:
             self._http(f"/json/activate/{tab_id}")
         except OSError:
-            pass
+            pass  # the tab stays where it is; later commands still target it
 
     def new_tab(self, url: str = "about:blank") -> None:
         from urllib.parse import quote
@@ -493,7 +493,7 @@ class BuiltinBrowser:
                 if (state.get("result") or {}).get("value") == "complete":
                     return True
             except BrowserError:
-                pass
+                pass  # page busy navigating: ask again
             time.sleep(0.3)
         return False
 

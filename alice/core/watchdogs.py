@@ -206,6 +206,6 @@ def outages(store, since: float) -> tuple[int, float]:
         try:
             total += float(e.body.split()[0])
         except (ValueError, IndexError):
-            pass
+            pass  # not a measurement: skip it
     return len(evs), total
 

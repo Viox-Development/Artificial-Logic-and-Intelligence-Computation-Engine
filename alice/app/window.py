@@ -132,7 +132,7 @@ def open_window(url: str, title: str = "ALICE", prefer: str = "auto",
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C: shut down quietly
     return "browser"
 
 
@@ -227,5 +227,5 @@ def create_shortcut() -> list[Path]:
     try:
         subprocess.run(["ie4uinit.exe", "-show"], capture_output=True, check=False, timeout=15)
     except (OSError, subprocess.SubprocessError):
-        pass
+        pass  # the old icon stays until the cache refreshes
     return [Path(line.strip()) for line in r.stdout.splitlines() if line.strip()]

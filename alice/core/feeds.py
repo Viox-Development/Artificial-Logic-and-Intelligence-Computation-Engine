@@ -221,7 +221,7 @@ def _write_state(data: dict[str, Any]) -> None:
         state_path().parent.mkdir(parents=True, exist_ok=True)
         state_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
-        pass
+        pass  # state is saved again on the next poll
 
 
 def fill(template: str, item: Any, feed: Feed) -> str:

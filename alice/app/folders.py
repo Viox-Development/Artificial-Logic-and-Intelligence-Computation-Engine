@@ -40,7 +40,7 @@ def remember_dir(path: Path) -> None:
         alice_home().mkdir(parents=True, exist_ok=True)
         _recent_file().write_text(json.dumps(rows[:RECENT_MAX], ensure_ascii=False), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the recent list is a convenience; it is rebuilt
 
 
 def _first_dir(*names: str) -> Path | None:
@@ -78,7 +78,7 @@ def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
     try:
         p = p.resolve()
     except OSError:
-        pass
+        pass  # keep the unresolved path
     if not p.is_dir():
         return {"ok": False, "error": f"klasör yok: {p}"}
     dirs: list[dict[str, Any]] = []
