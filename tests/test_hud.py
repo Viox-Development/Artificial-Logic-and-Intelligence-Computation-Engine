@@ -757,7 +757,9 @@ def test_window_draws_pointer_and_drops_it_when_done():
     pos = []
     w.win32.update_layered = lambda hwnd, img, x, y: pos.append((hwnd, x, y))
     w.win32.cursor_pos = lambda: (5, 5)
-    w.inbox.put({"kind": "cursor", "x": 600, "y": 400, "action": "click", "text": "tıklıyorum", "ttl": 1.0,
+    # A long ttl, so a slow runner (macOS CI) can't let the pointer expire before the first checks; then tick until
+    # it is gone, with a deadline instead of a fixed number of ticks.
+    w.inbox.put({"kind": "cursor", "x": 600, "y": 400, "action": "click", "text": "tıklıyorum", "ttl": 3.0,
                  "id": "computer"})
     for _ in range(30):
         w.tick()
@@ -766,10 +768,10 @@ def test_window_draws_pointer_and_drops_it_when_done():
     ph = w.slots[window.POINTER_KEY].hwnd
     xs = [x for h, x, _ in pos if h == ph]
     assert len(set(xs)) > 3  # the window glided step by step
-    time.sleep(1.0)
-    for _ in range(60):
+    deadline = time.monotonic() + 10
+    while window.POINTER_KEY in w.slots and time.monotonic() < deadline:
         w.tick()
-        time.sleep(0.01)
+        time.sleep(0.02)
     assert window.POINTER_KEY not in w.slots
 
 
