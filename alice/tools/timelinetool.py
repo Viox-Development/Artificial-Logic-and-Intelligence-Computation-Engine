@@ -10,16 +10,17 @@ from alice.tools.base import DANGER, READ, Tool, ToolContext, ToolError, ToolRes
 class TimelineSearch(Tool):
     name = "timeline"
     description = (
-        "Zaman makinesi hafıza: kullanıcının ekranında daha önce görünmüş yazıları (yerel, şifreli kayıt) arar.\n"
-        "- Kullan: \"geçen hafta Discord'da paylaşılan linki bul\", \"dün okuduğum o makale neydi\", \"şu hata mesajını "
-        "ne zaman görmüştüm\".\n"
-        "- Kullanma: dosya içeriği için grep/find_files, geçmiş sohbetler için memory search_chats.\n"
-        "action=wipe bütün kaydı siler (her zaman onay ister). Kayıt kapalıysa boş döner."
+        "Time machine memory: searches text that appeared on the user's screen before (a local, encrypted record).\n"
+        "- Use it for: \"find the link shared on Discord last week\", \"what was that article I read yesterday\", "
+        "\"when did I see that error message\".\n"
+        "- Don't use it for: file contents (grep/find_files), past chats (memory search_chats).\n"
+        "action=wipe deletes the whole record (always asks for approval). If recording is off it returns nothing."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["search", "wipe"], "description": "search: ara. wipe: hepsini sil."},
-        "query": {"type": "string", "description": "search: aranan kelimeler (hepsi geçmeli), ör. 'discord link'."},
-        "days": {"type": "number", "description": "search: kaç gün geriye. Varsayılan 30."},
+        "query": {"type": "string", "description": "search: the words to look for (all must appear), e.g. 'discord "
+                                                   "link'."},
+        "days": {"type": "number", "description": "search: how many days back. Default 30."},
     }, ["action"])
     risk = READ
     untrusted = True  # text seen on screen: it may contain instructions, so it is handled as data

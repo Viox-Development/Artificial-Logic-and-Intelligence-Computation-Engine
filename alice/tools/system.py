@@ -37,11 +37,13 @@ def _gpu() -> str:
 class SystemInfo(Tool):
     name = "system_info"
     parallel_safe = True
-    description = ("Bilgisayarın şu anki durumunu tek seferde döndürür: işletim sistemi, CPU ve RAM kullanımı, diskler (doluluk), "
-                   "GPU (sıcaklık, kullanım), ağ ve pil.\n"
-                   "- 'Bilgisayar neden kasıyor', 'disk ne kadar dolu', 'GPU kaç derece' gibi anlık sorular için.\n"
-                   "- Geçmiş değerler ('dün GPU kaç dereceydi') için metrics, hangi programın yorduğu için process_list kullan.\n"
-                   "- Aynı bilgiyi run_command ile (wmic, Get-CimInstance) toplamaya çalışma.")
+    description = ("Returns the computer's current state in one go: operating system, CPU and RAM use, disks (how "
+                   "full), GPU (temperature, use), network and battery.\n"
+                   "- For questions about right now like 'why is the computer slow', 'how full is the disk', 'how hot "
+                   "is the GPU'.\n"
+                   "- For past values ('how hot was the GPU yesterday') use metrics; for which program is the load, "
+                   "process_list.\n"
+                   "- Don't try to collect the same information with run_command (wmic, Get-CimInstance).")
     parameters = obj({})
 
     def run(self, ctx: ToolContext) -> ToolResult:
@@ -70,14 +72,16 @@ class SystemInfo(Tool):
 class ProcessList(Tool):
     name = "process_list"
     parallel_safe = True
-    description = ("Çalışan süreçleri PID, RAM ve CPU kullanımıyla tablo olarak listeler.\n"
-                   "- 'Ne çok RAM yiyor', 'X açık mı' gibi sorular ve process_kill'den önce doğru adı/PID'i bulmak için.\n"
-                   "- Açık pencereler için windows action=list, ALICE'in başlattığı arka plan komutları için process_output.\n"
-                   "- tasklist ya da Get-Process komutu yazma; bunu kullan.")
+    description = ("Lists running processes as a table with PID, RAM and CPU use.\n"
+                   "- For questions like 'what is eating so much RAM', 'is X open', and to find the right name/PID "
+                   "before process_kill.\n"
+                   "- For open windows use windows action=list; for background commands ALICE started, "
+                   "process_output.\n"
+                   "- Don't write a tasklist or Get-Process command; use this.")
     parameters = obj({
-        "name": {"type": "string", "description": "Adında bu geçen süreçler, ör. 'chrome'. Boş: hepsi."},
-        "sort": {"type": "string", "enum": ["cpu", "memory"], "description": "Sıralama. Varsayılan memory."},
-        "limit": {"type": "integer", "description": "En fazla satır. Varsayılan 40."},
+        "name": {"type": "string", "description": "Processes whose name contains this, e.g. 'chrome'. Empty: all."},
+        "sort": {"type": "string", "enum": ["cpu", "memory"], "description": "Sort order. Default memory."},
+        "limit": {"type": "integer", "description": "Maximum rows. Default 40."},
     })
 
     def run(self, ctx: ToolContext, name: str | None = None, sort: str = "memory", limit: int = 40) -> ToolResult:
@@ -102,14 +106,15 @@ def _same_name(proc_name: str, wanted: str) -> bool:
 
 class ProcessKill(Tool):
     name = "process_kill"
-    description = ("Bir süreci PID ya da tam adıyla zorla sonlandırır; adla verilirse o adı taşıyan TÜM süreçler kapanır.\n"
-                   "- Kaydedilmemiş işler kaybolabilir: bir uygulamayı nazikçe kapatmak için önce windows action=close dene.\n"
-                   "- Adı ya da PID'i bilmiyorsan önce process_list. Sistem süreçlerini (explorer, svchost, csrss) kapatma.\n"
-                   "- ALICE'in kendi başlattığı arka plan komutları için process_stop.")
+    description = ("Force-ends a process by PID or exact name; by name, ALL processes with that name are closed.\n"
+                   "- Unsaved work can be lost: to close an app gently, try windows action=close first.\n"
+                   "- If you don't know the name or PID, use process_list first. Don't close system processes "
+                   "(explorer, svchost, csrss).\n"
+                   "- For background commands ALICE started itself use process_stop.")
     parameters = obj({
-        "pid": {"type": "integer", "description": "Sonlandırılacak sürecin PID'i (process_list'ten)."},
-        "name": {"type": "string", "description": "Tam süreç adı, büyük/küçük harf fark etmez, ör. 'notepad.exe'. "
-                 "pid verilmediğinde kullanılır."},
+        "pid": {"type": "integer", "description": "PID of the process to end (from process_list)."},
+        "name": {"type": "string", "description": "Exact process name, case-insensitive, e.g. 'notepad.exe'. Used "
+                                                  "when pid is not given."},
     })
 
     risk = EXEC
