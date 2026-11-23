@@ -807,30 +807,31 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
 # ----------------------------------------------------------------------- tools
 class Windows(Tool):
     name = "windows"
-    description = ("Masaüstü pencereleri ve uygulamalar: uygulama/dosya açma, pencereyi öne alma, küçültme, kapatma; "
-                   "kurulu programı bulma; kullanıcının tarayıcısında klavyeyle sekme değiştirme ve adres açma.\n"
-                   "- Bir uygulamayı açmak için ilk tercih open (Başlat menüsü ve Store uygulamaları dahil); "
-                   "simgesine tıklamaya çalışma.\n"
-                   "- Bir programın kurulu olup olmadığını ya da exe yolunu öğrenmek için find; glob ya da shell "
-                   "araması yapma.\n"
-                   "- Açık bir pencerede iş: list ile bul, focus ile öne al, sonra ui_elements/ui_act.\n"
-                   "- Web sayfasında okuma/tıklama için önce browser aracı. navigate ve switch_tab, browser "
-                   "'bağlanılamıyor' dediğinde ya da sadece bir siteyi/aramayı açmak için.")
+    description = ("Desktop windows and apps: open apps/files, bring a window to the front, minimize, close; find "
+                   "an installed program; switch tabs and open addresses in the user's browser with the keyboard.\n"
+                   "- To open an app, open is the first choice (Start menu and Store apps included); don't try to "
+                   "click its icon.\n"
+                   "- To find out whether a program is installed, or its exe path, use find; don't search with glob "
+                   "or the shell.\n"
+                   "- Work in an open window: find it with list, bring it forward with focus, then ui_elements/ui_act.\n"
+                   "- To read/click on a web page use the browser tool first. Use navigate and switch_tab when "
+                   "browser says it can't connect, or just to open a site/search.")
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "focus", "minimize", "maximize", "restore", "close", "open", "find",
                                               "navigate", "switch_tab"],
-                   "description": "list: açık pencereler | focus/minimize/maximize/restore/close: title'daki pencere | "
-                   "open: target'ı aç (uygulama adı, exe, dosya ya da URL; URL varsayılan tarayıcıda açılır) | find: "
-                   "target programın exe yolunu bul (Başlat menüsü, kayıt defteri, Program Files, Steam) | navigate: "
-                   "kullanıcının tarayıcısında target'a git; site zaten bir sekmede açıksa o sekmeyi kullanır, öndeki "
-                   "sekme boşsa onu, yoksa yeni sekme açar | switch_tab: başlığında target geçen sekmeye geç."},
-        "title": {"type": "string", "description": "Pencere başlığından bir parça, ör. 'Discord' ya da 'Not Defteri'. "
-                  "focus/minimize/maximize/restore/close için gerekli; navigate/switch_tab'da tarayıcı penceresi."},
-        "target": {"type": "string", "description": "open: 'Discord', 'notepad', 'C:/yol/dosya.pdf' ya da "
-                   "'https://...' | find: program adı | navigate: URL ya da arama ifadesi, ör. 'github.com' | "
-                   "switch_tab: sekme başlığından parça, ör. 'Gmail'."},
-        "new_tab": {"type": "boolean", "description": "navigate için: true yeni sekme, false öndeki sekme. Boş: "
-                    "otomatik."},
+                   "description": "list: open windows | focus/minimize/maximize/restore/close: the window matching title | "
+                   "open: open target (app name, exe, file or URL; a URL opens in the default browser) | find: "
+                   "find the exe path of the target program (Start menu, registry, Program Files, Steam) | navigate: "
+                   "go to target in the user's browser; uses the tab if the site is already open in one, the front "
+                   "tab if it is empty, otherwise a new tab | switch_tab: switch to the tab whose title contains "
+                   "target."},
+        "title": {"type": "string", "description": "Part of the window title, e.g. 'Discord' or 'Not Defteri' (Notepad). "
+                  "Required for focus/minimize/maximize/restore/close; for navigate/switch_tab, the browser window."},
+        "target": {"type": "string", "description": "open: 'Discord', 'notepad', 'C:/path/file.pdf' or "
+                   "'https://...' | find: program name | navigate: URL or search phrase, e.g. 'github.com' | "
+                   "switch_tab: part of the tab title, e.g. 'Gmail'."},
+        "new_tab": {"type": "boolean", "description": "For navigate: true new tab, false the front tab. Empty: "
+                    "automatic."},
     }, ["action"])
     risk = COMPUTER
 
@@ -882,18 +883,18 @@ class Windows(Tool):
 
 class UIElements(Tool):
     name = "ui_elements"
-    description = ("Windows: öndeki (ya da title verilen) masaüstü penceresinin düğme, alan ve menü gibi öğelerini "
-                   "[ID] ile listeler (UI Automation); sonra ui_act ile ID üzerinden tıkla/yaz. İstersen doğrudan action "
-                   "vererek tek çağrıda listeleme ve tıklama yapabilirsin (ör. action='click', element_id=3). "
-                   "Koordinat tahmini yerine bunu kullan.")
+    description = ("Windows: lists the elements of the foreground (or title-matched) desktop window, such as "
+                   "buttons, fields and menus, with an [ID] (UI Automation); then click/type by ID with ui_act. You "
+                   "can also pass action to list and click in one call (e.g. action='click', element_id=3). "
+                   "Use this instead of guessing coordinates.")
     parameters = obj({
-        "title": {"type": "string", "description": "Pencere başlığından bir parça. Boş: öndeki pencere."},
-        "limit": {"type": "integer", "description": "En fazla öğe. Varsayılan 150."},
+        "title": {"type": "string", "description": "Part of the window title. Empty: the foreground window."},
+        "limit": {"type": "integer", "description": "Maximum elements. Default 150."},
         "action": {"type": "string", "enum": ["click", "double_click", "right_click", "focus", "set_text", "type",
                                               "toggle", "expand", "collapse", "select"],
-                   "description": "Öğede hemen işlem yap (boşsa sadece listeler)."},
-        "element_id": {"type": "integer", "description": "İşlem yapılacak öğenin ID'si (action verilmişse)."},
-        "text": {"type": "string", "description": "set_text veya type için metin."},
+                   "description": "Act on an element right away (if empty, only lists)."},
+        "element_id": {"type": "integer", "description": "ID of the element to act on (when action is given)."},
+        "text": {"type": "string", "description": "Text for set_text or type."},
     })
 
     def run(self, ctx: ToolContext, title: str | None = None, limit: int = 150,
@@ -909,19 +910,20 @@ class UIElements(Tool):
 
 class UIAct(Tool):
     name = "ui_act"
-    description = ("Son ui_elements listesindeki bir masaüstü öğesinde işlem yapar: tıklama, metin yazma, onay kutusu, menü/ağaç "
-                   "açma-kapama, liste seçimi.\n"
-                   "- element_id sadece SON ui_elements çıktısında geçerlidir; pencere ya da sayfa değiştiyse önce ui_elements'i "
-                   "yeniden çağır.\n"
-                   "- Öğe listede varsa koordinatla tıklamak (computer) yerine bunu kullan; daha güvenilir.\n"
-                   "- Gönder, sil, satın al gibi geri alınamaz düğmelere basmadan önce kullanıcıya sor.")
+    description = ("Acts on a desktop element from the last ui_elements list: click, type text, check box, "
+                   "expand/collapse a menu or tree, select in a list.\n"
+                   "- element_id is only valid for the LAST ui_elements output; if the window or page changed, call "
+                   "ui_elements again first.\n"
+                   "- If the element is in the list, use this instead of clicking by coordinates (computer); it is "
+                   "more reliable.\n"
+                   "- Ask the user before pressing irreversible buttons such as send, delete or buy.")
     parameters = obj({
-        "element_id": {"type": "integer", "description": "ui_elements çıktısındaki [ID]."},
+        "element_id": {"type": "integer", "description": "The [ID] from the ui_elements output."},
         "action": {"type": "string", "enum": ["click", "double_click", "right_click", "focus", "set_text", "type",
                                               "toggle", "expand", "collapse", "select"],
-                   "description": "set_text: alanın içeriğini text ile değiştir | type: imleç konumuna text'i yaz | "
-                   "toggle: onay kutusu | expand/collapse: ağaç/menü | select: liste öğesini seç."},
-        "text": {"type": "string", "description": "set_text ve type için metin."},
+                   "description": "set_text: replace the field's content with text | type: type text at the cursor | "
+                   "toggle: check box | expand/collapse: tree/menu | select: select a list item."},
+        "text": {"type": "string", "description": "Text for set_text and type."},
     }, ["element_id", "action"])
     risk = COMPUTER
 
@@ -931,14 +933,15 @@ class UIAct(Tool):
 
 class Clipboard(Tool):
     name = "clipboard"
-    description = ("Panodaki metni okur (get), panoya metin koyar (set) ya da son 12 saatte kopyalananları listeler "
-                   "(history). 'Kopyaladığım şey', 'panodaki' denince get; 'az önce/10 dk önce kopyaladığım' ve "
-                   "'bir önceki kopyaladığım' için history. Kopyalananı çevir/özetle/düzelt/cevap yaz istenince: "
-                   "get (ya da history) -> işle -> sonucu set ile panoya koy ve 'panoda, yapıştırabilirsin' de.")
+    description = ("Reads the clipboard text (get), puts text on the clipboard (set) or lists what was copied in "
+                   "the last 12 hours (history). For 'what I copied', 'on the clipboard' use get; for 'what I copied "
+                   "just now/10 min ago' and 'the thing I copied before that' use history. When asked to translate/"
+                   "summarize/fix/reply to what was copied: get (or history) -> process -> put the result on the "
+                   "clipboard with set and say it is on the clipboard, ready to paste.")
     parameters = obj({
         "action": {"type": "string", "enum": ["get", "set", "history"],
-                   "description": "get: oku | set: text'i panoya koy | history: son kopyalananlar (yeni önce)."},
-        "text": {"type": "string", "description": "set için metin."},
+                   "description": "get: read | set: put text on the clipboard | history: recent copies (newest first)."},
+        "text": {"type": "string", "description": "Text for set."},
     }, ["action"])
     risk = COMPUTER
 

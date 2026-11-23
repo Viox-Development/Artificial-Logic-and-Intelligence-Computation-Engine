@@ -258,30 +258,30 @@ def hold_keys(keys: str, seconds: float) -> None:
 class Computer(Tool):
     name = "computer"
     description = (
-        "Ekranın görüntüsünü alır ve fare/klavyeyi tek tek adımlarla kullanır (düşük seviye).\n"
-        "- Önce action=screenshot al; x,y koordinatları o görüntünün piksel uzayındadır. Görmeden koordinat "
-        "tahmin etme.\n"
-        "- Ekran işleri (tek ya da çok adımlı) için önce reflex (hızlı); web sayfaları için browser; reflex "
-        "yapamazsa computer_task. Koordinatla tıklama son çaredir.\n"
-        "- 'Ekranda ne var' sorusunda screenshot yeter."
+        "Takes screenshots and uses the mouse/keyboard one step at a time (low level).\n"
+        "- Take action=screenshot first; x,y coordinates are in that image's pixel space. Don't guess coordinates "
+        "without looking.\n"
+        "- For screen work (single or multi-step) use reflex first (fast); for web pages, browser; if reflex "
+        "can't do it, computer_task. Clicking by coordinates is the last resort.\n"
+        "- For 'what is on the screen', a screenshot is enough."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["screenshot", "click", "double_click", "right_click", "middle_click",
                                               "move", "drag", "scroll", "type", "key", "wait", "cursor_position"],
-                   "description": "screenshot | click/double_click/right_click/middle_click/move: x,y | drag: x,y'den "
-                   "to_x,to_y'ye | scroll: x,y üzerinde amount | type: text'i yaz | key: keys kombinasyonuna bas | "
-                   "wait: seconds bekle | cursor_position."},
-        "x": {"type": "number", "description": "Son ekran görüntüsünde yatay piksel."},
-        "y": {"type": "number", "description": "Son ekran görüntüsünde dikey piksel."},
-        "to_x": {"type": "number", "description": "drag için bitiş x."},
-        "to_y": {"type": "number", "description": "drag için bitiş y."},
-        "text": {"type": "string", "description": "type için yazılacak metin (Türkçe karakter olur)."},
-        "keys": {"type": "string", "description": "key için tuş ya da kombinasyon, ör. 'enter', 'ctrl+s', 'alt+tab'."},
-        "amount": {"type": "integer", "description": "scroll için çentik; pozitif yukarı, negatif aşağı. Varsayılan -5."},
-        "seconds": {"type": "number", "description": "wait için saniye, en fazla 30. Varsayılan 1."},
-        "grid": {"type": "boolean", "description": "screenshot'a koordinat ızgarası çiz (hassas tıklama için)."},
-        "monitor": {"type": "integer", "description": "1 ana monitör, 2 ikinci, 0 hepsi yan yana. Varsayılan 1."},
-        "screenshot_after": {"type": "boolean", "description": "İşlemden sonra yeni ekran görüntüsü döndür."},
+                   "description": "screenshot | click/double_click/right_click/middle_click/move: x,y | drag: from x,y "
+                   "to to_x,to_y | scroll: amount over x,y | type: type text | key: press the keys combination | "
+                   "wait: wait seconds | cursor_position."},
+        "x": {"type": "number", "description": "Horizontal pixel in the last screenshot."},
+        "y": {"type": "number", "description": "Vertical pixel in the last screenshot."},
+        "to_x": {"type": "number", "description": "End x for drag."},
+        "to_y": {"type": "number", "description": "End y for drag."},
+        "text": {"type": "string", "description": "Text to type for type (non-ASCII characters such as Turkish letters work)."},
+        "keys": {"type": "string", "description": "Key or combination for key, e.g. 'enter', 'ctrl+s', 'alt+tab'."},
+        "amount": {"type": "integer", "description": "Notches for scroll; positive up, negative down. Default -5."},
+        "seconds": {"type": "number", "description": "Seconds for wait, at most 30. Default 1."},
+        "grid": {"type": "boolean", "description": "Draw a coordinate grid on the screenshot (for precise clicks)."},
+        "monitor": {"type": "integer", "description": "1 main monitor, 2 second, 0 all side by side. Default 1."},
+        "screenshot_after": {"type": "boolean", "description": "Return a new screenshot after the action."},
     }, ["action"])
     risk = COMPUTER
 
@@ -357,18 +357,18 @@ class Computer(Tool):
 class ComputerTask(Tool):
     name = "computer_task"
     description = (
-        "YAVAŞ yedek: ekran görüntüsüne bakan büyük modelle çok adımlı ekran işi yapar (adım başına 5-15 sn, "
-        "dakikalar sürer). Ekran işlerinde önce reflex'i kullan: o da çok adımlıdır (yazma, kısayol, kaydet "
-        "penceresi, menüler) ve adım başına ~1 sn. Not Defteri'ne yazıp kaydetmek bununla 9 dakika sürmüştü.\n"
-        "- Kullan: reflex needs_help dediğinde, ya da ekranda okunabilir öğe/yazı olmayan arayüzlerde.\n"
-        "- Kullanma: reflex'in yapabildiği işler, uygulama açmak (windows open), dosya ya da komut işleri (dosya "
-        "araçları, run_command). Aynı anda tek görev çalışır; sürerken tekrar başlatma."
+        "SLOW fallback: does multi-step screen work with a large model that looks at screenshots (5-15 s per "
+        "step, takes minutes). For screen work use reflex first: it is multi-step too (typing, shortcuts, save "
+        "dialogs, menus) at ~1 s per step. Typing into Notepad and saving once took 9 minutes with this tool.\n"
+        "- Use it: when reflex says needs_help, or for interfaces with no readable elements/text on screen.\n"
+        "- Don't use it for: what reflex can do, opening apps (windows open), file or command work (file "
+        "tools, run_command). Only one task runs at a time; don't start it again while it runs."
     )
     parameters = obj({
-        "goal": {"type": "string", "description": "Yapılacak iş; kullanıcının istediği gibi, adlarıyla, net ve "
-                 "eksiksiz. Ör. 'Blender'ın arayüzünde Render ayarlarını aç'."},
-        "monitor": {"type": "integer", "description": "Çalışılacak monitör (1, 2...). Boş: öndeki pencerenin monitörü."},
-        "max_steps": {"type": "integer", "description": "En fazla adım. Varsayılan 30."},
+        "goal": {"type": "string", "description": "The job to do, as the user asked it, with names, clear and "
+                 "complete. E.g. 'Open the Render settings in Blender's interface'."},
+        "monitor": {"type": "integer", "description": "Monitor to work on (1, 2...). Empty: the foreground window's monitor."},
+        "max_steps": {"type": "integer", "description": "Maximum steps. Default 30."},
     }, ["goal"])
     risk = COMPUTER
 
