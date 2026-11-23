@@ -147,15 +147,24 @@ def apply_chunks(text: str, chunks: list[Chunk], path: str) -> str:
 class ApplyPatch(Tool):
     name = "apply_patch"
     description = (
-        "Bir ya da birden fazla dosyayı tek yamayla değiştirir: dosya ekleme, silme, düzenleme, taşıma. Hepsi-ya-hiçbiri: "
-        "bir parça uymazsa hiçbir dosyaya yazılmaz. Birden çok dosyaya dokunan değişiklikler için edit_file'ı tek tek "
-        "çağırmak yerine bunu kullan. Biçim:\n"
-        "*** Begin Patch\n*** Update File: src/a.py\n@@ def foo():\n bağlam satırı\n-eski satır\n+yeni satır\n"
-        "*** Add File: src/b.py\n+yeni dosyanın satırı\n*** Delete File: eski.txt\n*** End Patch\n"
-        "Update içinde değişikliğin önüne ve arkasına 3 satır bağlam koy (' ' ile); '@@ <satır>' yeri daraltır. "
-        "Taşımak için Update File'ın hemen altına '*** Move to: yeni/yol'.")
-    parameters = obj({"patch": {"type": "string", "description": "'*** Begin Patch' ile başlayıp '*** End Patch' ile "
-                                "biten yama metninin tamamı. Yollar çalışma klasörüne göre."}}, ["patch"])
+        "Changes one or more files with a single patch: adding, deleting, editing and moving files. All or nothing: "
+        "if one part doesn't fit, nothing is written to any file. For changes that touch several files use this "
+        "instead of calling edit_file one by one. Format:\n"
+        "*** Begin Patch\n"
+        "*** Update File: src/a.py\n"
+        "@@ def foo():\n"
+        " context line\n"
+        "-old line\n"
+        "+new line\n"
+        "*** Add File: src/b.py\n"
+        "+line of the new file\n"
+        "*** Delete File: old.txt\n"
+        "*** End Patch\n"
+        "In an Update, put 3 lines of context (prefixed with ' ') before and after the change; '@@ <line>' narrows "
+        "down the place. To move a file, put '*** Move to: new/path' right under Update File.")
+    parameters = obj({"patch": {"type": "string", "description": "The whole patch text, starting with '*** Begin "
+                                                                 "Patch' and ending with '*** End Patch'. Paths are "
+                                                                 "relative to the working folder."}}, ["patch"])
     risk = WRITE
 
     def summary(self, args: dict[str, Any]) -> str:

@@ -352,13 +352,13 @@ class LoadTools(Tool):
     name = "load_tools"
     parallel_safe = True
 
-    description = ("Şu an tanımı yüklü olmayan araçları açar (sistem talimatındaki 'Yüklenebilir araçlar' listesi); "
-                   "bir sonraki adımdan itibaren kullanılabilirler. Gereken araç yüklü değilse 'yapamam' demeden önce "
-                   "bunu çağır. Grup adı ya da araç adı verilebilir; MCP için 'mcp:<sunucu>'. Yalnız gereken "
-                   "grupları iste ('all' kabul edilmez).")
+    description = ("Opens tools whose definitions are not loaded yet (the 'Yüklenebilir araçlar' (loadable tools) "
+                   "list in the system instructions); they can be used from the next step on. Call this before saying "
+                   "'I can't' when a needed tool is not loaded. Pass a group name or a tool name; for MCP "
+                   "'mcp:<server>'. Ask only for the groups you need ('all' is not accepted).")
 
     parameters = obj({"groups": {"type": "array", "items": {"type": "string"},
-                                 "description": "Grup ya da araç adları, ör. [\"desktop\", \"youtube\"]."}}, ["groups"])
+                                 "description": "Group or tool names, e.g. [\"desktop\", \"youtube\"]."}}, ["groups"])
     risk = READ
 
     def run(self, ctx: ToolContext, groups: list[str] | str) -> ToolResult:

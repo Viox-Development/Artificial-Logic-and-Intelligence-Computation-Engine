@@ -18,40 +18,41 @@ PLUGIN_SKELETON = (
 class MakeTool(Tool):
     name = "make_tool"
     description = (
-        "Yapamadığın bir iş için yeni bir araç (ALICE eklentisi) yazar, testini kum havuzunda dener, kullanıcının "
-        "onayıyla ekler ve aynı konuşmada hemen kullanılır hâle getirir.\n"
-        "- Kullan: hiçbir aracın (bağlantılar ve load_tools grupları dahil) işi göremediğinde. Önce kullanıcıya "
-        "neyin eksik olduğunu söyle (\"Steam'deki son oyunları listeleyen aracım yok, yazayım mı?\").\n"
-        "- Kullanma: var olan bir araç ya da run_command tek seferde işi görüyorsa.\n"
-        "Akış: action=test (kod + test + bildirge) -> geçerse kullanıcıya erişimi bir cümleyle sor -> "
-        "action=install. action=list: yazdığın araçlar; action=remove: birini kaldır.\n"
-        "Kod: alice.plugins.Plugin ve alice.tools.base.Tool kullanan tek dosya; araç adları '<name>_' ile başlar. "
-        "Test: pytest, ağ yerine sahte veri (monkeypatch). Bildirgede olmayan internet adresi, klasör ya da "
-        "uygulama kullanan kod reddedilir; eval/exec/ctypes yasak."
+        "Writes a new tool (an ALICE plugin) for a job you can't do, tries its test in a sandbox, adds it with the "
+        "user's approval and makes it usable right away in the same conversation.\n"
+        "- Use it when no tool (connections and load_tools groups included) can do the job. First tell the user what "
+        "is missing (\"I don't have a tool that lists recent Steam games, shall I write one?\").\n"
+        "- Don't use it if an existing tool or run_command does the job in one go.\n"
+        "Flow: action=test (code + test + manifest) -> if it passes, ask the user about its access in one sentence -> "
+        "action=install. action=list: the tools you wrote; action=remove: remove one.\n"
+        "Code: a single file using alice.plugins.Plugin and alice.tools.base.Tool; tool names start with '<name>_'. "
+        "Test: pytest, with fake data instead of the network (monkeypatch). Code that uses an internet address, "
+        "folder or app not in the manifest is refused; eval/exec/ctypes are forbidden."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["test", "install", "list", "remove"],
-                   "description": "test: denetle ve kum havuzunda dene. install: test edilmiş aracı kullanıcı "
-                                  "onayıyla ekle. list: kendi yazdığın araçlar. remove: kaldır."},
-        "name": {"type": "string", "description": "Eklenti adı: küçük harf ve _, ör. 'steam_recent'."},
-        "need": {"type": "string", "description": "test: kullanıcının ihtiyacı, kendi sözleriyle."},
+                   "description": "test: check it and try it in the sandbox. install: add a tested tool with the "
+                                  "user's approval. list: tools you wrote. remove: remove one."},
+        "name": {"type": "string", "description": "Plugin name: lowercase letters and _, e.g. 'steam_recent'."},
+        "need": {"type": "string", "description": "test: the user's need, in their own words."},
         "description": {"type": "string",
-                        "description": "test: aracın ne yaptığı, tek cümle (onayda kullanıcıya gösterilir)."},
+                        "description": "test: what the tool does, one sentence (shown to the user for approval)."},
         "manifest": {"type": "object", "description": (
-            "test: neye erişeceği. network: internet adresleri (ör. ['api.steampowered.com']), folders: "
-            "okuyacağı/yazacağı klasörler, apps: çalıştıracağı programlar, asks_each_time: kod değiştiriyor, para "
-            "harcıyor, mesaj gönderiyor ya da bir şey siliyorsa true (her kullanımda onay ister)."),
+            "test: what it will access. network: internet addresses (e.g. ['api.steampowered.com']), folders: folders "
+            "it will read/write, apps: programs it will run, asks_each_time: true if it changes code, spends money, "
+            "sends messages or deletes something (asks for approval on every use)."),
             "properties": {"network": {"type": "array", "items": {"type": "string"},
-                                       "description": "Erişeceği alan adları, ör. ['api.steampowered.com']."},
+                                       "description": "Domains it will access, e.g. ['api.steampowered.com']."},
                            "folders": {"type": "array", "items": {"type": "string"},
-                                       "description": "Okuyacağı/yazacağı klasörler (mutlak yol)."},
+                                       "description": "Folders it will read/write (absolute paths)."},
                            "apps": {"type": "array", "items": {"type": "string"},
-                                    "description": "Çalıştıracağı programlar, ör. ['git']."},
-                           "asks_each_time": {"type": "boolean", "description": "true: her kullanımda onay ister "
-                                              "(kod değiştiren, para harcayan, mesaj gönderen, silen araçlar)."}}},
+                                    "description": "Programs it will run, e.g. ['git']."},
+                           "asks_each_time": {"type": "boolean", "description": "true: asks for approval on every use "
+                                                                                "(tools that change code, spend "
+                                                                                "money, send messages or delete)."}}},
         "code": {"type": "string", "description": "test: eklentinin Python kodu. İskelet:\n" + PLUGIN_SKELETON},
         "test": {"type": "string",
-                 "description": "test: pytest testi. Eklenti modülü adıyla içe aktarılır: `import <name>`."},
+                 "description": "test: a pytest test. The plugin module is imported by its name: `import <name>`."},
     }, ["action"])
     risk = EXEC
 
