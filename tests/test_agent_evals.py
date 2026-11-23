@@ -91,8 +91,8 @@ VERIFIER = ('Doğru.\n```json\n{"checks": [{"id": "F1", "status": "confirmed", "
 
 def fake_model(model, messages, tools, **kw):
     last = next(m["content"] for m in reversed(messages) if m["role"] == "user" and isinstance(m["content"], str))
-    if "# İnceleme kurulu" in messages[0]["content"]:
-        return VERIFIER if "Diğer rollerin bulguları" in last else CRITIC
+    if "# Review council" in messages[0]["content"]:
+        return VERIFIER if "The other roles' findings" in last else CRITIC
     start = max(i for i, m in enumerate(messages) if m["role"] == "user")
     done = sum(1 for m in messages[start:] if m["role"] == "tool")
     content = FULL if "review council" in last else HALF  # the first attempt fixes only one of the two bugs
