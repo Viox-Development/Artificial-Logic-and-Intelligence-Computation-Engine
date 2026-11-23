@@ -277,7 +277,7 @@ In the REPL: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (or Shift+Tab), `/mode
 
 ALICE updates itself from GitHub. By default it follows **releases** (`vX.Y.Z` tags), not every commit on `main`,
 so a merged pull request only reaches users after a maintainer publishes a release. Each update runs a smoke test and
-rolls back automatically if the new version fails to start.
+rolls back automatically if the new version fails to start. Details: [docs/guide/updates.md](docs/guide/updates.md).
 
 ```toml
 [update]
