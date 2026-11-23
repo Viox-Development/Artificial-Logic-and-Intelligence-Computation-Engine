@@ -311,6 +311,12 @@ class Core:
         GPU even while DCS was open."""
         now = time.time()
         try:
+            from alice import sandbox
+
+            sandbox.repair_old_labels()  # Windows: personal folders labeled low by old versions back to medium
+        except Exception:  # noqa: BLE001 - must not stop the core from starting
+            pass
+        try:
             self.pc._procs()  # process names only; temperature/GPU queries wait for the first tick
         except Exception:  # noqa: BLE001
             pass

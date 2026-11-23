@@ -144,6 +144,7 @@ def wrap(argv: list[str], cwd: Path, ctx: Any) -> tuple[list[str], dict[str, str
         raise RuntimeError(problem)
     cwd = Path(cwd).resolve()
     if name == "lowil":
+        repair_old_labels()
         label_low(cwd)
         hide_secrets()
         tmp = low_temp()
@@ -260,6 +261,45 @@ def label_low(folder: Path) -> None:
         _labels_path().write_text(json.dumps(sorted(done)), encoding="utf-8")
     except OSError:
         pass
+
+
+_REPAIRED: list[bool] = []
+
+
+def repair_old_labels() -> list[str]:
+    """Undo low-integrity labels that old versions put on folders the sandbox no longer accepts (Windows only).
+
+    Before #201 personal folders such as Downloads could become the sandbox's writable area and were labeled
+    "(OI)(CI)low". New versions never label them, but the label stayed, so a low-integrity process could still write
+    there. Every folder in sandbox_dirs.json that boxable() now rejects (personal folders, home, ALICE home) is set
+    back to medium and dropped from the list; project folders are left as they are. A folder whose reset fails stays
+    in the list and is retried next time. Runs once per process. Returns the folders that were reset."""
+    if not IS_WIN or _REPAIRED:
+        return []
+    _REPAIRED.append(True)
+    path = _labels_path()
+    try:
+        done = list(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    keep, fixed = [], []
+    for key in done:
+        if not boxable(Path(key)):
+            keep.append(key)
+            continue
+        try:
+            r = subprocess.run(["icacls", key, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"],
+                               capture_output=True, text=True, timeout=300, creationflags=0x08000000)
+            ok = r.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        (fixed if ok else keep).append(key)
+    if fixed:
+        try:
+            path.write_text(json.dumps(sorted(keep)), encoding="utf-8")
+        except OSError:
+            pass  # the labels are already reset; the list is cleaned up next time
+    return fixed
 
 
 def hide_from_sandbox(path: Path) -> bool:
