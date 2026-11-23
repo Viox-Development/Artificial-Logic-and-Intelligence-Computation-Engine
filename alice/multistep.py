@@ -23,41 +23,42 @@ from typing import Any, Callable
 
 from alice.tools.base import DANGER, Tool, ToolContext, ToolResult
 
-PLANNER = """Sen bir görev planlayıcısısın. Kullanıcının isteğini, bilgisayarda sırayla yapılacak 2-{max_steps} somut
-adıma böl. Her adım tek başına yapılabilir ve sonucu gözle kontrol edilebilir olsun. Kullanıcının bilgisayarı Windows;
-tarayıcısı açık ve bağlanılabilir. Kullanılabilecek araçlar: {tools}.
+PLANNER = """You are a task planner. Split the user's request into 2-{max_steps} concrete steps to be done one after
+another on the computer. Each step must be doable on its own and its result checkable by looking. The user's computer
+runs Windows; their browser is open and can be connected to. Tools available: {tools}.
 
-Sadece JSON döndür, başka hiçbir şey yazma:
-{{"steps": [{{"goal": "<adım, Türkçe, net ve eksiksiz: hangi uygulama/site, ne yazılacak>",
-             "check": "<adım bitince ekranda/sayfada/dosyada görülmesi gereken şey; doğrulanması gereksizse boş>",
-             "risky": <true|false>, "risk": "<risky ise neden: kime ne gidecek, ne silinecek>"}}],
- "question": "<istek belirsizse kullanıcıya sorulacak TEK kısa soru, değilse boş>"}}
+Return only JSON, nothing else:
+{{"steps": [{{"goal": "<the step, in Turkish (the user reads it), clear and complete: which app/site, what to type>",
+             "check": "<what should be visible on screen/page/in a file when the step is done; empty if no check is
+needed>",
+             "risky": <true|false>, "risk": "<if risky, why: what goes to whom, what gets deleted>"}}],
+ "question": "<ONE short question for the user if the request is unclear, otherwise empty>"}}
 
-Kurallar:
-- risky=true: mesaj/e-posta/yorum göndermek ya da paylaşmak, dosya/kayıt silmek ya da üzerine yazmak, satın almak,
-  ödemek, bir şey kurmak/kaldırmak, sistem ayarı değiştirmek, kaydedilmemiş işi kapatmak gibi geri alınamayan her şey.
-  Sadece açmak, aramak, okumak, bakmak, kopyalamak risky değildir.
-- Kullanıcının söylemediği işi plana ekleme. İstek tek adımlık ise tek adım yaz.
-- Kimin/neyin kastedildiği belli değilse ve yanlış tahmin geri alınamaz bir şeye yol açacaksa question yaz.
-- Şifre girme, ödeme bilgisi doldurma adımı yazma; gerekiyorsa o adımda kullanıcıya bırak."""
+Rules:
+- risky=true: anything that can't be undone, such as sending or sharing a message/email/comment, deleting or
+  overwriting a file/record, buying, paying, installing/uninstalling something, changing a system setting, closing
+  unsaved work. Only opening, searching, reading, looking and copying are not risky.
+- Don't add work the user didn't ask for. If the request is one step, write one step.
+- If it isn't clear who/what is meant and a wrong guess would lead to something irreversible, write a question.
+- Don't write steps that enter a password or fill in payment details; leave those to the user at that step."""
 
-STEP = """[Çok adımlı görev] Ana hedef: {goal}
+STEP = """[Multi-step task] Main goal: {goal}
 Plan:
 {plan}
-Önceki adımların sonuçları:
+Results of the previous steps:
 {done}
-{retry}Şimdi SADECE {n}. adımı yap: {step}
-Araçları kullanarak gerçekten yap; sonraki adımlara geçme, kullanıcıya soru sorma.
-Bitince son satıra tek satır yaz: "SONUÇ: TAMAM - <ne oldu, sonraki adımlar için lazım olan bilgi (ad, yol, link)>"
-ya da yapamadıysan "SONUÇ: OLMADI - <neden>"."""
+{retry}Now do ONLY step {n}: {step}
+Really do it with the tools; don't move on to the next steps and don't ask the user questions.
+When done, write one last line: "RESULT: DONE - <what happened, information the next steps need (name, path, link)>"
+or, if you couldn't do it, "RESULT: FAILED - <why>"."""
 
-VERIFY = """[Doğrulama] Bir bilgisayar adımının gerçekten yapılıp yapılmadığını kontrol et. HİÇBİR ŞEYİ DEĞİŞTİRME:
-sadece bakan araçları kullan (browser snapshot/text/tabs, ekran görüntüsü, ui_elements, windows list, read_file,
-list_dir...). Yürütücünün raporuna körü körüne güvenme; mümkünse kendin bak.
-Adım: {step}
-Beklenen: {check}
-Yürütücünün raporu: {report}
-Son satıra tek satır yaz: "DOĞRULAMA: EVET - <ne gördün>" ya da "DOĞRULAMA: HAYIR - <ne eksik>"."""
+VERIFY = """[Verification] Check whether a computer step was really done. DON'T CHANGE ANYTHING: use only tools that
+look (browser snapshot/text/tabs, screenshot, ui_elements, windows list, read_file, list_dir...). Don't trust the
+executor's report blindly; look yourself where you can.
+Step: {step}
+Expected: {check}
+Executor's report: {report}
+Write one last line: "VERIFIED: YES - <what you saw>" or "VERIFIED: NO - <what is missing>"."""
 
 # Even if the planner forgets to flag a risky step, approval is asked for any step containing these words.
 RISKY_RX = re.compile(
@@ -120,12 +121,19 @@ def parse_plan(goal: str, text: str, max_steps: int = 8) -> Plan:
     return Plan(goal=goal, steps=steps[:max_steps], question=question)
 
 
-def outcome(text: str, key: str, yes: str) -> tuple[bool | None, str]:
-    """Read the last "<key>: <yes|...> - explanation" line of the agent's reply. Without one, return (None, text)."""
+# The report markers. The Turkish ones are what the prompts asked for before; a model may still write them.
+RESULT_KEY, RESULT_YES = r"RESULT|SONUÇ", ("DONE", "TAMAM")
+VERIFY_KEY, VERIFY_YES = r"VERIFIED|DOĞRULAMA", ("YES", "EVET")
+
+
+def outcome(text: str, key: str, yes: str | tuple[str, ...]) -> tuple[bool | None, str]:
+    """Read the last "<key>: <yes|...> - explanation" line of the agent's reply. Without one, return (None, text).
+    key is a regex (alternatives allowed); yes is the word, or the words, that mean success."""
+    yes_words = {yes} if isinstance(yes, str) else set(yes)
     for line in reversed((text or "").strip().splitlines()):
-        m = re.match(rf"\s*\**{key}\**\s*:\s*\**\s*(\w+)\s*\**\s*[-–—:]?\s*(.*)", line, re.I)
+        m = re.match(rf"\s*\**(?:{key})\**\s*:\s*\**\s*(\w+)\s*\**\s*[-–—:]?\s*(.*)", line, re.I)
         if m:
-            return m.group(1).upper().replace("İ", "I") == yes, m.group(2).strip() or line.strip()
+            return m.group(1).upper().replace("İ", "I") in yes_words, m.group(2).strip() or line.strip()
     return None, (text or "").strip()[-400:]
 
 
@@ -212,8 +220,8 @@ class TaskRunner:
         self._answer, self.waiting = None, question
         self._answered.clear()
         try:
-            say(f"[görev onay bekliyor] Kullanıcıya kısaca sor: {question} Evet derse task_control action=approve, "
-                "hayır derse action=reject çağır. Kendi kendine onaylama.")
+            say(f"[task waiting for approval] Ask the user briefly, in Turkish: {question} If they say yes, call "
+                "task_control action=approve; if no, action=reject. Don't approve it yourself.")
         except Exception:  # noqa: BLE001
             self.waiting = ""
             return False
@@ -290,23 +298,23 @@ class TaskRunner:
     def _plan_text(self, current: int) -> str:
         assert self.plan is not None
         mark = {"done": "[x]", "failed": "[!]", "skipped": "[-]", "running": "[~]"}
-        return "\n".join(f"{mark.get(s.status, '[ ]')} {i}. {s.goal}" + ("  <- ŞİMDİKİ" if i == current else "")
+        return "\n".join(f"{mark.get(s.status, '[ ]')} {i}. {s.goal}" + ("  <- CURRENT" if i == current else "")
                          for i, s in enumerate(self.plan.steps, 1))
 
     # ------------------------------------------------------------- execution
     def _do_step(self, n: int, step: Step, retry: str = "") -> tuple[bool, str]:
         assert self.plan is not None
         done = "\n".join(f"{i}. {s.result}" for i, s in enumerate(self.plan.steps, 1)
-                         if s.status == "done" and s.result) or "(yok)"
+                         if s.status == "done" and s.result) or "(none)"
         report = self._ask(STEP.format(goal=self.goal, plan=self._plan_text(n), done=done, n=n, step=step.goal,
-                                       retry=f"Önceki deneme olmadı: {retry}. Farklı bir yol dene.\n" if retry else ""))
-        ok, why = outcome(report, "SONUÇ", "TAMAM")
+                                       retry=f"The previous try failed: {retry}. Try another way.\n" if retry else ""))
+        ok, why = outcome(report, RESULT_KEY, RESULT_YES)
         if ok is False or self.stopped.is_set():
             return False, why
         if not step.check:
             return True, why
         verdict = self._ask(VERIFY.format(step=step.goal, check=step.check, report=why[:600]), verify=True, steps=6)
-        vok, vwhy = outcome(verdict, "DOĞRULAMA", "EVET")
+        vok, vwhy = outcome(verdict, VERIFY_KEY, VERIFY_YES)
         if vok is False:
             return False, f"doğrulanamadı: {vwhy}"
         return True, why
@@ -320,11 +328,11 @@ class TaskRunner:
             return f"error: {e}"
         plan = self.plan
         if plan.question:
-            return (f"needs_info: {plan.question}\nKullanıcıya bu soruyu sor; cevabıyla run_plan'ı netleşmiş hedefle "
-                    "yeniden çağır.")
+            return (f"needs_info: {plan.question}\nAsk the user this question; with their answer, call run_plan again "
+                    "with the clarified goal.")
         self.log("plan:\n" + self._plan_text(0))
         if len(plan.steps) > 1:
-            self.say(f"[görev planı, kullanıcıya tek cümleyle söyle; liste okuma] {len(plan.steps)} adım: "
+            self.say(f"[task plan: tell the user in one sentence, in Turkish; don't read the list] {len(plan.steps)} steps: "
                      + "; ".join(s.goal for s in plan.steps))
         for n, step in enumerate(plan.steps, 1):
             if self.stopped.is_set():
@@ -370,12 +378,12 @@ class TaskRunner:
             status = "done"
         else:
             status = "fail"
-        lines = [f"{status}: {ok}/{len(steps)} adım tamam"]
+        lines = [f"{status}: {ok}/{len(steps)} steps done"]
         for i, s in enumerate(steps, 1):
             mark = {"done": "✓", "failed": "✗", "skipped": "-", "running": "~"}.get(s.status, " ")
             lines.append(f"{mark} {i}. {s.goal}" + (f" -> {s.result}" if s.result else ""))
         if status != "done":
-            lines.append("Kullanıcıya hangi adımda neden durduğunu söyle; yapılmamış adımları yapıldı deme.")
+            lines.append("Tell the user at which step it stopped and why; don't say steps that weren't done were done.")
         return "\n".join(lines)
 
     def status_text(self) -> str:
