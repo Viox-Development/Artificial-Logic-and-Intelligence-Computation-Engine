@@ -301,7 +301,8 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | untested |
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
-| UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
+| UI elements by ID (`ui_elements` / `ui_act`) | ✅ UI Automation | ✅ AT-SPI (needs PyGObject: `sudo apt install python3-gi gir1.2-atspi-2.0`) | ❌ |
+| Reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
 | On-screen HUD, global shortcuts / quick bar | ✅ | ❌ | ❌ |
 | PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
 | Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |

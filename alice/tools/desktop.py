@@ -665,8 +665,19 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
     """Collect interactive elements of the front window (or the one given by title/handle). In Chromium/WebView2
     apps (WhatsApp, Discord...) the tree is huge: return whatever was found within budget seconds. hwnd: finding a
     window by title scans all windows (~1 sec); reflex looks at the same window on every step."""
+    if not IS_WIN and sys.platform.startswith("linux"):
+        from alice.tools import atspi
+
+        try:
+            title_text, items, wrappers = atspi.collect(title, limit, budget)
+        except RuntimeError as e:
+            raise ToolError(str(e)) from None
+        ctx.state["ui_elems"] = wrappers
+        ctx.state["ui_items"] = {i["id"]: i for i in items}
+        return title_text, items
     if not IS_WIN:
-        raise ToolError("ui_elements şimdilik sadece Windows'ta (UI Automation). Linux/macOS'ta computer aracını kullan.")
+        raise ToolError("ui_elements şimdilik Windows'ta (UI Automation) ve Linux'ta (AT-SPI). macOS'ta computer "
+                        "aracını kullan.")
     if hwnd:
         from pywinauto import Desktop
 
@@ -883,7 +894,8 @@ class Windows(Tool):
 
 class UIElements(Tool):
     name = "ui_elements"
-    description = ("Windows: lists the elements of the foreground (or title-matched) desktop window, such as "
+    description = ("Windows (UI Automation) and Linux (AT-SPI): lists the elements of the foreground (or "
+                   "title-matched) desktop window, such as "
                    "buttons, fields and menus, with an [ID] (UI Automation); then click/type by ID with ui_act. You "
                    "can also pass action to list and click in one call (e.g. action='click', element_id=3). "
                    "Use this instead of guessing coordinates.")
