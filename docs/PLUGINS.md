@@ -1,17 +1,17 @@
-# ALICE eklentileri
+# ALICE plugins
 
-Eklenti, ALICE'e çekirdek koda dokunmadan yeni araç (yetenek) ekler. Bir Python dosyası yeterli.
+A plugin adds new tools (abilities) to ALICE without touching the core code. A single Python file is enough.
 
-## Hızlı başlangıç
+## Quick start
 
 ```
-alice plugins new spotify     # ~/.alice/plugins/spotify.py şablonunu oluşturur
-alice plugins                 # yüklü eklentileri ve hataları listeler
+alice plugins new spotify     # creates the ~/.alice/plugins/spotify.py template
+alice plugins                 # lists installed plugins and their errors
 ```
 
-Dosyayı düzenle, ALICE'i (çekirdek, uygulama ya da ses) yeniden başlat.
+Edit the file, then restart ALICE (core, app or voice).
 
-## Eklenti dosyası
+## Plugin file
 
 ```python
 from alice.plugins import Plugin
@@ -19,88 +19,88 @@ from alice.tools.base import NETWORK, Tool, ToolContext, ToolError, ToolResult, 
 
 
 class SpotifyPlay(Tool):
-    name = "spotify_play"                       # tüm araçlar arasında benzersiz
-    description = ("Spotify masaüstü uygulamasında şarkı, albüm ya da çalma listesi arayıp çalar. "
-                   "Durdur/devam ve ses için media aracını kullan.")  # model bunu okuyup ne zaman çağıracağına karar verir
-    parameters = obj({"query": {"type": "string", "description": "Şarkı ya da sanatçı, ör. 'Coldplay Yellow'."}},
+    name = "spotify_play"                       # unique across all tools
+    description = ("Searches for and plays a song, album or playlist in the Spotify desktop app. "
+                   "Use the media tool for pause/resume and volume.")  # the model reads this to decide when to call it
+    parameters = obj({"query": {"type": "string", "description": "Song or artist, e.g. 'Coldplay Yellow'."}},
                      ["query"])
-    risk = NETWORK                              # izin sistemi: READ, WRITE, EXEC, COMPUTER, NETWORK, DANGER
+    risk = NETWORK                              # permission system: READ, WRITE, EXEC, COMPUTER, NETWORK, DANGER
 
     def run(self, ctx: ToolContext, query: str) -> ToolResult:
         if not query:
-            raise ToolError("şarkı adı boş")    # modele anlamlı hata döner
+            raise ToolError("song name is empty")  # returns a meaningful error to the model
         ...
-        return ToolResult(f"çalıyor: {query}")
+        return ToolResult(f"playing: {query}")
 
 
 PLUGIN = Plugin(
-    name="spotify",                             # aynı zamanda grup adı: load_tools(["spotify"])
+    name="spotify",                             # also the group name: load_tools(["spotify"])
     tools=[SpotifyPlay()],
-    description="Spotify çalma, durdurma",      # load_tools listesinde görünür
-    keywords=r"spotify|şarkı çal",              # mesaj buna uyarsa grup kendiliğinden açılır
-    live=True,                                  # sesli (Gemini Live) konuşmada baştan açık
-    cleanup=None,                               # oturum kapanırken çağrılır: cleanup(ctx)
+    description="Spotify play, pause",          # shown in the load_tools list
+    keywords=r"spotify|şarkı çal",              # if a message matches this, the group opens by itself
+    live=True,                                  # on from the start in voice (Gemini Live) conversations
+    cleanup=None,                               # called when the session closes: cleanup(ctx)
 )
 ```
 
-`Plugin` alanları:
+`Plugin` fields:
 
-| alan | anlamı |
+| field | meaning |
 |---|---|
-| `name` | Küçük harf, rakam, `-`, `_`; harfle başlar, en çok 40 karakter. Grup adıdır. |
-| `tools` | `Tool` nesneleri. |
-| `description`, `keywords` | Araçlar varsayılan olarak bir grupta durur ve modele sadece gerekince gider; bu, isteği küçük ve modeli odaklı tutar. |
-| `always` | `True`: araçlar her istekte gider (grup yok). Az ve sık kullanılan araçlar için. |
-| `live` | Sesli konuşmada grubu baştan aç. |
-| `cleanup` | Açık bağlantı/süreç kapatma. |
-| `version` | Bilgi amaçlı. |
+| `name` | Lowercase letters, digits, `-`, `_`; starts with a letter, at most 40 characters. It is the group name. |
+| `tools` | `Tool` objects. |
+| `description`, `keywords` | By default tools sit in a group and are sent to the model only when needed; this keeps requests small and the model focused. |
+| `always` | `True`: the tools are sent with every request (no group). For a few, frequently used tools. |
+| `live` | Open the group from the start in voice conversations. |
+| `cleanup` | Closing open connections/processes. |
+| `version` | Informational. |
 
-## İyi araç tanımı
+## A good tool definition
 
-Model bir aracı sadece adına, açıklamasına ve parametre açıklamalarına bakarak seçer. Claude Code ve Codex'in
-yerleşik araçlarındaki düzen burada da geçerli (yerleşik araçlar `tests/test_tool_specs.py` ile denetlenir):
+The model picks a tool by looking only at its name, description and parameter descriptions. The pattern in the
+built-in tools of Claude Code and Codex applies here too (built-in tools are checked by `tests/test_tool_specs.py`):
 
-- İlk cümle aracın ne yaptığını söyler; model çoğu zaman sadece onu okur.
-- Ne zaman kullanılır ve, en önemlisi, ne zaman KULLANILMAZ: benzer bir araç varsa adını ver ("durdur/devam için
-  media kullan"). Bu, yanlış aracın seçilmesini en çok önleyen kısımdır.
-- Her parametrenin `description`'ı olur: birimi, varsayılanı ve kısa bir örneği (`"Saniye. Varsayılan 120."`,
-  `"ör. 'Coldplay Yellow'"`). `action` gibi enum parametrelerde her değerin ne yaptığı orada yazar.
-- Açıklama 1000 karakteri geçmez: Gemini Live sonrasını keser.
-- Hata mesajı modelin kendini düzeltmesine yeter: neyin yanlış olduğunu ve ne yapması gerektiğini söyler
-  (`"öğe bulunamadı; browser action=snapshot ile yenile"`). Eksik zorunlu parametre ve geçersiz enum değeri, araç
-  çalışmadan ALICE tarafından açıklamasıyla birlikte modele geri döner.
+- The first sentence says what the tool does; the model often reads only that.
+- When to use it and, most importantly, when NOT to use it: if there is a similar tool, name it ("use media for
+  pause/resume"). This is the part that does the most to prevent the wrong tool from being picked.
+- Every parameter has a `description`: its unit, default and a short example (`"Seconds. Default 120."`,
+  `"e.g. 'Coldplay Yellow'"`). For enum parameters such as `action`, say there what each value does.
+- The description stays under 1000 characters: Gemini Live cuts off the rest.
+- The error message is enough for the model to correct itself: it says what was wrong and what to do
+  (`"element not found; refresh with browser action=snapshot"`). A missing required parameter or an invalid enum
+  value is sent back to the model by ALICE, with an explanation, before the tool runs.
 
-Araçlar arası durum için `ctx.state` (sözlük), ayarlar için `ctx.config.data`, kullanıcıya kısa bilgi için
-`ctx.emit("...")` kullanılır. Uzun döngülerde `ctx.cancelled()` kontrol edilmeli.
+Use `ctx.state` (a dict) for state shared between tools, `ctx.config.data` for settings, and `ctx.emit("...")` for
+short messages to the user. Long loops should check `ctx.cancelled()`.
 
-Bir modül tek eklenti için `PLUGIN`, birden çok için `PLUGINS = [...]` ya da bunları döndüren `register()` tanımlar.
+A module defines `PLUGIN` for a single plugin, `PLUGINS = [...]` for several, or a `register()` that returns them.
 
-## Nereden yüklenir
+## Where plugins are loaded from
 
-1. `~/.alice/plugins/*.py` ve `~/.alice/plugins/<klasör>/__init__.py` (`_` ile başlayanlar atlanır),
-2. config'te `[plugins] paths = ["C:/yol/eklenti.py"]`,
-3. pip paketleri: `pyproject.toml` içinde `[project.entry-points."alice.plugins"] spotify = "paket.modul"`.
+1. `~/.alice/plugins/*.py` and `~/.alice/plugins/<folder>/__init__.py` (names starting with `_` are skipped),
+2. `[plugins] paths = ["C:/path/plugin.py"]` in the config,
+3. pip packages: `[project.entry-points."alice.plugins"] spotify = "package.module"` in `pyproject.toml`.
 
-## Kapatma ve hatalar
+## Turning plugins off, and errors
 
 ```toml
 [plugins]
-enabled = true        # false: hiçbir eklenti yüklenmez
+enabled = true        # false: no plugin is loaded
 disabled = ["spotify"]
 ```
 
-Bozuk eklenti ALICE'i durdurmaz: atlanır, hatası `alice plugins` çıktısında ve başlangıç mesajlarında görünür.
-Yerleşik bir araç ya da grup adıyla çakışan eklenti de atlanır.
+A broken plugin does not stop ALICE: it is skipped, and its error shows up in the `alice plugins` output and in the
+startup messages. A plugin whose name clashes with a built-in tool or group is skipped too.
 
-## ALICE'in kendi yazdığı araçlar
+## Tools ALICE writes itself
 
-Bir işi yapacak aracı yoksa ALICE aracı kendisi yazabilir (`make_tool`, ayrıntı: `alice/selftools.py`):
+If ALICE has no tool for a job, it can write one itself (`make_tool`, details in `alice/selftools.py`):
 
-1. Neyin eksik olduğunu söyler ve eklentiyi, testini ve **bildirgesini** yazar. Bildirge, aracın neye erişeceğini söyler: internet adresleri, klasörler, programlar. Bildirgede olmayan bir adres, klasör ya da program kullanan kod reddedilir. `eval`, `exec` ve `ctypes` yasak.
-2. Test kum havuzunda çalışır. Windows'ta bu, düşük bütünlük seviyesi demek: test yalnız geçici klasöre yazabilir ve süre sınırı vardır.
-3. ALICE ne yaptığını ve neye erişeceğini bir cümleyle söyleyip **her zaman** onay ister. Onay yoksa bu klasöre hiçbir dosya girmez.
-4. Onaydan sonra araç `~/.alice/plugins/<ad>.py` olarak eklenir ve aynı konuşmada kullanılır. Testi `_tests/` altında durur.
+1. It says what is missing and writes the plugin, its test and its **manifest**. The manifest says what the tool will access: internet addresses, folders, programs. Code that uses an address, folder or program not in the manifest is refused. `eval`, `exec` and `ctypes` are forbidden.
+2. The test runs in a sandbox. On Windows this means a low integrity level: the test can only write to a temporary folder and has a time limit.
+3. ALICE says in one sentence what the tool does and what it will access, and **always** asks for approval. Without approval, no file gets into that folder.
+4. After approval the tool is added as `~/.alice/plugins/<name>.py` and can be used in the same conversation. Its test lives under `_tests/`.
 
-`~/.alice/selftools.json` her aracı tutar: ne zaman ve neden yazıldığı, kaç kez kullanıldığı, son hatası. Üç kez hata veren araç kendiliğinden kapanır. Bildirgede `asks_each_time` olan araçlar (kod değiştiren, para harcayan, mesaj gönderen, silen) her kullanımda ayrıca onay ister. "Hangi araçları kendin yazdın?" sorusunun cevabı `make_tool action=list`. Kaldırılan araç silinmez, `_kaldirilan/` klasörüne taşınır.
+`~/.alice/selftools.json` keeps track of every tool: when and why it was written, how many times it was used, its last error. A tool that fails three times turns itself off. Tools with `asks_each_time` in their manifest (ones that change code, spend money, send messages or delete things) ask for approval again on every use. The answer to "Which tools did you write yourself?" is `make_tool action=list`. A removed tool is not deleted; it is moved to the `_kaldirilan/` folder.
 
-Sınır: bildirge denetimi koda bakarak yapılır. Çalışırken ağ ve dosya erişimi işletim sistemi seviyesinde kısıtlanmaz.
+Limitation: the manifest is checked by looking at the code. Network and file access are not restricted at the operating-system level while the tool runs.
