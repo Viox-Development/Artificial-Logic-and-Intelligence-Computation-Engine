@@ -6,8 +6,9 @@ Off by default (turn it on with [timeline] enabled = true).
 How it works:
   * Every 'every' seconds the foreground window is captured; if it differs noticeably from the previous one, it is
     turned into text with Windows' built-in OCR. Images are not stored, only the text, program name and window title.
-  * Text and title are encrypted with Windows DPAPI (only your Windows account can decrypt them), in
-    ~/.alice/timeline.db.
+  * Text and title are encrypted, in ~/.alice/timeline.db. On Windows with DPAPI (only your Windows account can
+    decrypt them); on Linux/macOS with a random key kept in the OS keyring (Secret Service / KWallet, macOS
+    Keychain) and Fernet (AES), which needs the "timeline" extra: pip install 'alice-harness[timeline]'.
   * Nothing is recorded in games (flight mode, War Thunder/DCS in front), in password managers, in private/incognito
     browser windows, or in windows whose title contains "şifre/password/banka". The list is extended with
     [timeline] exclude.
@@ -40,6 +41,37 @@ SAME = 0.03          # on the small image: if fewer pixels than this ratio chang
 MAX_TEXT = 20_000
 
 
+KEYRING_SERVICE, KEYRING_USER = "alice-timeline", "fernet-key"
+_FERNET: list[Any] = []  # cached Fernet object (the key is read from the keyring once per process)
+
+
+# ----------------------------------------------------------------------- Linux/macOS: keyring + Fernet
+def _fernet():
+    """Fernet with the timeline key from the OS keyring; a new random key is created and stored on first use.
+    RuntimeError with what to install when the packages or a keyring backend are missing."""
+    if _FERNET:
+        return _FERNET[0]
+    try:
+        import keyring
+        from cryptography.fernet import Fernet
+        from keyring.errors import KeyringError
+    except ImportError:
+        raise RuntimeError("zaman çizgisi şifrelemesi için paketler eksik: pip install 'alice-harness[timeline]' "
+                           "(keyring, cryptography)") from None
+    try:
+        key = keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
+        if not key:
+            keyring.set_password(KEYRING_SERVICE, KEYRING_USER, Fernet.generate_key().decode("ascii"))
+            key = keyring.get_password(KEYRING_SERVICE, KEYRING_USER)  # read back: the backend really stored it
+        if not key:
+            raise RuntimeError("anahtar deposuna yazılan anahtar geri okunamadı")
+    except KeyringError as e:
+        raise RuntimeError("zaman çizgisi için anahtar deposu kullanılamıyor (Linux'ta Secret Service: "
+                           f"gnome-keyring ya da KWallet çalışmalı): {e}") from e
+    _FERNET.append(Fernet(key.encode("ascii")))
+    return _FERNET[0]
+
+
 # ----------------------------------------------------------------------- DPAPI
 def _blob_cls():
     import ctypes
@@ -52,10 +84,10 @@ def _blob_cls():
 
 
 def protect(data: bytes) -> bytes:
-    """Windows DPAPI (CryptProtectData): only this Windows account can decrypt it. Nothing is recorded
-    outside Windows."""
+    """Encrypt. Windows: DPAPI (CryptProtectData), only this Windows account can decrypt it. Linux/macOS: Fernet
+    with the key in the OS keyring (_fernet)."""
     if sys.platform != "win32":
-        raise RuntimeError("zaman çizgisi şimdilik sadece Windows'ta (DPAPI şifrelemesi)")
+        return _fernet().encrypt(data)
     import ctypes
 
     blob = _blob_cls()
@@ -71,7 +103,14 @@ def protect(data: bytes) -> bytes:
 
 def unprotect(data: bytes) -> bytes:
     if sys.platform != "win32":
-        raise RuntimeError("zaman çizgisi şimdilik sadece Windows'ta (DPAPI şifrelemesi)")
+        f = _fernet()  # first: a missing package or keyring gives its clear RuntimeError
+        from cryptography.fernet import InvalidToken
+
+        try:
+            return f.decrypt(data)
+        except InvalidToken:
+            raise OSError("kayıt bu anahtarla çözülemedi (başka bir hesapta ya da anahtar değişmeden önce "
+                          "yazılmış)") from None
     import ctypes
 
     blob = _blob_cls()

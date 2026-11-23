@@ -146,3 +146,85 @@ def test_recorder_stop_joins_thread_and_closes_timeline(tl):
     assert not r._thread.is_alive()
     tl.add("a", "b", "c", 1.0)  # after closing, writes are silently dropped
     r.stop()  # calling it a second time is fine
+
+
+# ---------------------------------------------------------------- Linux/macOS: keyring + Fernet (#237)
+class MemoryKeyring:
+    """Stand-in keyring backend: get/set password in a dict, or fail like a missing Secret Service."""
+
+    def __init__(self, fail: bool = False):
+        self.store: dict[tuple[str, str], str] = {}
+        self.fail = fail
+
+    def get_password(self, service, user):
+        if self.fail:
+            from keyring.errors import NoKeyringError
+
+            raise NoKeyringError("No recommended backend was available.")
+        return self.store.get((service, user))
+
+    def set_password(self, service, user, value):
+        self.store[(service, user)] = value
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch):
+    keyring = pytest.importorskip("keyring")
+    pytest.importorskip("cryptography")
+    monkeypatch.setattr(timeline.sys, "platform", "linux")
+    monkeypatch.setattr(timeline, "_FERNET", [])
+
+    def make(fail=False):
+        kr = MemoryKeyring(fail)
+        monkeypatch.setattr(keyring, "get_password", kr.get_password)
+        monkeypatch.setattr(keyring, "set_password", kr.set_password)
+        timeline._FERNET.clear()
+        return kr
+    return make
+
+
+def test_keyring_fernet_roundtrip_creates_and_reuses_the_key(fake_keyring):
+    kr = fake_keyring()
+    data = "Discord: https://örnek.link/abc şifreli".encode()
+    enc = timeline.protect(data)
+    assert enc != data and data not in enc
+    assert timeline.unprotect(enc) == data
+    key = kr.store[(timeline.KEYRING_SERVICE, timeline.KEYRING_USER)]
+    timeline._FERNET.clear()  # a new process reads the same key back from the keyring
+    assert timeline.unprotect(enc) == data
+    assert kr.store[(timeline.KEYRING_SERVICE, timeline.KEYRING_USER)] == key
+
+
+def test_keyring_timeline_works_end_to_end(fake_keyring, tmp_path):
+    fake_keyring()
+    t = Timeline(tmp_path / "timeline.db")  # default enc/dec: protect/unprotect
+    try:
+        t.add("discord", "Discord - #genel", "Ali: şu linke bak https://example.com/oyun", ts=1000.0)
+        raw = sqlite3.connect(str(t.path)).execute("SELECT text FROM shots").fetchone()[0]
+        assert b"example.com" not in raw
+        assert [r["app"] for r in t.search("example oyun", now=2000.0)] == ["discord"]
+    finally:
+        t.close()
+
+
+def test_keyring_missing_backend_gives_a_clear_error(fake_keyring):
+    fake_keyring(fail=True)
+    with pytest.raises(RuntimeError, match="anahtar deposu kullanılamıyor"):
+        timeline.protect(b"x")
+
+
+def test_row_from_another_key_is_skipped_not_crashing(fake_keyring, tmp_path):
+    kr = fake_keyring()
+    enc = timeline.protect(b"eski")
+    kr.store.clear()  # the key was lost/replaced: a new one is created
+    timeline._FERNET.clear()
+    with pytest.raises(OSError, match="çözülemedi"):
+        timeline.unprotect(enc)
+
+
+def test_missing_packages_explain_what_to_install(monkeypatch):
+    monkeypatch.setattr(timeline.sys, "platform", "linux")
+    monkeypatch.setattr(timeline, "_FERNET", [])
+    monkeypatch.setitem(sys.modules, "keyring", None)
+    with pytest.raises(RuntimeError, match=r"alice-harness\[timeline\]"):
+        timeline.protect(b"x")

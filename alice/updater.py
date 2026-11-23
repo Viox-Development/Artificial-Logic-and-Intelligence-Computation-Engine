@@ -79,7 +79,7 @@ SMOKE_MODULES = ("alice.cli", "alice.agent", "alice.memory", "alice.app.server",
 HEALTHY_AFTER = 90.0  # seconds: the new version counts as healthy once it stays up this long
 MAX_BAD_BOOTS = 2     # if this many boots end without counting as healthy, roll back
 EXTRA_PROBE = {"computer": "mss", "browser": "playwright", "app": "webview", "core": "pystray",
-               "voice": "sounddevice", "home": "websockets"}
+               "voice": "sounddevice", "home": "websockets", "timeline": "keyring"}
 
 
 def settings(cfg: Any = None) -> dict[str, Any]:

@@ -343,7 +343,8 @@ quiet_notifications = true   # maçta Windows "Rahatsız etmeyin" (Discord balon
 game_update = true           # oyundan önce Steam güncellemesini kontrol et, gerekirse Steam'i arka planda aç
 morning = true               # sabah genelde ilk sorduğun şeylerin cevabını önceden hazırla
 
-# Zaman makinesi hafıza: ekranda gördüğün yazılar yerelde, şifreli (Windows DPAPI) ve aranabilir bir zaman çizgisine
+# Zaman makinesi hafıza: ekranda gördüğün yazılar yerelde, şifreli (Windows: DPAPI, Linux/macOS: işletim sisteminin
+# anahtar deposu + Fernet, pip install "alice-harness[timeline]") ve aranabilir bir zaman çizgisine
 # yazılır ("geçen hafta Discord'da paylaşılan linki bul"). Görüntü saklanmaz, sadece yazı. Oyunda, şifre
 # yöneticilerinde ve gizli tarayıcı pencerelerinde kayıt yok. Silmek: alice timeline wipe.
 [timeline]
