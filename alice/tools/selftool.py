@@ -9,9 +9,9 @@ from alice.tools.base import DANGER, EXEC, READ, WRITE, Tool, ToolContext, ToolE
 PLUGIN_SKELETON = (
     "from alice.plugins import Plugin\n"
     "from alice.tools.base import READ, Tool, ToolContext, ToolError, ToolResult, obj\n\n"
-    "class <Ad>(Tool):\n    name = '<ad>_<eylem>'\n    description = '...'\n    parameters = obj({...}, [...])\n"
+    "class <Name>(Tool):\n    name = '<name>_<verb>'\n    description = '...'\n    parameters = obj({...}, [...])\n"
     "    risk = READ\n    def run(self, ctx: ToolContext, ...) -> ToolResult: ...\n\n"
-    "PLUGIN = Plugin(name='<ad>', tools=[<Ad>()], description='...', keywords=r'...')"
+    "PLUGIN = Plugin(name='<name>', tools=[<Name>()], description='...', keywords=r'...')"
 )
 
 
@@ -50,7 +50,7 @@ class MakeTool(Tool):
                            "asks_each_time": {"type": "boolean", "description": "true: asks for approval on every use "
                                                                                 "(tools that change code, spend "
                                                                                 "money, send messages or delete)."}}},
-        "code": {"type": "string", "description": "test: eklentinin Python kodu. İskelet:\n" + PLUGIN_SKELETON},
+        "code": {"type": "string", "description": "test: the plugin's Python code. Skeleton:\n" + PLUGIN_SKELETON},
         "test": {"type": "string",
                  "description": "test: a pytest test. The plugin module is imported by its name: `import <name>`."},
     }, ["action"])

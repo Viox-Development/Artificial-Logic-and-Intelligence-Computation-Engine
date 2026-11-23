@@ -611,32 +611,34 @@ GIT_READ = {"status", "diff", "log", "branches", "audit", "worktrees"}
 class Git(Tool):
     name = "git"
     description = (
-        "Çalışma klasöründeki git deposunda iş yapar; GitHub anahtarını kendisi kullanır.\n"
-        "status/diff/log/branches/audit: okuma. switch: dala geç (create=true yeni dal açar). "
-        "commit: files ya da all=true ile ekleyip commit'ler (.env ve anahtar içeren değişiklikler reddedilir). "
-        "pull. push: dalı origin'e gönderir; main/master gibi korumalı dala ya da force ile push onay ister.\n"
-        "Kural: korumalı dalda çalışma; önce switch create=true ile dal aç, commit, push, sonra github pr_create.\n"
-        "worktree: aynı depoda ayrı bir çalışma kopyası aç (branch; yoksa create=true ile açılır) ve oraya geç: "
-        "mevcut değişikliklere dokunmadan başka bir dalda iş yapmak için. worktrees: listele. worktree_remove: path'teki "
-        "kopyayı kaldır (commit'lenmemiş değişiklik varsa reddeder)."
+        "Works in the git repository in the working folder; uses the GitHub key itself.\n"
+        "status/diff/log/branches/audit: reading. switch: switch branch (create=true creates a new one). commit: "
+        "stages files or all=true and commits (changes with .env or keys are refused). pull. push: sends the branch "
+        "to origin; a push to a protected branch such as main/master, or with force, asks for approval.\n"
+        "Rule: don't work on a protected branch; first switch create=true to open a branch, commit, push, then github "
+        "pr_create.\n"
+        "worktree: open a separate working copy of the same repository (branch; created with create=true if missing) "
+        "and move there: to work on another branch without touching the current changes. worktrees: list. "
+        "worktree_remove: remove the copy at path (refused if it has uncommitted changes)."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["status", "diff", "log", "branches", "switch", "commit", "pull", "push",
                                               "audit", "worktree", "worktrees", "worktree_remove"],
-                   "description": "Yapılacak iş."},
-        "branch": {"type": "string", "description": "switch/push için dal adı. push'ta boşsa şu anki dal."},
-        "create": {"type": "boolean", "description": "switch: dal yoksa oluştur. Varsayılan false."},
-        "message": {"type": "string", "description": "commit mesajı (ilk satır kısa özet)."},
+                   "description": "What to do."},
+        "branch": {"type": "string", "description": "For switch/push: branch name. Empty in push: the current branch."},
+        "create": {"type": "boolean", "description": "switch: create the branch if it doesn't exist. Default false."},
+        "message": {"type": "string", "description": "Commit message (first line a short summary)."},
         "files": {"type": "array", "items": {"type": "string", "description": "Dosya yolu."},
-                  "description": "commit: eklenecek dosyalar. Boşsa ve all=false ise yalnızca zaten eklenmişler."},
-        "all": {"type": "boolean", "description": "commit: tüm değişiklikleri (yeni dosyalar dahil) ekle."},
-        "staged": {"type": "boolean", "description": "diff: yalnızca commit'e eklenmiş değişiklikler."},
-        "path": {"type": "string", "description": "diff/log: yalnızca bu dosya ya da klasör. worktree_remove: "
-                 "kaldırılacak çalışma kopyası."},
-        "count": {"type": "integer", "description": "log: kaç commit. Varsayılan 15."},
+                  "description": "commit: files to stage. If empty and all=false, only what is already staged."},
+        "all": {"type": "boolean", "description": "commit: stage all changes (new files included)."},
+        "staged": {"type": "boolean", "description": "diff: only changes staged for commit."},
+        "path": {"type": "string", "description": "diff/log: only this file or folder. worktree_remove: the working "
+                                                  "copy to remove."},
+        "count": {"type": "integer", "description": "log: how many commits. Default 15."},
         "force": {"type": "boolean", "description": "push: --force-with-lease. Her zaman onay ister."},
-        "protected": {"type": "boolean", "description": "push: korumalı dala (main/master/ana dal) doğrudan push; "
-                      "yalnızca kullanıcı açıkça isterse. Onay ister."},
+        "protected": {"type": "boolean", "description": "push: push straight to a protected branch (main/master/the "
+                                                        "default branch); only if the user clearly asks. Asks for "
+                                                        "approval."},
     }, ["action"])
     risk = WRITE
 
@@ -869,53 +871,56 @@ GH_DANGER = {"pr_merge", "pr_close"}
 class GitHub(Tool):
     name = "github"
     description = (
-        "GitHub, kullanıcının anahtarıyla; repo boşsa çalışma klasörünün origin'i.\n"
-        "repos, clone (~/GitHub'a klonlar, oraya geçer), prs, pr_view, checks, issues. pr_create: dalı push edip PR "
-        "açar (korumalı daldan değil). pr_comment, issue_create. pr_merge/pr_close: onay ister; CI kırmızı/sürüyorsa "
-        "birleştirmez.\n"
-        "CI: ci_wait (bitene kadar bekle; push'tan sonra), ci_logs (başarısız işlerin hata özeti; 'CI neden kırmızı' "
-        "için önce bu), ci_rerun (başarısızları yeniden çalıştır), ci_run (workflow tetikle; boşsa listeler).\n"
-        "İnceleme: reviews (açık konular, kimlikleriyle), review_reply, review_resolve, request_review. "
-        "update_branch: PR dalını hedef dalla günceller.\n"
-        "watch/unwatch/watching: PR'ı arka planda izle; CI kırmızı, yorum ya da çakışma olunca ayrı çalışma "
-        "kopyasında kendisi düzeltir, istenirse yeşil olunca birleştirir (auto_merge)."
+        "GitHub, with the user's key; an empty repo means the working folder's origin.\n"
+        "repos, clone (clones into ~/GitHub and moves there), prs, pr_view, checks, issues. pr_create: pushes the "
+        "branch and opens a PR (not from a protected branch). pr_comment, issue_create. pr_merge/pr_close: ask for "
+        "approval; doesn't merge while CI is red/running.\n"
+        "CI: ci_wait (wait until it finishes; after a push), ci_logs (error summary of failed jobs; for 'why is CI "
+        "red' use this first), ci_rerun (re-run the failed ones), ci_run (trigger a workflow; empty lists them).\n"
+        "Review: reviews (open threads, with their ids), review_reply, review_resolve, request_review. update_branch: "
+        "updates the PR branch from the base branch.\n"
+        "watch/unwatch/watching: watch a PR in the background; on red CI, a comment or a conflict it fixes it itself "
+        "in a separate working copy, and if asked merges when green (auto_merge)."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["repos", "clone", "prs", "pr_view", "checks", "issues", "pr_create",
                                               "pr_comment", "pr_merge", "pr_close", "issue_create", "ci_wait", "ci_logs",
                                               "ci_rerun", "ci_run", "reviews", "review_reply", "review_resolve",
                                               "request_review", "update_branch", "watch", "unwatch", "watching"],
-                   "description": "Yapılacak iş."},
-        "comment_id": {"type": "integer", "description": "review_reply: cevaplanacak satır yorumunun kimliği "
-                       "(reviews çıktısındaki #sayı)."},
-        "thread": {"type": "string", "description": "review_resolve: konu kimliği (reviews çıktısındaki 'konu ...')."},
-        "workflow": {"type": "string", "description": "ci_run: workflow dosya adı ya da kimliği (ör. ci.yml)."},
-        "minutes": {"type": "integer", "description": "ci_wait: en fazla kaç dakika beklensin. Varsayılan 15, en çok 45."},
+                   "description": "What to do."},
+        "comment_id": {"type": "integer", "description": "review_reply: id of the line comment to answer (the #number "
+                                                         "in the reviews output)."},
+        "thread": {"type": "string", "description": "review_resolve: thread id (the 'konu ...' in the reviews "
+                                                    "output)."},
+        "workflow": {"type": "string", "description": "ci_run: workflow file name or id (e.g. ci.yml)."},
+        "minutes": {"type": "integer", "description": "ci_wait: wait at most this many minutes. Default 15, at most "
+                                                      "45."},
         "inputs": {"type": "object", "description": "ci_run: workflow_dispatch girdileri."},
-        "reviewers": {"type": "array", "items": {"type": "string", "description": "GitHub kullanıcı adı."},
+        "reviewers": {"type": "array", "items": {"type": "string", "description": "GitHub user name."},
                       "description": "request_review: inceleyiciler."},
-        "auto_fix": {"type": "boolean", "description": "watch: CI kırmızı ya da çakışma olunca kendisi düzeltsin. "
-                     "Varsayılan true."},
-        "address_comments": {"type": "boolean", "description": "watch: güvenilir inceleme yorumlarını uygulayıp "
-                             "cevaplasın. Varsayılan true."},
-        "auto_merge": {"type": "boolean", "description": "watch: CI yeşil, açık konu yokken kendisi birleştirsin. "
-                       "Varsayılan false; yalnız kullanıcı açıkça isterse."},
-        "auto_review": {"type": "boolean", "description": "watch: her yeni commit'i bağımsız bir inceleyiciye inceletip "
-                        "bulguları PR'a yazsın. Varsayılan true."},
-        "repo": {"type": "string", "description": "'sahip/depo'. Boşsa çalışma klasörünün origin'i."},
-        "query": {"type": "string", "description": "repos: ada/açıklamaya göre süzgeç."},
-        "number": {"type": "integer", "description": "PR ya da issue numarası."},
-        "title": {"type": "string", "description": "pr_create/issue_create başlığı."},
-        "body": {"type": "string", "description": "PR/issue açıklaması ya da yorum metni."},
-        "base": {"type": "string", "description": "pr_create: hedef dal. Varsayılan deponun ana dalı."},
-        "head": {"type": "string", "description": "pr_create: kaynak dal. Varsayılan şu anki dal."},
-        "branch": {"type": "string", "description": "clone: geçilecek dal. checks: bakılacak dal/commit."},
+        "auto_fix": {"type": "boolean", "description": "watch: fix it itself on red CI or a conflict. Default true."},
+        "address_comments": {"type": "boolean", "description": "watch: apply and answer trusted review comments. "
+                                                               "Default true."},
+        "auto_merge": {"type": "boolean", "description": "watch: merge by itself when CI is green and no thread is "
+                                                         "open. Default false; only if the user clearly asks."},
+        "auto_review": {"type": "boolean", "description": "watch: have an independent reviewer review each new commit "
+                                                          "and post the findings to the PR. Default true."},
+        "repo": {"type": "string", "description": "'owner/repo'. Empty: the working folder's origin."},
+        "query": {"type": "string", "description": "repos: filter by name/description."},
+        "number": {"type": "integer", "description": "PR or issue number."},
+        "title": {"type": "string", "description": "Title for pr_create/issue_create."},
+        "body": {"type": "string", "description": "PR/issue description or comment text."},
+        "base": {"type": "string", "description": "pr_create: target branch. Default: the repository's default "
+                                                  "branch."},
+        "head": {"type": "string", "description": "pr_create: source branch. Default: the current branch."},
+        "branch": {"type": "string", "description": "clone: branch to switch to. checks: branch/commit to check."},
         "draft": {"type": "boolean", "description": "pr_create: taslak PR."},
-        "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "prs/issues süzgeci. Varsayılan open."},
+        "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "Filter for prs/issues. Default "
+                                                                                      "open."},
         "method": {"type": "string", "enum": ["merge", "squash", "rebase"],
-                   "description": "pr_merge yöntemi. Varsayılan config [github] merge_method."},
-        "force": {"type": "boolean", "description": "pr_merge: CI kırmızı/sürüyor olsa da birleştir (kullanıcı açıkça "
-                  "isterse)."},
+                   "description": "pr_merge method. Default: config [github] merge_method."},
+        "force": {"type": "boolean", "description": "pr_merge: merge even if CI is red/running (if the user clearly "
+                                                    "asks)."},
     }, ["action"])
     risk = WRITE
 
