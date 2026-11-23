@@ -559,7 +559,10 @@ def test_btw_side_question_does_not_touch_history(app):
     done = [e for e in events if e["type"] == "btw" and not e.get("pending")]
     assert done and done[-1]["a"] == "Yan cevap: 42." and done[-1]["q"] == "sayı kaç?"
     assert state.chat.agent.messages == before  # not written to the chat
-    assert "Yan soru" in prov.calls[-1]["messages"][-1]["content"] and not prov.calls[-1].get("tools")
+    # Find the side-question call by its text: a background call (title, next-message suggestion) can land after it.
+    side = [c for c in prov.calls if isinstance(c["messages"][-1].get("content"), str)
+            and "Yan soru" in c["messages"][-1]["content"]]
+    assert side and not side[-1].get("tools")
     assert client.post("/api/send", json={"text": "/btw"}).json()["ok"] is False
 
 

@@ -42,6 +42,8 @@ jobs:
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    # The suite takes 3-5 minutes; a hung test would otherwise hold the job for the 6-hour limit.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
