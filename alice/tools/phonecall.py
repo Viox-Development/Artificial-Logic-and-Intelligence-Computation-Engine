@@ -8,18 +8,19 @@ from alice.tools.base import READ, Tool, ToolContext, ToolError, ToolResult, obj
 class PhoneCall(Tool):
     name = "phone_call"
     description = (
-        "Kullanıcıyı telefonundaki ALICE uygulamasından sesli ara: telefonda gelen arama ekranı açılır, açarsa "
-        "seninle konuşur (ayrı bir sesli görüşmede, araçların açık).\n"
-        "- Kullan: kullanıcı \"beni ara\", \"X'te beni ara\", \"bitince ara\" dediğinde (zamanlıysa önce bir görev/"
-        "hatırlatma kur, vakti gelince bu aracı çağır) ya da bildirimle geçiştirilemeyecek kadar önemli bir şey "
-        "olduğunda.\n"
-        "- message: kullanıcı açınca söyleyeceğin ilk cümle (kısa, doğal, neden aradığın). reason: bildirimde "
-        "görünen kısa neden.\n"
-        "- Araç aramayı başlatır ve hemen döner; açılmazsa 45 sn sonra cevapsız arama olarak kalır."
+        "Calls the user by voice through the ALICE app on their phone: an incoming call screen opens on the phone, "
+        "and if they answer they talk with you (in a separate voice call, with your tools available).\n"
+        "- Use when the user says \"call me\", \"call me at X\", \"call me when it's done\" (if it is timed, set up a "
+        "task/reminder first and call this tool when the time comes), or when something is too important to leave to "
+        "a notification.\n"
+        "- message: the first sentence you say when they answer (short, natural, why you are calling). reason: the "
+        "short reason shown in the notification.\n"
+        "- The tool starts the call and returns at once; if it isn't answered it becomes a missed call after 45 s."
     )
     parameters = obj({
-        "message": {"type": "string", "description": "Açınca ilk söyleyeceğin cümle"},
-        "reason": {"type": "string", "description": "Bildirimde görünen kısa neden (ör. 'Hatırlatma: ilaç')"},
+        "message": {"type": "string", "description": "The first sentence you say when they answer."},
+        "reason": {"type": "string", "description": "Short reason shown in the notification (e.g. 'Reminder: "
+                                                    "medicine')."},
     }, ["message"])
     risk = READ  # calling the user themselves sends nothing outside
 

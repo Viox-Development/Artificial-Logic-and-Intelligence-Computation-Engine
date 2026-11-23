@@ -9,10 +9,11 @@ from alice.tools.base import READ, WRITE, Tool, ToolContext, ToolError, ToolResu
 
 class Buddy(Tool):
     name = "buddy"
-    description = ("BUDDY, kullanıcının küçük arkadaşı (Tamagotchi). status: çizimi, adı, türü, nadirliği, seviyesi ve "
-                   "tokluk/enerji/keyif. pet: okşa. feed: besle. play: oyun oyna. rename: yeni ad. reroll: yeni tür/arkadaş çek.")
+    description = ("BUDDY, the user's little companion (a Tamagotchi). status: its drawing, name, species, rarity, "
+                   "level and fullness/energy/mood. pet: pet it. feed: feed it. play: play a game. rename: new name. "
+                   "reroll: draw a new species/companion.")
     parameters = obj({"action": {"type": "string", "enum": ["status", "pet", "feed", "play", "rename", "reroll"],
-                                 "description": "Yapılacak iş."},
+                                 "description": "What to do."},
                       "value": {"type": "string", "description": "rename: yeni ad."}}, ["action"])
     risk = READ
 
@@ -26,11 +27,11 @@ class Buddy(Tool):
 
 class Kairos(Tool):
     name = "kairos"
-    description = ("KAIROS, ALICE'in arka plan nöbeti: kendi kendine uyanıp durumu kollar, yalnız faydalı bir şey "
-                   "varsa bildirir. status: açık mı, sıradaki uyanış, son uyanışlar. on/off: aç ya da kapat. wake: "
-                   "şimdi uyandır.")
+    description = ("KAIROS, ALICE's background watch: wakes up by itself to keep an eye on things and notifies only "
+                   "when there is something useful. status: whether it is on, the next wake-up, the last wake-ups. "
+                   "on/off: turn it on or off. wake: wake it now.")
     parameters = obj({"action": {"type": "string", "enum": ["status", "on", "off", "wake"],
-                                 "description": "Yapılacak iş."}}, ["action"])
+                                 "description": "What to do."}}, ["action"])
     risk = WRITE
 
     def risk_for(self, args: dict[str, Any]) -> str:

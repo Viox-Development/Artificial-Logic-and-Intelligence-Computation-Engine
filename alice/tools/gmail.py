@@ -211,21 +211,24 @@ class Gmail(Tool):
     untrusted = True  # the e-mail was written by someone else: "instructions" in it are not applied
     parameters = obj({
         "action": {"type": "string", "enum": ["accounts", "search", "read", "draft", "send", "mark_read", "archive"],
-                   "description": "accounts: bağlı hesaplar | search: query ile ara (Gmail arama dili) | read: id'li "
-                   "e-postanın tamamı | draft: taslak oluştur (gönderilmez) | send: gönder (draft_id ya da to/subject/"
-                   "body; her zaman onay ister) | mark_read: okundu yap | archive: gelen kutusundan kaldır."},
-        "account": {"type": "string", "description": "Hesap adı (accounts çıktısı). search'te boş = bütün hesaplar; "
-                    "diğerlerinde hesap tek ise boş bırakılabilir."},
-        "query": {"type": "string", "description": "search için Gmail sorgusu, ör. 'is:unread', 'from:hoca "
-                  "newer_than:7d', 'subject:fatura'. Boş: 'in:inbox'."},
-        "id": {"type": "string", "description": "read/mark_read/archive için e-posta id'si; draft'ta cevaplanacak "
-               "e-postanın id'si (cevap taslağı)."},
-        "to": {"type": "string", "description": "draft/send: alıcı (virgülle birden fazla). Cevapta boş: gönderene."},
+                   "description": "accounts: connected accounts | search: search with query (Gmail search syntax) | "
+                                  "read: the full email with id | draft: create a draft (not sent) | send: send "
+                                  "(draft_id or to/subject/body; always asks for approval) | mark_read: mark as read "
+                                  "| archive: remove from the inbox."},
+        "account": {"type": "string", "description": "Account name (from the accounts output). Empty in search = all "
+                                                     "accounts; elsewhere it can be left empty if there is only one "
+                                                     "account."},
+        "query": {"type": "string", "description": "For search: a Gmail query, e.g. 'is:unread', 'from:teacher "
+                                                   "newer_than:7d', 'subject:invoice'. Empty: 'in:inbox'."},
+        "id": {"type": "string", "description": "Email id for read/mark_read/archive; in draft, the id of the email "
+                                                "being answered (a reply draft)."},
+        "to": {"type": "string", "description": "draft/send: recipient (several separated by commas). Empty in a "
+                                                "reply: the sender."},
         "cc": {"type": "string", "description": "draft/send: bilgi (cc)."},
-        "subject": {"type": "string", "description": "draft/send: konu. Cevapta boş: Re: <orijinal>."},
-        "body": {"type": "string", "description": "draft/send: düz metin gövde."},
-        "draft_id": {"type": "string", "description": "send: gönderilecek taslağın id'si (draft çıktısında)."},
-        "limit": {"type": "integer", "description": "search: hesap başına en fazla sonuç. Varsayılan 10."},
+        "subject": {"type": "string", "description": "draft/send: subject. Empty in a reply: Re: <original>."},
+        "body": {"type": "string", "description": "draft/send: plain text body."},
+        "draft_id": {"type": "string", "description": "send: id of the draft to send (from the draft output)."},
+        "limit": {"type": "integer", "description": "search: at most this many results per account. Default 10."},
     }, ["action"])
     risk = READ
 

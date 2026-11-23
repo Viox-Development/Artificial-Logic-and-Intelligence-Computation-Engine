@@ -10,16 +10,18 @@ from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolR
 class RunPlan(Tool):
     name = "run_plan"
     description = (
-        "Birkaç ayrı adımdan oluşan bir isteği planlayıp baştan sona yapar: 2-8 adıma böler, her adımı araçlarla "
-        "yapar ve sonucunu kontrol eder; olmayan adımı bir kez başka yoldan dener. Geri alınamaz adımlardan "
-        "(mesaj/e-posta göndermek, silmek, satın almak, kurmak) önce kullanıcıya onay sorar (cevap task_control "
-        "ile verilir). Dakikalar sürebilir.\n"
-        "- Kullan: 'Gmail'deki son faturayı indir, masaüstüne kaydet ve Ahmet'e WhatsApp'tan gönder'.\n"
-        "- Kullanma: tek araçla bitecek işler (doğrudan o aracı çağır); tek bir uygulamada ekran işi "
-        "(computer_task). Aynı anda tek görev çalışır."
+        "Plans a request made of several separate steps and carries it out from start to finish: splits it into 2-8 "
+        "steps, does each step with tools and checks the result; a step that fails is tried once another way. Asks "
+        "the user for approval before irreversible steps (sending a message/email, deleting, buying, installing); the "
+        "answer is given with task_control. Can take minutes.\n"
+        "- Use for: 'download the latest invoice from Gmail, save it to the desktop and send it to Ahmet on "
+        "WhatsApp'.\n"
+        "- Don't use for: jobs one tool can finish (call that tool directly); screen work in a single app "
+        "(computer_task). Only one task runs at a time."
     )
-    parameters = obj({"goal": {"type": "string", "description": "Kullanıcının isteği eksiksiz, kişi, dosya ve "
-                               "uygulama adlarıyla; konuşmayı görmeyen birinin anlayacağı gibi."}}, ["goal"])
+    parameters = obj({"goal": {"type": "string", "description": "The user's request in full, with names of people, "
+                                                                "files and apps; written so that someone who hasn't "
+                                                                "seen the conversation would understand it."}}, ["goal"])
     risk = COMPUTER  # each tool call inside it goes through its own permission check
 
     def summary(self, args: dict[str, Any]) -> str:
@@ -55,15 +57,16 @@ class RunPlan(Tool):
 
 class TaskControl(Tool):
     name = "task_control"
-    description = ("Süren bir run_plan görevini yönetir: kullanıcının onayını ya da reddini iletir, görevi durdurur ya da "
-                   "durumunu döndürür.\n"
-                   "- approve/reject sadece kullanıcı bu konuşmada açıkça 'evet'/'hayır' dediğinde. Onayı ASLA kendin verme ya "
-                   "da tahmin etme.\n"
-                   "- 'Dur', 'vazgeç' denince stop; 'ne durumda' sorusunda status.\n"
-                   "- Süren bir run_plan görevi yoksa hata döner.")
+    description = ("Manages a running run_plan task: passes on the user's approval or refusal, stops the task or "
+                   "returns its status.\n"
+                   "- approve/reject only when the user clearly said yes/no ('evet'/'hayır') in this conversation. "
+                   "NEVER give the approval yourself or guess it.\n"
+                   "- stop when told to stop or cancel ('dur', 'vazgeç'); status for 'how is it going' ('ne "
+                   "durumda').\n"
+                   "- Returns an error if no run_plan task is running.")
     parameters = obj({"action": {"type": "string", "enum": ["approve", "reject", "stop", "status"],
-                                 "description": "approve: görev onay sorunca kullanıcı 'evet' dedi | reject: 'hayır' "
-                                 "dedi | stop: 'dur', 'vazgeç' | status: 'ne durumda'."}}, ["action"])
+                                 "description": "approve: the task asked for approval and the user said yes | reject: "
+                                                "said no | stop: 'stop', 'cancel' | status: 'how is it going'."}}, ["action"])
     risk = READ
 
     def run(self, ctx: ToolContext, action: str) -> ToolResult:
@@ -103,36 +106,41 @@ AGENT_SPEC = obj({
 class TeamTool(Tool):
     name = "team"
     description = (
-        "Büyük bir işi otonom bir PROJE olarak başlatır: projenin kendi yöneticisi (sen, arka planda) işi paralel "
-        "çalışan ajanlara böler, sorularını cevaplar, biten her işi inceler (onaylar ya da düzeltmeye gönderir), "
-        "sonunda doğrulayıp özet yazar. Kullanıcı ilerlemeyi uygulamadaki Projeler sayfasında izler.\n"
-        "- Kullan: birbirinden ayrılabilen parçaları olan büyük işler (büyük kod tabanında birden çok modül, "
-        "frontend+backend+test, geniş inceleme/araştırma). Küçük işlerde kullanma: kendin yap ya da task kullan.\n"
-        "- start: goal'a kullanıcının isteğini, bildiklerini ve bitti ölçütünü yaz. agents vermezsen yönetici kodu "
-        "inceleyip ajanları kendisi kurar (çoğu zaman en iyisi). Sonra kullanıcıya projenin başladığını söyle; "
-        "sonucu sohbette istiyorsa action=wait ile bekle.\n"
-        "- Ajanlar kod işi araçlarını kullanır (dosya, kabuk, web, git); ekran ve tarayıcı araçları onlara kapalı."
+        "Starts a large job as an autonomous PROJECT: the project's own manager (you, in the background) splits the "
+        "work among agents running in parallel, answers their questions, reviews each finished job (approves it or "
+        "sends it back for fixes), and at the end verifies and writes a summary. The user follows progress on the "
+        "Projects page in the app.\n"
+        "- Use for: large jobs with parts that can be separated (several modules in a large codebase, "
+        "frontend+backend+tests, a broad review/research). Don't use it for small jobs: do them yourself or use "
+        "task.\n"
+        "- start: put the user's request, what you know and the definition of done in goal. If you don't give agents, "
+        "the manager reads the code and sets up the agents itself (usually best). Then tell the user the project has "
+        "started; if they want the result in the chat, wait with action=wait.\n"
+        "- Agents use coding tools (files, shell, web, git); screen and browser tools are closed to them."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["start", "wait", "send", "status", "stop", "resume"],
-                   "description": "start: projeyi başlat | wait: proje bitene ya da kullanıcıya soru sorana kadar "
-                   "bekle | send: yöneticiye (to=alice) ya da ajana mesaj | status: durum | stop: ajanı (name) ya "
-                   "da projeyi durdur | resume: durmuş projeyi sürdür."},
-        "goal": {"type": "string", "description": "start: işin genel hedefi ve bağlamı; herkes görür."},
-        "agents": {"type": "array", "description": "start (isteğe bağlı): ajanlar (en çok 8). Boş: yönetici planlar.",
+                   "description": "start: start the project | wait: wait until the project finishes or asks the user "
+                                  "a question | send: message the manager (to=alice) or an agent | status: status | "
+                                  "stop: stop an agent (name) or the project | resume: resume a stopped project."},
+        "goal": {"type": "string", "description": "start: the overall goal and context of the work; everyone sees it."},
+        "agents": {"type": "array", "description": "start (optional): agents (at most 8). Empty: the manager plans "
+                                                   "them.",
                    "items": AGENT_SPEC},
-        "review": {"type": "boolean", "description": "start: biten işleri yönetici incelesin mi. Varsayılan true."},
-        "council": {"type": "boolean", "description": "start: inceleme kurulu (plan, her iş ve final tartışılıp "
-                    "oylanır). Varsayılan true; küçük ya da acil işte false."},
-        "pr": {"type": "boolean", "description": "start: sonuç PR olsun. Proje kullanıcının kopyasına dokunmadan "
-               "kendi dalında çalışır; bitince dal push'lanır, PR açılır ve takibe alınır (kırmızı CI ve yorumlar bu "
-               "sohbete gelir). Kod deposunda, kullanıcı PR istediyse ya da iş incelenmesi gereken büyük bir "
-               "değişiklikse kullan."},
-        "project": {"type": "string", "description": "Proje kimliği. Boş: bu sohbette en son başlatılan."},
-        "to": {"type": "string", "description": "send: 'alice' (yönetici), ajan adı ya da 'all'."},
+        "review": {"type": "boolean", "description": "start: whether the manager reviews finished jobs. Default true."},
+        "council": {"type": "boolean", "description": "start: review council (the plan, each job and the final result "
+                                                      "are debated and voted on). Default true; false for a small or "
+                                                      "urgent job."},
+        "pr": {"type": "boolean", "description": "start: the result becomes a PR. The project works on its own branch "
+                                                 "without touching the user's copy; when done the branch is pushed, a "
+                                                 "PR is opened and watched (red CI and comments come to this chat). "
+                                                 "Use in a code repository when the user asked for a PR or the job is "
+                                                 "a large change that should be reviewed."},
+        "project": {"type": "string", "description": "Project id. Empty: the one started last in this chat."},
+        "to": {"type": "string", "description": "send: 'alice' (the manager), an agent's name or 'all'."},
         "text": {"type": "string", "description": "send: mesaj."},
-        "name": {"type": "string", "description": "stop: tek ajan. Boş: proje."},
-        "timeout": {"type": "integer", "description": "wait: en çok kaç saniye. Varsayılan 600, en çok 1800."},
+        "name": {"type": "string", "description": "stop: a single agent. Empty: the project."},
+        "timeout": {"type": "integer", "description": "wait: at most this many seconds. Default 600, at most 1800."},
     }, ["action"])
     risk = READ  # each tool call the agents make goes through its own permission check
 
@@ -206,20 +214,22 @@ class TeamTool(Tool):
 class CouncilTool(Tool):
     name = "council"
     description = (
-        "Bir konuyu inceleme kuruluna sorar: eleştirmen (acımasız ama kanıtlı), savunucu, kontrolcü (iddiaları "
-        "kendisi doğrular) ve gerekince güvenlik/performans/kullanıcı uzmanları bağımsız inceler, tartışır ve "
-        "ağırlıklı oylamayla karar verir. Fikir, tasarım kararı, dosya/kod, değişiklik ya da plan için.\n"
-        "- Kullan: kullanıcı '/kurul', 'kurula sor', 'eleştirsinler', 'tartışsınlar' derse ya da önemli bir kararın "
-        "artısını eksisini sağlam görmek gerekiyorsa. Dakikalar sürebilir.\n"
-        "- Sonucu kullanıcıya özetle: karar, doğrulanmış bulgular, kim neyi neden savundu."
+        "Asks a review council about a subject: a critic (harsh but with evidence), an advocate, a checker (verifies "
+        "claims itself) and, when needed, security/performance/user experts review it independently, debate and "
+        "decide by weighted vote. For an idea, a design decision, a file/code, a change or a plan.\n"
+        "- Use when the user says '/kurul', 'ask the council' ('kurula sor'), 'let them critique/debate it', or when "
+        "the pros and cons of an important decision need a solid look. Can take minutes.\n"
+        "- Summarize the result for the user: the decision, the verified findings, who argued for what and why."
     )
     parameters = obj({
-        "subject": {"type": "string", "description": "İncelenecek şey ve beklenti; konuşmayı görmeyen biri anlayacak "
-                    "kadar net. Kod/dosya ise yollarını da yaz."},
-        "paths": {"type": "array", "items": {"type": "string"}, "description": "Odaklanılacak dosyalar (isteğe bağlı)."},
-        "critical": {"type": "boolean", "description": "Kritik konu (güvenlik, veri, ana mimari): tam kurul, en güçlü "
-                     "modeller, derin tartışma."},
-        "depth": {"type": "string", "enum": ["auto", "1", "2", "3"], "description": "Tartışma turu. auto: işe göre."},
+        "subject": {"type": "string", "description": "What to review and what is expected; clear enough for someone "
+                                                     "who hasn't seen the conversation. For code/files, include their "
+                                                     "paths."},
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "Files to focus on (optional)."},
+        "critical": {"type": "boolean", "description": "Critical subject (security, data, core architecture): full "
+                                                       "council, the strongest models, deep debate."},
+        "depth": {"type": "string", "enum": ["auto", "1", "2", "3"], "description": "Debate rounds. auto: depends on "
+                                                                                    "the job."},
     }, ["subject"])
     risk = READ
 

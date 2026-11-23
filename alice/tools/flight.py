@@ -15,34 +15,39 @@ ACTIONS = ["status", "cockpit", "brief", "alert_home", "alert_alt", "alert_fuel"
 
 class Flight(Tool):
     name = "flight"
-    description = ("DCS / War Thunder uçuşu: canlı durum, sesli uyarılar, kontrol listeleri, kneeboard.\n"
-                   "- Hız, irtifa, yakıt, yön, üsse mesafe, silah sorulunca HER SEFER status çağır; eski cevabı "
-                   "tekrarlama.\n"
-                   "- status'ta olmayan ya da BİLİNMİYOR yazan bilgiyi ASLA uydurma ve genel bilginden tahmin etme; "
-                   "'oyun bu bilgiyi vermiyor' de.\n"
-                   "- Sadece alert_home/alt/fuel ile kurulabilen uyarıları söz ver ('X mile gelince söyle' -> "
-                   "alert_home).\n"
-                   "- 'Teker indir', 'flare at', 'telsizi 251'e al' gibi istekler -> cockpit (sadece DCS).\n"
-                   "- Kontrol listesinde sesliyken sadece dönen adımı oku; 'tamam/devam' gelince checklist_next.")
+    description = ("DCS / War Thunder flight: live state, spoken alerts, checklists, kneeboard.\n"
+                   "- When asked about speed, altitude, fuel, heading, distance to base or weapons, call status EVERY "
+                   "TIME; don't repeat an old answer.\n"
+                   "- NEVER make up information that status doesn't have or marks as UNKNOWN (BİLİNMİYOR), and don't "
+                   "guess it from general knowledge; say 'the game doesn't provide this'.\n"
+                   "- Only promise alerts that alert_home/alt/fuel can set up ('tell me at X miles' -> alert_home).\n"
+                   "- Requests like 'gear down', 'drop flares', 'set the radio to 251' -> cockpit (DCS only).\n"
+                   "- During a checklist by voice, read only the returned step; on 'ok/continue' ('tamam/devam') call "
+                   "checklist_next.")
     parameters = obj({
         "action": {"type": "string", "enum": ACTIONS,
-                   "description": "status: canlı yakıt, kalan dakika, üssün yönü/mesafesi, kaç derece dönmeli, en yakın "
-                   "düşmanlar/RWR | cockpit: DCS'te command'ı uygula | brief: yüklü DCS görevinin brifingini oku | "
-                   "alert_home: üsse nm mil kalınca söyle | alert_alt: ft irtifasına gelince söyle | alert_fuel: yakıt "
-                   "kg'a inince söyle | alerts_clear | last_debrief: son uçuşun değerlendirmesi | checklist_list | "
-                   "checklist_start: name listesini başlat | checklist_next/prev/stop | kneeboard_note: text'i not "
-                   "et | kneeboard_build: görevden kneeboard yap | kneeboard_show | kneeboard_clear."},
-        "name": {"type": "string", "description": "checklist_start için liste adı: kalkış, kalkış sonrası, iniş, iniş "
-                 "sonrası, motor çalıştırma, motor arızası, savaş girişi, savaş çıkışı."},
-        "text": {"type": "string", "description": "kneeboard_note için not."},
-        "mission": {"type": "string", "description": "kneeboard_build için .miz yolu. Boş: son görev."},
-        "nm": {"type": "number", "description": "alert_home için deniz mili."},
-        "ft": {"type": "number", "description": "alert_alt için feet."},
-        "kg": {"type": "number", "description": "alert_fuel için kilogram."},
+                   "description": "status: live fuel, minutes left, bearing/distance to base, how many degrees to "
+                                  "turn, nearest enemies/RWR | cockpit: apply command in DCS | brief: read the loaded "
+                                  "DCS mission's briefing | alert_home: tell me when nm miles from base | alert_alt: "
+                                  "tell me at ft altitude | alert_fuel: tell me when fuel drops to kg | alerts_clear "
+                                  "| last_debrief: debrief of the last flight | checklist_list | checklist_start: "
+                                  "start the name list | checklist_next/prev/stop | kneeboard_note: note text | "
+                                  "kneeboard_build: build a kneeboard from the mission | kneeboard_show | "
+                                  "kneeboard_clear."},
+        "name": {"type": "string", "description": "For checklist_start: the list name, in Turkish: kalkış (takeoff), "
+                                                  "kalkış sonrası (after takeoff), iniş (landing), iniş sonrası "
+                                                  "(after landing), motor çalıştırma (engine start), motor arızası "
+                                                  "(engine failure), savaş girişi (fight's on), savaş çıkışı (fight's "
+                                                  "off)."},
+        "text": {"type": "string", "description": "For kneeboard_note: the note."},
+        "mission": {"type": "string", "description": "For kneeboard_build: path to the .miz. Empty: the last mission."},
+        "nm": {"type": "number", "description": "For alert_home: nautical miles."},
+        "ft": {"type": "number", "description": "For alert_alt: feet."},
+        "kg": {"type": "number", "description": "For alert_fuel: kilograms."},
         "command": {"type": "string", "enum": ["gear_up", "gear_down", "flaps", "airbrake", "hook", "flare", "chaff",
                                                "radio"],
-                    "description": "cockpit için. flaps/airbrake/hook aç-kapa yapar; radio: mhz frekansına ayarla."},
-        "mhz": {"type": "number", "description": "cockpit radio için frekans, ör. 251 ya da 124.5."},
+                    "description": "For cockpit. flaps/airbrake/hook toggle; radio: set to the mhz frequency."},
+        "mhz": {"type": "number", "description": "For cockpit radio: frequency, e.g. 251 or 124.5."},
     }, ["action"])
     risk = READ
 
@@ -160,25 +165,28 @@ class Flight(Tool):
 
 class DcsWingman(Tool):
     name = "dcs_wingman"
-    description = ("DCS tek oyunculu görevde dost yapay zekâ kanat adamlarına sesli emir: saldır/bastır, yanıma gel, "
-                   "bekle (tur at), üsse dön. Ör. 'İkinci, sağdaki SAM'i bastır', 'Üçüncü eve dön', 'hepsi toplan'.\n"
-                   "- Kullanıcının sözünü olduğu gibi command'a koy; ALICE çözer. Ya da verb/index/target/direction "
-                   "alanlarını doldur.\n"
-                   "- Sıra: oyuncu lider (1); İkinci = en yakın kanat adamı, Üçüncü = sonraki, 0 = hepsi.\n"
-                   "- Sonuç oyunda ekranda yazı olarak görünür (ör. 'İkinci: SAM'e saldırıyor'); burada sadece "
-                   "gönderildiği söylenir. DCS kapalıysa ya da çok oyunculuda başkasının sunucusundaysan hiçbir şey "
-                   "olmaz.")
+    description = ("Voice orders to friendly AI wingmen in a DCS single-player mission: attack/suppress, rejoin, hold "
+                   "(orbit), return to base. E.g. 'İkinci, sağdaki SAM'i bastır' (Two, suppress the SAM on the "
+                   "right), 'Üçüncü eve dön' (Three, go home), 'hepsi toplan' (all, rejoin).\n"
+                   "- Put the user's words in command as they are; ALICE parses them. Or fill in "
+                   "verb/index/target/direction.\n"
+                   "- Order: the player is the lead (1); İkinci (Two) = the nearest wingman, Üçüncü (Three) = the "
+                   "next, 0 = all.\n"
+                   "- The result shows up as text on screen in the game (e.g. 'İkinci: SAM'e saldırıyor'); here it "
+                   "only says it was sent. Nothing happens if DCS is closed or you are on someone else's multiplayer "
+                   "server.")
     parameters = obj({
-        "command": {"type": "string", "description": "Kullanıcının sözü, ör. 'İkinci, sağdaki SAM'i bastır'. "
-                    "Verilirse diğer alanlar boşsa buradan çıkarılır."},
+        "command": {"type": "string", "description": "The user's words, e.g. 'İkinci, sağdaki SAM'i bastır'. If "
+                                                     "given, empty fields are taken from it."},
         "verb": {"type": "string", "enum": ["attack", "rejoin", "hold", "rtb"],
-                 "description": "attack: hedefe saldır | rejoin: oyuncuyu takip et | hold: bulunduğu yerde tur at | "
-                 "rtb: en yakın dost üsse in."},
-        "index": {"type": "integer", "description": "Kanat adamı sırası: 2 = İkinci (en yakın), 3 = Üçüncü, 0 = hepsi."},
+                 "description": "attack: attack a target | rejoin: follow the player | hold: orbit where it is | rtb: "
+                                "land at the nearest friendly base."},
+        "index": {"type": "integer", "description": "Wingman order: 2 = İkinci/Two (nearest), 3 = Üçüncü/Three, 0 = "
+                                                    "all."},
         "target": {"type": "string", "enum": ["sam", "air", "ground", "ship", "any"],
-                   "description": "attack için hedef türü: sam (hava savunma), air (uçak), ground (kara), ship, any."},
+                   "description": "For attack: target type: sam (air defense), air (aircraft), ground, ship, any."},
         "direction": {"type": "string", "enum": ["right", "left", "front", "behind", "any"],
-                      "description": "attack için hedefin oyuncunun burnuna göre yönü."},
+                      "description": "For attack: the target's direction relative to the player's nose."},
     })
     risk = READ
 
