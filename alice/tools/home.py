@@ -9,21 +9,22 @@ from alice.tools.base import COMPUTER, DANGER, READ, Tool, ToolContext, ToolErro
 
 class PC(Tool):
     name = "pc"
-    description = ("Bu bilgisayarın kendisi: kilitle, ekranı kapat, uyku, hazırda beklet, yeniden başlat, güç planı "
-                   "(dengeli/yüksek performans/tasarruf), monitör parlaklığı (DDC/CI ya da dizüstü ekranı), "
-                   "Wake-on-LAN bilgisi (bilgisayarı telefondan açmak için MAC ve gerekenler). Ses ve kapatma "
-                   "zamanlayıcısı için media.")
+    description = ("This computer itself: lock, screen off, sleep, hibernate, restart, power plan (balanced/high "
+                   "performance/power saver), monitor brightness (DDC/CI or the laptop screen), Wake-on-LAN info (the "
+                   "MAC and what is needed to turn the computer on from the phone). For volume and the shutdown timer "
+                   "use media.")
     parameters = obj({
         "action": {"type": "string", "enum": ["lock", "monitor_off", "sleep", "hibernate", "restart", "plans",
                                               "set_plan", "brightness", "wol_info"],
-                   "description": "lock | monitor_off | sleep | hibernate | restart (minutes sonra, varsayılan hemen) "
-                   "| plans: güç planlarını listele | set_plan: plan'a geç | brightness: level verilirse ayarla, "
-                   "verilmezse oku | wol_info: uzaktan açma için ağ kartı, MAC, durum."},
-        "plan": {"type": "string", "description": "set_plan için ad ya da kısaltma: 'dengeli', 'performans', "
-                 "'tasarruf'."},
-        "level": {"type": "integer", "description": "brightness için 0-100."},
-        "monitor": {"type": "integer", "description": "brightness için monitör sırası (1'den). Boş: hepsi."},
-        "minutes": {"type": "number", "description": "restart için kaç dakika sonra. Varsayılan 0."},
+                   "description": "lock | monitor_off | sleep | hibernate | restart (after minutes, default now) | "
+                                  "plans: list power plans | set_plan: switch to plan | brightness: set it if level "
+                                  "is given, otherwise read it | wol_info: network card, MAC and status for remote "
+                                  "wake-up."},
+        "plan": {"type": "string", "description": "For set_plan: a name or short form: 'balanced', 'performance', "
+                                                  "'saver' (Turkish 'dengeli', 'performans', 'tasarruf' work too)."},
+        "level": {"type": "integer", "description": "For brightness: 0-100."},
+        "monitor": {"type": "integer", "description": "For brightness: monitor number (from 1). Empty: all."},
+        "minutes": {"type": "number", "description": "For restart: after how many minutes. Default 0."},
     }, ["action"])
     risk = COMPUTER
 
@@ -66,22 +67,24 @@ class PC(Tool):
 
 class Wifi(Tool):
     name = "wifi"
-    description = ("Wi-Fi ve ev ağı: bağlantı durumu ve sinyal, çevredeki ağlar, kayıtlı ağlar, bir ağa bağlan "
-                   "(kayıtlı değilse şifreyle) ya da bağlantıyı kes, ağdaki cihazları listele (IP, MAC, ad), bir "
-                   "cihazı Wake-on-LAN ile uyandır, modem bilgisi (marka/model, dış IP, bağlantı, açık kalma süresi, trafik); ZTE "
-                   "modemde bağlı cihaz listesi ve modemi yeniden başlatma.")
+    description = ("Wi-Fi and the home network: connection status and signal, nearby networks, saved networks, "
+                   "connect to a network (with a password if it isn't saved) or disconnect, list devices on the "
+                   "network (IP, MAC, name), wake a device with Wake-on-LAN, modem info (brand/model, external IP, "
+                   "connection, uptime, traffic); on a ZTE modem, the connected device list and restarting the modem.")
     parameters = obj({
         "action": {"type": "string", "enum": ["status", "scan", "saved", "connect", "disconnect", "radio_on",
                                               "radio_off", "devices", "wake", "modem", "modem_devices",
                                               "modem_restart"],
-                   "description": "status | scan: çevredeki ağlar | saved: kayıtlı ağlar | connect: ssid'e bağlan | "
-                   "disconnect | radio_on/radio_off: Wi-Fi'ı aç/kapat (Linux) | "
-                   "devices: ağdaki cihazlar (birkaç saniye sürer) | wake: mac'teki cihaza WoL paketi | "
-                   "modem: modem modeli ve internet bağlantısı (UPnP) | modem_devices: modemin bildiği bağlı cihazlar "
-                   "(kablo/Wi-Fi, ad) | modem_restart: modemi yeniden başlat (internet 2-3 dk gider)."},
-        "ssid": {"type": "string", "description": "connect için ağ adı, tam yazımıyla."},
-        "password": {"type": "string", "description": "connect için şifre; ağ zaten kayıtlıysa gerekmez."},
-        "mac": {"type": "string", "description": "wake için cihazın MAC adresi, ör. 'aa:bb:cc:dd:ee:ff'."},
+                   "description": "status | scan: nearby networks | saved: saved networks | connect: connect to ssid "
+                                  "| disconnect | radio_on/radio_off: turn Wi-Fi on/off (Linux) | devices: devices on "
+                                  "the network (takes a few seconds) | wake: WoL packet to the device at mac | modem: "
+                                  "modem model and internet connection (UPnP) | modem_devices: connected devices the "
+                                  "modem knows (cable/Wi-Fi, name) | modem_restart: restart the modem (internet drops "
+                                  "for 2-3 min)."},
+        "ssid": {"type": "string", "description": "For connect: the network name, spelled exactly."},
+        "password": {"type": "string", "description": "For connect: the password; not needed if the network is "
+                                                      "already saved."},
+        "mac": {"type": "string", "description": "For wake: the device's MAC address, e.g. 'aa:bb:cc:dd:ee:ff'."},
     }, ["action"])
     risk = COMPUTER
 
@@ -172,32 +175,35 @@ class Wifi(Tool):
 
 class Android(Tool):
     name = "android"
-    description = ("ADB ile Android TV ve Android telefon. Her ikisinde: aç/kapa, tuş (ses, oynat, yön, ana ekran), "
-                   "uygulama aç, YouTube'da video aç, yazı yaz, ekran görüntüsü, uygulama listesi. Telefonda ayrıca "
-                   "pil, bildirimler, bilgisayardan dosya gönderme. İlk kullanımda find (TV'yi ağda arar) ya da "
-                   "host ile connect; telefon için pair (eşler ve kendisi bağlanır). Adres bir kere kaydedilir.")
+    description = ("Android TV and Android phones over ADB. On both: power on/off, keys (volume, play, arrows, home), "
+                   "open an app, open a video on YouTube, type text, screenshot, app list. On a phone also battery, "
+                   "notifications and sending files from the computer. On first use, find (searches the network for "
+                   "the TV) or connect with host; for a phone, pair (pairs and connects by itself). The address is "
+                   "saved once.")
     parameters = obj({
         "device": {"type": "string", "enum": ["tv", "phone"], "description": "Hangi cihaz."},
         "action": {"type": "string", "enum": ["connect", "pair", "find", "power", "key", "open_app", "youtube",
                                               "open_url", "type", "screenshot", "apps", "battery", "notifications",
                                               "send_file"],
-                   "description": "connect: host'a bağlan ve kaydet | "
-                   "pair: telefonu eşle ve bağlan (host=eşleme penceresindeki IP:port, code) | "
-                   "find: ağda ADB'si açık TV ara | power: state'e göre | key: key tuşuna times kez bas | open_app: "
-                   "app | youtube: query ya da url'deki videoyu aç | open_url | type: text yaz | screenshot | apps | "
-                   "battery | notifications | send_file: path'teki dosyayı telefonun İndirilenler'ine."},
-        "host": {"type": "string", "description": "connect/pair için IP ya da IP:port."},
-        "code": {"type": "string", "description": "pair için telefonda görünen 6 haneli kod."},
-        "state": {"type": "string", "enum": ["on", "off", "toggle", "status"], "description": "power için."},
+                   "description": "connect: connect to host and save it | pair: pair the phone and connect "
+                                  "(host=IP:port from the pairing window, code) | find: search the network for a TV "
+                                  "with ADB on | power: per state | key: press key times times | open_app: app | "
+                                  "youtube: open the video for query or url | open_url | type: type text | screenshot "
+                                  "| apps | battery | notifications | send_file: the file at path to the phone's "
+                                  "Downloads."},
+        "host": {"type": "string", "description": "For connect/pair: IP or IP:port."},
+        "code": {"type": "string", "description": "For pair: the 6-digit code shown on the phone."},
+        "state": {"type": "string", "enum": ["on", "off", "toggle", "status"], "description": "For power."},
         "key": {"type": "string", "enum": ["home", "back", "up", "down", "left", "right", "ok", "play_pause", "next",
                                            "previous", "volume_up", "volume_down", "mute", "input", "menu"],
-                "description": "key için tuş."},
-        "times": {"type": "integer", "description": "key için basış sayısı. Varsayılan 1."},
-        "app": {"type": "string", "description": "open_app için ad (youtube, netflix, spotify...) ya da paket adı."},
-        "query": {"type": "string", "description": "youtube için arama, ör. 'lofi hip hop'."},
-        "url": {"type": "string", "description": "youtube ya da open_url için adres."},
-        "text": {"type": "string", "description": "type için yazılacak metin."},
-        "path": {"type": "string", "description": "send_file için bilgisayardaki dosya yolu."},
+                "description": "For key: the key."},
+        "times": {"type": "integer", "description": "For key: number of presses. Default 1."},
+        "app": {"type": "string", "description": "For open_app: a name (youtube, netflix, spotify...) or a package "
+                                                 "name."},
+        "query": {"type": "string", "description": "For youtube: search, e.g. 'lofi hip hop'."},
+        "url": {"type": "string", "description": "For youtube or open_url: the address."},
+        "text": {"type": "string", "description": "For type: the text to type."},
+        "path": {"type": "string", "description": "For send_file: file path on the computer."},
     }, ["device", "action"])
     risk = COMPUTER
 
@@ -330,24 +336,27 @@ class Android(Tool):
 
 class SamsungTV(Tool):
     name = "tv"
-    description = ("Samsung (Tizen) akıllı TV: aç/kapa, durum, ses, kanal, tuşlar (yön, tamam, geri, ana ekran, "
-                   "kaynak/HDMI), uygulama aç (YouTube, Netflix ya da TV'de kurulu herhangi biri), YouTube'da video "
-                   "aç, açık klavyeye yazı yaz, kurulu uygulamalar. İlk kullanımda find (ağda TV'yi arar) ya da host "
-                   "ile connect; TV ekranında çıkan izin sorusu onaylanmalı. Android TV ve telefon için android.")
+    description = ("Samsung (Tizen) smart TV: power on/off, status, volume, channel, keys (arrows, ok, back, home, "
+                   "source/HDMI), open an app (YouTube, Netflix or any app installed on the TV), open a video on "
+                   "YouTube, type into the open keyboard, installed apps. On first use, find (searches the network "
+                   "for the TV) or connect with host; the permission prompt on the TV screen must be accepted. For "
+                   "Android TV and phones use android.")
     parameters = obj({
         "action": {"type": "string", "enum": ["find", "connect", "power", "key", "open_app", "youtube", "type",
                                               "apps", "status"],
-                   "description": "find | connect: host'a bağlan ve kaydet | power: state'e göre | key: key tuşuna "
-                   "times kez | open_app: app | youtube: query ya da url'deki video | type: text | apps | status."},
-        "host": {"type": "string", "description": "connect için TV'nin IP adresi."},
-        "state": {"type": "string", "enum": ["on", "off", "toggle"], "description": "power için."},
-        "key": {"type": "string", "description": "key için: volume_up, volume_down, mute, channel_up, channel_down, "
-                "up, down, left, right, ok, back, home, source, hdmi, play, pause, stop, menu, exit ya da 0-9."},
-        "times": {"type": "integer", "description": "key için basış sayısı. Varsayılan 1."},
-        "app": {"type": "string", "description": "open_app için uygulama adı, ör. 'netflix', 'exxen'."},
-        "query": {"type": "string", "description": "youtube için arama."},
-        "url": {"type": "string", "description": "youtube için video adresi."},
-        "text": {"type": "string", "description": "type için yazı (TV'de klavye açıkken)."},
+                   "description": "find | connect: connect to host and save it | power: per state | key: key, times "
+                                  "times | open_app: app | youtube: the video for query or url | type: text | apps | "
+                                  "status."},
+        "host": {"type": "string", "description": "For connect: the TV's IP address."},
+        "state": {"type": "string", "enum": ["on", "off", "toggle"], "description": "For power."},
+        "key": {"type": "string", "description": "For key: volume_up, volume_down, mute, channel_up, channel_down, "
+                                                 "up, down, left, right, ok, back, home, source, hdmi, play, pause, "
+                                                 "stop, menu, exit or 0-9."},
+        "times": {"type": "integer", "description": "For key: number of presses. Default 1."},
+        "app": {"type": "string", "description": "For open_app: the app name, e.g. 'netflix', 'exxen'."},
+        "query": {"type": "string", "description": "For youtube: search."},
+        "url": {"type": "string", "description": "For youtube: the video address."},
+        "text": {"type": "string", "description": "For type: the text (while the keyboard is open on the TV)."},
     }, ["action"])
     risk = COMPUTER
 
