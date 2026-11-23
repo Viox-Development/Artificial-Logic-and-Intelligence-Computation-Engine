@@ -36,19 +36,19 @@ def format_logs(rows: list[dict[str, Any]], limit: int = 40) -> str:
 class Preview(Tool):
     name = "preview"
     description = (
-        "Web arayüzü değişikliğini gerçekten doğrular: (gerekirse) geliştirme sunucusunu başlatır, sayfayı ALICE'in "
-        "yerleşik tarayıcısında açar (kullanıcı panelde canlı görür), ekran görüntüsünü ve sayfanın konsol "
-        "hatalarını / başarısız ağ isteklerini döndürür. Arayüzde bir şey değiştirdikten sonra 'çalışıyor' demeden "
-        "önce kullan.\n"
-        "action=open: url (ör. http://localhost:5173); command verilirse önce onu arka planda başlatır (ör. npm run "
-        "dev) ve sunucu cevap verene kadar bekler. action=check: şu anki sayfayı (ya da url'i) yeniden yükleyip "
-        "görüntü ve hataları al. action=logs: yalnız son hatalar.\n"
-        "Sayfada tıklama/yazma için browser aracını kullan; aynı tarayıcıdır.")
+        "Really verifies a web UI change: starts the dev server (if needed), opens the page in ALICE's built-in "
+        "browser (the user watches it live in the panel), and returns a screenshot plus the page's console errors / "
+        "failed network requests. Use it after changing something in the UI, before saying 'it works'.\n"
+        "action=open: url (e.g. http://localhost:5173); if command is given it is started first in the background "
+        "(e.g. npm run dev) and the tool waits until the server answers. action=check: reload the current page (or "
+        "url) and get the screenshot and errors. action=logs: only the latest errors.\n"
+        "Use the browser tool to click/type on the page; it is the same browser.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["open", "check", "logs"], "description": "Yapılacak iş."},
-        "url": {"type": "string", "description": "open: açılacak adres. check: boşsa şu anki sayfa."},
-        "command": {"type": "string", "description": "open: önce başlatılacak sunucu komutu (arka planda)."},
-        "wait": {"type": "integer", "description": "open: sunucunun cevap vermesi için en fazla saniye. Varsayılan 60."},
+        "action": {"type": "string", "enum": ["open", "check", "logs"], "description": "What to do."},
+        "url": {"type": "string", "description": "open: address to open. check: empty means the current page."},
+        "command": {"type": "string", "description": "open: server command to start first (in the background)."},
+        "wait": {"type": "integer", "description": "open: at most this many seconds for the server to answer. Default "
+                                                   "60."},
     }, ["action"])
     risk = READ
 

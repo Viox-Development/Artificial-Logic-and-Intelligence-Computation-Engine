@@ -13,19 +13,20 @@ from alice.tools.base import COMPUTER, DANGER, READ, WRITE, Tool, ToolContext, T
 
 class Notes(Tool):
     name = "notes"
-    description = ("Kullanıcının kısa notlarını kaydeder, arar ve listeler ('not al', 'şunu not et', 'notlarımda ne vardı').\n"
-                   "- Kullanıcının söylediğini olduğu gibi kaydet; özetleme ya da yorum ekleme.\n"
-                   "- Kullanıcı hakkında kalıcı bilgi ve tercihler için memory, uçuş sırasındaki notlar için flight "
-                   "kneeboard_note kullan.\n"
-                   "- undo sadece son eklenen notu siler.")
+    description = ("Saves, searches and lists the user's short notes ('take a note', 'note this down', 'what was in "
+                   "my notes').\n"
+                   "- Save what the user said as it is; don't summarize it or add comments.\n"
+                   "- For lasting facts and preferences about the user use memory; for notes during a flight use "
+                   "flight kneeboard_note.\n"
+                   "- undo deletes only the last note added.")
     parameters = obj({
         "action": {"type": "string", "enum": ["add", "search", "list", "undo"],
-                   "description": "add: text'i kaydet | search: query ve/veya tarih aralığıyla ara | list: son 20 not "
-                   "| undo: son eklenen notu sil."},
-        "text": {"type": "string", "description": "add için notun metni, kullanıcının söylediği gibi."},
-        "query": {"type": "string", "description": "search için aranacak kelimeler."},
-        "since": {"type": "string", "description": "Başlangıç: '7d', '2h', 'dün', 'bugün' ya da ISO tarih."},
-        "until": {"type": "string", "description": "Bitiş, since ile aynı biçim. Boş: şimdi."},
+                   "description": "add: save text | search: search by query and/or a date range | list: the last 20 "
+                                  "notes | undo: delete the last note added."},
+        "text": {"type": "string", "description": "For add: the note's text, as the user said it."},
+        "query": {"type": "string", "description": "For search: words to look for."},
+        "since": {"type": "string", "description": "Start: '7d', '2h', 'yesterday', 'today' or an ISO date."},
+        "until": {"type": "string", "description": "End, same format as since. Empty: now."},
     }, ["action"])
     risk = WRITE
 
@@ -57,14 +58,16 @@ class Notes(Tool):
 
 class Report(Tool):
     name = "report"
-    description = ("Hazır özet raporların verisini döndürür.\n"
-                   "- morning: sabah özeti (hava, bugün okul/staj, gece çalışan görevler ve uyarılar, dünden kalanlar). "
-                   "Kullanıcıya kısa ve sıcak bir dille anlat; listeyi aynen okuma.\n"
-                   "- pc: son günlerin bilgisayar raporu (sıcaklık, kullanım, olaylar) ve bir HTML dosyası; dosyayı send_file ile "
-                   "gösterebilirsin.")
+    description = ("Returns the data of ready-made summary reports.\n"
+                   "- morning: the morning summary (weather, school/internship today, tasks and alerts from the "
+                   "night, what's left from yesterday). Tell it to the user briefly and warmly; don't read the list "
+                   "out as it is.\n"
+                   "- pc: a computer report for the last days (temperatures, usage, events) and an HTML file; you can "
+                   "show the file with send_file.")
     parameters = obj({
-        "kind": {"type": "string", "enum": ["morning", "pc"], "description": "morning: sabah özeti | pc: PC raporu."},
-        "days": {"type": "integer", "description": "pc için kaç günlük. Varsayılan 7."},
+        "kind": {"type": "string", "enum": ["morning", "pc"], "description": "morning: morning summary | pc: PC "
+                                                                             "report."},
+        "days": {"type": "integer", "description": "For pc: how many days. Default 7."},
     }, ["kind"])
     risk = READ
 
@@ -81,11 +84,13 @@ class Report(Tool):
 
 class Weather(Tool):
     name = "weather"
-    description = ("Bir şehrin şu anki ve bugünkü hava durumunu döndürür: sıcaklık, en düşük/yüksek ve yağmur ihtimali.\n"
-                   "- Hava sorulunca web_search ya da web_fetch yerine bunu kullan; daha hızlı ve kesin.\n"
-                   "- Şehir verilmezse ayarlardaki şehir ya da konum kullanılır.\n"
-                   "- Sadece bugünü kapsar; ileriki günler sorulursa bunu söyle, tahmin uydurma.")
-    parameters = obj({"city": {"type": "string", "description": "Şehir, ör. 'İzmir'. Boş: ayarlı şehir ya da konum."}})
+    description = ("Returns a city's current and today's weather: temperature, low/high and chance of rain.\n"
+                   "- When asked about the weather, use this instead of web_search or web_fetch; it is faster and "
+                   "exact.\n"
+                   "- If no city is given, the city or location in the settings is used.\n"
+                   "- Covers only today; if asked about later days, say so and don't make up a forecast.")
+    parameters = obj({"city": {"type": "string", "description": "City, e.g. 'İzmir'. Empty: the configured city or "
+                                                                "location."}})
     risk = READ
 
     def run(self, ctx: ToolContext, city: str = "") -> ToolResult:
@@ -96,20 +101,21 @@ class Weather(Tool):
 
 class Media(Tool):
     name = "media"
-    description = ("Çalan medyayı (müzik, video) kontrol eder ve ne çaldığını söyler (now): Spotify, Sonora, YouTube, "
-                   "hangi uygulama olursa. \"Ne çalıyor\" sorusunda önce bunu kullan (Spotify bağlantısı yalnız Spotify'ı "
-                   "görür). Sistem sesi, zamanlı durdurma, bilgisayarı kapatma. Yeni bir şarkı ya da video AÇMAK için "
-                   "değil (youtube ya da browser).")
+    description = ("Controls the media playing (music, video) and says what is playing (now): Spotify, Sonora, "
+                   "YouTube, whichever app. For \"what's playing\" use this first (the Spotify connection only sees "
+                   "Spotify). System volume, timed pause, shutting the computer down. Not for OPENING a new song or "
+                   "video (youtube or browser).")
     parameters = obj({
         "action": {"type": "string", "enum": ["now", "play_pause", "next", "previous", "stop", "mute", "volume_up",
                                               "volume_down", "set_volume", "pause_in", "shutdown_in",
                                               "cancel_shutdown"],
-                   "description": "now: ne çalıyor (şarkı, sanatçı, uygulama) | play_pause: durdur/devam | next/previous: sonraki/önceki parça | mute: sesi kapat/aç "
-                   "| volume_up/volume_down: times kadar adım | set_volume: percent'e ayarla | pause_in: minutes "
-                   "sonra müziği durdur | shutdown_in: minutes sonra bilgisayarı kapat | cancel_shutdown."},
-        "times": {"type": "integer", "description": "volume_up/down için basış sayısı (her biri ~%2). Varsayılan 5."},
-        "percent": {"type": "integer", "description": "set_volume için 0-100."},
-        "minutes": {"type": "number", "description": "pause_in ve shutdown_in için dakika."},
+                   "description": "now: what's playing (song, artist, app) | play_pause: pause/resume | "
+                                  "next/previous: next/previous track | mute: mute/unmute | volume_up/volume_down: "
+                                  "times steps | set_volume: set to percent | pause_in: pause the music after minutes "
+                                  "| shutdown_in: shut the computer down after minutes | cancel_shutdown."},
+        "times": {"type": "integer", "description": "For volume_up/down: number of presses (each ~2%). Default 5."},
+        "percent": {"type": "integer", "description": "For set_volume: 0-100."},
+        "minutes": {"type": "number", "description": "For pause_in and shutdown_in: minutes."},
     }, ["action"])
     risk = COMPUTER
 
@@ -192,22 +198,22 @@ def with_time(url: str, seconds: int) -> str:
 
 class YouTube(Tool):
     name = "youtube"
-    description = ("YouTube'da yeni bir video bulup kullanıcının kendi tarayıcısında açar (açık YouTube sekmesi varsa "
-                   "onda) ya da açık videoyu bir dakikaya sarar.\n"
-                   "- Kullan: ekranda olmayan bir videoyu açmak ('X videosunu aç', 'Y şarkısını çal'), 'ikinci "
-                   "dakikaya getir'.\n"
-                   "- Kullanma: ekranda zaten görünen bir video/şarkı (browser snapshot + click ya da reflex), bir "
-                   "siteyi açmak (YouTube Music dahil: windows navigate ya da browser goto), durdur/devam (media "
+    description = ("Finds a new video on YouTube and opens it in the user's own browser (in the open YouTube tab if "
+                   "there is one), or seeks the open video to a minute.\n"
+                   "- Use for: opening a video that isn't on screen ('open the X video', 'play the song Y'), 'go to "
+                   "minute two'.\n"
+                   "- Don't use for: a video/song already visible on screen (browser snapshot + click, or reflex), "
+                   "opening a site (YouTube Music included: windows navigate or browser goto), pause/resume (media "
                    "play_pause).\n"
-                   "- query'yi kullanıcının söylediği gibi yaz; ne istediği belirsizse önce sor.")
+                   "- Write query the way the user said it; if what they want is unclear, ask first.")
     parameters = obj({
         "action": {"type": "string", "enum": ["search", "play", "seek"],
-                   "description": "search: query için ilk videoları listeler (bir şey açmaz) | play: query'nin "
-                   "index'inci videosunu ya da url'yi açar | seek: açık videoyu at saniyesine götürür."},
-        "query": {"type": "string", "description": "Arama ifadesi, ör. 'Coldplay Yellow'."},
-        "url": {"type": "string", "description": "play için doğrudan video adresi (query yerine)."},
-        "index": {"type": "integer", "description": "play için kaçıncı sonuç; 1 = ilk. Varsayılan 1."},
-        "at": {"type": "integer", "description": "Başlangıç saniyesi; ör. 2. dakika = 120."},
+                   "description": "search: lists the first videos for query (opens nothing) | play: opens the "
+                                  "index-th video for query, or url | seek: moves the open video to second at."},
+        "query": {"type": "string", "description": "Search phrase, e.g. 'Coldplay Yellow'."},
+        "url": {"type": "string", "description": "For play: a direct video address (instead of query)."},
+        "index": {"type": "integer", "description": "For play: which result; 1 = the first. Default 1."},
+        "at": {"type": "integer", "description": "Start second; e.g. minute 2 = 120."},
     }, ["action"])
     risk = COMPUTER
 

@@ -182,17 +182,19 @@ class WebCrawl(Tool):
     name = "web_crawl"
     untrusted = True
     description = (
-        "Bir siteyi birden çok sayfa gezerek araştırır ve sadece soruyla ilgili bölümleri döndürür (ekranda bir şey "
-        "açmaz). En alakalı bağlantıyı önce açar, soru yeterince kapsanıp yeni sayfalar bir şey katmayınca kendi durur; "
-        "aynı sitede kalır, robots.txt'ye uyar, engelleyen sayfaları gizli tarayıcıyla açar.\n"
-        "- Dokümantasyonda/blogda/bilgi bankasında bir şeyi bulmak, bir konuyu birkaç sayfadan toplamak için. Tek "
-        "sayfa için web_fetch yeter.\n"
-        "- query ne kadar net olursa o kadar az sayfa gezilir.")
+        "Researches a site by visiting several pages and returns only the parts relevant to the question (opens "
+        "nothing on screen). Opens the most relevant link first and stops by itself once the question is covered well "
+        "enough and new pages add nothing; stays on the same site, follows robots.txt, and opens pages that block it "
+        "with a hidden browser.\n"
+        "- For finding something in documentation/a blog/a knowledge base, or gathering a topic from several pages. "
+        "For a single page web_fetch is enough.\n"
+        "- The clearer the query, the fewer pages are visited.")
     parameters = obj({
-        "url": {"type": "string", "description": "Başlangıç sayfası, ör. 'https://docs.python.org/3/library/asyncio.html'."},
-        "query": {"type": "string", "description": "Ne aradığın, ör. 'görev iptali ve CancelledError nasıl ele alınır'."},
-        "max_pages": {"type": "integer", "description": "En fazla kaç sayfa (varsayılan 12, en çok 40)."},
-        "max_depth": {"type": "integer", "description": "Başlangıçtan en fazla kaç tık uzağa (varsayılan 3)."},
+        "url": {"type": "string", "description": "Start page, e.g. 'https://docs.python.org/3/library/asyncio.html'."},
+        "query": {"type": "string", "description": "What you are looking for, e.g. 'how task cancellation and "
+                                                   "CancelledError are handled'."},
+        "max_pages": {"type": "integer", "description": "At most this many pages (default 12, at most 40)."},
+        "max_depth": {"type": "integer", "description": "At most this many clicks away from the start (default 3)."},
     }, ["url", "query"])
     risk = NETWORK
 

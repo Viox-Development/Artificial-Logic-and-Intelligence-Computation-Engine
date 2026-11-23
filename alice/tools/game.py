@@ -17,28 +17,29 @@ AFTER_MOVE_WAIT = 1.2  # seconds: after a move, before reading the board (animat
 class Game(Tool):
     name = "game"
     description = (
-        "Herhangi bir oyunu oynar ve oynarken kurallarını, arayüzünü öğrenir (strateji, kart, bulmaca...). Dersleri "
-        "oturumlar arası saklar, her turdan sonra ekranda gerçekten ne olduğuna bakıp düzeltir.\n"
-        "- start: oyunu ve penceresini seç (oyun önceden açık olmalı). Ders yoksa kuralları ve ilk ekranı keşfeder.\n"
-        "- look: oyun penceresini tam çözünürlükte okuyup tahtayı metin olarak verir (kartlar, taşlar, sayılar). "
-        "Tahtayı computer ekran görüntüsüyle değil bununla oku.\n"
-        "- play: bak, bilinen kurallarla tek bir yasal hamle seç, ekranda yap, beklenenle olanı kıyasla ve kuralları "
-        "düzelt. goal boşsa en iyi hamle.\n"
-        "- turn: arayüzde somut bir hedef (ör. 'end the turn', 'open the research screen').\n"
-        "- note: kalıcı not. status: dersler ve son turlar. end: kapat.\n"
-        "Giriş, şart/gizlilik onayı, satın alma ya da reklam ekranı çıkarsa başka araçla da geçme: dur, kullanıcıya "
-        "bırak."
+        "Plays any game and learns its rules and interface while playing (strategy, cards, puzzles...). Keeps lessons "
+        "across sessions; after each turn it looks at what really happened on screen and corrects itself.\n"
+        "- start: choose the game and its window (the game must already be open). With no lessons it explores the "
+        "rules and the first screen.\n"
+        "- look: reads the game window at full resolution and gives the board as text (cards, pieces, numbers). Read "
+        "the board with this, not with a computer screenshot.\n"
+        "- play: look, pick one legal move with the known rules, make it on screen, compare what happened with what "
+        "was expected and correct the rules. Empty goal: the best move.\n"
+        "- turn: a concrete goal in the interface (e.g. 'end the turn', 'open the research screen').\n"
+        "- note: a lasting note. status: lessons and the last turns. end: close.\n"
+        "If a login, terms/privacy consent, purchase or ad screen comes up, don't get past it with another tool "
+        "either: stop and leave it to the user."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["start", "look", "play", "turn", "note", "status", "end"],
-                   "description": "start | look: tahtayı oku | play: bir hamle | turn: arayüz hedefi | note | status | "
-                                  "end."},
-        "game": {"type": "string", "description": "start için oyunun adı."},
-        "title": {"type": "string", "description": "start için pencere başlığından parça. Boş: oyunun adı."},
-        "goal": {"type": "string", "description": "turn: ekranda yapılacak somut hedef. play: istenen (boş: en iyi "
-                 "yasal hamle)."},
-        "note": {"type": "string", "description": "note için eklenecek bilgi."},
-        "max_steps": {"type": "integer", "description": "turn/play için en fazla adım. Varsayılan 15."},
+                   "description": "start | look: read the board | play: one move | turn: interface goal | note | "
+                                  "status | end."},
+        "game": {"type": "string", "description": "For start: the game's name."},
+        "title": {"type": "string", "description": "For start: part of the window title. Empty: the game's name."},
+        "goal": {"type": "string", "description": "turn: a concrete goal to do on screen. play: what is wanted "
+                                                  "(empty: the best legal move)."},
+        "note": {"type": "string", "description": "For note: the information to add."},
+        "max_steps": {"type": "integer", "description": "For turn/play: at most this many steps. Default 15."},
     }, ["action"])
     risk = COMPUTER
 

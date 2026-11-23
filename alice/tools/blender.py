@@ -114,24 +114,26 @@ def _section(out: str, name: str) -> str:
 class Blender(Tool):
     name = "blender"
     description = (
-        "Blender'da Python (bpy) betiğiyle 3B sahne oluşturur/düzenler; Blender penceresine tıklamak yerine bunu "
-        "kullan. run: betik penceresiz çalışır, sahne .blend dosyasına kaydedilir; hata izi, print çıktısı ve "
-        "nesnelerin listesi (ad, tür, konum, boyut) döner. Hata gelirse betiği düzeltip tekrar çalıştır. open: "
-        "bitmiş sahneyi Blender penceresinde açar.\n"
-        "Betik ipuçları: bpy.ops.mesh.primitive_cube_add(size=..., location=(x,y,z)); obj = "
-        "bpy.context.active_object; obj.scale = (sx,sy,sz); malzeme: mat = bpy.data.materials.new('ad'); "
-        "mat.diffuse_color = (r,g,b,1). z ekseni yukarı, birim metre."
+        "Builds/edits a 3D scene in Blender with a Python (bpy) script; use this instead of clicking in the Blender "
+        "window. run: the script runs without a window and the scene is saved to the .blend file; returns the "
+        "traceback, print output and a list of objects (name, type, location, size). If an error comes back, fix the "
+        "script and run it again. open: opens the finished scene in a Blender window.\n"
+        "Script tips: bpy.ops.mesh.primitive_cube_add(size=..., location=(x,y,z)); obj = bpy.context.active_object; "
+        "obj.scale = (sx,sy,sz); material: mat = bpy.data.materials.new('name'); mat.diffuse_color = (r,g,b,1). The z "
+        "axis is up, units are meters."
     )
     parameters = obj({
-        "action": {"type": "string", "enum": ["run", "open"], "description": "run: betiği çalıştır | open: sahneyi "
-                   "Blender penceresinde aç."},
-        "code": {"type": "string", "description": "run için bpy Python betiği."},
-        "file": {"type": "string", "description": ".blend yolu. Varsayılan: ALICE klasöründe blender/sahne.blend."},
-        "new": {"type": "boolean", "description": "true: boş başlangıç sahnesinden başla (varsayılan küp, kamera ve "
-                "ışık içerir; istemiyorsan sil). false: önceki run'ın sahnesinde devam et."},
-        "preview": {"type": "boolean", "description": "Kameradan küçük önizleme görüntüsü döndür (kamera yoksa sahne "
-                    "otomatik çerçevelenir)."},
-        "timeout": {"type": "integer", "description": "Saniye. Varsayılan 300."},
+        "action": {"type": "string", "enum": ["run", "open"], "description": "run: run the script | open: open the "
+                                                                             "scene in a Blender window."},
+        "code": {"type": "string", "description": "For run: the bpy Python script."},
+        "file": {"type": "string", "description": "Path to the .blend. Default: blender/sahne.blend in the ALICE "
+                                                  "folder."},
+        "new": {"type": "boolean", "description": "true: start from an empty starting scene (it has the default cube, "
+                                                  "camera and light; delete them if you don't want them). false: "
+                                                  "continue in the previous run's scene."},
+        "preview": {"type": "boolean", "description": "Return a small preview image from the camera (with no camera "
+                                                      "the scene is framed automatically)."},
+        "timeout": {"type": "integer", "description": "Seconds. Default 300."},
     }, ["action"])
     risk = EXEC
 
