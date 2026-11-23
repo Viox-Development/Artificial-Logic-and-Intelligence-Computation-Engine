@@ -54,26 +54,29 @@ def _deliver(ctx: ToolContext) -> Callable[[str], Any]:
 class Monitor(Tool):
     name = "monitor"
     description = (
-        "Arka planda bir şeyi izler ve olay olunca bu sohbete geri döner; turu bekletmez, kullanıcı bu sırada "
-        "yazabilir. 'Derleme bitince', 'sunucu hata verirse', 'deploy tamamlanınca', 'logda ERROR görünürse haber "
-        "ver/devam et' gibi işler için. process_wait yerine bunu kullan; o turu bloke eder.\n"
-        "action=start: kind=process (run_command background'un pid'i; çıktısında desen ya da süreç bitişi), "
-        "kind=file (log dosyasına eklenen satırlarda desen), kind=command (komutu every saniyede bir çalıştırır, "
-        "çıktısı desene uyunca). once=false: her eşleşmede haber verir (sık eşleşmeler birleştirilir).\n"
+        "Watches something in the background and comes back to this conversation when an event happens; it does not "
+        "hold the turn, and the user can keep typing meanwhile. For jobs like 'tell me/continue when the build "
+        "finishes', 'if the server errors', 'when the deploy completes', 'if ERROR shows up in the log'. Use this "
+        "instead of process_wait, which blocks the turn.\n"
+        "action=start: kind=process (pid from run_command background; a pattern in its output or the process ending), "
+        "kind=file (a pattern in lines appended to a log file), kind=command (runs the command every `every` seconds, "
+        "until its output matches the pattern). once=false: notifies on every match (frequent matches are merged).\n"
         "action=list / stop (id).\n"
-        "Olay olunca sana '[İzleme #id]' ile başlayan bir mesaj gelir: oradan işe devam et.")
+        "When the event happens you get a message starting with '[İzleme #id]': continue the work from there.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["start", "list", "stop"], "description": "Yapılacak iş."},
-        "kind": {"type": "string", "enum": ["process", "file", "command"], "description": "start: ne izlenecek."},
-        "target": {"type": "string", "description": "start: process'te pid, file'da dosya yolu, command'da komut."},
-        "pattern": {"type": "string", "description": "start: aranan düzenli ifade (büyük/küçük harf duyarsız). "
-                    "process'te boş bırakılırsa süreç bitince haber verir."},
-        "note": {"type": "string", "description": "start: olay olunca ne yapacağını hatırlatan kısa not (mesajda "
-                 "sana geri gelir), ör. 'testler bitince sonucu özetle'."},
-        "minutes": {"type": "integer", "description": "start: en fazla kaç dakika izlensin. Varsayılan 30, en çok 360."},
-        "every": {"type": "integer", "description": "command: kaç saniyede bir çalıştırılsın. Varsayılan 30."},
-        "once": {"type": "boolean", "description": "start: ilk eşleşmede dur (varsayılan true)."},
-        "id": {"type": "integer", "description": "stop: izleme numarası."},
+        "action": {"type": "string", "enum": ["start", "list", "stop"], "description": "What to do."},
+        "kind": {"type": "string", "enum": ["process", "file", "command"], "description": "start: what to watch."},
+        "target": {"type": "string", "description": "start: the pid for process, the file path for file, the command "
+                                                    "for command."},
+        "pattern": {"type": "string", "description": "start: regular expression to look for (case-insensitive). For "
+                                                     "process, if left empty, notifies when the process ends."},
+        "note": {"type": "string", "description": "start: a short note reminding you what to do when the event "
+                                                  "happens (it comes back to you in the message), e.g. 'summarize the "
+                                                  "results when the tests finish'."},
+        "minutes": {"type": "integer", "description": "start: maximum minutes to watch. Default 30, at most 360."},
+        "every": {"type": "integer", "description": "command: how many seconds between runs. Default 30."},
+        "once": {"type": "boolean", "description": "start: stop at the first match (default true)."},
+        "id": {"type": "integer", "description": "stop: the watch number."},
     }, ["action"])
     risk = READ
 
