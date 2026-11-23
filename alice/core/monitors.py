@@ -162,7 +162,7 @@ def _private_ws_reader() -> Callable[[int], int | None] | None:
                     "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage",
                     "PrivateUsage", "PrivateWorkingSetSize", "SharedCommitUsage")]
 
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # pyright: ignore[reportAttributeAccessIssue] - Windows
         k32.OpenProcess.restype = wintypes.HANDLE
         k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -346,9 +346,9 @@ class PCMonitor:
                 cpu[name] = cpu.get(name, 0.0) + (p.info.get("cpu_percent") or 0.0)
         self.processes = names
         out: list[Row] = []
-        for name in sorted(mem, key=mem.get, reverse=True)[: self.top_n]:
+        for name in sorted(mem, key=lambda n: mem[n], reverse=True)[: self.top_n]:
             out.append((f"pc.proc.{_key_part(name)}.mem_mb", mem[name], None))
-        for name in sorted(cpu, key=cpu.get, reverse=True)[: self.top_n]:
+        for name in sorted(cpu, key=lambda n: cpu[n], reverse=True)[: self.top_n]:
             if cpu[name] > 0:
                 out.append((f"pc.proc.{_key_part(name)}.cpu", cpu[name], None))
         return out

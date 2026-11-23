@@ -145,7 +145,7 @@ class Store:
                 "INSERT INTO events(ts, kind, title, body, severity, topic, delivered) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (time.time() if ts is None else ts, kind, title, body, severity, topic, int(delivered)))
             self._db.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def prune(self, retention_days: float, now: float | None = None) -> int:
         cutoff = (time.time() if now is None else now) - retention_days * 86400

@@ -175,7 +175,8 @@ class NetWatch:
         if r is False:
             return []
         self._track(r, now)
-        return [("net.online", 0.0 if r is None else 1.0, None)] + ([("net.latency_ms", float(r), None)] if r else [])
+        rows: list[tuple[str, float | None, str | None]] = [("net.online", 0.0 if r is None else 1.0, None)]
+        return rows + ([("net.latency_ms", float(r), None)] if r else [])
 
     def _track(self, latency: float | None, now: float) -> None:
         if latency is None:

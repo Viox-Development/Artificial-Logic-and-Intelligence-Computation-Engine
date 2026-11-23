@@ -166,7 +166,7 @@ def start_steam_silent(root: Path | None = None) -> bool:
         return False
 
 
-def prep_game_update(processes: set[str], notify: Callable[[str, str], None], st: dict[str, Any],
+def prep_game_update(processes: set[str], notify: Callable[[str, str], object], st: dict[str, Any],
                      manifest: dict[str, str] | None = None, start: Callable[[], bool] | None = None) -> str:
     """Before the game: if an update is pending, open Steam in the background, or say once if a setting is needed."""
     u = update_state(manifest if manifest is not None else steam_manifest())

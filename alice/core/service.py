@@ -492,9 +492,10 @@ class Core:
             self.store.add_event("info", "Önsezi: oyun güncellemesi", msg, "info", "now")
 
     def _morning(self) -> None:
-        if getattr(self, "morning", None) is None:  # an old install, or __init__ was skipped (tests)
+        morning = getattr(self, "morning", None)
+        if morning is None:  # an old install, or __init__ was skipped (tests)
             return
-        answers = self.morning.check()
+        answers = morning.check()
         if answers:
             # Show not only the topic names but also the prepared answers (shortened).
             def short(v: Any) -> str:
@@ -795,7 +796,7 @@ def release_lock_of(pid: Any) -> None:
 def run_tray(core: Core) -> bool:
     """If pystray is available, run with a tray icon (it blocks the main thread). Otherwise False."""
     try:
-        import pystray
+        import pystray  # pyright: ignore[reportMissingImports] - optional 'core' extra
         from PIL import Image
     except ImportError:
         return False
