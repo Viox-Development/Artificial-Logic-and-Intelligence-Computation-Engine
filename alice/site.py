@@ -174,6 +174,10 @@ def _pw_capture(url: str, timeout: float, settle: int, viewports: dict[str, tupl
     return out
 
 
+MAC_BROWSERS = ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+
+
 def browser_exe() -> str:
     """A Chromium-based browser that can take screenshots without opening a window: ALICE_CHROMIUM, then Edge
     (always installed on Windows), Chrome, Chromium. Empty if none is found."""
@@ -186,8 +190,7 @@ def browser_exe() -> str:
         if base:
             cands += [Path(base) / "Microsoft/Edge/Application/msedge.exe",
                       Path(base) / "Google/Chrome/Application/chrome.exe"]
-    cands += [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-              Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")]
+    cands += [Path(p) for p in MAC_BROWSERS]
     for c in cands:
         if c.is_file():
             return str(c)

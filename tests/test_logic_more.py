@@ -902,6 +902,7 @@ def test_browser_exe_lookup(monkeypatch, tmp_path):
     for env in ("ALICE_CHROMIUM", "PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
         monkeypatch.delenv(env, raising=False)
     monkeypatch.setattr(site.shutil, "which", lambda name: None)
+    monkeypatch.setattr(site, "MAC_BROWSERS", ())  # the macOS CI runner has Chrome in /Applications
     assert site.browser_exe() == ""
     monkeypatch.setattr(site.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "chromium" else None)
     assert site.browser_exe() == "/usr/bin/chromium"

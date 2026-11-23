@@ -33,7 +33,10 @@ from alice.tools.base import DANGER, NETWORK, READ, SEND, WRITE, Tool, ToolConte
 MODES = ("plan", "ask", "auto", "yolo")
 
 SYSTEM_DIRS_WIN = [r"c:\windows", r"c:\program files", r"c:\program files (x86)", r"c:\programdata\microsoft"]
-SYSTEM_DIRS_POSIX = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64", "/var/lib", "/System", "/Library"]
+# macOS: /etc and /var are links into /private, and callers check resolved paths, so "/etc/hosts" arrives as
+# "/private/etc/hosts" there (it was not recognized as a system path and auto mode allowed writing it).
+SYSTEM_DIRS_POSIX = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64", "/var/lib", "/System", "/Library",
+                     "/private/etc", "/private/var/db", "/var/db"]
 
 
 def is_system_path(p: Path) -> bool:
