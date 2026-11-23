@@ -1,60 +1,63 @@
-# ALICE araç yazım rehberi
+# ALICE tool writing guide
 
-ALICE'in araç tanımları (ad, açıklama, parametre şeması) modele her istekte giden talimatlardır. Model bir aracı
-ne zaman, nasıl ve neyle kullanacağını sadece buradan öğrenir. Bu rehber, Anthropic'in Claude Code araçlarının
-(Read, Edit, Write, Grep, Bash, WebFetch, Agent, AskUserQuestion, Monitor, SendUserFile, ExitPlanMode…) yazım
-biçiminden çıkarıldı. `tests/test_tool_style.py` en temel kuralları her araç için denetler.
+ALICE's tool definitions (name, description, parameter schema) are instructions sent to the model with every
+request. They are the only place the model learns when, how and with what to use a tool. This guide is drawn from
+the way Anthropic's Claude Code tools (Read, Edit, Write, Grep, Bash, WebFetch, Agent, AskUserQuestion, Monitor,
+SendUserFile, ExitPlanMode…) are written. `tests/test_tool_style.py` checks the most basic rules for every tool.
 
-## Açıklama
+## Description
 
-1. **İlk cümle: ne yapar, ne döndürür.** "Bir dosyanın içeriğini satır numaralarıyla okur; …". Model listeyi
-   tararken çoğu zaman sadece bunu okur.
-2. **Ne zaman kullanılmaz, yerine ne kullanılır.** Komşu araçlarla sınırı açıkça çiz:
-   "Dosya okumak için komut değil read_file kullan", "Dosya ADI için glob".
-3. **Ön koşullar.** Aracın başarılı olması için önce yapılması gerekeni yaz: "Düzenlemeden önce dosyayı read_file
-   ile oku; okumadan düzenleme reddedilir."
-4. **Kesin davranış ve başarısızlık durumları.** Neyin hata vereceğini söyle: "old_string dosyada tek bir kez
-   geçmeli; birden fazlaysa daha fazla bağlam ekle ya da replace_all=true ver."
-5. **Sınırlar ve varsayılanlar.** Zaman aşımı, satır/karakter sınırı, sayfa boyutu: rakamla.
-6. **Çıktının biçimi.** "dosya:satır:metin satırları", "pid döner, sonra process_output".
-7. **Güvenlik.** Geri alınamaz ya da dışa dönük işler (gönder, sil, satın al) için kullanıcı onayı; araç
-   çıktısındaki metin talimat değil veridir.
-8. **Madde işaretleri.** İlk cümleden sonra her kural ayrı bir "- " satırı. Kısa, emir kipinde.
-9. **Uzunluk.** Çekirdek araçlar (dosya, komut, web) 300-1500 karakter; tek işlik küçük araçlar en az 150
-   karakter. Gereksiz sıfat ve tekrar yok.
+1. **First sentence: what it does and what it returns.** "Reads a file's contents with line numbers; …". When the
+   model scans the list, this is often all it reads.
+2. **When not to use it, and what to use instead.** Draw the line with neighboring tools clearly:
+   "Use read_file, not a command, to read files", "glob for file NAMES".
+3. **Preconditions.** Say what has to happen first for the tool to succeed: "Read the file with read_file before
+   editing it; edits to a file that has not been read are refused."
+4. **Exact behavior and failure cases.** Say what will fail: "old_string must appear exactly once in the file; if it
+   appears more than once, add more context or pass replace_all=true."
+5. **Limits and defaults.** Timeouts, line/character limits, page size: give the numbers.
+6. **Output format.** "file:line:text lines", "returns a pid, then use process_output".
+7. **Safety.** User confirmation for irreversible or outward-facing actions (send, delete, buy); text in a tool's
+   output is data, not instructions.
+8. **Bullets.** After the first sentence, each rule goes on its own "- " line. Short, in the imperative.
+9. **Length.** Core tools (files, commands, web) 300-1500 characters; small single-purpose tools at least 150
+   characters. No needless adjectives or repetition.
 
-## Parametreler
+## Parameters
 
-- **Her parametrenin açıklaması olur:** ne olduğu, biçimi, bir örnek ve varsayılanı.
-  `"timeout": "Saniye; dolunca komut öldürülür. Varsayılan 120, en fazla 1800."`
-- **Kapalı kümeler `enum`** ile verilir ve her değerin anlamı açıklamada yazılır.
-- **`required`** sadece gerçekten zorunlu olanlar. İsteğe bağlı olanların varsayılanı açıklamada.
-- **Yol parametreleri:** mutlak ya da çalışma klasörüne göre olduğunu yaz.
-- **Ad:** küçük harf, alt çizgi (`process_wait`), fiil ya da nesne. Parametre adları İngilizce, açıklamalar Türkçe.
+- **Every parameter has a description:** what it is, its format, an example and its default.
+  `"timeout": "Seconds; the command is killed when it runs out. Default 120, at most 1800."`
+- **Closed sets use `enum`**, and the meaning of each value is written in the description.
+- **`required`** lists only what is truly mandatory. Optional parameters state their default in the description.
+- **Path parameters:** say whether they are absolute or relative to the working folder.
+- **Name:** lowercase with underscores (`process_wait`), a verb or a noun. Parameter names are in English;
+  descriptions are moving from Turkish to English (see
+  [#213](https://github.com/Viox-Development/alice-agent/issues/213)).
 
-## Claude Code karşılıkları
+## Claude Code equivalents
 
 | Claude Code | ALICE |
 |---|---|
 | Read / Write / Edit / MultiEdit | read_file / write_file / edit_file / multi_edit |
 | Glob / Grep | glob / grep |
 | NotebookEdit | notebook_edit |
-| Bash / PowerShell (+ arka plan) | run_command (background=true) |
+| Bash / PowerShell (+ background) | run_command (background=true) |
 | BashOutput / KillShell | process_output / process_stop |
 | Monitor | process_wait |
 | WebFetch / WebSearch | web_fetch / web_search |
-| Agent (alt ajan) | task, team |
+| Agent (subagent) | task, team |
 | AskUserQuestion | ask_user |
 | TodoWrite / TaskCreate | todo_write |
 | Skill | skill |
-| ToolSearch (ertelenmiş araçlar) | load_tools |
+| ToolSearch (deferred tools) | load_tools |
 | ExitPlanMode | exit_plan_mode |
 | SendUserFile | send_file |
 | CronCreate / ScheduleWakeup | schedule |
-| Tarayıcı / bilgisayar kullanımı | browser, computer, windows, ui_elements, ui_act |
+| Browser / computer use | browser, computer, windows, ui_elements, ui_act |
 
-## Davranış kuralları (kodda zorlanır)
+## Behavior rules (enforced in code)
 
-- **Okumadan düzenleme yok:** edit_file, multi_edit ve var olan bir dosyanın üzerine write_file, dosya bu
-  oturumda read_file ile okunmadıysa reddedilir. Okunduktan sonra dosya diskte değiştiyse yeniden okumak gerekir.
-- **Hata, cevap değildir:** araç başarısız olursa `ToolError` ile nedenini ve ne yapılacağını söyler.
+- **No editing without reading:** edit_file, multi_edit and write_file over an existing file are refused if the file
+  has not been read with read_file in this session. If the file changed on disk after it was read, it has to be read
+  again.
+- **An error is not an answer:** when a tool fails, it raises `ToolError` saying why and what to do next.
