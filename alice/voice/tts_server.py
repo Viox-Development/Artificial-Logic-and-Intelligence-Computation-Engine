@@ -362,20 +362,41 @@ class Handler(BaseHTTPRequestHandler):
         body = {"ok": True, "device": STATE["device"], "loaded": STATE["model"] is not None}
         self._send(200, json.dumps(body).encode(), "application/json")
 
+    def _discard_body(self, n: int) -> None:
+        """Read and drop a request body we won't use before answering. Closing the socket with unread bytes makes
+        the OS send a TCP reset, and on Windows the reset discards our response before the client reads it
+        (WinError 10053, flaky test_tts_server_limits_body_and_accepts_good_request). A length we refuse (negative
+        or over MAX_BODY) may not match what was sent, so only what has already arrived is read, briefly."""
+        try:
+            if 0 < n <= MAX_BODY:
+                self.rfile.read(n)
+                return
+            self.connection.settimeout(0.2)
+            got = 0
+            while got < MAX_BODY:
+                chunk = self.rfile.read1(65536)
+                if not chunk:
+                    break
+                got += len(chunk)
+        except OSError:  # includes the timeout: nothing more has arrived
+            pass
+
     def do_POST(self):  # noqa: N802
         if self._host_ok() and self.path == "/release":
             with LOCK:
                 release()
             return self._send(200, b'{"ok": true}', "application/json")
-        if not self._host_ok() or self.path != "/synth":
-            return self._send(404, b"{}", "application/json")
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
+        if not self._host_ok() or self.path != "/synth":
+            self._discard_body(n)
+            return self._send(404, b"{}", "application/json")
         # A negative length made read(-1) wait until the connection closed; a huge body fills memory.
         if n < 0 or n > MAX_BODY:
             self.close_connection = True
+            self._discard_body(n)
             return self._send(413 if n > MAX_BODY else 400, b'{"error": "gecersiz Content-Length"}',
                               "application/json")
         try:
