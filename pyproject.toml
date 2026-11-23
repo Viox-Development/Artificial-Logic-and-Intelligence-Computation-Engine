@@ -81,7 +81,3 @@ ignore = ["B905"]
 
 [tool.ruff.lint.per-file-ignores]
 "alice/**/__init__.py" = ["F401"]
-
-[tool.coverage.run]
-# Paths relative to the repo, so the coverage badge job (another runner) can read the .coverage file (#228).
-relative_files = true
