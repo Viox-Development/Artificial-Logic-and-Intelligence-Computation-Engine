@@ -221,7 +221,9 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
     import time
 
     out: dict[str, str] = {}
-    with tempfile.TemporaryDirectory(prefix="alice-shot-") as tmp:
+    # ignore_cleanup_errors: on Windows a file a dying browser still holds must not turn a finished capture into
+    # an error; at worst the temp folder is left behind.
+    with tempfile.TemporaryDirectory(prefix="alice-shot-", ignore_cleanup_errors=True) as tmp:
         # Viewport sizes are captured at once (each with its own profile): capturing them in turn doubled the time.
         jobs: list[tuple[str, Path, subprocess.Popen]] = []
         for i, (name, (w, h)) in enumerate((viewports or VIEWPORTS).items()):
@@ -258,14 +260,36 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
             if jobs:
                 time.sleep(0.2)
         # Close browsers that got their image but did not exit or timed out, so the temp profile can be deleted.
+        # Killing only the parent was not enough: on Windows Chrome's child processes (renderer, crashpad) kept
+        # files in the profile open and the temp folder cleanup failed (WinError 32).
+        from alice.tools.shell import kill_tree
+
         for proc in procs:
             if proc.poll() is None:
-                proc.kill()
+                kill_tree(proc.pid)
             try:
                 proc.wait(5)
             except subprocess.TimeoutExpired:
                 pass
+        _kill_profile_procs(tmp)
     return out
+
+
+def _kill_profile_procs(folder: str) -> int:
+    """Kill leftover processes started with a profile under folder (children that outlived their parent).
+    Returns how many were killed."""
+    import psutil
+
+    killed = []
+    for p in psutil.process_iter(["cmdline"]):
+        try:
+            if any(folder in arg for arg in (p.info.get("cmdline") or [])):
+                p.kill()
+                killed.append(p)
+        except psutil.Error:
+            pass
+    psutil.wait_procs(killed, timeout=3)
+    return len(killed)
 
 
 def _launch(p):

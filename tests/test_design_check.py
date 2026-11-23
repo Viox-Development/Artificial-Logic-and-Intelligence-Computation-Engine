@@ -175,3 +175,25 @@ def test_site_study_saves_references_and_feeds_comparisons(workdir, monkeypatch)
 def test_critical_check_needs_whole_words():
     assert not Team._critical("Uydurma bir savunma firması için paragraf ve parallax içeren site")
     assert Team._critical("Ödeme sayfasını yaz") and Team._critical("login için auth ekle")
+
+
+def test_leftover_browser_processes_using_the_temp_profile_are_killed(tmp_path):
+    """Windows: Chrome's child processes outlived the parent and kept the temp profile locked (WinError 32)."""
+    import subprocess
+    import sys
+
+    from alice.site import _kill_profile_procs
+
+    profile = str(tmp_path / "profile0")
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    child = subprocess.Popen([*sleeper, f"--user-data-dir={profile}"])
+    other = subprocess.Popen([*sleeper, "--user-data-dir=/somewhere/else"])
+    try:
+        assert _kill_profile_procs(str(tmp_path)) == 1
+        assert child.wait(5) is not None
+        assert other.poll() is None  # unrelated processes are left alone
+    finally:
+        for p in (child, other):
+            if p.poll() is None:
+                p.kill()
+                p.wait(5)
