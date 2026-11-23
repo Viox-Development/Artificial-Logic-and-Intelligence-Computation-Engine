@@ -1,142 +1,143 @@
-# Bağlantılar: bir siteyi ALICE'e öğretmek
+# Connections: teaching ALICE a site
 
-ALICE'in bir servisi kullanabilmesi için kod yazmak gerekmiyor. Bir TOML dosyası yazıyorsun, ALICE onu
-şemalı bir araca çeviriyor: model eylemleri ve parametreleri görüyor, kimlik otomatik ekleniyor, cevap
-okunur hale getiriliyor.
+ALICE doesn't need code to use a service. You write a TOML file, and ALICE turns it into a tool with a schema: the
+model sees the actions and their parameters, credentials are added automatically, and responses are made
+readable.
 
 ```powershell
-alice connect                      # bağlantılar ve durumları
-alice connect spotify              # OAuth: tarayıcıda izin al
+alice connect                      # connections and their status
+alice connect spotify              # OAuth: grant access in the browser
 alice connect steam --test library --arg steamid=7656119...
-alice connect benimsite --new      # şablon oluştur: ~/.alice/connect/benimsite.toml
-alice connect spotify --logout     # saklanan token'ı sil
+alice connect mysite --new         # create a template: ~/.alice/connect/mysite.toml
+alice connect spotify --logout     # delete the stored token
 ```
 
-Yerleşik tanımlar `alice/connect/builtin/*.toml`; seninkiler `~/.alice/connect/*.toml` (aynı ad varsa
-seninki geçerli). `config.toml`:
+Built-in definitions live in `alice/connect/builtin/*.toml`; yours go in `~/.alice/connect/*.toml` (if a name
+exists in both, yours wins). In `config.toml`:
 
 ```toml
 [connect]
-disabled = ["discord"]    # kapat
-paths = ["D:/alice-baglantilar"]   # ek klasör
+disabled = ["discord"]    # turn off
+paths = ["D:/alice-baglantilar"]   # extra folder
 ```
 
-Araçlar `connect` grubunda duruyor: her isteğe eklenmiyorlar, mesajda servis adı geçince ya da model
-`load_tools(["connect"])` dediğinde açılıyorlar.
+The tools sit in the `connect` group: they are not added to every request, and open when a service's name comes up
+in a message or the model calls `load_tools(["connect"])`.
 
-## Tanım dosyası
+## Definition file
 
 ```toml
-name = "steam"                 # araç adı: küçük harf, rakam, alt çizgi
+name = "steam"                 # tool name: lowercase letters, digits, underscores
 title = "Steam"
-description = "Modelin okuyacağı açıklama: bu servis ne işe yarar."
+description = "The description the model reads: what this service is for."
 base_url = "https://api.steampowered.com"
-keywords = "steam|oyun|kütüphane"      # bu kelimeler geçince grup kendiliğinden açılır
+keywords = "steam|oyun|kütüphane"      # when these words come up, the group opens by itself
 docs = "https://steamcommunity.com/dev"
 ```
 
-### Kimlik: `[auth]`
+### Credentials: `[auth]`
 
-| kind | ne yapar | gereken alanlar |
+| kind | what it does | required fields |
 |---|---|---|
-| `none` | kimliksiz açık API | — |
-| `api_key` | anahtarı query'ye ya da header'a koyar | `env`, `place` (query/header), `name`, `prefix` |
-| `bearer` | `Authorization: Bearer <anahtar>` | `env` |
-| `oauth2` | tarayıcıda izin, token saklama/yenileme | `client_id_env`, `authorize_url`, `token_url`, `scopes`, `redirect_port` |
+| `none` | open API without credentials | — |
+| `api_key` | puts the key in the query or a header | `env`, `place` (query/header), `name`, `prefix` |
+| `bearer` | `Authorization: Bearer <key>` | `env` |
+| `oauth2` | consent in the browser, token storage and refresh | `client_id_env`, `authorize_url`, `token_url`, `scopes`, `redirect_port` |
 
-Anahtarlar `.env`'den okunur (`env = "STEAM_API_KEY"`), hiçbir yere kopyalanmaz. `help` alanına anahtarın
-nereden alınacağını yaz; ALICE anahtar eksikse bunu gösteriyor.
+Keys are read from `.env` (`env = "STEAM_API_KEY"`) and are not copied anywhere. Put where to get the key in the
+`help` field; ALICE shows it when the key is missing.
 
-OAuth2'de akış şu: ALICE `127.0.0.1`'de bir porta tek seferlik sunucu açar, tarayıcıda izin sayfasını
-açar, dönen kodu token'la takas eder ve `~/.alice/connect.json`'a (chmod 600) yazar. PKCE kullanıldığı
-için client secret gerekmiyor. Servis geri dönüş adresini önceden kaydettiriyorsa (Spotify) `redirect_port`
-ver ve servisin panelinde `http://127.0.0.1:<port>/callback` adresini kaydet.
+The OAuth2 flow: ALICE opens a one-time server on a port on `127.0.0.1`, opens the consent page in the browser,
+exchanges the returned code for a token and writes it to `~/.alice/connect.json` (chmod 600). Because PKCE is used,
+no client secret is needed. If the service requires the redirect address to be registered in advance (Spotify),
+set `redirect_port` and register `http://127.0.0.1:<port>/callback` in the service's dashboard.
 
-### Eylemler: `[actions.<ad>]`
+### Actions: `[actions.<name>]`
 
 ```toml
 [actions.library]
-summary = "Kütüphanedeki oyunlar"        # modele giden tek satırlık açıklama
+summary = "Games in the library"          # one-line description sent to the model
 method = "GET"                            # GET | POST | PUT | PATCH | DELETE
-path = "/IPlayerService/GetOwnedGames/v1/"   # {param} yer tutucusu kullanılabilir
-query = { format = "json" }               # her istekte giden sabit query
+path = "/IPlayerService/GetOwnedGames/v1/"   # {param} placeholders can be used
+query = { format = "json" }               # fixed query sent with every request
 headers = { X-Thing = "1" }
-body = { fixed = true }                   # POST/PUT için sabit gövde
-pick = "response.games"                   # cevabın hangi dalı gösterilsin
-fields = ["name", "playtime_forever"]     # listelerde gösterilecek alanlar (iç içe: "snippet.title")
-limit = 40                                # en fazla kaç satır
-writes = true                             # izin sistemi "yazma" saysın (GET dışında varsayılan true)
-sends = true                              # başkasına gidiyor (mesaj, gönderi): auto modda da onay sorulur
-cache_seconds = 300                       # okuyan eylemin cevabı bu kadar saniye hatırlanır (0: hiç)
+body = { fixed = true }                   # fixed body for POST/PUT
+pick = "response.games"                   # which branch of the response to show
+fields = ["name", "playtime_forever"]     # fields to show in lists (nested: "snippet.title")
+limit = 40                                # at most this many rows
+writes = true                             # the permission system counts it as a "write" (default true except GET)
+sends = true                              # goes to someone else (message, post): asks for approval even in auto mode
+cache_seconds = 300                       # a reading action's response is remembered this many seconds (0: never)
 
 [actions.library.params.steamid]
 type = "string"        # string | integer | number | boolean | array
 required = true
 description = "SteamID64"
-into = "query"         # query | path | body | header (boş: GET'te query, POST'ta body)
+into = "query"         # query | path | body | header (empty: query for GET, body for POST)
 enum = ["a", "b"]
 default = "a"
 ```
 
-Model aracı `action` parametresiyle çağırıyor: `steam(action="library", steamid="765...")`.
+The model calls the tool with the `action` parameter: `steam(action="library", steamid="765...")`.
 
-## Yerleşik bağlantılar
+## Built-in connections
 
-| ad | kimlik | ne yapar |
+| name | credentials | what it does |
 |---|---|---|
-| `steam` | `STEAM_API_KEY` | kütüphane, oynama süreleri, arkadaşlar, oyuncu durumu, oyun haberleri |
-| `youtube_api` | `YOUTUBE_API_KEY` | video/kanal arama, video istatistikleri, yorumlar |
-| `discord` | `DISCORD_BOT_TOKEN` | sunucular, kanallar, son mesajlar, mesaj gönderme (bot hesabıyla) |
-| `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | çalan parça, çal/duraklat/sonraki, arama, cihazlar, çalma listeleri |
-| `google_calendar` | OAuth2 + `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yaklaşan etkinlikler, arama, doğal dille ekleme ("Cuma 15:00 dişçi"), silme. Bağlıysa çekirdek önümüzdeki iki günün sınav/maç/randevu gibi etkinliklerini takibe çevirir; ertesi gün ALICE nasıl geçtiğini sorar |
+| `steam` | `STEAM_API_KEY` | library, playtime, friends, player status, game news |
+| `youtube_api` | `YOUTUBE_API_KEY` | video/channel search, video statistics, comments |
+| `discord` | `DISCORD_BOT_TOKEN` | servers, channels, recent messages, sending messages (with a bot account) |
+| `spotify` | OAuth2 + `SPOTIFY_CLIENT_ID` | current track, play/pause/next, search, devices, playlists |
+| `google_calendar` | OAuth2 + `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | upcoming events, search, adding in natural language ("Cuma 15:00 dişçi", i.e. "Friday 3 pm dentist"), deleting. When connected, the core turns events in the next two days such as exams, matches or appointments into follow-ups; the next day ALICE asks how it went |
 
-## Resmî API'si olmayan siteler
+## Sites without an official API
 
-WhatsApp, Instagram ve TikTok'un kişisel hesap için kullanılabilir resmî API'si yok: WhatsApp Cloud API
-işletme numarası istiyor, Instagram ve TikTok'un API'leri işletme/içerik üretici hesabına ve onay
-sürecine bağlı. Bunlar için doğru yol API değil, ALICE'in kalıcı profille açtığı gerçek tarayıcı
-(`browser` aracı) ve reflex modu: bir kere giriş yapıyorsun, oturum açık kalıyor. Bu siteler için hazır
-tarifler `alice/apps.toml` içinde duruyor; `app` aracı onları çalıştırıyor (bkz. README, "Uygulama tarifleri").
+WhatsApp, Instagram and TikTok have no official API usable with a personal account: the WhatsApp Cloud API needs a
+business number, and the Instagram and TikTok APIs depend on a business/creator account and an approval process.
+For these the right path is not an API but the real browser ALICE opens with a persistent profile (the `browser`
+tool) and reflex mode: you log in once and the session stays open. Ready-made recipes for these sites are in
+`alice/apps.toml`, and the `app` tool runs them (see the "Uygulama tarifleri" section of the detailed guide,
+[docs/README.tr.md](README.tr.md)).
 
-## Akışlar: bağlantıyı izlemek
+## Feeds: watching a connection
 
-Bir bağlantının eylemini arka planda yoklayıp yeni öğeleri bildirime çevirebilirsin: `~/.alice/feeds.toml`
-(`alice feeds --new` örnek dosya oluşturur). Çekirdek servis (`alice core run`) çalışırken yoklanır.
+You can poll a connection's action in the background and turn new items into notifications: `~/.alice/feeds.toml`
+(`alice feeds --new` creates an example file). It is polled while the core service (`alice core run`) is running.
 
 ```toml
 [[feed]]
-name = "yeni_video"
+name = "new_video"
 connector = "youtube_api"
 action = "search"
 args = { q = "DCS World update", type = "video", maxResults = "5" }
 every_minutes = 30
 id_field = "id.videoId"
-title = "Yeni video: {snippet.title}"
+title = "New video: {snippet.title}"
 body = "{snippet.channelTitle}"
 ```
 
-`agent = "..."` eklersen yeni öğe geldiğinde ALICE uyanıp o işi yapar (özetlemek, bir şeyi kontrol etmek).
-İlk tur sessizdir; bir turda en fazla 5 bildirim gider.
+If you add `agent = "..."`, ALICE wakes up when a new item arrives and does that job (summarizing, checking
+something). The first round is silent; at most 5 notifications are sent per round.
 
-Hangi öğenin bildirileceğini `[feed.when]` (any/all/none/regex/fields/min/max/ask), hangisinin acil
-olduğunu `[feed.escalate]` belirler; `mode = "change"` ile bir alanın değişmesi izlenir, `quiet`,
-`digest_minutes` ve `cooldown_minutes` teslim zamanını ayarlar. Tam liste ve örnekler README'de,
-"Akışlar" bölümünde. Koşulu kurarken `alice feeds --test <ad>` her öğenin neden geçtiğini/elendiğini
-gösterir.
+`[feed.when]` (any/all/none/regex/fields/min/max/ask) decides which items get notified, and `[feed.escalate]` which
+ones are urgent; `mode = "change"` watches a field for changes, and `quiet`, `digest_minutes` and `cooldown_minutes`
+set when notifications are delivered. The full list and examples are in the "Akışlar" section of the detailed guide,
+[docs/README.tr.md](README.tr.md). While setting up a condition, `alice feeds --test <name>` shows why each item
+passed or was filtered out.
 
-## Hız ve dayanıklılık
+## Speed and resilience
 
-* `cache_seconds`: yavaş değişen veriyi (Steam kütüphanesi, YouTube video bilgisi, Discord kanal listesi)
-  hatırlar; ajan aynı soruyu adım adım tekrar sorduğunda istek ağa çıkmaz. Varsayılan kapalı. Yazan ve
-  gönderen eylemler asla önbellekten dönmez; akışlar her zaman taze ister.
-* Tekrar deneme bir kez ve kısa: 429'da (sunucu isteği işlemeden reddetti) Retry-After 5 sn'den kısaysa
-  beklenip tekrar denenir. Ağ hatası ve 502/503/504'te sadece okuyan eylemler tekrar denenir: mesaj
-  gönderen bir isteği tekrarlamak aynı mesajı iki kez gönderebilir.
+* `cache_seconds`: remembers slowly changing data (Steam library, YouTube video info, Discord channel list), so
+  when the agent asks the same question again step by step, the request doesn't go out to the network. Off by
+  default. Actions that write or send never answer from the cache; feeds always ask for fresh data.
+* Retries happen once and quickly: on 429 (the server refused the request without processing it), if Retry-After
+  is under 5 s, ALICE waits and retries. On network errors and 502/503/504 only reading actions are retried:
+  repeating a request that sends a message could send the same message twice.
 
-## İpuçları
+## Tips
 
-* Önce `--test` ile dene: `alice connect <ad> --test <eylem> --arg k=v`. Çıktıyı modelin göreceği
-  biçimde yazar, `fields` seçimini buna bakarak ayarla.
-* `fields` vermezsen cevap JSON olarak gider; uzun JSON hem yavaştır hem kotayı yer. Gerçekten gereken
-  alanları seç.
-* Bozuk bir tanım ALICE'i durdurmaz: atlanır ve sebebi `alice connect` çıktısında görünür.
+* Try it with `--test` first: `alice connect <name> --test <action> --arg k=v`. It prints the output the way the
+  model will see it; tune your `fields` choice by looking at it.
+* If you don't give `fields`, the response goes out as JSON; long JSON is both slow and eats quota. Pick the fields
+  you really need.
+* A broken definition does not stop ALICE: it is skipped, and the reason shows up in the `alice connect` output.

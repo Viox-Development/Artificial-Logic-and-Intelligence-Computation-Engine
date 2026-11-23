@@ -203,20 +203,21 @@ def tidy_plan(folder: Path | None = None, older_than_days: float = 1.0) -> list[
 
 class FindFiles(Tool):
     name = "find_files"
-    description = ("Kullanıcının KENDİ dosyalarını bulur ve açar (kod araması için glob/grep): 'geçen hafta indirdiğim "
-                   "PDF', 'dün açtığım Excel', 'staj belgesi nerede'. Bulunca yolu söyle; açmasını isterse open.\n"
-                   "- 'açtığım/çalıştığım' -> recent, 'indirdiğim' -> downloads, ikisi de değilse search.\n"
-                   "- tidy önce apply olmadan çağrılıp plan gösterilir; kullanıcı onaylayınca apply=true.")
+    description = ("Finds and opens the user's OWN files (for code search use glob/grep): 'the PDF I downloaded last "
+                   "week', 'the Excel file I opened yesterday', 'where is my internship letter'. When found, say the "
+                   "path; if the user wants it opened, use open.\n"
+                   "- 'I opened/worked on' -> recent, 'I downloaded' -> downloads, otherwise search.\n"
+                   "- Call tidy without apply first to show the plan; once the user approves, apply=true.")
     parameters = obj({
         "action": {"type": "string", "enum": ["recent", "downloads", "search", "open", "tidy"],
-                   "description": "recent: son açılanlar | downloads: İndirilenler | search: kişisel klasörlerde ad "
-                   "araması | open: path'i aç | tidy: İndirilenler'i tür klasörlerine ayır."},
-        "query": {"type": "string", "description": "Dosya adında geçen kelimeler (hepsi geçmeli), ör. 'staj'. Boş: hepsi."},
+                   "description": "recent: recently opened | downloads: the Downloads folder | search: name search in "
+                   "personal folders | open: open path | tidy: sort Downloads into folders by type."},
+        "query": {"type": "string", "description": "Words in the file name (all must appear), e.g. 'staj'. Empty: all."},
         # No empty option (""): Gemini Live rejected the whole tool list on an empty enum value
-        "kind": {"type": "string", "enum": list(KINDS), "description": "Dosya türü (boş bırakılabilir)."},
-        "days": {"type": "number", "description": "Son kaç gün ('dün' 2, 'geçen hafta' 8)."},
-        "path": {"type": "string", "description": "open için dosya yolu."},
-        "apply": {"type": "boolean", "description": "tidy için: true ise gerçekten taşı."},
+        "kind": {"type": "string", "enum": list(KINDS), "description": "File type (can be left empty)."},
+        "days": {"type": "number", "description": "How many recent days ('yesterday' 2, 'last week' 8)."},
+        "path": {"type": "string", "description": "File path for open."},
+        "apply": {"type": "boolean", "description": "For tidy: if true, actually move the files."},
     }, ["action"])
     risk = READ
 

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+
+import pytest
+
 from alice.extras import nowplaying
 from alice.tools.base import ToolContext
 from tests.conftest import make_config
@@ -49,3 +53,51 @@ def test_media_tool_controls_the_playing_app_and_reports_result(monkeypatch, tmp
     monkeypatch.setattr(nowplaying, "control", lambda a: False)  # no session: falls back to the media key
     monkeypatch.setattr(media, "key", lambda a, t=1: "tamam")
     assert extras.Media().run(ctx, "play_pause").text == "tamam"
+
+
+# ---------- Linux: MPRIS through playerctl ----------
+
+
+@pytest.fixture
+def playerctl(monkeypatch):
+    """Fake playerctl on Linux: replies maps the first argument to (returncode, stdout)."""
+    monkeypatch.setattr(nowplaying.sys, "platform", "linux")
+    monkeypatch.setattr(nowplaying.shutil, "which", lambda n: "/usr/bin/playerctl" if n == "playerctl" else None)
+    calls = []
+
+    def make(replies):
+        def run(cmd, **kw):
+            calls.append(cmd[1:])
+            code, out = replies.get(cmd[1], (1, ""))
+            return subprocess.CompletedProcess(cmd, code, out, "" if code == 0 else "No players found")
+
+        monkeypatch.setattr(nowplaying.subprocess, "run", run)
+        return calls
+    return make
+
+
+def test_linux_now_reads_playerctl_metadata(playerctl):
+    sep = nowplaying.SEP
+    calls = playerctl({"metadata": (0, sep.join(["spotify", "Playing", "Sen Ağlama", "maNga", "Sen Ağlama"]) + "\n")})
+    n = nowplaying.now()
+    assert n == {"app": "Spotify", "title": "Sen Ağlama", "artist": "maNga", "album": "Sen Ağlama",
+                 "status": "playing"}
+    assert calls == [["metadata", "--format", nowplaying.NOW_FORMAT]]
+    assert nowplaying.describe(n) == "maNga – Sen Ağlama (Spotify, çalıyor)"
+
+
+def test_linux_now_without_player_or_playerctl_is_none(playerctl, monkeypatch):
+    playerctl({})  # "No players found", exit code 1
+    assert nowplaying.now() is None
+    assert nowplaying.parse_playerctl("garbage") is None
+    monkeypatch.setattr(nowplaying.shutil, "which", lambda n: None)
+    assert nowplaying.now() is None and nowplaying.control("next") is False
+
+
+def test_linux_control_maps_actions_to_playerctl(playerctl):
+    calls = playerctl({"play-pause": (0, ""), "next": (0, ""), "pause": (1, "")})
+    assert nowplaying.control("play_pause") is True
+    assert nowplaying.control("next") is True
+    assert nowplaying.control("pause") is False  # no player: the caller falls back to the media keys
+    assert nowplaying.control("bogus") is False
+    assert calls == [["play-pause"], ["next"], ["pause"]]

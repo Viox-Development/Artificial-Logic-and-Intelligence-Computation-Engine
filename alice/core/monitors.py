@@ -46,8 +46,87 @@ def _run(cmd: list[str], timeout: float = 5) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
+def _pid(text: str | None) -> int | None:
+    m = re.search(r"\d+", text or "")
+    return int(m.group()) if m and int(m.group()) > 0 else None
+
+
+def _sway_focused_pid(tree: Any) -> int | None:
+    """swaymsg -t get_tree: the focused node's pid (depth-first over nodes and floating_nodes)."""
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if node.get("focused") and node.get("pid"):
+            return int(node["pid"])
+        stack.extend(node.get("nodes") or [])
+        stack.extend(node.get("floating_nodes") or [])
+    return None
+
+
+def _json(text: str | None) -> Any:
+    import json
+
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+def _x11_pid() -> int | None:
+    if shutil.which("xdotool"):
+        if pid := _pid(_run(["xdotool", "getactivewindow", "getwindowpid"])):
+            return pid
+    if shutil.which("xprop"):
+        m = re.search(r"0x[0-9a-fA-F]+", _run(["xprop", "-root", "_NET_ACTIVE_WINDOW"]) or "")
+        if m and int(m.group(), 16):
+            out = _run(["xprop", "-id", m.group(), "_NET_WM_PID"]) or ""
+            return _pid(out.partition("=")[2])
+    return None
+
+
+def _gnome_pid() -> int | None:
+    """GNOME Shell's Eval; it only answers when unsafe mode or an extension allows it, otherwise (false, '')."""
+    if not shutil.which("gdbus"):
+        return None
+    out = _run(["gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
+                "--method", "org.gnome.Shell.Eval", "global.display.focus_window.get_pid()"])
+    return _pid(out) if out and out.lstrip("( ").startswith("true") else None
+
+
+def linux_foreground_pid() -> int | None:
+    """PID of the focused window on Linux: Sway, Hyprland, KDE (kdotool), GNOME (Shell Eval) or X11 (xdotool/xprop).
+    None when the desktop is not supported or the tool is missing."""
+    env = os.environ
+    desktop = (env.get("XDG_CURRENT_DESKTOP") or "").upper()
+    wayland = bool(env.get("WAYLAND_DISPLAY")) or env.get("XDG_SESSION_TYPE") == "wayland"
+    if env.get("SWAYSOCK") and shutil.which("swaymsg"):
+        if pid := _sway_focused_pid(_json(_run(["swaymsg", "-t", "get_tree"]))):
+            return pid
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
+        win = _json(_run(["hyprctl", "activewindow", "-j"]))
+        if isinstance(win, dict) and isinstance(win.get("pid"), int) and win["pid"] > 0:
+            return win["pid"]
+    if "KDE" in desktop and shutil.which("kdotool"):
+        if pid := _pid(_run(["kdotool", "getactivewindow", "getwindowpid"])):
+            return pid
+    if "GNOME" in desktop and wayland:
+        if pid := _gnome_pid():
+            return pid
+    if env.get("DISPLAY") and not wayland:
+        return _x11_pid()  # not on Wayland: XWayland's active window can be stale while a native window has focus
+    return None
+
+
 def foreground_process() -> str | None:
-    """Program name of the foreground window (Windows only)."""
+    """Program name of the foreground window (Windows; Linux on X11 and the common Wayland compositors)."""
+    if sys.platform.startswith("linux"):
+        pid = linux_foreground_pid()
+        try:
+            return psutil.Process(pid).name() if pid else None
+        except psutil.Error:
+            return None
     if sys.platform != "win32":
         return None
     try:

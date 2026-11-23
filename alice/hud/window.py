@@ -345,11 +345,11 @@ class HudWindow:
             if state["fail"] >= 5:
                 return None
             try:
-                import mss
+                from alice.tools.imaging import screen_capture
                 from PIL import Image
 
                 if state["sct"] is None:
-                    state["sct"] = mss.MSS() if hasattr(mss, "MSS") else mss.mss()
+                    state["sct"] = screen_capture()
                 isl = self.island
                 shot = state["sct"].grab({"left": self.ox + isl.x, "top": self.oy + isl.y,
                                           "width": isl.cw, "height": isl.ch})

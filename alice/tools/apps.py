@@ -127,25 +127,26 @@ def _describe(apps: dict[str, App]) -> str:
 class AppTool(Tool):
     name = "app"
     description = (
-        "Bir uygulamayı ya da siteyi doğru yoldan açar ve tanımlı akışları çalıştırır (WhatsApp'tan mesaj atma, "
-        "Instagram DM, YouTube'da video açma, Steam'de oyun başlatma gibi).\n"
-        "- list: hangi uygulamalar tanımlı, hangi akışları ve hangi alanları var.\n"
-        "- open: uygulamayı/siteyi aç (site ise kullanıcının kendi tarayıcısında, oturumu açık olan yerde).\n"
-        "- flow: tanımlı akışı çalıştır, ör. app(action='flow', name='whatsapp', flow='send', "
+        "Opens an app or site the right way and runs its defined flows (such as sending a WhatsApp message, an "
+        "Instagram DM, opening a YouTube video or starting a Steam game).\n"
+        "- list: which apps are defined, and which flows and fields they have.\n"
+        "- open: open the app/site (a site opens in the user's own browser, where they are logged in).\n"
+        "- flow: run a defined flow, e.g. app(action='flow', name='whatsapp', flow='send', "
         "args={'kime': 'Ahmet', 'mesaj': 'geliyorum'}).\n"
-        "- Bir uygulamanın resmî bağlantısı (API) varsa list çıktısında yazar; o varsa onu tercih et, daha hızlı.\n"
-        "- Burada olmayan bir sayfada iş yapacaksan browser ya da reflex araçlarını kullan."
+        "- If an app has an official connection (API), the list output says so; prefer it when it exists, it is "
+        "faster.\n"
+        "- To work on a page that is not defined here, use the browser or reflex tools."
     )
     parameters = obj({
         "action": {"type": "string", "enum": ["list", "open", "flow"],
-                   "description": "list: tanımlı uygulamalar | open: aç | flow: tanımlı akışı çalıştır."},
-        "name": {"type": "string", "description": "Uygulama adı, ör. 'whatsapp', 'tiktok', 'steam_game'. "
-                 "Takma adlar da çalışır ('wp', 'insta')."},
-        "flow": {"type": "string", "description": "flow için akış adı, ör. 'send'. list çıktısında görünür."},
+                   "description": "list: defined apps | open: open | flow: run a defined flow."},
+        "name": {"type": "string", "description": "App name, e.g. 'whatsapp', 'tiktok', 'steam_game'. "
+                 "Aliases work too ('wp', 'insta')."},
+        "flow": {"type": "string", "description": "Flow name for flow, e.g. 'send'. Shown in the list output."},
         "args": {"type": "object", "additionalProperties": {"type": "string"},
-                 "description": "Akışın alanları, ör. {\"kime\": \"Ahmet\", \"mesaj\": \"selam\"}."},
-        "target": {"type": "string", "description": "protocol türü için yer tutucu değeri, ör. steam_game'de appid."},
-        "max_steps": {"type": "integer", "description": "flow için en fazla reflex adımı. Varsayılan 20."},
+                 "description": "The flow's fields, e.g. {\"kime\": \"Ahmet\", \"mesaj\": \"selam\"} (field names come from list)."},
+        "target": {"type": "string", "description": "Placeholder value for the protocol type, e.g. the appid for steam_game."},
+        "max_steps": {"type": "integer", "description": "Maximum reflex steps for flow. Default 20."},
     }, ["action"])
     risk = COMPUTER
 

@@ -7,6 +7,14 @@ from pathlib import Path
 from PIL import Image
 
 
+def screen_capture():
+    """Open an mss screen capture object. mss 10 added ``mss.MSS`` and deprecated ``mss.mss()``; older releases only
+    have the latter. The caller owns the object (use it as a context manager, or keep it open and reuse it)."""
+    import mss
+
+    return mss.MSS() if hasattr(mss, "MSS") else mss.mss()
+
+
 def image_to_png_b64(img: Image.Image, max_width: int) -> tuple[str, float]:
     """Resize image to max_width, return base64 PNG and scale ratio (original/resized)."""
     scale = 1.0

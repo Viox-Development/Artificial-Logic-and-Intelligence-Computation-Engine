@@ -1,15 +1,18 @@
-"""What is playing and control it: Windows' media sessions (the player box next to the volume icon).
+"""What is playing and control it: Windows' media sessions (the player box next to the volume icon), and on Linux
+the MPRIS players on D-Bus through `playerctl`.
 
 Spotify, Sonora, YouTube Music, a video in the browser... every app connected to media control shows up here;
 ALICE reads what is playing and stops/skips in that exact app. Media keys (extras.media) used to go to the last
-focused app and could not say what was playing. Outside Windows or without the package: None/False, and the caller
-falls back to the media keys.
+focused app and could not say what was playing. On other systems, or without the package/playerctl: None/False, and
+the caller falls back to the media keys.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -19,6 +22,10 @@ STATUS = {4: "playing", 5: "paused", 3: "stopped", 2: "changing", 1: "opened", 0
 CONTROL = {"play_pause": "try_toggle_play_pause_async", "next": "try_skip_next_async",
            "previous": "try_skip_previous_async", "stop": "try_stop_async", "play": "try_play_async",
            "pause": "try_pause_async"}
+PLAYERCTL = {"play_pause": "play-pause", "next": "next", "previous": "previous", "stop": "stop", "play": "play",
+             "pause": "pause"}
+SEP = "\x1f"  # unit separator: never appears in a title, unlike tabs or " - "
+NOW_FORMAT = SEP.join(["{{playerName}}", "{{status}}", "{{title}}", "{{artist}}", "{{album}}"])
 APPS = {"spotify": "Spotify", "sonora": "Sonora", "chrome": "Chrome", "opera": "Opera", "msedge": "Edge",
         "firefox": "Firefox", "zunemusic": "Medya Oynatıcı", "vlc": "VLC", "applemusic": "Apple Music",
         "youtube": "YouTube", "discord": "Discord"}
@@ -43,6 +50,29 @@ def _run(coro_fn: Callable[[], Any]) -> Any:
         return None
 
 
+def _playerctl(*args: str) -> str | None:
+    """Run playerctl (Linux, MPRIS over D-Bus); stdout, or None if it is missing, fails or there is no player."""
+    exe = shutil.which("playerctl")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def parse_playerctl(out: str | None) -> dict[str, Any] | None:
+    """`playerctl metadata --format NOW_FORMAT` output -> {app, title, artist, album, status}, or None."""
+    parts = (out or "").rstrip("\n").split(SEP)
+    if len(parts) != 5:
+        return None
+    player, status, title, artist, album = (x.strip() for x in parts)
+    return {"app": app_name(player), "title": title, "artist": artist, "album": album,
+            "status": status.lower() or "unknown"}
+
+
 async def _session():
     from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
 
@@ -52,6 +82,8 @@ async def _session():
 
 def now() -> dict[str, Any] | None:
     """Current media: {app, title, artist, album, status}, or None (nothing playing)."""
+    if sys.platform.startswith("linux"):
+        return parse_playerctl(_playerctl("metadata", "--format", NOW_FORMAT))
 
     async def go():
         s = await _session()
@@ -70,6 +102,8 @@ def control(action: str) -> bool:
     method = CONTROL.get(action)
     if method is None:
         return False
+    if sys.platform.startswith("linux"):
+        return _playerctl(PLAYERCTL[action]) is not None
 
     async def go():
         s = await _session()

@@ -174,9 +174,9 @@ class SimHub:
             from alice.sims.vision import default_region
 
             try:
-                import mss
+                from alice.tools.imaging import screen_capture
 
-                with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+                with screen_capture() as sct:
                     region = default_region(int(sct.monitors[1]["height"]))
             except Exception:  # noqa: BLE001
                 region = default_region(1080)
