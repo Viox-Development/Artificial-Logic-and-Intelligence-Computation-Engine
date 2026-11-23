@@ -278,3 +278,51 @@ def test_label_low_restores_exes_and_repairs_old_labels(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox, "_EXE_FIXED", set())  # eski sürümün etiketlediği klasör, yeni süreç
     sandbox.label_low(proj)
     assert calls == [["icacls", str(proj / "*.exe"), "/setintegritylevel", "M", "/T", "/C", "/Q"]]
+
+
+def test_old_labels_on_personal_folders_are_reset_to_medium(tmp_path, monkeypatch):
+    """#226: old versions could label Downloads etc. low-integrity writable; the label stayed after the sandbox
+    stopped accepting them. They are set back to medium and dropped from the list; project folders stay."""
+    import json
+    import sys
+    from pathlib import Path
+
+    from alice.config import alice_home
+
+    calls = []
+
+    class R:
+        def __init__(self, code):
+            self.returncode, self.stdout, self.stderr = code, "", ""
+
+    labels = tmp_path / "sandbox_dirs.json"
+    # label_low stores lowercased keys on Windows (case-insensitive paths); CI also runs this on Linux
+    norm = str.lower if sys.platform == "win32" else str
+    downloads = norm(str(Path.home() / "Downloads"))
+    desktop = norm(str(Path.home() / "Desktop" / "x"))
+    home = norm(str(Path.home()))
+    agents = norm(str(alice_home() / "agents"))
+    project = norm(str(tmp_path / "proje"))
+    labels.write_text(json.dumps([downloads, desktop, home, agents, project]), encoding="utf-8")
+    monkeypatch.setattr(sandbox, "IS_WIN", True)
+    monkeypatch.setattr(sandbox, "_labels_path", lambda: labels)
+    monkeypatch.setattr(sandbox, "_REPAIRED", [])
+    # resetting the Desktop folder fails: it stays in the list and is retried next time
+    monkeypatch.setattr(sandbox.subprocess, "run",
+                        lambda argv, **k: calls.append(argv) or R(5 if argv[1] == desktop else 0))
+
+    fixed = sandbox.repair_old_labels()
+    assert sorted(fixed) == sorted([downloads, home, agents])
+    assert all(c[0] == "icacls" and c[2:4] == ["/setintegritylevel", "(OI)(CI)M"] for c in calls)
+    assert project not in [c[1] for c in calls]  # project folders keep their label
+    assert sorted(json.loads(labels.read_text(encoding="utf-8"))) == sorted([desktop, project])
+
+    calls.clear()
+    assert sandbox.repair_old_labels() == [] and calls == []  # once per process
+
+
+def test_repair_old_labels_is_windows_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "IS_WIN", False)
+    monkeypatch.setattr(sandbox, "_REPAIRED", [])
+    monkeypatch.setattr(sandbox.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    assert sandbox.repair_old_labels() == []
