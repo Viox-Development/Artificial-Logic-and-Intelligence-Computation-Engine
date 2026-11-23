@@ -373,12 +373,14 @@ def _hold_turn(state, release):
     run_turn = agent.run_turn
 
     def slow(prompt, **kw):
+        # busy stays True until the real turn has finished: clearing it before run_turn let the test see an idle
+        # chat that had not written its answer yet (flaky on Windows CI).
         agent.busy = True
         try:
             release.wait(10)
+            return run_turn(prompt, **kw)
         finally:
             agent.busy = False
-        return run_turn(prompt, **kw)
 
     agent.run_turn = slow
     return agent
