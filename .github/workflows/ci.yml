@@ -77,6 +77,33 @@ jobs:
           name: coverage
           path: coverage.xml
 
+  # Coverage badge (#228): on every push to main, the coverage rate from the Python 3.13 test job is written as a
+  # shields.io endpoint file (coverage.json) to this repo's own `coverage-badge` branch, with the built-in token.
+  # No external service, secret or third-party action. The README badge reads that file.
+  coverage-badge:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push the coverage-badge branch
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: coverage
+      - name: Publish the badge data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          python .github/scripts/coverage_badge.py coverage.xml "$RUNNER_TEMP/badge"
+          cd "$RUNNER_TEMP/badge"
+          git init -q -b coverage-badge
+          git add coverage.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Coverage for ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" coverage-badge
+
   # The Linux install the README tells people to run, on a clean Ubuntu.
   linux-install:
     runs-on: ubuntu-latest

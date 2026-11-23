@@ -139,7 +139,19 @@ class QuickBar:
         self.server = AppServer(self.state, owns_state=state is None).start()
         self.last_open = 0.0
         self._listener = None
+        self.hotkey_problem = ""
         self.launcher = self._launch
+        self._write_url()
+
+    def _write_url(self) -> None:
+        """Let `alice quick --open` (a desktop shortcut on Wayland) find this running quick bar."""
+        try:
+            path = url_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(self.url, encoding="utf-8")
+            path.chmod(0o600)  # the URL carries the token
+        except OSError:
+            pass  # only the Wayland shortcut path needs it
 
     @property
     def url(self) -> str:
@@ -195,27 +207,48 @@ class QuickBar:
 
         mapping = {self.hotkeys["open"]: bg(self.open), self.hotkeys["region"]: bg(self.ask_region),
                    self.hotkeys["clipboard"]: bg(self.explain_clipboard)}
-        from alice.hotkeys import IS_WIN, WinHotkeys
+        from alice.hotkeys import IS_WIN, PynputHotkeys, WinHotkeys
 
-        if IS_WIN:
-            hk = WinHotkeys(mapping)
-            if hk.start():
-                self._listener = hk
-                return True
-            return False
-        try:
-            from pynput import keyboard
-        except ImportError:
-            return False
-        self._listener = keyboard.GlobalHotKeys({k: v for k, v in mapping.items() if k})
-        self._listener.daemon = True
-        self._listener.start()
-        return True
+        hk = WinHotkeys(mapping) if IS_WIN else PynputHotkeys(mapping)
+        if hk.start():
+            self._listener = hk
+            return True
+        self.hotkey_problem = getattr(hk, "problem", "") or "kısayollar başka bir program tarafından kullanılıyor"
+        return False
 
     def stop(self) -> None:
         if self._listener is not None:
             self._listener.stop()
         self.server.stop()
+        try:
+            if url_file().read_text(encoding="utf-8") == self.url:
+                url_file().unlink()
+        except OSError:
+            pass
+
+
+def url_file() -> Path:
+    return alice_home() / "quick-url"
+
+
+def open_running() -> bool:
+    """Open the quick bar of an already running core/quick process (True), e.g. from a desktop shortcut."""
+    import urllib.request
+
+    try:
+        url = url_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if not url.startswith("http://127.0.0.1:"):
+        return False
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 - our own local server
+            if r.status != 200:
+                return False
+    except OSError:
+        return False
+    QuickBar._launch(url)
+    return True
 
 
 def quick_cmd(argv: list[str]) -> int:
@@ -225,14 +258,16 @@ def quick_cmd(argv: list[str]) -> int:
     from alice.config import load_config
 
     console = Console(highlight=False)
+    if "--open" in argv and open_running():  # a desktop shortcut while the core/quick bar is already running
+        return 0
     cfg = load_config()
     qb = QuickBar(cfg)
     if "--open" in argv:
         qb.open()
     ok = qb.start_hotkeys()
     if not ok:
-        console.print("[yellow]pynput yok;[/] kısayollar çalışmaz (" + escape('pip install "alice-harness[voice]"')
-                      + f"). Hızlı bar adresi: {qb.url}")
+        why = getattr(qb, "hotkey_problem", "") or "kısayollar başlatılamadı"
+        console.print(f"[yellow]Kısayollar çalışmıyor:[/] {escape(why)}. Hızlı bar adresi: {qb.url}")
     else:
         hk = qb.hotkeys
         console.print(f"[bold magenta]ALICE hızlı bar[/] hazır: {hk['open']} aç · {hk['region']} alan seç · "

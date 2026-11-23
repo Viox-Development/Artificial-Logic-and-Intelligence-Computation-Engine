@@ -9,11 +9,14 @@ That is why we do not use a hook on Windows:
   leaves the other keys alone.
 - Push-to-talk: the key's state is checked at short intervals (GetAsyncKeyState); no hook.
 
-On other systems, pynput is still used.
+On other systems pynput's GlobalHotKeys is used (PynputHotkeys): X11 on Linux, and macOS once the terminal/app has
+the Accessibility permission. On Wayland a program cannot listen to keys pressed in other windows, so there the
+shortcut is bound in the desktop's own keyboard settings to the command `alice quick --open` (wayland_session()).
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -141,3 +144,54 @@ class KeyPoller:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def wayland_session() -> bool:
+    """A Wayland desktop session (Linux): global key listening is not possible for normal programs there."""
+    return sys.platform.startswith("linux") and (bool(os.environ.get("WAYLAND_DISPLAY"))
+                                                  or os.environ.get("XDG_SESSION_TYPE") == "wayland")
+
+
+def pynput_problem() -> str:
+    """Why pynput global shortcuts cannot work here ("" if they can)."""
+    if wayland_session():
+        return ("Wayland oturumunda programlar başka pencerelerdeki tuşları dinleyemez; kısayolu masaüstünün klavye "
+                "ayarlarında `alice quick --open` komutuna bağla")
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        return "X ekranı yok (DISPLAY boş): kısayollar masaüstü oturumu içinde çalışır"
+    try:
+        import pynput.keyboard  # noqa: F401
+    except ImportError:
+        return 'pynput yok: pip install "alice-harness[voice]"'
+    except Exception as e:  # noqa: BLE001 - pynput raises at import when it can't reach the display server
+        return f"pynput başlatılamadı: {e}"
+    return ""
+
+
+class PynputHotkeys:
+    """Global shortcuts with pynput's GlobalHotKeys (Linux X11, macOS). problem: why it could not start."""
+
+    def __init__(self, mapping: dict[str, Callable[[], None]]):
+        self.mapping = {k: v for k, v in mapping.items() if k}
+        self.problem = ""
+        self._listener = None
+
+    def start(self) -> bool:
+        self.problem = pynput_problem()
+        if self.problem:
+            return False
+        from pynput import keyboard
+
+        try:
+            self._listener = keyboard.GlobalHotKeys(self.mapping)
+            self._listener.daemon = True
+            self._listener.start()
+        except Exception as e:  # noqa: BLE001 - bad combo text or the display server refused
+            self.problem = f"kısayollar başlatılamadı: {e}"
+            self._listener = None
+            return False
+        return True
+
+    def stop(self) -> None:
+        if self._listener is not None:
+            self._listener.stop()

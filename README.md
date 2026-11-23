@@ -1,6 +1,6 @@
 # ALICE
 
-[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20(full)%20%7C%20Linux%20(partial)-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Viox-Development/alice-agent/coverage-badge/coverage.json)](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20(full)%20%7C%20Linux%20(partial)-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 **Artificial Logic and Intelligence Computation Engine.** An AI agent that lives on your computer, in the spirit of
 Claude Code and Codex, but not tied to one paid model. It chains free API tiers (and your own keys or subscriptions)
@@ -302,7 +302,8 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
 | UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
-| On-screen HUD, global shortcuts / quick bar | ✅ | ❌ | ❌ |
+| On-screen HUD | ✅ | ❌ | ❌ |
+| Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | untested (needs the Accessibility permission) |
 | PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
 | Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |
 | Time machine, Steam and flight-sim integration | ✅ | ❌ | ❌ |
