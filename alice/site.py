@@ -287,7 +287,7 @@ def _kill_profile_procs(folder: str) -> int:
                 p.kill()
                 killed.append(p)
         except psutil.Error:
-            pass
+            pass  # the process already exited or is not ours to read/kill: nothing to clean up
     psutil.wait_procs(killed, timeout=3)
     return len(killed)
 
