@@ -143,7 +143,7 @@ def test_context_has_followups_and_history(tmp_path):
     k, clock = make(tmp_path, lambda p: ("", None), memory=lambda: Mem())
     text = k.context(clock.t, {"history": [{"ts": clock.t - 3600, "summary": "sessiz"}]})
     assert "Sınav nasıl geçti?" in text and "Diş randevusu" in text and "testler yazıldı" in text
-    assert "Önceki uyanışların" in text and "bilgisayarın başında" in text
+    assert "Your previous wake-ups" in text and "at the computer" in text
 
 
 def test_sleep_tool_records_choice():

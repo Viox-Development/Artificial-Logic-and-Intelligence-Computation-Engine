@@ -120,35 +120,36 @@ def request_wake(path: Path | None = None) -> None:
 # ------------------------------------------------------------------------------------------- sleep tool
 class KairosSleep(Tool):
     name = "kairos_sleep"
-    description = ("KAIROS: bir sonraki uyanışı seç ve bu uyanışı bitir. minutes: kaç dakika sonra (sınırlar içinde "
-                   "kırpılır). Meşgul ya da beklenen bir şey varken kısa, sakinken uzun seç. reason: neden bu süre.")
-    parameters = obj({"minutes": {"type": "integer", "description": "Kaç dakika sonra uyanılsın."},
-                      "reason": {"type": "string", "description": "Kısa gerekçe."}}, ["minutes"])
+    description = ("KAIROS: choose the next wake-up and end this one. minutes: how many minutes from now (clamped to "
+                   "the limits). Pick short when things are busy or something is expected, long when it is calm. "
+                   "reason: why this interval.")
+    parameters = obj({"minutes": {"type": "integer", "description": "Wake up after this many minutes."},
+                      "reason": {"type": "string", "description": "Short reason."}}, ["minutes"])
     risk = READ
 
     def run(self, ctx: ToolContext, minutes: int, reason: str = "") -> ToolResult:
         ctx.state["kairos_sleep"] = (int(minutes or 0), str(reason or "")[:200])
-        return ToolResult(f"{minutes} dakika sonra uyanılacak. Şimdi tek satırlık özetini yaz ve bitir.")
+        return ToolResult(f"Waking up in {minutes} minutes. Now write your one-line summary and finish.")
 
 
-PROMPT = """Arka plan nöbetindesin (KAIROS). Kullanıcı seni çağırmadı; kendi kendine uyandın. Saat: {now}.
+PROMPT = """You are on background watch (KAIROS). The user didn't call you; you woke up on your own. Time: {now}.
 
-Görevin: durumu gözden geçir ve yalnız kullanıcıya ŞU AN gerçekten faydalı olacak bir şey varsa harekete geç.
-Çoğu uyanış hiçbir şey yapmadan bitmeli. Gereksiz bildirim, kullanıcıyı rahatsız eden en kötü sonuçtur.
+Your job: look over the state and act only if there is something that is really useful to the user RIGHT NOW.
+Most wake-ups should end without doing anything. A needless notification is the worst outcome: it bothers the user.
 
-İşe yarar örnekler: günü gelmiş ama konuşulmamış bir takip ya da hatırlatma; izlenen bir PR'da kullanıcının bakması
-gereken bir durum; yakında başlayacak bir etkinlik için gereken bir hazırlık; daha sonra hatırlanmaya değer bir
-gözlem (bunu bildirim yerine memory action=log ile günün kaydına yaz).
-Yapma: aynı şeyi ikinci kez bildirme (önceki uyanışlara bak), sohbet açmaya çalışma, kullanıcı oyundayken ya da
-geceyse önemsiz şey söyleme, tahmin yürütüp emin olmadığın bir şeyi bildirme.
+Useful examples: a follow-up or reminder that is due but hasn't been talked about; something on a watched PR the user
+needs to look at; preparation needed for an event starting soon; an observation worth remembering later (write it to
+the day's log with memory action=log instead of notifying).
+Don't: notify the same thing twice (look at the previous wake-ups), try to start a conversation, say something minor
+while the user is playing a game or at night, or notify something you are guessing and aren't sure of.
 
-Elindeki araçlar okumak içindir (takvim, e-posta, hafıza, web, PR durumu). Bildirim için `notify` (en fazla bir
-kez, 1-2 kısa cümle, Türkçe). Değişiklik yapan hiçbir şey yapamazsın.
+Your tools are for reading (calendar, email, memory, web, PR status). To notify, use `notify` (at most once, 1-2
+short sentences, in Turkish, the user's language). You can't do anything that changes things.
 
-Bitirirken mutlaka `kairos_sleep` ile bir sonraki uyanışı seç ({lo}-{hi} dakika). Son cevabın tek satır olsun:
-yaptığın şeyin özeti, hiçbir şey yapmadıysan yalnız "sessiz".
+Before finishing, always choose the next wake-up with `kairos_sleep` ({lo}-{hi} minutes). Make your last answer one
+line, in Turkish: a summary of what you did, or only "sessiz" if you did nothing.
 
-# Şu anki durum
+# Current state
 {context}"""
 
 
@@ -238,26 +239,26 @@ class Kairos:
         except Exception:  # noqa: BLE001
             pass
         if idle is not None:
-            rows.append(f"Kullanıcı: {'bilgisayarın başında' if idle < 300 else f'{int(idle // 60)} dakikadır uzakta'}")
+            rows.append(f"User: {'at the computer' if idle < 300 else f'away for {int(idle // 60)} minutes'}")
         pol = self.policy()
         if pol is not None:
-            rows.append(f"Mod: {getattr(pol, 'mode', '?')}")
+            rows.append(f"Mode: {getattr(pol, 'mode', '?')}")
         mem = self.memory()
         if mem is not None:
             try:
                 due = mem.due_followups(now)
                 soon = [f for f in mem.followups() if f.due and now < f.due <= now + 2 * 86400]
                 if due:
-                    rows.append("Günü gelen takipler:\n" + "\n".join(f"- [{f.kind}] {f.text}" for f in due[:8]))
+                    rows.append("Follow-ups due:\n" + "\n".join(f"- [{f.kind}] {f.text}" for f in due[:8]))
                 if soon:
-                    rows.append("Yaklaşan (2 gün):\n" + "\n".join(f"- {_fmt_ts(f.due)} {f.text}" for f in soon[:8]))
+                    rows.append("Coming up (2 days):\n" + "\n".join(f"- {_fmt_ts(f.due)} {f.text}" for f in soon[:8]))
             except Exception:  # noqa: BLE001
                 pass
             try:
                 start = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0).timestamp()
                 log = mem.notes.logs_since(start)
                 if log.strip():
-                    rows.append("Bugünün kaydı (son kısım):\n" + log[-1500:])
+                    rows.append("Today's log (last part):\n" + log[-1500:])
             except Exception:  # noqa: BLE001
                 pass
         if self.store is not None:
@@ -265,7 +266,7 @@ class Kairos:
                 since = float(st.get("last") or now - 6 * 3600)
                 evs = [e for e in self.store.events(since=since, limit=25) if e.topic != "kairos"]
                 if evs:
-                    rows.append("Son uyanıştan beri olaylar:\n" + "\n".join(
+                    rows.append("Events since the last wake-up:\n" + "\n".join(
                         f"- {_fmt_ts(e.ts)} [{e.severity}] {e.title}{': ' + e.body[:160] if e.body else ''}"
                         for e in evs[-15:]))
             except Exception:  # noqa: BLE001
@@ -274,14 +275,14 @@ class Kairos:
             from alice import prwatch
 
             if prwatch.store_path().exists() and prwatch.load():
-                rows.append("İzlenen PR'lar:\n" + prwatch.describe()[:1200])
+                rows.append("Watched PRs:\n" + prwatch.describe()[:1200])
         except Exception:  # noqa: BLE001
             pass
         hist = st.get("history") or []
         if hist:
-            rows.append("Önceki uyanışların:\n" + "\n".join(f"- {_fmt_ts(h['ts'])}: {h.get('summary', '')}"
+            rows.append("Your previous wake-ups:\n" + "\n".join(f"- {_fmt_ts(h['ts'])}: {h.get('summary', '')}"
                                                          for h in hist[-6:]))
-        return "\n\n".join(rows) or "(kayda değer bir şey yok)"
+        return "\n\n".join(rows) or "(nothing worth noting)"
 
     def wake(self) -> str:
         s = settings(self.cfg)

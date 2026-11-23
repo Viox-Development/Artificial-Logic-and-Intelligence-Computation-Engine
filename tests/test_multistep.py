@@ -28,6 +28,16 @@ def test_outcome_reads_last_status_line():
     assert outcome("rapor yok", "SONUÇ", "TAMAM")[0] is None
 
 
+def test_outcome_reads_english_and_older_turkish_markers():
+    from alice.multistep import RESULT_KEY, RESULT_YES, VERIFY_KEY, VERIFY_YES
+
+    assert outcome("did it\nRESULT: DONE - a.txt written", RESULT_KEY, RESULT_YES) == (True, "a.txt written")
+    assert outcome("RESULT: FAILED - no access", RESULT_KEY, RESULT_YES) == (False, "no access")
+    assert outcome("SONUÇ: TAMAM - yazıldı", RESULT_KEY, RESULT_YES) == (True, "yazıldı")
+    assert outcome("**VERIFIED:** NO - file missing", VERIFY_KEY, VERIFY_YES) == (False, "file missing")
+    assert outcome("DOĞRULAMA: EVET - var", VERIFY_KEY, VERIFY_YES) == (True, "var")
+
+
 def test_run_plan_plans_executes_confirms_and_verifies(workdir):
     script = [
         tool_call("run_plan", {"goal": "a.txt'ye selam yaz, sonra b.txt'yi sil ve yerine yenisini yaz"}),
@@ -83,7 +93,7 @@ def test_failed_verification_retries_step_once(workdir):
     agent, provs, _ = make_agent(script, workdir)
     agent.run_turn("yap")
     assert (workdir / "c.txt").exists()
-    retry_prompt = [c for c in provs["a"].calls if "Önceki deneme olmadı" in json.dumps(c["messages"], ensure_ascii=False)]
+    retry_prompt = [c for c in provs["a"].calls if "The previous try failed" in json.dumps(c["messages"], ensure_ascii=False)]
     assert retry_prompt
     report = [m for m in agent.messages if m["role"] == "tool" and m["name"] == "run_plan"][0]["content"]
     assert report.startswith("done: 1/1")
