@@ -522,9 +522,10 @@ def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
     assert [(i["role"], i["value"]) for i in items] == [("Document", "")]
 
 
-def test_collect_ui_elements_off_windows(ctx, monkeypatch):
+def test_collect_ui_elements_on_macos_says_to_use_computer(ctx, monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", False)
-    with pytest.raises(ToolError, match="sadece Windows"):
+    monkeypatch.setattr(desktop.sys, "platform", "darwin")
+    with pytest.raises(ToolError, match="macOS'ta computer"):
         desktop.collect_ui_elements(ctx)
 
 

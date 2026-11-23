@@ -317,7 +317,8 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | ✅ (tested in CI) |
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
-| UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
+| UI elements by ID (`ui_elements` / `ui_act`) | ✅ UI Automation | ✅ AT-SPI (needs PyGObject: `sudo apt install python3-gi gir1.2-atspi-2.0`) | ❌ |
+| Reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
 | On-screen HUD | ✅ | ❌ | ❌ |
 | Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | untested (needs the Accessibility permission) |
 | PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
