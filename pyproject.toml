@@ -42,13 +42,15 @@ core = ["pystray>=0.19"]
 voice = ["sounddevice>=0.4.6", "pynput>=1.7", "webrtcvad-wheels>=2.0.11", "edge-tts>=7.0", "av>=12", "websockets>=13",
          "sherpa-onnx>=1.12"]
 home = ["websockets>=13"]
+# Timeline encryption on Linux/macOS (Windows uses DPAPI): key in the OS keyring, Fernet (AES).
+timeline = ["keyring>=24; sys_platform != 'win32'", "cryptography>=42; sys_platform != 'win32'"]
 # Resmi Claude API (console.anthropic.com anahtarıyla, [providers.anthropic])
 claude = ["anthropic>=2.6"]
 voice-local = ["faster-whisper>=1.0", "openwakeword>=0.6"]
 # XTTS v2 (yerel, Kore sesini taklit eder). transformers 5 XTTS'i bozuyor.
 voice-xtts = ["coqui-tts>=0.27", "transformers<5"]
-all = ["alice-harness[computer,browser,app,core,voice,home,claude]"]
-dev = ["pre-commit>=3", "pytest>=8", "pytest-xdist>=3", "ruff>=0.6", "websockets>=13"]
+all = ["alice-harness[computer,browser,app,core,voice,home,claude,timeline]"]
+dev = ["pre-commit>=3", "pytest>=8", "pytest-xdist>=3", "ruff>=0.6", "websockets>=13", "keyring>=24", "cryptography>=42"]
 
 [project.scripts]
 alice = "alice.cli:main"
