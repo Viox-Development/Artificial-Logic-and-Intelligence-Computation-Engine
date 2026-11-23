@@ -146,7 +146,7 @@ def snapshot(ctx: ToolContext, p: Path) -> None:
         try:
             cp[key] = p.read_bytes() if p.exists() else None
         except OSError:
-            pass
+            pass  # unreadable: no checkpoint for this file
 
 
 def _page_range(pages: str | None, total: int) -> list[int]:

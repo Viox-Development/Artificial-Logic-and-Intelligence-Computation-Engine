@@ -279,7 +279,7 @@ def _diagnose(path: Path, root: Path) -> tuple[str, list[str]]:
                         ln = d.get("range", {}).get("start", {}).get("line", 0) + 1
                         found.append(f"{path.name}:{ln}: {d['severity']}: {d.get('message', '')}")
             except (ValueError, KeyError):
-                pass
+                pass  # malformed diagnostics: report what was parsed
     elif ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
         cfg = next((d / "tsconfig.json" for d in [path.parent, *path.parents] if (d / "tsconfig.json").is_file()),
                    None)

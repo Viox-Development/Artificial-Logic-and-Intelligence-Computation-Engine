@@ -364,5 +364,5 @@ def new_important(cfg=None, client: Any = None) -> list[str]:
         seen_path().parent.mkdir(parents=True, exist_ok=True)
         seen_path().write_text(json.dumps(seen), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the seen list is saved again on the next check
     return [] if first else fresh

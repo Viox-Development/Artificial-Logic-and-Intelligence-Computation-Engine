@@ -323,7 +323,7 @@ class RunCommand(Tool):
                     fh.write((out + ("\n" + err if err.strip() else "")).encode("utf-8", errors="replace"))
                 body += f"\n[tam çıktı dosyada: {name} - kesilen kısmı read_file/grep ile oku]"
             except OSError:
-                pass
+                pass  # no file: the truncated output is returned as is
         if IS_WIN and "is not a valid statement separator" in err:
             body += ("\n[ipucu] Bu Windows PowerShell 5.1: '&&' ve '||' yok. Komutları ';' ile ayır, "
                      "koşul için 'if ($?) { ... }' ya da 'if (-not $?) { ... }' kullan.")
@@ -444,11 +444,11 @@ def kill_tree(pid: int) -> None:
         try:
             child.kill()
         except psutil.Error:
-            pass
+            pass  # already gone
     try:
         parent.kill()
     except psutil.Error:
-        pass
+        pass  # already gone
 
 
 def _visible_window_pids() -> set[int]:
@@ -472,7 +472,7 @@ def _visible_window_pids() -> set[int]:
     try:
         user32.EnumWindows(proto(cb), 0)
     except OSError:
-        pass
+        pass  # window listing failed: return what was found
     return pids
 
 
@@ -522,18 +522,18 @@ def kill_console_tree(pid: int) -> None:
             try:
                 keep.update(c.pid for c in child.children(recursive=True))
             except psutil.Error:
-                pass
+                pass  # already gone
     for child in children:
         if child.pid in keep:
             continue
         try:
             child.kill()
         except psutil.Error:
-            pass
+            pass  # already gone
     try:
         parent.kill()
     except psutil.Error:
-        pass
+        pass  # already gone
 
 
 def _reap(pop: subprocess.Popen) -> None:
@@ -541,7 +541,7 @@ def _reap(pop: subprocess.Popen) -> None:
     try:
         pop.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        pass
+        pass  # left to the OS to reap
 
 
 def cleanup(ctx: ToolContext) -> None:

@@ -67,7 +67,7 @@ def _token_candidates(cfg: Any = None):
             if r.returncode == 0 and r.stdout.strip():
                 yield r.stdout.strip()
         except (OSError, subprocess.SubprocessError):
-            pass
+            pass  # no gh CLI: try the next token source
 
     for k in TOKEN_ENVS:
         if os.environ.get(k):
@@ -138,7 +138,7 @@ def token_source(cfg: Any, token: str | None) -> str:
             if r.returncode == 0 and r.stdout.strip() == token:
                 return "gh CLI (keyring)"
         except (OSError, subprocess.SubprocessError):
-            pass
+            pass  # no gh CLI: the token came from elsewhere
     for k in TOKEN_ENVS:
         if os.environ.get(k) == token:
             return f"Environment ({k})"
