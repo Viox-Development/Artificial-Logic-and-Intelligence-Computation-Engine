@@ -208,6 +208,11 @@ def test_start_quick_skips_without_pynput(monkeypatch):
     import importlib.util
 
     monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None)
+    monkeypatch.setattr("alice.hotkeys.IS_WIN", True)  # Windows: skipped when the voice extra is missing
+    assert core_cli._start_quick(None) is None
+    monkeypatch.setattr("alice.hotkeys.IS_WIN", False)  # elsewhere: skipped when pynput can't work here
+    monkeypatch.setattr("alice.hotkeys.pynput_problem", lambda: "pynput yok")
+    monkeypatch.setattr("alice.hotkeys.wayland_session", lambda: False)
     assert core_cli._start_quick(None) is None
 
 

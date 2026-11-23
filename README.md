@@ -302,7 +302,8 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
 | UI elements by ID, reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
-| On-screen HUD, global shortcuts / quick bar | ✅ | ❌ | ❌ |
+| On-screen HUD | ✅ | ❌ | ❌ |
+| Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | untested (needs the Accessibility permission) |
 | PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
 | Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |
 | Time machine, Steam and flight-sim integration | ✅ | ❌ | ❌ |
