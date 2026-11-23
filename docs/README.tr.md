@@ -301,6 +301,8 @@ Akışlarda CSS seçici yok, "sol listeden {kime} sohbetini aç, mesaj kutusuna 
 
 ## Otomatik güncelleme
 
+> English, and up to date with release channels: [guide/updates.md](guide/updates.md). Varsayılan kanal artık `stable`: ALICE `main`'in her commit'ini değil, yayınlanmış sürümleri (`vX.Y.Z`) izler; her commit için `[update] channel = "main"`.
+
 ALICE kendini GitHub'daki depodan günceller. Ölçü basit: yerel HEAD ile `main`'in ucu aynı mı? Kontrol `git ls-remote` ile yapılıyor, tek ağ turu, fetch yok; o yüzden açılışı bekletmiyor.
 
 * **Açılışta:** `alice app` açılırken `main`'e bakar. Yeni commit varsa fast-forward çeker, `pyproject.toml` değişmişse bağımlılıkları kurar ve kendini yeniden başlatıp **en son sürümü açar**.
