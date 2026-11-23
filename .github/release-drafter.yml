@@ -1,30 +1,47 @@
-# Release notes are drafted automatically from merged pull requests and their labels.
+# Release notes are drafted automatically from merged pull requests and their labels (release-drafter v7 format).
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
 # Only vX.Y.Z tags are releases. The installer workflows also publish "windows" and "android-v*" releases; without
 # this, the drafter treated the newest installer as the previous release, restarted the version at 0.1.0 and dropped
 # every pull request merged before it from the notes.
 tag-prefix: v
+# Categories are checked in this order. exclusive: a pull request is listed only under the first section it matches
+# (v7 lists it under every matching section otherwise, e.g. a dependency bump under both Dependencies and Maintenance).
 categories:
+  # Left out of the notes and of the version bump.
+  - type: "pre-exclude"
+    when:
+      labels: [skip-changelog]
   - title: "🚀 Features"
-    labels: [enhancement]
+    exclusive: true
+    semver-increment: minor
+    when:
+      labels: [enhancement]
   - title: "🐛 Fixes"
-    labels: [bug]
+    exclusive: true
+    when:
+      labels: [bug]
   - title: "🔒 Security"
-    labels: [security, security-sensitive]
+    exclusive: true
+    when:
+      labels: [security, security-sensitive]
   - title: "📦 Dependencies"
-    labels: [dependencies]
+    exclusive: true
+    when:
+      labels: [dependencies]
   - title: "🧰 Maintenance"
-    labels: [ci, docs, tests]
+    exclusive: true
+    when:
+      labels: [ci, docs, tests]
+  # Version bump: "breaking" -> major, "enhancement" -> minor (Features above), anything else -> patch.
+  - type: "version-resolver"
+    semver-increment: major
+    when:
+      labels: [breaking]
+  - type: "version-resolver"
+    semver-increment: patch
 change-template: "- $TITLE (#$NUMBER, by @$AUTHOR)"
-exclude-labels: [skip-changelog]
 exclude-contributors: [dependabot, "dependabot[bot]", "github-actions[bot]"]
-version-resolver:
-  major:
-    labels: [breaking]
-  minor:
-    labels: [enhancement]
-  default: patch
 template: |
   ## Changes
 
