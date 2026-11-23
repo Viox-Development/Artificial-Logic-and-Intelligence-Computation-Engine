@@ -209,14 +209,14 @@ def _foreground() -> tuple[str, str, tuple[int, int, int, int] | None]:
 
 
 def _grab(box: tuple[int, int, int, int]):
-    import mss
+    from alice.tools.imaging import screen_capture
     from PIL import Image
 
     from alice.tools.computer import _dpi_aware
 
     _dpi_aware()
     x, y, w, h = box
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+    with screen_capture() as sct:
         shot = sct.grab({"left": x, "top": y, "width": w, "height": h})
     return Image.frombytes("RGB", shot.size, shot.rgb)
 

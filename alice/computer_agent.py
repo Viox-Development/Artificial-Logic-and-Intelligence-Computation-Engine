@@ -146,7 +146,7 @@ class Screen:
         self.max_elements = max_elements
 
     def observe(self) -> Shot:
-        import mss
+        from alice.tools.imaging import screen_capture
         from PIL import Image, ImageDraw
 
         from alice.tools.computer import _dpi_aware
@@ -161,7 +161,7 @@ class Screen:
             elements = [i for i in items if i.get("rect")]
         except Exception:  # noqa: BLE001 - image only if no UIA
             pass
-        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+        with screen_capture() as sct:
             mon = sct.monitors[self.monitor] if 0 < self.monitor < len(sct.monitors) else self._monitor(sct)
             raw = sct.grab(mon)
         img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
@@ -188,12 +188,12 @@ class Screen:
     def wait_stable(self, max_wait: float = 0.8, every: float = 0.1) -> float:
         """Wait until the screen settles after an action (if two consecutive small images match); returns elapsed time.
         Instead of fixed 0.5 s wait: continue immediately on fast settling clicks, wait a bit on opening menus."""
-        import mss
+        from alice.tools.imaging import screen_capture
         from PIL import Image, ImageChops, ImageStat
 
         t0 = time.monotonic()
         prev = None
-        with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+        with screen_capture() as sct:
             mon = sct.monitors[self.monitor] if 0 < self.monitor < len(sct.monitors) else self._monitor(sct)
             while time.monotonic() - t0 < max_wait:
                 raw = sct.grab(mon)

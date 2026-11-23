@@ -170,10 +170,10 @@ def screen_jpeg(monitor: int = 1) -> bytes:
     now = time.monotonic()
     if now - _screen_cache["at"] < SCREEN_MIN_GAP and _screen_cache["jpg"]:
         return _screen_cache["jpg"]
-    import mss
+    from alice.tools.imaging import screen_capture
     from PIL import Image
 
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+    with screen_capture() as sct:
         mons = sct.monitors
         shot = sct.grab(mons[monitor] if 0 < monitor < len(mons) else mons[1])
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
@@ -248,7 +248,7 @@ def _type(text: str, enter: bool = False) -> str:
 
 def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
     """Point tapped on the phone's screenshot (0-1 fractions) -> pixel on the main screen (as in screen_jpeg)."""
-    import mss
+    from alice.tools.imaging import screen_capture
 
     from alice.tools.computer import _pyautogui
 
@@ -259,7 +259,7 @@ def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
         raise ValueError("dokunulan yer okunamadı") from None
     if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
         raise ValueError("dokunulan yer ekranın dışında")
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+    with screen_capture() as sct:
         m = sct.monitors[1]
     return m["left"] + round(fx * (m["width"] - 1)), m["top"] + round(fy * (m["height"] - 1))
 

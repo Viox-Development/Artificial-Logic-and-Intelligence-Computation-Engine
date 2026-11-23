@@ -121,14 +121,14 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
     """Take a screenshot and save its scale to ctx.state. Returns (b64 png, description)."""
     _dpi_aware()
     try:
-        import mss
+        import mss  # noqa: F401  (only checks that it is installed; screen_capture() opens it)
     except ImportError as e:
         raise ToolError("mss kurulu değil: pip install 'alice-harness[computer]'") from e
     from PIL import Image, ImageDraw
 
-    from alice.tools.imaging import image_to_png_b64
+    from alice.tools.imaging import image_to_png_b64, screen_capture
 
-    with mss.MSS() if hasattr(mss, "MSS") else mss.mss() as sct:
+    with screen_capture() as sct:
         mons = sct.monitors
         if monitor >= len(mons):
             raise ToolError(f"monitör {monitor} yok, {len(mons) - 1} monitör var")
