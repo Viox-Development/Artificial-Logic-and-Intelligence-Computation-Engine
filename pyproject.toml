@@ -66,6 +66,8 @@ include = ["alice*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test still running after 120 s prints every thread's stack, so a hang in CI shows where it is.
+faulthandler_timeout = 120
 
 [tool.ruff]
 line-length = 120
