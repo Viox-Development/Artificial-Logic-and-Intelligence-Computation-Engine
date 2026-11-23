@@ -357,8 +357,8 @@ class RealtimeSession:
         ws = base.replace("https://", "wss://").replace("http://", "ws://")
         return f"{ws}/v1/realtime?model={self.model}"
 
-    # ------------------------------------------------------------------ ön hazırlık
-    WARM_MAX = 60.0  # sn: ısıtılmış oturum bundan eskiyse kapatılır (kullanılmayan bağlantı açık kalmasın)
+    # ------------------------------------------------------------------ warm-up
+    WARM_MAX = 60.0  # s: a warmed-up session older than this is closed (an unused connection must not stay open)
 
     def _open(self) -> Any:
         secret = self._secret()
@@ -373,9 +373,9 @@ class RealtimeSession:
             raise LiveError(f"realtime bağlanamadı: {e}") from e
 
     def prefetch(self, owner: Any = None) -> None:
-        """Oturumu önceden ısıt: bağlan, session.created'ı al, ayarları (talimat, araçlar, ses) gönder.
-        Uyanma kontrolüyle aynı anda ve her cevaptan sonra çalışır; konuşma başlayınca bu ~2 sn beklenmez
-        (ölçüm: bağlantı ~0,9 sn + ayar ~1 sn)."""
+        """Warm up the session in advance: connect, get session.created, send the settings (instructions, tools,
+        voice). Runs alongside the wake check and after every answer, so these ~2 s are not waited for when the
+        conversation starts (measured: connection ~0.9 s + settings ~1 s)."""
         if not self.available:
             return
         with self._pre_lock:
@@ -408,8 +408,8 @@ class RealtimeSession:
             timer.start()
 
     def discard(self, owner: Any = None) -> None:
-        """Uyandırma çıkmadı: o cümle için açılan bağlantıyı kapat. Başkasının (ör. cevap sonrası ısıtılan)
-        oturumuna dokunma."""
+        """No wake word after all: close the connection opened for that sentence. Don't touch anyone else's session
+        (e.g. one warmed up after an answer)."""
         with self._pre_lock:
             if not self._pre or (owner is not None and self._pre.get("owner") is not owner):
                 return
@@ -417,7 +417,7 @@ class RealtimeSession:
         threading.Thread(target=_close, args=(pre,), daemon=True).start()
 
     def _take(self) -> tuple[Any, bool]:
-        """(bağlantı, ısıtılmış mı). Isıtılmışsa ayarlar zaten gönderildi."""
+        """(connection, warmed up?). If warmed up, the settings were already sent."""
         with self._pre_lock:
             pre, self._pre = self._pre, {}
         if pre:
@@ -430,11 +430,11 @@ class RealtimeSession:
                 self.log(f"realtime ön hazırlık başarısız: {pre['error']}")
         return self._open(), False
 
-    # ------------------------------------------------------------------ ana akış
+    # ------------------------------------------------------------------ main flow
     def converse(self, first_text: str, frames: "queue.Queue[bytes]", stop: threading.Event,
                  first_audio: bytes = b"", hint: Callable[[], str | None] | None = None,
                  ended: float | None = None, need_wake: bool = False, check_addressed: bool = False) -> None:
-        """Mikrofon karelerini (16 kHz, 30 ms) modele akıt, cevabı çal, araçları çalıştır. Sessizlikte döner."""
+        """Stream mic frames (16 kHz, 30 ms) to the model, play the answer, run the tools. Returns on silence."""
         if hint is not None and not first_text and not self.prefers_audio:
             try:
                 first_text = hint() or ""
@@ -450,7 +450,7 @@ class RealtimeSession:
         state = {"active": time.monotonic(), "heard": "", "said": "", "calls": {}, "done": False,
                  "answered": False, "want_response": False, "output_until": 0.0,
                  "echo_notice": False, "finish": False, "said_parts": [], "tools": [],
-                 # Discord'daki devam cümlesi: cevap ancak Jev "ALICE'e söylendi" derse üretilir (addressed.py).
+                 # A follow-up sentence in Discord: an answer is produced only if Jev says "it was said to ALICE" (addressed.py).
                  "gate": "pending" if check_addressed else "open", "gate_until": time.monotonic() + 8.0,
                  "check": check_addressed, "muted": False, "responding": False, "barged": False}
         self.declined = False
@@ -482,9 +482,9 @@ class RealtimeSession:
         tool_thread: threading.Thread | None = None
         try:
             if not warm:
-                ws.recv()  # session.created (ya da hata); ayrıntısına gerek yok
+                ws.recv()  # session.created (or an error); the details are not needed
                 if self._send_update:
-                    # Talimatlar, araçlar ve ses: HTTP gövdesi yerine oturum açıldıktan sonra gönderilir.
+                    # Instructions, tools and voice: sent after the session opens instead of in the HTTP body.
                     send({"type": "session.update", "session": self._session_config()["session"]})
             if state["gate"] == "pending":
                 td = self._session_config()["session"]["audio"]["input"]["turn_detection"]
@@ -502,28 +502,28 @@ class RealtimeSession:
                     except queue.Empty:
                         break
                     if frame:
-                        # Ses çalarken yalnızca mikrofondaki hoparlör yankısını Realtime'a geri verirdik.
-                        # VAD'in yeni tur açıp response'u yarıda bırakmasına yol açan asıl döngü buydu.
-                        # Kareleri burada atmak, eski sesin konuşma bitince yeni bir istek gibi işlenmesini de
-                        # engeller. ``output_until`` ağ paketleri arasındaki kısa boşlukları kapsar.
+                        # While audio plays we would only be feeding the speaker echo in the mic back to Realtime.
+                        # That was the real loop that made VAD open a new turn and drop the response halfway.
+                        # Dropping the frames here also keeps the old audio from being handled as a new request
+                        # once speech ends. ``output_until`` covers the short gaps between network packets.
                         if self.echo_guard and (self.playing or time.monotonic() < state["output_until"]):
                             if not (any(frame) and self.barge_ok()):
                                 continue
                             if not state["barged"]:
-                                # Ses izi doğruladı: kullanıcı ALICE'in sözünü kesiyor (eskiden konuşurken gelen her
-                                # kare atılıyordu; araya girmek de "Alice sus" da işlemiyordu, 7 Kasım). Bir cevap
-                                # için bir kez: ses kesildikten sonra çalıcı kısa süre "çalıyor" görünüyor, her
-                                # karede yeniden iptal gönderiliyordu (onlarca response_cancel_not_active).
+                                # The voice print confirmed it: the user is interrupting ALICE (every frame arriving while
+                                # it spoke used to be dropped; neither cutting in nor "Alice sus" worked, 7 November). Once
+                                # per answer: after the audio is cut the player looks "playing" for a moment, and a cancel
+                                # was sent again on every frame (dozens of response_cancel_not_active).
                                 self.log("realtime: kullanıcı araya girdi, ALICE susuyor")
                                 out.clear()
                                 if state["responding"]:
                                     send({"type": "response.cancel"})
                                 state.update(output_until=0.0, finish=False, muted=state["responding"],
                                              barged=True)
-                                if state["check"]:  # Discord: yeni cümle de ALICE'e mi söylendi, Jev baksın
+                                if state["check"]:  # Discord: let Jev check whether the new sentence was also said to ALICE
                                     state.update(gate="pending", gate_until=time.monotonic() + 8.0)
                         send_pcm(resample_16_to_24(frame))
-                        # Sessizlik kareleri oturumu açık tutmasın: 5 sn kimse konuşmazsa kapanır.
+                        # Silent frames must not keep the session open: it closes if nobody speaks for 5 s.
                         if any(frame):
                             touch()
                 if pending_audio:
@@ -533,18 +533,18 @@ class RealtimeSession:
                     raw = ws.recv(timeout=0.05)
                 except TimeoutError:
                     raw = None
-                except Exception as e:  # noqa: BLE001 - bağlantı koptu
+                except Exception as e:  # noqa: BLE001 - the connection dropped
                     raise LiveError(f"realtime bağlantısı koptu: {e}") from e
                 if raw is None:
                     if self.playing:
-                        # Sessizlik penceresi ALICE sustuktan sonra başlasın. Model sesi gerçek zamandan hızlı
-                        # gönderdiği için son parça çok önce gelmiş olur; eskiden ses biter bitmez oturum kapanıyor,
-                        # kullanıcının cevabı yeni (bağlamsız, yavaş) bir oturuma gidiyordu.
+                        # The silence window starts after ALICE stops talking. The model sends audio faster than real
+                        # time, so the last chunk arrives long before; the session used to close as soon as the audio
+                        # arrived, and the user's reply went to a new (context-free, slow) session.
                         touch()
                         continue
                     if tool_thread is not None and tool_thread.is_alive():
-                        # Araç/think sürüyor: sessizlik sayma. Eskiden 12 sn'de oturum kapanıyor, think'in sonucu
-                        # kapalı bağlantıya gidip kayboluyordu ("eee açacaktın").
+                        # A tool/think is running: don't count silence. The session used to close after 12 s, and think's
+                        # result went to the closed connection and was lost ("eee açacaktın" = well, you were going to open it).
                         touch()
                         continue
                     if state["gate"] == "pending" and time.monotonic() > state["gate_until"]:
@@ -552,7 +552,7 @@ class RealtimeSession:
                         self.declined = True
                         break
                     if state["finish"]:
-                        break  # tek cevaplık tur (Discord/oyun): cevap sonuna kadar çalındı
+                        break  # single-answer turn (Discord/game): the answer played to the end
                     if time.monotonic() - state["active"] > self.idle:
                         self.log("realtime: sessizlik, oturum kapanıyor")
                         break
@@ -560,9 +560,9 @@ class RealtimeSession:
                 ev = self._decode(raw)
                 kind = ev.get("type", "")
                 if kind == "response.created":
-                    state.update(muted=False, responding=True, barged=False)  # yeni cevap (araya girildiyse de)
+                    state.update(muted=False, responding=True, barged=False)  # a new answer (also after an interruption)
                 elif kind in ("response.output_audio.delta", "response.audio.delta") and state["muted"]:
-                    continue  # kesilen cevabın yoldaki parçaları
+                    continue  # chunks of the interrupted answer still on the way
                 elif kind in ("response.output_audio.delta", "response.audio.delta"):
                     try:
                         out.put(base64.b64decode(ev.get("delta", "")))
@@ -570,7 +570,7 @@ class RealtimeSession:
                         pass
                     state["output_until"] = time.monotonic() + 0.35
                     if not state["answered"]:
-                        # Gecikme ölçümü: kullanıcı sustuktan (yoksa oturum isteğinden) ilk sese kadar.
+                        # Latency: from when the user stopped talking (otherwise from the session request) to the first sound.
                         start = ended if isinstance(ended, (int, float)) and ended > 0 else t0
                         self.log(f"realtime ilk ses: {time.monotonic() - start:.2f} sn")
                     state["answered"] = True
@@ -579,7 +579,7 @@ class RealtimeSession:
                     state["said"] += ev.get("delta", "")
                     touch()
                 elif kind == "response.output_audio_transcript.done" or kind == "response.audio_transcript.done":
-                    # Araçtan önceki "Bir bakayım." ile sonraki cevap ayrı cevaplar: ikisi de kayda girsin.
+                    # "Bir bakayım." (let me look) before a tool and the answer after it are separate answers: log both.
                     part = str(ev.get("transcript") or state["said"]).strip()
                     if part:
                         state["said_parts"].append(part)
@@ -598,11 +598,12 @@ class RealtimeSession:
                         if self.on_heard is not None:
                             try:
                                 self.on_heard(text)
-                            except Exception:  # noqa: BLE001 - ekran hatası konuşmayı bozmasın
+                            except Exception:  # noqa: BLE001 - a screen error must not break the conversation
                                 pass
                         if self._is_hush(text):
-                            # "Sus", "sana demedim": çalan sesi kes, üretilen cevabı iptal et ve oturumu kapat. Eskiden
-                            # yalnız döküm kuyruğu boşalıyordu; sunucu cevabı sürdürüyor, ALICE konuşmaya devam ediyordu.
+                            # "Sus" (be quiet), "sana demedim" (I wasn't talking to you): cut the playing audio, cancel the answer
+                            # being produced and close the session. Before, only the transcript queue was emptied; the server kept
+                            # producing the answer and ALICE kept talking.
                             self.hushed = True
                             out.clear()
                             if state["responding"]:
@@ -618,16 +619,16 @@ class RealtimeSession:
                                 state["done"] = True
                         touch()
                 elif kind == "input_audio_buffer.speech_started":
-                    # Yankı koruması açıkken bu olay çoğunlukla önceki birkaç mikrofon karesinden gelir.
-                    # Cevabı temizleme ya da konuşma zamanını uzatma: ikisi de cümleyi yarıda kesiyordu.
+                    # With echo protection on, this event mostly comes from the previous few mic frames.
+                    # Don't clear the answer or extend the speaking time: both cut the sentence off halfway.
                     if self.echo_guard and (self.playing or time.monotonic() < state["output_until"]):
                         if not state["echo_notice"]:
                             self.log("realtime: çalarken algılanan ses yankı korumasıyla yok sayıldı")
                             state["echo_notice"] = True
                         continue
                     if not self.echo_guard and self.playing:
-                        # Yankı koruması kapalı (kulaklık, telefonun yankı engelleyicisi): sunucu cevabı iptal eder
-                        # ama önceden gelmiş ses çalmaya devam ediyordu; kullanıcı konuşunca hemen sus.
+                        # Echo protection off (headset, the phone's echo canceller): the server cancels the answer
+                        # but audio that already arrived kept playing; go quiet as soon as the user speaks.
                         out.clear()
                     touch()
                 elif kind in ("response.function_call_arguments.done",):
@@ -650,8 +651,8 @@ class RealtimeSession:
                         tool_thread.start()
                     else:
                         if self.single_turn and state["answered"] and status != "cancelled":
-                            # response.done üretimin bittiğini söyler, çalmanın değil: burada çıkınca close()
-                            # kuyruktaki sesi atıyor, ALICE cümlenin ortasında susuyordu. Ses bitince çıkılır.
+                            # response.done says production finished, not playback: exiting here made close() drop
+                            # the queued audio and ALICE went quiet mid-sentence. Exit when the audio has finished.
                             state["finish"] = True
                         if not self.playing:
                             touch()
@@ -659,7 +660,7 @@ class RealtimeSession:
                     continue
                 elif kind == "error":
                     if (ev.get("error") or {}).get("code") == "response_cancel_not_active":
-                        continue  # susturulacak cevap yoktu (dokunuş/araya girme): önemsiz
+                        continue  # there was no answer to silence (tap/interruption): harmless
                     self.log(f"realtime hata: {json.dumps(ev.get('error') or ev, ensure_ascii=False)[:300]}")
                     info = ev.get("error") or {}
                     err = str(info.get("code") or info.get("type") or "")
@@ -667,26 +668,26 @@ class RealtimeSession:
                     if err in ("invalid_api_key", "session_expired"):
                         raise LiveError(f"realtime oturumu geçersiz: {err}. {msg[:120]}")
                     if any(k in (err + msg).lower() for k in ("rate limit", "quota", "exhausted", "billing", "429")):
-                        # Kota/limit doldu: her "Hey Alice"te yeniden denemek yerine VoiceAssistant
-                        # bir saat normal sesli yola döner (LiveError.limited bunu message'dan anlar).
+                        # Quota/limit reached: instead of retrying on every "Hey Alice", VoiceAssistant
+                        # uses the normal voice path for an hour (LiveError.limited tells this from the message).
                         raise LiveError(f"realtime quota/rate limit: {err}. {msg[:160]}")
                     if err in ("invalid_model",):
                         raise LiveError(f"realtime modeli desteklenmiyor: {msg[:160]}")
         finally:
             self.agent.ui = old_ui
             try:
-                if not self.declined:  # arkadaşa söylenen cümle sohbet geçmişine girmesin
+                if not self.declined:  # a sentence said to a friend must not go into the chat history
                     self._remember(f"{first_text} {state['heard']}", " ".join(state["said_parts"] + [state["said"]]),
                                    state["tools"])
-            except Exception:  # noqa: BLE001 - kayıt konuşmayı bozmasın
+            except Exception:  # noqa: BLE001 - logging must not break the conversation
                 pass
             try:
                 ws.close()
             except Exception:  # noqa: BLE001
                 pass
             if not self.hushed and not stop.is_set():
-                # Bağlantı koptuysa ya da oturum başka sebeple bittiyse de gelmiş ses sonuna kadar çalınsın;
-                # close() kuyruğu boşaltır. "Alice sus" ve durdurma beklemeden keser.
+                # Even if the connection dropped or the session ended for another reason, play the audio that
+                # arrived to the end; close() empties the queue. "Alice sus" and stopping cut it off without waiting.
                 drain = getattr(out, "drain", None)
                 if callable(drain):
                     try:
