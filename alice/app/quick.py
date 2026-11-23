@@ -224,7 +224,7 @@ class QuickBar:
             if url_file().read_text(encoding="utf-8") == self.url:
                 url_file().unlink()
         except OSError:
-            pass
+            pass  # already gone or not ours: the next start overwrites it
 
 
 def url_file() -> Path:

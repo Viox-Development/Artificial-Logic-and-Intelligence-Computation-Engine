@@ -131,7 +131,7 @@ def release() -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except ImportError:
-        pass
+        pass  # no torch: no CUDA cache to free
 
 
 def load_whisper(name: str, device: str):
@@ -429,7 +429,7 @@ def main() -> int:
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C: shut down quietly
     return 0
 
 

@@ -98,6 +98,6 @@ def make_trimmer(stt=None) -> Callable[[Audio, str], Audio]:
                 if out is not None:
                     return out
             except Exception:
-                pass
+                pass  # word timing failed: fall back to trimming by length
         return by_length(audio, text)
     return trim

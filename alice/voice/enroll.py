@@ -101,7 +101,7 @@ class EnrollSession:
                 try:
                     sid.enrolling_path().unlink()
                 except OSError:
-                    pass
+                    pass  # marker already gone
 
         self._thread = threading.Thread(target=body, daemon=True, name=f"alice-voice-{name}")
         self._thread.start()
@@ -139,7 +139,7 @@ class EnrollSession:
         try:
             sid.profile_path().unlink()
         except FileNotFoundError:
-            pass
+            pass  # no profile yet: nothing to delete
         self._reset("idle", message="ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir")
         return {"ok": True}
 

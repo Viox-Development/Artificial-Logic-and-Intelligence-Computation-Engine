@@ -283,8 +283,6 @@ def test_label_low_restores_exes_and_repairs_old_labels(tmp_path, monkeypatch):
 def test_old_labels_on_personal_folders_are_reset_to_medium(tmp_path, monkeypatch):
     """#226: old versions could label Downloads etc. low-integrity writable; the label stayed after the sandbox
     stopped accepting them. They are set back to medium and dropped from the list; project folders stay."""
-    import json
-    import sys
     from pathlib import Path
 
     from alice.config import alice_home
