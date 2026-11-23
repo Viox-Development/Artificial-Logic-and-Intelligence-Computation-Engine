@@ -8,10 +8,11 @@ from alice.tools.base import READ, Tool, ToolContext, ToolResult, obj
 class NowState(Tool):
     name = "now"
     description = (
-        "Kullanıcının şu anki durumu tek yerde: mod, öndeki program, oyunda mı, bugünün uçuşları (kaç, ortalama "
-        "süre, son ölümlerden önce arkada düşman var mıydı), nabız, alışkanlığa göre beklenen oyun saati ve öneri.\n"
-        "- Kullan: \"nasılım\", \"ne durumdayım\", \"mola vermeli miyim\", \"bugün nasıl gidiyor\".\n"
-        "- Kullanma: geçmiş ölçüm grafikleri için metrics, canlı uçuş verisi için flight."
+        "The user's current state in one place: mode, the program in front, whether they are in a game, today's "
+        "flights (how many, average length, whether an enemy was behind them before recent deaths), heart rate, the "
+        "expected play time from their habits, and a suggestion.\n"
+        "- Use it for: \"how am I doing\", \"what's my status\", \"should I take a break\", \"how is today going\".\n"
+        "- Don't use it for: past measurement charts (metrics), live flight data (flight)."
     )
     parameters = obj({}, [])
     risk = READ
