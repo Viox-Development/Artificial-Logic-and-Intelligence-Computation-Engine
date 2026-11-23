@@ -96,8 +96,7 @@ WhatsApp, Instagram and TikTok have no official API usable with a personal accou
 business number, and the Instagram and TikTok APIs depend on a business/creator account and an approval process.
 For these the right path is not an API but the real browser ALICE opens with a persistent profile (the `browser`
 tool) and reflex mode: you log in once and the session stays open. Ready-made recipes for these sites are in
-`alice/apps.toml`, and the `app` tool runs them (see the "Uygulama tarifleri" section of the detailed guide,
-[docs/README.tr.md](README.tr.md)).
+`alice/apps.toml`, and the `app` tool runs them (see [guide/apps.md](guide/apps.md)).
 
 ## Feeds: watching a connection
 
@@ -121,8 +120,7 @@ something). The first round is silent; at most 5 notifications are sent per roun
 
 `[feed.when]` (any/all/none/regex/fields/min/max/ask) decides which items get notified, and `[feed.escalate]` which
 ones are urgent; `mode = "change"` watches a field for changes, and `quiet`, `digest_minutes` and `cooldown_minutes`
-set when notifications are delivered. The full list and examples are in the "Akışlar" section of the detailed guide,
-[docs/README.tr.md](README.tr.md). While setting up a condition, `alice feeds --test <name>` shows why each item
+set when notifications are delivered. The full list and examples are in [guide/feeds.md](guide/feeds.md). While setting up a condition, `alice feeds --test <name>` shows why each item
 passed or was filtered out.
 
 ## Speed and resilience
