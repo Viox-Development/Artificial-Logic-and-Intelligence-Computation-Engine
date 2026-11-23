@@ -205,6 +205,11 @@ def test_process_kill_risk(monkeypatch):
     # the test randomly failed on the Windows runner. Pin the process table.
     names = {1234: "notepad.exe", 4321: "csrss.exe"}
     monkeypatch.setattr(system.psutil, "Process", lambda pid: SimpleNamespace(name=lambda: names[pid]))
+    # ALICE's own pid and its parent count as protected; on the macOS runner the parent was pid 1234.
+    import os
+
+    monkeypatch.setattr(os, "getpid", lambda: 999_001)
+    monkeypatch.setattr(os, "getppid", lambda: 999_002)
     k = system.ProcessKill()
     assert k.risk_for({"pid": 1234}) == EXEC
     assert k.risk_for({"pid": 4321}) == DANGER     # a protected process given by pid also requires confirmation

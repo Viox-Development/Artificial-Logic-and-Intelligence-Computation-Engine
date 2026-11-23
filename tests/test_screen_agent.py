@@ -561,7 +561,8 @@ def test_long_or_multiline_text_is_pasted(monkeypatch):
     assert calls == [("write", ("1234*5678=",))]  # short single line: not sent via the clipboard (calculator)
     calls.clear()
     computer.type_text("1\n2\n3")
-    assert calls[:2] == [("copy", ("1\n2\n3",)), ("hotkey", ("ctrl", "v"))] and board["v"] == "eski pano"
+    paste = "command" if sys.platform == "darwin" else "ctrl"
+    assert calls[:2] == [("copy", ("1\n2\n3",)), ("hotkey", (paste, "v"))] and board["v"] == "eski pano"
 
 
 def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
