@@ -44,7 +44,7 @@ def _cfg(**agent):
 
 def test_compact_at_follows_model_window():
     a = _agent(_cfg(compact_at_tokens="auto", compact_max_tokens=0))
-    assert a.compact_at == int(1_048_576 * 0.8)
+    assert a.compact_at == int(1_048_576 * 0.6)
     # A hand-written 48000 is respected (it used to be treated as "auto" and the chat grew to 800K).
     assert _agent(_cfg(compact_at_tokens=48000)).compact_at == 48000
     # Any other manually written number is kept as is.
@@ -71,3 +71,22 @@ def test_legacy_brain_default_follows_current_default(tmp_path):
     assert cfg.roles["fast"] == ["auto"]
     p.write_text('[roles]\nbrain = ["gemini:gemini-3.8-flash"]\n', encoding="utf-8")
     assert load_config(p).roles["brain"] == ["gemini:gemini-3.8-flash"]  # the user's choice stays
+
+
+def test_no_resummarize_when_summary_cannot_shrink_context():
+    # Nov 22: system prompt + tool specs alone sat near the threshold, so every step summarized again
+    # (summary call + full cache rewrite each time). After one summary it must wait for real growth.
+    a = _agent(_cfg(compact_at_tokens=16000))
+    calls = []
+    a.context_tokens = lambda: 20000  # stays above the threshold whatever is summarized
+    a.router.chat = lambda *x, **k: calls.append(1) or ChatResult(
+        normalize_message({"content": "# Özet\nkullanıcı X istedi, Y yapıldı, sırada Z var."}), "nvidia", "m", {})
+    for i in range(6):
+        a.messages += [{"role": "user", "content": f"istek {i} " + "y" * 4000},
+                       {"role": "assistant", "content": "tamam " + "z" * 4000}]
+    assert a._maybe_compact()
+    for _ in range(5):
+        assert not a._maybe_compact()
+    assert len(calls) == 1
+    a.context_tokens = lambda: 20000 + 9000  # grown by more than the margin: summarizing is allowed again
+    assert a._maybe_compact()

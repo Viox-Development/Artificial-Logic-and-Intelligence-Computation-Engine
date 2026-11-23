@@ -299,6 +299,10 @@ class Hit:
         return self.item.line()
 
 
+HISTORY_OFF = ("geçmiş sohbet araması kapalı (kullanıcı Ayarlar > Hafıza'dan kapattı); eski konuşmaları bilmiyorsun, "
+               "uydurma: gerekirse kullanıcıya sor")
+
+
 class LongMemory:
     def __init__(self, path: Path | str, options: dict[str, Any] | None = None,
                  extractor: Callable[[str], str] | None = None, embedder: Any = None,
@@ -316,6 +320,9 @@ class LongMemory:
         self.dream_enabled = bool(o.get("dream", o.get("consolidate", True)))
         self.dream_hours = float(o.get("dream_hours", 24))
         self.dream_sessions = int(o.get("dream_sessions", 5))
+        # Settings > Memory > "Geçmiş sohbetlerde ara" (like Claude's "Search and reference chats"). Off: turns are not
+        # kept at all, search_chats / recent_chats answer that it is off, and no past-chat summary is added to messages.
+        self.chat_history = bool(o.get("chat_history", True))
         self._turns_since_extract = 0
         self._turns_lock = threading.Lock()  # the counter is incremented from several channels at once (voice, chat, Discord)
         self._last_dream_scan: float | None = None  # monotonic; None = never scanned (right after startup, monotonic may be < 600)
@@ -703,6 +710,8 @@ class LongMemory:
 
     # ------------------------------------------------------------------ conversations
     def record(self, user: str, reply: str, channel: str = "", sid: str = "") -> int | None:
+        if not self.chat_history:
+            return None
         user = clean_user_text(user)
         reply = (reply or "").strip()
         if not user or noise_turn(user):
@@ -930,6 +939,8 @@ class LongMemory:
 
     def recent_chats(self, n: int = 5, after: float | None = None, before: float | None = None) -> str:
         """The last n chats (or those in the given time range), newest first."""
+        if not self.chat_history:
+            return HISTORY_OFF
         groups = self.sessions(after, before)[-max(1, min(int(n), 20)):]
         now = time.time()
         return "\n\n".join(self._session_text(g, now=now) for g in reversed(groups)) or "bu aralıkta konuşma yok"
@@ -937,6 +948,8 @@ class LongMemory:
     def search_chats(self, query: str, limit: int = 5, after: float | None = None,
                      before: float | None = None) -> str:
         """Search past chats by topic: the chats containing matching turns (summary + context turns)."""
+        if not self.chat_history:
+            return HISTORY_OFF
         hits = self.search(query, limit=30, facts=False, min_score=0.2)
         picked: list[tuple[float, float]] = []  # (puan, tur zamanı)
         for h in hits:
@@ -988,7 +1001,7 @@ class LongMemory:
         picked = select_relevant(clean, notes, chooser, limit=5, recent_tools=recent_tools,
                                  context=clean_user_text(context) if context else "") if notes else []
         sums = [h for h in self.search(clean, limit=4, facts=False, exclude_after=exclude_after)
-                if isinstance(h.item, Summary) and h.score >= 0.6][:2]
+                if isinstance(h.item, Summary) and h.score >= 0.6][:2] if self.chat_history else []
         if not picked and not sums:
             return ""
         for n in picked:
@@ -1576,6 +1589,11 @@ class LongMemory:
             self.db.commit()
         self._bump()
         return {"episodes": len(ids), "summaries": len(gone_sums)}
+
+    def history_counts(self) -> dict[str, int]:
+        with self._lock:
+            return {"episodes": int(self.db.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]),
+                    "summaries": int(self.db.execute("SELECT COUNT(*) FROM summaries").fetchone()[0])}
 
     def forget_history(self) -> dict[str, int]:
         """The whole conversation history (turns, summaries, vectors). Notes and follow-ups stay."""

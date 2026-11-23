@@ -67,7 +67,7 @@ parallel_commands = true
 # hata verirse DuckDuckGo/Bing'e düşer.
 search_grounding = true
 grounding_model = "gemini-flash-latest"
-# Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %80'i
+# Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %60'ı
 # (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).
 compact_at_tokens = "auto"
 # Özet isteği konuşmanın kendisinin üstüne eklenir: geçmiş prompt önbelleğinden okunur, baştan ödenmez.
@@ -192,6 +192,9 @@ keep_days = 365
 # (sınavın nasıl geçtiğini sorma, yarım kalan iş). false: özetleme kapalı.
 digest = true
 session_gap_minutes = 20
+# Geçmiş sohbetlerde ara (Ayarlar > Hafıza): ALICE gerekince eski sohbetleri arar (search_chats / recent_chats).
+# false: konuşma turları hiç saklanmaz, eski sohbetlerden hiçbir şey mesajlara eklenmez.
+chat_history = true
 # Anlam araması (embedding): bu sağlayıcının OpenAI uyumlu /embeddings ucu kullanılır. Anahtar yoksa ya da "off" ise
 # sadece kelime araması. embed_min: bu benzerliğin (kosinüs) altı ilgisiz sayılır.
 embed_provider = "gemini"

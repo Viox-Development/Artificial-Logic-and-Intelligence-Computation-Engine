@@ -544,3 +544,13 @@ def test_learn_turn_counter_is_thread_safe(monkeypatch):
     finally:
         sys.setswitchinterval(old)
     assert len(calls) == 800 // 4 and m._turns_since_extract == 0
+
+
+def test_chat_history_off_keeps_no_turns_and_says_so():
+    m = LongMemory(":memory:", {"chat_history": False})
+    assert m.record("dün sınavım vardı, kötü geçti", "geçmiş olsun") is None
+    assert m.history_counts() == {"episodes": 0, "summaries": 0}
+    assert "kapalı" in m.search_chats("sınav") and "kapalı" in m.recent_chats()
+    m.chat_history = True
+    assert m.record("dün sınavım vardı, kötü geçti", "geçmiş olsun") is not None
+    assert m.history_counts()["episodes"] == 1

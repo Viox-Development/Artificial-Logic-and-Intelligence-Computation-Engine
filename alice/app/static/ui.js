@@ -2293,8 +2293,6 @@ function memoryPane(pane, data) {
   };
   f.addEventListener("input", draw);
   draw();
-  // Raw turns are no longer injected into the prompt, but they are still kept for search_chats / recent_chats,
-  // so the pane keeps the block that lets the user see and delete them.
   historyBlock(pane, d);
   if ((d.followups || []).length) {
     pane.appendChild(el("div", "sec", "Takipler (sonra sorulacak / hatırlatılacak)"));
@@ -2307,47 +2305,45 @@ function memoryPane(pane, data) {
     }
   }
 }
-/* Hatırlanan geçmiş konuşmalar (özetler ve son turlar): ALICE bunları yeni sohbetlerde "hatırlar"; tek tek ya da
-   hepsi birden silinebilir. Sohbeti kenar çubuğundan silmek de o sohbetin buradaki izlerini siler. */
+/* Geçmiş sohbetler: Claude'daki "Search and reference chats" gibi tek bir anahtar. Turlar burada tek tek listelenmez
+   (Hafıza sayfası notlar içindir); ALICE gerekince eski sohbetleri kendisi arar. Kapalıyken turlar hiç saklanmaz. */
 function historyBlock(pane, d) {
-  const sums = d.summaries || [], eps = d.episodes || [];
-  if (!sums.length && !eps.length) return;
-  const head = el("div", "list-row");
-  const hl = el("span", "l");
-  hl.append(el("b", "", "Hatırlanan konuşmalar"),
-    el("small", "", "ALICE geçmiş sohbetleri bu özetlerden ve turlardan hatırlar. Yanlış ya da istemediğin birini sil; sohbeti kenar çubuğundan silmek de buradaki izlerini siler."));
-  const all = el("button", "btn", "Hepsini unut");
+  const on = d.chat_history !== false, h = d.history || {};
+  pane.appendChild(el("div", "sec", "Geçmiş sohbetler"));
+  const row = el("div", "list-row");
+  const l = el("span", "l");
+  l.append(el("b", "", "Geçmiş sohbetlerde ara"),
+    el("small", "", on
+      ? "ALICE, sen geçmişe değinince (\"dün konuştuğumuz…\") eski sohbetlerini arayıp bulabilir. Eski konuşmalar mesajlara kendiliğinden eklenmez."
+      : "Kapalı: konuşmalar saklanmaz, ALICE eski sohbetleri bilmez. Notların etkilenmez."));
+  const sw = switchEl(on, on ? "Kapat" : "Aç", (v) => api("/api/memory/action", { action: "chat_history", on: v }).then((r) => {
+    toast(r && r.ok ? (v ? "Geçmiş sohbet araması açıldı" : "Geçmiş sohbet araması kapatıldı") : "kaydedilemedi");
+    showSettings("memory");
+  }));
+  row.append(l, sw);
+  pane.appendChild(row);
+  const n = (h.episodes || 0) + (h.summaries || 0);
+  if (!n) return;
+  const row2 = el("div", "list-row");
+  const l2 = el("span", "l");
+  l2.append(el("small", "", `Saklanan: ${h.episodes || 0} tur, ${h.summaries || 0} konuşma özeti. Bir sohbeti kenar çubuğundan silmek onun izlerini de siler.`));
+  const all = el("button", "btn", "Kaydı temizle");
   all.addEventListener("click", async () => {
-    if (!confirm("Bütün konuşma geçmişi (özetler ve turlar) hafızadan silinsin mi? Notlar ve takipler kalır. Geri alınamaz.")) return;
+    if (!confirm("Saklanan bütün sohbet geçmişi (turlar ve özetler) silinsin mi? Notlar ve takipler kalır. Geri alınamaz.")) return;
     const r = await api("/api/memory/action", { action: "forget_history" });
     toast(r && r.ok ? `${r.episodes} tur, ${r.summaries} özet silindi` : "silinemedi");
     showSettings("memory");
   });
-  head.append(hl, all);
-  pane.appendChild(head);
-  const rows = (title, items, action) => {
-    if (!items.length) return;
-    const det = el("details", "mem-history");
-    det.appendChild(el("summary", "", `${title} (${items.length})`));
-    for (const x of items) {
-      const row = el("div", "list-row");
-      const b = el("button", "btn", "Sil");
-      b.addEventListener("click", () => api("/api/memory/action", { action, id: x.id }).then((r) => {
-        if (r && r.ok) row.remove(); else toast("silinemedi");
-      }));
-      row.append(el("span", "l", x.text), b);
-      det.appendChild(row);
-    }
-    pane.appendChild(det);
-  };
-  rows("Konuşma özetleri", sums, "forget_summary");
-  rows("Son turlar", eps, "forget_episode");
+  row2.append(l2, all);
+  pane.appendChild(row2);
 }
 function noteRow(x, notes, redraw) {
   const row = el("div", "list-row mem-note" + (x.old ? " warn" : ""));
   const l = el("span", "l");
-  const meta = `${x.type_tr} · ${x.age}` + (x.source === "kullanıcı" ? " · senin isteğin" : "") + (x.old ? " · eski rolden" : "");
-  l.append(el("b", "", x.title || x.name), el("small", "", x.description), el("small", "mem-meta", meta));
+  const al = (x.aliases || []).filter((a) => a.toLocaleLowerCase("tr") !== String(x.name).toLocaleLowerCase("tr"));
+  const meta = [al.length ? "diğer adları: " + al.join(", ") : "", (x.links || []).length ? "bağlı: " + x.links.join(", ") : "",
+    "güncellendi " + x.age, x.source === "kullanıcı" ? "senin isteğin" : "", x.old ? "eski rolden" : ""].filter(Boolean).join(" · ");
+  l.append(el("b", "", x.title || x.name), el("small", "", String(x.description || "").replace(/\[\[([^\]]+)\]\]/g, "$1")), el("small", "mem-meta", meta));
   const body = el("div", "mem-body");
   body.hidden = true;
   const ta = el("textarea"); ta.value = x.body; ta.rows = Math.min(14, Math.max(3, x.body.split("\n").length + 1));

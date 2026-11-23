@@ -665,7 +665,9 @@ class NoteBook:
             pass
 
     def backup(self) -> Path | None:
-        notes = [p for p in self.root.glob("*.md")] if self.root.is_dir() else []
+        # Category folders too (people/, areas/, ...): a root-only glob left every categorized note out of the
+        # backup, so "Yedeğe dön" could not bring a deleted person or project note back.
+        notes = [p for p in self.root.glob("*.md")] + [p for p, _ in self._note_files() if p.parent != self.root]             if self.root.is_dir() else []
         if not notes:
             return None
         base = self.root / ".backups" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -674,7 +676,9 @@ class NoteBook:
             dest, i = base.with_name(f"{base.name}-{i}"), i + 1
         dest.mkdir(parents=True)
         for p in notes:
-            shutil.copy2(p, dest / p.name)
+            out = dest / p.relative_to(self.root)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, out)
         for old in sorted((self.root / ".backups").iterdir())[:-KEEP_BACKUPS]:
             shutil.rmtree(old, ignore_errors=True)
         return dest
@@ -689,13 +693,16 @@ class NoteBook:
         if not re.fullmatch(r"\d{8}-\d{6}(-\d+)?", stamp or "") or not src.is_dir():
             raise ValueError(f"yedek yok: {stamp}")
         # Read into memory first: pruning the oldest backups below could also delete the one we are restoring.
-        files = {p.name: p.read_bytes() for p in src.glob("*.md")}
+        files = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob("*.md")}
         self.backup()  # so the restore itself can be undone too
-        for p in self.root.glob("*.md"):
-            if p.name not in files and p.name != INDEX:
+        current = [(p, p.relative_to(self.root).as_posix()) for p, _ in self._note_files()]
+        for p, rel in current:
+            if rel not in files:
                 self.delete(p.stem)
-        for name, data in files.items():
-            (self.root / name).write_bytes(data)
+        for rel, data in files.items():
+            dest = self.root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
         return len([n for n in files if n != INDEX])
 
 

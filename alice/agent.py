@@ -242,6 +242,8 @@ IMAGE_SLACK = 3  # screenshots are pruned in bulk once there are keep_images + t
 # at 80% of a 1M window (800K; cliproxy is configured with max_input_tokens = 1000000) a single step of a long chat
 # cost as much as a whole short chat and burned the subscription quota. [agent] compact_max_tokens, 0 = no cap.
 AUTO_COMPACT_MAX = 120_000
+# "auto" summarization threshold as a share of the model's context window.
+AUTO_COMPACT_RATIO = 0.6
 # Tools whose definitions are sent at once even with a warm cache (plan mode must always be able to exit).
 ALWAYS_SEND = frozenset({"exit_plan_mode", "todo_write"})
 SUMMARY_HEAD = "[Önceki konuşmanın özeti]"
@@ -368,6 +370,10 @@ class Agent:
         # Upper limit (0 = none). Set for project agents and the council: on a 1M-context model every step sent
         # hundreds of thousands of tokens (one project ~100M tokens).
         self.compact_cap = 0
+        # Context size right after the last summarization (-1 = measure at the next check). If summarizing could not
+        # bring the context under the threshold (system prompt + tool specs alone near it), it re-summarized on EVERY
+        # step: each time a summary call plus a ~40K-token cache rewrite (Nov 22, quota burned in minutes).
+        self._post_compact = 0
         self._last_prompt: tuple[int, int, Any] | None = None  # (tokens counted by the provider, message count, last message)
         self.output_limit = int(a.get("tool_output_chars", 12000))
         self.keep_images = int(a.get("keep_images", 2))
@@ -1805,8 +1811,8 @@ class Agent:
                 ref = self.router.last_ref.get(self.role) or ""
             except Exception:  # noqa: BLE001
                 ref = ""
-        # Doğrulanmadı: cliproxy'nin 1 saatlik önbellek yazdığı varsayılıyor (yanlışsa prefix bozulmaz, yalnız soğuk
-        # önbellekte kırpma fırsatı kaçar). ~/.alice/logs/cache.log'da uzun aradan sonraki "write=" bunu gösterir;
+        # 22 Kasım'da ölçüldü: cliproxy üzerinden Claude'a giden istekte 5 dakikalık işaretli giriş 6 dk 40 sn sonra
+        # hâlâ önbellekteydi (abonelik hesabında önbellek 1 saat yaşıyor). Diğer cliproxy modelleri ölçülmedi.
         # [agent] cache_ttl_minutes ile elle verilebilir.
         try:
             m = float((getattr(self.config, "agent", None) or {}).get("cache_ttl_minutes") or 0)
@@ -1896,7 +1902,7 @@ class Agent:
     # -------------------------------------------------------------- context
     @property
     def compact_at(self) -> int:
-        """Özetleme sınırı. "auto": kullanılan modelin bağlam penceresinin %80'i, ama en fazla AUTO_COMPACT_MAX
+        """Özetleme sınırı. "auto": kullanılan modelin bağlam penceresinin %60'ı (AUTO_COMPACT_RATIO), ama en fazla AUTO_COMPACT_MAX
         ([agent] compact_max_tokens; Groq gibi dar katmanlarda sağlayıcı sınırı). Sayı yazılırsa o kullanılır."""
         v = self._compact_cfg
         cap = self.compact_cap or 10**9
@@ -1919,7 +1925,7 @@ class Agent:
             ref = None
         if not ref:
             return min(LEGACY_COMPACT_AT, cap)
-        return min(max(16000, int(self.router.context_limit(ref) * 0.8)), cap)
+        return min(max(16000, int(self.router.context_limit(ref) * AUTO_COMPACT_RATIO)), cap)
 
     @compact_at.setter
     def compact_at(self, value: int) -> None:
@@ -1939,8 +1945,14 @@ class Agent:
 
     def _maybe_compact(self, force: bool = False, limit: int = 0) -> bool:
         """Konuşmayı özetle. limit: konuşmanın sığması gereken model bağlamı (ör. sadece küçük modeller açıkken)."""
-        if not force and self.context_tokens() < self.compact_at:
-            return False
+        if not force:
+            ctx, at = self.context_tokens(), self.compact_at
+            post = getattr(self, "_post_compact", 0)
+            if post < 0:
+                self._post_compact = ctx  # first real size after summarizing: the floor summarizing can reach
+                return False
+            if ctx < at or (post and ctx < post + max(8000, at // 3)):
+                return False  # summarizing again would not shrink it: wait until the conversation really grows
         window = min(limit, self.compact_at) if limit else self.compact_at
         budget = int(window * 0.35)
         summary_tokens = 2000
@@ -2022,6 +2034,7 @@ class Agent:
         if self.messages[cut]["role"] == "user":  # roller sırayla gitsin
             head.append({"role": "assistant", "content": "Özeti aldım, kaldığım yerden devam ediyorum."})
         self.messages = head + self.messages[cut:]
+        self._post_compact = -1
         self.__dict__["_flush_tools"] = True  # konuşma önbelleğe zaten yeniden yazılacak: bekleyen araçlar şimdi girsin
         self._shrink_old_outputs(force=True)  # aynı sebeple: kalan eski çıktılar şimdi kırpılır, ayrı bir kırılma olmaz
         self.checkpoints.clear()  # mesaj indeksleri değişti, eski geri sarma noktaları geçersiz
@@ -2102,6 +2115,7 @@ class Agent:
 
     def reset(self) -> None:
         self.messages = self.messages[:1]
+        self._post_compact = 0
         self._last_turn_role = None
         self._reset_effort_latch()
         self.cache_breaks.reset()

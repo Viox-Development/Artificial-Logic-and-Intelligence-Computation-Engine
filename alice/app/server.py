@@ -1421,7 +1421,8 @@ class AppState:
                 "label": "Genel" if b.scope == "genel" else b.root.parent.name,
                 "notes": [{"key": n.key, "name": n.name, "title": n.title, "type": n.type,
                            "category": getattr(n, "category", "general"),
-                           "type_tr": TYPE_TR.get(n.type, n.type or "?"), "description": n.description,
+                           "type_tr": TYPE_TR.get(n.type, n.type or ""), "description": n.description,
+                           "aliases": list(getattr(n, "alias_list", ()) or ()), "links": list(n.links),
                            "body": n.body, "age": age_text(n.modified), "source": n.source,
                            "old": bool(OLD_ROLE_RX.search(f"{n.description}\n{n.body}"))} for n in notes],
                 "backups": b.backups()[:5], "last_dream": b.last_dream(),
@@ -1430,10 +1431,9 @@ class AppState:
             "enabled": True,
             "books": out,
             "followups": [{"id": f.id, "text": f.line()} for f in mem.followups()],
-            # Remembered past chats: summaries and recent turns. Can be deleted (previously only notes could be deleted;
-            # conversations ALICE "remembered" could not be removed from the UI).
-            "summaries": [{"id": x.id, "text": x.line()} for x in reversed(mem.summaries(30))],
-            "episodes": [{"id": e.id, "text": e.line(width=200), "channel": e.channel} for e in reversed(mem.recent(30))],
+            # Past chats are no longer listed turn by turn on the Memory page (it is for notes, like Claude's): only the
+            # "search past chats" switch and a count with a clear button.
+            "chat_history": mem.chat_history, "history": mem.history_counts(),
             "dream": {"summary": mem._meta("dream_summary") or "", "at": float(mem._meta("dream_at") or 0),
                       "enabled": mem.dream_enabled, "hours": mem.dream_hours, "sessions": mem.dream_sessions},
             "old_role": {"facts": len(old["facts"]), "summaries": len(old["summaries"]),
@@ -1449,7 +1449,7 @@ class AppState:
             return {"ok": False, "error": "hafıza kapalı"}
         cwd = getattr(self.agent.ctx, "cwd", None)
         if action in ("tidy", "dream", "forget", "save", "restore", "forget_summary", "forget_episode",
-                      "forget_history", "purge_old_role"):
+                      "forget_history", "purge_old_role", "chat_history"):
             mem.mark_user_edit()  # refresh system prompts of open chats on the next turn
         if action in ("tidy", "dream"):  # Settings → Memory → Dream: run consolidation now
             try:
@@ -1508,6 +1508,12 @@ class AppState:
                 return {"ok": False}
         if action == "forget_history":
             return {"ok": True, **mem.forget_history()}
+        if action == "chat_history":
+            from alice.config import set_config_value
+
+            mem.chat_history = bool(d.get("on"))
+            set_config_value("memory", "chat_history", mem.chat_history)
+            return {"ok": True, "on": mem.chat_history}
         if action == "purge_old_role":
             return {"ok": True, "removed": mem.purge_old_role()}
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
