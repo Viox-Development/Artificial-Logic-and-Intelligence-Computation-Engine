@@ -71,10 +71,12 @@ class Wifi(Tool):
                    "cihazı Wake-on-LAN ile uyandır, modem bilgisi (marka/model, dış IP, bağlantı, açık kalma süresi, trafik); ZTE "
                    "modemde bağlı cihaz listesi ve modemi yeniden başlatma.")
     parameters = obj({
-        "action": {"type": "string", "enum": ["status", "scan", "saved", "connect", "disconnect", "devices", "wake",
-                                              "modem", "modem_devices", "modem_restart"],
+        "action": {"type": "string", "enum": ["status", "scan", "saved", "connect", "disconnect", "radio_on",
+                                              "radio_off", "devices", "wake", "modem", "modem_devices",
+                                              "modem_restart"],
                    "description": "status | scan: çevredeki ağlar | saved: kayıtlı ağlar | connect: ssid'e bağlan | "
-                   "disconnect | devices: ağdaki cihazlar (birkaç saniye sürer) | wake: mac'teki cihaza WoL paketi | "
+                   "disconnect | radio_on/radio_off: Wi-Fi'ı aç/kapat (Linux) | "
+                   "devices: ağdaki cihazlar (birkaç saniye sürer) | wake: mac'teki cihaza WoL paketi | "
                    "modem: modem modeli ve internet bağlantısı (UPnP) | modem_devices: modemin bildiği bağlı cihazlar "
                    "(kablo/Wi-Fi, ad) | modem_restart: modemi yeniden başlat (internet 2-3 dk gider)."},
         "ssid": {"type": "string", "description": "connect için ağ adı, tam yazımıyla."},
@@ -87,7 +89,7 @@ class Wifi(Tool):
         a = args.get("action")
         if a == "modem_restart":
             return DANGER
-        return COMPUTER if a in ("connect", "disconnect", "wake") else READ
+        return COMPUTER if a in ("connect", "disconnect", "radio_on", "radio_off", "wake") else READ
 
     def run(self, ctx: ToolContext, action: str, ssid: str = "", password: str = "", mac: str = "") -> ToolResult:
         from alice.home import net, wifi
@@ -113,6 +115,8 @@ class Wifi(Tool):
                 return ToolResult(wifi.connect(ssid, password))
             if action == "disconnect":
                 return ToolResult(wifi.disconnect())
+            if action in ("radio_on", "radio_off"):
+                return ToolResult(wifi.radio(action == "radio_on"))
             if action == "devices":
                 devs = net.devices()
                 return ToolResult("\n".join(f"{d['ip']}  {d['mac']}  {d['name']}".rstrip() for d in devs)
