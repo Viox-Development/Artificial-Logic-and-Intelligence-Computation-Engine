@@ -198,9 +198,21 @@ def apps(limit: int = 400) -> list[str]:
     return sorted(out, key=str.lower)[:limit]
 
 
+def _linux_pc(fn) -> str:
+    """Lock/sleep on Linux through alice.home.pc (loginctl, systemctl); other systems are not supported."""
+    if not sys.platform.startswith("linux"):
+        raise ValueError("sadece Windows ve Linux")
+    try:
+        return fn()
+    except (RuntimeError, OSError) as e:
+        raise ValueError(str(e)) from e
+
+
 def _lock() -> str:
     if not IS_WIN:
-        raise ValueError("sadece Windows")
+        from alice.home import pc
+
+        return _linux_pc(pc.lock)
     import ctypes
 
     ctypes.windll.user32.LockWorkStation()
@@ -209,7 +221,9 @@ def _lock() -> str:
 
 def _sleep() -> str:
     if not IS_WIN:
-        raise ValueError("sadece Windows")
+        from alice.home import pc
+
+        return _linux_pc(pc.suspend)
     import ctypes
 
     ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
