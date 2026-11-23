@@ -61,7 +61,10 @@ def test_gemini_must_hear_alice_in_selective_mode(monkeypatch):
         out, logs = FakeOut(), []
         s = LiveSession(cfg(), agent(), log=logs.append, connect=lambda url, **k: ws, out_factory=lambda: out)
         s.names = lambda: []
-        s.ANSWER_WAIT = 0.5  # the fake connection may answer before the tool result: avoids a 20 s wait
+        # Wait for the answer long enough for a slow CI runner. With 0.5 s the session could close before the reader
+        # thread had read the fake connection's reply, so no audio arrived (flaky on Windows CI, #216). It does not
+        # slow the test down: the wait ends as soon as the turn completes.
+        s.ANSWER_WAIT = 5.0
         s.converse("", queue.Queue(), threading.Event(), first_audio=b"\0\0" * 1600, need_wake=True)
         return out.chunks, logs
 
