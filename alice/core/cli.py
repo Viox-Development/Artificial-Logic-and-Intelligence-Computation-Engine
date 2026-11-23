@@ -283,15 +283,15 @@ def _hud_show(hud):
 
 
 def _start_quick(cfg, state=None):
-    """Start quick bar shortcuts alongside the core (silently skip if pynput is missing)."""
-    import importlib.util
-
-    if importlib.util.find_spec("pynput") is None:
-        return None
+    """Start quick bar shortcuts alongside the core. On Wayland the quick bar keeps running without them, so a
+    desktop shortcut bound to `alice quick --open` opens it; elsewhere it is skipped if shortcuts can't start."""
     from alice.app.quick import QuickBar
+    from alice.hotkeys import IS_WIN, pynput_problem, wayland_session
 
+    if not IS_WIN and pynput_problem() and not wayland_session():
+        return None
     qb = QuickBar(cfg, state=state)
-    if not qb.start_hotkeys():
+    if not qb.start_hotkeys() and not wayland_session():
         qb.stop()
         return None
     return qb
