@@ -12,7 +12,8 @@ https://github.com/user-attachments/assets/4b67b5c5-4148-49cb-9195-05c788c51b02
 *ALICE fixes a bug and runs the tests, then keeps going on another model when the first one hits its rate limit.*
 
 > ALICE started as a Turkish-speaking assistant. The interface and prompts are being translated to English;
-> the full, detailed guide is currently in Turkish: [docs/README.tr.md](docs/README.tr.md).
+> the full, detailed guide is currently in Turkish: [docs/README.tr.md](docs/README.tr.md). Sections translated so
+> far are in [docs/guide/](docs/guide/).
 
 ## What it can do
 
@@ -224,7 +225,7 @@ If a command needs a missing extra, ALICE tells you which one to install instead
 
 You can also paste keys in the app under **Connections → Keys**; they are saved to `.env` and used immediately.
 Several keys per provider are supported and rotated automatically. Any OpenAI-compatible server (LM Studio, vLLM,
-LiteLLM) can be added from the same page.
+LiteLLM) can be added from the same page. Details: [docs/guide/keys.md](docs/guide/keys.md).
 
 **Subscriptions through a local proxy (optional).** ALICE can use [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
 to route your own Claude, ChatGPT, or other subscriptions through an OpenAI-compatible endpoint on your machine.
@@ -306,7 +307,7 @@ default = "low"   # off | low | medium | high
 ```
 
 More: [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md), [tool style](docs/TOOL-STYLE.md), and the
-[full guide (Turkish)](docs/README.tr.md).
+[full guide (Turkish)](docs/README.tr.md), with its translated sections in [docs/guide/](docs/guide/).
 
 ## Platform support
 
