@@ -138,6 +138,8 @@ Eksik bir paket gereken bir komutu çalıştırırsan ALICE traceback yerine han
 
 ### API anahtarları
 
+> English: [guide/keys.md](guide/keys.md)
+
 `alice init` `%USERPROFILE%\.alice\.env` dosyasını oluşturuyor. En az birini doldur, hepsini doldurursan zincir o kadar dayanıklı olur:
 
 * `GEMINI_API_KEY`: https://aistudio.google.com/apikey (en önemlisi bu)
