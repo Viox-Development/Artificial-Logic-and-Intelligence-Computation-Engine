@@ -29,8 +29,9 @@ if TYPE_CHECKING:
 
 class TeamSend(Tool):
     name = "team_send"
-    description = ("Takım arkadaşına, yöneticiye (alice) ya da herkese mesaj gönderir. Arayüz/sözleşme duyurmak, karar "
-                   "sormak, başkasının alanında bir değişiklik istemek için. Kısa ve net yaz.")
+    description = ("Sends a message to a teammate, the lead (alice) or everyone. Use it to announce an "
+                   "interface/contract, ask for a decision, or ask for a change in someone else's area. Write briefly "
+                   "and clearly.")
     parameters = obj({
         "to": {"type": "string", "description": f"Ajan adı, '{LEAD}' (yönetici) ya da 'all' (herkes)."},
         "text": {"type": "string", "description": "Mesaj."},
@@ -53,10 +54,11 @@ class TeamSend(Tool):
 
 class DesignCheck(Tool):
     name = "design_check"
-    description = ("Sitenin masaüstü ve telefon ekran görüntülerini alır, yapay zekâ yapımı görünen kalıpları koddan sayar "
-                   "ve görüntüleri bir sanat yönetmenine (görebilen model) eleştirtir. Görünüşe dokunan işi bitirmeden "
-                   "önce çalıştır, çıkan sorunları düzelt.")
-    parameters = obj({"focus": {"type": "string", "description": "İsteğe bağlı: özellikle neye bakılsın (sayfa, bölüm)."}})
+    description = ("Takes desktop and phone screenshots of the site, counts AI-made-looking patterns in the code and "
+                   "has an art director (a model that can see) critique the screenshots. Run it before finishing work "
+                   "that touches the look, and fix the problems it finds.")
+    parameters = obj({"focus": {"type": "string", "description": "Optional: what to look at in particular (a page, a "
+                                                                 "section)."}})
     risk = READ
     MAX_CRITIQUES = 4  # per agent; after that, only pattern counting and the image
 
@@ -93,12 +95,13 @@ class DesignCheck(Tool):
 
 class SiteStudy(Tool):
     name = "site_study"
-    description = ("Gerçek bir web sitesine bakar: masaüstü, uzun (sayfanın aşağısı) ve telefon ekran görüntülerini alır ve "
-                   "görebilen bir modele çözümletir: düzen, tipografi ölçüleri, renk oranları, görsel dil, metin tonu ve "
-                   "bizim siteye alınacaklar. Tasarım yönünü belirlemeden önce konunun iyi örneklerini bununla incele. "
-                   "Görüntüler ve çözümleme research/ klasörüne kaydedilir.")
-    parameters = obj({"url": {"type": "string", "description": "İncelenecek sitenin adresi (https://...)."},
-                      "focus": {"type": "string", "description": "İsteğe bağlı: özellikle neye bakılsın."}}, ["url"])
+    description = ("Looks at a real website: takes desktop, long (further down the page) and phone screenshots and "
+                   "has a model that can see analyze them: layout, typographic sizes, color proportions, visual "
+                   "language, text tone and what to take for our site. Use it to study good examples of the subject "
+                   "before setting the design direction. The screenshots and the analysis are saved to the research/ "
+                   "folder.")
+    parameters = obj({"url": {"type": "string", "description": "Address of the site to study (https://...)."},
+                      "focus": {"type": "string", "description": "Optional: what to look at in particular."}}, ["url"])
     risk = READ
     MAX_STUDIES = 8  # per agent
 
@@ -157,9 +160,11 @@ class SiteStudy(Tool):
 
 class TeamWait(Tool):
     name = "team_wait"
-    description = ("Sana mesaj gelene kadar bekler (en çok `seconds` saniye) ve gelenleri döndürür. Bir soruya cevap "
-                   "beklerken ya da başka bir ajanın işine bağlıyken kullan; boşuna bekleme.")
-    parameters = obj({"seconds": {"type": "integer", "description": "En çok kaç saniye. Varsayılan 120, en çok 600."}})
+    description = ("Waits until a message arrives for you (at most `seconds` seconds) and returns what arrived. Use "
+                   "it while waiting for an answer to a question or when you depend on another agent's work; don't "
+                   "wait for nothing.")
+    parameters = obj({"seconds": {"type": "integer", "description": "At most this many seconds. Default 120, at most "
+                                                                    "600."}})
     risk = READ
 
     def __init__(self, team: Team, me: str):
@@ -234,14 +239,16 @@ def route_plan_notes(snap: dict[str, Any], specs: list[dict[str, Any]]) -> list[
 
 class LeadPlan(Tool):
     name = "plan"
-    description = ("Planı ve ajanları birden sunar. Kurul açıksa plan önce inceleme kurulunda tartışılıp oylanır: "
-                   "onaylanırsa ajanlar hemen başlar; reddedilirse eleştiriler döner, planı düzeltip tekrar sun. "
-                   "Kurul kapalıysa ajanlar doğrudan başlar.")
+    description = ("Submits the plan and all the agents at once. If the council is on, the plan is first debated and "
+                   "voted on by the review council: if approved, the agents start at once; if rejected, the criticism "
+                   "comes back, so fix the plan and submit it again. If the council is off, the agents start "
+                   "directly.")
     parameters = obj({
-        "summary": {"type": "string", "description": "Yaklaşım: işi nasıl böldün, neden, riskler, doğrulama yolu."},
-        "agents": {"type": "array", "description": "Ajanlar (en çok 8); assign ile aynı alanlar.",
+        "summary": {"type": "string", "description": "The approach: how you split the work and why, the risks, the "
+                                                     "way to verify it."},
+        "agents": {"type": "array", "description": "Agents (at most 8); the same fields as assign.",
                    "items": {"type": "object"}},
-        "skip_council": {"type": "boolean", "description": "Sadece kullanıcı planı açıkça onayladıysa true."},
+        "skip_council": {"type": "boolean", "description": "true only if the user clearly approved the plan."},
     }, ["summary", "agents"])
     risk = READ
 
@@ -336,24 +343,24 @@ def _check_specs(t: Team, specs: list[dict[str, Any]], names: list[str]) -> None
 
 class LeadAssign(Tool):
     name = "assign"
-    description = ("Projeye yeni ajan ekler ve hemen başlatır (after verilmişse onlar onaylanınca başlar). Görevi, "
-                   "konuşmayı görmeyen birinin anlayacağı netlikte yaz.")
+    description = ("Adds a new agent to the project and starts it at once (if after is given, it starts when those "
+                   "are approved). Write the task clearly enough for someone who hasn't seen the conversation.")
     parameters = obj({
-        "name": {"type": "string", "description": "Kısa ad, ör. 'backend', 'tests', 'ui'."},
-        "task": {"type": "string", "description": "Yapacağı iş: hangi dosyalar, ne değişecek, nasıl doğrulayacak, ne "
-                 "raporlayacak."},
-        "constraints": {"type": "string", "description": "Sınırlar: dokunmayacağı yerler, uyacağı kurallar."},
+        "name": {"type": "string", "description": "A short name, e.g. 'backend', 'tests', 'ui'."},
+        "task": {"type": "string", "description": "The job: which files, what changes, how to verify it, what to "
+                                                  "report."},
+        "constraints": {"type": "string", "description": "Constraints: places not to touch, rules to follow."},
         "scope": {"type": "array", "items": {"type": "string"},
-                  "description": "Yazabileceği dosya/klasörler (çalışma klasörüne göre). Boş: her yer."},
-        "model": {"type": "string", "description": "Boş/auto (önerilen): işe göre en uygun model seçilir. "
-                  "Ya da brain (güçlü), fast (hızlı), sağlayıcı:model."},
-        "thinking": {"type": "string", "enum": list(THINKING), "description": "Düşünme seviyesi."},
+                  "description": "Files/folders it may write (relative to the working folder). Empty: everywhere."},
+        "model": {"type": "string", "description": "Empty/auto (recommended): the best model for the job is picked. "
+                                                   "Or brain (strong), fast (quick), provider:model."},
+        "thinking": {"type": "string", "enum": list(THINKING), "description": "Thinking level."},
         "isolation": {"type": "string", "enum": list(ISOLATIONS),
-                      "description": "shared: aynı klasör | worktree: kendi git dalı (onayda birleştirilir) | "
-                      "readonly: sadece inceleme."},
+                      "description": "shared: the same folder | worktree: its own git branch (merged on approval) | "
+                                     "readonly: review only."},
         "after": {"type": "array", "items": {"type": "string"},
-                  "description": "Bu ajanlar onaylanınca başlasın (ör. testler backend'den sonra)."},
-        "max_steps": {"type": "integer", "description": "En çok araç adımı. Varsayılan 60."},
+                  "description": "Start when these agents are approved (e.g. tests after the backend)."},
+        "max_steps": {"type": "integer", "description": "At most this many tool steps. Default 60."},
     }, ["name", "task"])
     risk = READ
 
@@ -371,13 +378,13 @@ class LeadAssign(Tool):
 
 class LeadReview(Tool):
     name = "review"
-    description = ("İnceleme bekleyen ajanın işini onaylar ya da düzeltmeye gönderir. Onaylanan worktree dalı ana "
-                   "çalışma klasörüne birleştirilir.")
+    description = ("Approves the work of an agent waiting for review, or sends it back for fixes. An approved "
+                   "worktree branch is merged into the main working folder.")
     parameters = obj({
-        "name": {"type": "string", "description": "Ajan adı."},
-        "decision": {"type": "string", "enum": ["approve", "revise"], "description": "approve: onayla | revise: "
-                     "düzeltme iste."},
-        "feedback": {"type": "string", "description": "revise için: neyin yanlış/eksik olduğu ve ne beklediğin."},
+        "name": {"type": "string", "description": "The agent's name."},
+        "decision": {"type": "string", "enum": ["approve", "revise"], "description": "approve: approve | revise: ask "
+                                                                                     "for fixes."},
+        "feedback": {"type": "string", "description": "For revise: what is wrong/missing and what you expect."},
     }, ["name", "decision"])
     risk = READ
 
@@ -393,8 +400,8 @@ class LeadReview(Tool):
 
 class LeadDiff(Tool):
     name = "diff"
-    description = "Ajanın dosya araçlarıyla yaptığı değişikliklerin farkını (unified diff) gösterir."
-    parameters = obj({"name": {"type": "string", "description": "Ajan adı."}}, ["name"])
+    description = "Shows the changes (a unified diff) the agent made with file tools."
+    parameters = obj({"name": {"type": "string", "description": "The agent's name."}}, ["name"])
     risk = READ
     parallel_safe = True
 
@@ -407,9 +414,11 @@ class LeadDiff(Tool):
 
 class LeadAskUser(Tool):
     name = "ask_user"
-    description = ("Kullanıcıya soru sorar (Projeler sayfasında görünür). Sadece kullanıcının tercihine bağlı, senin "
-                   "karar veremeyeceğin şeyler için. Cevap gelince sana olay olarak gelir; bu arada turunu bitir.")
-    parameters = obj({"question": {"type": "string", "description": "Kısa, net soru; gerekiyorsa seçenekleriyle."}},
+    description = ("Asks the user a question (shown on the Projects page). Only for things that depend on the user's "
+                   "preference and that you can't decide. The answer comes to you as an event; end your turn "
+                   "meanwhile.")
+    parameters = obj({"question": {"type": "string", "description": "A short, clear question in Turkish, with options "
+                                                                    "if needed."}},
                      ["question"])
     risk = READ
 
@@ -425,10 +434,11 @@ class LeadAskUser(Tool):
 
 class LeadFinish(Tool):
     name = "finish"
-    description = ("Projeyi bitirir ve kullanıcıya özet yazar. Ancak bütün işler onaylanıp bütün doğrulandıktan sonra "
-                   "çağır.")
-    parameters = obj({"summary": {"type": "string", "description": "Ne yapıldı, hangi dosyalar, nasıl doğrulandı, "
-                                  "açık kalanlar. Markdown olabilir."}}, ["summary"])
+    description = ("Finishes the project and writes a summary for the user. Call it only after every job is approved "
+                   "and the whole has been verified.")
+    parameters = obj({"summary": {"type": "string", "description": "In Turkish: what was done, which files, how it "
+                                                                   "was verified, what is still open. Markdown is "
+                                                                   "fine."}}, ["summary"])
     risk = READ
 
     def __init__(self, team: Team):
@@ -447,7 +457,7 @@ class LeadFinish(Tool):
 
 class LeadStatus(Tool):
     name = "project_status"
-    description = "Projedeki ajanların güncel durumu."
+    description = "The current status of the project's agents."
     parameters = obj({})
     risk = READ
     parallel_safe = True

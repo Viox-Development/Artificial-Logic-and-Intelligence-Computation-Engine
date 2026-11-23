@@ -162,7 +162,7 @@ def project_script(state):
                 return js(checks=[] if fixed else [{"id": "F1", "status": "confirmed"}],
                           vote="approve" if fixed else "reject")
             return js(vote="approve")
-        if "projesinin yöneticisisin" in messages[0]["content"]:
+        if "and the lead of the project" in messages[0]["content"]:
             event, k = since_user(messages)
             last = messages[-1]
             if "henüz ajan yok" in event or ("Kurul planı onaylamadı" in str(last.get("content")) and k < 3):
@@ -209,7 +209,7 @@ def test_user_vote_overrides_contested(workdir):
             return js(checks=[{"id": "F1", "status": "unclear"}], vote="approve")
         if role:
             return js(vote="approve")
-        if "projesinin yöneticisisin" in messages[0]["content"]:
+        if "and the lead of the project" in messages[0]["content"]:
             return "tamam"
         return [tool_call("write_file", {"path": "a.py", "content": "x\n"}), "rapor"][min(steps(messages), 1)]
 
@@ -257,7 +257,7 @@ def plan_council_script(state):
                           [{"id": "F1", "status": "unclear", "severity": "minor"}],
                           vote="approve" if fixed else "reject")
             return js(vote="approve", scores={"kapsam": 5})
-        if "projesinin yöneticisisin" in messages[0]["content"]:
+        if "and the lead of the project" in messages[0]["content"]:
             last = messages[-1]
             if last["role"] == "tool" and "ajanlar başladı" in str(last.get("content")):
                 return "tamam"
