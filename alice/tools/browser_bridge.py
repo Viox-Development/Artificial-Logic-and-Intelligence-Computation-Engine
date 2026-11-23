@@ -95,7 +95,7 @@ def write_token() -> str:
     try:
         os.chmod(tmp, 0o600)
     except OSError:
-        pass
+        pass  # Windows: chmod is not supported; the file is in the user's folder
     try:
         from alice.sandbox import hide_from_sandbox
 
@@ -351,7 +351,7 @@ def main(argv: list[str] | None = None) -> None:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {s}\n")
         except OSError:
-            pass
+            pass  # logging must not break the bridge
 
     try:
         asyncio.run(serve(a.port, log))

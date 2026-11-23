@@ -275,7 +275,7 @@ class WebFetch(Tool):
                     try:
                         body = json.dumps(json.loads(body), ensure_ascii=False, indent=1)
                     except ValueError:
-                        pass
+                        pass  # not valid JSON: return the body as is
             hit = (f.status, f.url, body, refs)
             if f.status < 400:
                 cache_put(key, hit)  # only successful downloads; failed pages may be retried
@@ -623,7 +623,7 @@ class HttpRequest(Tool):
             try:
                 text = jsonlib.dumps(r.json(), ensure_ascii=False, indent=1)
             except ValueError:
-                pass
+                pass  # not valid JSON: return the text as is
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
         return ToolResult(truncate(f"HTTP {r.status_code} {where(r)}\n{shown}\n\n{text}", limit),
                           is_error=r.status_code >= 400)

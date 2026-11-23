@@ -260,7 +260,7 @@ def _steam_libraries() -> list[Path]:
             for m in re.finditer(r'"path"\s+"([^"]+)"', vdf.read_text(encoding="utf-8", errors="replace")):
                 libs.append(Path(m.group(1).replace("\\\\", "\\")) / "steamapps" / "common")
         except OSError:
-            pass
+            pass  # unreadable Steam library list: use the default folder
     return [p for p in dict.fromkeys(libs) if p.is_dir()]
 
 
@@ -305,7 +305,7 @@ def start_apps(refresh: bool = False) -> list[tuple[str, str]]:
                 if name.strip() and app_id.strip():
                     apps.append((name.strip(), app_id.strip()))
         except (OSError, ValueError, subprocess.SubprocessError):
-            pass
+            pass  # no Start menu app list: other sources still apply
     _START_APPS = apps
     return apps
 
@@ -399,9 +399,9 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
                     try:
                         add("App Paths", str(winreg.QueryValue(root, key)))
                     except OSError:
-                        pass
+                        pass  # broken App Paths entry: skip it
     except ImportError:
-        pass
+        pass  # not Windows: no registry to search
 
     # Program folders and Steam: exes inside folders whose name matches
     bases = [Path(os.environ.get(k, "")) for k in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")]

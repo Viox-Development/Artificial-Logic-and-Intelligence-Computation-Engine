@@ -406,7 +406,7 @@ class ExtPage:
         try:
             self._tab = self.s.hub.call("tab", tabId=self.tab_id)
         except ToolError:
-            pass
+            pass  # tab gone: keep the last known state
         return self._tab
 
     @property

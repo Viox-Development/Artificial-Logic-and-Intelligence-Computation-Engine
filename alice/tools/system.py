@@ -30,7 +30,7 @@ def _gpu() -> str:
                                text=True, encoding="utf-8", errors="replace", timeout=8, creationflags=NO_WINDOW)
             return r.stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        pass
+        pass  # no GPU name: the rest of the report still works
     return "bilinmiyor"
 
 
@@ -132,7 +132,7 @@ class ProcessKill(Tool):
                 if pid in (os.getpid(), os.getppid()) or psutil.Process(pid).name().lower() in PROTECTED:
                     return DANGER
             except (ValueError, TypeError, psutil.Error):
-                pass
+                pass  # can't inspect the process: decide by name below
         return DANGER if n in PROTECTED or not (pid or n) else EXEC
 
     def run(self, ctx: ToolContext, pid: int | None = None, name: str | None = None) -> ToolResult:
@@ -165,7 +165,7 @@ class ProcessKill(Tool):
             try:
                 p.kill()
             except psutil.NoSuchProcess:
-                pass
+                pass  # already exited
             except psutil.Error as e:
                 failed[p.pid] = str(e) or type(e).__name__
         if alive:

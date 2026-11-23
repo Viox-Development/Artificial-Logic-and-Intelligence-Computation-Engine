@@ -181,7 +181,7 @@ def youtube_search(query: str, limit: int = 5, client: httpx.Client | None = Non
             try:
                 title = json.loads(f'"{title}"')
             except ValueError:
-                pass
+                pass  # not an escaped JSON string: keep the raw title
             out.append((title, vid))
         if len(out) >= limit:
             break
