@@ -42,7 +42,7 @@ document.addEventListener("mousedown", (e) => {
 
 function modeMenu() {
   openMenu($("#modeBtn"), (m) => {
-    m.appendChild(el("div", "menu-title", "İzin modu"));
+    m.appendChild(el("div", "menu-title", _("Permission mode")));
     for (const [k, [label, sub, icon]] of Object.entries(MODES)) {
       menuItem(m, icon, label, sub, () => setMode(k), S.status.mode === k);
     }
@@ -55,17 +55,17 @@ function cycleMode() {
 }
 
 const THINK = {
-  off: ["düşünmez", "En hızlı: hemen cevap verir. Basit işler için"],
-  low: ["az düşünür", "Kısa düşünür, sonra yapar (önerilen)"],
-  medium: ["orta düşünür", "Biraz daha dikkatli, biraz daha yavaş"],
-  high: ["çok düşünür", "Zor işler için; basit işte gereksiz uzun sürer"],
-  xhigh: ["daha da çok", "Extra High: çok zor işler için"],
-  max: ["en çok", "Max: en zor işler için, en yavaşı"],
-  default: ["model karar verir", "Modelin kendi ayarı"],
+  off: [_("doesn't think"), _("Fastest: answers right away. For simple tasks")],
+  low: [_("thinks a little"), _("Thinks briefly, then acts (recommended)")],
+  medium: [_("thinks more"), _("A bit more careful, a bit slower")],
+  high: [_("thinks a lot"), _("For hard tasks; needlessly slow on simple ones")],
+  xhigh: [_("even more"), _("Extra High: for very hard tasks")],
+  max: [_("the most"), _("Max: for the hardest tasks, the slowest")],
+  default: [_("the model decides"), _("The model's own setting")],
 };
 // Yalnız açık/kapalı destekleyen modeller (Qwen, GLM, Kimi...): seviye yerine kapalı/açık gösterilir.
-const THINK_BINARY = { off: ["düşünmez", "Düşünmeden hemen cevap verir"], high: ["düşünür", "Cevaptan önce düşünür"],
-  default: ["model karar verir", "Modelin kendi ayarı"] };
+const THINK_BINARY = { off: [_("doesn't think"), _("Answers right away without thinking")], high: [_("thinks"), _("Thinks before answering")],
+  default: [_("the model decides"), _("The model's own setting")] };
 // Seçili modelin desteklediği seviyeler (sunucu modele göre verir); bilinmiyorsa hepsi.
 function thinkOptions(st) {
   st = st || S.status;
@@ -81,15 +81,15 @@ function thinkLabel(st) {
 }
 async function setThinking(level) {
   applyStatus(await api("/api/thinking", { level }));
-  toast("Düşünme: " + ((thinkLabel() || THINK[level] || [level])[0]));
+  toast(_("Thinking: {level}", { level: (thinkLabel() || THINK[level] || [level])[0] }));
 }
 
 function thinkMenu() {
   openMenu($("#thinkBtn"), (m) => {
-    m.appendChild(el("div", "menu-title", "Düşünme · " + shortModel(S.status.model)));
+    m.appendChild(el("div", "menu-title", _("Thinking · {model}", { model: shortModel(S.status.model) })));
     const opts = thinkOptions();
     if (S.status.thinking_kind === "none") {
-      m.appendChild(el("div", "menu-note", "Bu model düşünme ayarı desteklemiyor; kendi bildiği gibi çalışır."));
+      m.appendChild(el("div", "menu-note", _("This model has no thinking setting; it works its own way.")));
     }
     const cur = S.status.thinking_effective || S.status.thinking;
     for (const [k, [label, sub]] of opts) {
@@ -106,8 +106,8 @@ async function modelMenu(anchor) {
     const provs = (all && all.providers) || [];
     const pinned = all ? all.pinned : (S.status.brain_pinned ? S.status.brain_chain[0] : null);
     openMenu(anchor instanceof Element ? anchor : $("#modelBtn"), (m) => {
-      m.appendChild(el("div", "menu-title", "Ana model"));
-      menuItem(m, IC.spark, "Otomatik", "Zincirdeki ilk uygun model, limit dolunca sıradakine geçer",
+      m.appendChild(el("div", "menu-title", _("Main model")));
+      menuItem(m, IC.spark, _("Automatic"), _("The first suitable model in the chain; moves to the next at its limit"),
         () => pinModel("reset"), !pinned);
       // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
       for (const p of provs) {
@@ -115,15 +115,15 @@ async function modelMenu(anchor) {
         if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
           // giriş var ama liste henüz yok: boş geçme, nedenini söyle
           m.appendChild(el("div", "menu-title", "chatgpt"));
-          menuItem(m, null, p.loading ? "Model listesi okunuyor…" : "Model listesi alınamadı",
-            p.loading ? "birkaç saniye sonra menüyü tekrar aç" : (p.error || "").slice(0, 120) + " · Kurulum'dan elle ekleyebilirsin",
+          menuItem(m, null, p.loading ? _("Reading the model list…") : _("Could not get the model list"),
+            p.loading ? _("open the menu again in a few seconds") : (p.error || "").slice(0, 120) + _(" · you can add them by hand in Setup"),
             () => showSettings("setup"));
           continue;
         }
         if (!rows.length && p.enabled && !p.hidden && p.error) {
           // Eklendi ama hiçbir modeli cevap vermiyor (kota, bakiye, yetki): sessizce kaybolmasın, nedenini söyle.
           m.appendChild(el("div", "menu-title", provLabel(p)));
-          menuItem(m, null, "Modeller çalışmıyor", p.error.slice(0, 160), () => showSettings("models"));
+          menuItem(m, null, _("The models aren't working"), p.error.slice(0, 160), () => showSettings("models"));
           continue;
         }
         if (!rows.length) continue;
@@ -133,7 +133,7 @@ async function modelMenu(anchor) {
         }
       }
       m.appendChild(el("div", "menu-sep"));
-      menuItem(m, IC.list, "Modelleri yönet", "Sağlayıcı ya da model gizle/göster, durumları gör", () => showSettings("models"));
+      menuItem(m, IC.list, _("Manage models"), _("Hide/show providers or models, see their status"), () => showSettings("models"));
     }, "right", anchor instanceof Element);
   };
 
@@ -148,15 +148,15 @@ async function modelMenu(anchor) {
 }
 async function hideModel(name, hidden, label) {
   const r = await api("/api/models/hide", { name, hidden });
-  if (!r.ok) return toast(r.error || "Kaydedilemedi");
+  if (!r.ok) return toast(r.error || _("Could not save"));
   applyStatus(r);
-  toast((hidden ? "Gizlendi: " : "Gösteriliyor: ") + (label || name));
+  toast((hidden ? _("Hidden: {name}", { name: label || name }) : _("Shown: {name}", { name: label || name })));
 }
 /* Modeller: üstte şu an kullanılan model ve düşünme, ortada sağlayıcı kartları (hazır / anahtar bekliyor / gizli),
    en altta katlanmış "Gelişmiş": puanlama ağırlıkları ve rol sıraları. */
 const PROV_LABEL = { gemini: "Google Gemini", openrouter: "OpenRouter", groq: "Groq", nvidia: "NVIDIA NIM", cerebras: "Cerebras",
   mistral: "Mistral", sambanova: "SambaNova", cloudflare: "Cloudflare", cohere: "Cohere", vercel: "Vercel AI Gateway",
-  zai: "Z.ai", ollama: "Ollama (yerel)", chatgpt: "ChatGPT hesabı", cliproxy: "Claude Code proxy" };
+  zai: "Z.ai", ollama: _("Ollama (local)"), chatgpt: _("ChatGPT account"), cliproxy: "Claude Code proxy" };
 /* Sağlayıcının görünen adı. Proxy modelleri sağlayıcı sağlayıcı gruplanır (Claude, Kimi...): onlar kendi etiketini getirir. */
 function provLabel(p) { return p.label || PROV_LABEL[p.name] || p.name; }
 // Sağlayıcı kartlarının açık/kapalı durumunu saklar; bir ayar değiştiğinde sayfa yenilense bile
@@ -165,27 +165,27 @@ const _modelsOpenSet = new Set();
 
 function modelsPage(pane, data) {
   const all = data.all || { providers: [] };
-  pane.append(el("h2", "", "Modeller"),
-    el("p", "", "ALICE her iş için en uygun ücretsiz modeli seçer; biri limite takılınca sıradakine geçer. İstersen bir modeli sabitleyebilirsin."));
+  pane.append(el("h2", "", _("Models")),
+    el("p", "", _("ALICE picks the best free model for each task and moves to the next one when one hits its limit. You can pin a model if you like.")));
   // Şu an kullanılan
   const hero = el("div", "mp-hero");
   const cur = S.status.model || "";
   const [prov, ...rest] = cur.split(":");
   const hl = el("div", "mp-cur");
-  hl.append(el("small", "", S.status.brain_pinned ? "Sabitlenmiş model" : "Otomatik seçim · şu an"),
+  hl.append(el("small", "", S.status.brain_pinned ? _("Pinned model") : _("Automatic choice · now")),
     el("b", "", rest.join(":") || cur || "model yok"), el("span", "mp-prov", PROV_LABEL[prov] || prov || ""));
   const ha = el("div", "mp-acts");
-  const change = el("button", "btn"); change.append(svg(IC.spark), document.createTextNode("Model seç"));
+  const change = el("button", "btn"); change.append(svg(IC.spark), document.createTextNode(_("Choose a model")));
   change.addEventListener("click", () => modelMenu(change));
   ha.appendChild(change);
   if (S.status.brain_pinned) {
-    const auto = el("button", "btn", "Otomatiğe dön");
+    const auto = el("button", "btn", _("Back to automatic"));
     auto.addEventListener("click", async () => { await pinModel("reset"); showSettings("models"); });
     ha.appendChild(auto);
   }
   hero.append(hl, ha);
   const think = el("div", "mp-think");
-  think.append(el("span", "lbl", "Düşünme"), segmented(thinkOptions().map(([k, [l]]) => [k, l]),
+  think.append(el("span", "lbl", _("Thinking level")), segmented(thinkOptions().map(([k, [l]]) => [k, l]),
     S.status.thinking_effective || S.status.thinking, (v) => setThinking(v)), el("small", "", (thinkLabel() || ["", ""])[1]));
   hero.appendChild(think);
   pane.appendChild(hero);
@@ -209,8 +209,8 @@ function modelsPage(pane, data) {
   });
   const ready = provs.filter((p) => p.enabled && !p.hidden && p.models.length && !p.error).length;
   const sh = el("div", "mp-sec");
-  sh.append(el("div", "sec", `Sağlayıcılar · ${ready}/${provs.length} hazır`));
-  const f = el("input"); f.type = "search"; f.placeholder = "Model ara";
+  sh.append(el("div", "sec", _("Providers · {ready}/{total} ready", { ready, total: provs.length })));
+  const f = el("input"); f.type = "search"; f.placeholder = _("Search models");
   sh.appendChild(f);
   pane.appendChild(sh);
   const grid = el("div", "prov-grid");
@@ -232,16 +232,16 @@ function modelsPage(pane, data) {
       const shown = p.models.filter((x) => !x.hidden).length;
       name.append(el("b", "", provLabel(p)),
         el("small", "", failing ? "modeller cevap vermiyor: " + p.error.slice(0, 200) :
-          st === "ok" ? `${shown}/${p.models.length} model açık` : st === "hidden" ? "gizli" :
+          st === "ok" ? _("{shown}/{total} models on", { shown, total: p.models.length }) : st === "hidden" ? _("hidden") :
           !hasModels && p.enabled ? "model yok" :
-          p.name === "chatgpt" ? "giriş yapılmamış" : `${p.key || "anahtar"} yok`));
+          p.name === "chatgpt" ? _("not signed in") : _("no {key}", { key: p.key || _("key") })));
       const pill = el("span", "pill " + (st === "ok" ? "done" : ""),
-        failing ? "hata" : st === "ok" ? "hazır" : st === "hidden" ? "gizli" : !hasModels && p.enabled ? "model yok" : "bekliyor");
+        failing ? _("error") : st === "ok" ? _("ready") : st === "hidden" ? _("hidden") : !hasModels && p.enabled ? _("no model") : _("waiting"));
       head.append(name, pill);
       card.appendChild(head);
       const acts = el("div", "pc-acts");
       if (!p.enabled && !p.hidden) {
-        const add = el("button", "btn", p.name === "chatgpt" ? "Giriş yap" : "Anahtar ekle");
+        const add = el("button", "btn", p.name === "chatgpt" ? _("Sign in") : _("Add a key"));
         add.addEventListener("click", () => showSettings(p.name === "chatgpt" ? "setup" : "apikeys"));
         acts.appendChild(add);
       }
@@ -250,8 +250,8 @@ function modelsPage(pane, data) {
         more.addEventListener("click", () => { openSet.has(p.name) ? openSet.delete(p.name) : openSet.add(p.name); draw(); });
         acts.appendChild(more);
       }
-      const hb = el("button", "btn ghost", p.hidden ? "Göster" : "Gizle");
-      hb.title = p.hidden ? "Otomatik zincire geri al" : "Otomatik zincirde ve model menüsünde kullanılmasın";
+      const hb = el("button", "btn ghost", p.hidden ? _("Show") : _("Hide"));
+      hb.title = p.hidden ? _("Put it back in the automatic chain") : _("Don't use it in the automatic chain or the model menu");
       hb.addEventListener("click", async () => { await hideModel(p.name, !p.hidden, provLabel(p)); showSettings("models"); });
       acts.appendChild(hb);
       card.appendChild(acts);
@@ -260,13 +260,13 @@ function modelsPage(pane, data) {
         for (const x of rows) {
           const row = el("div", "pc-model" + (x.hidden ? " off" : "") + (all.pinned === x.ref ? " pinned" : ""));
           const l = el("span", "l");
-          l.append(el("span", "m", x.model), el("small", "", x.tested ? x.status : (x.status === "hazır" ? "hazır · ölçülmedi" : x.status)));
-          const q = el("span", "q"); q.title = "Kalite puanı"; q.style.setProperty("--q", (x.quality || 0) + "%");
+          l.append(el("span", "m", x.model), el("small", "", x.tested ? x.status : (x.status === "hazır" ? _("ready · not measured") : x.status)));
+          const q = el("span", "q"); q.title = _("Quality score"); q.style.setProperty("--q", (x.quality || 0) + "%");
           const pin = el("button", "icon-btn" + (all.pinned === x.ref ? " on" : ""));
-          pin.title = all.pinned === x.ref ? "Sabitlemeyi kaldır" : "Bu modeli sabitle";
+          pin.title = all.pinned === x.ref ? _("Unpin") : _("Pin this model");
           pin.appendChild(svg(IC.pin));
           pin.addEventListener("click", async () => { await pinModel(all.pinned === x.ref ? "reset" : x.ref); showSettings("models"); });
-          const tb = switchEl(!x.hidden, x.hidden ? "Göster" : "Gizle", async (on) => { await hideModel(x.ref, !on); showSettings("models"); });
+          const tb = switchEl(!x.hidden, x.hidden ? _("Show") : _("Hide"), async (on) => { await hideModel(x.ref, !on); showSettings("models"); });
           row.append(l, q, pin, tb);
           list.appendChild(row);
         }
@@ -274,20 +274,20 @@ function modelsPage(pane, data) {
       }
       grid.appendChild(card);
     }
-    if (!grid.children.length) grid.appendChild(el("p", "", "Eşleşen model yok."));
+    if (!grid.children.length) grid.appendChild(el("p", "", _("No matching models.")));
   };
   f.addEventListener("input", draw);
   draw();
 
   // Gelişmiş
   const adv = el("details", "mp-adv");
-  adv.appendChild(el("summary", "", "Gelişmiş: puanlama ağırlıkları ve rol sıraları"));
+  adv.appendChild(el("summary", "", _("Advanced: scoring weights and role orders")));
   adv.appendChild(scorePane());
-  const names = { brain: "Ana model", fast: "Hızlı işler", vision: "Görsel", voice: "Sesli" };
+  const names = { brain: _("Main model"), fast: _("Quick tasks"), vision: _("Images"), voice: _("Voice") };
   const chains = el("div", "mp-chains");
   for (const [role, rows] of Object.entries(data.models || {})) {
     const c = el("div", "mp-chain");
-    c.appendChild(el("b", "", (names[role] || role) + " sırası"));
+    c.appendChild(el("b", "", _("{role} order", { role: names[role] || role })));
     const ol = el("ol");
     for (const r of rows) {
       const li = el("li", r.status === "hazır" ? "ok" : "");
@@ -303,7 +303,7 @@ function modelsPage(pane, data) {
 async function pinModel(ref) {
   await api("/api/model", { role: "brain", ref });
   await refreshStatus();
-  toast(ref === "reset" ? "Otomatik model seçimi" : "Model sabitlendi: " + shortModel(ref));
+  toast(ref === "reset" ? _("Automatic model choice") : _("Model pinned: {model}", { model: shortModel(ref) }));
 }
 
 /* =================================================================== dialoglar */
@@ -316,7 +316,7 @@ function showDialog(build) {
   build(d);
   $("#overlay").hidden = false;
 }
-// Esc ya da dışarı tıklamak da "Vazgeç" sayılır; onay bekleyen kod askıda kalmasın.
+// Esc ya da dışarı tıklamak da _("Cancel") sayılır; onay bekleyen kod askıda kalmasın.
 function closeDialog() {
   $("#overlay").hidden = true;
   const f = onDialogClose;
@@ -337,7 +337,7 @@ function confirmDialog(title, text, okLabel) {
       onDialogClose = () => resolve(false);
       d.append(el("h2", "", title), el("p", "", text));
       const row = el("div", "row");
-      const no = el("button", "btn", "Vazgeç");
+      const no = el("button", "btn", _("Cancel"));
       const yes = el("button", "btn accent", okLabel || "Tamam");
       no.addEventListener("click", closeDialog);
       yes.addEventListener("click", () => { onDialogClose = null; closeDialog(); resolve(true); });
@@ -360,9 +360,9 @@ function pickFolder(opts) {
       d.classList.add("fp");
       onDialogClose = () => resolve(null);
       const head = el("div", "fp-head");
-      head.append(el("h2", "", opts.title || "Klasör seç"));
+      head.append(el("h2", "", opts.title || _("Choose a folder")));
       const tabs = el("div", "seg fp-tabs");
-      const tFs = el("button", "on", "Bilgisayar"), tGh = el("button", "", "GitHub");
+      const tFs = el("button", "on", _("Computer")), tGh = el("button", "", "GitHub");
       if (opts.github) tabs.append(tFs, tGh);
       head.append(el("span", "grow"), tabs);
       const body = el("div", "fp-body");
@@ -370,9 +370,9 @@ function pickFolder(opts) {
       const main = el("div", "fp-main");
       const crumbs = el("div", "fp-crumbs");
       const tools = el("div", "fp-tools");
-      const filter = el("input"); filter.type = "text"; filter.placeholder = "Bu klasörde ara";
+      const filter = el("input"); filter.type = "text"; filter.placeholder = _("Search this folder");
       const hidden = el("label", "chk"); const hcb = el("input"); hcb.type = "checkbox";
-      hidden.append(hcb, document.createTextNode(" Gizlileri göster"));
+      hidden.append(hcb, document.createTextNode(" " + _("Show hidden")));
       tools.append(filter, hidden);
       const list = el("div", "fp-list");
       const err = el("div", "note err");
@@ -380,9 +380,9 @@ function pickFolder(opts) {
       body.append(side, main);
       const foot = el("div", "fp-foot");
       const cur = el("div", "fp-cur");
-      const mk = el("button", "btn"); mk.append(svg(IC.plus), document.createTextNode("Yeni klasör"));
-      const no = el("button", "btn", "Vazgeç");
-      const ok = el("button", "btn primary", opts.okLabel || "Bu klasörü seç");
+      const mk = el("button", "btn"); mk.append(svg(IC.plus), document.createTextNode(_("New folder")));
+      const no = el("button", "btn", _("Cancel"));
+      const ok = el("button", "btn primary", opts.okLabel || _("Choose this folder"));
       foot.append(cur, el("span", "grow"), mk, no, ok);
       const gh = el("div", "fp-gh"); gh.hidden = true;
       d.append(head, body, gh, foot);
@@ -390,7 +390,7 @@ function pickFolder(opts) {
       const go = async (path) => {
         err.textContent = "";
         const r = await api("/api/dirs?path=" + encodeURIComponent(path || "") + (hcb.checked ? "&hidden=1" : ""));
-        if (!r || !r.ok) { err.textContent = (r && r.error) || "açılamadı"; return; }
+        if (!r || !r.ok) { err.textContent = (r && r.error) || _("could not open"); return; }
         state = r; filter.value = ""; draw();
       };
       const place = (icon, label, path, sub) => {
@@ -403,14 +403,14 @@ function pickFolder(opts) {
       };
       const short = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
       const draw = () => {
-        side.replaceChildren(el("div", "fp-sec", "Yerler"));
+        side.replaceChildren(el("div", "fp-sec", _("Places")));
         for (const pl of state.places || []) side.appendChild(place(IC[pl.icon] || IC.folder, pl.label, pl.path));
         if ((state.recent || []).length) {
-          side.appendChild(el("div", "fp-sec", "Son kullanılanlar"));
+          side.appendChild(el("div", "fp-sec", _("Recent")));
           for (const r of state.recent) side.appendChild(place(IC.clock, short(r), r));
         }
         crumbs.replaceChildren();
-        const up = el("button", "icon-btn"); up.title = "Üst klasör"; up.appendChild(svg(IC.up));
+        const up = el("button", "icon-btn"); up.title = _("Parent folder"); up.appendChild(svg(IC.up));
         up.disabled = !state.parent; up.addEventListener("click", () => go(state.parent));
         crumbs.appendChild(up);
         state.crumbs.forEach((c, i) => {
@@ -424,16 +424,16 @@ function pickFolder(opts) {
         drawList();
       };
       const drawList = () => {
-        const f = filter.value.trim().toLocaleLowerCase("tr");
-        const rows = state.dirs.filter((x) => !f || x.name.toLocaleLowerCase("tr").includes(f));
+        const f = filter.value.trim().toLocaleLowerCase(ALICE_LOCALE);
+        const rows = state.dirs.filter((x) => !f || x.name.toLocaleLowerCase(ALICE_LOCALE).includes(f));
         list.replaceChildren();
-        if (!rows.length) list.appendChild(el("div", "fp-empty", f ? "Eşleşen klasör yok" : "Alt klasör yok. Bu klasörü seçebilir ya da yeni klasör oluşturabilirsin."));
+        if (!rows.length) list.appendChild(el("div", "fp-empty", f ? _("No matching folders") : _("No subfolders. You can choose this folder or create a new one.")));
         for (const x of rows) {
           const b = el("button", "fp-row");
           b.append(svg(IC.folder), el("span", "t", x.name));
           if (x.git) b.appendChild(el("span", "tag", "git"));
           b.appendChild(svg(IC.chev, "chev"));
-          b.title = "Aç (çift tıkla: seç)";
+          b.title = _("Open (double-click: choose)");
           b.addEventListener("click", () => go(x.path));
           b.addEventListener("dblclick", (e) => { e.preventDefault(); finish(x.path); });
           list.appendChild(b);
@@ -450,11 +450,11 @@ function pickFolder(opts) {
       ok.addEventListener("click", () => state && finish(state.path));
       mk.addEventListener("click", () => {
         const row = el("div", "fp-new");
-        const inp = el("input"); inp.type = "text"; inp.placeholder = "Yeni klasörün adı";
-        const save = el("button", "btn primary", "Oluştur");
+        const inp = el("input"); inp.type = "text"; inp.placeholder = _("Name of the new folder");
+        const save = el("button", "btn primary", _("Create"));
         const create = async () => {
           const r = await api("/api/dirs/mkdir", { parent: state.path, name: inp.value });
-          if (!r || !r.ok) { err.textContent = (r && r.error) || "olmadı"; return; }
+          if (!r || !r.ok) { err.textContent = (r && r.error) || _("didn't work"); return; }
           go(r.path);
         };
         save.addEventListener("click", create);
@@ -478,23 +478,23 @@ function pickFolder(opts) {
   });
 }
 async function askCwd() {
-  const path = await pickFolder({ title: "Çalışma klasörü", github: true, okLabel: "Burada çalış" });
+  const path = await pickFolder({ title: _("Working folder"), github: true, okLabel: _("Work here") });
   if (!path) return;
   const r = await api("/api/cwd", { path });
-  if (!r.ok) return toast(r.error || "Klasör değişmedi");
-  applyStatus(r); toast("Klasör: " + path);
+  if (!r.ok) return toast(r.error || _("The folder didn't change"));
+  applyStatus(r); toast(_("Folder: {path}", { path }));
 }
 // GitHub'daki depolar: tıklanınca ~/GitHub altına klonlanır (varsa güncellenir) ve çalışma klasörü olur.
 function githubPicker(err) {
   const box = el("div", "gh-pick");
-  const q = el("input"); q.type = "text"; q.placeholder = "GitHub deposu ara…";
+  const q = el("input"); q.type = "text"; q.placeholder = _("Search GitHub repositories…");
   const list = el("div", "gh-list");
-  const note = el("div", "note", "Depolar yükleniyor…");
-  box.append(el("h3", "", "GitHub'dan aç"), q, note, list);
+  const note = el("div", "note", _("Loading repositories…"));
+  box.append(el("h3", "", _("Open from GitHub")), q, note, list);
   let repos = [];
   const draw = () => {
-    const f = q.value.trim().toLocaleLowerCase("tr");
-    const rows = repos.filter((r) => !f || (r.full_name + " " + r.description).toLocaleLowerCase("tr").includes(f));
+    const f = q.value.trim().toLocaleLowerCase(ALICE_LOCALE);
+    const rows = repos.filter((r) => !f || (r.full_name + " " + r.description).toLocaleLowerCase(ALICE_LOCALE).includes(f));
     list.replaceChildren(...rows.slice(0, 50).map((r) => {
       const b = el("button", "list-row gh-row");
       const l = el("span", "l", r.full_name);
@@ -502,7 +502,7 @@ function githubPicker(err) {
       b.append(l, el("span", "r" + (r.local ? " ok" : ""), r.local ? "bilgisayarda" : r.private ? "gizli" : ""));
       b.addEventListener("click", async () => {
         list.querySelectorAll("button").forEach((x) => (x.disabled = true));
-        note.textContent = r.local ? `${r.full_name} güncelleniyor…` : `${r.full_name} klonlanıyor…`;
+        note.textContent = r.local ? _("Updating {repo}…", { repo: r.full_name }) : _("Cloning {repo}…", { repo: r.full_name });
         const res = await api("/api/github/open", { repo: r.full_name });
         if (!res.ok) {
           err.textContent = res.error; note.textContent = "";
@@ -513,7 +513,7 @@ function githubPicker(err) {
       });
       return b;
     }));
-    note.textContent = rows.length ? "" : (repos.length ? "Eşleşen depo yok" : note.textContent);
+    note.textContent = rows.length ? "" : (repos.length ? _("No matching repositories") : note.textContent);
   };
   q.addEventListener("input", draw);
   api("/api/github/repos").then((r) => {
@@ -573,19 +573,20 @@ function drawChangesChip() {
   $("#changesBtn").hidden = !n;
   $("#chA").textContent = `+${a}`;
   $("#chD").textContent = `−${d}`;
-  $("#changesBtn").title = `Bu oturumda ${n} dosya değişti`;
+  $("#changesBtn").title = _("{n} files changed in this session", { n });
   $("#chCount").textContent = n ? String(n) : "";
 }
 async function revertFile(c) {
-  const ok = await confirmDialog("Değişiklik geri alınsın mı?",
-    `${c.path} bu oturumdaki ilk haline döner` + (c.status === "eklendi" ? " (ALICE oluşturduğu için silinir)." : "."), "Geri al");
+  const ok = await confirmDialog(_("Undo the change?"),
+    (c.status === "eklendi" ? _("{path} goes back to how it was at the start of this session (deleted, since ALICE created it).", { path: c.path })
+      : _("{path} goes back to how it was at the start of this session.", { path: c.path })), _("Undo"));
   if (!ok) return;
   const r = await api("/api/changes/revert", { path: c.abs });
-  if (!r.ok) return toast(r.error || "Geri alınamadı");
+  if (!r.ok) return toast(r.error || _("Could not undo"));
   S.changes = r.changes || [];
   drawChangesChip();
   renderPanel();
-  toast(`${c.path} geri alındı`);
+  toast(_("{path} undone", { path: c.path }));
 }
 
 /* ================================================================= yan panel */
@@ -624,18 +625,18 @@ function renderPanel() {
   body.replaceChildren();
   if (PREFS.tab === "plan") {
     if (!parseTodo(S.todo).length) {
-      body.appendChild(emptyState(IC.list, "Henüz plan yok",
-        "ALICE çok adımlı bir işe başladığında yapılacakları burada listeler ve ilerledikçe işaretler."));
+      body.appendChild(emptyState(IC.list, _("No plan yet"),
+        _("When ALICE starts a multi-step task it lists the steps here and checks them off as it goes.")));
     } else body.appendChild(renderTodo(S.todo, true));
   } else if (PREFS.tab === "changes") {
     if (!S.changes.length) {
-      body.appendChild(emptyState(IC.diff, "Değişiklik yok",
-        "ALICE bu oturumda dosya araçlarıyla bir dosyayı değiştirdiğinde fark burada görünür. Dosya bazında geri alabilirsin."));
+      body.appendChild(emptyState(IC.diff, _("No changes"),
+        _("When ALICE changes a file with the file tools in this session, the diff shows here. You can undo it file by file.")));
     } else {
       const { a, d, n } = changeTotals();
       const head = el("div", "ch-sum");
-      head.append(el("b", "", `${n} dosya değişti`), el("span", "a", `+${a}`), el("span", "d", `−${d}`));
-      const fold = el("button", "act", "Tümünü daralt");
+      head.append(el("b", "", _("{n} files changed", { n })), el("span", "a", `+${a}`), el("span", "d", `−${d}`));
+      const fold = el("button", "act", _("Collapse all"));
       fold.addEventListener("click", () => $$(".ch-file", body).forEach((f) => f.classList.remove("open")));
       head.append(el("span", "grow"), fold);
       body.appendChild(head);
@@ -649,13 +650,13 @@ function renderPanel() {
         name.appendChild(document.createTextNode(c.path.slice(slash + 1)));
         row.append(name, el("span", "a", `+${c.added}`), el("span", "d", `−${c.removed}`));
         const rv = el("button", "act ch-revert");
-        rv.title = "Bu dosyayı geri al";
-        rv.append(svg(IC.rewind), document.createTextNode("Geri al"));
+        rv.title = _("Undo this file");
+        rv.append(svg(IC.rewind), document.createTextNode(_("Undo")));
         rv.addEventListener("click", (e) => { e.stopPropagation(); revertFile(c); });
         row.appendChild(rv);
         row.addEventListener("click", () => f.classList.toggle("open"));
         const inner = el("div", "ch-body");
-        if (c.binary) inner.appendChild(el("div", "note", "İkili dosya, fark gösterilemiyor"));
+        if (c.binary) inner.appendChild(el("div", "note", _("Binary file, no diff to show")));
         else if (c.diff) inner.appendChild(renderDiff(c.diff, c.path).box);
         f.append(row, inner);
         body.appendChild(f);
@@ -672,22 +673,22 @@ function renderPanel() {
     const fill = el("i");
     fill.style.width = pct + "%";
     meter.appendChild(fill);
-    const cp = el("button", "btn", "Şimdi özetle");
+    const cp = el("button", "btn", _("Summarize now"));
     cp.addEventListener("click", () => runCommand("/compact"));
-    ctx.append(el("div", "sec", "Bağlam doluluğu"), big, meter,
-      el("p", "", `Modelin penceresi ${fmtTok(win)} token. ${fmtTok(st.ctx_limit || 0)} token'a gelince eski konuşma otomatik özetlenir. ` +
-        "Sayı, sağlayıcının son istekte saydığı token'dır (araç tanımları dahil)."), cp);
+    ctx.append(el("div", "sec", _("Context usage")), big, meter,
+      el("p", "", _("The model's window is {win} tokens. At {limit} tokens the older conversation is summarized automatically. The number is the tokens the provider counted on the last request (tool definitions included).",
+        { win: fmtTok(win), limit: fmtTok(st.ctx_limit || 0) })), cp);
     body.appendChild(ctx);
     const kv = el("dl", "kv");
     const mins = Math.floor((Date.now() - S.started) / 60000);
     const { a, d, n } = changeTotals();
-    for (const [k, v] of [["Model", st.model || "yok"], ["Düşünme", (THINK[st.thinking] || [st.thinking || "?"])[0]],
-      ["İzin modu", (MODES[st.mode] || [st.mode])[0]], ["Karar", st.decider || "-"], ["Klasör", st.cwd || ""],
-      ["Git dalı", st.branch || "-"], ["Oturum", st.session || ""], ["Açık kalma", mins < 1 ? "1 dk'dan az" : `${mins} dk`],
-      ["Bugün", `${st.today_requests || 0} istek`], ["Değişiklik", n ? `${n} dosya +${a} −${d}` : "yok"]]) {
+    for (const [k, v] of [[_("Model"), st.model || _("none")], [_("Thinking level"), (THINK[st.thinking] || [st.thinking || "?"])[0]],
+      [_("Permission mode"), (MODES[st.mode] || [st.mode])[0]], [_("Decider"), st.decider || "-"], [_("Folder"), st.cwd || ""],
+      [_("Git branch"), st.branch || "-"], [_("Session"), st.session || ""], [_("Open for"), mins < 1 ? _("under 1 min") : _("{m} min", { m: mins })],
+      [_("Today"), _("{n} requests", { n: st.today_requests || 0 })], [_("Changes"), n ? _("{n} files", { n }) + ` +${a} −${d}` : _("none")]]) {
       kv.append(el("dt", "", k), el("dd", "", v));
     }
-    const sec = el("div", "sec", "Oturum");
+    const sec = el("div", "sec", _("Session"));
     body.append(sec, kv);
   }
   body.scrollTop = keep;
@@ -697,42 +698,42 @@ function renderPanel() {
 function paletteItems() {
   const items = [];
   const act = (group, icon, label, hint, run, key) => items.push({ group, icon, label, hint, run, key });
-  act("Eylemler", IC.chat, "Yeni sohbet", "", newChat, "Ctrl+Shift+O");
-  act("Eylemler", IC.panel, PREFS.panel ? "Yan paneli kapat" : "Yan paneli aç", "", togglePanel, "Ctrl+J");
-  act("Eylemler", IC.list, "Planı göster", "Yapılacaklar listesi", () => openPanel("plan"));
-  act("Eylemler", IC.diff, "Değişiklikleri göster", "Bu oturumda değişen dosyalar", () => openPanel("changes"));
-  act("Eylemler", IC.gauge, "Bağlam ve oturum bilgisi", "", () => openPanel("context"));
-  act("Eylemler", IC.expand, PREFS.verbose ? "Araç ayrıntılarını gizle" : "Araç ayrıntılarını göster", "Tüm araç çıktılarını aç/kapat", toggleVerbose, "Ctrl+O");
-  act("Eylemler", IC.folder, "Çalışma klasörünü değiştir", S.status.cwd || "", askCwd);
-  act("Eylemler", IC.spark, "Konuşmayı özetle", "/compact", () => runCommand("/compact"));
-  act("Eylemler", IC.rewind, "Son mesaja geri sar", "/rewind", () => runCommand("/rewind"));
-  act("Eylemler", IC.update, "Güncellemeleri denetle", "GitHub'daki son sürüm", checkUpdate);
-  act("Eylemler", IC.gear, "Ayarlar", "", () => showSettings("general"), "Ctrl+,");
-  act("Git", IC.list, "Projeler", "Ajan takımları", () => goSection("projects"));
-  act("Git", IC.check, "Görevler", "Arka planda yürüttüğü sorumluluklar ve onay kutusu", () => goSection("tasks"));
-  act("Git", IC.bolt, "Otomasyonlar", "Kurallar, zamanlanmış görevler, notlar, kayıtlar", () => goSection("auto"));
-  act("Git", IC.term, "Sistem", "Çekirdek, asistan, ses, kurulum, kullanım", () => goSection("system"));
-  act("Git", IC.plug, "Bağlantılar", "Servisler ve API anahtarları", () => goSection("connect"));
-  act("Eylemler", IC.keyboard, "Klavye kısayolları", "", () => showSettings("keys"));
-  for (const [k, label] of [["system", "Sistem"], ["light", "Açık"], ["dark", "Koyu"]]) {
-    act("Tema", k === "dark" ? IC.moon : IC.sun, `Tema: ${label}`, "", () => setPref("theme", k));
+  act(_("Actions"), IC.chat, _("New chat"), "", newChat, "Ctrl+Shift+O");
+  act(_("Actions"), IC.panel, PREFS.panel ? _("Close the side panel") : _("Open the side panel"), "", togglePanel, "Ctrl+J");
+  act(_("Actions"), IC.list, _("Show the plan"), _("To-do list"), () => openPanel("plan"));
+  act(_("Actions"), IC.diff, _("Show changes"), _("Files changed in this session"), () => openPanel("changes"));
+  act(_("Actions"), IC.gauge, _("Context and session info"), "", () => openPanel("context"));
+  act(_("Actions"), IC.expand, PREFS.verbose ? _("Hide tool details") : _("Show tool details"), _("Expand/collapse all tool output"), toggleVerbose, "Ctrl+O");
+  act(_("Actions"), IC.folder, _("Change the working folder"), S.status.cwd || "", askCwd);
+  act(_("Actions"), IC.spark, _("Summarize the conversation"), "/compact", () => runCommand("/compact"));
+  act(_("Actions"), IC.rewind, _("Rewind to the last message"), "/rewind", () => runCommand("/rewind"));
+  act(_("Actions"), IC.update, _("Check for updates"), _("The latest version on GitHub"), checkUpdate);
+  act(_("Actions"), IC.gear, _("Settings"), "", () => showSettings("general"), "Ctrl+,");
+  act(_("Go to"), IC.list, _("Projects"), _("Agent teams"), () => goSection("projects"));
+  act(_("Go to"), IC.check, _("Tasks"), _("Duties it runs in the background, and the approval box"), () => goSection("tasks"));
+  act(_("Go to"), IC.bolt, _("Automations"), _("Rules, scheduled tasks, notes, logs"), () => goSection("auto"));
+  act(_("Go to"), IC.term, _("System"), _("Core, assistant, voice, setup, usage"), () => goSection("system"));
+  act(_("Go to"), IC.plug, _("Connections"), _("Services and API keys"), () => goSection("connect"));
+  act(_("Actions"), IC.keyboard, _("Keyboard shortcuts"), "", () => showSettings("keys"));
+  for (const [k, label] of [["system", _("System")], ["light", _("Light")], ["dark", _("Dark")]]) {
+    act(_("Theme"), k === "dark" ? IC.moon : IC.sun, _("Theme: {name}", { name: label }), "", () => setPref("theme", k));
   }
-  for (const [k, [label, sub, icon]] of Object.entries(MODES)) act("İzin modu", icon, `Mod: ${label}`, sub, () => setMode(k));
-  for (const [k, [label, sub]] of thinkOptions()) act("Düşünme", IC.brain, `Düşünme: ${label}`, sub, () => setThinking(k));
-  act("Model", IC.spark, "Model: Otomatik", "Zincirdeki ilk uygun model", () => pinModel("reset"));
-  for (const ref of S.status.brain_chain || []) act("Model", IC.spark, `Model: ${shortModel(ref)}`, ref, () => pinModel(ref));
+  for (const [k, [label, sub, icon]] of Object.entries(MODES)) act(_("Permission mode"), icon, _("Mode: {name}", { name: label }), sub, () => setMode(k));
+  for (const [k, [label, sub]] of thinkOptions()) act(_("Thinking level"), IC.brain, _("Thinking: {level}", { level: label }), sub, () => setThinking(k));
+  act(_("Model"), IC.spark, _("Model: Automatic"), _("The first suitable model in the chain"), () => pinModel("reset"));
+  for (const ref of S.status.brain_chain || []) act(_("Model"), IC.spark, _("Model: {name}", { name: shortModel(ref) }), ref, () => pinModel(ref));
   for (const c of S.commands) {
-    act("Komutlar", IC.term, "/" + c.name, c.description, () => {
+    act(_("Commands"), IC.term, "/" + c.name, c.description, () => {
       input.value = "/" + c.name + " "; autosize(); input.focus();
     });
   }
-  for (const s of S.sessions || []) act("Sohbetler", IC.chat, s.title || "(boş)", relTime(s.updated), () => resume(s.id));
+  for (const s of S.sessions || []) act(_("Chats"), IC.chat, s.title || _("(empty)"), relTime(s.updated), () => resume(s.id));
   return items;
 }
 // Sırayla geçen harf eşleşmesi; ardışık harfler ve kelime başları daha yüksek puan alır.
 function fuzzy(q, text) {
   if (!q) return 1;
-  const t = text.toLocaleLowerCase("tr");
+  const t = text.toLocaleLowerCase(ALICE_LOCALE);
   const idx = t.indexOf(q);
   if (idx >= 0) return 100 - idx + (idx === 0 || /\s|\/|:/.test(t[idx - 1]) ? 50 : 0);
   let score = 0, j = 0, run = 0;
@@ -754,7 +755,7 @@ function openPalette(prefill) {
 }
 function closePalette() { $("#palette").hidden = true; }
 function drawPalette() {
-  const q = $("#palInput").value.trim().toLocaleLowerCase("tr");
+  const q = $("#palInput").value.trim().toLocaleLowerCase(ALICE_LOCALE);
   const scored = PAL.items.map((it) => ({ it, sc: Math.max(fuzzy(q, it.label), fuzzy(q, it.group + " " + it.label) * 0.6, fuzzy(q, it.hint || "") * 0.4) }))
     .filter((x) => x.sc > 0);
   if (q) scored.sort((x, y) => y.sc - x.sc);
@@ -762,7 +763,7 @@ function drawPalette() {
   PAL.sel = Math.min(PAL.sel, Math.max(0, PAL.shown.length - 1));
   const box = $("#palList");
   box.replaceChildren();
-  if (!PAL.shown.length) { box.appendChild(el("div", "pal-empty", "Sonuç yok")); return; }
+  if (!PAL.shown.length) { box.appendChild(el("div", "pal-empty", _("No results"))); return; }
   let group = null;
   PAL.shown.forEach((it, i) => {
     if (!q && it.group !== group) { group = it.group; box.appendChild(el("div", "pal-group", group)); }
@@ -851,7 +852,7 @@ function toolCat(name) {
   return "Diğer";
 }
 function toolsPage(pane, tools) {
-  pane.append(el("h2", "", "Araçlar"),
+  pane.append(el("h2", "", _("Tools")),
     el("p", "", `ALICE'in kullanabildiği ${tools.length} araç. MCP sunucularını config.toml'daki [mcp.servers] altına ekleyebilirsin.`));
   const bar = el("div", "tl-bar");
   const f = el("input"); f.type = "search"; f.placeholder = "Araç ara";
@@ -1006,7 +1007,7 @@ function healthPane(pane, data) {
 function kairosBlock(pane) {
   const box = el("div");
   pane.append(el("div", "sec", "KAIROS · arka plan nöbeti"), box);
-  const when = (ts) => new Date(ts * 1000).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const when = (ts) => new Date(ts * 1000).toLocaleString(ALICE_LOCALE, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   const draw = (k) => {
     if (!k) { box.replaceChildren(el("p", "", "Durum okunamadı.")); return; }
     const wake = el("button", "btn", "Şimdi uyandır");
@@ -1045,7 +1046,7 @@ function assistantPane(pane, data) {
     (x) => set(section, key, x === "1", label));
   pane.append(el("h2", "", "Asistan"),
     el("p", "", "Güvenlik, arama, karşılama ve bildirim ayarları. Özelliklerin çalışıp çalışmadığı Sağlık sekmesinde."));
-  pane.appendChild(el("div", "sec", "Ayarlar"));
+  pane.appendChild(el("div", "sec", _("Settings")));
   pane.append(
     setRow("Komut sandbox'ı", "Otomatik: dış içerik (web, e-posta) okunan turda komutlar proje dışına yazamayan sandbox'ta çalışır",
       segmented([["off", "Kapalı"], ["auto", "Otomatik"], ["on", "Her zaman"]], v["agent.sandbox"] || "auto",
@@ -1263,7 +1264,7 @@ function enrollCard() {
         }
       }
       const row = el("div", "row");
-      row.appendChild(btn("Vazgeç", "cancel"));
+      row.appendChild(btn(_("Cancel"), "cancel"));
       if (s.state === "recording" && !s.got) row.appendChild(btn("Bu cümleyi atla", "skip"));
       if ((s.state === "recording" || s.state === "testing") && !s.got) row.appendChild(btn("Okudum", "done", true));
       card.appendChild(row);
@@ -1304,7 +1305,7 @@ function systemPane(pane) {
   const mic = micTestCard();  // tek kart: durum tazelenirken süren test sıfırlanmasın
   let timer = null;
   const act = (action, extra, msg) => api("/api/system/action", Object.assign({ action }, extra || {})).then((r) => {
-    if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+    if (!r || !r.ok) return toast((r && r.error) || _("didn't work"));
     if (msg) toast(msg);
     load();
   });
@@ -1328,7 +1329,7 @@ function systemPane(pane) {
         : "Bildirimler, görevler ve sesli asistan çalışmıyor."));
     const acts = el("span", "enroll-act");
     if (c.busy) acts.appendChild(el("span", "sys-spin", ""));
-    else if (c.running) acts.append(btn("Yeniden başlat", "restart"), btn("Durdur", "stop"));
+    else if (c.running) acts.append(btn("Yeniden başlat", "restart"), btn(_("Stop"), "stop"));
     else acts.appendChild(btn("Başlat", "start", null, true));
     st.append(el("span", "chk " + (c.running ? "ok" : "off"), c.running ? "●" : "○"), l, acts);
     body.appendChild(st);
@@ -1363,7 +1364,7 @@ function systemPane(pane) {
         const r = el("div", "list-row ev-row");
         const el_ = el("span", "l");
         const t = new Date(e.ts * 1000);
-        el_.append(el("b", "", e.title), el("small", "", t.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+        el_.append(el("b", "", e.title), el("small", "", t.toLocaleString(ALICE_LOCALE, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
           + " · " + e.kind + (e.body ? " · " + e.body : "")));
         r.append(el("span", "chk " + (e.severity === "warn" || e.severity === "critical" ? "warn" : "off"), "•"), el_);
         body.appendChild(r);
@@ -1457,7 +1458,7 @@ function autoPane(pane) {
   const call = (action, extra) => api("/api/automations/action", Object.assign({ action }, extra || {}));
   const reload = () => api("/api/automations").then((d) => d && draw(d));
   const after = (msg) => (r) => {
-    if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+    if (!r || !r.ok) return toast((r && r.error) || _("didn't work"));
     if (msg) toast(msg);
     reload();
   };
@@ -1473,7 +1474,7 @@ function autoPane(pane) {
     const inp = el("input");
     inp.type = "text";
     inp.placeholder = placeholder;
-    const go = el("button", "btn primary", "Ekle");
+    const go = el("button", "btn primary", _("Add"));
     const out = el("div");
     const run = () => {
       const text = inp.value.trim();
@@ -1482,7 +1483,7 @@ function autoPane(pane) {
       go.textContent = "anlıyorum…";
       parse(text).then((r) => {
         go.disabled = false;
-        go.textContent = "Ekle";
+        go.textContent = _("Add");
         out.replaceChildren();
         if (!r || !r.ok) return toast((r && r.error) || "anlaşılamadı");
         const card = el("div", "auto-preview");
@@ -1493,8 +1494,8 @@ function autoPane(pane) {
           card.appendChild(line);
         }
         const btns = el("div", "row");
-        btns.append(small("Vazgeç", () => out.replaceChildren()),
-          small("Kaydet", () => save(r).then((x) => { if (x && x.ok) { inp.value = ""; out.replaceChildren(); } after("kaydedildi")(x); }), true));
+        btns.append(small(_("Cancel"), () => out.replaceChildren()),
+          small(_("Save"), () => save(r).then((x) => { if (x && x.ok) { inp.value = ""; out.replaceChildren(); } after("kaydedildi")(x); }), true));
         card.appendChild(btns);
         out.appendChild(card);
       });
@@ -1561,10 +1562,10 @@ function autoPane(pane) {
     ev.value = "PostToolUse";
     const mt = el("input"); mt.type = "text"; mt.placeholder = "araç (regex) ör. edit_file|write_file|multi_edit";
     const cmd = el("input"); cmd.type = "text"; cmd.placeholder = "komut ör. ruff format \"$ALICE_TOOL_PATH\"";
-    const addH = small("Ekle", async () => {
+    const addH = small(_("Add"), async () => {
       if (!cmd.value.trim()) return toast("komut boş");
       const ok = await confirmDialog("Hook eklensin mi?",
-        `${ev.value}${mt.value ? " [" + mt.value + "]" : ""} olayında her seferinde şu komut çalışacak:\n${cmd.value}`, "Ekle");
+        `${ev.value}${mt.value ? " [" + mt.value + "]" : ""} olayında her seferinde şu komut çalışacak:\n${cmd.value}`, _("Add"));
       if (ok) call("hook_add", { event: ev.value, matcher: mt.value, command: cmd.value }).then(after("hook eklendi"));
     }, true);
     const hrow = el("div", "key-edit");
@@ -1586,7 +1587,7 @@ function autoPane(pane) {
       if (!h.fixed) {
         row.append(small("Dene", () => call("hook_test", { index: h.index }).then((r) => {
           out.replaceChildren();
-          if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+          if (!r || !r.ok) return toast((r && r.error) || _("didn't work"));
           out.appendChild(el("small", "", `çıkış ${r.code}` + (r.stdout ? " · " + r.stdout : "") + (r.stderr ? " · " + r.stderr : "")));
         })), iconAct(IC.trash, "Hook'u sil", () => call("hook_rm", { index: h.index }).then(after("hook silindi")), "danger"));
       }
@@ -1599,7 +1600,7 @@ function autoPane(pane) {
     fl.append(el("b", "", "Bağlı servisleri izle"), el("small", "", "Discord'da adın geçince, arkadaşın oyuna girince haber ver gibi. "
       + "Tanımlar " + d.feeds_path + " dosyasında."));
     fh.append(fl, small(d.feeds_file ? "Dosyayı aç" : "Örnek dosya oluştur", () => call("feed_open").then((r) => {
-      if (!r || !r.ok) return toast((r && r.error) || "açılamadı");
+      if (!r || !r.ok) return toast((r && r.error) || _("could not open"));
       toast(r.created ? "örnek dosya oluşturuldu ve açıldı; kaydedince çekirdek kendisi okur" : "dosya açıldı");
       reload();
     })));
@@ -1617,7 +1618,7 @@ function autoPane(pane) {
           test.disabled = false;
           test.textContent = "Dene";
           out.replaceChildren();
-          if (!r || !r.ok) { out.appendChild(el("div", "enroll-result bad", (r && r.error) || "olmadı")); return; }
+          if (!r || !r.ok) { out.appendChild(el("div", "enroll-result bad", (r && r.error) || _("didn't work"))); return; }
           out.appendChild(el("small", "", `${r.total} öğe, ${r.passed} tanesi koşulu geçiyor (bildirim gönderilmedi)`));
           for (const v of r.items) {
             const it = el("div", "auto-line");
@@ -1658,7 +1659,7 @@ function scheduleRow(title, sub, info, def, weekdaysOpt, prefix, after) {
     .then((r) => { toast(r && r.ok ? title + " kuruldu" : (r && r.error) || "kurulamadı"); after(); }));
   ctl.appendChild(save);
   if (info) {
-    const rm = el("button", "btn", "Kaldır");
+    const rm = el("button", "btn", _("Remove"));
     rm.addEventListener("click", () => api("/api/notes/action", { action: prefix + "_remove" }).then(() => { toast(title + " kaldırıldı"); after(); }));
     ctl.appendChild(rm);
   }
@@ -1721,7 +1722,7 @@ function notesPane(pane) {
         api("/api/notes/action", Object.assign({ action }, extra || {})).then((r) => {
           b.disabled = false;
           b.textContent = old;
-          if (!r || !r.ok) return toast((r && r.error) || "olmadı");
+          if (!r || !r.ok) return toast((r && r.error) || _("didn't work"));
           out.replaceChildren(el("pre", "mem", r.text));
           if (r.path) {
             const o = el("button", "btn", "Sayfayı aç");
@@ -1758,7 +1759,7 @@ function logsPane(pane) {
     l.append(el("b", "", "Test seti"), el("small", "", `${d ? d.cases : "?"} vaka${last}`));
     const ctl = el("span", "enroll-act");
     if (r.state === "running") {
-      const stop = el("button", "btn", "Durdur");
+      const stop = el("button", "btn", _("Stop"));
       stop.addEventListener("click", () => act("eval_stop").then(poll));
       ctl.appendChild(stop);
     } else {
@@ -1766,7 +1767,7 @@ function logsPane(pane) {
       add.title = "Son 20 sesli isteğini vaka olarak ekle";
       add.addEventListener("click", () => act("eval_from_log", { n: 20 }).then((x) => { toast(x && x.ok ? `${x.added} vaka eklendi` : "eklenemedi"); refresh(); }));
       const open = el("button", "btn", "Dosyayı aç");
-      open.addEventListener("click", () => act("eval_open").then((x) => { if (!x || !x.ok) toast((x && x.error) || "açılamadı"); }));
+      open.addEventListener("click", () => act("eval_open").then((x) => { if (!x || !x.ok) toast((x && x.error) || _("could not open")); }));
       const run = el("button", "btn primary", "Testleri çalıştır");
       run.addEventListener("click", () => act("eval_run").then((x) => { if (!x || !x.ok) toast((x && x.error) || "başlamadı"); poll(); }));
       ctl.append(add, open, run);
@@ -1838,7 +1839,7 @@ function setupPane(pane) {
   const body = el("div");
   pane.appendChild(body);
   const act = (action, extra) => api("/api/setup/action", Object.assign({ action }, extra || {}));
-  const done = (msg) => (r) => { if (!r || !r.ok) toast((r && r.error) || "olmadı"); else if (msg) toast(typeof msg === "function" ? msg(r) : msg); load(); };
+  const done = (msg) => (r) => { if (!r || !r.ok) toast((r && r.error) || _("didn't work")); else if (msg) toast(typeof msg === "function" ? msg(r) : msg); load(); };
   const btn = (label, fn, primary) => { const b = el("button", primary ? "btn primary" : "btn", label); b.addEventListener("click", () => { b.disabled = true; fn(); }); return b; };
   const card = (title, sub, ...acts) => {
     const c = el("div", "enroll");
@@ -1889,7 +1890,7 @@ function setupPane(pane) {
     const c2b = card(cg.logged_in ? "ChatGPT bağlı ✓" : "ChatGPT ile giriş",
       cg.logged_in ? `${cg.email || "hesap"}${cg.plan ? " · " + cg.plan : ""}. Modeller ölçülünce otomatik sıraya girer; limit dolunca sıradakine geçilir.`
         : "API anahtarı olmadan ChatGPT hesabınla (ücretsiz plan dahil) GPT modelleri. Kullanım planının Codex limitinden düşer. Resmi olarak onaylı değil (OpenCode da aynı yolu kullanıyor).",
-      btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : cg.logged_in ? "Hesap ekle" : "Giriş yap",
+      btn(cg.state === "running" ? "tarayıcıda bekleniyor…" : cg.logged_in ? "Hesap ekle" : _("Sign in"),
         () => act("chatgpt_login").then(done()), cg.state !== "running"));
     c2b.appendChild(jobLines(cg));
     if (cg.logged_in) {
@@ -1915,12 +1916,12 @@ function setupPane(pane) {
         `Modeller: ${cg.models.join(", ")}. Sohbetin altındaki model menüsünden seç ya da Otomatik bırak.`));
       else {
         c2b.appendChild(el("div", "enroll-result " + (cg.models_state === "loading" ? "" : "bad"),
-          cg.models_state === "loading" ? "Model listesi okunuyor…" : "Model listesi alınamadı: " + (cg.models_error || "bilinmiyor")));
+          cg.models_state === "loading" ? _("Reading the model list…") : "Model listesi alınamadı: " + (cg.models_error || "bilinmiyor")));
         // Liste gelmese de kullanılabilsin: adı elle ekle
         const row = el("div", "key-edit auto-new");
         const inp = el("input");
         inp.type = "text"; inp.placeholder = "Model adı (ör. gpt-5.5)";
-        row.append(inp, btn("Ekle", () => act("chatgpt_model_add", { name: inp.value }).then(done("model eklendi, model menüsünde")), true),
+        row.append(inp, btn(_("Add"), () => act("chatgpt_model_add", { name: inp.value }).then(done("model eklendi, model menüsünde")), true),
           btn("Tekrar dene", () => act("chatgpt_models_retry").then(done())));
         c2b.appendChild(row);
       }
@@ -1930,7 +1931,7 @@ function setupPane(pane) {
       const it = el("div", "auto-line");
       const acts = el("span", "enroll-act");
       if (!a.active) acts.appendChild(btn("Kullan", () => act("chatgpt_use", { key: a.key }).then(done(`${a.email || "hesap"} kullanılıyor`))));
-      acts.appendChild(btn("Kaldır", () => act("chatgpt_logout", { key: a.key }).then(done("hesap kaldırıldı"))));
+      acts.appendChild(btn(_("Remove"), () => act("chatgpt_logout", { key: a.key }).then(done("hesap kaldırıldı"))));
       it.append(el("span", "chk " + (a.active ? "ok" : "off"), a.active ? "✓" : "–"), el("b", "", a.email || a.key),
         el("small", "", (a.plan || "") + (a.active ? " · kullanılıyor" : "")), acts);
       c2b.appendChild(it);
@@ -1959,7 +1960,7 @@ function setupPane(pane) {
       const sec = el("input");
       sec.type = "password";
       sec.placeholder = "Client secret";
-      const save = btn("Kaydet", () => act("google_client", { text: inp.value, secret: sec.value }).then(done("Google istemcisi kaydedildi")), true);
+      const save = btn(_("Save"), () => act("google_client", { text: inp.value, secret: sec.value }).then(done("Google istemcisi kaydedildi")), true);
       row.append(inp, sec, save);
       if (g.found_json) c3.appendChild(card("İndirilenlerde bulundu: " + g.found_json, "Google'dan indirdiğin dosya bu mu?",
         btn("Bunu kullan", () => act("google_client", { use_download: true }).then(done("Google istemcisi kaydedildi")), true)));
@@ -2005,7 +2006,7 @@ function setupPane(pane) {
       ? dc.dirs.map((x) => x.path + (x.installed ? " ✓ kurulu" : " · kurulu değil")).join(" · ") + (dc.mission ? " · son görev: " + dc.mission : "")
       : "DCS Saved Games klasörü bulunamadı (DCS bir kez açılmış olmalı).",
       ...(dc.dirs.length ? [btn("Kneeboard yaz", () => act("dcs_kneeboard").then(done((r) => `${r.pages} sayfa yazıldı` + (r.mission ? " (" + r.mission + ")" : "")))),
-        btn(installed ? "Kaldır" : "Kur", () => act("dcs_install", { on: !installed }).then(done(installed ? "kaldırıldı" : "kuruldu; DCS'i yeniden başlat")), !installed)] : []));
+        btn(installed ? _("Remove") : "Kur", () => act("dcs_install", { on: !installed }).then(done(installed ? "kaldırıldı" : "kuruldu; DCS'i yeniden başlat")), !installed)] : []));
     body.appendChild(c5);
     // Eklentiler
     body.appendChild(el("div", "sec", `Eklentiler (${d.plugins.items.length})`));
@@ -2048,7 +2049,7 @@ function setupPane(pane) {
 }
 /* Ayarlar > Modeller > Puanlama: her model zekâ / hız / ilk kelime / akış'ta 0-100 puan alır; rolün ağırlıklarıyla
    genel puan çıkar ve otomatik sıra buna göre kurulur. Ağırlık değişince modeller tekrar ölçülmeden sıra yenilenir. */
-const ROLE_NAMES = { brain: "Ana model", voice: "Sesli", fast: "Hızlı işler", vision: "Görsel" };
+const ROLE_NAMES = { brain: _("Main model"), voice: _("Voice"), fast: _("Quick tasks"), vision: _("Images") };
 const METRIC_SHORT = { zeka: "Zekâ", hiz: "Hız", tepki: "İlk kelime", akis: "Akış", baglam: "Bağlam", guven: "Güven" };
 const kTok = (n) => !n ? "?" : n >= 1000000 ? Math.round(n / 100000) / 10 + "M" : Math.round(n / 1000) + "K";
 let scoreRole = "brain";
@@ -2203,7 +2204,7 @@ function memoryPane(pane, data) {
   const dr = d.dream || {};
   const dbox = el("div", "list-row");
   const dl = el("span", "l");
-  const when = dr.at ? new Date(dr.at * 1000).toLocaleString("tr-TR") : "henüz hiç";
+  const when = dr.at ? new Date(dr.at * 1000).toLocaleString(ALICE_LOCALE) : "henüz hiç";
   dl.append(el("b", "", "Dream (hafızayı toparla)"),
     el("small", "", `Tekrarları birleştirir, eskiyeni düzeltir, son konuşmalardan kalıcı olanı ekler, dizini toparlar. Önce yedek alır. `
       + (dr.enabled ? `Kendiliğinden: ${dr.hours} saatte bir, en az ${dr.sessions} konuşma birikince. ` : "Kendiliğinden çalışma kapalı. ")
@@ -2266,12 +2267,12 @@ function memoryPane(pane, data) {
     }
   }
   const draw = () => {
-    const q = f.value.toLocaleLowerCase("tr");
+    const q = f.value.toLocaleLowerCase(ALICE_LOCALE);
     for (const [list, notes, byCat] of lists) {
       list.replaceChildren();
       if (q) {
         // Flat search filtered view
-        const shown = notes.filter((x) => (x.title + " " + x.description + " " + x.body).toLocaleLowerCase("tr").includes(q));
+        const shown = notes.filter((x) => (x.title + " " + x.description + " " + x.body).toLocaleLowerCase(ALICE_LOCALE).includes(q));
         if (!shown.length) list.appendChild(el("p", "", "Eşleşen yok."));
         for (const x of shown) list.appendChild(noteRow(x, notes, draw));
       } else {
@@ -2340,14 +2341,14 @@ function historyBlock(pane, d) {
 function noteRow(x, notes, redraw) {
   const row = el("div", "list-row mem-note" + (x.old ? " warn" : ""));
   const l = el("span", "l");
-  const al = (x.aliases || []).filter((a) => a.toLocaleLowerCase("tr") !== String(x.name).toLocaleLowerCase("tr"));
+  const al = (x.aliases || []).filter((a) => a.toLocaleLowerCase(ALICE_LOCALE) !== String(x.name).toLocaleLowerCase(ALICE_LOCALE));
   const meta = [al.length ? "diğer adları: " + al.join(", ") : "", (x.links || []).length ? "bağlı: " + x.links.join(", ") : "",
     "güncellendi " + x.age, x.source === "kullanıcı" ? "senin isteğin" : "", x.old ? "eski rolden" : ""].filter(Boolean).join(" · ");
   l.append(el("b", "", x.title || x.name), el("small", "", String(x.description || "").replace(/\[\[([^\]]+)\]\]/g, "$1")), el("small", "mem-meta", meta));
   const body = el("div", "mem-body");
   body.hidden = true;
   const ta = el("textarea"); ta.value = x.body; ta.rows = Math.min(14, Math.max(3, x.body.split("\n").length + 1));
-  const save = el("button", "btn primary", "Kaydet");
+  const save = el("button", "btn primary", _("Save"));
   save.addEventListener("click", () => {
     save.disabled = true;
     api("/api/memory/action", { action: "save", key: x.key, body: ta.value }).then((r) => {
@@ -2391,7 +2392,7 @@ function keysPane(pane, data) {
       const row = el("div", "kc-strategy");
       row.append(el("small", "", "Bir sağlayıcıda birden çok anahtar varsa:"),
         segmented([["round-robin", "Sırayla kullan"], ["fill-first", "Biri bitince diğerine geç"]], d.strategy || "round-robin",
-          (v) => api("/api/keys/strategy", { strategy: v }).then((r) => toast(r && r.ok ? "kaydedildi" : (r && r.error) || "olmadı"))));
+          (v) => api("/api/keys/strategy", { strategy: v }).then((r) => toast(r && r.ok ? "kaydedildi" : (r && r.error) || _("didn't work")))));
       pane.appendChild(row);
     }
     const grid = el("div", "key-grid");
@@ -2425,7 +2426,7 @@ function keyPool(k) {
   const inp = el("input");
   inp.type = "password"; inp.autocomplete = "off"; inp.spellcheck = false;
   inp.placeholder = "bir anahtar daha yapıştır (başka hesap)";
-  const go = el("button", "btn", "Ekle");
+  const go = el("button", "btn", _("Add"));
   go.addEventListener("click", () => {
     if (!inp.value.trim()) return inp.focus();
     api("/api/keys/add", { base: k.key, value: inp.value.trim() }).then((r) => {
@@ -2446,7 +2447,7 @@ function serverCard() {
   const head = el("div", "kc-head");
   const l = el("span", "l");
   l.append(el("b", "", "OpenAI uyumlu sunucu ekle"), el("small", "", "LM Studio, vLLM, LiteLLM, kendi proxy'n ya da başka bir bulut"));
-  const open = el("button", "btn", "Ekle");
+  const open = el("button", "btn", _("Add"));
   head.append(el("span", "kc-dot"), l, open);
   card.appendChild(head);
   const form = el("div", "kc-form");
@@ -2459,12 +2460,12 @@ function serverCard() {
     form.appendChild(row);
     return i;
   };
-  const name = field("Ad", "ör. lmstudio");
+  const name = field(_("Name"), "ör. lmstudio");
   const url = field("Adres", "http://localhost:1234/v1");
   const key = field("Anahtar", "yoksa boş bırak", "password");
   const models = field("Modeller", "boşsa sunucudan okunur (virgülle)");
   const fr = el("div", "kc-btns");
-  const cancel = el("button", "btn ghost", "Vazgeç");
+  const cancel = el("button", "btn ghost", _("Cancel"));
   cancel.addEventListener("click", () => { form.hidden = true; });
   const save = el("button", "btn primary", "Dene ve ekle");
   const send = (force) => {
@@ -2484,7 +2485,7 @@ function serverCard() {
   open.addEventListener("click", () => { form.hidden = !form.hidden; if (!form.hidden) setTimeout(() => name.focus(), 0); });
   return card;
 }
-/* Abonelikler (Claude Code proxy, CLIProxyAPI): her servis ayrı kart. Kartın "Giriş yap" düğmesi o servisin giriş
+/* Abonelikler (Claude Code proxy, CLIProxyAPI): her servis ayrı kart. Kartın _("Sign in") düğmesi o servisin giriş
    sayfasını tarayıcıda açar; kullanıcı kendi hesabıyla girince proxy hesabı saklar, kart kendiliğinden tazelenir.
    Aynı serviste birden çok hesap varsa istekler sırayla paylaşılır, biri sınıra takılınca diğerine geçilir. */
 function cliproxySection(pane) {
@@ -2571,7 +2572,7 @@ function serviceCard(key, name, accs, refresh) {
   const head = el("div", "kc-head");
   const l = el("span", "l");
   l.append(el("b", "", name), el("small", "", accs.length ? `${accs.length} hesap · ${ready} hazır` : "bağlı hesap yok"));
-  const go = el("button", accs.length ? "btn" : "btn primary", accs.length ? "Hesap ekle" : "Giriş yap");
+  const go = el("button", accs.length ? "btn" : "btn primary", accs.length ? "Hesap ekle" : _("Sign in"));
   go.title = name + " giriş sayfasını tarayıcıda açar";
   head.append(el("span", "kc-dot"), l, go);
   const flow = el("div", "cp-flow");
@@ -2594,7 +2595,7 @@ function serviceCard(key, name, accs, refresh) {
       const again = el("button", "btn", "Sayfayı yeniden aç");
       again.title = r.url;
       again.addEventListener("click", () => api("/api/open", { url: r.url }));
-      const cancel = el("button", "btn ghost", "Vazgeç");
+      const cancel = el("button", "btn ghost", _("Cancel"));
       cancel.addEventListener("click", () => { stop(); api("/api/cliproxy/login/cancel", { state: r.state }); flow.hidden = true; go.hidden = false; });
       const row = el("div", "cp-flow-btns");
       row.append(again, cancel);
@@ -2636,16 +2637,16 @@ function serviceCard(key, name, accs, refresh) {
       q.append(bar, el("small", "", `${w.label || "kota"} · %${pct}${when}`));
     }
     if (!wins.length) q.appendChild(el("small", "", a.needs_sign_in || a.error ? "" : "kullanım bilgisi yok (henüz istek gitmedi)"));
-    if (a.quota && a.quota.observed) q.title = "Son ölçüm: " + new Date(a.quota.observed * 1000).toLocaleString("tr-TR");
+    if (a.quota && a.quota.observed) q.title = "Son ölçüm: " + new Date(a.quota.observed * 1000).toLocaleString(ALICE_LOCALE);
     if (a.error) who.title = a.error;
     const acts = el("div", "cp-acts");
     if (a.needs_sign_in) {
-      const re = el("button", "btn", "Giriş yap");
+      const re = el("button", "btn", _("Sign in"));
       re.addEventListener("click", login);
       acts.appendChild(re);
     }
     acts.appendChild(iconAct(IC.trash, "Hesabı kaldır", () => {
-      confirmDialog("Hesap kaldırılsın mı?", (a.email || a.name) + " · " + name, "Kaldır").then((ok) => {
+      confirmDialog("Hesap kaldırılsın mı?", (a.email || a.name) + " · " + name, _("Remove")).then((ok) => {
         if (!ok) return;
         api("/api/cliproxy/remove", { name: a.name }).then((r) => { toast(r && r.ok ? "hesap kaldırıldı" : (r && r.error) || "kaldırılamadı"); refresh(); });
       });
@@ -2682,7 +2683,7 @@ function keyRow(parts) {
   }
   if (k.custom) head.appendChild(iconAct(IC.trash, "Sunucuyu kaldır", () => api("/api/providers/remove", { name: k.provider })
     .then((r) => { toast(r && r.ok ? k.label + " kaldırıldı" : (r && r.error) || "kaldırılamadı"); showSettings("apikeys"); }), "danger"));
-  const edit = el("button", "btn", all ? "Değiştir" : "Ekle");
+  const edit = el("button", "btn", all ? "Değiştir" : _("Add"));
   head.appendChild(edit);
   card.appendChild(head);
   const pooled = !many && k.provider && k.set;
@@ -2721,9 +2722,9 @@ function keyRow(parts) {
     showSettings("apikeys");
   };
   const fr = el("div", "kc-btns");
-  const cancel = el("button", "btn ghost", "Vazgeç");
+  const cancel = el("button", "btn ghost", _("Cancel"));
   cancel.addEventListener("click", () => { form.hidden = true; });
-  const save = el("button", "btn primary", "Kaydet");
+  const save = el("button", "btn primary", _("Save"));
   save.addEventListener("click", saveAll);
   fr.append(cancel, save);
   form.appendChild(fr);
@@ -2741,7 +2742,7 @@ function keyRow(parts) {
 /* Bağlantılar: servislerin durumu, OAuth bağlanma/çıkış ve izleyen akışlar. */
 function connectPane(pane, data) {
   const d = data || {};
-  pane.append(el("h2", "", "Bağlantılar"),
+  pane.append(el("h2", "", _("Connections")),
     el("p", "", "Servisleri ALICE'e bağlar. Anahtarlar ~/.alice/.env dosyasında durur; yeni bir servis eklemek "
       + "için ~/.alice/connect/<ad>.toml (terminalde: alice connect <ad> --new)."));
   for (const e of d.errors || []) pane.appendChild(el("div", "list-row warn", e));
@@ -2796,24 +2797,24 @@ function connectPane(pane, data) {
 }
 
 const SETTINGS_TABS = [
-  ["health", "Sağlık", IC.gauge], ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", "Araçlar", IC.bolt],
+  ["health", "Sağlık", IC.gauge], ["general", "Genel", IC.gear], ["apikeys", "Anahtarlar", IC.key], ["voice", "Ses", IC.sound], ["models", "Modeller", IC.spark], ["tools", _("Tools"), IC.bolt],
   ["assistant", "Asistan", IC.shield], ["system", "Çekirdek", IC.term], ["auto", "Kurallar ve görevler", IC.list], ["notes", "Notlar", IC.sun], ["logs", "Kayıtlar", IC.check], ["setup", "Kurulum", IC.update],
-  ["connect", "Bağlantılar", IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
+  ["connect", _("Connections"), IC.plug], ["memory", "Hafıza", IC.brain], ["usage", "Kullanım", IC.gauge],
   ["keys", "Kısayollar", IC.keyboard],
 ];
 /* Sol şeritteki bölümler. Eskiden hepsi tek bir Ayarlar penceresindeydi; özellikler (otomasyon, çekirdek,
    bağlantılar) artık kendi tam sayfalarında, Ayarlar'da sadece gerçek ayarlar kalır. */
 const SECTIONS = {
-  auto: ["Otomasyonlar", ["auto", "notes", "logs"]],
+  auto: [_("Automations"), ["auto", "notes", "logs"]],
   system: ["Sistem", ["health", "system", "assistant", "voice", "setup", "usage"]],
-  connect: ["Bağlantılar", ["connect", "apikeys"]],
-  settings: ["Ayarlar", ["general", "models", "tools", "memory", "keys"]],
+  connect: [_("Connections"), ["connect", "apikeys"]],
+  settings: [_("Settings"), ["general", "models", "tools", "memory", "keys"]],
 };
 const secOf = (tab) => Object.keys(SECTIONS).find((k) => SECTIONS[k][1].includes(tab)) || "settings";
 function markSection(sec) {
   app.dataset.sec = sec;
   for (const b of document.querySelectorAll("#rail [data-sec]")) b.classList.toggle("on", b.dataset.sec === sec && b.classList.contains("rbtn"));
-  $("#sideTitle").textContent = sec === "chat" ? "Sohbetler" : sec === "projects" ? "Projeler" : sec === "tasks" ? "Görevler" : SECTIONS[sec][0];
+  $("#sideTitle").textContent = sec === "chat" ? _("Chats") : sec === "projects" ? _("Projects") : sec === "tasks" ? _("Tasks") : SECTIONS[sec][0];
   const inPage = sec in SECTIONS || sec === "tasks" || (sec === "projects" && !S.proj);
   if (!(sec in SECTIONS)) $("#sideNav").replaceChildren();
   app.classList.toggle("in-page", inPage);
@@ -2831,7 +2832,7 @@ function showProjects() {
   const page = el("div", "page");
   const head = el("div", "page-head");
   const t = el("div");
-  t.append(el("h1", "", "Projeler"),
+  t.append(el("h1", "", _("Projects")),
     el("p", "", "Büyük işleri ALICE'in yönettiği, paralel çalışan ajan takımları yürütür. Soldan bir proje seç ya da yenisini başlat."));
   const nb = el("button", "btn primary");
   nb.append(svg(IC.plus), document.createTextNode("Yeni proje"));
@@ -2869,7 +2870,7 @@ async function drawOnboarding() {
   const core = !!(sys && sys.core && sys.core.running);
   const steps = [
     [hasModel, IC.key, "Bir model bağla", "Ücretsiz bir API anahtarı yapıştır (Gemini önerilir) ya da ChatGPT hesabınla gir.",
-      "Anahtar ekle", () => showSettings("apikeys")],
+      _("Add a key"), () => showSettings("apikeys")],
     [probed, IC.gauge, "Modelleri ölç", "Hangi modelin hızlı ve doğru olduğunu bir kez ölçer, sırayı ona göre kurar (~1-2 dk).",
       "Ölç", () => api("/api/setup/action", { action: "models_refresh" }).then(() => { toast("Ölçüm başladı"); drawOnboarding(); })],
     [core, IC.term, "Çekirdeği başlat", "Bildirimler, zamanlanmış görevler ve \"Hey Alice\" için arka planda çalışır.",
@@ -2958,16 +2959,16 @@ async function showSettings(tab) {
           segmented([["en", "English"], ["tr", "Türkçe"]], S.status.language || "en",
             (v) => api("/api/features/action", { action: "lang", lang: v }).then((r) => { if (r && r.ok) { S.status.language = v; location.reload(); } }))),
         setRow("Tema", "Sistem seçilirse Windows'un açık/koyu ayarını izler",
-          segmented([["system", "Sistem"], ["light", "Açık"], ["dark", "Koyu"]], PREFS.theme, (v) => setPref("theme", v))),
+          segmented([["system", _("System")], ["light", _("Light")], ["dark", _("Dark")]], PREFS.theme, (v) => setPref("theme", v))),
         setRow("Yazı boyutu", "Sohbet metninin boyutu",
           segmented([["small", "Küçük"], ["normal", "Normal"], ["large", "Büyük"]], PREFS.size, (v) => setPref("size", v))),
         setRow("Araç ayrıntıları", "Komut çıktıları ve okunan dosyalar açık gelsin (Ctrl+O)",
           segmented([["0", "Kapalı"], ["1", "Açık"]], PREFS.verbose ? "1" : "0", (v) => { if ((v === "1") !== PREFS.verbose) toggleVerbose(); })),
         setRow("Yan panel", "Plan, değişiklikler ve bağlam (Ctrl+J)",
           segmented([["0", "Kapalı"], ["1", "Açık"]], PREFS.panel ? "1" : "0", (v) => (v === "1" ? openPanel() : closePanel()))),
-        setRow("İzin modu", (MODES[S.status.mode] || ["", ""])[1],
+        setRow(_("Permission mode"), (MODES[S.status.mode] || ["", ""])[1],
           segmented(Object.entries(MODES).map(([k, [l]]) => [k, l]), S.status.mode, (v) => setMode(v))),
-        setRow("Çalışma klasörü", S.status.cwd || "", (() => { const b = el("button", "btn", "Değiştir"); b.addEventListener("click", askCwd); return b; })()),
+        setRow(_("Working folder"), S.status.cwd || "", (() => { const b = el("button", "btn", "Değiştir"); b.addEventListener("click", askCwd); return b; })()),
         setRow("Güncelleme", "Otomatik: açılışta GitHub'daki main'den çeker ve en son sürümle açılır",
           segmented([["auto", "Otomatik"], ["notify", "Haber ver"], ["off", "Kapalı"]], S.status.update_mode || "auto",
             (v) => api("/api/update/mode", { mode: v }).then((r) => { if (r && r.ok) { S.status.update_mode = r.mode; toast("Güncelleme: " + v); } }))),
@@ -3047,11 +3048,11 @@ async function showSettings(tab) {
 }
 const SHORTCUTS = [
   ["Ctrl+K", "Komut paleti"], ["Ctrl+J", "Yan panel (plan, değişiklikler, bağlam)"], ["Ctrl+O", "Araç ayrıntılarını aç/kapat"],
-  ["Ctrl+,", "Ayarlar"], ["Enter", "Gönder (çalışırken sıraya ekler)"], ["Shift+Enter", "Yeni satır"],
+  ["Ctrl+,", _("Settings")], ["Enter", "Gönder (çalışırken sıraya ekler)"], ["Shift+Enter", "Yeni satır"],
   ["Ctrl + / Ctrl −", "Arayüzü büyüt / küçült (Ctrl+0 sıfırlar)"], ["Ctrl+Shift+E", "Sohbeti genişlet / daralt"],
   ["↑ / ↓", "Önceki mesajları geri getir (kutu boşken)"], ["Esc", "Durdur / menüyü kapat"],
   ["1 / 2 / 3", "İzin kartını cevapla: izin ver / hep izin ver / reddet"], ["Shift+Tab", "İzin modunu değiştir"],
-  ["Ctrl+B", "Kenar çubuğu"], ["Ctrl+Shift+O", "Yeni sohbet"], ["Ctrl+V", "Görsel yapıştır"],
+  ["Ctrl+B", "Kenar çubuğu"], ["Ctrl+Shift+O", _("New chat")], ["Ctrl+V", "Görsel yapıştır"],
 ];
 
 /* =========================================================== slash komutları */
@@ -3062,10 +3063,10 @@ async function runCommand(text) {
     case "help": showHelp(); return true;
     case "clear": case "new": newChat(); return true;
     case "compact": {
-      if (S.busy) { toast("Önce mevcut işi durdur"); return true; }
-      toast("Özetleniyor…");
+      if (S.busy) { toast(_("Stop the current job first")); return true; }
+      toast(_("Summarizing…"));
       const r = await api("/api/compact", {});
-      applyStatus(r); toast(r.ok ? "Context özetlendi" : "Özetlenecek bir şey yok");
+      applyStatus(r); toast(r.ok ? _("Context summarized") : _("Nothing to summarize"));
       loadHistory();
       return true;
     }
@@ -3082,7 +3083,7 @@ async function runCommand(text) {
     case "rewind": {
       const users = $$(".turn-user");
       const last = users[users.length - 1];
-      if (!last) { toast("Geri sarılacak mesaj yok"); return true; }
+      if (!last) { toast(_("No message to rewind to")); return true; }
       last.querySelector(".act[title^='Bu mesajdan']")?.click();
       return true;
     }
@@ -3114,11 +3115,11 @@ async function updatePopup() {
   let items;
   if (tok.kind === "cmd") {
     items = S.commands.filter((c) => c.name.startsWith(tok.q.toLowerCase()))
-      .map((c) => ({ label: "/" + c.name, desc: c.description, tag: c.kind === "custom" ? "özel" : "", value: "/" + c.name + " " }));
+      .map((c) => ({ label: "/" + c.name, desc: c.description, tag: c.kind === "custom" ? _("custom") : "", value: "/" + c.name + " " }));
   } else {
     const files = await api("/api/files?q=" + encodeURIComponent(tok.q));
     if (seq !== popupSeq) return;
-    items = (Array.isArray(files) ? files : []).map((f) => ({ label: f, desc: "", tag: f.endsWith("/") ? "klasör" : "", value: "@" + f + " " }));
+    items = (Array.isArray(files) ? files : []).map((f) => ({ label: f, desc: "", tag: f.endsWith("/") ? _("folder") : "", value: "@" + f + " " }));
   }
   if (!items.length) return hidePopup();
   S.popup = { ...tok, items, sel: 0 };
@@ -3171,7 +3172,7 @@ function drawAttachments() {
   S.attachments.forEach((b64, i) => {
     const a = el("div", "att");
     const img = el("img"); img.src = "data:image/png;base64," + b64;
-    const x = el("button"); x.title = "Kaldır"; x.appendChild(svg(IC.x));
+    const x = el("button"); x.title = _("Remove"); x.appendChild(svg(IC.x));
     x.addEventListener("click", () => { S.attachments.splice(i, 1); drawAttachments(); });
     a.append(img, x);
     box.appendChild(a);
@@ -3212,7 +3213,7 @@ async function submit(textArg) {
     // Yan soru işi beklemez ve bölmez: hemen gider, cevap kart olarak gelir.
     if (textArg === undefined) { input.value = ""; autosize(); }
     const r = await api("/api/send", { text });
-    if (!r || !r.ok) toast((r && r.error) || "yan soru gönderilemedi");
+    if (!r || !r.ok) toast((r && r.error) || _("could not send the side question"));
     return;
   }
   if (S.busy && text.startsWith("/")) {
@@ -3227,12 +3228,12 @@ async function submit(textArg) {
     const r = await api("/api/send", { text, images });
     if (!r.ok) {
       // Sesli asistan aynı anda iş başlatmış olabilir: mesaj kaybolmasın, sıraya girsin.
-      if (/çalışıyor/.test(r.error || "")) {
+      if (/çalışıyor|busy|already running/i.test(r.error || "")) {
         S.queue.push({ text, images }); drawQueue();
         await refreshStatus();
         if (!S.busy) flushQueue();
       }
-      else { toast(r.error || "Gönderilemedi"); return; }
+      else { toast(r.error || _("Could not send")); return; }
     }
   }
   if (textArg === undefined) {
@@ -3261,8 +3262,8 @@ function drawQueue() {
   q.replaceChildren();
   S.queue.forEach((item, i) => {
     const row = el("div", "queued");
-    row.append(el("small", "", "Sırada"), el("span", "", item.text));
-    const x = el("button", "act"); x.title = "Sıradan çıkar"; x.appendChild(svg(IC.x));
+    row.append(el("small", "", _("Queued")), el("span", "", item.text));
+    const x = el("button", "act"); x.title = _("Remove from the queue"); x.appendChild(svg(IC.x));
     x.addEventListener("click", () => { S.queue.splice(i, 1); drawQueue(); });
     row.appendChild(x);
     q.appendChild(row);
@@ -3273,7 +3274,7 @@ async function flushQueue() {
   const item = S.queue.shift();
   drawQueue();
   const r = await api("/api/send", item);
-  if (!r.ok) toast(r.error || "Sıradaki mesaj gönderilemedi");
+  if (!r.ok) toast(r.error || _("Could not send the queued message"));
 }
 function stop() { api("/api/stop", {}); S.queue = []; drawQueue(); }
 
@@ -3311,38 +3312,38 @@ $("#modelBtn").addEventListener("click", modelMenu);
 $("#thinkBtn").addEventListener("click", thinkMenu);
 $("#cwdBtn").addEventListener("click", askCwd);
 /* Dal menüsü: üst çubuktaki dal etiketine tıklayınca yerel ve uzaktaki dallar; seçilene geçilir, uzakta olup
-   yerelde olmayan dal izleyen dal olarak açılır. "Yeni dal" şu anki daldan yeni bir dal açar. */
+   yerelde olmayan dal izleyen dal olarak açılır. _("New branch") şu anki daldan yeni bir dal açar. */
 async function branchMenu() {
   const r = await api("/api/git/branches", {});
-  if (!r || !r.ok) return toast((r && r.error) || "dallar okunamadı");
+  if (!r || !r.ok) return toast((r && r.error) || _("could not read the branches"));
   const go = async (name, create) => {
-    toast(create ? `'${name}' açılıyor…` : `'${name}' dalına geçiliyor…`);
+    toast(create ? _("Creating '{name}'…", { name }) : _("Switching to '{name}'…", { name }));
     const x = await api("/api/git/switch", { branch: name, create: !!create });
-    if (!x || !x.ok) return toast((x && x.error) || "dal değiştirilemedi");
+    if (!x || !x.ok) return toast((x && x.error) || _("could not switch the branch"));
     applyStatus(x);
     toast("Dal: " + name);
     refreshChanges();
   };
   openMenu($("#branchChip"), (m) => {
-    m.appendChild(el("div", "menu-title", "Dal değiştir"));
+    m.appendChild(el("div", "menu-title", _("Switch branch")));
     for (const b of r.branches || []) {
-      const when = b.ts ? new Date(b.ts * 1000).toLocaleDateString("tr-TR") : "";
-      menuItem(m, IC.branch, b.name, (b.remote ? "yalnız GitHub'da · " : "") + [when, b.subject].filter(Boolean).join(" · "),
+      const when = b.ts ? new Date(b.ts * 1000).toLocaleDateString(ALICE_LOCALE) : "";
+      menuItem(m, IC.branch, b.name, (b.remote ? _("only on GitHub · ") : "") + [when, b.subject].filter(Boolean).join(" · "),
         () => { if (!b.current) go(b.name); }, b.current);
     }
-    menuItem(m, IC.plus || IC.branch, "Yeni dal…", "Şu anki daldan yeni bir dal aç", async () => {
+    menuItem(m, IC.plus || IC.branch, _("New branch…"), _("Open a new branch from the current one"), async () => {
       showDialog((d) => {
         const inp = el("input", "text");
-        inp.placeholder = "ör. ozellik/yeni-ayar";
+        inp.placeholder = _("e.g. feature/new-setting");
         const row = el("div", "row");
-        const no = el("button", "btn", "Vazgeç");
-        const yes = el("button", "btn accent", "Aç ve geç");
+        const no = el("button", "btn", _("Cancel"));
+        const yes = el("button", "btn accent", _("Create and switch"));
         const ok = () => { const name = inp.value.trim(); if (!name) return; closeDialog(); go(name, true); };
         no.addEventListener("click", closeDialog);
         yes.addEventListener("click", ok);
         inp.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); });
         row.append(no, yes);
-        d.append(el("h2", "", "Yeni dal"), inp, row);
+        d.append(el("h2", "", _("New branch")), inp, row);
         setTimeout(() => inp.focus(), 0);
       });
     });
@@ -3411,9 +3412,9 @@ function setZoom(val) {
   zoomPref = Math.min(want, Math.max(limit, zoom));  // sınırın üstüne birikmesin: Ctrl - ilk basışta küçültsün
   try { localStorage.setItem("alice.zoom", String(zoomPref)); } catch { /* yok */ }
   if (applyZoom()) window.dispatchEvent(new Event("resize"));  // ölçüye bağlı yerleşimler (site önizlemesi) yenilensin
-  const pct = `Yakınlaştırma %${Math.round(zoom * 100)}`;
-  toast(want > zoom && zoom >= limit ? `${pct} · bu pencere genişliğinde en fazla bu kadar`
-    : pct + (zoom === 1 ? "" : " · sıfırlamak için Ctrl+0"));
+  const pct = _("Zoom {pct}%", { pct: Math.round(zoom * 100) });
+  toast(want > zoom && zoom >= limit ? pct + _(" · the most this window width allows")
+    : pct + (zoom === 1 ? "" : _(" · Ctrl+0 to reset")));
 }
 // Ctrl+tekerlek: pencerenin kendi yakınlaştırması devreye girip bizimkiyle üst üste binmesin, aynı ayarı değiştirsin.
 let wheelZoomAt = 0;
@@ -3525,17 +3526,17 @@ function renderBrowserPane() {
   const wrap = el("div", "bb");
   const bar = el("div", "bb-bar");
   const mk = (icon, title, fn) => { const b = iconAct(icon, title, fn); b.classList.add("bb-btn"); return b; };
-  bar.append(mk(IC.back, "Geri", () => bbSend({ type: "back" })),
-    mk(IC.fwd, "İleri", () => bbSend({ type: "forward" })),
-    mk(IC.reload, "Yenile", () => bbSend({ type: "reload" })));
+  bar.append(mk(IC.back, _("Back"), () => bbSend({ type: "back" })),
+    mk(IC.fwd, _("Forward"), () => bbSend({ type: "forward" })),
+    mk(IC.reload, _("Reload"), () => bbSend({ type: "reload" })));
   const url = el("input", "bb-url");
-  url.placeholder = "Adres ya da arama";
+  url.placeholder = _("Address or search");
   url.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { bbSend({ type: "navigate", url: url.value }); url.blur(); }
   });
   url.addEventListener("focus", () => url.select());
   bar.appendChild(url);
-  const tabsBtn = mk(IC.list, "Sekmeler", () => bbTabsMenu(tabsBtn));
+  const tabsBtn = mk(IC.list, _("Tabs"), () => bbTabsMenu(tabsBtn));
   bar.appendChild(tabsBtn);
   const view = el("div", "bb-view");
   view.tabIndex = 0;
@@ -3543,15 +3544,14 @@ function renderBrowserPane() {
   img.alt = "";
   img.draggable = false;
   const idle = el("div", "bb-idle");
-  const start = el("button", "btn accent", "Tarayıcıyı başlat");
+  const start = el("button", "btn accent", _("Start the browser"));
   start.addEventListener("click", async () => {
-    start.disabled = true; start.textContent = "Açılıyor…";
+    start.disabled = true; start.textContent = _("Opening…");
     const r = await api("/api/browser/input", { type: "start" });
-    if (!r.ok) { toast(r.error || "açılamadı"); start.disabled = false; start.textContent = "Tarayıcıyı başlat"; }
+    if (!r.ok) { toast(r.error || _("could not open")); start.disabled = false; start.textContent = _("Start the browser"); }
   });
-  idle.append(el("b", "", "ALICE'in tarayıcısı"),
-    el("p", "", "ALICE web'de bir iş yapınca burada canlı görürsün; istediğin an tıklayıp yazarak devralabilirsin. " +
-      "Giriş yaptığın siteler sonraki seferde de açık kalır."), start);
+  idle.append(el("b", "", _("ALICE's browser")),
+    el("p", "", _("When ALICE works on the web you see it live here; you can take over at any time by clicking and typing. Sites you sign in to stay signed in next time.")), start);
   view.append(img, idle);
   const pos = (e) => {
     const f = BB.frame, r = img.getBoundingClientRect();
@@ -3589,15 +3589,15 @@ async function bbSend(cmd) {
 }
 async function bbTabsMenu(anchor) {
   const r = await api("/api/browser/tabs");
-  if (!r || !r.ok) return toast((r && r.error) || "tarayıcı kapalı");
+  if (!r || !r.ok) return toast((r && r.error) || _("the browser is closed"));
   openMenu(anchor, (m) => {
-    m.appendChild(el("div", "menu-title", "Sekmeler"));
+    m.appendChild(el("div", "menu-title", _("Tabs")));
     for (const t of r.tabs) {
       menuItem(m, IC.globe || IC.file, (t.title || t.url || "yeni sekme").slice(0, 60), t.url.slice(0, 80),
         () => bbSend({ type: "tab", id: t.id }), t.id === r.current);
     }
-    menuItem(m, IC.plus, "Yeni sekme", "", () => bbSend({ type: "new_tab" }));
-    if (r.tabs.length > 1) menuItem(m, IC.x, "Bu sekmeyi kapat", "", () => bbSend({ type: "close_tab", id: r.current }));
+    menuItem(m, IC.plus, _("New tab"), "", () => bbSend({ type: "new_tab" }));
+    if (r.tabs.length > 1) menuItem(m, IC.x, _("Close this tab"), "", () => bbSend({ type: "close_tab", id: r.current }));
   }, "right", true);
 }
 async function bbTick(force) {
@@ -3640,14 +3640,14 @@ function browserLoop() {
    açık PR'ı izlenmiyorsa tek tıkla izlemeye alınır. Sekme açıkken 30 sn'de bir tazelenir. */
 const PRP = { timer: null, busy: false };
 const PR_FLAGS = [
-  ["auto_fix", "CI kırmızıysa düzelt"],
-  ["address_comments", "İnceleme yorumlarını uygula"],
-  ["auto_review", "Her commit'i bağımsız incele"],
-  ["auto_merge", "Hepsi yeşilken birleştir"],
+  ["auto_fix", _("Fix when CI is red")],
+  ["address_comments", _("Apply review comments")],
+  ["auto_review", _("Review every commit independently")],
+  ["auto_merge", _("Merge when everything is green")],
 ];
 async function prAct(path, body) {
   const r = await api("/api/prs/" + path, body);
-  if (!r || !r.ok) toast((r && r.error) || "olmadı");
+  if (!r || !r.ok) toast((r && r.error) || _("didn't work"));
   else if (r.note && path !== "flag") toast(r.note);
   renderPrPane(true);
 }
@@ -3659,37 +3659,36 @@ async function renderPrPane(force) {
     if (!document.hidden) renderPrPane(false);
   }, 30000);
   if (PRP.busy) return;
-  if (!body.querySelector(".prp")) body.replaceChildren(el("div", "prp note", "PR'lar yükleniyor…"));
+  if (!body.querySelector(".prp")) body.replaceChildren(el("div", "prp note", _("Loading PRs…")));
   PRP.busy = true;
   let r;
   try { r = await api("/api/prs" + (force ? "?force=1" : "")); } finally { PRP.busy = false; }
   if (!(PREFS.panel && PREFS.tab === "prs")) return;
   const wrap = el("div", "prp");
   const head = el("div", "prp-head");
-  head.append(el("b", "", "İzlenen PR'lar"), el("span", "grow"),
-    iconAct(IC.rewind, "Tazele", () => renderPrPane(true)));
+  head.append(el("b", "", _("Watched PRs")), el("span", "grow"),
+    iconAct(IC.rewind, _("Refresh"), () => renderPrPane(true)));
   wrap.appendChild(head);
   if (!r || (!r.ok && !r.watching.length)) {
-    wrap.appendChild(el("div", "note", (r && r.error) || "GitHub'a ulaşılamadı"));
+    wrap.appendChild(el("div", "note", (r && r.error) || _("Could not reach GitHub")));
   }
   if (r && r.suggest) {
     const s = r.suggest, card = el("div", "prp-suggest");
-    card.append(el("div", "", `Bu dalın (${s.head}) açık PR'ı izlenmiyor:`),
+    card.append(el("div", "", _("The open PR of this branch ({branch}) isn't watched:", { branch: s.head })),
       el("b", "", `#${s.number} ${s.title}`));
-    const b = el("button", "btn accent", "İzlemeye al");
+    const b = el("button", "btn accent", _("Watch it"));
     b.addEventListener("click", () => { b.disabled = true; prAct("watch", { repo: s.repo, number: s.number }); });
     card.appendChild(b);
     wrap.appendChild(card);
   }
   const rows = (r && r.watching) || [];
   if (!rows.length && !(r && r.suggest)) {
-    wrap.appendChild(emptyState(IC.branch, "İzlenen PR yok",
-      "ALICE bir PR açınca ya da sohbette \"bu PR'ı takip et\" deyince burada görünür: CI kırmızıya dönünce, " +
-      "inceleme yorumu ya da çakışma gelince kendisi düzeltir."));
+    wrap.appendChild(emptyState(IC.branch, _("No watched PRs"),
+      _("Shows up here when ALICE opens a PR or you say \"follow this PR\" in a chat: when CI turns red, or a review comment or conflict arrives, it fixes it itself.")));
   }
   for (const w of rows) wrap.appendChild(prCard(w));
   if (rows.length) wrap.appendChild(el("div", "prp-foot",
-    "Kontrolleri ALICE çekirdeği birkaç dakikada bir yapar; düzeltmeler PR'ı açan sohbete gelir."));
+    _("The ALICE core checks every few minutes; fixes arrive in the chat that opened the PR.")));
   body.replaceChildren(wrap);
 }
 function prCard(w) {
@@ -3697,8 +3696,8 @@ function prCard(w) {
   const top = el("div", "prp-top");
   const ci = w.state === "merged" ? "merged" : w.state === "closed" ? "closed" : (w.ci || "none");
   const dot = el("span", "prp-dot " + ci);
-  dot.title = { success: "CI yeşil", failure: "CI kırmızı", pending: "CI sürüyor", none: "CI yok",
-    merged: "birleşti", closed: "kapandı" }[ci] || ci;
+  dot.title = { success: _("CI green"), failure: _("CI red"), pending: _("CI running"), none: _("No CI"),
+    merged: _("merged"), closed: _("closed") }[ci] || ci;
   const title = el("a", "prp-title", `#${w.number} ${w.title || ""}`);
   if (w.url) { title.href = w.url; title.target = "_blank"; title.rel = "noopener"; }
   top.append(dot, title);
@@ -3713,16 +3712,16 @@ function prCard(w) {
   const chips = el("div", "prp-chips");
   const chip = (cls, text) => chips.appendChild(el("span", "prp-chip " + cls, text));
   if (w.error) chip("bad", w.error);
-  if (ci === "failure") chip("bad", `${w.failed.length} iş kırmızı: ${w.failed.slice(0, 3).join(", ")}`);
-  else if (ci === "pending") chip("wait", `${w.pending.length} iş sürüyor`);
-  else if (ci === "success") chip("ok", `${w.checks} kontrol yeşil`);
-  if (w.open_threads > 0) chip("wait", `${w.open_threads} açık yorum`);
-  if (w.mergeable === false) chip("bad", "çakışma var");
+  if (ci === "failure") chip("bad", _("{n} jobs red: {names}", { n: w.failed.length, names: w.failed.slice(0, 3).join(", ") }));
+  else if (ci === "pending") chip("wait", _("{n} jobs running", { n: w.pending.length }));
+  else if (ci === "success") chip("ok", _("{n} checks green", { n: w.checks }));
+  if (w.open_threads > 0) chip("wait", _("{n} open comments", { n: w.open_threads }));
+  if (w.mergeable === false) chip("bad", _("has conflicts"));
   if (chips.childNodes.length) c.appendChild(chips);
   if (w.status) c.appendChild(el("div", "prp-status", w.status));
   if (w.finished) {  // merged/closed: no behavior switches, only "izlemeyi bırak"
     const bar = el("div", "prp-acts");
-    const un = el("button", "act", "Kaldır");
+    const un = el("button", "act", _("Remove"));
     un.addEventListener("click", () => prAct("unwatch", { repo: w.repo, number: w.number }));
     bar.append(el("span", "grow"), un);
     c.appendChild(bar);
@@ -3734,8 +3733,8 @@ function prCard(w) {
     row.append(el("span", "", label), switchEl(!!w[k], label, async (v) => {
       let confirmed = false;
       if (k === "auto_merge" && v) {
-        confirmed = await confirmDialog("Otomatik birleştirme",
-          `#${w.number}: CI yeşil, açık yorum ve çakışma yokken ALICE PR'ı kendisi birleştirecek.`, "Aç");
+        confirmed = await confirmDialog(_("Automatic merge"),
+          _("#{n}: ALICE will merge the PR itself when CI is green and there are no open comments or conflicts.", { n: w.number }), _("Turn on"));
         if (!confirmed) return;
       }
       prAct("flag", { repo: w.repo, number: w.number, flag: k, value: v, confirmed });
@@ -3745,16 +3744,16 @@ function prCard(w) {
   c.appendChild(flags);
   const acts = el("div", "prp-acts");
   if (ci === "failure") {
-    const b = el("button", "act", "Başarısızları yeniden çalıştır");
+    const b = el("button", "act", _("Re-run the failed ones"));
     b.addEventListener("click", () => { b.disabled = true; prAct("rerun", { repo: w.repo, number: w.number }); });
     acts.appendChild(b);
   }
   if (w.history && w.history.length) {
-    const b = el("button", "act", "Geçmiş");
+    const b = el("button", "act", _("History"));
     b.addEventListener("click", () => c.classList.toggle("open"));
     acts.appendChild(b);
   }
-  const un = el("button", "act", "İzlemeyi bırak");
+  const un = el("button", "act", _("Stop watching"));
   un.addEventListener("click", () => prAct("unwatch", { repo: w.repo, number: w.number }));
   acts.append(el("span", "grow"), un);
   c.appendChild(acts);
@@ -3768,8 +3767,8 @@ function prCard(w) {
    Bu sohbetin alt ajanları (task aracı, alice/subagents.py): canlı durum, son araç, durdurma ve biten ajana devam
    mesajı. Altında özel alt ajan tanımları (~/.alice/agents, <proje>/.alice/agents): ekle, düzenle, sil. */
 const AGP = { busy: false, editing: null, again: false, stale: false };
-const AG_STATUS = { running: ["Çalışıyor", "pending"], done: ["Bitti", "success"], failed: ["Hata", "failure"],
-  stopped: ["Durduruldu", "none"] };
+const AG_STATUS = { running: ["Çalışıyor", "pending"], done: [_("Done"), "success"], failed: [_("Error"), "failure"],
+  stopped: [_("Stopped"), "none"] };
 function onSubagentEvent() {
   if (!(PREFS.panel && PREFS.tab === "agents") || AGP.editing) return;
   // Devam kutusuna yazılırken yeniden çizme: yazılan metin ve odak kayboluyordu. Kutu boşalınca tazelenir.
@@ -3779,7 +3778,7 @@ function onSubagentEvent() {
 }
 async function agAct(path, body) {
   const r = await api(path, body);
-  if (!r || !r.ok) toast((r && r.error) || "olmadı");
+  if (!r || !r.ok) toast((r && r.error) || _("didn't work"));
   else if (r.note) toast(r.note);
   renderAgentsPane();
   return r && r.ok;
@@ -3794,19 +3793,18 @@ async function renderAgentsPane() {
   if (!(PREFS.panel && PREFS.tab === "agents") || !r) return;
   const wrap = el("div", "prp");
   const head = el("div", "prp-head");
-  head.append(el("b", "", "Alt ajanlar"), el("span", "grow"), iconAct(IC.reload, "Tazele", renderAgentsPane));
+  head.append(el("b", "", _("Subagents")), el("span", "grow"), iconAct(IC.reload, _("Refresh"), renderAgentsPane));
   wrap.appendChild(head);
   if (!(r.subs || []).length) {
-    wrap.appendChild(emptyState(IC.spark, "Bu sohbette alt ajan yok",
-      "ALICE bir işi alt ajana verince (\"bunu arka planda araştır\", \"üç modülü paralel incele\") burada canlı " +
-      "görünür: ne yaptığı, kaç adım attığı. Durdurabilir, biten ajana devam mesajı yazabilirsin."));
+    wrap.appendChild(emptyState(IC.spark, _("No subagents in this chat"),
+      _("When ALICE hands a job to a subagent (\"research this in the background\", \"review the three modules in parallel\") it shows here live: what it is doing and how many steps it took. You can stop it, or write a follow-up to a finished agent.")));
   }
   for (const s of r.subs || []) wrap.appendChild(subCard(s));
   const dh = el("div", "prp-head agp-defs");
-  const add = el("button", "act", "Yeni ajan");
+  const add = el("button", "act", _("New agent"));
   const defsBox = el("div", "prp");
   add.addEventListener("click", () => { AGP.editing = {}; drawAgentDefs(defsBox, r.defs || []); });
-  dh.append(el("b", "", "Özel ajanlar"), el("span", "grow"), add);
+  dh.append(el("b", "", _("Custom agents")), el("span", "grow"), add);
   wrap.appendChild(dh);
   drawAgentDefs(defsBox, r.defs || []);
   wrap.appendChild(defsBox);
@@ -3820,22 +3818,22 @@ function subCard(s) {
   dot.title = label;
   top.append(dot, el("span", "prp-title", `${s.id} · ${s.label}`));
   c.appendChild(top);
-  const bits = [label, `${s.steps} adım`, `${s.secs} sn`];
+  const bits = [label, _("{n} steps", { n: s.steps }), _("{secs} s", { secs: s.secs })];
   if (s.kind) bits.push(s.kind);
-  if (s.background) bits.push("arka planda");
-  if (s.turns > 1) bits.push(`${s.turns}. tur`);
+  if (s.background) bits.push(_("in the background"));
+  if (s.turns > 1) bits.push(_("turn {n}", { n: s.turns }));
   c.appendChild(el("div", "prp-meta", bits.join(" · ")));
   if (s.status === "running" && s.last) c.appendChild(el("div", "prp-status", s.last));
   if (s.result) c.appendChild(el("div", "agp-result", s.result));
   const acts = el("div", "prp-acts");
   if (s.status === "running") {
-    const b = el("button", "act", "Durdur");
+    const b = el("button", "act", _("Stop"));
     b.addEventListener("click", () => { b.disabled = true; agAct("/api/subagents/stop", { id: s.id }); });
     acts.appendChild(b);
   } else {
     const inp = el("input", "agp-send");
     inp.type = "text";
-    inp.placeholder = "Bu ajana devam mesajı…";
+    inp.placeholder = _("A follow-up for this agent…");
     const go = el("button", "act", "Gönder");
     const send = () => {
       const t = inp.value.trim();
@@ -3855,8 +3853,7 @@ function drawAgentDefs(box, defs) {
   box.replaceChildren();
   if (AGP.editing) box.appendChild(agentForm(AGP.editing, box, defs));
   if (!defs.length && !AGP.editing) {
-    box.appendChild(el("div", "prp-foot", "Tanımlı özel ajan yok. Bir rol (ör. salt okuyan inceleyici, test yazıcı) " +
-      "tanımlarsan ALICE işe uyunca onu çağırır. Sohbette \"bana bir test yazıcı ajan tanımla\" da diyebilirsin."));
+    box.appendChild(el("div", "prp-foot", _("No custom agents defined. If you define a role (e.g. a read-only reviewer, a test writer), ALICE calls it when it fits the job. You can also say \"define a test-writer agent for me\" in a chat.")));
   }
   for (const a of defs) {
     const c = el("div", "prp-card");
@@ -3864,13 +3861,14 @@ function drawAgentDefs(box, defs) {
     top.append(el("span", "prp-title", a.name), el("span", "grow"),
       iconAct(IC.edit, "Düzenle", () => { AGP.editing = { ...a, editing: true }; drawAgentDefs(box, defs); }),
       iconAct(IC.trash, "Sil", async () => {
-        if (await confirmDialog("Ajanı sil", `${a.name} tanımı silinecek (${a.path}).`, "Sil")) {
+        if (await confirmDialog(_("Delete the agent"), _("The definition of {name} will be deleted ({path}).", { name: a.name, path: a.path }), "Sil")) {
           agAct("/api/agents/delete", { name: a.name });
         }
       }));
     c.append(top, el("div", "prp-status", a.description),
-      el("div", "prp-meta", [`araçlar: ${a.tools.length ? a.tools.join(", ") : "hepsi"}`,
-        `model: ${a.model || "ana ajan"}`, `${a.max_steps} adım`, a.where === "project" ? "bu projede" : "her projede"]
+      el("div", "prp-meta", [_("tools: {tools}", { tools: a.tools.length ? a.tools.join(", ") : _("all") }),
+        _("model: {model}", { model: a.model || _("the main agent") }), _("{n} steps", { n: a.max_steps }),
+        a.where === "project" ? _("in this project") : _("in every project")]
         .join(" · ")));
     box.appendChild(c);
   }
@@ -3881,25 +3879,24 @@ function agentForm(a, box, defs) {
   const input = (v, ph) => { const i = el("input"); i.type = "text"; i.value = v || ""; i.placeholder = ph; return i; };
   const name = input(a.name, "test-yazici");
   if (a.editing) name.disabled = true;
-  const desc = input(a.description, "Değişen koda birim test yazar; uygulama kodunu değiştirmez");
+  const desc = input(a.description, _("Writes unit tests for changed code; doesn't change the application code"));
   const prompt = el("textarea");
   prompt.rows = 7;
   prompt.value = a.prompt || "";
-  prompt.placeholder = "Sen titiz bir test yazarısın. Verilen dosyaları oku, eksik durumlar için test yaz, testleri " +
-    "koş ve sonucu kısa raporla…";
-  const tools = input((a.tools || []).join(", "), "boş: hepsi · ör. read_file, grep, glob, list_dir, git");
-  const model = input(a.model, "boş: ana ajan · brain, fast ya da sağlayıcı:model");
+  prompt.placeholder = _("You are a meticulous test writer. Read the given files, write tests for the missing cases, run them and report briefly…");
+  const tools = input((a.tools || []).join(", "), _("empty: all · e.g. read_file, grep, glob, list_dir, git"));
+  const model = input(a.model, _("empty: the main agent · brain, fast or provider:model"));
   const steps = el("input");
   steps.type = "number"; steps.min = 1; steps.max = 200; steps.value = a.max_steps || 40;
   const where = el("select");
-  for (const [v, t] of [["user", "Her projede (~/.alice/agents)"], ["project", "Yalnız bu projede (.alice/agents)"]]) {
+  for (const [v, t] of [["user", _("In every project (~/.alice/agents)")], ["project", _("Only in this project (.alice/agents)")]]) {
     const o = el("option", "", t); o.value = v; where.appendChild(o);
   }
   where.value = a.where || "user";
   const err = el("div", "prp-chip bad");
   err.hidden = true;
-  const save = el("button", "btn accent", a.editing ? "Kaydet" : "Ekle");
-  const cancel = el("button", "act", "Vazgeç");
+  const save = el("button", "btn accent", a.editing ? _("Save") : _("Add"));
+  const cancel = el("button", "act", _("Cancel"));
   cancel.addEventListener("click", () => { AGP.editing = null; drawAgentDefs(box, defs); });
   save.addEventListener("click", async () => {
     save.disabled = true;
@@ -3914,7 +3911,7 @@ function agentForm(a, box, defs) {
   });
   const acts = el("div", "prp-acts");
   acts.append(save, cancel);
-  f.append(field("Ad", name), field("Ne zaman kullanılır", desc), field("Talimat", prompt), field("Araçlar", tools),
-    field("Model", model), field("En fazla adım", steps), field("Nerede", where), err, acts);
+  f.append(field(_("Name"), name), field(_("When to use it"), desc), field(_("Instructions"), prompt), field(_("Tools"), tools),
+    field(_("Model"), model), field(_("Max steps"), steps), field(_("Where"), where), err, acts);
   return f;
 }

@@ -260,7 +260,7 @@ function showWorking(label) {
   S.working = add(w);
 }
 function hideWorking() { if (S.working) { clearInterval(S.working._timer); S.working.remove(); S.working = null; } }
-function fmtSecs(s) { return s < 60 ? `${s} sn` : `${Math.floor(s / 60)} dk ${s % 60} sn`; }
+function fmtSecs(s) { return s < 60 ? _("{secs} s", { secs: s }) : _("{m} min {s} s", { m: Math.floor(s / 60), s: s % 60 }); }
 
 function ensureAi() {
   if (S.cur) return S.cur;
@@ -575,12 +575,14 @@ function toolRow(id, name, summary, running) {
 function fmtTok(n) {
   if (n >= 1e6) {
     const m = n / 1048576;
-    return String(Math.abs(m - Math.round(m)) < 0.01 ? Math.round(m) : (n / 1e6).toFixed(1)).replace(".", ",") + "M";
+    return decimal(Math.abs(m - Math.round(m)) < 0.01 ? String(Math.round(m)) : (n / 1e6).toFixed(1)) + "M";
   }
   if (n >= 1e4) return `${Math.round(n / 1000)}k`;
-  return `${(n / 1000).toFixed(1).replace(".", ",")}k`;
+  return `${decimal((n / 1000).toFixed(1))}k`;
 }
-function fmtDur(s) { return s < 10 ? `${s.toFixed(1).replace(".", ",")} sn` : fmtSecs(Math.round(s)); }
+// "8.4" in English, "8,4" in Turkish.
+function decimal(text) { return ALICE_LANG === "tr" ? text.replace(".", ",") : text; }
+function fmtDur(s) { return s < 10 ? _("{secs} s", { secs: decimal(s.toFixed(1)) }) : fmtSecs(Math.round(s)); }
 
 // Satır numaralı, renklendirilmiş unified diff (Codex/Claude Code'daki gibi).
 function renderDiff(diff, title) {
