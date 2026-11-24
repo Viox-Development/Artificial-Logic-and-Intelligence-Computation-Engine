@@ -123,7 +123,7 @@ def test_agent_stops_when_vision_model_unavailable():
 
     s = FakeScreen()
     res = ComputerAgent(s, ask, settle=0).run("x")
-    assert res.status == "error" and "kota" in res.summary and s.acts == []
+    assert res.status == "error" and "quota" in res.summary and s.acts == []
 
 
 def test_parse_action_nested():
@@ -186,5 +186,5 @@ def test_failed_attempt_is_a_warning_next_time():
         return '{"action": "done", "summary": "açıldı"}'
 
     ComputerAgent(FakeScreen(), ask, settle=0).run("ayarlardan bluetooth aç")
-    assert "PAST FAILED ATTEMPT" in seen[0] and "tekrarlanıyor" in seen[0]
+    assert "PAST FAILED ATTEMPT" in seen[0] and "keeps repeating" in seen[0]
     assert ComputerAgent(FakeScreen(), ask, settle=0, learn=False).run("ayarlardan bluetooth aç").status == "done"

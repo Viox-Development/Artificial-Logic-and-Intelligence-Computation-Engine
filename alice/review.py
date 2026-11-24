@@ -26,47 +26,48 @@ MAX_DIFF = 60_000  # characters: a larger diff is shortened (the file list is al
 SEVERITIES = ("critical", "high", "medium", "low")
 
 FOCUS = {
-    "bugs": "Doğruluk hataları: yanlış mantık, kenar durumlar, yarış durumları, hata yönetimi, kaynak sızıntısı, "
-            "geriye dönük uyumsuzluk, testlerin gerçekte sınamadığı davranış.",
-    "security": "Güvenlik: enjeksiyon (komut, SQL, yol), kimlik/yetki atlatma, gizli bilgi sızıntısı (log, hata "
-                "mesajı, URL), güvensiz seri hale getirme, dış girdinin doğrulanmaması, SSRF.",
-    "all": "Doğruluk hataları ve güvenlik açıkları; ayrıca gereksiz karmaşıklık ve açık performans sorunları.",
-    "performance": "Performans: döngü içinde tekrarlanan pahalı iş (dosya/ağ/veritabanı çağrısı, N+1 sorgu), gereksiz "
-                   "kopyalama ve büyük bellek tutma, kapanmayan kaynak (dosya, bağlantı, thread), ana/UI thread'ini "
-                   "bloklayan çağrı, sınırsız büyüyen önbellek/kuyruk. Yalnız ölçülebilir etkisi olanı yaz.",
-    "tests": "Test kapsamı: değişen davranışın test edilmeyen yolları (hata dalları, kenar durumlar, eşzamanlılık), "
-             "gerçekte hiçbir şeyi sınamayan testler (her durumda geçen assert, sahteyle kendini test eden), kırılgan "
-             "testler (zamanlamaya, sıraya, ortama bağlı). Bulguda hangi senaryonun test edilmediğini somut yaz; "
-             "'line' eksik testin ilgili olduğu kod satırı olsun.",
-    "docs": "Doküman doğruluğu: değişiklikten sonra artık yanlış olan yorumlar, docstring'ler, README/ayar açıklamaları "
-            "(var olmayan parametre, değişmiş varsayılan, eski davranış tarifi). Yalnız koda göre YANLIŞ olanı yaz, "
-            "eksik doküman ya da üslup değil.",
+    "bugs": "Correctness bugs: wrong logic, edge cases, race conditions, error handling, resource leaks, "
+            "backward incompatibility, behaviour the tests don't really check.",
+    "security": "Security: injection (command, SQL, path), authentication/authorisation bypass, leaked secrets (logs, error "
+                "messages, URLs), unsafe deserialisation, unvalidated external input, SSRF.",
+    "all": "Correctness bugs and security holes; also needless complexity and obvious performance problems.",
+    "performance": "Performance: expensive work repeated in a loop (file/network/database calls, N+1 queries), needless "
+                   "copying and holding large memory, resources not closed (files, connections, threads), calls that "
+                   "block the main/UI thread, caches/queues that grow without limit. Only report what has a measurable effect.",
+    "tests": "Test coverage: untested paths of the changed behaviour (error branches, edge cases, concurrency), "
+             "tests that don't really check anything (asserts that always pass, a fake testing itself), fragile "
+             "tests (timing-, order- or environment-dependent). Name the untested scenario concretely in the finding; "
+             "'line' is the code line the missing test is about.",
+    "docs": "Documentation accuracy: comments, docstrings and README/setting descriptions that are now wrong after the change "
+            "(a parameter that no longer exists, a changed default, a description of old behaviour). Only report what is WRONG "
+            "according to the code, not missing docs or style.",
 }
 # deep: each one runs its own focused reviewers at the same time; the findings are merged and go through one verifier.
 DEEP = ("bugs", "security", "performance", "tests")
 
-REVIEWER = """Sen bağımsız bir kod inceleyicisisin. Bu değişikliği sen yazmadın ve yazarın konuşmasını görmüyorsun.
-Görevin: değişiklikteki GERÇEK sorunları bulmak. Biçim, isimlendirme, zevk meselesi yazma.
+REVIEWER = """You are an independent code reviewer. You didn't write this change and you don't see the author's conversation.
+Your job: find the REAL problems in the change. Don't write about formatting, naming or taste.
 
-Odak: {focus}
+Focus: {focus}
 
-Yöntem:
-- Fark yetmiyorsa çevredeki kodu read_file/grep ile oku: çağıranlar, kullanılan fonksiyonlar, testler.
-- Her bulgu için somut bir bozulma senaryosu yaz: hangi girdi/durumda ne yanlış olur. Senaryo yazamıyorsan yazma.
-- Yalnız değişen satırlar ve onların doğrudan etkisi. Eskiden beri var olan, değişiklikle ilgisiz sorunları yazma.
+Method:
+- If the diff isn't enough, read the surrounding code with read_file/grep: callers, the functions used, the tests.
+- For every finding write a concrete failure scenario: with which input/state what goes wrong. If you can't write one, leave it out.
+- Only the changed lines and their direct effect. Don't report old problems unrelated to the change.
+- Write the findings in the language of the code's comments and the user (English if unsure).
 
-Bitince YALNIZCA şu JSON'u yaz (başka metin yok):
-{{"findings": [{{"file": "yol/dosya.py", "line": 42, "severity": "high", "title": "kısa başlık",
-"detail": "ne yanlış", "scenario": "hangi durumda bozulur", "fix": "nasıl düzelir (kısa)"}}]}}
-Sorun yoksa {{"findings": []}}. Önem: critical | high | medium | low."""
+When done, write ONLY this JSON (no other text):
+{{"findings": [{{"file": "path/file.py", "line": 42, "severity": "high", "title": "short title",
+"detail": "what is wrong", "scenario": "when it breaks", "fix": "how to fix it (short)"}}]}}
+If there is no problem: {{"findings": []}}. Severity: critical | high | medium | low."""
 
-VERIFIER = """Sen bir doğrulayıcısın. Başka bir inceleyicinin bulgularını kodda tek tek kontrol et: iddia gerçekten
-doğru mu, senaryo gerçekten olur mu? Kodu read_file/grep ile oku; varsayımla karar verme.
+VERIFIER = """You are a verifier. Check another reviewer's findings one by one in the code: is the claim really true,
+does the scenario really happen? Read the code with read_file/grep; don't decide on assumptions.
 
-Bitince YALNIZCA şu JSON'u yaz:
-{"verdicts": [{"id": 0, "verdict": "CONFIRMED", "reason": "kısa gerekçe"}]}
-verdict: CONFIRMED (kodda doğrulandı) | PLAUSIBLE (büyük ihtimalle doğru ama tam doğrulanamadı) |
-REJECTED (yanlış, zaten ele alınmış ya da senaryo olamaz)."""
+When done, write ONLY this JSON:
+{"verdicts": [{"id": 0, "verdict": "CONFIRMED", "reason": "short reason"}]}
+verdict: CONFIRMED (verified in the code) | PLAUSIBLE (most likely true but not fully verified) |
+REJECTED (wrong, already handled, or the scenario can't happen)."""
 
 
 @dataclass
@@ -87,7 +88,7 @@ class Finding:
         if self.scenario:
             body.append(f"Ne zaman bozulur: {self.scenario}")
         if self.fix:
-            body.append(f"Öneri: {self.fix}")
+            body.append(f"Fix: {self.fix}")
         return head + "\n  " + "\n  ".join(body)
 
 
@@ -115,8 +116,8 @@ def local_diff(cwd: Path, base: str = "") -> tuple[str, str]:
             continue
     full = (diff + ("\n" + "\n".join(extra) if extra else "")).strip()
     if not full:
-        raise ToolError(f"incelenecek değişiklik yok ({start[:10]} ile aynı)")
-    return f"{current_branch(root) or 'HEAD'} dalı, {base} ile fark", full
+        raise ToolError(f"no changes to review (same as {start[:10]})")
+    return f"branch {current_branch(root) or 'HEAD'}, diff against {base}", full
 
 
 def pr_diff(api: Any, repo: str, number: int) -> tuple[str, str, str]:
@@ -127,9 +128,9 @@ def pr_diff(api: Any, repo: str, number: int) -> tuple[str, str, str]:
     try:
         r = api.client.get(f"/repos/{repo}/pulls/{number}", headers={"Accept": "application/vnd.github.diff"})
     except Exception as e:  # noqa: BLE001
-        raise ToolError(f"PR farkı alınamadı: {e}") from e
+        raise ToolError(f"could not get the PR diff: {e}") from e
     if r.status_code >= 400:
-        raise ToolError(f"PR farkı alınamadı (HTTP {r.status_code})")
+        raise ToolError(f"could not get the PR diff (HTTP {r.status_code})")
     return f"PR #{number}: {pr.get('title', '')}", r.text, pr["head"]["sha"]
 
 
@@ -137,7 +138,7 @@ def shorten(diff: str, limit: int = MAX_DIFF) -> str:
     if len(diff) <= limit:
         return diff
     files = re.findall(r"(?m)^\+\+\+ b/(.+)$", diff)
-    return diff[:limit] + f"\n… (fark kısaltıldı; değişen dosyalar: {', '.join(files)}. Gerekirse read_file ile oku.)"
+    return diff[:limit] + f"\n… (diff shortened; changed files: {', '.join(files)}. Read them with read_file if needed.)"
 
 
 # ----------------------------------------------------------------------------------------------- agents
@@ -190,7 +191,7 @@ def _finding(d: dict[str, Any]) -> Finding | None:
 
 def _review_one(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str) -> list[Finding]:
     reviewer = _agent(cfg, router, cwd, REVIEWER.format(focus=FOCUS.get(focus, FOCUS["bugs"])))
-    out = reviewer.run_turn(f"İncelenecek değişiklik: {title}\n\n```diff\n{shorten(diff)}\n```", max_steps=30)
+    out = reviewer.run_turn(f"Change to review: {title}\n\n```diff\n{shorten(diff)}\n```", max_steps=30)
     return [f for f in (_finding(d) for d in parse_json(out, "findings")) if f]
 
 
@@ -223,7 +224,7 @@ def review(cfg: Any, router: Any, cwd: Path, title: str, diff: str, focus: str =
         return _sorted(static + findings)
     listing = "\n\n".join(f"id={i}\n{f.text()}" for i, f in enumerate(findings))
     verifier = _agent(cfg, router, cwd, VERIFIER)
-    res = verifier.run_turn(f"Değişiklik: {title}\n\n```diff\n{shorten(diff, MAX_DIFF // 2)}\n```\n\nBulgular:\n{listing}",
+    res = verifier.run_turn(f"Change: {title}\n\n```diff\n{shorten(diff, MAX_DIFF // 2)}\n```\n\nFindings:\n{listing}",
                             max_steps=30)
     verdicts = {int(v["id"]): v for v in parse_json(res, "verdicts") if str(v.get("id", "")).isdigit()}
     kept = []
@@ -279,8 +280,8 @@ def _sorted(findings: list[Finding]) -> list[Finding]:
 
 def report(findings: list[Finding]) -> str:
     if not findings:
-        return "İnceleme bitti: doğrulanmış sorun bulunmadı."
-    return f"{len(findings)} bulgu (önem sırasıyla):\n\n" + "\n\n".join(f.text() for f in findings)
+        return "Review finished: no verified problems found."
+    return f"{len(findings)} findings (by severity):\n\n" + "\n\n".join(f.text() for f in findings)
 
 
 _HUNK_RX = re.compile(r"@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -365,10 +366,10 @@ def post(api: Any, repo: str, number: int, sha: str, findings: list[Finding], di
         (inline if at > 0 else outside).append((f, at))
     comments = [{"path": f.file, "line": at, "side": "RIGHT", "body": f.text() + f"\n\n{ALICE_MARK}"}
                 for f, at in inline]
-    summary = (f"Bağımsız inceleme: {len(findings)} bulgu" + (f" ({len(comments)} satır yorumu)" if comments else "")
-               + "." if findings else "Bağımsız inceleme: doğrulanmış sorun bulunmadı.")
+    summary = (f"Independent review: {len(findings)} findings" + (f" ({len(comments)} line comments)" if comments else "")
+               + "." if findings else "Independent review: no verified problems found.")
     if outside:
-        summary += "\n\nFarkın dışında kalan bulgular:\n\n" + "\n\n".join(f.text() for f, _ in outside)
+        summary += "\n\nFindings outside the diff:\n\n" + "\n\n".join(f.text() for f, _ in outside)
     summary += f"\n\n{ALICE_MARK}"
     payload = {"commit_id": sha, "event": "COMMENT", "body": summary, "comments": comments}
     try:

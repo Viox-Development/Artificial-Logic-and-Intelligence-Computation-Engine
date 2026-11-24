@@ -65,7 +65,7 @@ class TaskResult:
 
     def report(self) -> str:
         tail = "\n".join(self.steps[-12:])
-        return f"{self.status}: {self.summary}" + (f"\nadımlar:\n{tail}" if tail else "")
+        return f"{self.status}: {self.summary}" + (f"\nsteps:\n{tail}" if tail else "")
 
 
 def parse_action(text: str) -> dict[str, Any]:
@@ -235,7 +235,7 @@ class Screen:
             if not target:  # empty target was treated as Path("") = "." on Windows, opening the working directory
                 raise ValueError("open: target is required")
             if is_script_target(target):  # do not run a script read from the screen without confirmation
-                raise ValueError("betik/kurulum dosyası ekran görevinden açılmaz; kullanıcıya sor")
+                raise ValueError("a script/installer file isn't opened from a screen task; ask the user")
             res = open_app(target)
             time.sleep(1.5)
             # "Opening" an already open app again does not bring it to foreground on Windows (foreground lock):
@@ -247,20 +247,20 @@ class Screen:
 
                     focus_window(name)
                 except Exception as e:  # noqa: BLE001
-                    if "öne alınamadı" in str(e):
+                    if "could not bring it to the front" in str(e):
                         res += f"; {e}"
             return res
         if kind == "wait":
             time.sleep(max(0.5, min(float(a.get("seconds", 1)), 5.0)))
-            return "beklendi"
+            return "waited"
         if kind == "type":
             type_text(str(a.get("text", "")))
             if a.get("enter"):
                 press_keys("enter")
-            return f"yazıldı: {str(a.get('text', ''))[:60]}"
+            return f"typed: {str(a.get('text', ''))[:60]}"
         if kind == "key":
             press_keys(str(a.get("keys", "")))
-            return f"tuş: {a.get('keys')}"
+            return f"key: {a.get('keys')}"
         pg = _pyautogui()
         x, y = self.point(a, shot)
         from alice.hud import views
@@ -274,13 +274,13 @@ class Screen:
             pg.moveTo(x, y)
             n = max(1, min(int(a.get("amount", 3)), 10))
             pg.scroll((n if a.get("direction") == "up" else -n) * 120)
-            return f"kaydırıldı {a.get('direction', 'down')} {n}"
+            return f"scrolled {a.get('direction', 'down')} {n}"
         if kind == "drag":
             tx, ty = self.point({"point": a.get("to")}, shot)
             pg.moveTo(x, y)
             pg.dragTo(tx, ty, duration=0.5, button="left")
-            return f"sürüklendi ({x},{y}) -> ({tx},{ty})"
-        raise ValueError(f"bilinmeyen aksiyon: {kind}")
+            return f"dragged ({x},{y}) -> ({tx},{ty})"
+        raise ValueError(f"unknown action: {kind}")
 
     @staticmethod
     def point(a: dict[str, Any], shot: Shot) -> tuple[int, int]:
@@ -288,10 +288,10 @@ class Screen:
             for e in shot.elements:
                 if e["id"] == int(a["id"]):
                     return tuple(e["center"])  # type: ignore[return-value]
-            raise ValueError(f"öğe {a['id']} yok")
+            raise ValueError(f"no element {a['id']}")
         p = a.get("point")
         if not isinstance(p, (list, tuple)) or len(p) != 2:
-            raise ValueError("id ya da point gerekli")
+            raise ValueError("id or point is required")
         # Prevent points outside 0-1000 (model assumed pixels) from clicking off-screen or on another monitor.
         y, x = (min(1000.0, max(0.0, float(v))) for v in p)
         return round(shot.left + x / 1000 * shot.width), round(shot.top + y / 1000 * shot.height)
@@ -376,7 +376,7 @@ class ComputerAgent:
     def run(self, goal: str, max_steps: int = 30, max_seconds: float = 180.0) -> TaskResult:
         hint = recipe_hint(goal) if self.learn else ""
         if hint:
-            self.emit("benzer bir işin geçmiş adımları ipucu olarak verildi")
+            self.emit("past steps of a similar job were given as a hint")
         res = self._run(goal, max_steps, max_seconds, hint)
         if self.learn and res.status in ("done", "fail", "max_steps") and res.steps:
             # unfinished task is also a lesson: next time it hints "this path didn't finish, try another"
@@ -404,11 +404,11 @@ class ComputerAgent:
             if self.stop():
                 return TaskResult("stopped", "durduruldu", steps)
             if time.monotonic() > deadline:
-                return TaskResult("fail", f"{max_seconds:.0f} sn içinde bitmedi", steps)
+                return TaskResult("fail", f"did not finish within {max_seconds:.0f} s", steps)
             try:
                 shot = self.screen.observe()
             except Exception as e:  # noqa: BLE001
-                return TaskResult("error", f"ekran okunamadı: {e}", steps)
+                return TaskResult("error", f"could not read the screen: {e}", steps)
             h = hashlib.sha1(str(shot.png_b64).encode("ascii", "ignore")).hexdigest()
             if prev_hash is not None:
                 changed.append(h != prev_hash)
@@ -416,7 +416,7 @@ class ComputerAgent:
                     note = self.SAME_NOTE  # click had no effect: prevent the model from clicking the same spot again
             prev_hash = h
             elems = "\n".join(f"[{e['id']}] {e.get('role', '')} '{e.get('name', '')}'"
-                              + (f" değer='{e['value']}'" if e.get("value") else "") for e in shot.elements[:60])
+                              + (f" value='{e['value']}'" if e.get("value") else "") for e in shot.elements[:60])
             text = (f"GOAL: {goal}\n" + (f"{hint}\n" if hint else "") + note
                     + f"FOREGROUND WINDOW: {shot.title or '?'}\n"
                     f"DONE SO FAR:\n{chr(10).join(steps[-10:]) or '(nothing yet)'}\n"
@@ -429,23 +429,23 @@ class ComputerAgent:
                 answer = self.ask(messages)
             except Exception as e:  # noqa: BLE001 - quota/connection: do not continue blindly
                 model_errors += 1
-                self.emit(f"görme modeli hatası: {str(e)[:200]}")
+                self.emit(f"vision model error: {str(e)[:200]}")
                 if model_errors >= 2:
                     low = str(e).lower()
                     quota = "429" in low or "quota" in low or "soğumada" in low or "cooling down" in low or "rate" in low
-                    return TaskResult("error", "görme modeli kullanılamıyor" + (
-                        " (günlük ücretsiz kota dolmuş)" if quota else f": {str(e)[:120]}"), steps)
+                    return TaskResult("error", "the vision model can't be used" + (
+                        " (the daily free quota is used up)" if quota else f": {str(e)[:120]}"), steps)
                 continue
             model_errors = 0
             try:
                 a = parse_action(answer)
             except Exception as e:  # noqa: BLE001
-                steps.append(f"{n}. model cevabı okunamadı: {e}")
+                steps.append(f"{n}. could not read the model's answer: {e}")
                 continue
             batch = a.get("actions") if isinstance(a.get("actions"), list) else [a]
             batch = [normalize_action(b) for b in batch if isinstance(b, dict)][:5]
             if not batch:
-                steps.append(f"{n}. boş aksiyon")
+                steps.append(f"{n}. empty action")
                 continue
             kind = batch[0].get("action", "")
             if kind in ("done", "fail"):
@@ -455,11 +455,11 @@ class ComputerAgent:
             last.append(key)
             if len(last) >= 3 and len(set(last[-3:])) == 1:
                 if nudged:
-                    return TaskResult("fail", "aynı adım tekrarlanıyor, ilerleyemedim", steps)
+                    return TaskResult("fail", "the same step keeps repeating; couldn't make progress", steps)
                 nudged = True  # recover once: try another way instead of repeating the same action a third time
                 last.clear()
                 note = self.STUCK_NOTE
-                steps.append(f"{n}. (takıldı: aynı adım 3 kez, başka bir yol denenecek)")
+                steps.append(f"{n}. (stuck: the same step 3 times, another way will be tried)")
                 self.emit(steps[-1])
                 continue
             results = []
@@ -482,8 +482,8 @@ class ComputerAgent:
                 time.sleep(self.settle)
             if n == limit and not extended and sum(changed[-5:]) >= 2:
                 extended, limit = True, limit + self.EXTEND_STEPS  # screen is changing: do not abandon halfway
-                self.emit(f"ilerleme var, {self.EXTEND_STEPS} adım daha")
-        return TaskResult("max_steps", "adım sınırı doldu", steps)
+                self.emit(f"progress made, {self.EXTEND_STEPS} more steps")
+        return TaskResult("max_steps", "the step limit ran out", steps)
 
 
 def router_asker(router, role: str = "vision", effort: str = "low") -> Callable[[list[dict[str, Any]]], str]:
