@@ -64,7 +64,7 @@ def test_lead_that_never_plans_gets_a_fallback_worker(workdir):
     team.start(plan=True)
     assert team.wait_until(lambda: "worker" in team.members, 20)
     lead_users = [str(m["content"]) for m in team.lead_agent.messages if m["role"] == "user"]
-    assert sum("Henüz ajan kurmadın" in c for c in lead_users) == 2
+    assert sum("You haven't set up any agents yet" in c for c in lead_users) == 2
     assert team.wait_until(lambda: team.members["worker"].status == "done", 10)
     assert any(x["kind"] == "plan" for x in team.timeline)
 
@@ -83,7 +83,7 @@ def test_member_fails_when_no_model_answers(workdir):
     team.start()
     m = team.members["backend"]
     assert team.wait_until(lambda: m.status == "failed" and "failed" in seen, 15)
-    assert m.result.startswith("Modellere ulaşılamadı: ") and "team:" not in m.result and "anahtar" in m.result
+    assert m.result.startswith("Could not reach the models: ") and "team:" not in m.result and "API key" in m.result
 
 
 def test_stalled_member_is_reported(workdir):
@@ -104,7 +104,7 @@ def test_stalled_member_is_reported(workdir):
     team.start()
     m = team.members["backend"]
     assert team.wait_until(lambda: m.stall_warned, 15)
-    assert team.wait_until(lambda: any("ilerlemiyor" in str(x.get("content")) for x in
+    assert team.wait_until(lambda: any("hasn't progressed" in str(x.get("content")) for x in
                                        (team.lead_agent.messages if team.lead_agent else [])), 10)
     gate.set()
     assert team.wait_until(lambda: m.status == "done", 10)
@@ -140,9 +140,9 @@ def test_worktree_conflict_is_handed_back_to_the_agent(workdir):
     (workdir / "a.txt").write_text("ana dal\n", encoding="utf-8")  # meanwhile main changed the same line too
     git(workdir, "commit", "-qam", "ana dalda değişiklik")
     note = team.review_member("backend", True)
-    assert "çakışmayı çözüyor" in note and m.merge_attempts == 1
+    assert "resolving the conflict" in note and m.merge_attempts == 1
     assert team.wait_until(lambda: m.status == "review" and state["resolved"], 15)
-    assert "birleştirildi" in team.review_member("backend", True)
+    assert "merged" in team.review_member("backend", True)
     assert (workdir / "a.txt").read_text(encoding="utf-8") == "ana dal\n"  # -X theirs: agent took main's side
     assert any(x["kind"] == "conflict" for x in team.timeline)
 
@@ -202,7 +202,7 @@ def test_check_command_lessons_and_rules_reach_the_council(workdir):
     assert team.wait_until(lambda: m.councils and m.councils[0].get("state") == "done", 15)
     sys_prompt, material = seen["critic"][0]
     assert "Her public fonksiyonun testi olmalı" in sys_prompt and "KONTROL-TAMAM" in material
-    assert any("kontrol komutu" in x["text"] for x in team.timeline)
+    assert any("check command" in x["text"] for x in team.timeline)
     assert team.wait_until(lambda: team.lessons == ["test eksik → kontrol ekle"], 10)
     # on a fix request the lesson goes to the agent too; the second council's prompt includes it
     assert team.wait_until(lambda: len(m.councils) >= 2 and m.councils[1].get("state") == "done", 20)
@@ -288,7 +288,7 @@ def test_member_tool_progress_counts_as_activity(tmp_path):
     ui = MemberUI(team, m)
     ui.tool_delta("write_file", 12500)
     assert m.last_at > 1.0 and m.stall_warned is False
-    assert events[-1]["tool"] == "write_file hazırlıyor · 12 KB"
+    assert events[-1]["tool"] == "write_file is preparing · 12 KB"
     ui.stream_end("", "x")
     assert events[-1]["tool"] == ""
 
@@ -331,8 +331,8 @@ def test_stuck_member_is_restarted_on_next_model_and_usage_is_counted(workdir):
         gate.set()
     assert m.recoveries == 1 and m.result == "rapor: bitti"
     resumed = [str(x["content"]) for x in m.agent.messages if x["role"] == "user"]
-    assert any(c.startswith("[sistem] Önceki adımın") for c in resumed)
-    assert any("otomatik yeniden başlatıldı" in x["text"] for x in team.timeline)
+    assert any(c.startswith("[system] Your previous step") for c in resumed)
+    assert any("restarted automatically" in x["text"] for x in team.timeline)
     usage = team.snapshot()["usage"]
     assert usage["by"]["backend"]["in"] >= 20 and usage["total"]["out"] > 0
     assert Team.load(team.id, ctx).usage["backend"]["in"] == usage["by"]["backend"]["in"]
@@ -358,7 +358,7 @@ def test_minor_only_conditions_approve_without_a_new_round(workdir):
     snap = {"result": {"decision": "approve_conditions", "conditions": ["sayaç biçimi daha okunur olsun"]},
             "findings": [{"id": "F1", "severity": "minor", "status": "confirmed", "title": "sayaç biçimi", "fix": "x"}]}
     team._apply_council(m, snap, "rapor", "- şart: sayaç biçimi")
-    assert m.status == "done" and m.council_cycles == 0 and "zorunlu değil" in seen[-1]
+    assert m.status == "done" and m.council_cycles == 0 and "optional" in seen[-1]
 
 
 def test_duplicate_conditions_and_lessons_are_dropped():

@@ -177,7 +177,7 @@ class TeamTool(Tool):
             team.start(plan=not specs)
             return ToolResult(f"project started (id {team.id}). "
                               + ("The lead will look at the code and set up the agents. " if not specs else
-                                 "Ajanlar:\n" + team.status_text() + "\n")
+                                 "Agents:\n" + team.status_text() + "\n")
                               + "The user can follow it on the Projects page. If they want the result here, action=wait.")
         team = teams.get(project) if project else ctx.state.get("team")
         if team is None:
