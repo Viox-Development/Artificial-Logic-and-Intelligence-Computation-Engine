@@ -97,6 +97,8 @@ Yani reflex modu anahtarsız da çalışıyor, sadece daha yavaş: Jev için bil
 
 ## Kurulum (Windows)
 
+> English, and up to date: the [README](../README.md#install-windows) (`ALICE-Setup.exe`, kurulum sihirbazı, Linux ve macOS).
+
 Python 3.10+ lazım (python.org, "Add to PATH" işaretli).
 
 ```powershell
@@ -400,6 +402,8 @@ Tek seferlik kapatmak için `ALICE_UPDATE_MODE=off` ya da `ALICE_NO_UPDATE=1` or
 
 ## Projeler: otonom ajan takımları
 
+> English: [guide/projects.md](guide/projects.md)
+
 Büyük bir iş (büyük bir kod tabanında birden çok modül, backend + frontend + test, geniş bir inceleme) **proje** olarak yürütülür. Her projenin bir **yöneticisi** (Alice) ve paralel çalışan **ajanları** var. Yönetici sohbetten bağımsız, arka planda çalışır ve olay geldikçe uyanır:
 
 1. **Planlar:** ajan verilmediyse kodu inceler, işi çakışmayan parçalara böler ve ajanları kurar. Her ajana görev, sınırlar, yazma kapsamı, model ve düşünme seviyesi verir; zor işe `brain` + `high`, mekanik işe `fast` + `low`.
@@ -458,6 +462,8 @@ Büyük bir iş (büyük bir kod tabanında birden çok modül, backend + fronte
 **Ajanlar arası iletişim:** ajanlar `team_send` ile birbirine, yöneticiye (`alice`) ya da herkese (`all`) yazar, `team_wait` ile cevap bekler. Gelen mesajlar her araç adımından sonra konuşmalarına eklenir. Sonradan katılan ajan diğerlerine duyurulur.
 
 ### İnceleme kurulu
+
+> English: [guide/council.md](guide/council.md)
 
 İşleri tek bir göz değil, farklı bakış açıları olan bir **kurul** değerlendirir. Projelerde varsayılan olarak açık (yeni proje Ayarlar'ında kapatılabilir); sohbette `/kurul <konu>` ile bir fikri, dosyayı, kararı ya da PR'ı da sorabilirsin.
 
