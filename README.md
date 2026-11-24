@@ -126,6 +126,8 @@ hour; a bad key skips the provider for the session. If one provider goes down, A
 
 By default the brain chain uses the best measured free models from the providers you have keys for, then local
 Ollama. Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
+Why this order, and how the router and reflex work: [docs/guide/models.md](docs/guide/models.md),
+[docs/guide/architecture.md](docs/guide/architecture.md).
 
 ## Install (Windows)
 
