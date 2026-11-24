@@ -652,6 +652,8 @@ Kurallar (`config.toml` `[github]`):
 
 ## Terminal
 
+> English: [guide/terminal.md](guide/terminal.md). `alice update --check` artık güncelleme kanalına bakar (varsayılan `stable`: yayınlanmış sürümler); ayrıntı: [guide/updates.md](guide/updates.md).
+
 ```powershell
 alice                                   # etkileşimli oturum
 alice "bu klasördeki Unity projesinde PlayerController'daki zıplama bug'ını bul ve düzelt"
