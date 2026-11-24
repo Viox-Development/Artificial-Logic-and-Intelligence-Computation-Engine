@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from alice.config import alice_home
+from alice.i18n import _
 
 WT_APPID = "236390"
 DND_STATE = 0x0D83063EA3BF1C75   # WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: 0 off, 1 priority only, 2 alarms only
@@ -42,10 +43,10 @@ MORNING_BEFORE = 20 * 60         # prepare this long before the time you usually
 READY_UNTIL = 13                 # a prepared answer counts as stale in the afternoon
 
 TOPICS = {  # first thing asked in the morning -> topic
-    "hava": r"\bhava\b|yağmur|sıcaklık|kaç derece|şemsiye",
-    "program": r"program|takvim|bugün ne var|dersim|toplantı|staj",
-    "posta": r"\bmail|e-?posta|gmail|mesaj(ım|lar)",
-    "oyun": r"war thunder|güncelleme|\bdcs\b",
+    "hava": r"\bhava\b|yağmur|sıcaklık|kaç derece|şemsiye|\bweather\b|\brain\b|umbrella|temperature",
+    "program": r"program|takvim|bugün ne var|dersim|toplantı|staj|schedule|calendar|meeting",
+    "posta": r"\bmail|e-?posta|gmail|mesaj(ım|lar)|\bemails?\b|messages",
+    "oyun": r"war thunder|güncelleme|\bdcs\b|\bupdate",
 }
 
 
@@ -173,18 +174,18 @@ def prep_game_update(processes: set[str], notify: Callable[[str, str], object], 
     if not u or not (u["pending"] or u["downloading"]):
         return ""
     if u["downloading"]:
-        return f"{u['name']} güncellemesi Steam'de iniyor."
+        return f"the {u['name']} update is downloading in Steam."
     if u["on_launch_only"]:
         if st.get("update_told") != u["build"]:
             st["update_told"] = u["build"]
-            notify(f"{u['name']} güncellemesi bekliyor",
-                   "Steam'de bu oyun 'sadece oyunu açınca güncelle' ayarında, o yüzden güncelleme oyunu açınca inecek. "
-                   "Steam → War Thunder → Özellikler → Güncellemeler → 'Bu oyunu her zaman güncel tut' seçersen "
-                   "oyundan önce ben indirtirim.")
-        return f"{u['name']} güncellemesi oyun açılınca inecek (Steam ayarı)."
+            notify(_("{name} update pending", name=u["name"]),
+                   _("In Steam this game is set to 'only update this game when I launch it', so the update will download when you "
+                     "open the game. If you choose Steam → War Thunder → Properties → Updates → 'Always keep this game "
+                     "updated', I'll get it downloaded before you play."))
+        return f"the {u['name']} update will download when the game is opened (Steam setting)."
     if not steam_running(processes) and (start or start_steam_silent)():
-        return f"{u['name']} güncellemesi için Steam arka planda açıldı."
-    return f"{u['name']} güncellemesi Steam'de bekliyor."
+        return f"Steam was opened in the background for the {u['name']} update."
+    return f"the {u['name']} update is waiting in Steam."
 
 
 # ------------------------------------------------------------ do not disturb
@@ -235,7 +236,7 @@ class QuietGame:
                 if write(DND_ALARMS_ONLY):
                     st["dnd_prev"] = cur
                     save_state(st, self.path)
-                    return "Rahatsız etmeyin açıldı"
+                    return _("Do not disturb turned on")
                 return ""
             if "dnd_prev" in st:
                 try:
@@ -245,7 +246,7 @@ class QuietGame:
                 save_state(st, self.path)
                 if read() == DND_ALARMS_ONLY:  # if you changed it in the meantime, leave it alone
                     write(prev)
-                    return "Rahatsız etmeyin eski haline döndü"
+                    return _("Do not disturb restored")
         return ""
 
 
@@ -270,7 +271,7 @@ def morning_habits(lines: list[str]) -> tuple[Counter, list[int]]:
             if re.search(rx, low):
                 topics[name] += 1
                 break
-    return topics, [m for m, _ in first.values()]
+    return topics, [m for m, _when in first.values()]
 
 
 def _read_log_tail(path: Path, max_bytes: int = 4_000_000) -> list[str]:
@@ -345,13 +346,13 @@ def _fetchers(cfg: Any, now: datetime) -> dict[str, Callable[[], str]]:
         from alice.presence import unread_mail
 
         mails = unread_mail(cfg)
-        return f"{len(mails)} önemli okunmamış e-posta: " + "; ".join(mails[:3]) if mails else "önemli yeni e-posta yok"
+        return f"{len(mails)} important unread emails: " + "; ".join(mails[:3]) if mails else "no important new emails"
 
     def oyun() -> str:
         u = update_state(steam_manifest())
         if not u:
             return ""
-        return f"{u['name']} güncellemesi bekliyor" if u["pending"] else f"{u['name']} güncel"
+        return f"{u['name']} update pending" if u["pending"] else f"{u['name']} is up to date"
 
     return {"hava": lambda: brief.weather(str(b.get("city") or ""), auto=True), "program": program,
             "posta": posta, "oyun": oyun}

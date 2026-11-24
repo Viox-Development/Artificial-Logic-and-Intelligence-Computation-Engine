@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from alice.i18n import _
+
 if TYPE_CHECKING:
     from alice.config import Config
     from alice.tools.base import Tool, ToolContext
@@ -81,7 +83,7 @@ def _from_module(mod: Any, source: str) -> list[Plugin]:
     elif hasattr(mod, "PLUGIN"):
         found = mod.PLUGIN
     if found is None:
-        raise ValueError("PLUGIN, PLUGINS ya da register() bulunamadı")
+        raise ValueError("no PLUGIN, PLUGINS or register() found")
     items = found if isinstance(found, (list, tuple)) else [found]
     for p in items:
         if not isinstance(p, Plugin):
@@ -96,7 +98,7 @@ def _load_file(path: Path) -> list[Plugin]:
     spec = importlib.util.spec_from_file_location(
         modname, target, submodule_search_locations=[str(path)] if path.is_dir() else None)
     if spec is None or spec.loader is None:
-        raise ImportError(f"yüklenemedi: {path}")
+        raise ImportError(f"could not load: {path}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[modname] = mod
     try:
@@ -161,19 +163,19 @@ def load_plugins(cfg: "Config | None" = None, emit: Callable[[str], None] = lamb
         if p.name in disabled:
             continue
         if not _NAME.match(p.name):
-            errors.append(f"{p.name!r}: geçersiz ad (küçük harf, rakam, - ve _; harfle başlar)")
+            errors.append(f"{p.name!r}: invalid name (lowercase letters, digits, - and _; starts with a letter)")
             continue
         if p.name in names or p.name in reserved:
-            errors.append(f"{p.name}: bu ad zaten kullanılıyor, atlandı")
+            errors.append(f"{p.name}: this name is already in use, skipped")
             continue
         try:
             re.compile(p.keywords)
         except re.error as e:
-            errors.append(f"{p.name}: keywords regex'i bozuk ({e}), atlandı")
+            errors.append(f"{p.name}: broken keywords regex ({e}), skipped")
             continue
         clash = p.tool_names() & tool_names
         if clash:
-            errors.append(f"{p.name}: araç adı çakışıyor ({', '.join(sorted(clash))}), atlandı")
+            errors.append(f"{p.name}: tool name clash ({', '.join(sorted(clash))}), skipped")
             continue
         names.add(p.name)
         tool_names |= p.tool_names()
@@ -183,7 +185,7 @@ def load_plugins(cfg: "Config | None" = None, emit: Callable[[str], None] = lamb
     active = selftools.instrument(active)  # ALICE's own plugins: usage/error counting; closed after 3 errors
     _ACTIVE, _ERRORS = active, errors
     for e in errors:
-        emit(f"eklenti hatası: {e}")
+        emit(f"plugin error: {e}")
     if active:
         emit("eklentiler: " + ", ".join(p.name for p in active))
     return list(active)
@@ -220,7 +222,7 @@ def cleanup(ctx: "ToolContext") -> None:
             try:
                 p.cleanup(ctx)
             except Exception:  # noqa: BLE001
-                log.debug("eklenti temizliği hata verdi: %s", p.name, exc_info=True)
+                log.debug("plugin cleanup failed: %s", p.name, exc_info=True)
 
 
 TEMPLATE = '''"""ALICE plugin: {name}. Details: docs/PLUGINS.md"""
@@ -237,14 +239,14 @@ class Hello(Tool):
     parallel_safe = True
 
     def run(self, ctx: ToolContext, who: str) -> ToolResult:
-        return ToolResult(f"Merhaba {{who}}!")
+        return ToolResult(f"Hello {{who}}!")
 
 
 PLUGIN = Plugin(
     name="{name}",
     tools=[Hello()],
     description="example plugin",
-    keywords=r"selam|merhaba",
+    keywords=r"hello|selam|merhaba",
 )
 '''
 
@@ -256,7 +258,7 @@ def plugins_cmd(argv: list[str]) -> int:
     if argv[:1] == ["new"]:
         name = argv[1] if len(argv) > 1 else ""
         if not _NAME.match(name):
-            print("kullanım: alice plugins new <ad>   (küçük harf, rakam, - ya da _; harfle başlar)")
+            print(_("usage: alice plugins new <name>   (lowercase letters, digits, - or _; starts with a letter)"))
             return 2
         d = plugin_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -265,19 +267,19 @@ def plugins_cmd(argv: list[str]) -> int:
             print(f"zaten var: {path}")
             return 1
         path.write_text(TEMPLATE.format(name=name.replace("-", "_")), encoding="utf-8")
-        print(f"oluşturuldu: {path}\nDüzenle, sonra ALICE'i yeniden başlat; `alice plugins` ile kontrol et.")
+        print(_("created: {path}\nEdit it, then restart ALICE; check with `alice plugins`.", path=path))
         return 0
 
     from alice.tools import all_tools
 
     all_tools(load_config())
-    print(f"eklenti klasörü: {plugin_dir()}")
+    print(_("plugin folder: {path}", path=plugin_dir()))
     for p in _ACTIVE:
-        mode = "her zaman" if p.always else f"grup: {p.group}" + (" (canlı ses)" if p.live else "")
+        mode = "her zaman" if p.always else f"grup: {p.group}" + (_(" (live voice)") if p.live else "")
         ver = f" {p.version}" if p.version else ""
         print(f"  {p.name}{ver}  [{mode}]  {', '.join(sorted(p.tool_names())) or '-'}\n    {p.source}")
     if not _ACTIVE:
-        print("  (eklenti yok; `alice plugins new <ad>` ile başla)")
+        print(_("  (no plugins; start with `alice plugins new <name>`)"))
     for e in _ERRORS:
         print(f"  HATA {e}")
     return 1 if _ERRORS else 0

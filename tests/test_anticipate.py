@@ -12,7 +12,7 @@ def test_update_state_and_prep_tells_setting_once():
     assert u["pending"] and u["on_launch_only"] and not u["downloading"]
     told, started, st = [], [], {}
     msg = a.prep_game_update(set(), lambda t, b: told.append(t), st, manifest=m, start=lambda: started.append(1) or True)
-    assert "oyun açılınca" in msg and told == ["War Thunder güncellemesi bekliyor"] and not started
+    assert "when the game is opened" in msg and told == ["War Thunder update pending"] and not started
     a.prep_game_update(set(), lambda t, b: told.append(t), st, manifest=m)
     assert len(told) == 1  # told once for the same version
 
@@ -21,7 +21,7 @@ def test_prep_starts_steam_silently_when_auto_update_on():
     m = {"name": "War Thunder", "StateFlags": "6", "AutoUpdateBehavior": "0", "buildid": "42"}
     started = []
     msg = a.prep_game_update(set(), lambda t, b: None, {}, manifest=m, start=lambda: started.append(1) or True)
-    assert started and "arka planda" in msg
+    assert started and "in the background" in msg
     started.clear()
     a.prep_game_update({"steam.exe"}, lambda t, b: None, {}, manifest=m, start=lambda: started.append(1) or True)
     assert not started  # Steam is already open: it downloads by itself

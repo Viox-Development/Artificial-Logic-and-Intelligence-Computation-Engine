@@ -77,7 +77,7 @@ def test_broken_and_clashing_plugins_are_skipped(isolated_home):
     names = [t.name for t in all_tools(cfg())]
     assert names.count("read_file") == 1
     errs = " | ".join(plugins.errors())
-    assert "bad.py" in errs and "boom" in errs and "empty.py" in errs and "çakışıyor" in errs and "regex" in errs
+    assert "bad.py" in errs and "boom" in errs and "empty.py" in errs and "clash" in errs and "regex" in errs
     assert plugins.active() == []
 
 
@@ -95,4 +95,4 @@ def test_plugins_new_scaffold_loads(isolated_home, capsys):
     assert plugins.plugins_cmd([]) == 0
     assert "hava_durumu_hello" in capsys.readouterr().out
     t = next(t for t in all_tools(cfg()) if t.name == "hava_durumu_hello")
-    assert t.run(None, who="Hayat").text == "Merhaba Hayat!"
+    assert t.run(None, who="Hayat").text == "Hello Hayat!"

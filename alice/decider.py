@@ -32,6 +32,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from alice.i18n import _
 from alice.config import Config
 from alice.providers.router import AllProvidersFailed, Router
 
@@ -140,10 +141,10 @@ def _validate(questions: dict[str, Question]) -> None:
     # Jev has no limit on the number of questions (the request must fit the context limit); a reasonable
     # upper bound for the LLM fallback.
     if not 1 <= len(questions) <= 16:
-        raise ValueError("System One'a 1 ile 16 arasında soru sorulur")
+        raise ValueError("System One accepts 1 to 16 questions")
     for k, q in questions.items():
         if isinstance(q, Choice) and len(q.criteria) < 2:
-            raise ValueError(f"{k}: Choice en az 2 seçenek ister")
+            raise ValueError(f"{k}: Choice needs at least 2 options")
 
 
 def _score_as_choice(q: Score) -> Choice:
@@ -182,7 +183,7 @@ class JevEngine:
         _validate(questions)
         visual = _needs_images(questions, images)
         if visual and not self.images:
-            raise DeciderError(f"{self.name}: görsel kapalı", 0.0)
+            raise DeciderError(f"{self.name}: images are off", 0.0)
         wire: dict[str, Any] = {}
         for k, q in questions.items():
             if isinstance(q, Noul):
@@ -206,7 +207,7 @@ class JevEngine:
         try:
             r = self._client.post(self.url, headers=headers, json=body)
         except httpx.HTTPError as e:
-            raise DeciderError(f"jev ağ hatası: {e}") from e
+            raise DeciderError(f"jev network error: {e}") from e
         if r.status_code != 200:
             # 402 = no credit (OpenRouter), 401/403 = no key/access: these do not get fixed within a minute.
             cooldown = 3600.0 if r.status_code in (401, 402, 403) else 60.0
@@ -219,11 +220,11 @@ class JevEngine:
     @staticmethod
     def _parse(q: Question, a: Any) -> Answer:
         if a is None:
-            raise DeciderError("jev cevabında soru eksik")
+            raise DeciderError("a question is missing from the jev answer")
         if isinstance(q, Box):
             b = a.get("box") if isinstance(a, dict) else None
             if not isinstance(b, dict) or not all(k in b for k in ("left", "top", "right", "bottom")):
-                raise DeciderError(f"jev box cevabı çözülemedi: {a!r}"[:200])
+                raise DeciderError(f"could not parse the jev box answer: {a!r}"[:200])
             box = {k: min(1.0, max(0.0, float(b[k]))) for k in ("left", "top", "right", "bottom")}
             conf = a.get("confidence")
             return Answer("box", box, float(conf) if isinstance(conf, (int, float)) else 0.0)
@@ -245,7 +246,7 @@ class JevEngine:
         if label is None and probs:
             label = max(probs, key=probs.get)
         if label is None:
-            raise DeciderError(f"jev cevabı çözülemedi: {a!r}"[:200])
+            raise DeciderError(f"could not parse the jev answer: {a!r}"[:200])
         conf = float(a.get("confidence", probs.get(label, 0.0))) if isinstance(a, dict) else probs.get(label, 0.0)
         if isinstance(q, Score):
             value = _expected(probs) if probs else float(label)
@@ -271,7 +272,7 @@ class LLMEngine:
     def decide(self, state: Any, questions: dict[str, Question], images: dict[str, bytes] | None = None) -> Decision:
         _validate(questions)
         if _needs_images(questions, images):
-            raise DeciderError(f"{self.name}: görsel/Box desteklemiyor", 0.0)
+            raise DeciderError(f"{self.name}: images/Box not supported", 0.0)
         if not isinstance(state, str):
             state = json.dumps(state, ensure_ascii=False, indent=1)
         lines = []
@@ -304,7 +305,7 @@ class LLMEngine:
             res = self.router.chat(self.role, msgs, temperature=0, max_tokens=600)
         data = extract_json(res.text)
         if not isinstance(data, dict):
-            raise DeciderError(f"LLM decider JSON döndürmedi: {res.text[:200]}")
+            raise DeciderError(f"the LLM decider did not return JSON: {res.text[:200]}")
         answers = {k: self._parse(q, data.get(k)) for k, q in questions.items()}
         return Decision(answers, f"{self.name} ({res.provider}:{res.model})", time.monotonic() - t0)
 
@@ -324,7 +325,7 @@ class LLMEngine:
         if isinstance(q, Score):
             v = _num(raw, None)
             if v is None:
-                raise DeciderError(f"score çözülemedi: {a!r}")
+                raise DeciderError(f"could not parse score: {a!r}")
             return Answer("score", v, conf, {})
         label = str(raw).strip() if raw is not None else ""
         if label not in q.criteria:
@@ -332,7 +333,7 @@ class LLMEngine:
             norm = {k.lower(): k for k in q.criteria}
             label = norm.get(label.lower().strip('"\''), "")
             if not label:
-                raise DeciderError(f"geçersiz seçenek: {raw!r}")
+                raise DeciderError(f"invalid option: {raw!r}")
         return Answer("choice", label, conf, {label: conf})
 
 
@@ -431,13 +432,13 @@ class Decider:
                 return e.decide(state, questions, images) if visual else e.decide(state, questions)
             except Exception as err:  # noqa: BLE001 - an unexpected reply (not JSON, missing key) also moves on
                 errors.append(f"{e.name}: {err}")
-                self.on_event(f"decider {e.name} başarısız, sıradakine geçiliyor")
+                self.on_event(f"decider {e.name} failed, trying the next one")
                 # If the image request was rejected (400: no image permission, image not accepted), only the image part
                 # cools down; the same engine still answers the text questions.
                 key = f"{e.name}:img" if visual and "HTTP 4" in str(err) else e.name
                 self._broken[key] = time.monotonic() + getattr(err, "cooldown", 60.0)
-        raise DeciderError("; ".join(errors) or ("görsel soru sorabilecek karar motoru yok (TypeSafe anahtarı gerekli)"
-                                                 if visual else "kullanılabilir karar motoru yok"))
+        raise DeciderError("; ".join(errors) or ("no decision engine can answer image questions (a TypeSafe key is needed)"
+                                                 if visual else "no decision engine available"))
 
 
 # ------------------------------------------------------------------- image test
@@ -452,7 +453,7 @@ def image_check(decider: "Decider") -> dict[str, Any]:
     from PIL import ImageDraw
 
     if not decider.supports_images:
-        return {"status": "off", "detail": "TypeSafe anahtarı yok ya da [decider] jev_images kapalı"}
+        return {"status": "off", "detail": "no TypeSafe key, or [decider] jev_images is off"}
     w, h = 640, 400
     img = PILImage.new("RGB", (w, h), (255, 255, 255))
     d = ImageDraw.Draw(img)
@@ -472,8 +473,10 @@ def image_check(decider: "Decider") -> dict[str, Any]:
     cx, cy = (box["left"] + box["right"]) / 2, (box["top"] + box["bottom"]) / 2
     inside = l <= cx <= r and t <= cy <= b
     red, green = dec["has_red"].value, dec["has_green"].value
-    detail = (f"kırmızı var mı {red:.2f}, yeşil var mı {green:.2f}, kutu "
-              f"{box['left']:.2f}-{box['right']:.2f} × {box['top']:.2f}-{box['bottom']:.2f} "
-              f"({'doğru yerde' if inside else 'YANLIŞ yerde'}) · {dec.latency * 1000:.0f} ms, {dec.engine}")
+    detail = (_("red present {red}, green present {green}, box {box} ({where}) · {ms} ms, {engine}",
+                red=f"{red:.2f}", green=f"{green:.2f}",
+                box=f"{box['left']:.2f}-{box['right']:.2f} × {box['top']:.2f}-{box['bottom']:.2f}",
+                where=_("in the right place") if inside else _("in the WRONG place"),
+                ms=f"{dec.latency * 1000:.0f}", engine=dec.engine))
     ok = inside and red >= 0.7 and green <= 0.3
     return {"status": "ok" if ok else "warn", "detail": detail}

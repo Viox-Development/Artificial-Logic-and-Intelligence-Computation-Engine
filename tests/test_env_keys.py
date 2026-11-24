@@ -114,7 +114,7 @@ def test_feedback_from_app_lands_in_eval_set(app):
     assert r.json() == {"ok": True, "added": True}
     case = next(c for c in evals.load_cases() if c.say == "hava nasıl")
     text = evals.evals_path().read_text(encoding="utf-8")
-    assert case and "beğenilmedi (uygulama)" in text and "soruma cevap vermedi" in text
+    assert case and "disliked (uygulama)" in text and "soruma cevap vermedi" in text
     assert evals.recent_feedback()[-1]["reply"].startswith("Buradayım")
     assert client.post("/api/feedback", json={"say": "hava nasıl", "reply": "x"}).json()["added"] is False  # no dupes
 

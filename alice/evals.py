@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from alice.i18n import _
 from alice.config import alice_home
 
 
@@ -107,13 +108,13 @@ def add_cases(sayings: list[str], note: str = "", path: Path | None = None) -> i
     for s in new:
         chunks.append(f"\n[[case]]\nsay = {_toml_str(s)}\n"
                       + (f"# {note}\n" if note else "")
-                      + 'expect = ""          # cevapta geçmesi gereken (regex)\n'
+                      + ('expect = ""          # must appear in the answer (regex)\n'
                         'forbid = ""\n'
                         "expect_tools = []\n"
-                        "forbid_tools = []\n")
+                        "forbid_tools = []\n"))
     with path.open("a", encoding="utf-8") as f:
         if not path.stat().st_size:
-            f.write("# ALICE test seti (alice eval). Ayrıntı: alice/evals.py\n")
+            f.write("# ALICE test set (alice eval). Details: alice/evals.py\n")
         f.write("".join(chunks))
     return len(new)
 
@@ -135,7 +136,7 @@ def record_feedback(say: str, reply: str, note: str = "", source: str = "", path
     if not say:
         return False
     one_line = lambda s: " ".join(s.split())[:300]  # noqa: E731
-    comment = f"beğenilmedi ({source or '?'}): {one_line(reply)}" + (f" | not: {one_line(note)}" if note else "")
+    comment = _("disliked ({source}): {reply}", source=source or "?", reply=one_line(reply)) + (f" | not: {one_line(note)}" if note else "")
     return add_cases([say], note=comment, path=path) > 0
 
 
@@ -181,14 +182,14 @@ def check(case: Case, reply: str, tools: list[str]) -> list[str]:
     if case.expect and not re.search(case.expect, reply, re.I):
         reasons.append(f"cevapta yok: {case.expect}")
     if case.forbid and re.search(case.forbid, reply, re.I):
-        reasons.append(f"cevapta olmamalı: {case.forbid}")
+        reasons.append(_("must not be in the answer: {forbid}", forbid=case.forbid))
     if case.expect_tools and not any(t in tools for t in case.expect_tools):
-        reasons.append(f"beklenen araç çağrılmadı: {'/'.join(case.expect_tools)}")
+        reasons.append(_("expected tool not called: {tools}", tools="/".join(case.expect_tools)))
     bad = [t for t in case.forbid_tools if t in tools]
     if bad:
-        reasons.append(f"yasak araç çağrıldı: {', '.join(bad)}")
+        reasons.append(_("forbidden tool called: {tools}", tools=", ".join(bad)))
     if not reply.strip():
-        reasons.append("boş cevap")
+        reasons.append(_("empty answer"))
     return reasons
 
 
@@ -254,7 +255,7 @@ def run_all(cases: list[Case], on_case=lambda i, o: None, stop=lambda: False, cf
     from alice.config import load_config
     from alice.tools import cleanup
 
-    agent, _, ctx = build(cfg or load_config(), _P.home(), "ask")
+    agent, _ui, ctx = build(cfg or load_config(), _P.home(), "ask")
     agent.memory = None  # test conversations are not saved to memory (the profile stays in the system prompt)
     base_role = agent.role
 
@@ -283,16 +284,16 @@ def eval_cmd(argv: list[str]) -> int:
     from rich.markup import escape
 
     console = Console()
-    ap = argparse.ArgumentParser(prog="alice eval", description="Gerçek konuşmalardan test seti (bkz. alice/evals.py)")
-    ap.add_argument("--only", help="adında ya da cümlesinde bu geçen vakalar")
-    ap.add_argument("--add", action="append", help="yeni vaka cümlesi (tekrarlanabilir)")
-    ap.add_argument("--from-log", type=int, metavar="N", help="voice.log'daki son N cümleyi vaka taslağı yap")
-    ap.add_argument("--feedback", action="store_true", help="beğenmediğin son cevapları göster")
+    ap = argparse.ArgumentParser(prog="alice eval", description=_("Test set from real conversations (see alice/evals.py)"))
+    ap.add_argument("--only", help=_("cases with this in their name or sentence"))
+    ap.add_argument("--add", action="append", help=_("new case sentence (repeatable)"))
+    ap.add_argument("--from-log", type=int, metavar="N", help=_("turn the last N sentences in voice.log into draft cases"))
+    ap.add_argument("--feedback", action="store_true", help=_("show the answers you disliked recently"))
     a = ap.parse_args(argv)
     if a.feedback:
         rows = recent_feedback(30)
         if not rows:
-            console.print("geri bildirim yok. Sesle 'bu cevap kötüydü' de ya da uygulamada cevabın altındaki 👎.")
+            console.print(_("no feedback. Say 'that answer was bad' or press 👎 under the answer in the app."))
             return 0
         for r in rows:
             when = time.strftime("%d.%m %H:%M", time.localtime(r.get("ts", 0)))
@@ -312,13 +313,12 @@ def eval_cmd(argv: list[str]) -> int:
         q = a.only.lower()
         cases = [c for c in cases if q in c.say.lower() or q in c.name.lower()]
     if not cases:
-        console.print(f"vaka yok. Eklemek için: alice eval --add \"cümle\" ya da alice eval --from-log 20 "
-                      f"({evals_path()})")
+        console.print(_("no cases. To add: alice eval --add \"sentence\" or alice eval --from-log 20 ({path})", path=evals_path()))
         return 1
     def show(i: int, o: Outcome) -> None:
-        mark = "[green]geçti[/]" if o.passed else "[red]kaldı[/]"
-        console.print(f"{i:>2}. {mark} {escape(o.case.label)} [dim]({o.seconds:.1f} sn, {escape(o.model)}, "
-                      f"araçlar: {escape(', '.join(o.tools) or '-')})[/]")
+        mark = "[green]" + _("passed") + "[/]" if o.passed else "[red]" + _("did not pass") + "[/]"
+        console.print((f"{i:>2}. {mark} {escape(o.case.label)} [dim](" + _("{s} s, {model}, tools: {tools}", s=f"{o.seconds:.1f}", model=escape(o.model),
+                      tools=escape(', '.join(o.tools) or '-')) + ")[/]"))
         for r in o.reasons:
             console.print(f"     [yellow]{escape(r)}[/]")
         if not o.passed:
@@ -327,12 +327,12 @@ def eval_cmd(argv: list[str]) -> int:
     outcomes = run_all(cases, on_case=show)
     cmp = save_results(outcomes)
     passed = sum(o.passed for o in outcomes)
-    line = f"\n{passed}/{len(outcomes)} geçti"
+    line = "\n" + _("{passed}/{total} passed", passed=passed, total=len(outcomes))
     if cmp["before"] is not None:
-        line += f" (önceki çalıştırma: {cmp['before']}/{cmp['before_total']})"
+        line += _(" (previous run: {before}/{total})", before=cmp["before"], total=cmp["before_total"])
     console.print(line)
     if cmp["fixed"]:
-        console.print("[green]düzelenler:[/] " + escape(", ".join(cmp["fixed"])))
+        console.print("[green]" + _("fixed:") + "[/] " + escape(", ".join(cmp["fixed"])))
     if cmp["broken"]:
-        console.print("[red]bozulanlar:[/] " + escape(", ".join(cmp["broken"])))
+        console.print("[red]" + _("broke:") + "[/] " + escape(", ".join(cmp["broken"])))
     return 0 if passed == len(outcomes) else 1
