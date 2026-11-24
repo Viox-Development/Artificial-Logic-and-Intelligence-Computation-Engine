@@ -41,4 +41,4 @@ def test_narrow_context_models_are_pushed_back_for_agent_work():
 
 
 def test_explain_is_short():
-    assert picker.explain("nvidia:z-ai/glm-5.3", "design") == "tasarım · glm-5.3"
+    assert picker.explain("nvidia:z-ai/glm-5.3", "design") == "design · glm-5.3"

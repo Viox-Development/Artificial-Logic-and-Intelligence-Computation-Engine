@@ -17,11 +17,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from alice.i18n import _
 from alice.providers import ranking
 
 DOMAINS = ("design", "code", "review", "writing", "light", "vision")
-DOMAIN_TR = {"design": "tasarım", "code": "kod", "review": "inceleme", "writing": "metin", "light": "basit iş",
-             "vision": "görsel"}
+# Display names (English keys, translated with _() where shown).
+DOMAIN_TR = {"design": "design", "code": "code", "review": "review", "writing": "writing", "light": "simple job",
+             "vision": "vision"}
 
 # Patterns that extract the task domain from the task text (not the first match: the one with the most matches wins).
 KEYWORDS: dict[str, str] = {
@@ -189,9 +191,9 @@ def pick(router, text: str, fallback: str = "brain") -> tuple[str, list[str]]:
 
 def explain(ref: str, domain: str) -> str:
     """Short label for the UI: 'tasarım · glm-5.3'."""
-    return f"{DOMAIN_TR.get(domain, domain)} · {ref.split(':', 1)[-1].split('/')[-1]}"
+    return f"{_(DOMAIN_TR.get(domain, domain))} · {ref.split(':', 1)[-1].split('/')[-1]}"
 
 
 def table(router) -> list[dict[str, Any]]:
     """For settings/screen: the top three models in each domain."""
-    return [{"domain": d, "label": DOMAIN_TR[d], "models": chain_for(router, d)[:3]} for d in DOMAINS]
+    return [{"domain": d, "label": _(DOMAIN_TR[d]), "models": chain_for(router, d)[:3]} for d in DOMAINS]

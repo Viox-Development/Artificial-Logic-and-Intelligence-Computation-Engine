@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
+from alice.i18n import _
 from alice.config import ProviderConfig, alice_home
 from alice.providers.openai_compat import (_TOO_LARGE_HINTS, _TRANSPORT_ERRORS, ChatResult, OpenAICompatProvider,
                                            ProviderError, StreamCancelled, _transport_error, classify_error,
@@ -318,7 +319,7 @@ def limits_from_headers(headers: Any) -> dict[str, Any] | None:
 
 
 def limit_note() -> str:
-    """Short limit summary for the model menu: '5 sa: %40 · haftalık: %12' (sa = hours, haftalık = weekly)."""
+    """Short limit summary for the model menu: '5 h: 40% · weekly: 12%'."""
     lim = load_auth().get("limits") or {}
     parts = []
     for key in ("primary", "secondary"):
@@ -326,8 +327,9 @@ def limit_note() -> str:
         if not w:
             continue
         mins = int(w.get("window_minutes") or 0)
-        name = "haftalık" if mins >= 6 * 24 * 60 else f"{round(mins / 60)} sa" if mins >= 60 else f"{mins} dk"
-        parts.append(f"{name}: %{round(w.get('used_percent') or 0)}")
+        name = (_("weekly") if mins >= 6 * 24 * 60 else _("{n} h", n=round(mins / 60)) if mins >= 60
+                else _("{n} min", n=mins))
+        parts.append(f"{name}: {round(w.get('used_percent') or 0)}%")
     return " · ".join(parts)
 
 
@@ -397,7 +399,7 @@ def _limit_error(status: int, body: str, headers: dict[str, str]) -> ProviderErr
         secs = max(60.0, float(secs)) if secs is not None else None
     except (TypeError, ValueError):
         secs = None
-    return ProviderError("quota", f"ChatGPT kullanım limiti doldu ({info.get('plan_type') or 'plan'})", 429, secs)
+    return ProviderError("quota", f"ChatGPT usage limit reached ({info.get('plan_type') or 'plan'})", 429, secs)
 
 
 def logged_in() -> bool:
@@ -450,7 +452,7 @@ def refresh(client: httpx.Client | None = None, key: str | None = None) -> dict[
     key = key or _store()["active"]
     a = load_auth(key)
     if not a.get("refresh_token"):
-        raise ProviderError("auth", "ChatGPT'ye giriş yapılmamış (Sistem → Kurulum → ChatGPT ile giriş)")
+        raise ProviderError("auth", "not signed in to ChatGPT (System → Setup → sign in with ChatGPT)")
     c = client or httpx.Client(timeout=30.0)
     try:
         r = c.post(f"{ISSUER}/oauth/token", json={"client_id": CLIENT_ID, "grant_type": "refresh_token",
@@ -462,14 +464,14 @@ def refresh(client: httpx.Client | None = None, key: str | None = None) -> dict[
             c.close()
     if r.status_code != 200:
         kind = "auth" if r.status_code in (400, 401, 403) else "server"
-        raise ProviderError(kind, f"ChatGPT oturumu yenilenemedi ({r.status_code}); tekrar giriş yap", r.status_code)
+        raise ProviderError(kind, f"could not renew the ChatGPT session ({r.status_code}); sign in again", r.status_code)
     return save_auth(r.json(), key=key)
 
 
 def access(client: httpx.Client | None = None, key: str | None = None) -> dict[str, Any]:
     a = load_auth(key)
     if not a.get("access_token") and not a.get("refresh_token"):
-        raise ProviderError("auth", "ChatGPT'ye giriş yapılmamış (Sistem → Kurulum → ChatGPT ile giriş)")
+        raise ProviderError("auth", "not signed in to ChatGPT (System → Setup → sign in with ChatGPT)")
     if float(a.get("expires_at") or 0) - REFRESH_EARLY < time.time():
         key = key or _store()["active"]
         with _refresh_lock:
@@ -503,7 +505,7 @@ def exchange(code: str, verifier: str, client: httpx.Client | None = None) -> di
         if client is None:
             c.close()
     if r.status_code != 200:
-        raise ProviderError("auth", f"giriş tamamlanamadı ({r.status_code}): {r.text[:200]}", r.status_code)
+        raise ProviderError("auth", f"sign-in could not be completed ({r.status_code}): {r.text[:200]}", r.status_code)
     return save_auth(r.json())
 
 
@@ -529,12 +531,12 @@ def login(open_url: Callable[[str], Any] | None = None, timeout: float = 300.0,
                 self.end_headers()
                 return
             if q.get("state", [""])[0] != state:
-                got["error"] = "güvenlik kontrolü (state) tutmadı"
+                got["error"] = "the security check (state) did not match"
             elif q.get("error"):
                 got["error"] = q.get("error_description", q["error"])[0]
             else:
                 got["code"] = q.get("code", [""])[0]
-            msg = "Giriş tamam, bu sekmeyi kapatabilirsin." if got.get("code") else f"Giriş olmadı: {got.get('error')}"
+            msg = _("Signed in; you can close this tab.") if got.get("code") else _("Sign-in failed: {error}", error=got.get("error"))
             body = DONE_PAGE.format(msg=msg).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -549,19 +551,19 @@ def login(open_url: Callable[[str], Any] | None = None, timeout: float = 300.0,
     try:
         server = HTTPServer(("127.0.0.1", PORT), Handler)
     except OSError as e:
-        raise ProviderError("network", f"localhost:{PORT} açılamadı (Codex CLI girişi açık olabilir): {e}") from e
+        raise ProviderError("network", f"could not open localhost:{PORT} (the Codex CLI sign-in may be open): {e}") from e
     threading.Thread(target=server.serve_forever, daemon=True, name="alice-chatgpt-login").start()
     try:
         url = authorize_url(challenge, state)
-        emit("tarayıcıda ChatGPT girişi açıldı")
+        emit(_("the ChatGPT sign-in opened in the browser"))
         (open_url or webbrowser.open)(url)
         if not done.wait(timeout):
-            raise ProviderError("auth", "giriş zaman aşımına uğradı (5 dk)")
+            raise ProviderError("auth", "the sign-in timed out (5 min)")
     finally:
         server.shutdown()
         server.server_close()
     if not got.get("code"):
-        raise ProviderError("auth", f"giriş olmadı: {got.get('error', 'kod gelmedi')}")
+        raise ProviderError("auth", f"sign-in failed: {got.get('error', 'no code came')}")
     return exchange(got["code"], verifier)
 
 
@@ -645,7 +647,7 @@ def _tool_output(c: Any) -> tuple[str, list[dict[str, Any]]]:
     if not texts and not imgs:
         return redact_binary(c), []
     if imgs:
-        texts.append(f"[araç {len(imgs)} görüntü döndürdü; görüntüler sonraki mesajda]")
+        texts.append(f"[the tool returned {len(imgs)} images; the images are in the next message]")
     return "\n".join(texts), imgs
 
 
@@ -699,7 +701,7 @@ def codex_prompt(client: httpx.Client) -> str:
             _codex_prompt = r.text
             break
     else:
-        raise ProviderError("bad_request", "Codex istemi indirilemedi; bu model ALICE'in talimatını kabul etmedi")
+        raise ProviderError("bad_request", "could not download the Codex prompt; this model didn't accept ALICE's instructions")
     try:
         p.write_text(r.text, encoding="utf-8")
     except OSError:
@@ -747,13 +749,13 @@ class ChatGPTProvider(OpenAICompatProvider):
             try:
                 data = r.json()
             except ValueError as e:
-                raise ProviderError("server", f"model listesi okunamadı: {r.text[:160]}", 200) from e
+                raise ProviderError("server", f"could not read the model list: {r.text[:160]}", 200) from e
             out = parse_models(data)
             if out:
                 _update_active(models=[m["id"] for m in out], models_error="")
                 return out
             seen = r.text[:200]
-        raise ProviderError("server", f"model listesi boş geldi (sunucu cevabı: {seen or 'boş'})", 200)
+        raise ProviderError("server", f"the model list came back empty (server answer: {seen or 'empty'})", 200)
 
     def chat(self, model, messages, tools=None, temperature=None, max_tokens=None, response_format=None, extra=None):
         # max_tokens/temperature are deliberately not sent: the Codex backend rejects max_output_tokens and
@@ -805,7 +807,7 @@ class ChatGPTProvider(OpenAICompatProvider):
                 # Every account is at its usage limit: let the router rest this model until the earliest reset
                 # (at most half an hour; accounts may be added in the meantime).
                 wait = min(_earliest_reset() or 1800.0, 1800.0)
-                raise ProviderError("quota", f"ChatGPT: kayıtlı {len(tried)} hesabın hepsinin limiti dolu", 429,
+                raise ProviderError("quota", f"ChatGPT: all {len(tried)} saved accounts are at their limit", 429,
                                     max(wait, 60.0)) from e
 
     def _chat_one(self, model, messages, on_delta, tools, extra, cancel, on_reasoning, on_first, on_tool,
@@ -850,7 +852,7 @@ class ChatGPTProvider(OpenAICompatProvider):
                     and "json" not in str(instructions).lower():
                 # Responses API json_object requires "JSON" in the input, otherwise the request returns 400.
                 body["input"] = [*items, {"type": "message", "role": "developer",
-                                          "content": [{"type": "input_text", "text": "Cevabı JSON olarak ver."}]}]
+                                          "content": [{"type": "input_text", "text": "Give the answer as JSON."}]}]
         t0 = time.monotonic()
         text: list[str] = []
         calls: dict[str, dict[str, Any]] = {}
@@ -864,7 +866,7 @@ class ChatGPTProvider(OpenAICompatProvider):
         stop = threading.Event()
 
         def first_timeout() -> ProviderError:
-            return ProviderError("network", f"zaman aşımı: model {int(self.FIRST_DATA)} sn'dir ilk cevabı vermedi")
+            return ProviderError("network", f"timed out: the model hasn't given its first answer for {int(self.FIRST_DATA)} s")
 
         def lines(r: httpx.Response) -> Iterator[str]:
             """The stream's lines, read in another thread so the first-data limit and cancel apply even while the
@@ -995,12 +997,12 @@ class ChatGPTProvider(OpenAICompatProvider):
         if not completed and any(cid not in closed for cid in calls):
             # The stream was cut before its end event and a tool call's arguments are partial (empty text from
             # output_item.added). Before, the call counted as a success with empty arguments and the tool ran that way.
-            raise ProviderError("network", "ChatGPT akışı yarıda kesildi (araç çağrısı tamamlanmadı)")
+            raise ProviderError("network", "the ChatGPT stream was cut off (the tool call was not completed)")
         msg: dict[str, Any] = {"content": "".join(text)}
         if calls:
             msg["tool_calls"] = list(calls.values())
         if not msg["content"] and not calls:
-            raise ProviderError("server", "ChatGPT boş cevap döndü")
+            raise ProviderError("server", "ChatGPT returned an empty answer")
         return ChatResult(normalize_message(msg), self.name, served, usage, time.monotonic() - t0, finish=finish)
 
 

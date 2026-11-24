@@ -204,7 +204,7 @@ def test_not_logged_in_is_auth_error():
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
     with pytest.raises(ProviderError) as ei:
         p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
-    assert ei.value.kind == "auth" and "giriş" in str(ei.value)
+    assert ei.value.kind == "auth" and "sign" in str(ei.value)
 
 
 def test_browser_login_flow(monkeypatch):
@@ -286,7 +286,7 @@ def test_limits_from_headers_usage_endpoint_and_model_menu():
                                                      "x-codex-secondary-used-percent": "12",
                                                      "x-codex-secondary-window-minutes": "10080"}))
     chatgpt.save_limits(lim)
-    assert chatgpt.limit_note() == "5 sa: %40 · haftalık: %12"
+    assert chatgpt.limit_note() == "5 h: 40% · weekly: 12%"
     assert chatgpt.status()["limits"]["primary"]["reset_at"] > time.time()
 
     def handler(req):
@@ -306,7 +306,7 @@ def test_limits_from_headers_usage_endpoint_and_model_menu():
                                                           .default_config_dict()["providers"]["chatgpt"])})
     view = {p["name"]: p for p in Router(cfg, provider_factory=lambda p: None, auto_cache={}).catalog_view()}
     assert [m["ref"] for m in view["chatgpt"]["models"]] == ["chatgpt:gpt-5.5"]  # in the menu before being measured
-    assert view["chatgpt"]["note"] == "5 sa: %75"
+    assert view["chatgpt"]["note"] == "5 h: 75%"
 
 
 def test_stream_records_limit_headers():
@@ -318,7 +318,7 @@ def test_stream_records_limit_headers():
 
     ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler))).chat(
         "gpt-5.5", [{"role": "user", "content": "x"}])
-    assert chatgpt.limit_note() == "5 sa: %5"
+    assert chatgpt.limit_note() == "5 h: 5%"
 
 
 def test_models_fetched_later_if_login_was_before_list_existed(monkeypatch):
@@ -374,7 +374,7 @@ def test_empty_list_is_an_error_and_manual_add_works(monkeypatch):
         return httpx.Response(200, json={"models": []})
 
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ProviderError, match="boş geldi"):
+    with pytest.raises(ProviderError, match="came back empty"):
         p.list_models()
     assert [a.get("client_version") for a in asked] == [chatgpt.CLIENT_VERSION, "9.99.0", None]
 
@@ -428,7 +428,7 @@ def test_all_accounts_limited_is_quota_with_reset_time():
     p = ChatGPTProvider(pc(), client=httpx.Client(transport=httpx.MockTransport(lambda req: _limit_429(600))))
     with pytest.raises(ProviderError) as ei:
         p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
-    assert ei.value.kind == "quota" and 500 < ei.value.retry_after <= 600 and "2 hesabın" in str(ei.value)
+    assert ei.value.kind == "quota" and 500 < ei.value.retry_after <= 600 and "all 2 saved accounts" in str(ei.value)
 
 
 def test_single_account_limit_keeps_server_reset_time():
@@ -670,7 +670,7 @@ def test_no_first_data_still_times_out_at_first_data_limit(monkeypatch):
         t = time.monotonic()
         with pytest.raises(ProviderError) as ei:
             p.chat("gpt-5.5", [{"role": "user", "content": "x"}])
-        assert ei.value.kind == "network" and "ilk cevabı vermedi" in str(ei.value)
+        assert ei.value.kind == "network" and "first answer" in str(ei.value)
         assert time.monotonic() - t < 3  # did not wait for STREAM_READ (5 s)
     finally:
         srv.close()

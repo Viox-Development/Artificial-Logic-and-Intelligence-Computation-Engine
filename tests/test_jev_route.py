@@ -47,7 +47,7 @@ def test_route_sends_request_and_previous_reply():
 def test_jev_failure_is_not_an_answer():
     logs = []
     r = jev_route.route(NS(), "selam", engine=FakeEngine(error=DeciderError("HTTP 500")), log=logs.append)
-    assert r.tier == "normal" and r.reason == "jev hatası" and "başarısız" in logs[0]
+    assert r.tier == "normal" and r.reason == "jev error" and "failed" in logs[0]
 
 
 def make_router(chains):

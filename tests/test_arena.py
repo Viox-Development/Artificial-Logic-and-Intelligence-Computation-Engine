@@ -95,7 +95,7 @@ def test_refresh_failure_keeps_old_data():
         raise httpx.ConnectError("yok")
 
     assert arena.refresh(msgs.append, get=boom)["scores"] == data()["scores"]
-    assert "alınamadı" in msgs[0]
+    assert "could not get" in msgs[0]
 
 
 def test_live_speed_replaces_single_probe_after_enough_calls():

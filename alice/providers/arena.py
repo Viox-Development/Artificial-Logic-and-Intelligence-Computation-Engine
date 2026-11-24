@@ -167,7 +167,7 @@ def fetch(get: Callable[..., Any] | None = None, workers: int = 8) -> list[dict[
                 if client is None or attempt == 3:
                     raise
                 time.sleep(1.5 * (attempt + 1))
-        raise RuntimeError("ulaşılamaz")
+        raise RuntimeError("unreachable")
 
     try:
         first = page(0)
@@ -188,11 +188,11 @@ def refresh(emit: Callable[[str], None] = lambda s: None, get: Callable[..., Any
     try:
         rows = fetch(get)
     except Exception as e:  # noqa: BLE001 - no network or site changed: continue with old data
-        emit(f"LMArena sıralaması alınamadı, eski veriyle devam: {e}")
+        emit(f"could not get the LMArena ranking; continuing with the old data: {e}")
         return load()
     scores = build(rows)
     if not scores:
-        emit("LMArena sıralaması boş geldi, eski veriyle devam")
+        emit("the LMArena ranking came back empty; continuing with the old data")
         return load()
     published = max((str(r.get("leaderboard_publish_date") or "") for r in rows), default="")
     data = {"fetched_ts": time.time(), "published": published, "scores": scores, "elo_per_point": ELO_PER_POINT}
@@ -203,7 +203,7 @@ def refresh(emit: Callable[[str], None] = lambda s: None, get: Callable[..., Any
     except OSError:
         pass  # the cache is rebuilt on the next fetch
     set_cache(data)
-    emit(f"LMArena sıralaması güncellendi ({len(scores)} model, {published})")
+    emit(f"LMArena ranking updated ({len(scores)} models, {published})")
     return data
 
 

@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.config import alice_home
 from alice.providers import arena
 
@@ -206,7 +207,7 @@ def candidates(router, per_provider: int = PER_PROVIDER,
         if name == "ollama":
             continue
         if not pc.enabled:
-            errors[name] = f"{pc.api_key_env} tanımlı değil"
+            errors[name] = _("{env} is not set", env=pc.api_key_env)
             continue
         if not getattr(pc, "auto", True):
             continue  # paid-credit provider: only chosen by hand, and the measurement must not spend credit either
@@ -230,7 +231,7 @@ def candidates(router, per_provider: int = PER_PROVIDER,
     out = []
     for name, items in by_provider.items():
         items.sort(key=lambda x: -x[0])
-        out += [ref for _, ref in items[:min(per_provider, PROVIDER_CAP.get(name, per_provider))]]
+        out += [ref for _score, ref in items[:min(per_provider, PROVIDER_CAP.get(name, per_provider))]]
     return out, errors, catalog
 
 
@@ -294,9 +295,9 @@ def probe(router, ref: str, specs: list[dict[str, Any]] | None = None, timeout: 
             json.loads(good[0]["function"].get("arguments") or "{}")
             res.ok, res.tool = True, good[0]["function"]["name"]
         except json.JSONDecodeError:
-            res.error_kind, res.error = "bad_args", "araç argümanları geçerli JSON değil"
+            res.error_kind, res.error = "bad_args", "the tool arguments are not valid JSON"
     else:
-        res.error_kind, res.error = "no_tool", f"araç çağırmadı: {r.text[:120]!r}"
+        res.error_kind, res.error = "no_tool", f"did not call the tool: {r.text[:120]!r}"
     return res
 
 
@@ -319,7 +320,7 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
         def one(ref: str) -> Probe:
             if quota_hit:
                 return Probe(ref, False, quality(ref), error_kind="quota",
-                             error="denenmedi: sağlayıcının günlük ücretsiz kotası dolu")
+                             error=_("not tried: the provider's daily free quota is used up"))
             pr = probe(router, ref, specs, timeout)
             if pr.error_kind == "quota" and provider in ACCOUNT_QUOTA:
                 quota_hit.append(pr)
@@ -343,10 +344,10 @@ def probe_all(router, refs: list[str], emit: Callable[[str], None] = lambda s: N
 # -------------------------------------------------------------------- ranking
 # Each model scores 0-100 on five criteria; the overall score is weighted by role. Weights are editable in the app
 # (Settings → Models → Scoring) and saved to ~/.alice/model-weights.json.
-METRICS = {"zeka": "zekâ (araç kullanma, Türkçe, kod)", "hiz": "hız (işi bitirme süresi)",
-           "tepki": "ilk kelime süresi", "akis": "akış (saniyede token)",
-           "baglam": "bağlam (ne kadar uzun konuşma, dosya, sayfa sığar)",
-           "guven": "güvenilirlik (gerçek kullanımda takılmadan, saçmalamadan cevap verme)"}
+METRICS = {"zeka": "intelligence (tool use, Turkish, code)", "hiz": "speed (time to finish the job)",
+           "tepki": "time to first word", "akis": "streaming (tokens per second)",
+           "baglam": "context (how long a conversation, file or page fits)",
+           "guven": "reliability (answering without getting stuck or talking nonsense in real use)"}
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
     # An agent calls the model 10-20 times: intelligence comes first, but slowness and stalling are costly too.
     # Since LMArena gave intelligence, gaps are small (flash-lite 67, 3.5-flash 82): a fast but weak flash-lite
@@ -598,7 +599,7 @@ def vision_backups(results: dict[str, Any], providers_cfg: dict[str, Any], have:
     out: list[str] = []
     for ref, r in sorted(results.items(),
                          key=lambda kv: -role_score(with_context(kv[1], kv[0], providers_cfg), "vision")):
-        prov, _, model = ref.partition(":")
+        prov, _sep, model = ref.partition(":")
         pc = providers_cfg.get(prov)
         if (len(out) < limit and r.get("ok") and prov not in used and ref not in have and pc
                 and pc.supports_vision(model) and quality(ref) > 0):
@@ -671,7 +672,7 @@ def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | N
         arena.refresh(emit)  # intelligence scores: real benchmark (every three days, a few seconds)
     contexts: dict[str, int] = {}
     refs, errors, catalog = candidates(router, per_provider, contexts=contexts)
-    emit(f"{len(refs)} aday ölçülüyor ({', '.join(sorted({r.split(':', 1)[0] for r in refs}))})")
+    emit(_("measuring {n} candidates ({providers})", n=len(refs), providers=", ".join(sorted({r.split(":", 1)[0] for r in refs}))))
     results = probe_all(router, refs, emit, timeout)
     prev = (load_cache(path).get("results") or {})
     for r in results:
@@ -721,20 +722,20 @@ def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Pa
 def left_out(r: dict[str, Any], role: str, providers_cfg: dict[str, Any] | None) -> str:
     """Why a model is not in this role's order even though its score is high (the build_chains conditions)."""
     q, lat = float(r.get("quality") or 0), float(r.get("latency") or 0)
-    prov, _, model = str(r.get("ref", "")).partition(":")
+    prov, _sep, model = str(r.get("ref", "")).partition(":")
     pc = (providers_cfg or {}).get(prov)
     if not quality(str(r.get("ref", ""))):
-        return "zekâ puanı bilinmiyor"
+        return _("intelligence score unknown")
     floor = BRAIN_MIN_QUALITY if role == "brain" else VOICE_MIN_QUALITY
     if role in ("brain", "voice") and q < floor:
-        return f"zekâ {floor}'in altında"
+        return _("intelligence below {floor}", floor=floor)
     if role == "brain" and pc is not None and pc.max_input_tokens < 16000:
-        return f"bağlamı küçük ({pc.max_input_tokens // 1000}K), ana modelin isteğine sığmaz"
+        return _("small context ({k}K); doesn't fit the main model's requests", k=pc.max_input_tokens // 1000)
     if role == "fast" and (q < FAST_MIN_QUALITY or lat > 15):
-        return "yeterince iyi ya da hızlı değil"
+        return _("not good or fast enough")
     if role == "vision" and pc is not None and not pc.supports_vision(model):
-        return "görsel desteklemiyor"
-    return "sıranın sonuna sığmadı"
+        return _("doesn't support images")
+    return _("didn't fit at the end of the order")
 
 
 def score_table(cache: dict[str, Any] | None = None, weights: dict[str, dict[str, float]] | None = None,
@@ -774,12 +775,12 @@ def refresh_in_background(router, emit: Callable[[str], None] = lambda s: None,
 
     def work() -> None:
         try:
-            emit("modeller ölçülüyor (arka planda, günde bir)")
+            emit(_("measuring the models (in the background, once a day)"))
             cache = refresh(router)
             router.reload_auto(cache)
-            emit("model sırası güncellendi: " + ", ".join(cache["chains"].get("brain", [])[:3]))
+            emit(_("model order updated: ") + ", ".join(cache["chains"].get("brain", [])[:3]))
         except Exception as e:  # noqa: BLE001 - a background job must not crash the app
-            emit(f"model ölçümü başarısız: {e}")
+            emit(_("model measurement failed: {error}", error=e))
         finally:
             _refreshing.release()
 
@@ -788,7 +789,7 @@ def refresh_in_background(router, emit: Callable[[str], None] = lambda s: None,
 
 
 def format_table(cache: dict[str, Any]) -> list[str]:
-    rows = [f"{'model':58s} {'durum':10s} {'kalite':>6s} {'süre':>6s} {'ilk tk':>6s} {'token':>6s} {'tk/sn':>6s}"]
+    rows = [f"{'model':58s} {'state':10s} {'quality':>7s} {'time':>6s} {'ttft':>6s} {'token':>6s} {'tok/s':>6s}"]
     for r in cache.get("results", {}).values():
         state = "OK" if r["ok"] else r["error_kind"][:10]
         rows.append(f"{r['ref'][:58]:58s} {state:10s} {r['quality']:6d} {r['latency']:6.1f} {r['ttft']:6.1f} "

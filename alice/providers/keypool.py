@@ -134,11 +134,11 @@ class KeyPool:
             now = time.monotonic()
             live = [k for k in self.keys if not k.dead]
             if not live:
-                raise ProviderError("auth", f"{self.name}: bütün anahtarlar geçersiz")
+                raise ProviderError("auth", f"{self.name}: all keys are invalid")
             wait = min(self._waiting(k, model, now) for k in live)
             kinds = {self.kind.get((k.fp, model)) for k in live}
             kind = "quota" if kinds == {"quota"} else "rate_limit"
-            raise ProviderError(kind, f"{self.name}: {len(live)} anahtarın hepsi beklemede ({int(wait)} sn)",
+            raise ProviderError(kind, f"{self.name}: all {len(live)} keys are waiting ({int(wait)} s)",
                                 retry_after=wait, daily=kind == "quota" and wait > 3600)
         last: ProviderError | None = None
         for ks in keys:

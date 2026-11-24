@@ -206,7 +206,7 @@ def test_stream_aborts_when_only_keepalives_arrive():
     t0 = time.monotonic()
     with pytest.raises(ProviderError) as ei:
         p.chat_stream("m", [], lambda t: None)
-    assert ei.value.kind == "network" and "veri göndermiyor" in str(ei.value) and time.monotonic() - t0 < 1.5
+    assert ei.value.kind == "network" and "hasn't sent data" in str(ei.value) and time.monotonic() - t0 < 1.5
 
 
 def test_stream_gives_up_when_first_answer_never_comes():
@@ -223,4 +223,4 @@ def test_stream_gives_up_when_first_answer_never_comes():
     t0 = time.monotonic()
     with pytest.raises(ProviderError) as ei:
         p.chat_stream("m", [], lambda t: None)
-    assert "zaman aşımı" in str(ei.value) and "ilk" in str(ei.value) and time.monotonic() - t0 < 1.5
+    assert "timed out" in str(ei.value) and "first" in str(ei.value) and time.monotonic() - t0 < 1.5
