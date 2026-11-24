@@ -23,7 +23,7 @@ def test_note_round_trip_keeps_hash_and_colon_in_values(tmp_path):
     again = b.get("feedback-testler")
     assert again.description == note.description and again.title == "Testler"
     idx = b.index_raw()
-    assert idx.startswith("# Hafıza Dizini")  # the index is generated from the notes, with a heading
+    assert idx.startswith("# Memory Index")  # the index is generated from the notes, with a heading
     assert "- [Testler](feedback-testler.md) — C# testleri: yalnız ilgili olanlar #önemli" in idx.splitlines()
     _, new2 = b.save("feedback-testler", "güncel", "feedback", "Yeni kural.")
     assert not new2 and b.index_raw().count("feedback-testler.md") == 1  # line updated in place
@@ -43,14 +43,14 @@ def test_index_limit_refuses_instead_of_truncating(tmp_path, monkeypatch):
     b = NoteBook(tmp_path / "m")
     for i in range(7):
         b.save(f"n{i}", f"not {i}", "user", "gövde")
-    with pytest.raises(MemoryFull, match="sınırı aşılacaktı"):
+    with pytest.raises(MemoryFull, match="would go over its limit"):
         b.save("yeni-not", "açıklama", "user", "gövde")
     assert not b.path_for("yeni-not").exists()  # nothing was written
     for i in range(7, 12):  # notes added by hand past the limit: the prompt shows the start and says why
         (b.root / f"n{i}.md").write_text(f"---\nname: n{i}\ndescription: not {i}\n---\n\ngövde\n", encoding="utf-8")
     b.index_path.write_text(b.build_index(), encoding="utf-8")
     shown = b.index_for_prompt()
-    assert "UYARI" in shown and "ilk 10 satırı" in shown and b.near_limit()
+    assert "WARNING" in shown and "first 10 lines" in shown and b.near_limit()
     assert MAX_INDEX_LINES == 200  # the real limit is unchanged
 
 

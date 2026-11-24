@@ -2817,5 +2817,7 @@
  "{url} — unreachable: {error}": "{url} — ulaşılamadı: {error}",
  "5 hours": "5 saat",
  "week": "hafta",
- "{n} hours": "{n} saat"
+ "{n} hours": "{n} saat",
+ "empty record": "boş kayıt",
+ "{index} would go over its limit ({lines} lines, {kb} KB; the limit is {max_lines} lines / {max_kb} KB). Merge similar notes into one, delete outdated ones or tidy up with memory action=dream; then save again.": "{index} sınırı aşılacaktı ({lines} satır, {kb} KB; sınır {max_lines} satır / {max_kb} KB). Benzer notları tek notta birleştir, eskiyenleri sil ya da memory action=dream ile toparla; sonra tekrar kaydet."
 }
