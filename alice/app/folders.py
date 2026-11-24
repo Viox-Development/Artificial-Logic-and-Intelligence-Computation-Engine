@@ -74,11 +74,16 @@ def places(clone_root: Path | None = None) -> list[dict[str, str]]:
 
 def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
     """Subdirectories of a folder. Empty path means home folder. Returns an error on inaccessible folders."""
-    p = Path(path).expanduser() if path else Path.home()
+    base = Path.home().resolve()
+    p = Path(path).expanduser() if path else base
     try:
         p = p.resolve()
     except OSError:
-        pass  # keep the unresolved path
+        return {"ok": False, "error": "geçersiz klasör yolu"}
+    try:
+        p.relative_to(base)
+    except ValueError:
+        return {"ok": False, "error": "klasöre erişim izni yok"}
     if not p.is_dir():
         return {"ok": False, "error": f"klasör yok: {p}"}
     dirs: list[dict[str, Any]] = []
