@@ -123,7 +123,7 @@ def test_disconnect_and_radio(nmcli, tmp_path):
     assert f.calls[-1] == ["device", "disconnect", "wlp2s0"]
     assert Wifi().run(ctx, action="radio_off").text == "Wi-Fi turned off"
     assert f.calls[-1] == ["radio", "wifi", "off"]
-    assert Wifi().run(ctx, action="radio_on").text == "Wi-Fi açıldı"
+    assert Wifi().run(ctx, action="radio_on").text == "Wi-Fi turned on"
     assert Wifi().risk_for({"action": "radio_off"}) == "computer"
 
     f = nmcli({"DEVICE,TYPE,CONNECTION": "wlan0:wifi:--\n"})
