@@ -38,7 +38,7 @@ def test_stop_request_ends_running_core_within_a_second(tmp_path):
     assert t.is_alive()
     service.request_stop()
     t.join(3)
-    assert not t.is_alive() and any("uygulamadan durduruldu" in e.title for e in core.store.events(limit=5))
+    assert not t.is_alive() and any("stopped from the app" in e.title for e in core.store.events(limit=5))
 
 
 def test_state_reports_voice(tmp_path):

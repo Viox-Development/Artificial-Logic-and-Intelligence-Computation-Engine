@@ -208,7 +208,7 @@ def test_memory_job_steps_survive_calendar_error(monkeypatch):
     core.memory_job()
     core.memory_job()
     assert sent == ["ilacını al"]  # sent once; a calendar error does not stop it
-    assert events == ["takvim takibi hata verdi"]  # the same error is logged once a day
+    assert events == ["calendar follow-ups failed"]  # the same error is logged once a day
 
 
 def test_calendar_manifest_loads():
