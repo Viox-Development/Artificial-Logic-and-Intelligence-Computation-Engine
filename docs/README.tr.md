@@ -890,6 +890,8 @@ Bozuk işaretlenen sürüm bir daha otomatik çekilmez (düzeltme commit'i gelin
 
 ## Hızlı bar
 
+> English: [guide/quick-bar.md](guide/quick-bar.md)
+
 Hangi programdayken olursan ol:
 
 * **Ctrl+Alt+A:** ekranın ortasında küçük bir ALICE kutusu açılır. Yaz ya da mikrofon tuşunu (veya Ctrl+Boşluk) basılı tutup konuş.
@@ -998,6 +1000,8 @@ alice report --install 20:00                          # her pazar akşamı
 
 ## Eklentiler
 
+> English: [guide/plugins.md](guide/plugins.md)
+
 Yeni yetenek eklemek için çekirdek koda dokunmak gerekmiyor: `~/.alice/plugins/` altına bir Python dosyası koy.
 
 ```powershell
@@ -1008,6 +1012,8 @@ alice plugins                 # yüklü eklentiler ve hatalar
 Eklenti araçları kendi grubunda durur, mesajdaki anahtar kelimelerle ya da `load_tools` ile açılır; sesli konuşmada baştan açık olabilir. Ayrıntı ve örnek: [docs/PLUGINS.md](PLUGINS.md).
 
 ## İzin modları ve güvenlik
+
+> English: [guide/permissions.md](guide/permissions.md)
 
 * **plan:** sadece okur ve araştırır; dosya değiştiren, komut çalıştıran ya da ekrana dokunan her şey reddedilir, ALICE plan yazıp onayını bekler
 * **ask:** okuma dışındaki her şey onay ister
