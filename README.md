@@ -37,7 +37,8 @@ ALICE ships with about 90 tools. The main groups:
 - A real browser with a persistent profile, and a browser extension for working in your own Chrome.
 - **Reflex mode:** small UI goals ("open Settings, go to Privacy, tick this box") are handed to a fast decision model
   that acts in a few hundred milliseconds per step and gives control back to the main model when unsure.
-- Windows, processes, clipboard, Wi-Fi, media, smart TVs, and Android phones over ADB.
+- Windows, processes, clipboard, Wi-Fi, media, smart TVs, and Android phones over ADB
+  ([docs/guide/home.md](docs/guide/home.md)).
 
 **Voice**
 - Wake word ("Hey Alice"), speaker recognition (it ignores other voices), and live conversation over Gemini Live or
@@ -322,7 +323,7 @@ ALICE is developed and used daily on **Windows**, where every feature works.
 | Reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
 | On-screen HUD | ✅ | ❌ | ❌ |
 | Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | untested (needs the Accessibility permission) |
-| PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ❌ | ❌ |
+| PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ✅ ([docs/guide/home.md](docs/guide/home.md)) | ❌ |
 | Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |
 | Time machine, Steam and flight-sim integration | ✅ | ❌ | ❌ |
 
