@@ -11,9 +11,9 @@ https://github.com/user-attachments/assets/4b67b5c5-4148-49cb-9195-05c788c51b02
 
 *ALICE fixes a bug and runs the tests, then keeps going on another model when the first one hits its rate limit.*
 
-> ALICE started as a Turkish-speaking assistant. The interface and prompts are being translated to English;
-> the full, detailed guide is currently in Turkish: [docs/README.tr.md](docs/README.tr.md). Sections translated so
-> far are in [docs/guide/](docs/guide/).
+> ALICE started as a Turkish-speaking assistant. The prompts are in English and the interface is being translated
+> (#214). The full guide is in [docs/guide/](docs/guide/README.md); the original Turkish guide is
+> [docs/README.tr.md](docs/README.tr.md).
 
 ## What it can do
 
@@ -326,7 +326,7 @@ language = "en"  # or "tr": the app's and the CLI's messages (being translated, 
 
 More: [configuration](docs/guide/config.md), [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md),
 [tool style](docs/TOOL-STYLE.md), and the
-[full guide (Turkish)](docs/README.tr.md), with its translated sections in [docs/guide/](docs/guide/).
+[full guide](docs/guide/README.md) ([Turkish](docs/README.tr.md)).
 
 ## Platform support
 
