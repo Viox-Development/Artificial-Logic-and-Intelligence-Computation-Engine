@@ -299,7 +299,7 @@ def test_duyuru_uygulama_aciksa_cekirdekte_susar(core, monkeypatch):
     assert sent == []
     monkeypatch.setattr(updater, "app_running", lambda: False)
     announce_update(core, updater)
-    assert sent[0].title == "ALICE güncellendi" and "1 değişiklik daha" in sent[0].body
+    assert sent[0].title == "ALICE updated" and "1 more changes" in sent[0].body
     announce_update(core, updater)
     assert len(sent) == 1
 

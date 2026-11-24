@@ -21,10 +21,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from alice.i18n import _
 from alice.config import alice_home
 
 _SAVE_LOCK = threading.Lock()
 
+
+
+def project_failure(reason: str) -> str:
+    return _("could not start the project: {reason}", reason=reason)
+
+
+def is_project_failure(text: str) -> bool:
+    """True for a project_failure() result in any language (older builds wrote "proje başlatılamadı")."""
+    head = project_failure("").rstrip()
+    return text.startswith((head, "could not start the project:", "proje başlatılamadı"))
 
 def write_json_atomic(path: Path, data: Any) -> None:
     """Write to a temporary file first, then replace the target: a crash, power cut, or two threads writing at
@@ -53,7 +64,7 @@ class Cron:
     def __init__(self, expr: str):
         parts = expr.split()
         if len(parts) != 5:
-            raise ValueError(f"cron 5 alanlı olmalı (dakika saat gün ay haftanın_günü): {expr!r}")
+            raise ValueError(_("cron must have 5 fields (minute hour day month day_of_week): {expr}", expr=repr(expr)))
         self.expr = " ".join(parts)
         self.fields = [self._parse(p, lo, hi, name) for p, (lo, hi), name in zip(parts, _RANGES, _NAMES)]
         self.fields[4] = {d % 7 for d in self.fields[4]}
@@ -69,7 +80,7 @@ class Cron:
                 item, s = item.split("/", 1)
                 step = int(s)
                 if step <= 0:
-                    raise ValueError(f"{name}: adım pozitif olmalı")
+                    raise ValueError(_("{name}: the step must be positive", name=name))
             if item == "*":
                 a, b = lo, hi
             elif "-" in item:
@@ -79,7 +90,7 @@ class Cron:
                 if step > 1:
                     b = hi
             if a < lo or b > hi or a > b:
-                raise ValueError(f"{name} alanı {lo}-{hi} aralığında olmalı: {part!r}")
+                raise ValueError(_("the {name} field must be in {lo}-{hi}: {part}", name=name, lo=lo, hi=hi, part=repr(part)))
             out.update(range(a, b + 1, step))
         return out
 
@@ -110,7 +121,7 @@ class Cron:
             if t.minute in self.fields[0]:
                 return t
             t += timedelta(minutes=1)
-        raise ValueError(f"cron hiç eşleşmiyor: {self.expr}")
+        raise ValueError(_("the cron never matches: {expr}", expr=self.expr))
 
     def _day_ok(self, t: datetime) -> bool:
         dom_ok = t.day in self.fields[2]
@@ -127,10 +138,10 @@ class Cron:
         if dow != "*":
             days.append(", ".join(_DOW[d] for d in sorted(self.fields[4])))
         if dom != "*":
-            days.append(f"ayın {dom}. günü")
+            days.append(_("day {n} of the month", n=dom))
         if mon != "*":
             days.append(f"ay={mon}")
-        return f"{' / '.join(days) or 'her gün'} {when}"
+        return f"{' / '.join(days) or _('every day')} {when}"
 
 
 @dataclass
@@ -166,12 +177,12 @@ class ScheduledTask:
 
     def summary(self) -> str:
         try:
-            nxt = self.next_run(time.time()).strftime("%d.%m %H:%M") if self.enabled else "kapalı"
+            nxt = self.next_run(time.time()).strftime("%d.%m %H:%M") if self.enabled else _("off")
         except ValueError:
-            nxt = "hiç gelmiyor"
-        last = datetime.fromtimestamp(self.last_run).strftime("%d.%m %H:%M") if self.last_run else "hiç"
-        kind = "tek sefer, çalışınca kendiliğinden silinir; " if self.once else ""
-        what = f"proje şablonu '{self.project}'" if self.project else (self.description or self.prompt[:60])
+            nxt = _("never comes")
+        last = datetime.fromtimestamp(self.last_run).strftime("%d.%m %H:%M") if self.last_run else _("never")
+        kind = _("one-off, deletes itself after it runs; ") if self.once else ""
+        what = _("project template '{name}'", name=self.project) if self.project else (self.description or self.prompt[:60])
         return (f"{self.id}: [{self.cron}] {Cron(self.cron).describe()} -> {what} "
                 f"({kind}sonraki: {nxt}, son: {last})")
 
@@ -182,18 +193,18 @@ def start_project(task: ScheduledTask, starter: Any) -> str:
     from alice.team_store import list_templates
 
     if starter is None:
-        return "proje başlatılamadı: uygulama çekirdekte açık değil"
+        return project_failure(_("the app isn't open in the core"))
     tpl = next((t for t in list_templates() if str(t.get("name", "")).lower() == task.project.lower()), None)
     if tpl is None:
-        return f"proje başlatılamadı: '{task.project}' adında şablon yok"
+        return project_failure(_("there is no template called '{name}'", name=task.project))
     goal = str(tpl.get("goal") or "") + ("\n\n" + task.prompt if task.prompt.strip() else "")
     try:
         pid = starter({**tpl, "goal": goal, "cwd": task.cwd or tpl.get("cwd") or ""})
     except Exception as e:  # noqa: BLE001 - folder missing, PR branch failed, etc.: reported as the result
-        return f"proje başlatılamadı: {str(e)[:300]}"
+        return project_failure(str(e)[:300])
     if not pid:
-        return "proje başlatılamadı: uygulama hazır değil"
-    return f"'{task.project}' şablonundan proje başladı ({pid}); Projeler sayfasında izlenebilir"
+        return project_failure(_("the app isn't ready"))
+    return _("project started from the '{name}' template ({pid}); it can be followed on the Projects page", name=task.project, pid=pid)
 
 
 class TaskStore:
@@ -283,7 +294,7 @@ PARSE_PROMPT = """Convert the user's request into a scheduled task for a desktop
 shell commands, edit files, browse the web and use the computer. Now: {now}.
 Reply ONLY with JSON:
 {{"cron": "<5-field cron: minute hour day-of-month month day-of-week (0=Sunday)>",
-  "prompt": "<complete, self-contained Turkish instruction ALICE will execute unattended at that time; include paths/details the user gave>",
+  "prompt": "<complete, self-contained instruction, in the user's language, that ALICE will execute unattended at that time; include paths/details the user gave>",
   "catch_up": <true if it should still run once after the computer was off at the scheduled time>,
   "once": <true for a one-time request ("yarın", "5 dakika sonra", a specific date); false if it repeats ("her gün")>}}
 For a one-time request put the exact minute, hour, day and month in the cron.
@@ -299,6 +310,6 @@ def parse_task(text: str, router) -> ScheduledTask:
     res = router.chat("fast", msgs, temperature=0, max_tokens=600)
     data = extract_json(res.text)
     if not isinstance(data, dict) or "cron" not in data or "prompt" not in data:
-        raise ValueError(f"model görev döndürmedi: {res.text[:200]}")
+        raise ValueError(_("the model returned no task: {text}", text=res.text[:200]))
     return ScheduledTask(cron=str(data["cron"]), prompt=str(data["prompt"]), description=text,
                          catch_up=bool(data.get("catch_up", True)), once=bool(data.get("once", False)))

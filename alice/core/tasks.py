@@ -38,6 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.config import alice_home
 from alice.tools.base import READ, Tool, ToolContext, ToolResult, obj
 
@@ -74,11 +75,11 @@ class Task:
         self.name = str(self.name or "").strip()
         self.responsibility = str(self.responsibility or "").strip()
         if not self.name or not self.responsibility:
-            raise ValueError("görevin adı ve sorumluluğu olmalı")
+            raise ValueError(_("a task needs a name and a responsibility"))
         if self.permission not in PERMISSIONS:
-            raise ValueError(f"geçersiz izin seviyesi: {self.permission}")
+            raise ValueError(_("invalid permission level: {value}", value=self.permission))
         if not isinstance(self.trigger, dict):
-            raise ValueError("tetik bir nesne olmalı")
+            raise ValueError(_("the trigger must be an object"))
         check_trigger(self.trigger)
         self.tools = [str(t) for t in (self.tools or []) if str(t).strip()]
         self.role = str(self.role or "brain")
@@ -93,7 +94,7 @@ def check_trigger(t: dict[str, Any]) -> None:
     """Raise ValueError if the trigger cannot work, so a broken task is refused when saved, not on every tick."""
     kind = t.get("type", "manual")
     if kind not in TRIGGERS:
-        raise ValueError(f"geçersiz tetik: {kind}")
+        raise ValueError(_("invalid trigger: {kind}", kind=kind))
     if kind == "schedule":
         from alice.core.schedule import Cron
 
@@ -102,19 +103,19 @@ def check_trigger(t: dict[str, Any]) -> None:
         from alice.core.rules import OPS
 
         if not t.get("metric") or t.get("op") not in OPS:
-            raise ValueError("ölçüm tetiği için metric ve op gerekli")
+            raise ValueError(_("a metric trigger needs metric and op"))
         float(t.get("threshold", 0))
     elif kind == "event":
         if not (t.get("kind") or t.get("topic") or t.get("match")):
-            raise ValueError("olay tetiği için kind, topic ya da match gerekli")
+            raise ValueError(_("an event trigger needs kind, topic or match"))
         if t.get("match"):
             re.compile(str(t["match"]))
     elif kind == "github":
         if not re.fullmatch(r"[\w.-]+/[\w.-]+", str(t.get("repo", ""))):
-            raise ValueError("GitHub tetiği için repo 'sahip/depo' biçiminde olmalı")
+            raise ValueError(_("a GitHub trigger needs repo as 'owner/repo'"))
     elif kind == "folder":
         if not str(t.get("path", "")).strip():
-            raise ValueError("klasör tetiği için path gerekli")
+            raise ValueError(_("a folder trigger needs path"))
 
 
 def describe_trigger(t: dict[str, Any]) -> str:
@@ -136,7 +137,7 @@ def describe_trigger(t: dict[str, Any]) -> str:
     if kind == "github":
         return f"{t.get('repo')} deposunda yeni {'PR' if t.get('what') == 'pulls' else 'issue'}"
     if kind == "folder":
-        return f"{t.get('path')} klasörüne yeni dosya"
+        return _("new file in {path}", path=t.get("path"))
     return "elle"
 
 
@@ -235,7 +236,7 @@ class TaskBook:
         with self._lock:
             n = self._db.execute("DELETE FROM tasks WHERE id = ?", (task_id,)).rowcount
             self._db.execute("DELETE FROM log WHERE task_id = ?", (task_id,))
-            self._db.execute("UPDATE approvals SET status = 'rejected', reply = 'görev silindi', resolved = ? "
+            self._db.execute("UPDATE approvals SET status = 'rejected', reply = 'task deleted', resolved = ? "
                              "WHERE task_id = ? AND status = 'pending'", (time.time(), task_id))
             self._db.commit()
         return n > 0
@@ -311,17 +312,17 @@ class TaskBook:
         on the phone must not be answered again on the desktop)."""
         status = {"approve": "approved", "reject": "rejected", "reply": "replied"}.get(decision)
         if status is None:
-            raise ValueError(f"geçersiz cevap: {decision}")
+            raise ValueError(_("invalid answer: {value}", value=decision))
         if status == "replied" and not str(reply).strip():
-            raise ValueError("cevap boş olamaz")
+            raise ValueError(_("the answer can't be empty"))
         n = self._x("UPDATE approvals SET status = ?, reply = ?, resolved = ? WHERE id = ? AND status = 'pending'",
                     (status, str(reply)[:4000], time.time(), approval_id))
         a = self.approval(approval_id)
         if a is None:
             raise KeyError(approval_id)
         if not n:
-            raise ValueError("bu onay zaten cevaplanmış")
-        word = {"approved": "Onaylandı", "rejected": "Reddedildi"}.get(status, "Cevap")
+            raise ValueError(_("this approval was already answered"))
+        word = {"approved": _("Approved"), "rejected": _("Rejected")}.get(status, _("Answer"))
         self.log(a.task_id, "answer", f"{word}: {a.title}" + (f" — {reply}" if reply else ""))
         return a
 
@@ -386,7 +387,7 @@ class Triggers:
         st = self.book.state(task.id)
         if st.get("run_now"):
             self.book.set_state(task.id, run_now=False)
-            return Fire("elle çalıştırıldı")
+            return Fire(_("run by hand"))
         fn = getattr(self, f"_{kind}", None)
         return fn(task, t, st, now) if fn else None
 
@@ -402,7 +403,7 @@ class Triggers:
         if now - nxt > 600 and not t.get("catch_up", True):
             self.book.set_state(task.id, last_fire=now)  # missed while off: wait for the next time
             return None
-        return Fire(f"zamanı geldi ({describe_trigger(t)})")
+        return Fire(_("it's time ({trigger})", trigger=describe_trigger(t)))
 
     def _metric(self, task: Task, t: dict, st: dict, now: float) -> Fire | None:
         if self.store is None:
@@ -471,7 +472,7 @@ class Triggers:
         self.book.set_state(task.id, gh_last=top)
         lines = [f"#{i['number']} {i['title']} ({i.get('author', '')}) {i.get('url', '')}\n{i.get('body', '')}".strip()
                  for i in new]
-        return Fire(f"{t['repo']} deposunda {len(new)} yeni kayıt", lines)
+        return Fire(_("{n} new records in {repo}", n=len(new), repo=t["repo"]), lines)
 
     def _folder(self, task: Task, t: dict, st: dict, now: float) -> Fire | None:
         if not self._due_poll({"every_minutes": t.get("every_minutes", 1)}, st, now):
@@ -488,7 +489,7 @@ class Triggers:
         if seen is None:
             return None
         new = [n for n in names if n not in set(seen)]
-        return Fire(f"{folder} klasörüne {len(new)} yeni dosya", [str(folder / n) for n in new]) if new else None
+        return Fire(_("{n} new files in {folder}", n=len(new), folder=folder), [str(folder / n) for n in new]) if new else None
 
 
 # --------------------------------------------------------------------------- agent tools
@@ -659,7 +660,7 @@ class TaskRunner:
             if fire is None:
                 continue
             self.book.set_state(task.id, last_fire=now)
-            self.book.log(task.id, "trigger", fire.reason + (f" ({len(fire.items)} öğe)" if fire.items else ""))
+            self.book.log(task.id, "trigger", fire.reason + (_(" ({n} items)", n=len(fire.items)) if fire.items else ""))
             if self._start(task.id, self._run, task, fire):
                 started.append(task.id)
         return started
@@ -711,27 +712,27 @@ class TaskRunner:
 
     def _execute(self, task: Task, prompt: str, mode: str, approve: str, approval: Approval | None = None) -> str:
         state: dict[str, Any] = {"standing_task": task.id}
-        self.book.log(task.id, "run", "takip: " + approval.title if approval else "çalışıyor")
+        self.book.log(task.id, "run", _("follow-up: {title}", title=approval.title) if approval else _("running"))
         try:
             text = " ".join((self.agent(task, prompt, mode, approve, state) or "").split())[:2000]  # type: ignore[misc]
             ok = True
         except Exception as e:  # noqa: BLE001 - one failed run must not stop the task or the core
-            text, ok = f"çalıştırma başarısız: {str(e)[:300]}", False
+            text, ok = _("the run failed: {error}", error=str(e)[:300]), False
         for note in state.get("task_notes") or []:
             self.book.remember(task.id, note)
         for ask in state.get("task_asks") or []:
-            a = self.book.ask(task.id, ask.get("title") or "Onay", ask.get("body") or "", ask.get("action") or "")
+            a = self.book.ask(task.id, ask.get("title") or _("Approval"), ask.get("body") or "", ask.get("action") or "")
             self.book.log(task.id, "approval", a.title)
-            self.notify(f"Onay bekliyor · {task.name}", a.title, "warn", "approval")
+            self.notify(_("Waiting for approval · {name}", name=task.name), a.title, "warn", "approval")
         silent = text.lower().strip(" .") in SILENT
-        self.book.log(task.id, "result" if ok else "error", text or "sessiz")
+        self.book.log(task.id, "result" if ok else "error", text or _("(silent)"))
         self.book.set_state(task.id, last_run=self.clock(), last_result=text, last_ok=ok)
         if approval is not None:
             self.book.finish(approval.id, ok, text)
         if not ok:
-            self.notify(f"Görev hata verdi · {task.name}", text, "warn", "task")
+            self.notify(_("Task failed · {name}", name=task.name), text, "warn", "task")
         elif task.notify and not silent:
-            self.notify(f"Görev · {task.name}", text, "info", "task")
+            self.notify(_("Task · {name}", name=task.name), text, "info", "task")
         return text
 
     def _followup(self, a: Approval) -> None:
@@ -739,11 +740,11 @@ class TaskRunner:
             return
         task = self.book.get(a.task_id)
         if task is None:
-            self.book.finish(a.id, False, "görev silinmiş")
+            self.book.finish(a.id, False, _("the task was deleted"))
             return
         if a.status == "rejected":
-            self.book.remember(task.id, f"Kullanıcı reddetti: {a.title}" + (f" ({a.reply})" if a.reply else ""))
-            self.book.finish(a.id, True, "reddedildi, yapılmadı")
+            self.book.remember(task.id, f"The user rejected: {a.title}" + (f" ({a.reply})" if a.reply else ""))
+            self.book.finish(a.id, True, _("rejected, not done"))
             return
         mem, _recent = self._context(task)
         if a.status == "approved":

@@ -312,7 +312,7 @@ def test_one_time_task_removes_itself_after_running(tmp_path):
     now = 1_760_000_000
     once = core.tasks.add(ScheduledTask("* * * * *", "kullanıcıyı ara", created=now - 100, once=True))
     keep = core.tasks.add(ScheduledTask("* * * * *", "rapor yaz", created=now - 100))
-    assert "tek sefer" in once.summary() and "tek sefer" not in keep.summary()
+    assert "one-off" in once.summary() and "one-off" not in keep.summary()
     core.tick(now)
     for _ in range(100):
         if not core.running_tasks and core.tasks.get(once.id) is None:

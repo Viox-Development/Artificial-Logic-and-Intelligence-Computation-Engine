@@ -238,11 +238,11 @@ def test_scheduled_project_starts_from_template(monkeypatch):
                                                                   "pr": True, "cwd": "C:/proje"}), encoding="utf-8")
     task = ScheduledTask(cron="0 9 * * 1", prompt="major sürümlere dokunma", project="bağımlılık")
     got = []
-    assert "proje başladı (p9)" in start_project(task, lambda d: got.append(d) or "p9")
+    assert "project started from" in start_project(task, lambda d: got.append(d) or "p9")
     assert got[0]["goal"] == "güncelle\n\nmajor sürümlere dokunma" and got[0]["pr"] and got[0]["cwd"] == "C:/proje"
-    assert "uygulama" in start_project(task, None)
-    assert "şablon yok" in start_project(ScheduledTask(cron="0 9 * * 1", prompt="", project="yok"), lambda d: "x")
-    assert "proje şablonu 'bağımlılık'" in task.summary()
+    assert "app isn't open" in start_project(task, None)
+    assert "no template called" in start_project(ScheduledTask(cron="0 9 * * 1", prompt="", project="yok"), lambda d: "x")
+    assert "project template 'bağımlılık'" in task.summary()
 
 
 def test_schedule_tool_validates_project_template(workdir):

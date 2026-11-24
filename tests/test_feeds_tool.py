@@ -111,7 +111,7 @@ def test_arac_akis_ekler_listeler_siler(ffile, ctx):
                 description="Ahmet Steam'de oyuna girince haber ver").text
     assert "feed added: ahmet_oyun" in out and "first round is silent" in out
     listed = t.run(ctx, action="list").text
-    assert "ahmet_oyun" in listed and "değişince: gameextrainfo" in listed and "sessiz 23:00-08:00" in listed
+    assert "ahmet_oyun" in listed and "on change: gameextrainfo" in listed and "quiet 23:00-08:00" in listed
     assert t.run(ctx, action="disable", name="ahmet_oyun").text == "turned off"
     assert "(off)" in t.run(ctx, action="list").text
     assert t.run(ctx, action="remove", name="ahmet_oyun").text == "deleted"
