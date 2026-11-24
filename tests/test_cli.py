@@ -161,7 +161,7 @@ def test_check_ready_warns_when_no_api_keys(isolated_home, capsys, monkeypatch):
 def test_reflex_rejects_bad_input_before_starting(capsys):
     a = argparse.Namespace(goal="x", target="browser", url=None, title=None, input=["eksik"], max_steps=1, close=True)
     assert cli.reflex_cmd(load_config(), a) == 2
-    assert "alan=metin" in capsys.readouterr().out
+    assert "field=text" in capsys.readouterr().out
 
 
 def test_report_days_must_be_number(capsys):

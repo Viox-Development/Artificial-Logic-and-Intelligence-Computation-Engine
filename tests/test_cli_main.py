@@ -201,7 +201,7 @@ def test_slash_model_override_reset_and_bad_ref(env, out):
     cfg, router, ctx, agent = env
     cli.handle_slash("/model brain b:m2", agent, router, ctx, cfg)
     assert router.chain("brain")[0] == "b:m2"
-    assert "Rol zincirleri" in out()
+    assert "Role chains" in out()
     cli.handle_slash("/model brain reset", agent, router, ctx, cfg)
     assert router.chain("brain") == ["a:m1", "b:m2"]
     assert cli.handle_slash("/model brain bozukref", agent, router, ctx, cfg) is None
@@ -236,7 +236,7 @@ def test_slash_tools_mcp_usage_memory(env, out):
     text = out()
     assert "read_file (read) Dosya okur" in text and "ayrıntı" not in text
     assert "mcp__gh__issues (write) Issue" in text
-    assert "a:m1" in text and "Bugünkü kullanım" in text
+    assert "a:m1" in text and "Usage today" in text
     assert "# Hafıza [x]" in text
     assert "Unknown command /olmayan" in text
 
@@ -585,8 +585,8 @@ def test_doctor_reports_providers_and_decider(monkeypatch, out):
     assert cli.doctor(cfg) == 0
     text = out()
     assert sorted(calls) == ["a:m1", "b:m2"]
-    assert "çalışıyor" in text and "401 yetkisiz" in text and "karar motoru çalışmıyor: motor yok" in text
-    assert "Karar motorları: llm:fast" in text and "playwright" in text
+    assert "working" in text and "401 yetkisiz" in text and "decision engine not working: motor yok" in text
+    assert "Decision engines: llm:fast" in text and "playwright" in text
 
 
 def test_models_cmd_from_cache(monkeypatch, out, isolated_home):
@@ -622,7 +622,7 @@ def test_models_cmd_refresh_and_write(monkeypatch, out, isolated_home):
 
     roles = tomllib.loads((alice_home() / "config.toml").read_text(encoding="utf-8"))["roles"]
     assert roles["brain"] == ["auto", "ollama:qwen3:8b"] and roles["vision"][0] == "auto"
-    assert 'rolleri "auto" yapıldı' in out()
+    assert 'roles set to "auto"' in out()
 
 
 def test_reflex_cmd_wires_observer_and_inputs(monkeypatch, out):

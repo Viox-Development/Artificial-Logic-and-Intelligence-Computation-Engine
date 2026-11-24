@@ -565,10 +565,10 @@ def rewind_prompt(agent: Agent):
 
 
 def print_status(router: Router) -> None:
-    t = Table(title="Rol zincirleri", show_lines=False)
-    t.add_column("rol")
-    t.add_column("model")
-    t.add_column("durum")
+    t = Table(title=_("Role chains"), show_lines=False)
+    t.add_column(_("role"))
+    t.add_column(_("model"))
+    t.add_column(_("status"))
     for role, rows in router.status().items():
         for i, (ref, st) in enumerate(rows):
             style = "green" if st == "hazır" else "dim"
@@ -577,8 +577,8 @@ def print_status(router: Router) -> None:
 
 
 def print_usage(router: Router) -> None:
-    t = Table(title="Bugünkü kullanım")
-    for c in ("model", "istek", "hata", "girdi tok", "çıktı tok"):
+    t = Table(title=_("Usage today"))
+    for c in (_("model"), _("requests"), _("errors"), _("input tok"), _("output tok")):
         t.add_column(c)
     for ref, row in sorted(router.usage.today().items()):
         t.add_row(ref, str(row["requests"]), str(row["errors"]), str(row["prompt_tokens"]), str(row["completion_tokens"]))
@@ -594,10 +594,10 @@ def _doctor_connect(cfg: Config) -> None:
     manifests, errors = discover(cfg)
     if not manifests:
         return
-    hazır = [m.label for m in manifests.values() if ready(m)[0]]
-    bekleyen = [f"{m.label} ({ready(m)[1]})" for m in manifests.values() if not ready(m)[0]]
-    console.print(f"[bold]Bağlantılar:[/] " + (f"[green]{', '.join(hazır)}[/]" if hazır else "[dim]hazır yok[/]")
-                  + (f"  [dim]bekleyen: {'; '.join(bekleyen)}[/]" if bekleyen else ""))
+    ok = [m.label for m in manifests.values() if ready(m)[0]]
+    waiting = [f"{m.label} ({ready(m)[1]})" for m in manifests.values() if not ready(m)[0]]
+    console.print(_("[bold]Connections:[/] ") + (f"[green]{', '.join(ok)}[/]" if ok else _("[dim]none ready[/]"))
+                  + (_("  [dim]waiting: {items}[/]", items="; ".join(waiting)) if waiting else ""))
     for e in errors:
         console.print(f"  [yellow]{escape(e)}[/]")
 
@@ -610,40 +610,41 @@ def _doctor_update(cfg: Config) -> None:
     try:
         info = updater.check(cfg, timeout=10, details=False)
     except Exception as e:  # noqa: BLE001 - doctor should never crash at any step
-        console.print(f"[dim]sürüm kontrolü yapılamadı: {e}[/]")
+        console.print(_("[dim]could not check the version: {error}[/]", error=e))
         return
     if info.error and not info.available:
-        console.print(f"[bold]Sürüm:[/] {__version__}  [dim]{info.error}[/]")
+        console.print(_("[bold]Version:[/] {version}  [dim]{error}[/]", version=__version__, error=info.error))
     elif info.available:
-        console.print(f"[bold]Sürüm:[/] {__version__} @ {info.local[:7]}  "
-                      f"[yellow]yeni sürüm var[/] ({info.remote[:7]}) · güncelleme modu: {mode} · "
-                      "[bold]alice update[/]")
+        console.print(_("[bold]Version:[/] {version} @ {local}  [yellow]new version available[/] ({remote}) · "
+                        "update mode: {mode} · [bold]alice update[/]", version=__version__, local=info.local[:7],
+                        remote=info.remote[:7], mode=mode))
     else:
-        console.print(f"[bold]Sürüm:[/] {__version__} @ {info.local[:7]}  [green]güncel[/] · güncelleme modu: {mode}")
+        console.print(_("[bold]Version:[/] {version} @ {local}  [green]up to date[/] · update mode: {mode}",
+                        version=__version__, local=info.local[:7], mode=mode))
 
 
 def doctor(cfg: Config) -> int:
     router = Router(cfg, max_wait=0)
-    console.print(f"[bold]ALICE home:[/] {alice_home()}  config: {cfg.path or '(varsayılan)'}")
+    console.print(_("[bold]ALICE home:[/] {home}  config: {path}", home=alice_home(), path=cfg.path or _("(default)")))
     for name, why in cfg.provider_errors().items():
-        console.print(f"[yellow]{escape(f'[providers.{name}] kullanılmıyor: {why}')}[/]")
+        console.print(f"[yellow]{escape(_('[providers.{name}] not used: {why}', name=name, why=why))}[/]")
     _doctor_update(cfg)
     _doctor_connect(cfg)
     from alice.doctor import probe_providers, run_all
 
-    t = Table(title="Sağlayıcılar")
-    for c in ("sağlayıcı", "anahtar", "test modeli", "sonuç"):
+    t = Table(title=_("Providers"))
+    for c in (_("provider"), _("key"), _("test model"), _("result")):
         t.add_column(c)
     color = {"ok": "green", "fail": "red"}
     for row in probe_providers(cfg):
-        detail = ("çalışıyor " if row["status"] == "ok" else "") + row["detail"]
-        key = row["key"] if row["key"] != "yok" else f"[dim]{row['env']} yok[/]"
+        detail = (_("working ") if row["status"] == "ok" else "") + row["detail"]
+        key = row["key"] if row["key"] != "yok" else _("[dim]no {env}[/]", env=row["env"])
         c = color.get(row["status"])
         t.add_row(row["name"], key, row["model"], f"[{c}]{escape(detail)}[/]" if c else f"[dim]{escape(detail)}[/]")
     console.print(t)
 
     decider = Decider.from_config(cfg, router)
-    console.print(f"[bold]Karar motorları:[/] {', '.join(decider.names)}")
+    console.print(_("[bold]Decision engines:[/] {names}", names=", ".join(decider.names)))
     from alice.decider import Choice, DeciderError, Noul
 
     try:
@@ -651,22 +652,25 @@ def doctor(cfg: Config) -> int:
                            {"next": Choice("Next action?", {"type_user": "Type username", "click_signin": "Click Sign in",
                                                             "scroll": "Scroll down"}),
                             "done": Noul("Is the user already signed in?")})
-        console.print(f"  test kararı: next={d['next'].value} ({d['next'].confidence:.2f}), done={d['done'].value:.2f} "
-                      f"[dim]{d.latency * 1000:.0f} ms, {d.engine}[/]")
+        console.print(_("  test decision: next={next} ({confidence}), done={done} [dim]{ms} ms, {engine}[/]",
+                        next=d["next"].value, confidence=f"{d['next'].confidence:.2f}", done=f"{d['done'].value:.2f}",
+                        ms=f"{d.latency * 1000:.0f}", engine=d.engine))
     except DeciderError as e:
-        console.print(f"  [red]karar motoru çalışmıyor: {e}[/]")
+        console.print(_("  [red]decision engine not working: {error}[/]", error=e))
 
     marks = {"ok": "[green]✓[/]", "warn": "[yellow]![/]", "off": "[dim]–[/]", "fail": "[red]✗[/]"}
-    console.print("[bold]Özellikler:[/]")
+    console.print(_("[bold]Features:[/]"))
     for c in run_all(cfg, Path.cwd()):
         console.print(f"  {marks.get(c.status, '?')} {c.name:<24} {escape(c.detail)}"
                       + (f"  [dim]→ {escape(c.fix)}[/]" if c.fix and c.status != "ok" else ""))
 
-    console.print("[bold]Opsiyonel bileşenler:[/]")
-    for mod, why in (("mss", "ekran görüntüsü"), ("pyautogui", "fare/klavye"), ("pyperclip", "pano, Türkçe yazma"),
-                     ("pygetwindow", "pencere yönetimi (Windows/macOS)"), ("pywinauto", "UI Automation (Windows)"),
-                     ("playwright", "tarayıcı"), ("webview", "uygulama penceresi"), ("pystray", "tepsi simgesi"),
-                     ("sounddevice", "mikrofon ve ses çalma"), ("pynput", "bas-konuş ve hızlı bar kısayolları")):
+    console.print(_("[bold]Optional components:[/]"))
+    for mod, why in (("mss", _("screenshots")), ("pyautogui", _("mouse/keyboard")),
+                     ("pyperclip", _("clipboard, typing non-ASCII text")),
+                     ("pygetwindow", _("window management (Windows/macOS)")), ("pywinauto", _("UI Automation (Windows)")),
+                     ("playwright", _("browser")), ("webview", _("app window")), ("pystray", _("tray icon")),
+                     ("sounddevice", _("microphone and audio playback")),
+                     ("pynput", _("push-to-talk and quick bar shortcuts"))):
         ok = importlib.util.find_spec(mod) is not None
         hint = "" if ok else f"  [dim]{escape(install_hint(mod))}[/]"
         console.print(f"  {'[green]✓[/]' if ok else '[red]✗[/]'} {mod:<12} {why}{hint}")
@@ -681,31 +685,32 @@ def models_cmd(cfg: Config, refresh: bool, write: bool) -> int:
     router = Router(cfg)
     cache = ranking.load_cache()
     if refresh or not cache:
-        with console.status("modeller ölçülüyor (her biri gerçek bir araç çağrısıyla, ~1-2 dk)...") as st:
-            cache = ranking.refresh(router, emit=lambda s: st.update(f"modeller ölçülüyor... {s}"))
+        with console.status(_("measuring models (each with a real tool call, ~1-2 min)...")) as st:
+            cache = ranking.refresh(router, emit=lambda s: st.update(_("measuring models... {step}", step=s)))
         router.reload_auto(cache)
-    t = Table(title=f"Ücretsiz modeller (ölçüm: {cache.get('probed_at', '?')})")
-    for c in ("model", "durum", "kalite", "süre sn", "ilk token sn", "token", "token/sn"):
-        t.add_column(c, justify="left" if c in ("model", "durum") else "right")
+    t = Table(title=_("Free models (measured: {when})", when=cache.get("probed_at", "?")))
+    cols = (_("model"), _("status"), _("quality"), _("time s"), _("first token s"), _("tokens"), _("tokens/s"))
+    for i, c in enumerate(cols):
+        t.add_column(c, justify="left" if i < 2 else "right")
     for r in cache.get("results", {}).values():
-        state = "[green]çalışıyor[/]" if r["ok"] else f"[red]{r['error_kind']}[/]"
+        state = _("[green]working[/]") if r["ok"] else f"[red]{r['error_kind']}[/]"
         t.add_row(r["ref"], state, str(r["quality"]), f"{r['latency']:.1f}", f"{r['ttft']:.1f}",
                   str(r["tokens"]), f"{r['tps']:.0f}")
     console.print(t)
     for p, e in (cache.get("catalog_errors") or {}).items():
         console.print(f"[dim]{p}: {e}[/]")
-    console.print("[bold]Otomatik sıra (\"auto\"):[/]")
+    console.print(_("[bold]Automatic order (\"auto\"):[/]"))
     for role, refs in (cache.get("chains") or {}).items():
         console.print(f"  {role}: {', '.join(refs) or '-'}")
-    console.print("[bold]Şu anki zincirler:[/]")
+    console.print(_("[bold]Current chains:[/]"))
     for role in ("brain", "fast", "vision"):
         console.print(f"  {role}: {', '.join(router.chain(role))}")
     if write:
         path = write_roles({"brain": ["auto", "ollama:qwen3:8b"], "fast": ["auto", "ollama:qwen3:8b"],
                             "vision": ["auto", "gemini:gemini-flash-lite-latest"]})
-        console.print(f"[green]config rolleri \"auto\" yapıldı:[/] {path}")
+        console.print(_("[green]config roles set to \"auto\":[/] {path}", path=path))
     elif any("auto" not in (cfg.roles.get(r) or []) for r in ("brain", "fast", "vision")):
-        console.print("[dim]Zincirlerin tamamen ölçüme göre kurulması için: alice models --write[/]")
+        console.print(_("[dim]To build the chains entirely from the measurements: alice models --write[/]"))
     return 0
 
 
@@ -732,7 +737,7 @@ def reflex_cmd(cfg: Config, a: argparse.Namespace) -> int:
 
     bad = [kv for kv in a.input or [] if "=" not in kv]
     if bad:
-        console.print(f"[red]--input alan=metin biçiminde olmalı:[/] {escape(bad[0])}")
+        console.print(_("[red]--input must look like field=text:[/] {value}", value=escape(bad[0])))
         return 2
     inputs = dict(kv.split("=", 1) for kv in a.input or [])
     router = Router(cfg)
@@ -746,12 +751,13 @@ def reflex_cmd(cfg: Config, a: argparse.Namespace) -> int:
         res = loop.run(a.goal, max_steps=a.max_steps, inputs=inputs)
         console.print(res.report())
         if a.target == "browser" and not a.close:
-            console.input("[dim]tarayıcıyı kapatmak için Enter[/]")
+            console.input(_("[dim]Enter to close the browser[/]"))
     except ToolError as e:
         if str(e) == NO_SEPARATE:  # text written for the model; tell what to do on the command line
-            console.print("[red]Açık tarayıcına bağlanılamadı ve ayrı pencere açmak kapalı.[/] Tarayıcını "
-                          "--remote-debugging-port=9222 ile aç ya da config.toml " + escape("[agent]")
-                          + " bölümüne browser_allow_separate = true yaz.")
+            console.print(_("[red]Could not connect to your open browser, and opening a separate window is off.[/] "
+                            "Start your browser with --remote-debugging-port=9222, or add "
+                            "browser_allow_separate = true to the {section} section of config.toml.",
+                            section=escape("[agent]")))
         else:
             console.print(f"[red]{escape(str(e))}[/]")
         return 1
