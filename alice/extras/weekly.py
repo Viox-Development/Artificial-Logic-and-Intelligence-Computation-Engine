@@ -90,15 +90,16 @@ def gather(store, mem=None, now: float | None = None, flights: list[dict[str, An
     return data
 
 
-PROMPT = """Kullanıcıya bu haftasının kısa, sesli bir özetini yap. Kişiliğin aşağıda; o karakterle konuş. Kurallar: \
-Türkçe, en fazla 5 kısa cümle, liste/markdown/emoji yok, sayıları yuvarla ("yaklaşık 6 saat"). Önce haftanın genel \
-havası, sonra öne çıkanlar (uçuşlar, en çok vakit giden şey, konuştuklarınızdan bir iki tema), en son gelecek hafta \
-için tek bir hafif öneri. Yargılama, sadece fark ettir. Uydurma: sadece aşağıdakileri kullan.
+PROMPT = """Give the user a short spoken summary of their week. Your personality is below; speak as that \
+character. Rules: Turkish, at most 5 short sentences, no lists/markdown/emoji, round the numbers ("yaklaşık 6 saat"). \
+First the overall mood of the week, then the highlights (flights, what took the most time, one or two themes from what \
+you talked about), last a single light suggestion for next week. Don't judge, just point things out. Don't make \
+anything up: use only what is below.
 
-Kişilik (özet):
+Personality (summary):
 {persona}
 
-Bu hafta:
+This week:
 {data}"""
 
 

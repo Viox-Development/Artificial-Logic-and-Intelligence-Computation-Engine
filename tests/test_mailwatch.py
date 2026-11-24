@@ -25,9 +25,9 @@ class Router:
 def test_bills_and_dates_become_reminders_once(tmp_path):
     now = datetime(2026, 11, 2, 14)
     router = Router({
-        "Konu: Faturanız": {"kind": "bill", "title": "Turkcell faturası", "due": "2026-11-10", "amount": "349,90 TL"},
-        "Konu: Ödev": {"kind": "date", "title": "Algoritma ödevi teslimi", "due": "2026-11-03T23:59", "amount": None},
-        "Konu: Eski": {"kind": "bill", "title": "Eski fatura", "due": "2026-10-01", "amount": None},  # past: not picked up
+        "Subject: Faturanız": {"kind": "bill", "title": "Turkcell faturası", "due": "2026-11-10", "amount": "349,90 TL"},
+        "Subject: Ödev": {"kind": "date", "title": "Algoritma ödevi teslimi", "due": "2026-11-03T23:59", "amount": None},
+        "Subject: Eski": {"kind": "bill", "title": "Eski fatura", "due": "2026-10-01", "amount": None},  # past: not picked up
     })
     mails = [("okul", "1", "Turkcell", "Faturanız", "Turkcell faturanız hazır"),
              ("okul", "2", "Hoca", "Ödev", "Ödev teslimi yarın"),

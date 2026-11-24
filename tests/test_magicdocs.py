@@ -52,7 +52,7 @@ def test_update_rewrites_doc_and_respects_rules(workdir):
     r = Router("```markdown\n# MAGIC DOC: Kurulum\n_Kurulum adımları_\nPort 9000.\n```")
     assert magicdocs.update(state, r, TALK, now=1000.0) == [str(p)]
     assert p.read_text(encoding="utf-8") == "# MAGIC DOC: Kurulum\n_Kurulum adımları_\nPort 9000.\n"
-    assert "Belgenin amacı: Kurulum adımları" in r.prompts[0]
+    assert "The document's purpose: Kurulum adımları" in r.prompts[0]
     assert magicdocs.update(state, r, TALK, now=1100.0) == []  # 10 minutes have not passed
     r.reply = magicdocs.NO_CHANGE
     assert magicdocs.update(state, r, TALK, now=5000.0) == [] and "9000" in p.read_text(encoding="utf-8")
