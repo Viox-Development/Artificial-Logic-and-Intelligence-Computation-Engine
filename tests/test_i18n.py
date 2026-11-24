@@ -2,6 +2,7 @@
 
 import ast
 import json
+import re
 import string
 from pathlib import Path
 
@@ -58,9 +59,44 @@ def _fields(text: str) -> set[str]:
     return {f for _, f, _, _ in string.Formatter().parse(text) if f}
 
 
-def _source_strings() -> dict[str, str]:
-    """Every literal passed to _() in alice/, with where it is."""
+STATIC = ROOT / "app" / "static"
+# _("...") or _('...') in the app's scripts; template literals are not translatable (use {name} placeholders)
+JS_CALL = re.compile(r"""(?<![\w.$])_\(\s*(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)')""")
+HTML_TEXT = re.compile(r"<\w+[^>]*\bdata-i18n(?![-\w])[^>]*>([^<]*)<")
+HTML_ATTR = re.compile(r"<\w+([^>]*\bdata-i18n-attr=\"([^\"]+)\"[^>]*)>")
+
+
+def _js_literal(double: str | None, single: str | None) -> str:
+    body = double if double is not None else (single or "").replace("\\'", "'").replace('"', '\\"')
+    return json.loads(f'"{body}"')
+
+
+def _app_strings() -> dict[str, str]:
+    """Strings the app translates: _("...") in static/*.js, data-i18n text and data-i18n-attr attributes in *.html."""
     found = {}
+    for p in sorted(STATIC.glob("*.js")):
+        if p.name.endswith(".min.js") or p.name == "highlight.js":
+            continue
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("//"):
+                continue
+            for m in JS_CALL.finditer(line):
+                found.setdefault(_js_literal(m.group(1), m.group(2)), f"static/{p.name}:{n}")
+    for p in sorted(STATIC.glob("*.html")):
+        html = p.read_text(encoding="utf-8")
+        for m in HTML_TEXT.finditer(html):
+            found.setdefault(m.group(1).strip(), f"static/{p.name}")
+        for m in HTML_ATTR.finditer(html):
+            for name in m.group(2).split():
+                v = re.search(rf'\b{re.escape(name)}="([^"]*)"', m.group(1))
+                assert v, f"static/{p.name}: data-i18n-attr names {name!r} but the element has no such attribute"
+                found.setdefault(v.group(1), f"static/{p.name}")
+    return found
+
+
+def _source_strings() -> dict[str, str]:
+    """Every literal passed to _() in alice/ (Python and the app), with where it is."""
+    found = _app_strings()
     for p in ROOT.rglob("*.py"):
         for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_"
@@ -110,3 +146,23 @@ def test_modules_that_translate_never_rebind_underscore():
         if imports and p.name != "i18n.py":
             bad += [f"{p.relative_to(ROOT.parent)}:{n.lineno}" for n in ast.walk(tree) if _binds_underscore(n)]
     assert not bad, "rename these to something other than _:\n" + "\n".join(bad)
+
+
+def test_app_strings_are_found():
+    """Guards the scanner itself: the quick bar's strings must be seen, or a broken regex would pass everything."""
+    found = _app_strings()
+    assert "thinking…" in found and "Always in this project" in found  # quick.js
+    assert "Projects" in found and "Ask ALICE… (Enter sends, Esc closes)" in found and "Speak" in found  # quick.html
+
+
+def test_pages_carry_the_language_and_its_catalog(monkeypatch):
+    from alice.app import server
+
+    monkeypatch.setattr(i18n, "catalog", lambda lang: {"Projects": "Projeler</script>"} if lang == "tr" else {})
+    page = server._page("quick.html", "tok")
+    assert '<html lang="en">' in page and '"catalog": {}' in page and "{{" not in page
+    i18n.set_language("tr")
+    page = server._page("quick.html", "tok")
+    block = re.search(r'<script type="application/json" id="alice-i18n">(.*?)</script>', page).group(1)
+    assert '<html lang="tr">' in page and json.loads(block) == {"lang": "tr", "catalog": {"Projects": "Projeler</script>"}}
+    assert page.index('id="alice-i18n"') < page.index("/static/i18n.js") < page.index("/static/quick.js")
