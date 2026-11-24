@@ -40,7 +40,7 @@ def parse_patch(text: str) -> list[FileOp]:
     while lines and not lines[-1].strip().startswith(END):
         lines.pop()
     if len(lines) < 2:
-        raise ToolError(f"yama '{BEGIN}' ile başlayıp '{END}' ile bitmeli")
+        raise ToolError(f"the patch must start with '{BEGIN}' and end with '{END}'")
     ops: list[FileOp] = []
     i = 1
     while i < len(lines) - 1:
@@ -50,7 +50,7 @@ def parse_patch(text: str) -> list[FileOp]:
             i += 1
             while i < len(lines) - 1 and not lines[i].startswith("*** "):
                 if not lines[i].startswith("+"):
-                    raise ToolError(f"satır {i + 1}: Add File içindeki her satır '+' ile başlamalı: {lines[i][:80]!r}")
+                    raise ToolError(f"line {i + 1}: every line in Add File must start with '+': {lines[i][:80]!r}")
                 op.content.append(lines[i][1:])
                 i += 1
             ops.append(op)
@@ -85,19 +85,18 @@ def parse_patch(text: str) -> list[FileOp]:
                     elif tag == "+":
                         chunk.new.append(body)
                     else:
-                        raise ToolError(f"satır {i + 1}: Update File içindeki satırlar ' ', '-' ya da '+' ile "
-                                        f"başlamalı: {cur[:80]!r}")
+                        raise ToolError(f"line {i + 1}: lines in Update File must start with ' ', '-' or '+': "
+                                        f"{cur[:80]!r}")
                 i += 1
             if not op.chunks and not op.move_to:
-                raise ToolError(f"{op.path}: Update File boş")
+                raise ToolError(f"{op.path}: Update File is empty")
             ops.append(op)
         elif not line.strip():
             i += 1
         else:
-            raise ToolError(f"satır {i + 1}: beklenmeyen satır {line[:80]!r}; '{ADD}', '{UPDATE}' ya da '{DELETE}' "
-                            "bekleniyordu")
+            raise ToolError(f"line {i + 1}: unexpected line {line[:80]!r}; expected '{ADD}', '{UPDATE}' or '{DELETE}'")
     if not ops:
-        raise ToolError("yamada hiç dosya işlemi yok")
+        raise ToolError("the patch has no file operations")
     return ops
 
 
@@ -127,7 +126,7 @@ def apply_chunks(text: str, chunks: list[Chunk], path: str) -> str:
         if ch.anchor:
             k = _find(lines, [ch.anchor], cursor, False)
             if k < 0:
-                raise ToolError(f"{path}: parça {n}: '@@ {ch.anchor}' satırı bulunamadı")
+                raise ToolError(f"{path}: chunk {n}: line '@@ {ch.anchor}' not found")
             cursor = k + 1
         k = _find(lines, ch.old, cursor, ch.at_eof)
         if k < 0 and ch.old and not ch.old[-1].strip():  # a trailing blank context line often comes in as an extra
@@ -136,8 +135,8 @@ def apply_chunks(text: str, chunks: list[Chunk], path: str) -> str:
                 ch = Chunk(ch.anchor, ch.old[:-1], ch.new[:-1] if ch.new and not ch.new[-1].strip() else ch.new)
         if k < 0:
             preview = "\n".join(ch.old[:6])
-            raise ToolError(f"{path}: parça {n}: değiştirilecek satırlar dosyada bulunamadı. Dosyayı read_file ile "
-                            f"tekrar oku; bağlam satırları birebir olmalı. Aranan:\n{preview}")
+            raise ToolError(f"{path}: chunk {n}: the lines to change were not found in the file. Read the file again with read_file; "
+                            f"the context lines must match exactly. Looked for:\n{preview}")
         lines[k:k + len(ch.old)] = ch.new
         cursor = k + len(ch.new)
     out = "\n".join(lines) + ("\n" if trailing_nl and lines else "")
@@ -171,7 +170,7 @@ class ApplyPatch(Tool):
         try:
             ops = parse_patch(str(args.get("patch") or ""))
         except ToolError:
-            return "(geçersiz yama)"
+            return "(invalid patch)"
         return ", ".join(f"{o.kind} {o.path}" + (f" -> {o.move_to}" if o.move_to else "") for o in ops)[:160]
 
     def run(self, ctx: ToolContext, patch: str) -> ToolResult:
@@ -201,7 +200,7 @@ class ApplyPatch(Tool):
             p = ctx.resolve(op.path)
             if op.kind == "add":
                 if (pending[p] is not None) if p in pending else p.exists():
-                    raise ToolError(f"{op.path} zaten var; değiştirmek için '*** Update File:' kullan")
+                    raise ToolError(f"{op.path} already exists; use '*** Update File:' to change it")
                 body = "\n".join(op.content) + ("\n" if op.content else "")
                 encodings.setdefault(p, "utf-8")
                 pending[p] = body
@@ -218,14 +217,14 @@ class ApplyPatch(Tool):
             else:
                 before = current(p)
                 if before is None:
-                    raise ToolError(f"düzenlenecek dosya yok: {op.path}")
+                    raise ToolError(f"no file to edit: {op.path}")
                 if p not in pending:
                     require_read(ctx, p)  # same rule as edit_file: unread or since-changed files are not edited
                 after = apply_chunks(before, op.chunks, op.path) if op.chunks else before
                 if op.move_to:
                     dest = ctx.resolve(op.move_to)
                     if current(dest) is not None or (dest not in pending and dest.exists()):
-                        raise ToolError(f"taşıma hedefi zaten var: {op.move_to}")
+                        raise ToolError(f"the move target already exists: {op.move_to}")
                     encodings[dest] = encoding_of(p)
                     pending[dest] = after
                     pending[p] = None
@@ -251,9 +250,9 @@ class ApplyPatch(Tool):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 write_encoded(p, body, encodings.get(p, "utf-8"))
                 mark_read(ctx, p)  # it knows what it wrote, so edit_file won't then say "changed on disk"
-        text = "yama uygulandı:\n" + "\n".join(report)
+        text = "patch applied:\n" + "\n".join(report)
         if trashed:
-            text += "\nsilinenler ALICE çöpünde:\n" + "\n".join(trashed)
+            text += "\ndeleted files are in ALICE's trash:\n" + "\n".join(trashed)
         return ToolResult(text, diff="\n".join(d for d in diffs if d))
 
 

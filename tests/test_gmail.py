@@ -90,7 +90,7 @@ def test_accounts_and_search_across_all(two_accounts, workdir):
 
 def test_read_needs_account_when_ambiguous(two_accounts, workdir):
     tool = gmail.Gmail()
-    with pytest.raises(ToolError, match="hangi hesap"):
+    with pytest.raises(ToolError, match="which account"):
         tool.run(ctx(workdir), "read", id="o1")
     out = tool.run(ctx(workdir), "read", account="okul", id="o1").text
     assert "Proje teslimi" in out and "proje cuma teslim" in out
@@ -104,11 +104,11 @@ def test_reply_draft_then_send_uses_right_account(two_accounts, workdir):
     raw = base64.urlsafe_b64decode(body["message"]["raw"]).decode()
     assert "In-Reply-To: msg-1@okul" in raw and body["message"]["threadId"] == "t-o1" and auth == "Bearer tok-o"
     assert tool.risk_for({"action": "send"}) == "send" and tool.risk_for({"action": "draft"}) == "write"
-    assert "gönderildi [okul]" in tool.run(ctx(workdir), "send", account="okul", draft_id="d-1").text
+    assert "sent [okul]" in tool.run(ctx(workdir), "send", account="okul", draft_id="d-1").text
 
 
 def test_not_connected_account(two_accounts, workdir):
-    with pytest.raises(ToolError, match="bağlı değil"):
+    with pytest.raises(ToolError, match="is not connected"):
         gmail.Gmail().run(ctx(workdir), "search", account="iş")
 
 

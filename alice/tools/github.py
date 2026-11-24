@@ -707,7 +707,7 @@ class Git(Tool):
             return ToolResult(out)
         if action == "push":
             return self._push(ctx, root, branch, force, protected)
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
     @staticmethod
     def _worktree(ctx: ToolContext, root: Path, branch: str, create: bool) -> ToolResult:
@@ -1086,7 +1086,7 @@ class GitHub(Tool):
                                             address_comments=address_comments, auto_merge=auto_merge,
                                             auto_review=auto_review,
                                             session=str(ctx.state.get("session_id") or "")))
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
     def _wait(self, ctx: ToolContext, api: GitHubAPI, repo: str, number: int, branch: str, minutes: int) -> ToolResult:
         """Wait until CI finishes (or the time runs out). Right after a push the checks may not be visible yet, so

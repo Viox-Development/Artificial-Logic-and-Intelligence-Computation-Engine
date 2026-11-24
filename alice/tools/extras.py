@@ -40,9 +40,9 @@ class Notes(Tool):
 
         if action == "add":
             if not text.strip():
-                raise ToolError("text gerekli")
+                raise ToolError("text is required")
             notes.add(text)
-            return ToolResult("not alındı")
+            return ToolResult("note taken")
         if action == "undo":
             n = notes.remove_last()
             return ToolResult(f"silindi: {n.text}" if n else "silinecek not yok")
@@ -53,7 +53,7 @@ class Notes(Tool):
         found = notes.search(query if action == "search" else "", t0, t1)
         if action == "list":
             found = found[-20:]
-        return ToolResult("\n".join(n.line() for n in found[-50:]) or "not bulunamadı")
+        return ToolResult("\n".join(n.line() for n in found[-50:]) or "note not found")
 
 
 class Report(Tool):
@@ -128,11 +128,11 @@ class Media(Tool):
 
         if action == "set_volume":
             if percent is None:
-                raise ToolError("percent gerekli")
+                raise ToolError("percent is required")
             return ToolResult(media.set_volume(percent))
         if action in ("pause_in", "shutdown_in"):
             if not minutes or minutes <= 0:
-                raise ToolError("minutes gerekli")
+                raise ToolError("minutes is required")
             return ToolResult(media.pause_in(minutes) if action == "pause_in" else media.shutdown_in(minutes))
         if action == "cancel_shutdown":
             return ToolResult(media.cancel_shutdown())
@@ -145,7 +145,7 @@ class Media(Tool):
             import time
 
             time.sleep(0.7)
-            return ToolResult(f"tamam; şimdi: {nowplaying.describe(nowplaying.now())}")
+            return ToolResult(f"done; now: {nowplaying.describe(nowplaying.now())}")
         return ToolResult(media.key(action, times if action.startswith("volume") else 1))
 
 
@@ -226,20 +226,20 @@ class YouTube(Tool):
 
         if action == "seek":
             if at is None:
-                raise ToolError("seek için at (saniye) gerekli")
+                raise ToolError("seek needs at (seconds)")
             cur = url or current_tab_url()
             if "youtube.com/watch" not in cur and "youtu.be/" not in cur:
-                raise ToolError(f"öndeki sekmede YouTube videosu yok ({cur[:80] or 'adres okunamadı'}); önce play")
+                raise ToolError(f"no YouTube video in the front tab ({cur[:80] or 'could not read the address'}); play first")
             return ToolResult(navigate_tab(with_time(cur, at), new_tab=False))
         if action == "search" or (action == "play" and not url):
             if not query:
-                raise ToolError("query gerekli")
+                raise ToolError("query is required")
             try:
                 hits = youtube_search(query)
             except httpx.HTTPError as e:
-                raise ToolError(f"YouTube'a ulaşılamadı: {e.__class__.__name__}") from e
+                raise ToolError(f"could not reach YouTube: {e.__class__.__name__}") from e
             if not hits:
-                return ToolResult("video bulunamadı")
+                return ToolResult("video not found")
             if action == "search":
                 return ToolResult("\n".join(f"{i}. {t} — https://www.youtube.com/watch?v={v}"
                                             for i, (t, v) in enumerate(hits, 1)))
@@ -249,7 +249,7 @@ class YouTube(Tool):
             title = url
         if at:
             url = with_time(url, at)
-        return ToolResult(f"oynatılıyor: {title}. {navigate_tab(url)}")
+        return ToolResult(f"playing: {title}. {navigate_tab(url)}")
 
 
 TOOLS = [Notes(), Report(), Weather(), Media(), YouTube()]

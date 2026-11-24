@@ -44,11 +44,11 @@ class Kairos(Tool):
             return ToolResult(describe(ctx.config))
         if action == "wake":
             kairos.request_wake()
-            return ToolResult("KAIROS çekirdeğin bir sonraki turunda uyanacak (çekirdek açık olmalı).")
+            return ToolResult("KAIROS will wake on the core's next tick (the core must be running).")
         if action in ("on", "off"):
             kairos.set_enabled(ctx.config, action == "on")
-            return ToolResult("KAIROS " + ("açıldı: ilk uyanış birkaç dakika içinde." if action == "on" else "kapatıldı."))
-        raise ToolError(f"bilinmeyen action: {action}")
+            return ToolResult("KAIROS " + ("turned on: the first wake-up within a few minutes." if action == "on" else "turned off."))
+        raise ToolError(f"unknown action: {action}")
 
 
 def describe(cfg: Any) -> str:
@@ -56,12 +56,12 @@ def describe(cfg: Any) -> str:
 
     v = kairos.view()
     on = kairos.is_enabled(cfg)
-    rows = [f"KAIROS {'açık' if on else 'kapalı'}"]
+    rows = [f"KAIROS {'on' if on else 'off'}"]
     if on and v["next"]:
-        rows.append("sıradaki uyanış: " + datetime.fromtimestamp(v["next"]).strftime("%d.%m %H:%M"))
+        rows.append("next wake-up: " + datetime.fromtimestamp(v["next"]).strftime("%d.%m %H:%M"))
     if v["skipped"]:
         rows.append(f"son ertelemenin nedeni: {v['skipped']}")
-    rows.append(f"bugün {v['wakes']} uyanış")
+    rows.append(f"{v['wakes']} wake-ups today")
     for h in v["history"][:8]:
         rows.append(f"- {datetime.fromtimestamp(h['ts']).strftime('%d.%m %H:%M')}: {h.get('summary', '')}")
     return "\n".join(rows)

@@ -135,9 +135,9 @@ def test_window_by_title_and_errors():
     log = []
     at = fake_atspi([Acc("frame", "Arka", states=("showing",)), window(log)])
     assert atspi.find_window(at, "metin düzen").get_name() == "Belge - Metin Düzenleyici"
-    with pytest.raises(RuntimeError, match="bulunamadı"):
+    with pytest.raises(RuntimeError, match="no window titled .* found"):
         atspi.find_window(at, "Discord")
-    with pytest.raises(RuntimeError, match="öndeki pencere"):
+    with pytest.raises(RuntimeError, match="no foreground window"):
         atspi.find_window(fake_atspi([Acc("frame", "Arka", states=("showing",))]))
 
 

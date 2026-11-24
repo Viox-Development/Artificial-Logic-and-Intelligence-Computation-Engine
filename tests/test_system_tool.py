@@ -99,20 +99,20 @@ def test_system_info_rows(ctx, monkeypatch):
     _patch_platform(monkeypatch)
     out = system.SystemInfo().run(ctx).text.splitlines()
     assert out[0] == "OS: TestOS-1.0 (x86_64)"
-    assert out[1] == "CPU: Intel i9 | 8C/16T | kullanım %12.5"
+    assert out[1] == "CPU: Intel i9 | 8C/16T | usage 12.5%"
     assert out[2] == "RAM: 8.0/16.0 GB (%50.0)"
     assert out[3] == "GPU: FakeGPU"
-    assert out[4] == "Disk /: 100/500 GB (%20.0) ext4"
+    assert out[4] == "Disk /: 100/500 GB (20.0%) ext4"
     assert not any("/locked" in r for r in out)  # permission errors are skipped
-    assert out[5] == "Pil: %77 pilde"
-    assert out[6] == "Ağ: gönderilen 300 MB, alınan 1200 MB"
+    assert out[5] == "Battery: 77% on battery"
+    assert out[6] == "Network: sent 300 MB, received 1200 MB"
 
 
 def test_system_info_no_battery_no_processor(ctx, monkeypatch):
     monkeypatch.setattr(system, "psutil", _fake_psutil(sensors_battery=lambda: None))
     _patch_platform(monkeypatch, processor="")
     out = system.SystemInfo().run(ctx).text
-    assert "CPU: bilinmiyor" in out and "Pil" not in out
+    assert "CPU: unknown" in out and "Pil" not in out
 
 
 def test_system_info_without_sensors_battery_attr(ctx, monkeypatch):
@@ -127,7 +127,7 @@ def test_system_info_charging(ctx, monkeypatch):
     monkeypatch.setattr(system, "psutil", _fake_psutil(
         sensors_battery=lambda: SimpleNamespace(percent=99.6, power_plugged=True)))
     _patch_platform(monkeypatch)
-    assert "Pil: %100 şarjda" in system.SystemInfo().run(ctx).text
+    assert "Battery: 100% charging" in system.SystemInfo().run(ctx).text
 
 
 # ------------------------------------------------------------------ ProcessList
@@ -175,7 +175,7 @@ def _pids(text):
 def test_process_list_sorted_by_memory_default(ctx, monkeypatch):
     _patch_procs(monkeypatch, PROCS)
     out = system.ProcessList().run(ctx).text
-    assert out.startswith("    PID       RAM     CPU  İSİM\n")
+    assert out.startswith("    PID       RAM     CPU  NAME\n")
     assert _pids(out) == [2, 1, 4, 3]  # memory_info None -> 0, placed last
     assert "     900 MB" in out
 
@@ -194,7 +194,7 @@ def test_process_list_name_filter_case_insensitive_and_limit(ctx, monkeypatch):
 
 def test_process_list_no_match(ctx, monkeypatch):
     _patch_procs(monkeypatch, PROCS)
-    assert system.ProcessList().run(ctx, name="yokboyle").text == "süreç bulunamadı"
+    assert system.ProcessList().run(ctx, name="yokboyle").text == "no process found"
 
 
 # ------------------------------------------------------------------ ProcessKill
@@ -224,7 +224,7 @@ def test_process_kill_by_pid(ctx, monkeypatch):
     procs = [FakeProc(10, "a"), FakeProc(11, "b")]
     waited = _patch_procs(monkeypatch, procs)
     r = system.ProcessKill().run(ctx, pid=11)
-    assert r.text == "sonlandırıldı: 11"
+    assert r.text == "terminated: 11"
     assert procs[1].terminated and not procs[0].terminated
     assert waited == [([procs[1]], 3)]
 
@@ -233,7 +233,7 @@ def test_process_kill_by_name_matches_all_exactly(ctx, monkeypatch):
     procs = [FakeProc(1, "Notepad.exe"), FakeProc(2, "notepad.exe"), FakeProc(3, "notepad.exe.bak"), FakeProc(4, None)]
     _patch_procs(monkeypatch, procs)
     r = system.ProcessKill().run(ctx, name="NOTEPAD.EXE")
-    assert r.text == "sonlandırıldı: 1, 2"
+    assert r.text == "terminated: 1, 2"
     assert not procs[2].terminated
 
 
@@ -242,7 +242,7 @@ def test_process_kill_reports_terminate_errors(ctx, monkeypatch):
     _patch_procs(monkeypatch, procs)
     r = system.ProcessKill().run(ctx, name="x")
     # a process that could not be closed is not reported as "sonlandırıldı"
-    assert r.text.startswith("sonlandırıldı: 6\n5: kapatılamadı (") and not r.is_error
+    assert r.text.startswith("terminated: 6\n5: could not close it (") and not r.is_error
     assert procs[1].terminated
 
 
@@ -252,7 +252,7 @@ def test_process_kill_forces_stubborn_and_accepts_name_without_exe(ctx, monkeypa
     monkeypatch.setattr(system, "sys", SimpleNamespace(platform="win32"))
     _patch_procs(monkeypatch, procs)
     r = system.ProcessKill().run(ctx, name="notepad")
-    assert r.text == "sonlandırıldı: 7" and procs[0].killed
+    assert r.text == "terminated: 7" and procs[0].killed
     assert system.ProcessKill().risk_for({"name": "explorer"}) == DANGER
 
 
@@ -265,7 +265,7 @@ def test_process_kill_all_failed_is_error(ctx, monkeypatch):
 
 def test_process_kill_no_target(ctx, monkeypatch):
     _patch_procs(monkeypatch, [FakeProc(1, "a")])
-    with pytest.raises(ToolError, match="eşleşen süreç yok"):
+    with pytest.raises(ToolError, match="no matching process"):
         system.ProcessKill().run(ctx, name="zzz")
     with pytest.raises(ToolError):
         system.ProcessKill().run(ctx)

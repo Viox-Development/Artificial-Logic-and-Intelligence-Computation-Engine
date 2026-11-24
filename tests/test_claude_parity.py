@@ -51,7 +51,7 @@ def test_web_search_uses_google_grounding_then_falls_back(monkeypatch, workdir):
     monkeypatch.setattr(web.httpx, "post", post)
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = TOOLS["web_search"].run(ctx, "DCS son sürüm").text
-    assert out.startswith("Google araması özeti") and "2.9.10" in out and "eagle.ru" in out
+    assert out.startswith("Google search summary") and "2.9.10" in out and "eagle.ru" in out
     assert calls[0][1]["tools"] == [{"google_search": {}}] and "gemini-flash-latest" in calls[0][0]
 
     monkeypatch.setattr(web.httpx, "post", lambda *a, **k: Resp(429, {"error": "quota"}))

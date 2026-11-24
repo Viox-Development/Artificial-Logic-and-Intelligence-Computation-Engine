@@ -50,8 +50,8 @@ class SystemInfo(Tool):
         vm = psutil.virtual_memory()
         rows = [
             f"OS: {platform.platform()} ({platform.machine()})",
-            f"CPU: {platform.processor() or 'bilinmiyor'} | {psutil.cpu_count(logical=False)}C/{psutil.cpu_count()}T | "
-            f"kullanım %{psutil.cpu_percent(interval=0.5)}",
+            f"CPU: {platform.processor() or 'unknown'} | {psutil.cpu_count(logical=False)}C/{psutil.cpu_count()}T | "
+            f"usage {psutil.cpu_percent(interval=0.5)}%",
             f"RAM: {vm.used / 2**30:.1f}/{vm.total / 2**30:.1f} GB (%{vm.percent})",
             f"GPU: {_gpu()}",
         ]
@@ -60,12 +60,12 @@ class SystemInfo(Tool):
                 u = psutil.disk_usage(part.mountpoint)
             except (PermissionError, OSError):
                 continue
-            rows.append(f"Disk {part.mountpoint}: {u.used / 2**30:.0f}/{u.total / 2**30:.0f} GB (%{u.percent}) {part.fstype}")
+            rows.append(f"Disk {part.mountpoint}: {u.used / 2**30:.0f}/{u.total / 2**30:.0f} GB ({u.percent}%) {part.fstype}")
         bat = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
         if bat:
-            rows.append(f"Pil: %{bat.percent:.0f} {'şarjda' if bat.power_plugged else 'pilde'}")
+            rows.append(f"Battery: {bat.percent:.0f}% {'charging' if bat.power_plugged else 'on battery'}")
         net = psutil.net_io_counters()
-        rows.append(f"Ağ: gönderilen {net.bytes_sent / 2**20:.0f} MB, alınan {net.bytes_recv / 2**20:.0f} MB")
+        rows.append(f"Network: sent {net.bytes_sent / 2**20:.0f} MB, received {net.bytes_recv / 2**20:.0f} MB")
         return ToolResult("\n".join(rows))
 
 
@@ -95,7 +95,7 @@ class ProcessList(Tool):
         procs.sort(key=key, reverse=True)
         rows = [f"{i['pid']:>7}  {(i['memory_info'].rss if i['memory_info'] else 0) / 2**20:>8.0f} MB  "
                 f"%{i['cpu_percent'] or 0:>5.1f}  {i['name']}" for i in procs[:limit]]
-        return ToolResult("    PID       RAM     CPU  İSİM\n" + "\n".join(rows) if rows else "süreç bulunamadı")
+        return ToolResult("    PID       RAM     CPU  NAME\n" + "\n".join(rows) if rows else "no process found")
 
 
 def _same_name(proc_name: str, wanted: str) -> bool:
@@ -147,11 +147,11 @@ class ProcessKill(Tool):
             try:
                 targets = [psutil.Process(pid)]
             except psutil.NoSuchProcess:
-                raise ToolError(f"pid {pid} ile çalışan süreç yok (zaten kapanmış olabilir)") from None
+                raise ToolError(f"no process running with pid {pid} (it may have closed already)") from None
         elif name:
             targets = [p for p in psutil.process_iter(["name"]) if _same_name(p.info["name"] or "", name)]
         if not targets:
-            raise ToolError(f"eşleşen süreç yok: {name or pid} (adı process_list ile bak)")
+            raise ToolError(f"no matching process: {name or pid} (look up the name with process_list)")
         failed: dict[int, str] = {}
         for p in targets:
             try:
@@ -171,11 +171,11 @@ class ProcessKill(Tool):
         if alive:
             _, alive = psutil.wait_procs(alive, timeout=2)
         for p in alive:
-            failed.setdefault(p.pid, "hâlâ çalışıyor")
+            failed.setdefault(p.pid, "still running")
         # Processes that never exited used to be reported as "sonlandırıldı" too (access denied, exit ignored).
         ok = [str(p.pid) for p in targets if p.pid not in failed]
-        parts = [f"sonlandırıldı: {', '.join(ok)}"] if ok else []
-        parts += [f"{pid_}: kapatılamadı ({why})" for pid_, why in failed.items()]
+        parts = [f"terminated: {', '.join(ok)}"] if ok else []
+        parts += [f"{pid_}: could not close it ({why})" for pid_, why in failed.items()]
         return ToolResult("\n".join(parts), is_error=bool(failed) and not ok)
 
 

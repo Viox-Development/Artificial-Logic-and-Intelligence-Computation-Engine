@@ -157,9 +157,9 @@ def test_tool_on_off_and_status(tmp_path):
 
     c = cfg(enabled=False)
     ctx = ToolContext(cwd=tmp_path, config=c)
-    assert "kapalı" in Tool().run(ctx, "status").text
+    assert "off" in Tool().run(ctx, "status").text
     Tool().run(ctx, "on")
-    assert kairos.is_enabled(c) and "açık" in Tool().run(ctx, "status").text
+    assert kairos.is_enabled(c) and "on" in Tool().run(ctx, "status").text
 
 
 def test_concurrent_state_writes_do_not_fail_or_leave_temp_files(tmp_path):

@@ -193,7 +193,7 @@ def _launch() -> None:
 
     exe = find_chromium()
     if not exe:
-        raise RenderError("Chromium tabanlı tarayıcı bulunamadı (Edge/Chrome/Chromium)")
+        raise RenderError("no Chromium-based browser found (Edge/Chrome/Chromium)")
     profile = alice_home() / "render-profile"
     profile.mkdir(parents=True, exist_ok=True)
     _port = _free_port()
@@ -217,7 +217,7 @@ def _launch() -> None:
             time.sleep(0.2)
     else:
         _shutdown()
-        raise RenderError("gizli tarayıcı açılmadı")
+        raise RenderError("the hidden browser did not open")
     # patchright: the real UA minus "HeadlessChrome" (a dead giveaway on every request header).
     _ua = (info.get("User-Agent") or "").replace("HeadlessChrome", "Chrome")
     threading.Thread(target=_idle_watch, daemon=True, name="alice-render-idle").start()
@@ -323,7 +323,7 @@ class _Tab:
         r = self.send("Runtime.evaluate", {"expression": expression, "contextId": world, "returnByValue": True,
                                            "awaitPromise": True}, timeout=20)
         if r.get("exceptionDetails"):
-            raise RenderError("sayfa betiği hata verdi")
+            raise RenderError("the page script failed")
         return (r.get("result") or {}).get("value")
 
     def close(self) -> None:

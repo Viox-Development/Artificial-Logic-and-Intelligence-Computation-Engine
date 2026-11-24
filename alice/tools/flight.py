@@ -62,18 +62,18 @@ class Flight(Tool):
             from alice.sims import hub
 
             if hub.ACTIVE is None:
-                return ToolResult("uçuş takibi bu süreçte çalışmıyor (alice core run ile başlar)")
+                return ToolResult("flight tracking isn't running in this process (it starts with alice core run)")
             if action == "brief":
                 hub.ACTIVE._briefed = ""
-                return ToolResult(hub.ACTIVE.brief_mission() or "yüklü görev bulunamadı")
+                return ToolResult(hub.ACTIVE.brief_mission() or "no loaded mission found")
             if not command:
-                raise ToolError("command gerekli")
+                raise ToolError("command is required")
             return ToolResult(hub.ACTIVE.cockpit(command, _number(mhz)))
         if action.startswith("alert"):
             from alice.sims import hub
 
             if hub.ACTIVE is None:
-                return ToolResult("uçuş takibi bu süreçte çalışmıyor (alice core run ile başlar)")
+                return ToolResult("flight tracking isn't running in this process (it starts with alice core run)")
             if action == "alerts_clear":
                 return ToolResult(hub.ACTIVE.clear_alerts())
             name, value, call = {"alert_home": ("nm", nm, hub.ACTIVE.alert_home),
@@ -97,14 +97,14 @@ class Flight(Tool):
 
         if action == "status":
             if hub.ACTIVE is None:
-                return ToolResult("uçuş takibi bu süreçte çalışmıyor (alice core run ile başlar)")
+                return ToolResult("flight tracking isn't running in this process (it starts with alice core run)")
             return ToolResult(hub.ACTIVE.status())
         if hub.ACTIVE is not None and hub.ACTIVE.last_debrief:
             d, page = hub.ACTIVE.last_debrief
             return ToolResult(f"{d.summary()}\nRapor: {page}")
         files = sorted(flights_dir().glob("*.json")) if flights_dir().is_dir() else []
         if not files:
-            return ToolResult("kayıtlı uçuş yok")
+            return ToolResult("no recorded flights")
         d = Debrief(**json.loads(files[-1].read_text(encoding="utf-8")))
         return ToolResult(f"{d.summary()}\nRapor: {files[-1].with_suffix('.html')}")
 
@@ -114,20 +114,20 @@ class Flight(Tool):
         from alice.sims.checklists import Runner, find, load_all
 
         if action == "list":
-            return ToolResult("\n".join(f"{cl.key}: {cl.title} ({len(cl.steps)} adım)" for cl in load_all().values())
+            return ToolResult("\n".join(f"{cl.key}: {cl.title} ({len(cl.steps)} steps)" for cl in load_all().values())
                               or "kontrol listesi yok")
         if action == "start":
             cl = find(name)
             if cl is None:
-                raise ToolError(f"liste bulunamadı: {name}")
+                raise ToolError(f"list not found: {name}")
             ctx.state["checklist"] = Runner(cl)
             return ToolResult(f"{cl.title}. {ctx.state['checklist'].current()}")
         run = ctx.state.get("checklist")
         if run is None:
-            raise ToolError("açık kontrol listesi yok (önce checklist_start)")
+            raise ToolError("no open checklist (checklist_start first)")
         if action == "stop":
             ctx.state.pop("checklist")
-            return ToolResult("kontrol listesi kapatıldı")
+            return ToolResult("checklist closed")
         text = {"next": run.next, "prev": run.prev}[action]()
         if run.done:
             ctx.state.pop("checklist")
@@ -143,13 +143,13 @@ class Flight(Tool):
             return ToolResult("\n".join(f"{n['time']} {n['text']}" for n in kb.load_notes()) or "not yok")
         if action == "note":
             if not text:
-                raise ToolError("text gerekli")
+                raise ToolError("text is required")
             kb.add_note(text)
         elif action == "clear":
             kb.clear_notes()
         dirs = saved_games_dirs()
         if not dirs:
-            raise ToolError("DCS Saved Games klasörü bulunamadı")
+            raise ToolError("DCS Saved Games folder not found")
         info = None
         path = Path(mission).expanduser() if mission else latest_mission(dirs)
         if path is not None and path.exists():
@@ -157,10 +157,10 @@ class Flight(Tool):
                 info = read_mission(path)
             except (ValueError, KeyError, OSError) as e:
                 if action == "build":
-                    raise ToolError(f"görev okunamadı: {e}") from e
+                    raise ToolError(f"could not read the mission: {e}") from e
         written = kb.write(kb.render(info, kb.load_notes()), kb.kneeboard_dirs(dirs))
-        what = f"görev: {info.name}, {len(info.waypoints)} waypoint" if info else "görev yok"
-        return ToolResult(f"kneeboard güncellendi ({len(written)} sayfa; {what}).")
+        what = f"mission: {info.name}, {len(info.waypoints)} waypoints" if info else "no mission"
+        return ToolResult(f"kneeboard updated ({len(written)} pages; {what}).")
 
 
 class DcsWingman(Tool):
@@ -197,7 +197,7 @@ class DcsWingman(Tool):
         cmd = wm.parse(command) if command else None
         if cmd is None:
             if not verb:
-                raise ToolError("komut anlaşılmadı: verb (attack/rejoin/hold/rtb) ver ya da command'ı netleştir")
+                raise ToolError("the command wasn't understood: give verb (attack/rejoin/hold/rtb) or make command clearer")
             cmd = wm.Command(verb)
         if verb:
             cmd.verb = verb
@@ -212,8 +212,8 @@ class DcsWingman(Tool):
         except ValueError as e:
             raise ToolError(str(e)) from e
         if not ok:
-            return ToolResult(f"gönderilemedi ({cmd.describe()}): yerel UDP hatası")
-        return ToolResult(f"gönderildi: {cmd.describe()}. Sonuç DCS'te ekranda yazı olarak görünür.")
+            return ToolResult(f"could not send ({cmd.describe()}): local UDP error")
+        return ToolResult(f"sent: {cmd.describe()}. The result shows as text on screen in DCS.")
 
 
 TOOLS = [Flight(), DcsWingman()]

@@ -93,7 +93,7 @@ def test_list_akislari_ve_apileri_yazar(ctx):
 
 
 def test_bilinmeyen_uygulama_secenekleri_sayar(ctx):
-    with pytest.raises(ToolError, match="tanımlı uygulama tanımı yok|diye bir uygulama tanımı yok"):
+    with pytest.raises(ToolError, match="no app definition called"):
         AppTool().run(ctx, action="open", name="snapchat")
 
 
@@ -130,7 +130,7 @@ def test_protokol_derin_baglantisi(ctx, monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: opened.append(t) or "başlatıldı")
     AppTool().run(ctx, action="open", name="steam_game", target="238960")
     assert opened == ["steam://rungameid/238960"]
-    with pytest.raises(ToolError, match="target gerekli"):
+    with pytest.raises(ToolError, match="target is required"):
         AppTool().run(ctx, action="open", name="steam_game")
 
 
@@ -182,7 +182,7 @@ def test_flow_eksik_alanda_calismaz(ctx, monkeypatch):
 def test_akissiz_uygulamada_flow_yonlendirir(ctx):
     ctx.decider = object()
     ctx.router = object()
-    with pytest.raises(ToolError, match="tanımlı akış yok"):
+    with pytest.raises(ToolError, match="has no defined flow"):
         AppTool().run(ctx, action="flow", name="github_web", flow="x")
 
 
@@ -234,7 +234,7 @@ def test_pencere_gelmezse_anlasilir_hata(monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.list_windows", lambda: [])
     monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: "açıldı")
     monkeypatch.setattr("alice.tools.desktop.focus_window", lambda t: t)
-    with pytest.raises(ToolError, match="pencere .* gelmedi"):
+    with pytest.raises(ToolError, match="no window titled .* came"):
         appsmod._ensure_window(apps.find("steam"), wait=0.05, sleep=lambda s: None)
 
 

@@ -124,11 +124,11 @@ def html_to_text(raw: str, main_only: bool = False) -> str:
 def _paginate(body: str, start: int, limit: int) -> str:
     start = max(0, int(start or 0))
     if start >= len(body) > 0:
-        return f"[start={start} metnin sonunu aşıyor; metin {len(body)} karakter]"
+        return f"[start={start} is past the end of the text; the text is {len(body)} characters]"
     chunk = body[start:start + limit]
     rest = len(body) - start - len(chunk)
     head = f"[karakter {start}-{start + len(chunk)} / {len(body)}]\n" if start else ""
-    tail = f"\n\n... [{rest} karakter kesildi; devamı için start={start + len(chunk)}]" if rest > 0 else ""
+    tail = f"\n\n... [{rest} characters cut; for the rest start={start + len(chunk)}]" if rest > 0 else ""
     return head + chunk + tail
 
 
@@ -204,17 +204,17 @@ def fetch_page(url: str, allow_browser: bool = True, timeout: float = 30) -> Fet
         out = stealth.render(url)
     except stealth.RenderError as e:
         if r is None:
-            raise ToolError(f"{why}; tarayıcıyla da açılamadı ({e})") from e
-        f.note = f"[düz istek: {why}; tarayıcıyla açma da başarısız: {e}]"
+            raise ToolError(f"{why}; it couldn't be opened with the browser either ({e})") from e
+        f.note = f"[plain request: {why}; opening with the browser failed too: {e}]"
         return f
     html_text = out["html"]
     # The browser's own error page ("can't reach this page") is not the site.
     if out["url"].startswith(("chrome-error:", "edge-error:", "about:")):
         if r is None:
-            raise ToolError(f"{why}; tarayıcı da siteye ulaşamadı")
+            raise ToolError(f"{why}; the browser couldn't reach the site either")
         return f
     return Fetched(out["status"], out["url"], "text/html; charset=utf-8", html_text.encode("utf-8", "replace"),
-                   html_text, via="browser", note=f"[sayfa gerçek tarayıcıyla açıldı: {why}]")
+                   html_text, via="browser", note=f"[the page was opened with a real browser: {why}]")
 
 
 class WebFetch(Tool):
@@ -260,8 +260,8 @@ class WebFetch(Tool):
                 body = _pdf_text(f.body)
             elif not f.text and not _looks_textual(ctype, f.body):
                 # Images, zip, exe...: r.text used to return a pile of meaningless characters and flood the context.
-                body = (f"[ikili içerik: {ctype or 'türü belirtilmemiş'}, {len(f.body)} bayt - metin olarak "
-                        "gösterilemez. İndirmek için run_command (ör. Invoke-WebRequest -OutFile) kullan.]")
+                body = (f"[binary content: {ctype or 'type not given'}, {len(f.body)} bytes - can't be shown "
+                        "as text. To download it use run_command (e.g. Invoke-WebRequest -OutFile).]")
             else:
                 body = f.text
                 if not raw and "html" in ctype:
@@ -451,8 +451,8 @@ class WebSearch(Tool):
                 break
         if not res:
             if len(errors) == len(engines):
-                raise ToolError("arama başarısız: " + "; ".join(errors))
-            return ToolResult("sonuç yok")
+                raise ToolError("search failed: " + "; ".join(errors))
+            return ToolResult("no results")
         return ToolResult("\n\n".join(f"{i}. {r['title']}\n{r['url']}\n{r['snippet']}" for i, r in enumerate(res, 1)))
 
 
@@ -460,9 +460,9 @@ class WebSearch(Tool):
 # It is much more current and complete than scraping DuckDuckGo/Bing pages. If the quota runs out or it errors,
 # it is not tried for a while and classic engines are used instead.
 GROUNDING_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-GROUNDING_PROMPT = ("Bu soruyu Google'da ara ve bulduklarını kısa, olgusal bir özet olarak yaz: Türkçe, en fazla 8 madde, "
-                    "tarihleri, sayıları, sürümleri ve adları aynen koru; emin olmadığını belirt; yorum ekleme.\n"
-                    "Arama: {query}")
+GROUNDING_PROMPT = ("Search Google for this question and write what you find as a short, factual summary: at most 8 points, "
+                    "keep dates, numbers, versions and names exactly; say when you're unsure; add no commentary.\n"
+                    "Search: {query}")
 _grounding = {"down_until": 0.0}
 
 
@@ -473,14 +473,14 @@ def grounding_model(ctx: ToolContext) -> str:
 def gemini_search(query: str, key: str, model: str, timeout: float = 25.0) -> dict[str, Any]:
     """{'text': summary, 'sources': [{'title', 'url'}], 'queries': [...]}; quota/error raises ValueError."""
     if time.monotonic() < _grounding["down_until"]:
-        raise ValueError("Google araması geçici olarak kapalı (kota/hata)")
+        raise ValueError("Google search is temporarily off (quota/error)")
     try:
         r = httpx.post(GROUNDING_URL.format(model=model), headers={"x-goog-api-key": key},
                        json={"contents": [{"role": "user", "parts": [{"text": GROUNDING_PROMPT.format(query=query)}]}],
                              "tools": [{"google_search": {}}]}, timeout=timeout)
     except httpx.HTTPError as e:
         _grounding["down_until"] = time.monotonic() + 300
-        raise ValueError(f"bağlantı: {e}") from e
+        raise ValueError(f"connection: {e}") from e
     if r.status_code >= 400:
         _grounding["down_until"] = time.monotonic() + (3600 if r.status_code == 429 else 900)
         raise ValueError(f"HTTP {r.status_code}: {r.text[:160]}")
@@ -493,14 +493,14 @@ def gemini_search(query: str, key: str, model: str, timeout: float = 25.0) -> di
     sources = [{"title": (c.get("web") or {}).get("title", ""), "url": (c.get("web") or {}).get("uri", "")}
                for c in meta.get("groundingChunks") or [] if c.get("web")]
     if not text or not sources:
-        raise ValueError("Google araması sonuç döndürmedi")
+        raise ValueError("Google search returned no results")
     return {"text": text, "sources": sources[:8], "queries": meta.get("webSearchQueries") or []}
 
 
 def format_grounded(res: dict[str, Any]) -> str:
     src = "\n".join(f"{i}. {s['title']}\n{s['url']}" for i, s in enumerate(res["sources"], 1))
-    return (f"Google araması özeti (Gemini, kaynaklı):\n{res['text']}\n\nKaynaklar (ayrıntı için web_fetch; "
-            f"başlık sitenin adıdır):\n{src}")
+    return (f"Google search summary (Gemini, with sources):\n{res['text']}\n\nSources (web_fetch for details; "
+            f"the title is the site's name):\n{src}")
 
 
 _ENV_RX = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -510,7 +510,7 @@ def _expand_env(s: str) -> str:
     """'${env:GITHUB_TOKEN}' -> environment variable; the key goes into the header without the model ever seeing it."""
     def sub(m: re.Match) -> str:
         if m.group(1) not in os.environ:
-            raise ToolError(f"ortam değişkeni yok: {m.group(1)}")
+            raise ToolError(f"no such environment variable: {m.group(1)}")
         return os.environ[m.group(1)]
     return _ENV_RX.sub(sub, s)
 
@@ -523,7 +523,7 @@ def _json_arg(name: str, v: Any) -> Any:
     try:
         return json.loads(v)
     except ValueError as e:
-        raise ToolError(f"{name} geçerli JSON değil: {e}") from e
+        raise ToolError(f"{name} is not valid JSON: {e}") from e
 
 
 class HttpRequest(Tool):
@@ -605,7 +605,7 @@ class HttpRequest(Tool):
                         with open(tmp, "wb") as f:
                             for part in r.iter_bytes():
                                 if ctx.cancelled():
-                                    raise ToolError("kullanıcı durdurdu; dosya kaydedilmedi")
+                                    raise ToolError("stopped by the user; the file was not saved")
                                 f.write(part)
                                 size += len(part)
                         tmp.replace(dest)
@@ -615,7 +615,7 @@ class HttpRequest(Tool):
                 return ToolResult(f"HTTP {r.status_code}: {size} byte kaydedildi -> {dest}")
             r = httpx.request(method, _expand_env(url), **kw)
         except httpx.HTTPError as e:
-            raise ToolError(f"istek başarısız: {type(e).__name__}: {e}") from e
+            raise ToolError(f"request failed: {type(e).__name__}: {e}") from e
         keep = ("content-type", "location", "retry-after", "x-ratelimit-remaining", "link", "etag")
         shown = "\n".join(f"{k}: {v}" for k, v in r.headers.items() if k.lower() in keep)
         text = r.text

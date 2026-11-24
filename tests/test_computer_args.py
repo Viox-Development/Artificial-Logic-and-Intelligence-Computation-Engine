@@ -140,7 +140,7 @@ def test_agent_open_rejects_empty_target(monkeypatch):
     opened: list[str] = []
     monkeypatch.setattr("alice.tools.desktop.open_app", opened.append)
     for target in ("", "   ", None):
-        with pytest.raises(ValueError, match="target gerekli"):
+        with pytest.raises(ValueError, match="target is required"):
             Screen(None).act({"action": "open", "target": target}, SHOT)
     assert opened == []  # On Windows, Path("") is "." and was opening the working folder
 

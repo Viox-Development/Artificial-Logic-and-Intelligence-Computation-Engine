@@ -617,7 +617,7 @@ def test_team_tool_actions(team_ctx):
     second.state = "stopped"
     out = t.run(team_ctx, action="wait").text
     assert out.startswith("Proje durumu: stopped") and "Süre doldu" not in out
-    with pytest.raises(ToolError, match="bilinmeyen action"):
+    with pytest.raises(ToolError, match="unknown action"):
         t.run(team_ctx, action="dans")
 
 

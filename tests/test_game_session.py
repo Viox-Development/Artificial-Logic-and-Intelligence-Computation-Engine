@@ -420,18 +420,18 @@ def test_game_tool_discovers_plays_and_learns(monkeypatch, tmp_path):
     tool = Game()
     assert tool.risk_for({"action": "status"}) == "read" and tool.risk_for({"action": "turn"}) == tool.risk
     out = tool.run(ctx, "start", game="Hiç Görülmemiş Oyun").text
-    assert "oyunu tanıdı: Klondike in a solitaire collection; 1 başlangıç dersi" in out
+    assert "recognised the game: Klondike in a solitaire collection; 1 starting lessons" in out
     assert "Begin here. (unverified)" in out and "Identified game: Klondike" in out  # Jev sees it too
     r = tool.run(ctx, "turn", goal="start a game")
     assert made == [("Hiç Görülmemiş Oyun", True)]  # the discovery observer is also used in the turn
     observer, goal, notes, tracked = runs[0]
     assert tracked and "When 'Start new game' is on screen: Begin here." in notes
-    assert "özet: Tried Exit twice" in r.text and "+1 yeni, 1 doğrulandı" in r.text  # code's lesson + model confirm
+    assert "summary: Tried Exit twice" in r.text and "+1 new, 1 confirmed" in r.text  # code's lesson + model confirm
     lessons = {x["do"]: x for x in GameSession.open(tmp_path, "Hiç Görülmemiş Oyun").lessons()}
     assert lessons["Begin here."]["source"] == "seen"
     assert any(d.startswith("Clicking 'Exit' changes nothing") for d in lessons)
     assert "2 ders" in tool.run(ctx, "status").text
-    assert "toplam 1 tur" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
+    assert "1 turns" in tool.run(ctx, "end").text and STATE_KEY not in ctx.state
 
 
 # ------------------------------------------------------------------------------------------- rules
@@ -557,8 +557,8 @@ def test_game_tool_play_looks_plans_acts_and_learns_rules(monkeypatch, tmp_path)
     assert goal == "Click the 4 of clubs" and "Expected: 4 moves onto 5" in notes  # Jev makes the planned move
     assert calls == ["vision", "vision", "brain", "vision", "fast"]  # two reads, plan, (play), look again, compare
     assert "Second, independent reading of the same board:\nColumn 3: 4 of spades" in planned[0]
-    assert "hamle: Click the 4 of clubs" in r and "tahta şimdi:\nColumn 6: 5 of diamonds, 4 of clubs." in r
-    assert "1 doğrulandı" in r
+    assert "hamle: Click the 4 of clubs" in r and "board now:\nColumn 6: 5 of diamonds, 4 of clubs." in r
+    assert "1 confirmed" in r
     (rule,) = [x for x in GameSession.open(tmp_path, "Solitaire").lessons() if x["kind"] == "rule"]
     assert rule["source"] == "seen" and rule["score"] == 1  # rule confirmed by playing
 
@@ -610,7 +610,7 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
     assert made[0].stop_after_change and made[0].track_changes  # move: stop at the first change
     assert "RESULT: goal done." in first
     second = tool.run(ctx, "play").text
-    assert "OLMADI (tahtaya göre)" in second
+    assert "did NOT go as expected (according to the board)" in second
     rows = GameSession.open(tmp_path, "Kart")
     assert [t["status"] for t in rows.turns()] == ["done", "failed"]
     rules = [r for r in rows.lessons() if r["kind"] == "rule"]

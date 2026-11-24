@@ -104,7 +104,7 @@ def test_malformed_tool_call_fields_are_fed_back_not_crash(workdir):
     assert agent.run_turn("dene") == "ok"
     tools = [m for m in agent.messages if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tools] == ["n1", "n2", "n3"]
-    assert all(m["content"].startswith("HATA") for m in tools)
+    assert all(m["content"].startswith("ERROR") for m in tools)
     calls = next(m for m in agent.messages if m.get("tool_calls"))["tool_calls"]
     # Calls sent back into history are in a form the API accepts: name and arguments are strings.
     assert all(isinstance(c["function"]["name"], str) and isinstance(c["function"]["arguments"], str) for c in calls)

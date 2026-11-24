@@ -230,7 +230,7 @@ class FindFiles(Tool):
             path: str = "", apply: bool = False) -> ToolResult:
         if action == "open":
             if not path:
-                raise ToolError("open için path gerekli")
+                raise ToolError("open needs path")
             # A relative path is resolved against the chat's working folder (it used to be relative to the process cwd).
             p = ctx.resolve(path)
             if not p.exists():
@@ -241,17 +241,17 @@ class FindFiles(Tool):
                 import subprocess
 
                 subprocess.Popen(["xdg-open" if sys.platform != "darwin" else "open", str(p)])
-            return ToolResult(f"açıldı: {p.name}")
+            return ToolResult(f"opened: {p.name}")
         if action == "tidy":
             plan = tidy_plan()
             if not plan:
-                return ToolResult("İndirilenler zaten düzenli (taşınacak dosya yok)")
+                return ToolResult("Downloads is already tidy (no files to move)")
             counts: dict[str, int] = {}
             for _, dest in plan:
                 counts[dest.parent.name] = counts.get(dest.parent.name, 0) + 1
             summary = ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda x: -x[1]))
             if not apply:
-                return ToolResult(f"{len(plan)} dosya taşınacak: {summary}. Onaylarsa apply=true ile tekrar çağır.")
+                return ToolResult(f"{len(plan)} files will be moved: {summary}. If the user approves, call again with apply=true.")
             moved = 0
             for src, dest in plan:
                 try:
@@ -262,14 +262,14 @@ class FindFiles(Tool):
                     moved += 1
                 except OSError:
                     continue
-            return ToolResult(f"{moved} dosya taşındı ({summary}); İndirilenler'in içinde alt klasörlerde.")
+            return ToolResult(f"{moved} files moved ({summary}); they are in subfolders inside Downloads.")
         fn = {"recent": recent, "downloads": downloads, "search": search}.get(action)
         if fn is None:
-            raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"unknown action: {action}")
         hits = fn(query, kind, days)
         if not hits and action == "recent":  # not among recent files: search the disk
             hits = search(query, kind, days)
-        return ToolResult("\n".join(_fmt(p, ts) for p, ts in hits) or "bulunamadı")
+        return ToolResult("\n".join(_fmt(p, ts) for p, ts in hits) or "not found")
 
 
 TOOLS = [FindFiles()]

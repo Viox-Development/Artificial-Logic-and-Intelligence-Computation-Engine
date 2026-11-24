@@ -44,14 +44,14 @@ def test_signal_lines_are_picked_from_a_cut_middle():
     lines[900] = "Traceback (most recent call last):"
     lines[901] = "ValueError: bad input in parse_config"
     out = smart_truncate("\n".join(lines), 3000, failed=True)
-    assert "önemli satır" in out and "ValueError: bad input" in out
-    assert "|" in out.split("önemli satır", 1)[1]  # numbered rows
+    assert "important lines" in out and "ValueError: bad input" in out
+    assert "|" in out.split("important lines", 1)[1]  # numbered rows
 
 
 def test_repeated_lines_collapse_without_losing_the_error():
     log = "\n".join([f"Collecting dep{i % 3}" for i in range(400)] + ["ERROR: No matching distribution for foo"])
     out = smart_truncate(log, 3000)
-    assert len(out) < 400 and "benzer" in out and "No matching distribution" in out
+    assert len(out) < 400 and "similar" in out and "No matching distribution" in out
 
 
 def test_failed_command_gives_the_tail_more_room():

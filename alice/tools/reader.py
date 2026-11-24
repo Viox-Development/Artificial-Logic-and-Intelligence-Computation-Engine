@@ -318,7 +318,7 @@ class _MD:
             return "\n"
         if t == "img":
             alt = _squash(n.attrs.get("alt", ""))
-            return f"[görsel: {alt}]" if alt else ""
+            return f"[image: {alt}]" if alt else ""
         if t == "a":
             return self.link(n.attrs.get("href", ""), _squash(inner))
         if t in ("strong", "b") and inner.strip():
@@ -527,8 +527,8 @@ def references(links: list[tuple[str, str]], used: set[int] | None = None, limit
     if not rows:
         return ""
     extra = len(rows) - limit
-    rows = rows[:limit] + ([f"... {extra} bağlantı daha"] if extra > 0 else [])
-    return "\n\n## Bağlantılar\n" + "\n".join(rows)
+    rows = rows[:limit] + ([f"... {extra} more links"] if extra > 0 else [])
+    return "\n\n## Links\n" + "\n".join(rows)
 
 
 def used_links(text: str) -> set[int]:
@@ -660,7 +660,7 @@ def bm25_select(markdown: str, query: str, budget: int = 12000, k1: float = 1.2,
         head, body = parts[i]
         out.append((f"### {head}\n\n" if head else "") + body)
     skipped = n - len(keep)
-    note = f"\n\n[sorunla ilgili {len(keep)}/{n} bölüm gösterildi; {skipped} bölüm atlandı]" if skipped else ""
+    note = f"\n\n[{len(keep)}/{n} sections relevant to the question shown; {skipped} sections skipped]" if skipped else ""
     return "\n\n---\n\n".join(out) + note
 
 
@@ -702,11 +702,11 @@ def detect_block(status: int, html: str, text_len: int | None = None) -> str:
     real = status < 400 and (text_len or 0) > 3000
     for rx in TIER1:
         if rx.search(head) and not real:
-            return f"bot koruması ({rx.pattern[:40]})"
+            return f"bot protection ({rx.pattern[:40]})"
     if status == 429:
-        return "HTTP 429 (çok fazla istek)"
+        return "HTTP 429 (too many requests)"
     if status in (403, 503) and size and not html.lstrip().startswith(("{", "[", "<?xml")):
-        return f"HTTP {status} engel sayfası"
+        return f"HTTP {status} block page"
     if status >= 400 and size < 10_000 and not html.lstrip().startswith(("{", "[", "<?xml")):
         for rx in TIER2:
             if rx.search(html):
@@ -715,15 +715,15 @@ def detect_block(status: int, html: str, text_len: int | None = None) -> str:
         visible = text_len if text_len is not None else len(_squash(re.sub(r"<[^>]+>", " ", re.sub(
             r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I))))
         if size < 100:
-            return "neredeyse boş cevap"
+            return "almost empty response"
         if size < 50_000 and visible < 200:
             for rx in TIER2:
                 if rx.search(html):
-                    return f"engel sayfası ({rx.pattern})"
+                    return f"block page ({rx.pattern})"
         # A JavaScript app shell or an interstitial: markup/script but almost no text (an empty mount point, or a
         # page like Reddit's that only runs a script and resubmits a form).
         if visible < 300 and (JS_SHELL.search(html) or size > 5_000 or "<script" in head.lower()):
-            return "JavaScript ile yüklenen sayfa (metin yok)"
+            return "page loaded with JavaScript (no text)"
     return ""
 
 

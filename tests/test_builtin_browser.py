@@ -38,7 +38,7 @@ def test_console_and_network_events_are_collected():
     assert any("ERR_CONNECTION_REFUSED http://localhost/api" in t for _, t in kinds)
     assert any("HTTP 404" in t for _, t in kinds)
     out = format_logs(list(page.logs))
-    assert out.startswith("4 hata") and "yakalanmamış hata" in out
+    assert out.startswith("4 errors") and "uncaught error" in out
 
 
 def test_agent_uses_builtin_browser_by_default(monkeypatch, workdir):
@@ -107,7 +107,7 @@ def test_preview_opens_page_and_reports_errors(monkeypatch, workdir):
     Preview().run(ctx, "check")
     assert ("hist", "reload") in bb.calls
     assert Preview().risk_for({"action": "open", "command": "npm run dev"}) == "exec"
-    with pytest.raises(ToolError, match="yalnız ALICE uygulamasında"):
+    with pytest.raises(ToolError, match="only in the ALICE app"):
         Preview().run(ToolContext(cwd=workdir, config=ctx.config), "check")
 
 

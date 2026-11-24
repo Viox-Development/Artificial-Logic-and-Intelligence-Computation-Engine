@@ -255,7 +255,7 @@ def restore_reads(ctx: ToolContext, messages: list[dict[str, Any]], saved_at: fl
     session" error and had to read it again. Only files unchanged on disk since the chat's last save (saved_at) count
     as read; if one changed, editing against the old content is still rejected."""
     ok = {m.get("tool_call_id") for m in messages
-          if m.get("role") == "tool" and not str(m.get("content") or "").startswith("HATA:")}
+          if m.get("role") == "tool" and not str(m.get("content") or "").startswith(("ERROR:", "HATA:"))}
     n = 0
     for m in messages:
         for tc in m.get("tool_calls") or []:

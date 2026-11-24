@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from alice.apps import App, find, registry
+from alice.i18n import _
 from alice.tools.base import COMPUTER, READ, SEND, Tool, ToolContext, ToolError, ToolResult, obj
 
 
@@ -23,7 +24,7 @@ def _open_web(ctx: ToolContext, url: str) -> str:
     except Exception as e:  # noqa: BLE001 - failing to connect to the browser is not the end of the job
         from alice.tools.desktop import open_app
 
-        ctx.emit(f"tarayıcıya bağlanılamadı ({e}), varsayılan tarayıcıyla açılıyor")
+        ctx.emit(f"could not connect to the browser ({e}); opening with the default browser")
         return open_app(url)
 
 
@@ -84,8 +85,8 @@ def _ensure_window(app: App, wait: float = WINDOW_WAIT, sleep=None) -> str:
             sleep(0.5)
             title = find_title()
         if title is None:
-            raise ToolError(f"{app.label} açıldı ama '{app.window_title}' başlıklı pencere {int(wait)} sn içinde "
-                            "gelmedi; tarifte window alanını pencerenin gerçek başlığına göre ayarla")
+            raise ToolError(f"{app.label} opened but no window titled '{app.window_title}' came within {int(wait)} s; "
+                            "set the recipe's window field to the window's real title")
     focus_window(title)
     return title
 
@@ -95,7 +96,7 @@ def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps
     from alice.reflex.observers import BrowserObserver, DesktopObserver
 
     if ctx.decider is None or ctx.router is None:
-        raise ToolError("karar motoru yapılandırılmamış (alice doctor)")
+        raise ToolError("the decision engine is not configured (alice doctor)")
     try:
         goal = app.goal(flow, args)
     except ValueError as e:
@@ -113,15 +114,15 @@ def _flow(ctx: ToolContext, app: App, flow: str, args: dict[str, Any], max_steps
 def _describe(apps: dict[str, App]) -> str:
     rows = []
     for a in sorted(apps.values(), key=lambda x: x.name):
-        bits = [a.name, f"({a.kind}" + (", masaüstü" if a.flows and a.flow_target == "desktop" else "") + ")"]
+        bits = [a.name, f"({a.kind}" + (", desktop" if a.flows and a.flow_target == "desktop" else "") + ")"]
         if a.desktop:
-            bits.append(f"masaüstü kuruluysa: {a.desktop}")
+            bits.append(f"if the desktop app is installed: {a.desktop}")
         if a.api:
             bits.append(f"API: {a.api}")
         if a.flows:
-            bits.append("akışlar: " + ", ".join(f"{f}({', '.join(a.fields(f))})" for f in sorted(a.flows)))
+            bits.append("flows: " + ", ".join(f"{f}({', '.join(a.fields(f))})" for f in sorted(a.flows)))
         rows.append(" · ".join(bits))
-    return "\n".join(rows) or "kayıt yok"
+    return "\n".join(rows) or "no entries"
 
 
 class AppTool(Tool):
@@ -162,9 +163,9 @@ class AppTool(Tool):
     def summary(self, args: dict[str, Any]) -> str:
         a = args.get("action", "")
         if a == "list":
-            return "tanımlı uygulamalar"
+            return _("defined apps")
         name = args.get("name", "")
-        return f"{name} · {args.get('flow')}" if a == "flow" else f"{name} aç"
+        return f"{name} · {args.get('flow')}" if a == "flow" else _("open {name}", name=name)
 
     def run(self, ctx: ToolContext, action: str, name: str = "", flow: str = "", args: dict[str, Any] | None = None,
             target: str = "", max_steps: int = 20) -> ToolResult:
@@ -173,15 +174,15 @@ class AppTool(Tool):
             return ToolResult(_describe(apps))
         app = find(name, apps=apps)
         if app is None:
-            raise ToolError(f"'{name}' diye bir uygulama tanımı yok. Tanımlılar: {', '.join(sorted(apps))}. "
-                            "Yenisini ~/.alice/apps.toml içine ekleyebilirsin.")
+            raise ToolError(f"there is no app definition called '{name}'. Defined: {', '.join(sorted(apps))}. "
+                            "You can add a new one to ~/.alice/apps.toml.")
         chosen = preferred(app, apps)
         if chosen is not app and (action != "flow" or flow in chosen.flows):
-            ctx.emit(f"{app.label}: masaüstü uygulaması kurulu, onunla ({chosen.label})")
+            ctx.emit(f"{app.label}: the desktop app is installed, using it ({chosen.label})")
             app = chosen
         if action == "flow":
             if not app.flows:
-                raise ToolError(f"{app.label} için tanımlı akış yok; open ile açıp browser/reflex ile devam et.")
+                raise ToolError(f"{app.label} has no defined flow; open it with open and continue with browser/reflex.")
             note = f"\n({app.note})" if app.note else ""
             return ToolResult(_flow(ctx, app, flow, args or {}, max_steps) + note)
         # open
@@ -191,7 +192,7 @@ class AppTool(Tool):
             from alice.apps import FIELD_RX
 
             if FIELD_RX.search(app.url) and not target.strip():
-                raise ToolError(f"{app.label}: target gerekli, şablon: {app.url}")
+                raise ToolError(f"{app.label}: target is required, template: {app.url}")
             url = FIELD_RX.sub(lambda _m: target.strip(), app.url)
             from alice.tools.desktop import open_app
 
@@ -202,7 +203,7 @@ class AppTool(Tool):
             out = open_app(app.exe or app.label)
         extra = []
         if app.api:
-            extra.append(f"not: bu servisin resmî bağlantısı var ({app.api}), veri işleri için onu kullan")
+            extra.append(f"note: this service has an official connection ({app.api}); use it for data jobs")
         if app.note:
             extra.append(app.note)
         return ToolResult(out + ("\n" + "\n".join(extra) if extra else ""))

@@ -99,7 +99,7 @@ def find_blender(ctx: ToolContext | None = None) -> str:
             return e
     if exes:
         return exes[0]
-    raise ToolError("Blender bulunamadı. Kuruluysa config.toml'a [blender] path = \"...blender.exe\" ekle.")
+    raise ToolError("Blender not found. If it is installed, add [blender] path = \"...blender.exe\" to config.toml.")
 
 
 def _section(out: str, name: str) -> str:
@@ -155,7 +155,7 @@ class Blender(Tool):
         blend = self._blend(ctx, file)
         if action == "open":
             if not blend.exists():
-                raise ToolError(f"sahne dosyası yok: {blend}. Önce action=run ile oluştur.")
+                raise ToolError(f"no scene file: {blend}. Create it with action=run first.")
             kwargs: dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
                                       "stdin": subprocess.DEVNULL}
             if IS_WIN:
@@ -163,11 +163,11 @@ class Blender(Tool):
             else:
                 kwargs["start_new_session"] = True
             subprocess.Popen([exe, str(blend)], **kwargs)
-            return ToolResult(f"Blender penceresinde açılıyor: {blend}")
+            return ToolResult(f"opening in the Blender window: {blend}")
         if action != "run":
-            raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"unknown action: {action}")
         if not code or not code.strip():
-            raise ToolError("run için code gerekli")
+            raise ToolError("run needs code")
 
         blend.parent.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix="alice-blender-"))
@@ -192,7 +192,7 @@ class Blender(Tool):
                 pop.wait()
                 fo.seek(0)
                 tail = fo.read().decode("utf-8", errors="replace")[-3000:]
-                return ToolResult(f"ZAMAN AŞIMI ({timeout} sn): betik bitmedi (sonsuz döngü ya da çok ağır işlem?)\n{tail}",
+                return ToolResult(f"TIMEOUT ({timeout} s): the script did not finish (an endless loop or a very heavy job?)\n{tail}",
                                   is_error=True)
             fo.seek(0)
             out = fo.read().decode("utf-8", errors="replace")
@@ -209,13 +209,13 @@ class Blender(Tool):
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
         parts = []
         if err:
-            parts.append("BETİK HATASI (sahne kaydedilmedi, betiği düzeltip tekrar çalıştır):\n" + err)
+            parts.append("SCRIPT ERROR (the scene was not saved; fix the script and run it again):\n" + err)
         elif rc != 0 or not scene:
-            parts.append(f"Blender {rc} koduyla çıktı:\n" + out[-3000:])
+            parts.append(f"Blender exited with code {rc}:\n" + out[-3000:])
         else:
             parts.append(f"tamam, sahne kaydedildi: {blend}")
         if user_out.strip():
-            parts.append("print çıktısı:\n" + user_out.strip())
+            parts.append("print output:\n" + user_out.strip())
         if scene:
             parts.append("sahnedeki nesneler:\n" + scene)
         parts += notes

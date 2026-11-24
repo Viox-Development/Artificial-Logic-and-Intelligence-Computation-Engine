@@ -2,7 +2,7 @@
 start_session and hand_off in Claude Code).
 
 A separate chat runs on its own (shown in the sidebar, the user can steer it). When its turn ends, it reports
-the result here as an "[Oturum bitti]" message. fork=true also gives the new chat this conversation's history,
+the result here as a "[Session finished]" message. fork=true also gives the new chat this conversation's history,
 so work based on what was learned here is not researched again. Runs only inside the app (ctx.state["sessions"]).
 """
 
@@ -45,30 +45,30 @@ class Session(Tool):
             id: str = "") -> ToolResult:  # noqa: A002
         api = ctx.state.get("sessions")
         if api is None:
-            raise ToolError("ayrı oturum yalnız ALICE uygulamasında başlatılabilir")
+            raise ToolError("a separate session can only be started in the ALICE app")
         if action == "list":
             rows = api.linked()
             if not rows:
-                return ToolResult("bu sohbetten başlatılmış oturum yok")
+                return ToolResult("no sessions were started from this chat")
             return ToolResult("\n".join(f"{r['id']}  {r['title']}  [{r['state']}]" for r in rows))
         if action == "message":
             if not id or not prompt:
-                raise ToolError("message için id ve prompt gerekli")
+                raise ToolError("message needs id and prompt")
             err = api.message(id, prompt)
             if err:
                 raise ToolError(err)
             return ToolResult(f"{id} oturumuna iletildi")
         if action not in ("start", "handoff"):
-            raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"unknown action: {action}")
         if not prompt.strip():
-            raise ToolError("prompt gerekli: yeni oturumun eksiksiz görevi")
+            raise ToolError("prompt is required: the new session's complete task")
         handoff = action == "handoff"
         sid, err = api.start(prompt.strip(), (title or prompt.strip().splitlines()[0])[:80], fork or handoff)
         if err:
             raise ToolError(err)
-        tail = (" Bu işi burada bırak; kullanıcının yeni isteğine dön." if handoff else
-                " Bitince sonucu bu sohbete '[Oturum bitti]' mesajıyla gelecek; beklemeden devam edebilirsin.")
-        return ToolResult(f"Ayrı oturum başladı: {sid} ('{title or prompt[:40]}'). Kenar çubuğunda görünür.{tail}")
+        tail = (" Leave this job here; go back to the user's new request." if handoff else
+                " When it's done, its result comes to this chat as a '[Session finished]' message; you can continue without waiting.")
+        return ToolResult(f"Separate session started: {sid} ('{title or prompt[:40]}'). It shows in the sidebar.{tail}")
 
 
 TOOLS: list[Tool] = [Session()]

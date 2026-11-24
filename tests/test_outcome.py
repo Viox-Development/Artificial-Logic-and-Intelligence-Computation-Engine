@@ -29,28 +29,28 @@ def test_new_error_box_is_reported_with_its_text(screen):
     screen.texts[7] = "Windows 'C:/Users/k/Downloads/Sonora-Setup.exe' öğesini bulamıyor. | Tamam"
     screen.fg = 7
     note = w.note(sleep=lambda s: None)
-    assert "yeni iletişim kutusu 'Sonora-Setup.exe'" in note and "bulamıyor" in note
-    assert "körlemesine Enter" in note
+    assert "new dialog 'Sonora-Setup.exe'" in note and "bulamıyor" in note
+    assert "Enter/OK blindly" in note
 
 
 def test_dialog_already_in_front_is_mentioned_again(screen):
     screen.wins[8] = {"title": "Farklı Kaydet", "cls": "#32770", "pid": 5}
     screen.fg = 8
     note = outcome.Watch().note(sleep=lambda s: None)  # the box was already open and is still in front
-    assert "önde açık bir iletişim kutusu var 'Farklı Kaydet'" in note
+    assert "a dialog is open in front 'Farklı Kaydet'" in note
 
 
 def test_open_without_any_window_is_not_assumed_success(screen):
     slept = []
     note = outcome.Watch(opening=True).note(sleep=slept.append)
-    assert "yeni bir pencere görünmedi" in note and "varsayma" in note
+    assert "no new window appeared" in note and "don't assume" in note
     assert sum(slept) == pytest.approx(outcome.OPEN_WAIT)
 
 
 def test_uac_prompt_is_handed_to_the_user(screen):
     w = outcome.Watch()
     screen.uac = True
-    assert "izin ekranı (UAC)" in w.note(sleep=lambda s: None)
+    assert "permission screen (UAC)" in w.note(sleep=lambda s: None)
 
 
 def test_quiet_when_nothing_changed(screen):

@@ -121,7 +121,7 @@ def test_apply_patch_add_update_delete(ctx, workdir):
     assert not (workdir / "old.txt").exists()
     trashed = list((alice_home() / "trash").rglob("old.txt"))  # not permanently deleted: it is in ALICE's trash
     assert len(trashed) == 1 and trashed[0].read_text(encoding="utf-8") == "eski\n"
-    assert "çöpünde" in r.text
+    assert "trash" in r.text
     assert "+    return 10" in r.diff
     assert str(workdir / "old.txt") in ctx.state["checkpoint"]
 
@@ -131,7 +131,7 @@ def test_apply_patch_is_all_or_nothing(ctx, workdir):
     ReadFile().run(ctx, path="a.txt")
     patch = ("*** Begin Patch\n*** Update File: a.txt\n-bir\n+BİR\n*** Update File: a.txt\n-yok\n+x\n"
              "*** End Patch")
-    with pytest.raises(ToolError, match="bulunamadı"):
+    with pytest.raises(ToolError, match="not found"):
         ApplyPatch().run(ctx, patch=patch)
     assert (workdir / "a.txt").read_text(encoding="utf-8") == "bir\niki\n"
 
@@ -169,10 +169,10 @@ def test_apply_patch_update_requires_read_like_edit_file(ctx, workdir):
 def test_apply_patch_rejects_bad_input(ctx, workdir):
     with pytest.raises(ToolError, match="Begin Patch"):
         parse_patch("merhaba")
-    with pytest.raises(ToolError, match="'\\+' ile"):
+    with pytest.raises(ToolError, match="must start with '\\+'"):
         parse_patch("*** Begin Patch\n*** Add File: a\nx\n*** End Patch")
     (workdir / "var.txt").write_text("x", encoding="utf-8")
-    with pytest.raises(ToolError, match="zaten var"):
+    with pytest.raises(ToolError, match="already exists"):
         ApplyPatch().run(ctx, patch="*** Begin Patch\n*** Add File: var.txt\n+y\n*** End Patch")
     assert ApplyPatch().summary({"patch": PATCH}) == "update src/a.py, add src/new.py, delete old.txt"
 

@@ -215,7 +215,7 @@ def test_press_eval_text_tabs_back(ctx, session):
     page.eval_result = lambda *a, **k: {"ok": 1}
     assert browser.Browser().run(ctx, "eval", js="return 1;").text == "{'ok': 1}"
     page.eval_result = lambda *a, **k: "x" * 10000
-    assert "kesildi" in browser.Browser().run(ctx, "text").text  # tool_output_chars limit
+    assert "cut" in browser.Browser().run(ctx, "text").text  # tool_output_chars limit
     assert "<- aktif" in browser.Browser().run(ctx, "tabs").text
     page.eval_result = lambda *a, **k: []
     browser.Browser().run(ctx, "back")

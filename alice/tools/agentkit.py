@@ -155,7 +155,7 @@ class McpResources(Tool):
                     body = body[:60000] + "\n… (shortened)"
                 return ToolResult(body or "(empty resource)", images=images)
             raise ToolError("could not read the resource: " + "; ".join(errors)[:500])
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 # ---------------------------------------------------------------------------------------------------- code intelligence
@@ -393,7 +393,7 @@ class CodeIntel(Tool):
                     rel = p
                 lines.append(f"{rel}:{ln}: {text[:200]}")
             return ToolResult(f"{len(hits)} results{' (first 150)' if len(hits) >= 150 else ''}:\n" + "\n".join(lines))
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 TOOLS = [Notify(), EnterPlanMode(), McpResources(), CodeIntel()]

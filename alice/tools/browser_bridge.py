@@ -134,13 +134,13 @@ class Bridge:
             return self.up
         url = self.find_upstream()
         if not url:
-            raise ConnectionError("tarayıcıda uzaktan hata ayıklama açık değil")
+            raise ConnectionError("remote debugging is not on in the browser")
         connect = self._connect
         if connect is None:
             from websockets.asyncio.client import connect
         # The browser asks the user for permission here, once: give them time to answer.
         self.up = await connect(url, open_timeout=120, max_size=None, ping_interval=None)
-        self.log(f"tarayıcıya bağlanıldı: {url}")
+        self.log(f"connected to the browser: {url}")
         loop = asyncio.get_running_loop()
         self._pump = loop.create_task(self._pump_up(self.up))
         if self.heartbeat > 0:
@@ -164,9 +164,9 @@ class Bridge:
             except Exception:  # noqa: BLE001 - timeout or broken socket
                 misses += 1
                 if misses < HEARTBEAT_MISSES:
-                    self.log(f"tarayıcı {self.heartbeat_timeout:.0f} sn cevap vermedi; bir kez daha bekleniyor")
+                    self.log(f"the browser did not answer for {self.heartbeat_timeout:.0f} s; waiting once more")
                     continue
-                self.log(f"tarayıcı üst üste {misses} kez cevap vermedi; bağlantı ölü sayılıyor")
+                self.log(f"the browser did not answer {misses} times in a row; the connection counts as dead")
                 await self._shutdown(up)
                 return
 
@@ -191,9 +191,9 @@ class Bridge:
             async for raw in up:
                 await self._from_browser(raw)
         except Exception as e:  # noqa: BLE001
-            self.log(f"tarayıcı bağlantısı koptu: {e}")
+            self.log(f"the browser connection dropped: {e}")
         finally:
-            self.log("tarayıcı kapandı; köprü kapanıyor")
+            self.log("the browser closed; the bridge is closing")
             await self._shutdown(up)
 
     async def _from_browser(self, raw) -> None:
@@ -257,12 +257,12 @@ class Bridge:
             if self.closed.is_set():
                 # The browser link died and the bridge is closing: don't reconnect and prompt again; the client
                 # starts a new bridge.
-                await ws.close(1011, "köprü kapanıyor")
+                await ws.close(1011, "the bridge is closing")
                 return
             try:
                 up = await self._upstream()
             except Exception as e:  # noqa: BLE001
-                self.log(f"tarayıcıya bağlanılamadı: {e}")
+                self.log(f"could not connect to the browser: {e}")
                 await ws.close(1011, str(e)[:120])
                 return
             await self._cleanup()
@@ -270,7 +270,7 @@ class Bridge:
             gen = self.gen
             self.pending.clear()
             self.client = ws
-        self.log("istemci bağlandı")
+        self.log("client connected")
         try:
             async for raw in ws:
                 msg = neutralize(json.loads(raw))
@@ -296,7 +296,7 @@ class Bridge:
                     self.client = None
                     self.gen += 1
                     await self._cleanup()
-            self.log("istemci ayrıldı")
+            self.log("client disconnected")
 
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
@@ -334,12 +334,12 @@ async def serve(port: int, log=print, bridge: Bridge | None = None, auth: bool =
         # (another bridge is running), its key must not be overwritten.
         if auth:
             key["token"] = write_token()
-        log(f"köprü dinliyor: {endpoint(port)}")
+        log(f"bridge listening: {endpoint(port)}")
         await bridge.closed.wait()
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description="ALICE tarayıcı köprüsü")
+    p = argparse.ArgumentParser(description="ALICE browser bridge")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     a = p.parse_args(argv)
     from alice.config import alice_home
@@ -356,7 +356,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         asyncio.run(serve(a.port, log))
     except OSError as e:  # port in use: another bridge is already running
-        log(f"köprü başlatılamadı: {e}")
+        log(f"could not start the bridge: {e}")
 
 
 if __name__ == "__main__":

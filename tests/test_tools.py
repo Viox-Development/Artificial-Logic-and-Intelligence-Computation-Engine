@@ -235,7 +235,7 @@ def test_blender_tool_parses_error_and_scene(tmp_path, monkeypatch):
     ctx = ToolContext(cwd=tmp_path, config=Cfg(), router=None)
     res = bl.Blender().run(ctx, action="run", code="import bpy", new=True)
     assert res.is_error
-    assert "gas_color" in res.text and "BETİK HATASI" in res.text
+    assert "gas_color" in res.text and "SCRIPT ERROR" in res.text
     assert "Cube [MESH]" in res.text and "kullanici ciktisi" in res.text
     assert "Blender 5.2.1" not in res.text
 

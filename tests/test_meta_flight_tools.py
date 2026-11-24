@@ -216,7 +216,7 @@ class FakeHub:
 
 
 def test_alert_home_without_hub(ctx, no_hub):
-    assert "çalışmıyor" in flight_mod.Flight().run(ctx, action="alert_home", nm=10).text
+    assert "isn't running" in flight_mod.Flight().run(ctx, action="alert_home", nm=10).text
 
 
 @pytest.mark.parametrize("nm", [None, 0, -5])
@@ -267,7 +267,7 @@ def test_alert_home_unparseable_text_nm(ctx, monkeypatch):
 
 
 def test_status_without_hub(ctx, no_hub):
-    assert "çalışmıyor" in flight_mod.Flight().run(ctx, action="status").text
+    assert "isn't running" in flight_mod.Flight().run(ctx, action="status").text
 
 
 # ================================================================== flight: last debrief
@@ -286,9 +286,9 @@ def _debrief_dict(**over):
 
 
 def test_last_debrief_none_saved(ctx, no_hub):
-    assert flight_mod.Flight().run(ctx, action="last_debrief").text == "kayıtlı uçuş yok"
+    assert flight_mod.Flight().run(ctx, action="last_debrief").text == "no recorded flights"
     (alice_home() / "flights").mkdir(parents=True)
-    assert flight_mod.Flight().run(ctx, action="last_debrief").text == "kayıtlı uçuş yok"
+    assert flight_mod.Flight().run(ctx, action="last_debrief").text == "no recorded flights"
 
 
 def test_last_debrief_reads_newest_file(ctx, no_hub):
@@ -324,7 +324,7 @@ def user_checklist():
 
 def test_checklist_list_includes_user_list(ctx, user_checklist):
     out = flight_mod.Flight().run(ctx, action="checklist_list").text
-    assert "zz-deneme: Zz Deneme Listesi (3 adım)" in out
+    assert "zz-deneme: Zz Deneme Listesi (3 steps)" in out
 
 
 def test_checklist_list_empty(ctx, monkeypatch):
@@ -344,14 +344,14 @@ def test_checklist_full_flow(ctx, user_checklist):
     f.run(ctx, action="checklist_next")
     assert f.run(ctx, action="checklist_next").text == "Zz Deneme Listesi kontrol listesi tamam."
     assert "checklist" not in ctx.state  # closes when finished
-    with pytest.raises(ToolError, match="açık kontrol listesi yok"):
+    with pytest.raises(ToolError, match="no open checklist"):
         f.run(ctx, action="checklist_next")
 
 
 def test_checklist_stop(ctx, user_checklist):
     f = flight_mod.Flight()
     f.run(ctx, action="checklist_start", name="zz-deneme")
-    assert f.run(ctx, action="checklist_stop").text == "kontrol listesi kapatıldı"
+    assert f.run(ctx, action="checklist_stop").text == "checklist closed"
     assert "checklist" not in ctx.state
     with pytest.raises(ToolError):
         f.run(ctx, action="checklist_stop")
@@ -361,7 +361,7 @@ def test_checklist_start_unknown(ctx, monkeypatch):
     import alice.sims.checklists as cl
 
     monkeypatch.setattr(cl, "load_all", lambda: {})
-    with pytest.raises(ToolError, match="liste bulunamadı: hiçbiri"):
+    with pytest.raises(ToolError, match="list not found: hiçbiri"):
         flight_mod.Flight().run(ctx, action="checklist_start", name="hiçbiri")
 
 
@@ -419,7 +419,7 @@ def test_kneeboard_note_requires_text(ctx, dcs_env):
 
 def test_kneeboard_note_writes_pages_without_mission(ctx, dcs_env):
     r = flight_mod.Flight().run(ctx, action="kneeboard_note", text="tanker 5Y")
-    assert r.text == "kneeboard güncellendi (2 sayfa; görev yok)."
+    assert r.text == "kneeboard updated (2 pages; no mission)."
     pages = sorted(p.name for p in (dcs_env["sg"] / "Kneeboard").glob("*.png"))
     assert pages == ["ALICE_01.png", "ALICE_02.png"]
     info, notes = dcs_env["renders"][-1]
@@ -439,7 +439,7 @@ def test_kneeboard_build_with_explicit_mission(ctx, dcs_env, tmp_path):
     miz.write_bytes(b"x")
     dcs_env["read"] = SimpleNamespace(name="Op Kartal", waypoints=[1, 2, 3])
     r = flight_mod.Flight().run(ctx, action="kneeboard_build", mission=str(miz))
-    assert r.text == "kneeboard güncellendi (2 sayfa; görev: Op Kartal, 3 waypoint)."
+    assert r.text == "kneeboard updated (2 pages; mission: Op Kartal, 3 waypoints)."
 
 
 def test_kneeboard_build_uses_latest_mission(ctx, dcs_env, tmp_path):
@@ -447,19 +447,19 @@ def test_kneeboard_build_uses_latest_mission(ctx, dcs_env, tmp_path):
     miz.write_bytes(b"x")
     dcs_env["latest"] = miz
     dcs_env["read"] = SimpleNamespace(name="Son", waypoints=[])
-    assert "görev: Son, 0 waypoint" in flight_mod.Flight().run(ctx, action="kneeboard_build").text
+    assert "mission: Son, 0 waypoints" in flight_mod.Flight().run(ctx, action="kneeboard_build").text
 
 
 def test_kneeboard_build_missing_mission_file(ctx, dcs_env, tmp_path):
     r = flight_mod.Flight().run(ctx, action="kneeboard_build", mission=str(tmp_path / "yok.miz"))
-    assert "görev yok" in r.text
+    assert "no mission" in r.text
 
 
 def test_kneeboard_build_unreadable_mission_raises(ctx, dcs_env, tmp_path):
     miz = tmp_path / "bozuk.miz"
     miz.write_bytes(b"x")
     dcs_env["read"] = ValueError("bozuk zip")
-    with pytest.raises(ToolError, match="görev okunamadı: bozuk zip"):
+    with pytest.raises(ToolError, match="could not read the mission: bozuk zip"):
         flight_mod.Flight().run(ctx, action="kneeboard_build", mission=str(miz))
 
 
@@ -468,7 +468,7 @@ def test_kneeboard_note_tolerates_unreadable_mission(ctx, dcs_env, tmp_path):
     miz.write_bytes(b"x")
     dcs_env["latest"] = miz
     dcs_env["read"] = KeyError("mission")
-    assert "görev yok" in flight_mod.Flight().run(ctx, action="kneeboard_note", text="n").text
+    assert "no mission" in flight_mod.Flight().run(ctx, action="kneeboard_note", text="n").text
 
 
 def test_kneeboard_without_dcs_folder(ctx, dcs_env):

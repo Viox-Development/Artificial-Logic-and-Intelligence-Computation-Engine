@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alice.i18n import _
 from alice.tools.base import READ, WRITE, Tool, ToolContext, ToolError, ToolResult, obj
 
 
@@ -41,7 +42,7 @@ class CodeReview(Tool):
         return WRITE if args.get("post") else READ
 
     def summary(self, args: dict[str, Any]) -> str:
-        what = f"PR #{args['number']}" if args.get("number") else "yerel değişiklikler"
+        what = f"PR #{args['number']}" if args.get("number") else "local changes"
         return f"{what} ({args.get('focus') or 'bugs'})" + (", PR'a yaz" if args.get("post") else "")
 
     def run(self, ctx: ToolContext, target: str = "", number: int = 0, repo: str = "", base: str = "",
@@ -50,26 +51,26 @@ class CodeReview(Tool):
         from alice.tools.github import GitHub, _api
 
         if ctx.router is None:
-            raise ToolError("model yönlendiricisi yok: inceleme bu bağlamda çalışmaz")
+            raise ToolError("no model router: the review can't run in this context")
         target = target or ("pr" if number else "local")
         sha = ""
         if target == "pr":
             if not number:
-                raise ToolError("target=pr için number gerekli")
+                raise ToolError("target=pr needs number")
             api = _api(ctx)
             repo = GitHub()._repo(ctx, repo)
             title, diff, sha = review.pr_diff(api, repo, int(number))
         else:
             if post:
-                raise ToolError("post yalnız target=pr ile")
+                raise ToolError("post only with target=pr")
             title, diff = review.local_diff(ctx.cwd, base)
-        ctx.emit(f"bağımsız inceleme başladı: {title}")
+        ctx.emit(_("independent review started: {title}", title=title))
         findings = review.review(ctx.config, ctx.router, ctx.cwd, title, diff, focus, verify)
         text = review.report(findings)
         if post:
             url = review.post(_api(ctx), repo, int(number), sha, findings, diff)
-            text += f"\n\nPR'a inceleme olarak yazıldı: {url}"
-        ctx.emit("bağımsız inceleme bitti")
+            text += f"\n\nPosted to the PR as a review: {url}"
+        ctx.emit(_("independent review finished"))
         return ToolResult(text)
 
 

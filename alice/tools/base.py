@@ -144,7 +144,7 @@ def check_args(tool: Tool, args: dict[str, Any]) -> str:
     for k, v in args.items():
         enum = (props.get(k) or {}).get("enum")
         if enum and isinstance(v, str) and v not in enum:
-            return f"{tool.name}: {k}='{v}' geçersiz. Geçerli değerler: {', '.join(map(str, enum))}."
+            return f"{tool.name}: {k}='{v}' is invalid. Valid values: {', '.join(map(str, enum))}."
     return ""
 
 
@@ -154,7 +154,7 @@ def unknown_params(tool: Tool, args: dict[str, Any]) -> str:
     extra = [k for k in args if k not in props]
     if not extra or not props:
         return ""
-    return (f"{tool.name}: bilinmeyen parametre: {', '.join(extra)}. Geçerli parametreler: "
+    return (f"{tool.name}: unknown parameter: {', '.join(extra)}. Valid parameters: "
             f"{', '.join(props)}.")
 
 
@@ -173,7 +173,7 @@ def make_diff(path: str, before: str, after: str, context: int = 3, max_lines: i
     lines = list(difflib.unified_diff(before.splitlines(), after.splitlines(),
                                       fromfile=f"a/{path}", tofile=f"b/{path}", n=context, lineterm=""))
     if len(lines) > max_lines:
-        lines = lines[:max_lines] + [f"... ({len(lines) - max_lines} satır daha)"]
+        lines = lines[:max_lines] + [f"... ({len(lines) - max_lines} more lines)"]
     return "\n".join(lines)
 
 
@@ -181,10 +181,10 @@ def truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     if limit <= 0:  # text[-0:] used to return the whole text
-        return f"... [{len(text)} karakter kesildi] ..."
+        return f"... [{len(text)} characters cut] ..."
     head = int(limit * 0.6)
     tail = limit - head
-    return f"{text[:head]}\n\n... [{len(text) - limit} karakter kesildi] ...\n\n{text[-tail:]}"
+    return f"{text[:head]}\n\n... [{len(text) - limit} characters cut] ...\n\n{text[-tail:]}"
 
 
 # Lines worth keeping from the cut middle of a long command output: errors, failures, tracebacks, summaries.
@@ -209,7 +209,7 @@ def _collapse_repeats(lines: list[str]) -> list[str]:
             while j < len(lines) and norm(lines[j]) == norm(lines[i]):
                 j += 1
         if j - i >= _REPEAT_MIN:
-            out += [lines[i], f"    ... (benzer {j - i - 2} satır daha) ...", lines[j - 1]]
+            out += [lines[i], f"    ... ({j - i - 2} similar lines more) ...", lines[j - 1]]
         else:
             out += lines[i:j]
         i = j
@@ -231,7 +231,7 @@ def smart_truncate(text: str, limit: int, failed: bool = False) -> str:
     if len(squeezed) <= limit:
         return squeezed
     if limit <= 0:
-        return f"... [{len(text)} karakter kesildi] ..."
+        return f"... [{len(text)} characters cut] ..."
     head_n = int(limit * (0.3 if failed else 0.45))
     tail_n = int(limit * (0.45 if failed else 0.35))
     sig_n = limit - head_n - tail_n
@@ -257,9 +257,9 @@ def smart_truncate(text: str, limit: int, failed: bool = False) -> str:
         picked.append(row)
         used += len(row) + 1
     cut = len(squeezed) - head_n - tail_n
-    mid = f"\n\n... [{cut} karakter kesildi"
+    mid = f"\n\n... [{cut} characters cut"
     if picked:
-        mid += f"; aradan {len(picked)} önemli satır (satır no ile):]\n" + "\n".join(picked) + "\n[...]\n\n"
+        mid += f"; {len(picked)} important lines in between (with line numbers):]\n" + "\n".join(picked) + "\n[...]\n\n"
     else:
         mid += "] ...\n\n"
     return head + mid + tail

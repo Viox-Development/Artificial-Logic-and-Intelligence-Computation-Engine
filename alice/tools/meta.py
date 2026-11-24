@@ -224,7 +224,7 @@ class Memory(Tool):
                 raise ToolError("done needs id")
             f = mem.done_followup(int(id))
             return ToolResult(f"closed: {f.text}" if f else f"#{id} not found")
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 class Task(Tool):

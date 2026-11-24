@@ -110,9 +110,9 @@ def test_web_fetch_binary_content_returns_summary(ctx, monkeypatch):
                               request=httpx.Request("GET", url))
 
     monkeypatch.setattr(web.httpx, "get", fake_get)
-    for url, ctype in (("https://bin.example/logo.png", "image/png"), ("https://bin.example/blob", "türü belirtilmemiş")):
+    for url, ctype in (("https://bin.example/logo.png", "image/png"), ("https://bin.example/blob", "type not given")):
         out = web.WebFetch().run(ctx, url=url).text
-        assert "ikili içerik" in out and ctype in out and f"{len(png)} bayt" in out
+        assert "binary content" in out and ctype in out and f"{len(png)} bytes" in out
         assert "IHDR" not in out
 
 
@@ -141,7 +141,7 @@ def test_web_fetch_truncates_to_config_limit(workdir, monkeypatch):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}, tool_output_chars=200))
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, "A" * 5000, ctype="text/plain"))
     out = web.WebFetch().run(ctx, url="https://a").text
-    assert "karakter kesildi" in out
+    assert "characters cut" in out
     assert len(out) < 400
 
 
@@ -212,14 +212,14 @@ def test_web_search_formats(ctx, ddg):
 def test_web_search_no_results(ctx, ddg, monkeypatch):
     ddg["html"] = ""
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, "<html></html>"))
-    assert web.WebSearch().run(ctx, query="q").text == "sonuç yok"
+    assert web.WebSearch().run(ctx, query="q").text == "no results"
 
 
 def test_web_search_errors_become_tool_error(ctx, ddg, monkeypatch):
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     ddg["status"] = 429
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, "", status=503))
-    with pytest.raises(ToolError, match="arama başarısız"):
+    with pytest.raises(ToolError, match="search failed"):
         web.WebSearch().run(ctx, query="q")
 
     def boom(*a, **k):
@@ -266,7 +266,7 @@ def test_web_search_falls_back_to_bing_when_ddg_blocks(ctx, ddg, monkeypatch):
 def test_web_search_domain_filters(ctx, ddg, monkeypatch):
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     monkeypatch.setattr(web.httpx, "get", lambda url, **kw: _resp(url, "<html></html>"))
-    assert "sonuç yok" == web.WebSearch().run(ctx, query="q", allowed_domains=["eal.example"]).text  # not partial
+    assert "no results" == web.WebSearch().run(ctx, query="q", allowed_domains=["eal.example"]).text  # not partial
     out = web.WebSearch().run(ctx, query="q", allowed_domains=["real.example"]).text
     assert ddg["data"] == {"q": "q site:real.example"}
     assert "real.example" in out and "direct.example" not in out
@@ -307,7 +307,7 @@ def test_web_fetch_paginates_with_start(workdir, monkeypatch):
     assert "start=100" in first and body[:100] in first
     second = web.WebFetch().run(ctx, url="https://a", start=100).text
     assert body[100:200] in second and "start=200" in second and "[karakter 100-200 / 300]" in second
-    assert "sonunu aşıyor" in web.WebFetch().run(ctx, url="https://a", start=999).text
+    assert "past the end of the text" in web.WebFetch().run(ctx, url="https://a", start=999).text
 
 
 class _FakeRouter:
@@ -372,9 +372,9 @@ def test_http_request_sends_json_and_env_header(ctx, monkeypatch):
 
 
 def test_http_request_bad_json_and_missing_env(ctx):
-    with pytest.raises(ToolError, match="json geçerli JSON değil"):
+    with pytest.raises(ToolError, match="json is not valid JSON"):
         web.HttpRequest().run(ctx, url="https://a", json="{bozuk")
-    with pytest.raises(ToolError, match="ortam değişkeni yok: YOK_BOYLE"):
+    with pytest.raises(ToolError, match="no such environment variable: YOK_BOYLE"):
         web.HttpRequest().run(ctx, url="https://a", headers='{"X": "${env:YOK_BOYLE}"}')
 
 
@@ -442,7 +442,7 @@ def test_http_request_interrupted_download_keeps_existing_file(ctx, monkeypatch,
     monkeypatch.setattr(web.httpx, "stream", lambda method, url, **kw: client.stream(method, url, **kw))
     (workdir / "f.bin").write_bytes(b"eski ve saglam")
     monkeypatch.setattr(ctx, "cancelled", lambda: True)
-    with pytest.raises(ToolError, match="durdurdu"):
+    with pytest.raises(ToolError, match="stopped by the user"):
         web.HttpRequest().run(ctx, url="https://a/f.bin", save_to="f.bin")
     assert (workdir / "f.bin").read_bytes() == b"eski ve saglam"
     assert [p.name for p in workdir.iterdir()] == ["f.bin"]  # no half-written .part file is left behind

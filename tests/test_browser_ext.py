@@ -201,7 +201,7 @@ def test_browser_tool_works_through_extension(ext):
     assert ("run", {"tabId": 2, "fn": "key", "args": ["Enter"]}) in fh.calls  # window in background: Enter in page
     tool.run(ctx, "click", element_id=1)
     assert ("run", {"tabId": 2, "fn": "click", "args": [1, "left", 1]}) in fh.calls
-    with pytest.raises(ToolError, match="öğe bulunamadı"):
+    with pytest.raises(ToolError, match="element not found"):
         tool.run(ctx, "click", element_id=99)
     assert "Sonora metni" in tool.run(ctx, "text").text
     tabs = tool.run(ctx, "tabs").text
@@ -248,7 +248,7 @@ def test_browser_own_pages_get_a_clear_message(ext):
         return FakeHub.call(fh, method, **p)
 
     fh.call = deny
-    with pytest.raises(ToolError, match="tarayıcının kendi sayfası"):
+    with pytest.raises(ToolError, match="browser's own page"):
         b.snapshot()
 
 
@@ -289,12 +289,12 @@ def test_download_skips_save_as_and_returns_path(ext, files_server, tmp_path, mo
     monkeypatch.setattr(fetch_file, "downloads_dir", lambda: dl)
     url = f"{files_server}/Sonora-Setup.exe"
     r = browser.Browser().run(ctx, "download", url=url)
-    assert r.text == f"indirildi: {dl / 'Sonora-Setup.exe'}, 0.3 MB — kurulumu/dosyayı bu yolla aç"
+    assert r.text == f"downloaded: {dl / 'Sonora-Setup.exe'}, 0.3 MB — open the installer/file at this path"
     assert (dl / "Sonora-Setup.exe").read_bytes()[:2] == b"MZ" and not list(dl.glob("*.part"))
     assert browser.Browser().risk_for({"action": "download"}) == "network"
     assert not any(c == "download" for c, _ in fh.calls)  # tarayıcıya hiç gitmedi
     # windows open ile açılan kurulum bağlantısı da tarayıcıya gitmez; ikinci kopya üzerine yazmaz
-    assert open_app(url).startswith(f"indirildi (açılmadı): {dl / 'Sonora-Setup (1).exe'}")
+    assert open_app(url).startswith(f"downloaded (not opened): {dl / 'Sonora-Setup (1).exe'}")
     assert "Sonora-Setup (1).exe | complete" in browser.Browser().run(ctx, "downloads").text
 
 
@@ -307,7 +307,7 @@ def test_download_needing_login_falls_back_to_browser(ext, files_server, tmp_pat
     fh.call = lambda m, _timeout=15.0, **p: ({"file": "", "url": p["url"], "state": "in_progress", "bytes": 0,
                                               "total": 0} if m == "download" else orig(m, _timeout, **p))
     r = browser.Browser().run(ctx, "download", url=f"{files_server}/login.html")  # page: login required
-    assert "kaydetme penceresi açık olabilir" in r.text
+    assert "a save dialog may be open" in r.text
 
 
 def test_open_missing_file_says_so_and_lists_lookalikes(tmp_path):

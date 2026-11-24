@@ -78,7 +78,7 @@ def token(account: str) -> str:
     name = PREFIX + account
     row = store.get(name)
     if not row.get("access_token"):
-        raise ToolError(f"'{account}' Gmail hesabı bağlı değil. Bağlamak için: alice connect gmail --account {account}")
+        raise ToolError(f"the Gmail account '{account}' is not connected. To connect: alice connect gmail --account {account}")
     if store.expired(row):
         cid, secret = _creds()
         try:
@@ -94,7 +94,7 @@ def _request(account: str, method: str, path: str, client: Any = None, **kw: Any
     c = client or httpx
     r = c.request(method, API + path, headers={"Authorization": f"Bearer {token(account)}"}, timeout=30, **kw)
     if r.status_code == 401:
-        raise ToolError(f"{account}: yetki reddedildi, tekrar bağlan: alice connect gmail --account {account}")
+        raise ToolError(f"{account}: permission denied, connect again: alice connect gmail --account {account}")
     if r.status_code >= 400:
         raise ToolError(f"{account}: Gmail HTTP {r.status_code}: {r.text[:300]}")
     return r.json() if r.content else {}
@@ -261,11 +261,11 @@ class Gmail(Tool):
         accs = accounts()
         if account:
             if account not in accs:
-                raise ToolError(f"'{account}' bağlı değil. Bağlı hesaplar: {', '.join(accs) or 'yok'}")
+                raise ToolError(f"'{account}' is not connected. Connected accounts: {', '.join(accs) or 'none'}")
             return account
         if len(accs) == 1:
             return accs[0]
-        raise ToolError("hangi hesap? account ver. Bağlı hesaplar: " + (", ".join(accs) or
+        raise ToolError("which account? give account. Connected accounts: " + (", ".join(accs) or
                         "yok (alice connect gmail --account <ad>)"))
 
     def run(self, ctx: ToolContext, action: str, account: str = "", query: str = "", id: str = "", to: str = "",
@@ -275,24 +275,24 @@ class Gmail(Tool):
 
             accs = accounts()
             if not accs:
-                return ToolResult("bağlı Gmail hesabı yok. Bağlamak için: alice connect gmail --account <ad>")
+                return ToolResult("no Gmail account connected. To connect: alice connect gmail --account <name>")
             return ToolResult("\n".join(f"- {a}: {store.get(PREFIX + a).get('email', '')}" for a in accs))
         if action == "search":
             targets = [self._account(account)] if account else accounts()
             if not targets:
-                raise ToolError("bağlı Gmail hesabı yok: alice connect gmail --account <ad>")
+                raise ToolError("no Gmail account connected: alice connect gmail --account <name>")
             lines, errors = [], []
             for acc in targets:
                 try:
                     lines += [line(acc, m) for m in search(acc, query or "in:inbox", limit)]
                 except ToolError as e:
                     errors.append(str(e))
-            text = "\n".join(lines) or "sonuç yok"
+            text = "\n".join(lines) or "no results"
             return ToolResult(text + ("\n\nHATALAR: " + "; ".join(errors) if errors else ""))
         acc = self._account(account)
         if action == "read":
             if not id:
-                raise ToolError("read için id gerekli")
+                raise ToolError("read needs id")
             msg = _get(acc, f"/messages/{id}", format="full")
             h = _headers(msg)
             text = body_text(msg.get("payload") or {})
@@ -300,31 +300,31 @@ class Gmail(Tool):
                               f"Tarih: {h.get('date', '')}\n\n{text[:8000]}")
         if action in ("mark_read", "archive"):
             if not id:
-                raise ToolError(f"{action} için id gerekli")
+                raise ToolError(f"{action} needs id")
             labels = ["UNREAD"] if action == "mark_read" else ["INBOX"]
             _request(acc, "POST", f"/messages/{id}/modify", json={"removeLabelIds": labels})
-            return ToolResult("okundu işaretlendi" if action == "mark_read" else "arşivlendi")
+            return ToolResult("marked as read" if action == "mark_read" else "archived")
         if action == "draft":
             reply, thread = None, ""
             if id:
                 reply, subj, sender, thread = _reply_parts(acc, id)
                 subject, to = subject or subj, to or sender
             if not to or not body:
-                raise ToolError("draft için to ve body gerekli (cevapta to boş olabilir)")
+                raise ToolError("draft needs to and body (to may be empty in a reply)")
             message: dict[str, Any] = {"raw": _raw(to, subject, body, cc, reply)}
             if thread:
                 message["threadId"] = thread
             d = _request(acc, "POST", "/drafts", json={"message": message})
-            return ToolResult(f"taslak hazır (gönderilmedi): draft_id={d.get('id')} [{acc}] → {to}: {subject}\n\n{body}")
+            return ToolResult(f"draft ready (not sent): draft_id={d.get('id')} [{acc}] → {to}: {subject}\n\n{body}")
         if action == "send":
             if draft_id:
                 r = _request(acc, "POST", "/drafts/send", json={"id": draft_id})
             else:
                 if not to or not body:
-                    raise ToolError("send için draft_id ya da to ve body gerekli")
+                    raise ToolError("send needs draft_id, or to and body")
                 r = _request(acc, "POST", "/messages/send", json={"raw": _raw(to, subject, body, cc)})
-            return ToolResult(f"gönderildi [{acc}] id={r.get('id', '')}")
-        raise ToolError(f"bilinmeyen action: {action}")
+            return ToolResult(f"sent [{acc}] id={r.get('id', '')}")
+        raise ToolError(f"unknown action: {action}")
 
 
 TOOLS = [Gmail()]

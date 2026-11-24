@@ -47,7 +47,7 @@ def test_media_tool_controls_the_playing_app_and_reports_result(monkeypatch, tmp
 
     monkeypatch.setattr(time, "sleep", lambda s: None)
     ctx = ToolContext(cwd=tmp_path, config=make_config({"brain": ["a:m"]}))
-    assert extras.Media().run(ctx, "next").text == "tamam; şimdi: X – B (Sonora, çalıyor)"
+    assert extras.Media().run(ctx, "next").text == "done; now: X – B (Sonora, çalıyor)"
     assert calls == ["next"]
     assert extras.Media().run(ctx, "now").text == "X – B (Sonora, çalıyor)"
     monkeypatch.setattr(nowplaying, "control", lambda a: False)  # no session: falls back to the media key
