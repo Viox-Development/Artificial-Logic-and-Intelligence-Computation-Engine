@@ -690,6 +690,8 @@ REPL komutları: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (Shift+Tab ile de 
 
 ## Arka plan çekirdeği
 
+> English: [guide/core.md](guide/core.md)
+
 ALICE'in altında, sen yazmasan da çalışan küçük bir servis var. Bilgisayarı izliyor, uzun süren sorunlarda haber veriyor, ortama göre mod değiştiriyor ve zamanlanmış görevleri çalıştırıyor.
 
 ```powershell

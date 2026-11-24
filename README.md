@@ -54,6 +54,7 @@ ALICE ships with about 90 tools. The main groups:
 - **KAIROS:** a background agent that wakes itself up when it decides to, checks the situation, and acts.
 - **Night cycle:** ALICE reads its own logs at night and fixes repeated mistakes, noisy announcements, and false
   wake-ups.
+- Details: [docs/guide/core.md](docs/guide/core.md).
 
 **Memory and awareness**
 - Notes, past conversations, and follow-ups across sessions, with a page to review, edit, or delete what it knows.
