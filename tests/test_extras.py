@@ -207,9 +207,10 @@ def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeyp
     monkeypatch.setattr(shell.RunCommand, "run", fake_run)
     calls = {"content": "", "tool_calls": [_cmd("a", "python a.py"), _cmd("b", "python b.py"), _cmd("c", "node c.js")]}
     agent, _, ui = make_agent([calls, "bitti"], workdir, mode="auto")
-    t0 = time.monotonic()
     agent.run_turn("üçünü paralel çalıştır")
-    assert seen["max"] == 3 and time.monotonic() - t0 < 0.8  # in sequence this would take 0.9 s
+    # All three were running at once. No wall-clock check: a slow CI runner can take longer than the 0.9 s a
+    # sequential run would need even when the commands overlap.
+    assert seen["max"] == 3
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_msgs] == ["a", "b", "c"]  # results come back in the requested order
     assert [m["content"] for m in tool_msgs] == [f"çıkış kodu 0 {c}" for c in ("python a.py", "python b.py", "node c.js")]
