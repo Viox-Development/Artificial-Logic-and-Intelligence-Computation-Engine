@@ -7,11 +7,13 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from alice.i18n import _, language
 from alice.config import alice_home
 from alice.core.store import Store
 
-REPORT_PROMPT = ("Haftalık bilgisayar raporumu hazırla: report aracını kind=pc ile çağır ve en önemli 3-4 noktayı kısaca anlat "
-                 "(sıcaklık, disk, bellek, dikkat edilmesi gereken bir şey varsa). Rapor dosyasının yolunu da söyle.")
+REPORT_PROMPT = ("Prepare my weekly computer report: call the report tool with kind=pc and briefly tell me the 3-4 most "
+                 "important points in my language (temperatures, disks, memory, anything to watch out for). Also give "
+                 "the path of the report file.")
 
 
 def build(store: Store, days: int = 7, now: float | None = None) -> dict:
@@ -19,16 +21,17 @@ def build(store: Store, days: int = 7, now: float | None = None) -> dict:
     since = now - days * 86400
     prev = since - days * 86400
     out: dict = {"days": days, "since": since, "until": now, "rows": [], "procs": [], "disks": [], "alerts": []}
-    for key, label, unit in (("pc.cpu.temp", "İşlemci sıcaklığı", "°C"), ("pc.gpu.temp", "Ekran kartı sıcaklığı", "°C"),
-                             ("pc.cpu.percent", "İşlemci kullanımı", "%"), ("pc.gpu.util", "Ekran kartı kullanımı", "%"),
-                             ("pc.mem.percent", "Bellek kullanımı", "%")):
+    for key, label, unit in (("pc.cpu.temp", _("Processor temperature"), "°C"), ("pc.gpu.temp", _("Graphics card temperature"), "°C"),
+                             ("pc.cpu.percent", _("Processor usage"), "%"), ("pc.gpu.util", _("Graphics card usage"), "%"),
+                             ("pc.mem.percent", _("Memory usage"), "%")):
         s = store.stats(key, since, now)
         if not s.count:
             continue
         p = store.stats(key, prev, since)
-        delta = f" (önceki haftaya göre ort {s.avg - p.avg:+.1f})" if p.count else ""
+        delta = _(" (avg {delta} vs. the previous week)", delta=f"{s.avg - p.avg:+.1f}") if p.count else ""
         when = datetime.fromtimestamp(s.max_ts).strftime("%d.%m %H:%M") if s.max_ts else ""
-        out["rows"].append((label, f"ort {s.avg:.0f}{unit}, en yüksek {s.max:.0f}{unit} ({when}){delta}"))
+        out["rows"].append((label, _("avg {avg}, highest {max} ({when})", avg=f"{s.avg:.0f}{unit}", max=f"{s.max:.0f}{unit}",
+                                     when=when) + delta))
     for key in store.keys("pc.disk.*.percent", since=since):
         series = store.series(key, since, now)
         if series:
@@ -48,20 +51,21 @@ def build(store: Store, days: int = 7, now: float | None = None) -> dict:
 
 
 def text(r: dict) -> str:
-    lines = [f"Son {r['days']} gün:"]
+    lines = [_("Last {n} days:", n=r["days"])]
     lines += [f"- {k}: {v}" for k, v in r["rows"]]
     for name, a, b in r["disks"]:
-        lines.append(f"- Disk {name}: %{b:.0f} dolu ({b - a:+.1f} puan)")
+        lines.append(_("- Disk {name}: {pct}% full ({delta} points)", name=name, pct=f"{b:.0f}", delta=f"{b - a:+.1f}"))
     if r["procs"]:
-        lines.append("- En çok bellek kullananlar: " + ", ".join(f"{n} (ort {a / 1024:.1f} GB)" for n, a, _, _ in r["procs"][:4]))
+        lines.append(_("- Using the most memory: ") + ", ".join(_("{name} (avg {gb} GB)", name=n, gb=f"{a / 1024:.1f}")
+                                                                 for n, a, _max, _count in r["procs"][:4]))
     if r["alerts"]:
-        lines.append("- Uyarılar: " + "; ".join(f"{t} ×{n}" for t, n in r["alerts"][:5]))
+        lines.append(_("- Alerts: ") + "; ".join(f"{t} ×{n}" for t, n in r["alerts"][:5]))
     else:
-        lines.append("- Uyarı yok")
+        lines.append(_("- No alerts"))
     if r["flights"]:
-        lines.append(f"- Uçuş sayısı: {r['flights']}")
+        lines.append(_("- Flights: {n}", n=r["flights"]))
     if len(lines) == 2 and not r["rows"]:
-        lines.append("- Yeterli veri yok (çekirdek çalışıyor mu?)")
+        lines.append(_("- Not enough data (is the core running?)"))
     return "\n".join(lines)
 
 
@@ -74,21 +78,22 @@ def save_html(r: dict, out: Path | None = None) -> Path:
     rows = "".join(f"<tr><th>{h.escape(k)}</th><td>{h.escape(v)}</td></tr>" for k, v in r["rows"])
     disks = "".join(f"<tr><th>{h.escape(n)}</th><td><div class=bar><i style='width:{b:.0f}%'></i></div>"
                     f"%{b:.0f} ({b - a:+.1f})</td></tr>" for n, a, b in r["disks"])
-    procs = "".join(f"<tr><th>{h.escape(n)}</th><td>ort {a / 1024:.1f} GB, en fazla {m / 1024:.1f} GB</td></tr>"
-                    for n, a, m, _ in r["procs"])
-    alerts = "".join(f"<li>{h.escape(t)} <span class=m>×{n}</span></li>" for t, n in r["alerts"]) or "<li>Uyarı yok</li>"
+    procs = "".join(f"<tr><th>{h.escape(n)}</th><td>"
+                    + h.escape(_("avg {avg} GB, at most {max} GB", avg=f"{a / 1024:.1f}", max=f"{m / 1024:.1f}"))
+                    + "</td></tr>" for n, a, m, _count in r["procs"])
+    alerts = "".join(f"<li>{h.escape(t)} <span class=m>×{n}</span></li>" for t, n in r["alerts"]) or f"<li>{h.escape(_('No alerts'))}</li>"
     span = f"{datetime.fromtimestamp(r['since']):%d.%m} – {datetime.fromtimestamp(r['until']):%d.%m.%Y}"
-    page.write_text(f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Haftalık rapor</title><style>
+    page.write_text(f"""<!doctype html><html lang="{language()}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{h.escape(_('Weekly report'))}</title><style>
 :root{{--bg:#faf9f7;--fg:#222;--mut:#777;--line:#e4e1dc;--a:#c6613f}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#1c1b1a;--fg:#eee;--mut:#999;--line:#333;--a:#d97757}}}}
 body{{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;margin:24px 16px;max-width:760px}}
 th{{text-align:left;color:var(--mut);font-weight:400;padding:4px 16px 4px 0;vertical-align:top}} h2{{font-size:17px;margin-top:28px}}
 .bar{{display:inline-block;width:160px;height:8px;background:var(--line);border-radius:4px;margin-right:8px}}
 .bar i{{display:block;height:100%;background:var(--a);border-radius:4px}} .m{{color:var(--mut)}}
-</style></head><body><h1>Haftalık bilgisayar raporu</h1><p class=m>{span}</p>
-<h2>Genel</h2><table>{rows}</table><h2>Diskler</h2><table>{disks}</table>
-<h2>En çok bellek kullananlar</h2><table>{procs}</table><h2>Uyarılar</h2><ul>{alerts}</ul></body></html>""",
+</style></head><body><h1>{h.escape(_('Weekly computer report'))}</h1><p class=m>{span}</p>
+<h2>{h.escape(_('Overview'))}</h2><table>{rows}</table><h2>{h.escape(_('Disks'))}</h2><table>{disks}</table>
+<h2>{h.escape(_('Using the most memory'))}</h2><table>{procs}</table><h2>{h.escape(_('Alerts'))}</h2><ul>{alerts}</ul></body></html>""",
                     encoding="utf-8")
     return page
 
@@ -97,6 +102,6 @@ def install(at: str = "20:00", weekday: int = 0):
     from alice.core.schedule import ScheduledTask, TaskStore
 
     h, m = (int(x) for x in at.split(":"))
-    task = ScheduledTask(cron=f"{m} {h} * * {weekday}", prompt=REPORT_PROMPT, description="haftalık bilgisayar raporu",
+    task = ScheduledTask(cron=f"{m} {h} * * {weekday}", prompt=REPORT_PROMPT, description=_("weekly computer report"),
                          catch_up=True, created=time.time(), id="weekly-report")
     return TaskStore().add(task)

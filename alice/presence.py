@@ -131,8 +131,8 @@ def morning_info(cfg, now: datetime) -> dict[str, Any]:
     try:
         g = brief.gather(b, now=now, weather_fn=lambda c: "")
         if b.get("days"):
-            out["program"] = g.get("bugün", "")
-        out["notes"] = g.get("dünden kalanlar") or []
+            out["program"] = g.get("today", "")
+        out["notes"] = g.get("left_from_yesterday") or []
     except Exception:  # noqa: BLE001
         pass
     try:

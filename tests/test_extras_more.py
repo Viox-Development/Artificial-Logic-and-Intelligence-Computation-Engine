@@ -25,8 +25,8 @@ def test_weather_parsing():
             "weather": [{"mintempC": "9", "maxtempC": "18", "hourly": [{"chanceofrain": "10"}, {"chanceofrain": "65"}]}]}
     c = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=data)))
     out = brief.weather("Istanbul", c)
-    assert out == "Istanbul: şu an 14°C, parçalı bulutlu; bugün en düşük 9°C, en yüksek 18°C, yağmur ihtimali en fazla %65"
-    assert "ayarla" in brief.weather("")
+    assert out == "Istanbul: now 14°C, parçalı bulutlu; today low 9°C, high 18°C, chance of rain up to 65%"
+    assert "set [brief] city" in brief.weather("")
 
 
 def test_brief_gather(tmp_path):
@@ -39,10 +39,10 @@ def test_brief_gather(tmp_path):
     notes.add("yarın raporu bitir", ts=now.timestamp() - 14 * 3600)
     d = brief.gather({"city": "", "days": {"pazartesi": "okul", "salı": "staj"}}, st, ts, now=now,
                      weather_fn=lambda c: "güneşli")
-    assert d["tarih"].endswith("pazartesi") and d["bugün"] == "okul" and d["yarın"] == "staj"
-    assert d["gece çalışan görevler"] == ["gece yedeği: 12 proje yedeklendi"]
-    assert "Disk %96 dolu" in d["gece olanlar"][0] and d["dünden kalanlar"] == ["yarın raporu bitir"]
-    assert "bugün: okul" in brief.render(d)
+    assert d["date"].endswith("Monday") and d["today"] == "okul" and d["tomorrow"] == "staj"
+    assert d["tasks_overnight"] == ["gece yedeği: 12 proje yedeklendi"]
+    assert "Disk %96 dolu" in d["overnight"][0] and d["left_from_yesterday"] == ["yarın raporu bitir"]
+    assert "today: okul" in brief.render(d)
     t = brief.install("07:45", weekdays_only=True)
     assert t.cron == "45 7 * * 1-5" and TaskStore().get("brief")
 
@@ -60,11 +60,11 @@ def test_weekly_report(tmp_path):
     st.add_event("alert", "ALICE", "GPU 88°C", "warn", "pc", ts=now - 86400)
     r = report.build(st, 7, now)
     txt = report.text(r)
-    assert "Ekran kartı sıcaklığı: ort" in txt and "önceki haftaya göre" in txt
-    assert "Disk c: %85 dolu (+4.9 puan)" in txt and txt.index("unity.exe") < txt.index("chrome.exe")
+    assert "Graphics card temperature: avg" in txt and "vs. the previous week" in txt
+    assert "Disk c: 85% full (+4.9 points)" in txt and txt.index("unity.exe") < txt.index("chrome.exe")
     assert "GPU 88°C ×1" in txt
     page = report.save_html(r, tmp_path)
-    assert "Haftalık bilgisayar raporu" in page.read_text(encoding="utf-8")
+    assert "Weekly computer report" in page.read_text(encoding="utf-8")
     assert report.install().cron == "0 20 * * 0"
 
 
@@ -99,7 +99,7 @@ def test_report_tool(tmp_path):
 
     ctx = ToolContext(cwd=tmp_path, config=Config(default_config_dict()))
     ctx.state["core_store"] = Store(":memory:")
-    assert "bugün:" in Report().run(ctx, kind="morning").text
+    assert "today:" in Report().run(ctx, kind="morning").text
     assert "Rapor:" in Report().run(ctx, kind="pc").text
 
 

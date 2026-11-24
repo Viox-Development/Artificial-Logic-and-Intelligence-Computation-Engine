@@ -24,6 +24,6 @@ def test_weekly_summary_sunday_evening_once(tmp_path):
     send = lambda t, b: sent.append(b) or True  # noqa: E731
     assert weekly.maybe_send(store, None, None, send, now=now - 3 * 3600, **kw) is None  # not before 19 o'clock
     text = weekly.maybe_send(store, None, None, send, now=now, **kw)
-    assert "1 uçuş, toplam 30 dk; F-16C 1; en yumuşak iniş 1.4" in text and "War Thunder 4.0 saat" in text
+    assert "1 flights, 30 min in total; F-16C 1; softest landing 1.4" in text and "War Thunder 4.0 h" in text
     assert weekly.maybe_send(store, None, None, send, now=now + 600, **kw) is None and len(sent) == 1
     assert weekly.maybe_send(store, None, None, send, now=datetime(2026, 11, 2, 20).timestamp(), **kw) is None

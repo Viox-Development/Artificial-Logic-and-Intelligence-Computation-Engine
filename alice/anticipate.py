@@ -339,7 +339,7 @@ def _fetchers(cfg: Any, now: datetime) -> dict[str, Callable[[], str]]:
     b = dict((getattr(cfg, "data", None) or {}).get("brief") or {})
 
     def program() -> str:
-        return str(brief.gather(b, now=now, weather_fn=lambda c: "").get("bugün") or "")
+        return str(brief.gather(b, now=now, weather_fn=lambda c: "").get("today") or "")
 
     def posta() -> str:
         from alice.presence import unread_mail
