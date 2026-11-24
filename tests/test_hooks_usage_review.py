@@ -116,4 +116,4 @@ def test_post_puts_inline_and_outside_findings_correctly():
     assert review.post(API(), "o/r", 1, "sha", fs, DIFF) == "u"
     body = sent[0]
     assert [c["path"] for c in body["comments"]] == ["a.py"] and body["comments"][0]["line"] == 11
-    assert "Farkın dışında kalan" in body["body"] and "dışarıda" in body["body"] and "1 satır yorumu" in body["body"]
+    assert "Findings outside the diff" in body["body"] and "dışarıda" in body["body"] and "1 line comments" in body["body"]

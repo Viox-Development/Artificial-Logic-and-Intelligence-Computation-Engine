@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.tools.base import DANGER, Tool, ToolContext, ToolResult
 
 PLANNER = """You are a task planner. Split the user's request into 2-{max_steps} concrete steps to be done one after
@@ -96,7 +97,7 @@ def _first_json(text: str) -> dict[str, Any]:
         raise ValueError(f"planda JSON yok: {(text or '')[:160]}")
     val = json.loads(m.group(0))
     if not isinstance(val, dict):
-        raise ValueError("plan JSON obje değil")
+        raise ValueError("the plan is not a JSON object")
     return val
 
 
@@ -117,7 +118,7 @@ def parse_plan(goal: str, text: str, max_steps: int = 8) -> Plan:
                           risk=str(s.get("risk") or "").strip()))
     question = str(data.get("question") or "").strip()
     if not steps and not question:
-        raise ValueError("planda adım yok")
+        raise ValueError("the plan has no steps")
     return Plan(goal=goal, steps=steps[:max_steps], question=question)
 
 
@@ -147,16 +148,16 @@ class _TaskUI:
         return lambda *a, **k: None
 
     def tool_start(self, call_id: str, name: str, summary: str) -> None:
-        self.runner.log(f"  araç {name}({summary[:100]})")
+        self.runner.log(f"  tool {name}({summary[:100]})")
 
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None:
         if result.is_error:
-            self.runner.log(f"  araç hatası {name}: {result.text[:160]}")
+            self.runner.log(f"  tool error {name}: {result.text[:160]}")
 
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
         if self.runner.step_approved and risk != DANGER:
             return "y"
-        return "y" if self.runner.confirm(f"{name} çalıştırılsın mı: {summary[:160]}") else "n"
+        return "y" if self.runner.confirm(_("Run {name}: {summary}?", name=name, summary=summary[:160])) else "n"
 
 
 class TaskRunner:
@@ -215,12 +216,12 @@ class TaskRunner:
             agent = self.ctx.state.get("agent")
             ask = getattr(getattr(agent, "ui", None), "ask_permission", None)
             ok = ask is not None and ask("run_plan", question, DANGER) in ("y", "a", "p")
-            self.log("onay: " + ("evet" if ok else "hayır"))
+            self.log(_("approval: yes") if ok else _("approval: no"))
             return ok
         self._answer, self.waiting = None, question
         self._answered.clear()
         try:
-            say(f"[task waiting for approval] Ask the user briefly, in Turkish: {question} If they say yes, call "
+            say(f"[task waiting for approval] Ask the user briefly, in their language: {question} If they say yes, call "
                 "task_control action=approve; if no, action=reject. Don't approve it yourself.")
         except Exception:  # noqa: BLE001
             self.waiting = ""
@@ -231,7 +232,7 @@ class TaskRunner:
                 break
         self.waiting = ""
         ok = bool(self._answer)
-        self.log("onay: " + ("evet" if ok else "hayır" if self._answered.is_set() else "cevap gelmedi"))
+        self.log(_("approval: yes") if ok else _("approval: no") if self._answered.is_set() else _("approval: no answer"))
         return ok
 
     def answer(self, approve: bool) -> bool:
@@ -286,14 +287,14 @@ class TaskRunner:
         names = sorted(n for n in getattr(parent, "tools", {}) if n not in HIDDEN and not n.startswith("mcp__"))
         prompt = PLANNER.format(max_steps=self.max_steps, tools=", ".join(names) or "(bilinmiyor)")
         last: Exception | None = None
-        for _ in range(2):
+        for _try in range(2):
             res = self.ctx.router.chat("brain", [{"role": "system", "content": prompt},
                                                  {"role": "user", "content": self.goal}], max_tokens=1500)
             try:
                 return parse_plan(self.goal, res.text, self.max_steps)
             except (ValueError, json.JSONDecodeError) as e:
                 last = e
-        raise RuntimeError(f"plan çıkarılamadı: {last}")
+        raise RuntimeError(f"could not make a plan: {last}")
 
     def _plan_text(self, current: int) -> str:
         assert self.plan is not None
@@ -316,15 +317,15 @@ class TaskRunner:
         verdict = self._ask(VERIFY.format(step=step.goal, check=step.check, report=why[:600]), verify=True, steps=6)
         vok, vwhy = outcome(verdict, VERIFY_KEY, VERIFY_YES)
         if vok is False:
-            return False, f"doğrulanamadı: {vwhy}"
+            return False, f"could not verify: {vwhy}"
         return True, why
 
     def run(self) -> str:
-        self.log(f"görev: {self.goal}")
+        self.log(_("task: {goal}", goal=self.goal))
         try:
             self.plan = self.make_plan()
         except Exception as e:  # noqa: BLE001
-            self.log(f"plan hatası: {e}")
+            self.log(_("plan error: {error}", error=e))
             return f"error: {e}"
         plan = self.plan
         if plan.question:
@@ -340,13 +341,13 @@ class TaskRunner:
             self.step_approved = False
             if step.risky:
                 why = f" ({step.risk})" if step.risk else ""
-                if not self.confirm(f"{n}. adım geri alınamaz: {step.goal}{why}. Yapayım mı?"):
-                    step.status, step.result = "skipped", "kullanıcı onaylamadı"
-                    self.log(f"{n}. adım atlandı: onay yok")
+                if not self.confirm(_("Step {n} can't be undone: {goal}{why}. Shall I do it?", n=n, goal=step.goal, why=why)):
+                    step.status, step.result = "skipped", "the user didn't approve"
+                    self.log(_("step {n} skipped: no approval", n=n))
                     break
                 self.step_approved = True
             step.status = "running"
-            self.log(f"{n}. adım: {step.goal}")
+            self.log(_("step {n}: {goal}", n=n, goal=step.goal))
             reason = ""
             ok = False
             while step.tries < 2 and not self.stopped.is_set():
@@ -357,12 +358,12 @@ class TaskRunner:
                     ok, reason = False, f"{type(e).__name__}: {e}"
                 if ok:
                     break
-                self.log(f"{n}. adım olmadı ({step.tries}. deneme): {reason[:200]}")
+                self.log(_("step {n} failed (try {tries}): {reason}", n=n, tries=step.tries, reason=reason[:200]))
                 if step.risky:  # do not retry an irreversible step on our own, so it is not sent twice
                     break
             step.result = reason[:500]
             step.status = "done" if ok else "failed"
-            self.log(f"{n}. adım {'tamam' if ok else 'olmadı'}: {step.result[:200]}")
+            self.log((_("step {n} done: {result}", n=n, result=step.result[:200]) if ok else _("step {n} failed: {result}", n=n, result=step.result[:200])))
             if not ok:
                 break
         self.step_approved = False
@@ -387,10 +388,10 @@ class TaskRunner:
         return "\n".join(lines)
 
     def status_text(self) -> str:
-        head = f"görev: {self.goal}"
+        head = _("task: {goal}", goal=self.goal)
         if self.waiting:
             head += f"\nonay bekliyor: {self.waiting}"
-        return head + "\n" + (self._plan_text(0) if self.plan is not None else "planlanıyor")
+        return head + "\n" + (self._plan_text(0) if self.plan is not None else _("planning"))
 
 
 def task_log(text: str) -> None:

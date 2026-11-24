@@ -83,7 +83,7 @@ def test_parse_action_none_is_value_error():
 def test_task_result_report_tail():
     r = TaskResult("done", "tamam", [f"{i}. adım" for i in range(1, 21)])
     rep = r.report()
-    assert rep.startswith("done: tamam\nadımlar:\n9. adım") and rep.endswith("20. adım") and "\n8. adım" not in rep
+    assert rep.startswith("done: tamam\nsteps:\n9. adım") and rep.endswith("20. adım") and "\n8. adım" not in rep
     assert TaskResult("fail", "olmadı", []).report() == "fail: olmadı"
 
 
@@ -94,7 +94,7 @@ def test_prompt_lists_elements_values_and_placeholders():
     ComputerAgent(s, ask, settle=0).run("hedef")
     text = ask.seen[0][1]["content"][0]["text"]
     assert "GOAL: hedef" in text and "FOREGROUND WINDOW: ?" in text and "(nothing yet)" in text
-    assert "[2] Edit 'Ara' değer='abc'" in text and ask.seen[0][0]["content"] == ca.SYSTEM
+    assert "[2] Edit 'Ara' value='abc'" in text and ask.seen[0][0]["content"] == ca.SYSTEM
     s.elements = []
     ask2 = scripted('{"action": "fail", "summary": "giriş gerekli"}')
     res = ComputerAgent(s, ask2, settle=0).run("x")
@@ -134,16 +134,16 @@ def test_done_summary_falls_back_to_outer():
 def test_unparseable_and_empty_answers_are_steps():
     res = ComputerAgent(FakeScreen(), scripted("bilmiyorum", '{"actions": []}', '{"actions": ["x"]}'),
                         settle=0).run("x", max_steps=3)
-    assert res.status == "max_steps" and res.summary == "adım sınırı doldu"
-    assert res.steps[0].startswith("1. model cevabı okunamadı") and res.steps[1:] == ["2. boş aksiyon", "3. boş aksiyon"]
+    assert res.status == "max_steps" and res.summary == "the step limit ran out"
+    assert res.steps[0].startswith("1. could not read the model's answer") and res.steps[1:] == ["2. empty action", "3. empty action"]
 
 
 def test_two_model_errors_in_a_row_abort_with_quota_hint():
     emitted = []
     res = ComputerAgent(FakeScreen(), scripted(RuntimeError("429 Too Many"), RuntimeError("HTTP 429 quota")),
                         emit=emitted.append, settle=0).run("x")
-    assert res.status == "error" and "günlük ücretsiz kota" in res.summary
-    assert len(emitted) == 2 and emitted[0].startswith("görme modeli hatası")
+    assert res.status == "error" and "daily free quota" in res.summary
+    assert len(emitted) == 2 and emitted[0].startswith("vision model error")
 
 
 def test_model_error_counter_resets_after_success():
@@ -152,12 +152,12 @@ def test_model_error_counter_resets_after_success():
                    '{"action": "done", "summary": "ok"}')
     assert ComputerAgent(s, ask, settle=0).run("x").status == "done"
     res = ComputerAgent(s, scripted(RuntimeError("bağlantı"), RuntimeError("bağlantı koptu")), settle=0).run("x")
-    assert res.summary == "görme modeli kullanılamıyor: bağlantı koptu"
+    assert res.summary == "the vision model can't be used: bağlantı koptu"
 
 
 def test_observe_failure_stop_and_deadline(monkeypatch):
     res = ComputerAgent(FakeScreen(observe_error=OSError("mss yok")), scripted(), settle=0).run("x")
-    assert res.status == "error" and res.summary == "ekran okunamadı: mss yok"
+    assert res.status == "error" and res.summary == "could not read the screen: mss yok"
     assert ComputerAgent(FakeScreen(), scripted(), stop=lambda: True).run("x").status == "stopped"
     t = [0.0]
     monkeypatch.setattr(ca.time, "monotonic", lambda: t[0])
@@ -167,14 +167,14 @@ def test_observe_failure_stop_and_deadline(monkeypatch):
         return '{"action": "key", "keys": "%d"}' % t[0]
 
     res = ComputerAgent(FakeScreen(), slow, settle=0).run("x", max_seconds=150)
-    assert res.status == "fail" and res.summary == "150 sn içinde bitmedi" and len(res.steps) == 2
+    assert res.status == "fail" and res.summary == "did not finish within 150 s" and len(res.steps) == 2
 
 
 def test_repeat_detection_ignores_thought_changes():
     s = FakeScreen()
     answers = [json.dumps({"thought": f"deneme {i}", "action": "click", "id": 1}) for i in range(8)]
     res = ComputerAgent(s, scripted(*answers), settle=0).run("x")
-    assert res.status == "fail" and "tekrarlanıyor" in res.summary and len(s.acts) == 4  # one recovery attempt
+    assert res.status == "fail" and "keeps repeating" in res.summary and len(s.acts) == 4  # one recovery attempt
 
 
 def test_router_asker_passes_role_and_effort():
@@ -232,11 +232,11 @@ def test_act_keyboard_open_wait(io_fakes, monkeypatch):
     sleeps = []
     monkeypatch.setattr(ca.time, "sleep", sleeps.append)
     sc = Screen(None)
-    assert sc.act({"action": "type", "text": "merhaba", "enter": True}, SHOT) == "yazıldı: merhaba"
-    assert sc.act({"action": "key", "keys": "ctrl+s"}, SHOT) == "tuş: ctrl+s"
+    assert sc.act({"action": "type", "text": "merhaba", "enter": True}, SHOT) == "typed: merhaba"
+    assert sc.act({"action": "key", "keys": "ctrl+s"}, SHOT) == "key: ctrl+s"
     assert sc.act({"action": "open", "target": "notepad"}, SHOT) == "açıldı notepad"
     assert log == [("type", "merhaba"), ("keys", "enter"), ("keys", "ctrl+s"), ("open", "notepad")]
-    assert sc.act({"action": "wait", "seconds": 60}, SHOT) == "beklendi"
+    assert sc.act({"action": "wait", "seconds": 60}, SHOT) == "waited"
     sc.act({"action": "wait", "seconds": 0}, SHOT)
     assert sleeps == [1.5, 5.0, 0.5] and pg.calls == []
 
@@ -248,23 +248,23 @@ def test_act_mouse_actions(io_fakes):
     assert pg.calls[-1] == ("click", (500, 400), {"clicks": 2, "button": "left", "interval": 0.08})
     sc.act({"action": "right_click", "point": [0, 0]}, SHOT)
     assert pg.calls[-1] == ("click", (100, 50), {"clicks": 1, "button": "right", "interval": 0.08})
-    assert sc.act({"action": "scroll", "point": [500, 500], "direction": "up", "amount": 50}, SHOT) == "kaydırıldı up 10"
+    assert sc.act({"action": "scroll", "point": [500, 500], "direction": "up", "amount": 50}, SHOT) == "scrolled up 10"
     assert pg.calls[-1] == ("scroll", (1200,), {})
     sc.act({"action": "scroll", "point": [500, 500], "amount": 0}, SHOT)
     assert pg.calls[-1] == ("scroll", (-120,), {})
     res = sc.act({"action": "drag", "point": [0, 0], "to": [1000, 1000]}, SHOT)
-    assert res == "sürüklendi (100,50) -> (2100,1050)"
+    assert res == "dragged (100,50) -> (2100,1050)"
     assert pg.calls[-1] == ("dragTo", (2100, 1050), {"duration": 0.5, "button": "left"})
-    with pytest.raises(ValueError, match="bilinmeyen aksiyon"):
+    with pytest.raises(ValueError, match="unknown action"):
         sc.act({"action": "dance", "point": [1, 1]}, SHOT)
 
 
 def test_point_errors():
-    with pytest.raises(ValueError, match="öğe 9 yok"):
+    with pytest.raises(ValueError, match="no element 9"):
         Screen.point({"id": 9}, SHOT)
-    with pytest.raises(ValueError, match="id ya da point"):
+    with pytest.raises(ValueError, match="id or point"):
         Screen.point({"point": [1]}, SHOT)
-    with pytest.raises(ValueError, match="id ya da point"):
+    with pytest.raises(ValueError, match="id or point"):
         Screen.point({}, SHOT)
     assert Screen.point({"id": 0, "point": [0, 0]}, Shot("", 0, 0, 10, 10, [{"id": 0, "center": (7, 7)}])) == (7, 7)
 

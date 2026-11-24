@@ -147,12 +147,12 @@ def test_agent_open_rejects_empty_target(monkeypatch):
 
 def test_agent_open_refuses_script_with_trailing_dot(monkeypatch):
     monkeypatch.setattr("alice.tools.desktop.open_app", lambda t: pytest.fail("açılmamalı"))
-    with pytest.raises(ValueError, match="betik"):
+    with pytest.raises(ValueError, match="script"):
         Screen(None).act({"action": "open", "target": "C:/indirilen/kur.bat."}, SHOT)
 
 
 def test_point_is_clamped_to_screen():
     # if the model sends pixels instead of 0-1000, don't click off-screen or on another monitor
     assert Screen.point({"point": [1500, -20]}, SHOT) == (100, 1050)
-    with pytest.raises(ValueError, match="id ya da point"):
+    with pytest.raises(ValueError, match="id or point"):
         Screen.point({"point": "500,500"}, SHOT)

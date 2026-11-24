@@ -75,7 +75,7 @@ def test_rejected_risky_step_is_not_done(workdir):
     agent.run_turn("yap")
     report = [m for m in agent.messages if m["role"] == "tool" and m["name"] == "run_plan"][0]["content"]
     assert report.startswith("fail: 1/2")
-    assert "kullanıcı onaylamadı" in report
+    assert "the user didn't approve" in report
 
 
 def test_failed_verification_retries_step_once(workdir):
