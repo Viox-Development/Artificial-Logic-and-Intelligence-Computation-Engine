@@ -114,7 +114,7 @@ def test_arac_akis_ekler_listeler_siler(ffile, ctx):
     assert "ahmet_oyun" in listed and "değişince: gameextrainfo" in listed and "sessiz 23:00-08:00" in listed
     assert t.run(ctx, action="disable", name="ahmet_oyun").text == "turned off"
     assert "(off)" in t.run(ctx, action="list").text
-    assert t.run(ctx, action="remove", name="ahmet_oyun").text == "silindi"
+    assert t.run(ctx, action="remove", name="ahmet_oyun").text == "deleted"
     assert t.run(ctx, action="list").text == "no feeds"
 
 
@@ -122,7 +122,7 @@ def test_arac_yanlis_baglanti_ve_eksik_parametreyi_soyler(ffile, ctx):
     t = Feeds()
     with pytest.raises(ToolError, match="no such connection: slack"):
         t.run(ctx, action="add", name="x", connector="slack", connector_action="m")
-    with pytest.raises(ToolError, match="Olanlar: .*messages"):
+    with pytest.raises(ToolError, match="Available: .*messages"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="mesajlar")
     with pytest.raises(ToolError, match="missing in args for discord.messages: channel_id"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="messages")

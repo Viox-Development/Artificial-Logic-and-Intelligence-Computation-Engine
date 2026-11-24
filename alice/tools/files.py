@@ -386,7 +386,7 @@ class ReadFile(Tool):
             symbol: str | None = None) -> ToolResult:
         p = ctx.resolve(path)
         if not p.exists():
-            raise ToolError(f"dosya yok: {p}")
+            raise ToolError(f"file not found: {p}")
         if p.is_dir():
             raise ToolError(f"{p} is a folder; use list_dir")
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
@@ -398,7 +398,7 @@ class ReadFile(Tool):
             mark_read(ctx, p)
             return ToolResult(content)
         if _is_binary(p):
-            raise ToolError(f"{p} binary bir dosya ({p.stat().st_size} byte)")
+            raise ToolError(f"{p} is a binary file ({p.stat().st_size} bytes)")
         text = render_notebook(p) if p.suffix.lower() == ".ipynb" else _read_text(p)
         lines = text.splitlines()
         header = ""
@@ -552,7 +552,7 @@ class EditFile(Tool):
     def run(self, ctx: ToolContext, path: str, old_string: str, new_string: str, replace_all: bool = False) -> ToolResult:
         p = ctx.resolve(path)
         if not p.is_file():
-            raise ToolError(f"dosya yok: {p}")
+            raise ToolError(f"file not found: {p}")
         require_read(ctx, p)
         before = _read_text(p)
         text, n = _apply_edit(before, old_string, new_string, replace_all)
@@ -588,7 +588,7 @@ class MultiEdit(Tool):
     def run(self, ctx: ToolContext, path: str, edits: list[dict[str, Any]]) -> ToolResult:
         p = ctx.resolve(path)
         if not p.is_file():
-            raise ToolError(f"dosya yok: {p}")
+            raise ToolError(f"file not found: {p}")
         if not edits:
             raise ToolError("edits is empty")
         require_read(ctx, p)
@@ -597,7 +597,7 @@ class MultiEdit(Tool):
         total = 0
         for i, e in enumerate(edits, 1):
             if not isinstance(e, dict) or "old_string" not in e or "new_string" not in e:
-                raise ToolError(f"edit {i}: old_string ve new_string gerekli")
+                raise ToolError(f"edit {i}: old_string and new_string are required")
             text, n = _apply_edit(text, str(e["old_string"]), str(e["new_string"]), bool(e.get("replace_all")),
                                   where=f"edit {i}/{len(edits)}: ")
             total += n
@@ -779,7 +779,7 @@ class Grep(Tool):
             max_results: int = 200, offset: int = 0) -> ToolResult:
         base = ctx.resolve(path)
         if not base.exists():
-            raise ToolError(f"yol yok: {base}")
+            raise ToolError(f"path not found: {base}")
         context = max(0, min(int(context or 0), 20))
         max_results = max(1, int(max_results or 200))
         offset = max(0, int(offset or 0))
@@ -1002,14 +1002,14 @@ class FileOps(Tool):
             destination: str | None = None, overwrite: bool = False) -> ToolResult:
         sources = [ctx.resolve(x) for x in ([path] if path else []) + list(paths or [])]
         if not sources:
-            raise ToolError("path ya da paths gerekli")
+            raise ToolError("path or paths is required")
         if action == "mkdir":
             for s in sources:
                 s.mkdir(parents=True, exist_ok=True)
             return ToolResult("folder ready: " + ", ".join(map(str, sources)))
         missing = [str(s) for s in sources if not s.exists()]
         if missing:
-            raise ToolError(f"yok: {', '.join(missing)}")
+            raise ToolError(f"not found: {', '.join(missing)}")
         if action == "delete":
             return ToolResult("moved to the recycle bin (move it back from there to undo):\n" +
                               "\n".join(f"{s} -> {self._trash(ctx, s)}" for s in sources))

@@ -91,7 +91,7 @@ def test_grep_path_glob_matches_relative_path_like_rg(grep_ctx, workdir):
 
 
 def test_grep_missing_path(ctx):
-    with pytest.raises(ToolError, match="yol yok"):
+    with pytest.raises(ToolError, match="path not found"):
         Grep().run(ctx, pattern="x", path="yok")
 
 
@@ -208,7 +208,7 @@ def test_file_ops_delete_goes_to_trash(ctx, workdir, isolated_home):
     trashed = list((isolated_home / "trash").rglob("sil.txt"))
     assert trashed and trashed[0].read_text(encoding="utf-8") == "veri" and "recycle bin" in r.text
     assert ctx.state["checkpoint"][str(workdir / "sil.txt")] == b"veri"
-    with pytest.raises(ToolError, match="yok"):
+    with pytest.raises(ToolError, match="not found"):
         FileOps().run(ctx, action="delete", path="sil.txt")
 
 

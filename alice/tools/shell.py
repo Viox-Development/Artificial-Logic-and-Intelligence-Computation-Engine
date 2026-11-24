@@ -214,7 +214,7 @@ class RunCommand(Tool):
         if python and command:
             raise ToolError("give only one of command or python")
         if not python and not command.strip():
-            raise ToolError("eksik zorunlu parametre: command (ya da python)")
+            raise ToolError("missing required parameter: command (or python)")
         if python:
             # The code goes to the interpreter on stdin, never through a shell: no quoting, no $ or backslash
             # mangling, multi-line works. `py -c "..."` through PowerShell broke on nearly every non-trivial snippet.

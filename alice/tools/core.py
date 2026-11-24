@@ -72,10 +72,10 @@ class Metrics(Tool):
             return ToolResult(health_report.summary_now(ctx.config, st))
         if action == "keys":
             ks = st.keys(pattern or "*", since=t0)
-            return ToolResult("\n".join(ks) or "veri yok")
+            return ToolResult("\n".join(ks) or "no data")
         if action == "events":
             evs = [e for e in st.events(since=t0, limit=100) if t1 is None or e.ts <= t1]
-            return ToolResult("\n".join(e.line() for e in evs) or "olay yok")
+            return ToolResult("\n".join(e.line() for e in evs) or "no events")
         if action == "modes":
             out = []
             for m in [mode] if mode else ["flight", "dev", "quiet"]:
@@ -87,10 +87,10 @@ class Metrics(Tool):
             raise ToolError("key is required (action=keys to see the keys)")
         if action == "stats":
             keys = st.keys(key, since=t0) if any(c in key for c in "*?[") else [key]
-            return ToolResult("\n".join(st.stats(k, t0, t1, mode).line() for k in keys[:30]) or "veri yok")
+            return ToolResult("\n".join(st.stats(k, t0, t1, mode).line() for k in keys[:30]) or "no data")
         pts = st.series(key, t0, t1, mode)
         if not pts:
-            return ToolResult("veri yok")
+            return ToolResult("no data")
         step = max(1, len(pts) // 60)
         rows = [f"{datetime.fromtimestamp(t):%d.%m %H:%M:%S} {v:.1f}" for t, v in pts[::step]]
         return ToolResult(f"{key}, {len(pts)} measurements" + (f" (1 in every {step} shown)" if step > 1 else "") + "\n"
@@ -143,7 +143,7 @@ class Rules(Tool):
 
         rs = RuleSet()
         if action == "list":
-            return ToolResult("\n".join(r.summary() for r in rs.rules) or "kural yok")
+            return ToolResult("\n".join(r.summary() for r in rs.rules) or "no rules")
         if action == "add":
             for req in ("metric", "op", "threshold", "message"):
                 if fields.get(req) in (None, ""):
@@ -156,9 +156,9 @@ class Rules(Tool):
             rs.add(rule)
             return ToolResult(f"kural kuruldu: {rule.summary()}")
         if not id:
-            raise ToolError("id gerekli")
+            raise ToolError("id is required")
         ok = rs.remove(id) if action == "remove" else rs.set_enabled(id, action == "enable")
-        return ToolResult("tamam" if ok else f"kural yok: {id}", is_error=not ok)
+        return ToolResult("done" if ok else f"no rule: {id}", is_error=not ok)
 
 
 class Schedule(Tool):
@@ -237,11 +237,11 @@ class Schedule(Tool):
                 "\nWarning: the core is not running; for the task to run: `alice core install` or `alice core run`."
             return ToolResult(f"task set up: {task.summary()}{warn}")
         if not id:
-            raise ToolError("id gerekli")
+            raise ToolError("id is required")
         if action == "remove":
             if not ts.remove(id):  # treat unknown id as an error so the model doesn't think it was deleted
                 raise ToolError(f"no task: {id}. action=list for the ids")
-            return ToolResult("silindi")
+            return ToolResult("deleted")
         task = ts.get(id)
         if task is None:
             raise ToolError(f"no task: {id}")
@@ -347,7 +347,7 @@ class Feeds(Tool):
         if action == "list":
             feeds, errors = load_feeds()
             lines = [f"{f.name}{'' if f.enabled else ' (off)'}: {f.describe()}" for f in feeds]
-            return ToolResult("\n".join(lines + [f"hata: {e}" for e in errors]) or "no feeds")
+            return ToolResult("\n".join(lines + [f"error: {e}" for e in errors]) or "no feeds")
         if action == "connectors":
             return ToolResult(_connectors_text(ctx))
         if action == "test_action":
@@ -355,7 +355,7 @@ class Feeds(Tool):
         if action in ("remove", "enable", "disable", "test") and not name:
             raise ToolError(f"{action} needs name")
         if action == "remove":
-            return ToolResult("silindi" if feedfile.remove_feed(name) else f"no feed: {name}")
+            return ToolResult("deleted" if feedfile.remove_feed(name) else f"no feed: {name}")
         if action in ("enable", "disable"):
             ok = feedfile.set_enabled(name, action == "enable")
             return ToolResult(("turned on" if action == "enable" else "turned off") if ok else f"no feed: {name}")
@@ -404,7 +404,7 @@ def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, 
         raise ToolError(f"no such connection: {connector}")
     act = m.actions.get(action)
     if act is None:
-        raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
+        raise ToolError(f"{connector}: no action {action}. Available: {', '.join(sorted(m.actions))}")
     if act.writes or act.sends:
         raise ToolError(f"{connector}.{action} changes/sends something; a feed only polls read-only actions")
     ok, note = ready(m)
@@ -433,7 +433,7 @@ def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[st
         raise ToolError(f"no such connection: {connector}. Look with feeds action=connectors")
     act = m.actions.get(action)
     if act is None:
-        raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
+        raise ToolError(f"{connector}: no action {action}. Available: {', '.join(sorted(m.actions))}")
     if act.writes or act.sends:
         raise ToolError(f"{connector}.{action} changes/sends something; give the feed a read-only action")
     missing = [p.name for p in act.params.values() if p.required and not str(args.get(p.name, "")).strip()]

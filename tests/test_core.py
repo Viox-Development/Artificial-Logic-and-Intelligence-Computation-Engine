@@ -352,7 +352,7 @@ def test_tools(tmp_path, isolated_home):
     # remove with an unknown id must fail (it used to return a success result).
     with pytest.raises(ToolError, match="no task"):
         s.run(ctx, action="remove", id="olmayan-gorev")
-    assert s.run(ctx, action="remove", id=tid).text == "silindi"
+    assert s.run(ctx, action="remove", id=tid).text == "deleted"
     assert TaskStore().get(tid) is None
 
 
