@@ -149,7 +149,7 @@ def test_reads_are_restored_after_restart_unless_the_file_changed(workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     assert restore_reads(ctx, msgs, saved) == 1
     require_read(ctx, a.resolve())
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         require_read(ctx, b.resolve())
 
 

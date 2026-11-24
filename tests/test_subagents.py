@@ -249,7 +249,7 @@ def test_schedule_tool_validates_project_template(workdir):
     from alice.tools.core import Schedule
 
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
-    with pytest.raises(ToolError, match="proje şablonu yok"):
+    with pytest.raises(ToolError, match="no project template"):
         Schedule().run(ctx, "add", cron="0 9 * * 1", project="olmayan")
 
 

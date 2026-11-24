@@ -55,7 +55,7 @@ def ctx(workdir):
 def test_read_symbol_python_function(ctx, workdir):
     (workdir / "m.py").write_text(PY_SRC, encoding="utf-8")
     out = ReadFile().run(ctx, path="m.py", symbol="alpha").text
-    assert "Sembol 'alpha'" in out
+    assert "symbol 'alpha'" in out
     assert "def alpha(x):" in out
     assert "return y" in out
     assert "class Beta" not in out and "def gamma" not in out
@@ -75,7 +75,7 @@ def test_read_symbol_js_braces(ctx, workdir):
 
 def test_read_symbol_unknown_raises(ctx, workdir):
     (workdir / "m.py").write_text(PY_SRC, encoding="utf-8")
-    with pytest.raises(ToolError, match="bulunamadı"):
+    with pytest.raises(ToolError, match="not found"):
         ReadFile().run(ctx, path="m.py", symbol="yok_boyle_bir_sey")
 
 
@@ -95,7 +95,7 @@ def test_edit_missing_old_string_gives_hint(ctx, workdir):
     with pytest.raises(ToolError) as e:
         EditFile().run(ctx, path="m.py", old_string="def alpha(x):\n    y = x + 2", new_string="def alpha(x):")
     msg = str(e.value)
-    assert "bulunamadı" in msg and "İPUCU" in msg
+    assert "not found" in msg and "HINT" in msg
     assert "alpha" in msg  # a candidate line is shown
 
 
@@ -104,7 +104,7 @@ def test_edit_indentation_mismatch_gets_hint(ctx, workdir):
     ReadFile().run(ctx, path="m.py")
     with pytest.raises(ToolError) as e:
         EditFile().run(ctx, path="m.py", old_string="return  1", new_string="return 2")  # two spaces
-    assert "girinti" in str(e.value) or "boşluk" in str(e.value)
+    assert "indentation" in str(e.value) or "spaces" in str(e.value)
 
 
 def test_edit_ambiguous_old_string_shows_locations(ctx, workdir):
@@ -112,7 +112,7 @@ def test_edit_ambiguous_old_string_shows_locations(ctx, workdir):
     ReadFile().run(ctx, path="m.py")
     with pytest.raises(ToolError) as e:
         EditFile().run(ctx, path="m.py", old_string="return", new_string="return None")
-    assert "satır" in str(e.value)
+    assert "line" in str(e.value)
 
 
 def test_edit_stale_file_names_file(ctx, workdir):
@@ -122,12 +122,12 @@ def test_edit_stale_file_names_file(ctx, workdir):
     with pytest.raises(ToolError) as e:
         EditFile().run(ctx, path="m.py", old_string="return y", new_string="return z")
     msg = str(e.value)
-    assert "m.py" in msg and "diskte değişti" in msg
+    assert "m.py" in msg and "changed on disk" in msg
 
 
 def test_edit_unread_file_names_file(ctx, workdir):
     (workdir / "m.py").write_text(PY_SRC, encoding="utf-8")
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         EditFile().run(ctx, path="m.py", old_string="x", new_string="y")
 
 
@@ -142,7 +142,7 @@ def test_multi_edit_nonexisting_edit_suggests_line(ctx, workdir):
             {"old_string": "return su_yok", "new_string": "return su_var"},
         ])
     msg = str(e.value)
-    assert "edit 2/2" in msg and "İPUCU" in msg
+    assert "edit 2/2" in msg and "HINT" in msg
     # no change was written
     assert "y = x + 1" in (workdir / "m.py").read_text(encoding="utf-8")
 
@@ -150,7 +150,7 @@ def test_multi_edit_nonexisting_edit_suggests_line(ctx, workdir):
 def test_grep_no_match_reports_scope_and_filters(ctx, workdir):
     (workdir / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     out = Grep().run(ctx, pattern=r"def \w+", glob="*.md").text
-    assert "eşleşme yok" in out
+    assert "no matches" in out
     assert "pattern=" in out and "glob='*.md'" in out and "taranan alan" in out
 
 
@@ -158,8 +158,8 @@ def test_grep_truncation_note_counts_total(ctx, workdir):
     for i in range(10):
         (workdir / f"f{i}.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     out = Grep().run(ctx, pattern=r"def foo", max_results=3).text
-    assert "toplam 10" in out and "offset=3" in out
-    assert "daralt" in out  # suggestion to narrow with path/glob
+    assert "of 10 matching lines" in out and "offset=3" in out
+    assert "narrow" in out  # suggestion to narrow with path/glob
 
 
 def test_grep_pagination_consistent(ctx, workdir):

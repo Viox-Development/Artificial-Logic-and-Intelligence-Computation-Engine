@@ -357,25 +357,25 @@ def test_metrics_actions(core_ctx):
         st.add("pc.cpu.percent", float(i), ts=now - 3000 + i * 10)
     st.add_event("alert", "CPU", "yüksek", ts=now - 50)
     st.add_event("alert", "eski", ts=now - 10 * 86400)
-    assert "çekirdek çalışmıyor" in m.run(core_ctx, action="status").text
+    assert "core is not running" in m.run(core_ctx, action="status").text
     alice_home().mkdir(parents=True, exist_ok=True)
     state_path().write_text(json.dumps({"pid": os.getpid(), "ts": now, "mode": "flight",
                                         "policy": {"min_severity": "critical", "voice": True, "local_gpu": False}}),
                             encoding="utf-8")
-    assert m.run(core_ctx, action="status").text == ("çekirdek çalışıyor, mod: flight, en düşük bildirim: critical, "
-                                                     "ses: True, yerel GPU: False")
+    assert m.run(core_ctx, action="status").text == ("the core is running, mode: flight, lowest notification: critical, "
+                                                     "voice: True, local GPU: False")
     assert m.run(core_ctx, action="keys", pattern="pc.*").text == "pc.cpu.percent"
-    assert m.run(core_ctx, action="keys", pattern="watch.*").text == "veri yok"
+    assert m.run(core_ctx, action="keys", pattern="watch.*").text == "no data"
     ev = m.run(core_ctx, action="events", since="1d").text
     assert "CPU: yüksek" in ev and "eski" not in ev
-    assert m.run(core_ctx, action="events", since="1d", until="2d").text == "olay yok"
-    assert m.run(core_ctx, action="modes", mode="dev").text == "bu aralıkta mod kaydı yok"
+    assert m.run(core_ctx, action="events", since="1d", until="2d").text == "no events"
+    assert m.run(core_ctx, action="modes", mode="dev").text == "no mode records in this range"
     series = m.run(core_ctx, action="series", key="pc.cpu.percent", since="2h").text
     lines = series.splitlines()
-    assert lines[0] == "pc.cpu.percent, 130 ölçüm (her 2. gösteriliyor)" and len(lines) == 66
-    assert m.run(core_ctx, action="series", key="watch.hr").text == "veri yok"
+    assert lines[0] == "pc.cpu.percent, 130 measurements (1 in every 2 shown)" and len(lines) == 66
+    assert m.run(core_ctx, action="series", key="watch.hr").text == "no data"
     assert "ort" in m.run(core_ctx, action="stats", key="pc.*").text
-    with pytest.raises(ToolError, match="key gerekli"):
+    with pytest.raises(ToolError, match="key is required"):
         m.run(core_ctx, action="stats")
     with pytest.raises(ToolError, match="zaman anlaşılamadı"):
         m.run(core_ctx, action="keys", since="geçen bayram")
@@ -396,7 +396,7 @@ def test_rules_tool_validation_and_toggles(core_ctx):
 
     r = Rules()
     assert r.risk_for({"action": "list"}) == "read" and r.risk_for({"action": "add"}) == "write"
-    with pytest.raises(ToolError, match="threshold gerekli"):
+    with pytest.raises(ToolError, match="add needs threshold"):
         r.run(core_ctx, action="add", metric="pc.gpu.temp", op=">", message="x")
     with pytest.raises(ToolError, match="geçersiz operatör"):
         r.run(core_ctx, action="add", metric="pc.gpu.temp", op="=>", threshold=1, message="x")
@@ -405,13 +405,13 @@ def test_rules_tool_validation_and_toggles(core_ctx):
     out = r.run(core_ctx, action="add", metric="pc.gpu.temp", op=">=", threshold=90, message="sıcak",
                 modes=["flight"], severity=None).text
     assert "kural kuruldu" in out and "[flight]" in out and "(warn)" in out
-    with pytest.raises(ToolError, match="id gerekli"):
+    with pytest.raises(ToolError, match="id is required"):
         r.run(core_ctx, action="remove")
-    assert r.run(core_ctx, action="disable", id="gpu-hot").text == "tamam"
+    assert r.run(core_ctx, action="disable", id="gpu-hot").text == "done"
     assert RuleSet().get("gpu-hot").enabled is False
-    assert r.run(core_ctx, action="enable", id="gpu-hot").text == "tamam"
+    assert r.run(core_ctx, action="enable", id="gpu-hot").text == "done"
     res = r.run(core_ctx, action="remove", id="yok")
-    assert res.is_error and res.text == "kural yok: yok"
+    assert res.is_error and res.text == "no rule: yok"
 
 
 def test_schedule_tool_paths(core_ctx):
@@ -421,23 +421,23 @@ def test_schedule_tool_paths(core_ctx):
     assert s.risk_for({"action": "list"}) == "read" and s.risk_for({"action": "remove"}) == "write"
     assert s.summary({"action": "add", "cron": "bozuk cron"}).startswith("bozuk cron: ")
     assert s.summary({"action": "list"}) == '{"action": "list"}'
-    assert s.run(core_ctx, action="list").text == "zamanlanmış görev yok"
-    with pytest.raises(ToolError, match="cron ve prompt"):
+    assert s.run(core_ctx, action="list").text == "no scheduled tasks"
+    with pytest.raises(ToolError, match="cron and prompt"):
         s.run(core_ctx, action="add", cron="0 8 * * *")
     with pytest.raises(ToolError):
         s.run(core_ctx, action="add", cron="0 9 31 2 *", prompt="imkansız")
-    with pytest.raises(ToolError, match="id gerekli"):
+    with pytest.raises(ToolError, match="id is required"):
         s.run(core_ctx, action="run_now")
-    with pytest.raises(ToolError, match="görev yok"):
+    with pytest.raises(ToolError, match="no task"):
         s.run(core_ctx, action="run_now", id="yok")
-    with pytest.raises(ToolError, match="görev yok"):
+    with pytest.raises(ToolError, match="no task"):
         s.run(core_ctx, action="remove", id="yok")
     s.run(core_ctx, action="add", cron="0 8 * * *", prompt="hava durumu", description="sabah")
     from alice.core.schedule import TaskStore
 
     tid = TaskStore().tasks[0].id
     assert "sabah" in s.run(core_ctx, action="list").text
-    assert s.run(core_ctx, action="remove", id=tid).text == "silindi"
+    assert s.run(core_ctx, action="remove", id=tid).text == "deleted"
 
 
 # =============================================================== tools/tasks.py

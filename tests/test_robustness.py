@@ -204,10 +204,10 @@ def test_glob_skips_heavy_dirs_and_respects_deadline(workdir, monkeypatch):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = Glob().run(ctx, pattern="**/*.py").text
     assert "a.py" in out and "node_modules" not in out
-    assert Glob().run(ctx, pattern="*.py").text == "eşleşme yok"  # derine inmez
+    assert Glob().run(ctx, pattern="*.py").text == "no matches"  # derine inmez
     monkeypatch.setattr(files, "SEARCH_SECONDS", -1.0)
     res = Glob().run(ctx, pattern="**/*.py")
-    assert res.is_error and "YARIDA KESİLDİ" in res.text
+    assert res.is_error and "CUT SHORT" in res.text
 
 
 # ------------------------------------------------------------------ security
@@ -258,7 +258,7 @@ def test_bad_tool_args_return_error_and_keep_history_valid(workdir, args):
     agent, _, _ = make_agent(script, workdir)
     assert agent.run_turn("çalıştır") == "düzelttim"
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
-    assert tool_msgs and any(w in tool_msgs[0]["content"] for w in ("geçersiz", "eksik"))
+    assert tool_msgs and any(w in tool_msgs[0]["content"] for w in ("invalid", "missing", "geçersiz", "eksik"))
 
 
 def test_unexpected_error_repairs_tool_calls(workdir, monkeypatch):

@@ -207,22 +207,22 @@ class RunCommand(Tool):
             background: bool = False, unsandboxed: bool = False, python: str = "", stdin: str = "") -> ToolResult:
         wd = ctx.resolve(cwd) if cwd else ctx.cwd
         if not wd.is_dir():
-            raise ToolError(f"klasör yok: {wd}")
+            raise ToolError(f"folder not found: {wd}")
         if (command is not None and not isinstance(command, str)) or (python is not None and not isinstance(python, str)):
-            raise ToolError("geçersiz parametre: command ve python metin olmalı")
+            raise ToolError("invalid parameter: command and python must be text")
         command, python = command or "", python or ""
         if python and command:
-            raise ToolError("command ya da python'dan yalnız birini ver")
+            raise ToolError("give only one of command or python")
         if not python and not command.strip():
-            raise ToolError("eksik zorunlu parametre: command (ya da python)")
+            raise ToolError("missing required parameter: command (or python)")
         if python:
             # The code goes to the interpreter on stdin, never through a shell: no quoting, no $ or backslash
             # mangling, multi-line works. `py -c "..."` through PowerShell broke on nearly every non-trivial snippet.
             from alice import runtime
 
             if stdin:
-                raise ToolError("python ile stdin birlikte verilemez: kod zaten stdin'den okunuyor; girdiyi kodun "
-                                "içine yaz ya da dosyadan oku")
+                raise ToolError("python and stdin can't be given together: the code is already read from stdin; put the input inside the "
+                                "code or read it from a file")
             argv = [str(runtime.python()), "-X", "utf8", "-"]
             stdin = python
             command = "python -"
@@ -237,8 +237,8 @@ class RunCommand(Tool):
                 with _sandbox_lock:
                     argv, extra = sandbox.wrap(argv, wd, ctx)
             except (RuntimeError, OSError, subprocess.SubprocessError) as e:
-                raise ToolError(f"sandbox kurulamadı, komut çalıştırılmadı: {e}. Gerekiyorsa unsandboxed=true ile "
-                                "(kullanıcı onayıyla) çalıştır.") from e
+                raise ToolError(f"the sandbox could not be set up, the command was not run: {e}. If needed, run it with unsandboxed=true "
+                                "(with the user's approval).") from e
             env = sandbox.scrub_env(env, ctx)  # keep API keys from .env out of the sandbox
             env.update(extra)
         from alice import gitsafe
@@ -248,7 +248,7 @@ class RunCommand(Tool):
         git_before = gitsafe.snapshot(wd) if boxed and not background else None
         limit = int(ctx.config.agent.get("tool_output_chars", 12000))
         if background and stdin:
-            raise ToolError("arka plan sürecine stdin/python verilemez; kodu bir dosyaya yazıp dosyayı çalıştır")
+            raise ToolError("a background process can't take stdin/python; write the code to a file and run the file")
         if background:
             # The name used to be a timestamp: two processes started in the same millisecond wrote to one file
             # and their output got mixed.
@@ -304,15 +304,15 @@ class RunCommand(Tool):
         if IS_WIN:
             out, err = clean_ps_noise(out), clean_ps_noise(err)
         if timed_out:
-            return ToolResult(f"ZAMAN AŞIMI ({timeout} sn). Uzun işler için background=true kullan. Pencereli bir "
-                              "program açıyorsan run_command yerine windows action=open kullan; Blender için blender aracını "
-                              f"kullan.\n{truncate(out + err, limit)}"
+            return ToolResult(f"TIMEOUT ({timeout} s). Use background=true for long jobs. If you are opening a windowed "
+                              "program, use windows action=open instead of run_command; for Blender use the blender tool."
+                              f"\n{truncate(out + err, limit)}"
                               + (gitsafe.warning(gitsafe.changes(git_before, gitsafe.snapshot(wd)))
                                  if git_before is not None else ""), is_error=True)
         body = out
         if err.strip():
             body += ("\n[stderr]\n" if out.strip() else "[stderr]\n") + err
-        body = smart_truncate(body.strip(), limit, failed=returncode != 0) or "(çıktı yok)"
+        body = smart_truncate(body.strip(), limit, failed=returncode != 0) or "(no output)"
         if len(out) + len(err) > limit:
             # So truncated output is not lost: the full output is written to a temp file the model can read.
             # mkstemp opens the file as 0600 on POSIX; write_bytes would leave it 0644 and expose the output to
@@ -321,7 +321,7 @@ class RunCommand(Tool):
                 fd, name = tempfile.mkstemp(prefix="alice-out-", suffix=".log")
                 with os.fdopen(fd, "wb") as fh:
                     fh.write((out + ("\n" + err if err.strip() else "")).encode("utf-8", errors="replace"))
-                body += f"\n[tam çıktı dosyada: {name} - kesilen kısmı read_file/grep ile oku]"
+                body += f"\n[full output in file: {name} - read the cut part with read_file/grep]"
             except OSError:
                 pass  # no file: the truncated output is returned as is
         if IS_WIN and "is not a valid statement separator" in err:
@@ -348,13 +348,13 @@ def _ps_hint(command: str, err: str) -> str:
     """One-line fix for common PowerShell syntax errors (the ones that recur in session logs):
     the model spent several turns working out the error."""
     if "was not followed by a valid variable name character" in err:
-        return ("\n[ipucu] PowerShell \"$ad: ...\" içindeki ':' işaretini değişken adının parçası sanıyor. "
-                "\"${ad}: ...\" ya da \"$($ad): ...\" yaz.")
+        return ("\n[hint] PowerShell takes the ':' in \"$name: ...\" as part of the variable name. "
+                "Write \"${name}: ...\" or \"$($name): ...\".")
     if "Unrecognized token" in err and "@@" in command:
-        return "\n[ipucu] Sözlük '@{ ... }' ile yazılır; '@@{' geçersiz."
+        return "\n[hint] A hashtable is written '@{ ... }'; '@@{' is invalid."
     if _INLINE_CODE_RX.search(command) and ("SyntaxError" in err or "unexpected EOF" in err or "Unexpected token" in err):
-        return ("\n[ipucu] PowerShell, -c ile verilen kodun içindeki çift tırnakları ve ters eğik çizgileri bozuyor. "
-                "Kodu write_file ile geçici bir dosyaya yaz ve dosyayı çalıştır; satır içi kodda sadece tek tırnak kullan.")
+        return ("\n[hint] PowerShell mangles double quotes and backslashes inside code given with -c. "
+                "Write the code to a temporary file with write_file and run the file; use only single quotes in inline code.")
     return ""
 
 
@@ -377,15 +377,15 @@ class ProcessOutput(Tool):
         procs: dict[int, BgProc] = ctx.state.get("bg_procs", {})
         if pid is None:
             if not procs:
-                return ToolResult("arka plan süreci yok")
-            rows = [f"pid={p.pid} {'çalışıyor' if p.popen.poll() is None else f'bitti({p.popen.returncode})'} :: {p.command[:100]}"
+                return ToolResult("no background processes")
+            rows = [f"pid={p.pid} {'running' if p.popen.poll() is None else f'finished({p.popen.returncode})'} :: {p.command[:100]}"
                     for p in procs.values()]
             return ToolResult("\n".join(rows))
         p = procs.get(pid)
         if not p:
-            raise ToolError(f"pid {pid} ALICE tarafından başlatılmamış")
+            raise ToolError(f"pid {pid} was not started by ALICE")
         data = p.log.read_bytes().decode("utf-8", errors="replace") if p.log.exists() else ""
-        state = "çalışıyor" if p.popen.poll() is None else f"bitti (kod {p.popen.returncode})"
+        state = "running" if p.popen.poll() is None else f"finished (code {p.popen.returncode})"
         # data[-0:] returned the whole log: 0 and negative values mean "no output, status only".
         n = int(tail_chars or 0)
         if n <= 0:
@@ -407,7 +407,7 @@ class ProcessStop(Tool):
         procs: dict[int, BgProc] = ctx.state.get("bg_procs", {})
         p = procs.get(pid)
         if not p:
-            raise ToolError(f"pid {pid} ALICE tarafından başlatılmamış; başka süreçler için process_kill kullan")
+            raise ToolError(f"pid {pid} was not started by ALICE; use process_kill for other processes")
         kill_tree(pid)
         _reap(p.popen)
         return ToolResult(f"durduruldu: {pid}")
@@ -581,11 +581,11 @@ class ProcessWait(Tool):
         procs: dict[int, BgProc] = ctx.state.get("bg_procs", {})
         p = procs.get(pid)
         if not p:
-            raise ToolError(f"pid {pid} ALICE tarafından başlatılmamış; listelemek için process_output")
+            raise ToolError(f"pid {pid} was not started by ALICE; process_output to list them")
         try:
             rx = re.compile(pattern, re.I) if pattern else None
         except re.error as e:
-            raise ToolError(f"geçersiz desen: {e}") from e
+            raise ToolError(f"invalid pattern: {e}") from e
 
         def read() -> str:
             return p.log.read_bytes().decode("utf-8", errors="replace") if p.log.exists() else ""
@@ -602,15 +602,15 @@ class ProcessWait(Tool):
             if rx is not None:
                 hits = [ln for ln in new.splitlines() if rx.search(ln)]
                 if hits:
-                    return ToolResult(f"pid={pid} desen göründü:\n" + "\n".join(hits[-20:]) +
-                                      f"\n--- çıktının sonu ---\n{data[-2000:]}")
+                    return ToolResult(f"pid={pid} pattern seen:\n" + "\n".join(hits[-20:]) +
+                                      f"\n--- end of output ---\n{data[-2000:]}")
             if code is not None:
-                return ToolResult(f"pid={pid} bitti (kod {code})" + (" — desen görünmedi" if rx else "") +
+                return ToolResult(f"pid={pid} finished (code {code})" + (" — pattern not seen" if rx else "") +
                                   f"\n{data[-4000:]}", is_error=bool(rx) or code != 0)
             if ctx.cancelled():
-                return ToolResult(f"pid={pid} bekleme durduruldu (süreç çalışmaya devam ediyor)")
+                return ToolResult(f"pid={pid} waiting stopped (the process keeps running)")
             if time.monotonic() >= end:
-                return ToolResult(f"pid={pid} zaman aşımı: hâlâ çalışıyor" + (", desen görünmedi" if rx else "") +
+                return ToolResult(f"pid={pid} timeout: still running" + (", pattern not seen" if rx else "") +
                                   f"\n{data[-2000:]}")
             time.sleep(0.5)
 
