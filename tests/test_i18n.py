@@ -266,3 +266,13 @@ def test_agent_notices_are_translated_and_old_wordings_are_still_read():
     assert sess.is_stopped(sess.STOPPED) and sess.is_stopped(sess.OLD_STOPPED) and not sess.is_stopped("done")
     assert sess.strip_plan_note(sess.PLAN_NOTE + "x") == "x" and sess.strip_plan_note(sess.OLD_PLAN_NOTE + "y") == "y"
     assert ag._CATALOG_RX.search("a\n\n# Loadable tools\nx") and ag._CATALOG_RX.search("a\n\n# Yüklenebilir araçlar\nx")
+
+
+def test_core_mode_names_are_translated():
+    """The tray menu and the mode event show the core's mode names through _(MODE_NAMES[...]), which the scanner can't
+    see: every name needs a Turkish entry."""
+    from alice.core import service
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    for name in service.MODE_NAMES.values():
+        assert name in tr, name

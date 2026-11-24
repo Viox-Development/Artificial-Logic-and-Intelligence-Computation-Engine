@@ -142,7 +142,7 @@ def test_tick_survives_broken_monitor(tmp_path):
     core.tick(1000)
     assert core.store.last("pc.cpu")[1] == 42.0
     errs = core.store.events(kind="error")
-    assert len(errs) == 1 and "bozuk gözlemcisi hata verdi" in errs[0].title and len(errs[0].body) <= 300
+    assert len(errs) == 1 and "bozuk monitor failed" in errs[0].title and len(errs[0].body) <= 300
 
 
 def test_mode_event_only_on_change_and_invalid_force_ignored(tmp_path):
@@ -151,7 +151,7 @@ def test_mode_event_only_on_change_and_invalid_force_ignored(tmp_path):
     core.tick(1000)
     core.tick(1015)
     mode_events = core.store.events(kind="mode")
-    assert [e.title for e in mode_events] == ["Mod: uçuş"]
+    assert [e.title for e in mode_events] == ["Mode: Flight"]
     force_mode("uzay")  # undefined mode: ignored
     core.tick(1030)
     assert core.modes.forced is None and core.modes.current == "flight"
@@ -219,7 +219,7 @@ def test_run_due_skips_already_running(tmp_path, monkeypatch):
     core.running_tasks.clear()
     core._run_due(NOW)
     assert len(started) == 1 and t.id in core.running_tasks
-    assert core.tasks.get(t.id).last_result == "(çalışıyor)" and core.tasks.get(t.id).last_run == NOW
+    assert core.tasks.get(t.id).last_result == "(running)" and core.tasks.get(t.id).last_run == NOW
 
 
 def test_run_task_success_notifies(tmp_path):
@@ -228,7 +228,7 @@ def test_run_task_success_notifies(tmp_path):
     core.running_tasks.add(t.id)
     core._run_task(t, late=True)
     assert core.tasks.get(t.id).last_result == "bitti: yedekle" and core.tasks.get(t.id).last_run == 500
-    assert sent[0].title == "Görev (telafi): gece yedeği" and sent[0].severity == "info" and sent[0].kind == "task"
+    assert sent[0].title == "Task (catch-up): gece yedeği" and sent[0].severity == "info" and sent[0].kind == "task"
     assert t.id not in core.running_tasks
 
 
@@ -242,8 +242,8 @@ def test_run_task_failure_without_notify_logs_event(tmp_path):
     core._run_task(t, late=False)
     assert sent == []
     ev = core.store.events(kind="task")[0]
-    assert ev.title == "Görev: " + "p" * 40 and ev.body == "görev başarısız: kota doldu" and ev.severity == "warn"
-    assert core.tasks.get(t.id).last_result == "görev başarısız: kota doldu"
+    assert ev.title == "Task: " + "p" * 40 and ev.body == "task failed: kota doldu" and ev.severity == "warn"
+    assert core.tasks.get(t.id).last_result == "task failed: kota doldu"
     assert not core.running_tasks
 
 
@@ -270,7 +270,7 @@ def test_failing_rule_step_does_not_skip_tasks_or_state(tmp_path, monkeypatch):
     core.tick(NOW + 15)
     assert ran == [NOW, NOW + 15]
     assert json.loads(state_path().read_text(encoding="utf-8"))["ts"] == NOW + 15
-    errs = [e for e in core.store.events(kind="error") if "kural değerlendirme" in e.title]
+    errs = [e for e in core.store.events(kind="error") if "rule evaluation" in e.title]
     assert len(errs) == 1 and "bozuk kural" in errs[0].body
 
 
@@ -291,7 +291,7 @@ def test_run_forever_records_start_stop_and_errors(tmp_path, monkeypatch):
     core.run_forever()
     assert len(calls) == 2
     titles = [e.title for e in core.store.events(kind="core")]
-    assert "Çekirdek başladı" in titles and "Çekirdek durdu" in titles
+    assert "Core started" in titles and "Core stopped" in titles
     err = core.store.events(kind="error")[0]
     assert "tur patladı" in err.body and err.severity == "warn"
     assert core.store.last(MODE_KEY)[2] == "off"
@@ -319,9 +319,9 @@ def test_make_agent_runner_uses_unattended_agent(monkeypatch, tmp_path):
     cfg.data.setdefault("core", {})["task_permission_mode"] = "plan"
     run = service.make_agent_runner(cfg, tmp_path)
     FakeAgent.reply = ""
-    assert run("raporu yaz") == "(sonuç yok)"
+    assert run("raporu yaz") == "(no result)"
     a = made[0]
-    assert a.prompt.startswith("raporu yaz\n\n") and "Soru sorma" in a.prompt
+    assert a.prompt.startswith("raporu yaz\n\n") and "Don't ask questions" in a.prompt
     assert a.ctx.cwd == tmp_path and cleaned == [a.ctx]
     FakeAgent.reply = "tamam"
     assert run("x") == "tamam" and len(made) == 2 and made[0] is not made[1]  # a clean agent on every call

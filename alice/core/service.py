@@ -31,8 +31,10 @@ from alice.core.notify import Notification, Notifier
 from alice.core.rules import RuleEngine, RuleSet
 from alice.core.schedule import ScheduledTask, TaskStore
 from alice.core.store import MODE_KEY, Store
+from alice.i18n import _, pick
 
-MODE_NAMES = {"normal": "normal", "dev": "geliştirme", "flight": "uçuş", "quiet": "sessiz"}
+# Display names (English keys, translated with _() where shown).
+MODE_NAMES = {"normal": "Normal", "dev": "Development", "flight": "Flight", "quiet": "Quiet"}
 
 
 # When an event containing these words ends, ALICE asks "how did it go?" (not for every meeting).
@@ -66,7 +68,7 @@ def calendar_followups(mem, cfg, now: datetime | None = None, client: Any = None
         except ValueError:
             continue
         due = datetime.combine(day + timedelta(days=1), datetime.min.time()).replace(hour=9).timestamp()
-        mem.add_followup(f"Takvimdeki '{title}' ({day:%d.%m}) nasıl geçti, sor.", due, "ask")
+        mem.add_followup(f"Ask how '{title}' on the calendar ({day:%d.%m}) went.", due, "ask")
         added += 1
     return added
 
@@ -136,13 +138,13 @@ def make_agent_runner(cfg: Config, cwd: Path | None = None) -> Callable[[str], s
         agent = Agent(cfg, router, all_tools(cfg), ctx, Permissions(mode), NullUI(approve="n"), decider)
         try:
             text = agent.run_turn(
-                prompt + "\n\n(Bu görev arka planda, kullanıcı başında değilken çalışıyor. Soru sorma; "
-                         "bitince sonucu 1-3 kısa cümleyle Türkçe özetle.)")
+                prompt + "\n\n(This task runs in the background while the user is away. Don't ask questions; when "
+                         f"done, summarise the result in 1-3 short sentences in {pick('English', 'Turkish')}.)")
         finally:
             cleanup(ctx)
             decider.close()
             router.close()  # a new router for every task, so HTTP connections don't pile up for hours
-        return text or "(sonuç yok)"
+        return text or _("(no result)")
 
     return run
 
@@ -257,7 +259,7 @@ class Core:
                 rows += m.collect()
             except Exception as e:  # if one observer crashes, the others still run
                 try:
-                    self.store.add_event("error", f"{getattr(m, 'name', m)} gözlemcisi hata verdi", str(e)[:300])
+                    self.store.add_event("error", _("{name} monitor failed", name=getattr(m, "name", m)), str(e)[:300])
                 except Exception:  # noqa: BLE001
                     pass
         if rows:
@@ -266,23 +268,23 @@ class Core:
         try:
             self.game_health.check(self.modes.current, now)
         except Exception as e:  # noqa: BLE001 - the watchdog must not stop the tick
-            self.store.add_event("error", "oyun sağlığı kontrolü hata verdi", repr(e)[:300], topic="core")
+            self.store.add_event("error", _("game health check failed"), repr(e)[:300], topic="core")
         for hook in self.hooks:
             try:
                 hook(self.modes.policy)
             except Exception as e:  # noqa: BLE001 - even if one hook crashes, the tick goes on
-                self.store.add_event("error", "çekirdek kancası hata verdi", repr(e)[:300], topic="core")
+                self.store.add_event("error", _("core hook failed"), repr(e)[:300], topic="core")
         # The steps are independent: when one (a broken rule, a locked file) failed on every tick, the rest
         # (tasks, update, state file) never ran; once the state file got stale, the app thought the core was off.
         # The same error is written once a day.
         steps: tuple[tuple[str, Callable[[], Any]], ...] = (
-            ("kural/görev dosyası yükleme", self._reload_if_changed),
-            ("kural değerlendirme", lambda: self.engine.evaluate(now)),
-            ("zamanlanmış görevler", lambda: self._run_due(now)),
-            ("görevler", lambda: self.standing.tick(now)),
-            ("güncelleme kontrolü", lambda: self._maybe_update(now)),
-            ("hafıza işi", self._maybe_memory),
-            ("PR takibi", lambda: self._maybe_prwatch(now)),
+            (_("loading the rule/task files"), self._reload_if_changed),
+            (_("rule evaluation"), lambda: self.engine.evaluate(now)),
+            (_("scheduled tasks"), lambda: self._run_due(now)),
+            (_("tasks"), lambda: self.standing.tick(now)),
+            (_("update check"), lambda: self._maybe_update(now)),
+            (_("memory job"), self._maybe_memory),
+            (_("PR watch"), lambda: self._maybe_prwatch(now)),
         )
         for name, step in steps:
             try:
@@ -292,11 +294,11 @@ class Core:
         try:
             self.greeter.tick()
         except Exception as e:  # noqa: BLE001 - the greeter must not stop the core
-            self.store.add_event("error", "karşılama hata verdi", repr(e)[:300], topic="core")
+            self.store.add_event("error", _("greeting failed"), repr(e)[:300], topic="core")
         try:
             self.kairos.tick()
         except Exception as e:  # noqa: BLE001 - the watch must not stop the core
-            self.store.add_event("error", "KAIROS hata verdi", repr(e)[:300], topic="core")
+            self.store.add_event("error", _("KAIROS failed"), repr(e)[:300], topic="core")
         if now - self._last_prune > 3600:
             self._last_prune = now
             try:
@@ -324,7 +326,7 @@ class Core:
         try:
             self.write_state(now)
         except OSError as e:  # don't crash at startup; the first tick writes it again
-            print(f"çekirdek durumu yazılamadı: {e!r}", file=sys.stderr)
+            print(f"could not write the core state: {e!r}", file=sys.stderr)
 
     def _update_mode(self, now: float) -> None:
         try:
@@ -346,7 +348,7 @@ class Core:
         except Exception:  # noqa: BLE001
             pass
         if changed:
-            self.store.add_event("mode", f"Mod: {MODE_NAMES.get(mode, mode)}", severity="info", topic="mode")
+            self.store.add_event("mode", _("Mode: {mode}", mode=_(MODE_NAMES.get(mode, mode))), severity="info", topic="mode")
             try:  # Windows notification balloons are muted during a match and restored when it ends
                 did = self.quiet_game.mode(mode)
                 if did:
@@ -398,18 +400,18 @@ class Core:
         if mem is None:
             return
         steps: list[tuple[str, Callable[[], Any]]] = [
-            ("hatırlatmalar", lambda: self._send_reminders(mem)),  # the most important first
-            ("konuşma özeti", mem.digest),
-            ("hafıza Dream", mem.maybe_dream),  # daily, once enough conversation has built up: notes get consolidated
-            ("takvim takibi", lambda: calendar_followups(mem, self.cfg)),
-            ("sesli mod gecikme raporu", self._latency_report),
-            ("önemli e-postalar", self._important_mail),
-            ("sağlık raporu", self._health_report),
-            ("haftalık özet", lambda: self._weekly(mem)),
-            ("e-posta tarihleri", lambda: self._mail_dates(mem)),
-            ("gece döngüsü", lambda: self._night(mem)),
-            ("önsezi", lambda: self.anticipator.check()),
-            ("sabah hazırlığı", self._morning),
+            (_("reminders"), lambda: self._send_reminders(mem)),  # the most important first
+            (_("conversation digest"), mem.digest),
+            (_("memory Dream"), mem.maybe_dream),  # daily, once enough conversation has built up: notes get consolidated
+            (_("calendar follow-ups"), lambda: calendar_followups(mem, self.cfg)),
+            (_("voice mode latency report"), self._latency_report),
+            (_("important e-mails"), self._important_mail),
+            (_("health report"), self._health_report),
+            (_("weekly summary"), lambda: self._weekly(mem)),
+            (_("e-mail dates"), lambda: self._mail_dates(mem)),
+            (_("night cycle"), lambda: self._night(mem)),
+            (_("anticipation"), lambda: self.anticipator.check()),
+            (_("morning prep"), self._morning),
         ]
         for name, fn in steps:
             try:
@@ -436,9 +438,9 @@ class Core:
         def work() -> None:
             try:
                 for line in prwatch.check_all(self.cfg, notify, deliver=self.chat_delivery):
-                    self.store.add_event("info", "PR takibi", line, topic="github")
+                    self.store.add_event("info", _("PR watch"), line, topic="github")
             except Exception as e:  # noqa: BLE001 - no key, no network: the core keeps running
-                self._step_error("PR takibi", e)
+                self._step_error(_("PR watch"), e)
 
         self._prwatch_thread = threading.Thread(target=work, daemon=True, name="alice-prwatch")
         self._prwatch_thread.start()
@@ -448,7 +450,7 @@ class Core:
         now = time.time()
         due = [f for f in mem.due_followups(now) if f.kind == "remind" and f.id not in sent and (f.due or 0) <= now]
         for f in due:
-            self.notifier.send(Notification("Hatırlatma", f.text, "info", "memory", kind="info"))
+            self.notifier.send(Notification(_("Reminder"), f.text, "info", "memory", kind="info"))
             sent.add(f.id)
         if due:
             mem._meta("reminded", json.dumps(sorted(sent)[-200:]))
@@ -458,14 +460,14 @@ class Core:
 
         week = latency.weekly_report()
         if week:  # the weekly latency of voice mode: slowness should be seen from measurements, not guesses
-            self.store.add_event("info", "Sesli mod: bu haftanın gecikmesi", week, topic="voice")
+            self.store.add_event("info", _("Voice mode: this week's latency"), week, topic="voice")
 
     def _important_mail(self) -> None:
         from alice.tools.gmail import new_important
 
         mails = new_important(self.cfg)
         if mails:
-            self.notifier.send(Notification(f"{len(mails)} yeni önemli e-posta", "; ".join(mails[:3]),
+            self.notifier.send(Notification(_("{n} new important e-mails", n=len(mails)), "; ".join(mails[:3]),
                                             "info", "mail", kind="info"))
 
     def _processes(self) -> set[str]:
@@ -489,7 +491,7 @@ class Core:
             with anticipate.state_edit() as cur:
                 cur.update(changed)
         if msg:
-            self.store.add_event("info", "Önsezi: oyun güncellemesi", msg, "info", "now")
+            self.store.add_event("info", _("Anticipation: game update"), msg, "info", "now")
 
     def _morning(self) -> None:
         morning = getattr(self, "morning", None)
@@ -503,7 +505,7 @@ class Core:
                 return t if len(t) <= 160 else t[:157].rstrip() + "…"
 
             text = "; ".join(f"{k}: {s}" if s else str(k) for k, s in ((k, short(v)) for k, v in answers.items()))
-            self.store.add_event("info", "Önsezi: sabah cevapları hazır", text, "info", "now")
+            self.store.add_event("info", _("Anticipation: morning answers ready"), text, "info", "now")
 
     def _health_report(self) -> None:
         from alice import health_report
@@ -557,7 +559,7 @@ class Core:
         except OSError:
             pass  # saved again on the next check
         try:
-            self.store.add_event("error", f"{name} hata verdi", repr(e)[:300], "warn", "core")
+            self.store.add_event("error", _("{name} failed", name=name), repr(e)[:300], "warn", "core")
         except Exception:  # noqa: BLE001
             pass
 
@@ -597,10 +599,10 @@ class Core:
                 # "Yeniden başlat" button leave the moment to them. Only updates ALICE pulled itself restart alone.
                 if getattr(self, "_hand_pull_noted", "") != info.local:
                     self._hand_pull_noted = info.local
-                    self.store.add_event("core", "Kod elle değişti; yeniden başlatma sana bırakıldı", topic="core")
+                    self.store.add_event("core", _("The code was changed by hand; restarting is up to you"), topic="core")
                 return
             if info.stale:
-                self.store.add_event("core", "Yeni sürüm indirilmiş, çekirdek boşta kalınca yeniden başlayacak",
+                self.store.add_event("core", _("A new version is downloaded; the core restarts when it is idle"),
                                      topic="core")
                 self.restart_pending = True
                 return
@@ -615,15 +617,15 @@ class Core:
                     every = max(5.0, float(updater.settings(self.cfg).get("check_every_minutes") or 60)) * 60
                     self._last_update_check = time.time() - every + updater.CI_RECHECK
                     return
-                self.store.add_event("core", "Yeni sürüm var ama otomatik çekilmedi", info.blocked, topic="core")
+                self.store.add_event("core", _("A new version is available but was not pulled automatically"), info.blocked, topic="core")
                 return
             ok, msg = updater.apply_update(info, self.cfg)
-            self.store.add_event("core", "ALICE güncellendi" if ok else "Güncelleme yapılamadı", msg,
+            self.store.add_event("core", _("ALICE updated") if ok else _("Update failed"), msg,
                                  "info" if ok else "warn", "core")
             if ok:
                 self.restart_pending = True
         except Exception as e:  # noqa: BLE001 - the update check must not bring down the core
-            self.store.add_event("error", "güncelleme kontrolü hata verdi", repr(e)[:300], topic="core")
+            self.store.add_event("error", _("{name} failed", name=_("update check")), repr(e)[:300], topic="core")
 
     def _restart_process(self) -> None:
         """Restart with the same command. The single-instance lock is released first, otherwise the new
@@ -632,7 +634,7 @@ class Core:
 
         from alice.app.host import mark_restarting
 
-        self.store.add_event("core", "Çekirdek yeni sürümle yeniden başlıyor", topic="core")
+        self.store.add_event("core", _("The core is restarting with the new version"), topic="core")
         mark_restarting()  # keep the open window from closing; it moves to the new core's address
         release_lock()
         try:
@@ -655,7 +657,7 @@ class Core:
             self.running_tasks.add(task.id)
             # Mark it right away to prevent a double run; it is updated when the result arrives.
             try:
-                self.tasks.mark_run(task, "(çalışıyor)", now)
+                self.tasks.mark_run(task, _("(running)"), now)
             except Exception:
                 self.running_tasks.discard(task.id)  # otherwise this task would never run again
                 raise
@@ -672,7 +674,7 @@ class Core:
                     result = self.run_agent(task.prompt)  # type: ignore[misc]
                 sev = "warn" if result.startswith("proje başlatılamadı") else "info"
             except Exception as e:
-                result, sev = f"görev başarısız: {e}", "warn"
+                result, sev = _("task failed: {error}", error=e), "warn"
             with self._lock:
                 fresh = self.tasks.get(task.id) or task
                 self.tasks.mark_run(fresh, result, fresh.last_run)
@@ -680,7 +682,7 @@ class Core:
                     # A one-time task left in the list fired again on the same day every year
                     # ("call me in 1 minute" would call again the next year too), and removing it was left to the user.
                     self.tasks.remove(fresh.id)
-            title = f"Görev{' (telafi)' if late else ''}: {task.description or task.prompt[:40]}"
+            title = (_("Task (catch-up): {name}") if late else _("Task: {name}")).format(name=task.description or task.prompt[:40])
             if task.notify:
                 self.notifier.send(Notification(title, result[:500], sev, "task", kind="task"))
             else:
@@ -707,7 +709,7 @@ class Core:
 
     # ---------------------------------------------------------------- loop
     def run_forever(self) -> None:
-        self.store.add_event("core", "Çekirdek başladı", severity="info", topic="core")
+        self.store.add_event("core", _("Core started"), severity="info", topic="core")
         _take_stop_request()  # an unused stop request sent to the previous core must not shut down the new one
         clip = None
         if (self.cfg.data.get("core") or {}).get("clipboard_history", True):
@@ -724,26 +726,26 @@ class Core:
                     self.tick()
                 except Exception as e:
                     try:  # even if the event cannot be written (database locked), the loop must not die
-                        self.store.add_event("error", "çekirdek turu hata verdi", repr(e)[:500], "warn", "core")
+                        self.store.add_event("error", _("core tick failed"), repr(e)[:500], "warn", "core")
                     except Exception:  # noqa: BLE001
                         traceback.print_exc()
                 # Wait between ticks in one-second steps, so a stop request from the app is noticed within a second.
                 # The number of steps is limited; even if the clock jumps or wait returns early,
                 # the loop does not spin out of control.
                 end = t0 + max(1.0, self.interval)
-                for _ in range(int(max(1.0, self.interval)) + 1):
+                for _tick in range(int(max(1.0, self.interval)) + 1):
                     left = end - time.monotonic()
                     if self.stop_event.is_set() or left <= 0:
                         break
                     self.stop_event.wait(min(1.0, left))
                     if _take_stop_request():
-                        self.store.add_event("core", "Çekirdek uygulamadan durduruldu", topic="core")
+                        self.store.add_event("core", _("The core was stopped from the app"), topic="core")
                         self.stop()
         finally:
             if clip is not None:
                 clip.stop()
             self.store.add(MODE_KEY, text="off")
-            self.store.add_event("core", "Çekirdek durdu", topic="core")
+            self.store.add_event("core", _("Core stopped"), topic="core")
             try:
                 state_path().unlink()
             except OSError:
@@ -804,10 +806,10 @@ def run_tray(core: Core) -> bool:
     image = Image.open(icon_path) if icon_path.exists() else Image.new("RGB", (64, 64), (120, 80, 200))
 
     def set_mode(mode):
-        def _(icon, item):
+        def _set(icon, item):
             force_mode(mode)
             core.modes.forced = mode
-        return _
+        return _set
 
     def is_mode(mode):
         return lambda item: core.modes.forced == mode
@@ -821,21 +823,22 @@ def run_tray(core: Core) -> bool:
 
     def quit_(icon, item):
         try:  # so the later question "why did it close?" does not go unanswered
-            core.store.add_event("core", "Çekirdek tepsiden kapatıldı", topic="core")
+            core.store.add_event("core", _("The core was closed from the tray"), topic="core")
         except Exception:  # noqa: BLE001
             pass
         core.stop()
         icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem(lambda item: f"Mod: {MODE_NAMES.get(core.modes.current, core.modes.current)}", None,
+        pystray.MenuItem(lambda item: _("Mode: {mode}", mode=_(MODE_NAMES.get(core.modes.current, core.modes.current))),
+                         None,
                          enabled=False),
-        pystray.MenuItem("ALICE'i aç", open_app, default=True),
-        pystray.MenuItem("Modu sabitle", pystray.Menu(
-            pystray.MenuItem("Otomatik", set_mode(None), checked=is_mode(None), radio=True),
-            *(pystray.MenuItem(MODE_NAMES[m].capitalize(), set_mode(m), checked=is_mode(m), radio=True)
+        pystray.MenuItem(_("Open ALICE"), open_app, default=True),
+        pystray.MenuItem(_("Pin mode"), pystray.Menu(
+            pystray.MenuItem(_("Auto"), set_mode(None), checked=is_mode(None), radio=True),
+            *(pystray.MenuItem(_(MODE_NAMES[m]), set_mode(m), checked=is_mode(m), radio=True)
               for m in ("normal", "dev", "flight", "quiet")))),
-        pystray.MenuItem("Çık", quit_),
+        pystray.MenuItem(_("Quit"), quit_),
     )
     icon = pystray.Icon("alice", image, "ALICE", menu)
     def loop() -> None:
@@ -900,14 +903,14 @@ def enable_crash_log() -> None:
 
     try:
         f = open(alice_home() / "core-crash.log", "a", encoding="utf-8")
-        f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} çekirdek başladı (pid {os.getpid()})\n")
+        f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} core started (pid {os.getpid()})\n")
         f.flush()
         faulthandler.enable(f, all_threads=True)
         _crash_file = f  # must stay open: faulthandler holds the file handle
     except (OSError, ValueError, RuntimeError):
         pass  # crash logging is optional
     try:
-        print(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} çekirdek başladı (pid {os.getpid()})", file=sys.stderr,
+        print(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} core started (pid {os.getpid()})", file=sys.stderr,
               flush=True)
     except Exception:  # noqa: BLE001 - no stderr, so it doesn't matter
         pass
@@ -935,7 +938,7 @@ def install_autostart() -> Path:
         icon = Path(__file__).resolve().parent.parent / "app" / "static" / "alice.ico"
         ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + str(path).replace("'", "''") + "');"
               f"$s.TargetPath='{target}';$s.Arguments='-m alice core run --tray';"
-              f"$s.WorkingDirectory='{Path.home()}';$s.IconLocation='{icon}';$s.Description='ALICE çekirdek';$s.Save()")
+              f"$s.WorkingDirectory='{Path.home()}';$s.IconLocation='{icon}';$s.Description='ALICE core';$s.Save()")
         subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True)
     elif sys.platform == "darwin":
         path.write_text(
