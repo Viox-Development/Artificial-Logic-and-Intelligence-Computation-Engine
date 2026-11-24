@@ -275,7 +275,7 @@ def test_checklist_tool(tmp_path):
     assert "Adım 2/" in tool.run(ctx, action="checklist_next").text
     assert "Adım 1/" in tool.run(ctx, action="checklist_prev").text
     assert tool.risk_for({"action": "kneeboard_note"}) == "write" and tool.risk_for({"action": "status"}) == "read"
-    assert "çalışmıyor" in tool.run(ctx, action="status").text
+    assert "isn't running" in tool.run(ctx, action="status").text
 
 
 # ------------------------------------------------------------- War Thunder

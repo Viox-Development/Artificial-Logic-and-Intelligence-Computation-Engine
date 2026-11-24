@@ -42,23 +42,23 @@ class PermissionsTool(Tool):
         if action == "suggest":
             rows = perm.suggestions(None if everywhere else ctx.cwd)
             if not rows:
-                return ToolResult("öneri yok: henüz sık ve hep onaylanan bir iş birikmedi")
-            return ToolResult("Hep onayladığın işler (kural · kaç kez onaylandı):\n"
+                return ToolResult("no suggestions: no frequent, always-approved job has built up yet")
+            return ToolResult("Jobs you always approve (rule · times approved):\n"
                               + "\n".join(f"- {s['rule']} · {s['yes']} kez" for s in rows[:20])
-                              + "\nHangilerini artık sormadan yapayım? (apply ile eklenir)")
+                              + "\nWhich of them should I do without asking from now on? (added with apply)")
         if action == "apply":
             good = [r.strip() for r in rules or [] if r.strip()]
             if not good:
-                raise ToolError("apply için rules gerekli")
+                raise ToolError("apply needs rules")
             for r in good:
                 name, _ = perm.parse_rule(r)
                 if not name or name == "*":
-                    raise ToolError(f"çok geniş kural: {r}")
+                    raise ToolError(f"rule too broad: {r}")
             where = None
             for r in good:
                 where = perm.persist_allow(ctx.cwd, r)
             return ToolResult(f"{len(good)} kural eklendi ({where}): " + ", ".join(good))
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 class Share(Tool):
@@ -89,22 +89,22 @@ class Share(Tool):
             if not p.is_file():
                 raise ToolError(f"dosya yok: {p}")
             if p.stat().st_size > 1_000_000:
-                raise ToolError(f"dosya çok büyük (1 MB üstü): {p.name}")
+                raise ToolError(f"file too large (over 1 MB): {p.name}")
             text = p.read_text(encoding="utf-8", errors="replace")
             if _looks_secret(p, text):
-                raise ToolError(f"{p.name} anahtar/parola gibi görünen içerik taşıyor; paylaşılmadı")
+                raise ToolError(f"{p.name} contains what looks like a key/password; not shared")
             files[p.name] = {"content": text}
         if not files:
-            raise ToolError("paylaşılacak dosya yok")
+            raise ToolError("no files to share")
         gist = _api(ctx).post("/gists", {"description": title or ", ".join(files), "public": bool(public),
                                          "files": files})
         url = str(gist.get("html_url") or "")
-        lines = [f"Paylaşıldı ({'herkese açık' if public else 'gizli, bağlantıyı bilen görür'}): {url}"]
+        lines = [f"Shared ({'public' if public else 'secret, anyone with the link can see it'}): {url}"]
         for name, f in (gist.get("files") or {}).items():
             raw = str(f.get("raw_url") or "")
             if Path(name).suffix.lower() in (".html", ".htm") and raw:
                 lines.append(f"{name} sayfa olarak: {raw.replace('gist.githubusercontent.com', 'gistcdn.githack.com')}")
-        lines.append("Silmek için GitHub'da Gist sayfasından Delete.")
+        lines.append("To delete it: Delete on the Gist page on GitHub.")
         return ToolResult("\n".join(lines))
 
 

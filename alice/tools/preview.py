@@ -25,12 +25,12 @@ def _reachable(url: str) -> bool:
 
 def format_logs(rows: list[dict[str, Any]], limit: int = 40) -> str:
     if not rows:
-        return "Konsolda hata/uyarı yok, başarısız ağ isteği yok."
-    kinds = {"console": "konsol", "exception": "yakalanmamış hata", "log": "tarayıcı", "network": "ağ"}
+        return "No console errors/warnings, no failed network requests."
+    kinds = {"console": "konsol", "exception": "uncaught error", "log": "browser", "network": "network"}
     out = [f"- [{kinds.get(r['kind'], r['kind'])} {r['level']}] {' '.join(str(r['text']).split())[:400]}"
            for r in rows[-limit:]]
     errors = sum(1 for r in rows if r["level"] == "error")
-    return f"{errors} hata, {len(rows) - errors} uyarı:\n" + "\n".join(out)
+    return f"{errors} errors, {len(rows) - errors} warnings:\n" + "\n".join(out)
 
 
 class Preview(Tool):
@@ -61,7 +61,7 @@ class Preview(Tool):
     def run(self, ctx: ToolContext, action: str, url: str = "", command: str = "", wait: int = 60) -> ToolResult:
         factory = ctx.state.get("builtin_browser")
         if not callable(factory):
-            raise ToolError("yerleşik tarayıcı yalnız ALICE uygulamasında var; tarayıcı aracını kullan")
+            raise ToolError("the built-in browser exists only in the ALICE app; use the browser tool")
         from alice.app.builtin_browser import BrowserError
 
         bb = factory()
@@ -72,7 +72,7 @@ class Preview(Tool):
             note = ""
             if action == "open":
                 if not url:
-                    raise ToolError("open için url gerekli")
+                    raise ToolError("open needs url")
                 if command:
                     note = self._serve(ctx, command, url, max(5, min(int(wait or 60), 300)))
                 bb.navigate(url)
@@ -82,17 +82,17 @@ class Preview(Tool):
                 else:
                     bb.history("reload")
             else:
-                raise ToolError(f"bilinmeyen action: {action}")
+                raise ToolError(f"unknown action: {action}")
             loaded = bb.wait_load(20)
             time.sleep(1.2)  # first paint and late-arriving requests
             png = bb.screenshot_png()
             tab = bb.current()
             logs = bb.logs(since=started)
         except BrowserError as e:
-            raise ToolError(f"yerleşik tarayıcı: {e}") from e
-        head = f"Sayfa: {tab.get('title') or '(başlıksız)'} — {tab.get('url')}" + ("" if loaded else " (yüklenmesi bitmedi)")
+            raise ToolError(f"built-in browser: {e}") from e
+        head = f"Sayfa: {tab.get('title') or '(untitled)'} — {tab.get('url')}" + ("" if loaded else " (not finished loading)")
         return ToolResult("\n".join(x for x in (note, head, format_logs(logs),
-                                                "Ekran görüntüsü ekte; kullanıcı da panelde görüyor.") if x),
+                                                "The screenshot is attached; the user sees it in the panel too.") if x),
                           images=[png] if png else [])
 
     @staticmethod
@@ -100,21 +100,21 @@ class Preview(Tool):
         from alice.tools.shell import RunCommand
 
         if _reachable(url):
-            return "Sunucu zaten çalışıyordu; komut çalıştırılmadı."
+            return "The server was already running; the command was not run."
         res = RunCommand().run(ctx, command, background=True)
         m = re.search(r"pid=(\d+)", res.text)
         proc = ctx.state.get("bg_procs", {}).get(int(m.group(1))) if m else None
         end = time.monotonic() + wait
         while time.monotonic() < end:
             if _reachable(url):
-                return f"Sunucu başladı (pid={proc.pid if proc else '?'})."
+                return f"Server started (pid={proc.pid if proc else '?'})."
             if proc is not None and proc.popen.poll() is not None:
                 tail = proc.log.read_bytes().decode("utf-8", errors="replace")[-1500:] if proc.log.exists() else ""
-                raise ToolError(f"sunucu komutu bitti (kod {proc.popen.returncode}), sayfa açılmadı:\n{tail}")
+                raise ToolError(f"the server command ended (code {proc.popen.returncode}); the page didn't open:\n{tail}")
             if ctx.cancelled():
                 raise ToolError("durduruldu")
             time.sleep(0.5)
-        raise ToolError(f"{wait} sn içinde {url} cevap vermedi (sunucu pid={proc.pid if proc else '?'} arkada sürüyor)")
+        raise ToolError(f"{url} did not answer within {wait} s (server pid={proc.pid if proc else '?'} keeps running in the background)")
 
 
 TOOLS: list[Tool] = [Preview()]

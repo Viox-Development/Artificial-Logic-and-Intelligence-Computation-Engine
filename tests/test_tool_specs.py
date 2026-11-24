@@ -78,7 +78,7 @@ def test_truncate_zero_or_negative_limit_does_not_return_whole_text():
     text = "x" * 50
     for limit in (0, -3):
         out = truncate(text, limit)
-        assert out == "... [50 karakter kesildi] ..." and "x" not in out
+        assert out == "... [50 characters cut] ..." and "x" not in out
     assert truncate("", 0) == ""
     out = truncate(text, 10)
-    assert out.startswith("xxxxxx\n") and out.endswith("\nxxxx") and "40 karakter kesildi" in out
+    assert out.startswith("xxxxxx\n") and out.endswith("\nxxxx") and "40 characters cut" in out

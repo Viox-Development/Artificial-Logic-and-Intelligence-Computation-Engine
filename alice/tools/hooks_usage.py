@@ -56,15 +56,15 @@ class HooksTool(Tool):
         try:
             if action == "add":
                 h = hk.add_hook(event, command, matcher, timeout, on_failure)
-                return ToolResult(f"eklendi ({hk.hooks_path()}): {h.event} [{h.matcher or 'her araç'}] {h.command}. "
-                                  "Açık sohbetler dahil hemen geçerli.")
+                return ToolResult(f"added ({hk.hooks_path()}): {h.event} [{h.matcher or 'every tool'}] {h.command}. "
+                                  "Applies right away, open chats included.")
             if action == "remove":
                 h = hk.remove_hook(int(index))
                 return ToolResult(f"silindi: {h.event} {h.command}")
             if action == "test":
                 rows = hk.file_hooks()
                 if not 0 <= int(index) < len(rows):
-                    raise ToolError(f"böyle bir hook yok: {index}")
+                    raise ToolError(f"no such hook: {index}")
                 h = rows[int(index)]
                 r = hk.Hooks([h], ctx.cwd)._run_one(h, {"args": {"path": "ornek.py"}, "result": "", "prompt": "deneme"},
                                                     "edit_file")
@@ -81,9 +81,9 @@ def describe_hooks(ctx: ToolContext) -> str:
 
     rows = hk.file_hooks()
     cfg_rows = hk._parse(dict(((getattr(ctx.config, "data", None) or {}).get("hooks")) or {}))
-    out = [f"{i}. {h.event} [{h.matcher or 'her araç'}] {h.command} (zaman aşımı {h.timeout:g} sn)"
+    out = [f"{i}. {h.event} [{h.matcher or 'every tool'}] {h.command} (timeout {h.timeout:g} s)"
            for i, h in enumerate(rows)]
-    out += [f"-. {h.event} [{h.matcher or 'her araç'}] {h.command} (config.toml'da; buradan silinmez)"
+    out += [f"-. {h.event} [{h.matcher or 'every tool'}] {h.command} (config.toml'da; buradan silinmez)"
             for h in cfg_rows]
     return "\n".join(out) if out else "hook yok"
 
@@ -104,21 +104,21 @@ class Usage(Tool):
     def run(self, ctx: ToolContext) -> ToolResult:
         agent = ctx.state.get("agent")
         if agent is None or not hasattr(agent, "usage_breakdown"):
-            raise ToolError("bu bağlamda oturum istatistiği yok")
+            raise ToolError("no session statistics in this context")
         u = agent.usage_breakdown()
         total_in = u["input"] or 1
-        lines = [f"{u['turns']} tur, {u['steps']} model çağrısı · model {u['llm_s']} sn, araç {u['tool_s']} sn",
-                 f"Girdi {_k(u['input'])} (önbellekten {_k(u['cached'])}, %{100 * u['cached'] // total_in}), "
-                 f"çıktı {_k(u['output'])}", "", "Modeller:"]
-        lines += [f"  {m['model']}: {m['calls']} çağrı, girdi {_k(m['input'])} (önbellek {_k(m['cached'])}), "
-                  f"çıktı {_k(m['output'])}, {m['seconds']} sn" for m in u["models"]] or ["  (henüz çağrı yok)"]
-        lines += ["", "Araç çıktıları (bağlama eklenen ~token):"]
+        lines = [f"{u['turns']} turns, {u['steps']} model calls · model {u['llm_s']} s, tools {u['tool_s']} s",
+                 f"Input {_k(u['input'])} (from cache {_k(u['cached'])}, {100 * u['cached'] // total_in}%), "
+                 f"output {_k(u['output'])}", "", "Modeller:"]
+        lines += [f"  {m['model']}: {m['calls']} calls, input {_k(m['input'])} (cache {_k(m['cached'])}), "
+                  f"output {_k(m['output'])}, {m['seconds']} s" for m in u["models"]] or ["  (no calls yet)"]
+        lines += ["", "Tool outputs (~tokens added to the context):"]
         lines += [f"  {t['tool']}: {t['calls']} kez, ~{_k(t['tokens'])}" + (f", {t['errors']} hata" if t["errors"]
                                                                               else "") for t in u["tools"][:12]] \
-            or ["  (araç kullanılmadı)"]
+            or ["  (no tools used)"]
         c = u["ctx"]
-        lines += ["", f"Bağlam şu an ~{_k(c['total'])}: sistem istemi {_k(c['system'])}, araç tanımları "
-                      f"{_k(c['tools'])}, mesajlar {_k(c['messages'])}"]
+        lines += ["", f"Context is now ~{_k(c['total'])}: system prompt {_k(c['system'])}, tool definitions "
+                      f"{_k(c['tools'])}, messages {_k(c['messages'])}"]
         return ToolResult("\n".join(lines), card={"kind": "usage", **u})
 
 

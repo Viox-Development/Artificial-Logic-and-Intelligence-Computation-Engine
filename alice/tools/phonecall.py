@@ -29,12 +29,12 @@ class PhoneCall(Tool):
 
         mgr = call.current()
         if mgr is None:
-            raise ToolError("telefon köprüsü kapalı: Ayarlar → Kurulum → Telefondan ALICE açık olmalı")
+            raise ToolError("the phone bridge is off: Settings → Setup → ALICE from the phone must be on")
         r = mgr.ring(reason or message[:60], message)
         if not r.get("ok"):
-            raise ToolError(r.get("error") or "aranamadı")
-        return ToolResult("Telefon çalıyor. Kullanıcı açarsa görüşme ayrı bir sesli konuşmada sürecek; burada "
-                          "ayrıca bir şey söylemene gerek yok.")
+            raise ToolError(r.get("error") or "could not call")
+        return ToolResult("The phone is ringing. If the user picks up, the call continues in a separate voice conversation; you don't "
+                          "need to say anything else here.")
 
 
 TOOLS = [PhoneCall()]

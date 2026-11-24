@@ -129,7 +129,7 @@ def test_tool_reports_when_off():
 
     from alice.tools.timelinetool import TimelineSearch
 
-    assert "kaydı yok" in TimelineSearch().run(SimpleNamespace(), action="search", query="link").text
+    assert "No timeline records" in TimelineSearch().run(SimpleNamespace(), action="search", query="link").text
 
 
 def test_default_off():

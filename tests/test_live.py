@@ -201,7 +201,7 @@ def test_live_tool_timeout_answers_model(monkeypatch):
     s.TOOL_TIMEOUT = 0.05
     s._run_call(ws, {"id": "c1", "name": "browser", "args": {"action": "snapshot"}})
     assert len(sent) == 1  # a late result is not sent a second time
-    assert "bitmedi" in sent[0]["toolResponse"]["functionResponses"][0]["response"]["result"]
+    assert "did not finish" in sent[0]["toolResponse"]["functionResponses"][0]["response"]["result"]
 
 
 def test_live_first_turn_uses_local_text_and_names(monkeypatch):
@@ -305,7 +305,7 @@ def test_stuck_tool_does_not_lock_conversation(monkeypatch):
     s.TOOL_TIMEOUT = 5
     s._run_call(ws, {"id": "2", "name": "windows", "args": {}})  # runs right away in a new thread
     results = [m["toolResponse"]["functionResponses"][0]["response"]["result"] for m in sent]
-    assert "YAPILMADI" in results[0] and results[1] == "ok"
+    assert "NOT done" in results[0] and results[1] == "ok"
     release.set()
 
 

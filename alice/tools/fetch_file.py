@@ -84,12 +84,12 @@ def fetch(url: str, folder: Path | None = None, wait: float = 240.0, opener=None
         resp = open_(req, timeout=30)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403, 407):
-            raise NeedsBrowser(f"sunucu giriş istiyor ({e.code})") from e
+            raise NeedsBrowser(f"the server asks for sign-in ({e.code})") from e
         raise
     ctype = (resp.headers.get("Content-Type") or "").lower()
     if ctype.startswith("text/html"):
         resp.close()
-        raise NeedsBrowser("bağlantı bir dosya değil, sayfa açıyor (giriş ya da indirme sayfası olabilir)")
+        raise NeedsBrowser("the link isn't a file, it opens a page (it may be a sign-in or download page)")
     path = _unique(folder, _safe(_filename(resp.geturl() if hasattr(resp, "geturl") else url, resp.headers)))
     total = int(resp.headers.get("Content-Length") or 0)
     job = {"file": str(path), "url": url, "state": "in_progress", "error": "", "bytes": 0, "total": total,
@@ -137,7 +137,7 @@ def download(url: str, wait: float = 240.0) -> dict[str, Any]:
 
         hub = browser_ext.hub()
         if hub is None:
-            raise ToolError(f"{e}; tarayıcıda giriş yapılmış olmalı ama ALICE tarayıcı eklentisi bağlı değil") from e
+            raise ToolError(f"{e}; you must be signed in in the browser, but the ALICE browser extension isn't connected") from e
         d = browser_ext.ExtBrowserSession(hub).download(url, wait)
         d["via"] = "browser"
         return d
@@ -149,14 +149,14 @@ def describe(d: dict[str, Any], opened: bool = False) -> str:
 
     if d.get("state") == "complete":
         size = f", {int(d['bytes']) / 1e6:.1f} MB" if d.get("bytes") else ""
-        return f"indirildi{' (açılmadı)' if opened else ''}: {d.get('file')}{size} — kurulumu/dosyayı bu yolla aç"
+        return f"downloaded{' (not opened)' if opened else ''}: {d.get('file')}{size} — open the installer/file at this path"
     if d.get("state") == "interrupted":
-        raise ToolError(f"indirme yarıda kesildi: {d.get('error') or 'bilinmeyen hata'}")
+        raise ToolError(f"the download was cut off: {d.get('error') or 'unknown error'}")
     pct = f" %{100 * int(d.get('bytes') or 0) // int(d['total'])}" if d.get("total") else ""
     if d.get("via") == "browser" and not d.get("file"):
-        return ("tarayıcı indiriyor ama kaydetme penceresi açık olabilir (Opera'da 'nereye kaydedileceğini sor' "
-                "açık): kullanıcıya söyle ya da pencerede Kaydet'e bas")
-    return f"hâlâ iniyor{pct}: {d.get('file') or d.get('url')} (browser action=downloads ile takip et; bitmeden açma)"
+        return ("the browser is downloading but a save dialog may be open (Opera's 'ask where to save' "
+                "is on): tell the user or press Save in the dialog")
+    return f"still downloading{pct}: {d.get('file') or d.get('url')} (follow it with browser action=downloads; don't open it before it finishes)"
 
 
 def source_name(url: str) -> str:

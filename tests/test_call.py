@@ -93,7 +93,7 @@ def test_alice_rings_user_who_answers(setup):
     from alice.tools.phonecall import PhoneCall
 
     res = PhoneCall().run(state.ctx, message="Selam, ilacını içme vakti.", reason="Hatırlatma: ilaç")
-    assert "Telefon çalıyor" in res.text
+    assert "The phone is ringing" in res.text
     ev, _ = wait_for(events, lambda e: e["type"] == "call")
     assert ev["from"] == "alice" and ev["reason"] == "Hatırlatma: ilaç"
     # If the user calls at that moment, no new call opens; the ringing call opens instead.
@@ -134,7 +134,7 @@ def test_phone_call_tool_without_bridge():
     from alice.tools.phonecall import PhoneCall
 
     call.register(None)
-    with pytest.raises(ToolError, match="telefon köprüsü kapalı"):
+    with pytest.raises(ToolError, match="phone bridge is off"):
         PhoneCall().run(NS(), message="selam")
 
 

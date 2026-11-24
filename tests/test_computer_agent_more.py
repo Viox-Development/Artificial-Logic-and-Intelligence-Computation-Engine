@@ -122,7 +122,7 @@ def test_batch_stops_at_error_and_at_done():
                    '{"action": "done", "summary": "bitti"}')
     res = ComputerAgent(s, ask, settle=0).run("x")
     assert [a["action"] for a in s.acts] == ["click", "click"]  # not run after an error or after done
-    assert "HATA olmadı" in res.steps[0] and res.status == "done" and res.summary == "bitti"
+    assert "ERROR olmadı" in res.steps[0] and res.status == "done" and res.summary == "bitti"
 
 
 def test_done_summary_falls_back_to_outer():

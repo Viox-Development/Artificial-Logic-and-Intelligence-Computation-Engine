@@ -54,32 +54,32 @@ class Game(Tool):
         sess: GameSession | None = ctx.state.get(STATE_KEY)
         if action == "start":
             if not game.strip():
-                raise ToolError("start için game (oyunun adı) gerekli")
+                raise ToolError("start needs game (the game's name)")
             sess = GameSession.open(alice_home(), game, title)
             ctx.state[STATE_KEY] = sess
             found = self._discover(ctx, sess) if not sess.lessons() and not sess.notes() else ""
-            return ToolResult(f"oyun oturumu: {sess.name} (pencere: '{sess.title}', şimdiye kadar {sess.turn} tur)\n"
-                              f"dersler: {sess.lessons_path}\n{found}\n{sess.context()}")
+            return ToolResult(f"game session: {sess.name} (window: '{sess.title}', {sess.turn} turns so far)\n"
+                              f"lessons: {sess.lessons_path}\n{found}\n{sess.context()}")
         if sess is None:
-            raise ToolError("açık oyun oturumu yok: önce action=start, game=<oyunun adı>")
+            raise ToolError("no open game session: first action=start, game=<the game's name>")
         if action == "note":
             added = sess.add_note(note)
-            return ToolResult("not eklendi" if added else "not boş ya da zaten var")
+            return ToolResult("not eklendi" if added else "the note is empty or already there")
         if action == "status":
             return ToolResult(f"{sess.name}: {sess.turn} tur, {len(sess.lessons())} ders\n\n{sess.context()}")
         if action == "end":
             ctx.state.pop(STATE_KEY, None)
-            return ToolResult(f"oyun oturumu kapandı: {sess.name}, toplam {sess.turn} tur, {len(sess.lessons())} ders; "
-                              f"hepsi {sess.root} altında")
+            return ToolResult(f"game session closed: {sess.name}, {sess.turn} turns, {len(sess.lessons())} lessons in total; "
+                              f"all under {sess.root}")
         if action == "look":
             board = self._look(ctx, sess)
-            return ToolResult(board or "tahta okunamadı (görüntü modeli yok)", is_error=not board)
+            return ToolResult(board or "could not read the board (no vision model)", is_error=not board)
         if action == "play":
             return self._play(ctx, sess, goal.strip() or DEFAULT_PLAY, max_steps)
         if action != "turn":
-            raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"unknown action: {action}")
         if not goal.strip():
-            raise ToolError("turn için goal gerekli")
+            raise ToolError("turn needs goal")
         return self._turn(ctx, sess, goal, max_steps)
 
     # ------------------------------------------------------------------ models
@@ -108,7 +108,7 @@ class Game(Tool):
         try:
             scr = self._observer(ctx, sess, "").screen("")
         except Exception as e:  # noqa: BLE001 - if the screen can't be read, start without discovery
-            return f"ilk ekran okunamadı ({e}); dersler oynadıkça birikecek\n"
+            return f"could not read the first screen ({e}); lessons will build up as you play\n"
         visible = [i.label for i in scr.items]
         board = self._read_board(ctx, sess, scr.image)
         found = discover(self._chat(ctx, "brain", 1500), sess.name, visible, board)
@@ -116,8 +116,8 @@ class Game(Tool):
         identified = " ".join(str(found.get("identified") or "").split())[:120]
         if identified and identified.lower() != "menu":
             sess.add_note(f"Identified game: {identified}")
-        return (f"ana model ekrana bakıp oyunu tanıdı: {identified or 'bilinmiyor'}; {n} başlangıç dersi "
-                "(kurallar dahil, doğrulanmamış)\n")
+        return (f"the main model looked at the screen and recognised the game: {identified or 'unknown'}; {n} starting lessons "
+                "(rules included, unverified)\n")
 
     def _read_board(self, ctx: ToolContext, sess: Any, image: Any, temperature: float = 0) -> str:
         from alice.reflex.game import look_board
@@ -128,7 +128,7 @@ class Game(Tool):
         try:
             img = self._observer(ctx, sess, "").screen("").image
         except Exception as e:  # noqa: BLE001
-            return f"(ekran okunamadı: {e})"
+            return f"(could not read the screen: {e})"
         return self._read_board(ctx, sess, img)
 
     def _look_twice(self, ctx: ToolContext, sess: Any) -> tuple[str, str]:
@@ -137,7 +137,7 @@ class Game(Tool):
         try:
             img = self._observer(ctx, sess, "").screen("").image
         except Exception as e:  # noqa: BLE001
-            return f"(ekran okunamadı: {e})", ""
+            return f"(could not read the screen: {e})", ""
         return self._read_board(ctx, sess, img), self._read_board(ctx, sess, img, SECOND_READ_TEMPERATURE)
 
     # ------------------------------------------------------------------ playing
@@ -146,7 +146,7 @@ class Game(Tool):
         from alice.reflex.game import plan_move
 
         if ctx.decider is None or ctx.router is None:
-            raise ToolError("karar motoru yapılandırılmamış")
+            raise ToolError("the decision engine is not configured")
         if not any(r.get("kind") == "rule" for r in sess.lessons()):
             # Started on a menu or game unidentified; if a board/map is visible now, the main model re-identifies it.
             self._discover(ctx, sess)
@@ -154,7 +154,7 @@ class Game(Tool):
         recent = [f"turn {t['turn']}: {t['summary']}" for t in sess.turns()[-3:] if t.get("summary")]
         plan = plan_move(self._chat(ctx, "brain", 600), sess.name, goal, board, sess.lessons(), recent, board2)
         if not plan:
-            return ToolResult(f"hamle seçilemedi (tahta ya da plan yok).\ntahta:\n{board[:BOARD_SHOWN]}", is_error=True)
+            return ToolResult(f"no move could be chosen (no board or plan).\nboard:\n{board[:BOARD_SHOWN]}", is_error=True)
         # Rules the planner relies on but that aren't known yet are stored as unverified rules; the move's result
         # verifies or drops them. Rules come from the board, not the game name: discovery under "Solitaire Collection"
         # wrote no rules at all.
@@ -172,7 +172,7 @@ class Game(Tool):
         from alice.tools.meta import reflex_verdict
 
         if ctx.decider is None or ctx.router is None:
-            raise ToolError("karar motoru yapılandırılmamış")
+            raise ToolError("the decision engine is not configured")
         agent = ScreenAgent(self._observer(ctx, sess, goal), ctx.decider, make_text_writer(ctx.router),
                             make_translator(ctx.router), emit=ctx.emit, trace_path=alice_home() / "reflex-trace.jsonl")
         agent.track_changes = True
@@ -199,16 +199,16 @@ class Game(Tool):
             # was counted as "failed" and a wrong rule was written).
             status = "done" if ops["expected_happened"] else "failed"
         row = sess.record(goal, status, res.steps, summary)
-        verdict = reflex_verdict(status) or ("SONUÇ: hamle beklendiği gibi OLMADI (tahtaya göre)."
+        verdict = reflex_verdict(status) or ("RESULT: the move did NOT go as expected (according to the board)."
                                              if status == "failed" else "")
-        lessons = (f"dersler: +{learned['add'] + sure['add']} yeni, {learned['confirm']} doğrulandı, "
-                   f"{learned['contradict']} çelişti, {learned['edit']} düzeltildi")
+        lessons = (f"lessons: +{learned['add'] + sure['add']} new, {learned['confirm']} confirmed, "
+                   f"{learned['contradict']} contradicted, {learned['edit']} corrected")
         head = f"tur {row['turn']} ({sess.name})\n"
         if intent:
             head += (f"hamle: {intent['move']}\nneden: {intent.get('why', '')}\nbeklenen: {intent.get('expect', '')}"
                      "\n")
-        tail = f"\ntahta şimdi:\n{board_after[:BOARD_SHOWN]}" if board_after else ""
-        return ToolResult(f"{head}{res.report()}\nözet: {summary}\n{lessons}" + ("\n" + verdict if verdict else "")
+        tail = f"\nboard now:\n{board_after[:BOARD_SHOWN]}" if board_after else ""
+        return ToolResult(f"{head}{res.report()}\nsummary: {summary}\n{lessons}" + ("\n" + verdict if verdict else "")
                           + tail, is_error=status == "error")
 
 

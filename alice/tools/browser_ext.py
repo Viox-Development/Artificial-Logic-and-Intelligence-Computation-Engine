@@ -65,7 +65,7 @@ class ExtHub:
             asyncio.run(self._serve())
         except Exception as e:  # noqa: BLE001 - port busy etc.: the non-extension (CDP) path keeps working
             self.error = str(e)
-            self.log(f"eklenti sunucusu başlatılamadı: {e}")
+            self.log(f"could not start the extension server: {e}")
             self._ready.set()
 
     async def _serve(self) -> None:
@@ -103,16 +103,16 @@ class ExtHub:
             return True
         if not allowed:
             pin_id(ext_id)
-            self.log(f"tarayıcı eklentisi eşlendi: {ext_id}")
+            self.log(f"browser extension paired: {ext_id}")
             return True
-        self.log(f"tanınmayan eklenti kimliği reddedildi: {ext_id} (yeniden eşlemek için {pin_path()} dosyasını sil)")
+        self.log(f"unknown extension id rejected: {ext_id} (delete {pin_path()} to pair again)")
         return False
 
     async def _handle(self, ws) -> None:
         old, self.ws = self.ws, ws
         if old is not None:
             await old.close()
-        self.log("eklenti bağlandı")
+        self.log("extension connected")
         try:
             async for raw in ws:
                 try:
@@ -126,7 +126,7 @@ class ExtHub:
                 if fut is None or fut.done():
                     continue
                 if "error" in msg:
-                    fut.set_exception(ToolError(f"tarayıcı eklentisi: {msg['error']}"))
+                    fut.set_exception(ToolError(f"browser extension: {msg['error']}"))
                 else:
                     fut.set_result(msg.get("result"))
         except Exception:  # noqa: BLE001 - extension disconnected
@@ -134,8 +134,8 @@ class ExtHub:
         finally:
             if self.ws is ws:
                 self.ws = None
-                self.fail_all("tarayıcı eklentisi bağlantısı koptu (connection closed)")
-            self.log("eklenti ayrıldı")
+                self.fail_all("the browser extension connection dropped (connection closed)")
+            self.log("extension disconnected")
 
     def fail_all(self, reason: str) -> None:
         for fut in list(self.pending.values()):
@@ -148,7 +148,7 @@ class ExtHub:
         timeout = _timeout
         ws, loop = self.ws, self.loop
         if ws is None or loop is None:
-            raise ConnectionError("tarayıcı eklentisi bağlı değil (not connected)")
+            raise ConnectionError("the browser extension is not connected")
         cid = next(self._ids)
         fut: concurrent.futures.Future = concurrent.futures.Future()
         self.pending[cid] = fut
@@ -156,7 +156,7 @@ class ExtHub:
         try:
             return fut.result(timeout)
         except concurrent.futures.TimeoutError:
-            raise ToolError(f"tarayıcı {timeout:.0f} sn içinde cevap vermedi ({method}); sekme donmuş olabilir") from None
+            raise ToolError(f"the browser did not answer within {timeout:.0f} s ({method}); the tab may be frozen") from None
         finally:
             self.pending.pop(cid, None)
 
@@ -250,7 +250,7 @@ class ExtKeyboard:
 
     def type(self, text: str, delay: float = 0) -> None:
         if not self.page.os_focus():
-            raise ToolError("tarayıcı penceresi öne alınamadı; yazmak için type action'ını kullan")
+            raise ToolError("could not bring the browser window to the front; use the type action to type")
         from alice.tools.computer import type_text
 
         type_text(text)
@@ -277,10 +277,10 @@ class ExtMouse:
 
     def _screen(self, x: float, y: float) -> tuple[int, int]:
         if not self.page.os_focus():
-            raise ToolError("tarayıcı penceresi öne alınamadı; noktaya tıklanamıyor")
+            raise ToolError("could not bring the browser window to the front; can't click the point")
         pt = _viewport_point(self.page.run("place", None), x, y)
         if pt is None:
-            raise ToolError("tarayıcı penceresi görünmüyor; noktaya tıklanamıyor")
+            raise ToolError("the browser window isn't visible; can't click the point")
         return pt
 
     def click(self, x: float, y: float, button: str = "left", click_count: int = 1) -> None:
@@ -336,7 +336,7 @@ class ExtLocator:
             return self.page.run("place", self.id)
         if js == OUTLINE_JS:
             return self.page.run("outline", self.id)
-        raise ToolError("eklentiyle öğe üzerinde serbest JS çalıştırılamıyor")
+        raise ToolError("arbitrary JS can't be run on an element with the extension")
 
     def _os_point(self) -> tuple[int, int] | None:
         if not self.page.os_focus():
@@ -370,7 +370,7 @@ class ExtLocator:
     def drag_to(self, other: "ExtLocator", timeout: float = 8000) -> None:
         a, b = self._os_point(), other._os_point()
         if a is None or b is None:
-            raise ToolError("sürüklemek için tarayıcı penceresi önde ve görünür olmalı")
+            raise ToolError("dragging needs the browser window in front and visible")
         from alice.tools.computer import _dpi_aware, _pyautogui
 
         _dpi_aware()
@@ -398,8 +398,8 @@ class ExtPage:
         except ToolError as e:
             if "Cannot access" in str(e) or "cannot be scripted" in str(e):
                 # opera://, chrome://, extension store: the browser does not let extensions into these pages
-                raise ToolError("bu tarayıcının kendi sayfası (ayarlar, eklentiler, mağaza gibi); içi okunamaz ve "
-                                "tıklanamaz. Başka sekmeye geç ya da windows/ui_act ile çalış.") from e
+                raise ToolError("this is the browser's own page (settings, extensions, store and the like); it can't be read or "
+                                "clicked. Switch to another tab or work with windows/ui_act.") from e
             raise
 
     def _refresh(self) -> dict[str, Any]:
@@ -484,7 +484,7 @@ class ExtPage:
 
         m = re.search(r'data-alice-id="(\d+)"', selector)
         if not m:
-            raise ToolError("eklentiyle yalnız snapshot ID'leriyle çalışılır")
+            raise ToolError("with the extension, only snapshot IDs can be used")
         return ExtLocator(self, int(m.group(1)))
 
 
@@ -528,7 +528,7 @@ class ExtBrowserSession:
         return self.hub.connected
 
     def abort(self, reason: str) -> None:
-        self.hub.fail_all(f"tarayıcı işlemi kesildi: {reason} (connection closed)")
+        self.hub.fail_all(f"the browser action was cut off: {reason} (connection closed)")
 
     def _visible_page(self) -> ExtPage | None:
         """Active tab in the foreground window."""
@@ -573,7 +573,7 @@ class ExtBrowserSession:
 
         loc = ExtLocator(self.page, as_number(element_id, "element_id", int))
         if loc.count() == 0:
-            raise ToolError("öğe bulunamadı; sayfa değişmiş olabilir, browser action=snapshot ile yenile")
+            raise ToolError("element not found; the page may have changed, refresh with browser action=snapshot")
         return loc
 
     def downloads(self, limit: int = 5) -> list[dict[str, Any]]:

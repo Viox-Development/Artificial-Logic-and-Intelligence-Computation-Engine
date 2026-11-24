@@ -118,7 +118,7 @@ def test_blocked_page_is_rendered_in_the_stealth_browser(monkeypatch, workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = web.WebFetch().run(ctx, url="https://blocked.test/q").text
     assert seen == ["https://blocked.test/q"]
-    assert out.startswith("HTTP 200") and "gerçek tarayıcıyla açıldı" in out and "pip install tool" in out
+    assert out.startswith("HTTP 200") and "opened with a real browser" in out and "pip install tool" in out
 
 
 def test_raw_never_starts_a_browser(monkeypatch, workdir):
@@ -225,18 +225,18 @@ def test_crawl_tool_formats_a_digest(monkeypatch, workdir):
     _with_site(monkeypatch, SITE)
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = crawl.WebCrawl().run(ctx, url="d.test/", query="cancel a task CancelledError").text
-    assert "sayfa okundu" in out and "https://d.test/cancel" in out and "⟨" not in out
+    assert "pages read" in out and "https://d.test/cancel" in out and "⟨" not in out
 
 
 def test_crawl_max_depth_zero_only_visits_root(monkeypatch, workdir):
     _with_site(monkeypatch, SITE)
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = crawl.WebCrawl().run(ctx, url="https://d.test/", query="cancel", max_depth=0).text
-    assert "1 sayfa okundu" in out
+    assert "1 pages read" in out
 
 
 def test_crawl_reports_when_nothing_could_be_read(monkeypatch, workdir):
     _with_site(monkeypatch, {})
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
-    with pytest.raises(ToolError, match="hiçbir sayfa okunamadı"):
+    with pytest.raises(ToolError, match="no page could be read"):
         crawl.WebCrawl().run(ctx, url="https://d.test/", query="x")

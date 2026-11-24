@@ -130,7 +130,7 @@ def test_tool_sends_parsed_command(monkeypatch, workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     r = DcsWingman().run(ctx, command="İkinci, sağdaki SAM'i bastır")
     assert sent == [("ALICE1|attack|2|sam|right|", 41231)]
-    assert "gönderildi" in r.text and "SAM" in r.text
+    assert "sent" in r.text and "SAM" in r.text
     DcsWingman().run(ctx, verb="rtb", index="3")
     assert sent[-1][0] == "ALICE1|rtb|3|any|any|"
     with pytest.raises(ToolError):

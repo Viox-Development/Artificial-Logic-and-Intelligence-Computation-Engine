@@ -142,21 +142,21 @@ class Watch:
         for h, w in list(new.items())[:4]:
             if w["cls"] == DIALOG_CLASS:
                 body = dialog_text(h)
-                lines.append(f"yeni iletişim kutusu '{w['title']}'" + (f": {body}" if body else ""))
+                lines.append(f"new dialog '{w['title']}'" + (f": {body}" if body else ""))
             else:
                 lines.append(f"yeni pencere '{w['title']}'")
         if fg and fg not in new and fg in self.before and self.before[fg]["cls"] == DIALOG_CLASS:
             body = dialog_text(fg)
-            lines.append(f"önde açık bir iletişim kutusu var '{self.before[fg]['title']}'" + (f": {body}" if body else ""))
+            lines.append(f"a dialog is open in front '{self.before[fg]['title']}'" + (f": {body}" if body else ""))
         if not self.uac and uac_open():
-            lines.append("Windows izin ekranı (UAC) açıldı: hiçbir program ona tıklayamaz; kullanıcıdan 'Evet'e "
-                         "basmasını iste ve bekle")
+            lines.append("the Windows permission screen (UAC) opened: no program can click it; ask the user to press 'Yes' "
+                         "and wait")
         if self.opening and not new and not lines:
-            lines.append(f"{waited:.1f} sn içinde yeni bir pencere görünmedi: açıldığını varsayma, kontrol et "
-                         "(ya hiç açılmadı ya da yavaş açılıyor)")
+            lines.append(f"no new window appeared within {waited:.1f} s: don't assume it opened, check "
+                         "(it either never opened or is opening slowly)")
         if not lines:
             return ""
-        dialog = any("iletişim kutusu" in s for s in lines)
-        tail = (" Beklemediğin bir uyarı/hata ise önce ne yazdığını oku ve planını ona göre değiştir; körlemesine "
-                "Enter/Tamam'a basma, aynı adımı tekrarlama.") if dialog else ""
+        dialog = any("dialog" in s for s in lines)
+        tail = (" If it's a warning/error you didn't expect, read what it says first and change your plan to fit; don't "
+                "press Enter/OK blindly or repeat the same step.") if dialog else ""
         return "\n\n[ekranda olan] " + "; ".join(lines) + "." + tail

@@ -28,6 +28,9 @@ from alice.providers.router import (COOLING_RX, AllProvidersFailed, Router, cach
 from alice.tools.base import COMPUTER, DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
 # Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
+# Prefix of a failed tool result. Older builds wrote "HATA:"; readers accept both (ERROR_PREFIXES).
+ERROR_PREFIX = "ERROR:"
+ERROR_PREFIXES = ("ERROR:", "HATA:")
 log = logging.getLogger(__name__)
 
 
@@ -1328,7 +1331,7 @@ class Agent:
 
             text = tool_results.shape(result.text, self.output_limit, str(call.get("id") or ""), name)
             if result.is_error:
-                text = f"HATA: {text}"
+                text = f"{ERROR_PREFIX} {text}"
             text += self._loop_note(call, result)
             if result.images:
                 if self._brain_sees_images():

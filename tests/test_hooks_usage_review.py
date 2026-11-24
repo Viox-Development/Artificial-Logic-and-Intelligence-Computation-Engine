@@ -40,7 +40,7 @@ def test_hooks_tool_asks_before_adding_and_runs_test(home, workdir):
     assert t.risk_for({"action": "add"}) == DANGER and t.risk_for({"action": "list"}) == "read"
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = t.run(ctx, "add", event="PostToolUse", command="echo tamam", matcher="edit_file")
-    assert "eklendi" in out.text
+    assert "added" in out.text
     assert "0. PostToolUse [edit_file] echo tamam" in t.run(ctx, "list").text
     assert "exit code 0" in t.run(ctx, "test", index=0).text and "tamam" in t.run(ctx, "test", index=0).text
     with pytest.raises(ToolError):
@@ -70,7 +70,7 @@ def test_usage_breakdown_by_model_and_tool(workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     ctx.state["agent"] = a
     out = Usage().run(ctx)
-    assert "chatgpt:gpt-6: 2 çağrı" in out.text and out.card["kind"] == "usage"
+    assert "chatgpt:gpt-6: 2 calls" in out.text and out.card["kind"] == "usage"
     del agent
 
 

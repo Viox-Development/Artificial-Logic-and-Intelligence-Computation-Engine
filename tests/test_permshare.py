@@ -38,7 +38,7 @@ def test_apply_writes_project_rules_and_they_stop_being_suggested(workdir):
     PermissionsTool().run(ctx, "apply", rules=["run_command(npm test*)"])
     assert "run_command(npm test*)" in perm.project_rules(workdir)["allow"]
     assert perm.suggestions(workdir) == []
-    with pytest.raises(ToolError, match="geniş"):
+    with pytest.raises(ToolError, match="too broad"):
         PermissionsTool().run(ctx, "apply", rules=["*"])
 
 
@@ -58,9 +58,9 @@ def test_share_publishes_secret_gist_and_refuses_secrets(workdir):
     (workdir / "rapor.html").write_text("<h1>Rapor</h1>", encoding="utf-8")
     out = Share().run(ctx, ["rapor.html"], title="Haftalık")
     assert api.body["public"] is False and "rapor.html" in api.body["files"]
-    assert "gistcdn.githack.com" in out.text and "gizli" in out.text
+    assert "gistcdn.githack.com" in out.text and "secret" in out.text
     (workdir / ".env").write_text("OPENAI_API_KEY=sk-abcdefabcdefabcdefabcdefabcdef", encoding="utf-8")
-    with pytest.raises(ToolError, match="paylaşılmadı"):
+    with pytest.raises(ToolError, match="not shared"):
         Share().run(ctx, [".env"])
     assert Share().risk == "send"
 

@@ -30,7 +30,7 @@ def _script(tmp_path: Path, code: str) -> str:
 
 def test_output_truncated_and_dumped_to_file(ctx, tmp_path):
     res = RunCommand().run(ctx, command=_script(tmp_path, "print('x' * 3000)"), timeout=60)
-    assert "karakter kesildi" in res.text
+    assert "characters cut" in res.text
     assert "full output in file:" in res.text
     dump = res.text.split("full output in file:")[1].split(" - ")[0].strip()
     assert Path(dump).exists() and Path(dump).stat().st_size > 2000

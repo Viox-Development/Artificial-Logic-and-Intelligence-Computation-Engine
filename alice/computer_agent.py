@@ -233,7 +233,7 @@ class Screen:
 
             target = str(a.get("target") or "").strip()
             if not target:  # empty target was treated as Path("") = "." on Windows, opening the working directory
-                raise ValueError("open için target gerekli")
+                raise ValueError("open: target is required")
             if is_script_target(target):  # do not run a script read from the screen without confirmation
                 raise ValueError("betik/kurulum dosyası ekran görevinden açılmaz; kullanıcıya sor")
             res = open_app(target)
@@ -469,7 +469,7 @@ class ComputerAgent:
                 try:
                     results.append(self.screen.act(b, shot))
                 except Exception as e:  # noqa: BLE001
-                    results.append(f"HATA {e}")
+                    results.append(f"ERROR {e}")
                     break  # subsequent actions might depend on this step
                 time.sleep(0.25)
             line = f"{n}. {key[:160]} -> {'; '.join(results)} ({str(a.get('thought', ''))[:100]})"

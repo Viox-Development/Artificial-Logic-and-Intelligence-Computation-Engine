@@ -196,7 +196,7 @@ def test_stop_kills_running_command(workdir):
     t0 = time.monotonic()
     agent.run_turn("bekle")
     assert time.monotonic() - t0 < 5
-    assert "stopped" in agent.messages[-1]["content"] or "HATA" in agent.messages[-1]["content"]
+    assert "stopped" in agent.messages[-1]["content"] or "ERROR" in agent.messages[-1]["content"] or "HATA" in agent.messages[-1]["content"]
 
 
 def test_repeated_failing_call_gets_a_nudge(workdir):

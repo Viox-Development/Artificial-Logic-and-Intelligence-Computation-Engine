@@ -32,13 +32,13 @@ class TimelineSearch(Tool):
         from alice import timeline
 
         if not timeline.db_path().exists():
-            return ToolResult("Zaman çizgisi kaydı yok ([timeline] enabled = false).")
+            return ToolResult("No timeline records ([timeline] enabled = false).")
         tl = timeline.Timeline()
         try:
             if action == "wipe":
-                return ToolResult(f"Zaman çizgisi silindi ({tl.wipe()} kayıt).")
+                return ToolResult(f"Timeline deleted ({tl.wipe()} records).")
             if not query.strip():
-                raise ToolError("search için query gerekli")
+                raise ToolError("search needs query")
             return ToolResult(timeline.fmt(tl.search(query, days=float(days or 30))))
         finally:
             tl.close()

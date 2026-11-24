@@ -37,9 +37,9 @@ def load() -> Any:
         gi.require_version("Atspi", "2.0")
         from gi.repository import Atspi
     except (ImportError, ValueError) as e:
-        raise RuntimeError("ui_elements Linux'ta AT-SPI ister: PyGObject ve Atspi 2.0 (Debian/Ubuntu: sudo apt install "
-                           "python3-gi gir1.2-atspi-2.0; venv içinde pip install PyGObject). Yoksa computer aracını "
-                           f"kullan. ({e})") from None
+        raise RuntimeError("ui_elements on Linux needs AT-SPI: PyGObject and Atspi 2.0 (Debian/Ubuntu: sudo apt install "
+                           "python3-gi gir1.2-atspi-2.0; in a venv pip install PyGObject). Otherwise use the computer "
+                           f"tool. ({e})") from None
     return Atspi
 
 
@@ -65,11 +65,11 @@ def find_window(atspi: Any, title: str | None = None) -> Any:
         for w in windows:
             if want in (w.get_name() or "").casefold():
                 return w
-        raise RuntimeError(f"'{title}' başlıklı pencere bulunamadı")
+        raise RuntimeError(f"no window titled '{title}' found")
     for w in windows:
         if _has_state(atspi, w, "ACTIVE"):
             return w
-    raise RuntimeError("öndeki pencere bulunamadı (erişilebilirlik veriyolu çalışıyor mu? at-spi2-core)")
+    raise RuntimeError("no foreground window found (is the accessibility bus running? at-spi2-core)")
 
 
 def _extents(atspi: Any, acc: Any) -> tuple[int, int, int, int] | None:
@@ -157,7 +157,7 @@ class AtspiElement:
 
     def invoke(self) -> None:
         if not self._do(*CLICK_ACTIONS):
-            raise RuntimeError("öğenin tıklama eylemi yok")
+            raise RuntimeError("the element has no click action")
 
     def click_input(self) -> None:
         self._click_at()
@@ -175,11 +175,11 @@ class AtspiElement:
 
     def toggle(self) -> None:
         if not self._do("toggle", "click", "press", "activate"):
-            raise RuntimeError("öğe açılıp kapatılamıyor")
+            raise RuntimeError("the element can't be opened or closed")
 
     def expand(self) -> None:
         if not self._do("expand or contract", "expand", "open", "click"):
-            raise RuntimeError("öğe genişletilemiyor")
+            raise RuntimeError("the element can't be expanded")
 
     collapse = expand  # AT-SPI exposes one "expand or contract" toggle
 
@@ -198,7 +198,7 @@ class AtspiElement:
     def set_edit_text(self, text: str) -> None:
         edit = self.acc.get_editable_text_iface()
         if edit is None or not edit.set_text_contents(text):
-            raise RuntimeError("alan yazılabilir değil")
+            raise RuntimeError("the field isn't writable")
 
     def get_value(self) -> str:
         return _text_value(self.acc)

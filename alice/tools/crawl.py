@@ -109,7 +109,7 @@ def crawl(start: str, query: str, max_pages: int = 15, max_depth: int = 3, fetch
     pages: list[_PageResult] = []
     covered: set[str] = set()
     stale = 0
-    reason = "sayfa sınırı"
+    reason = "page limit"
     skipped_robots = 0
 
     def visit(item: _Item) -> _PageResult:
@@ -164,16 +164,16 @@ def crawl(start: str, query: str, max_pages: int = 15, max_depth: int = 3, fetch
                         continue
                     heapq.heappush(queue, _Item(-s, res.depth + 1, url, res.url))
             if q_terms and covered >= q_terms and stale >= SATURATION_PAGES:
-                reason = "yeni bilgi gelmiyor (soru kapsandı)"
+                reason = "no new information (the question is covered)"
                 break
             # Saturation on quality too: once we have strong pages and what is left in the queue is weak, stop.
             strong = sum(1 for p in pages if not p.error and p.score >= 0.99)
             if query and strong >= 2 and (not queue or -queue[0].neg_score < 0.35) and len(pages) >= 4:
-                reason = "kalan bağlantılar zayıf (soru kapsandı)"
+                reason = "the remaining links are weak (the question is covered)"
                 break
         else:
             if not queue:
-                reason = "gezilecek bağlantı kalmadı"
+                reason = "no links left to visit"
     return {"pages": pages, "reason": reason, "queued": len(queue), "robots_skipped": skipped_robots,
             "coverage": (len(covered & q_terms) / len(q_terms)) if q_terms else 1.0}
 
@@ -214,15 +214,15 @@ class WebCrawl(Tool):
         ok = [p for p in pages if not p.error]
         if not ok:
             errs = "; ".join(f"{p.url}: {p.error}" for p in pages[:3])
-            raise ToolError(f"hiçbir sayfa okunamadı ({errs})")
+            raise ToolError(f"no page could be read ({errs})")
         ok.sort(key=lambda p: p.score, reverse=True)
-        lines = [f"{len(ok)} sayfa okundu ({time.monotonic() - t0:.0f} sn), durma nedeni: {out['reason']}; soru "
-                 f"kapsamı %{out['coverage'] * 100:.0f}"
-                 + (f"; robots.txt yüzünden {out['robots_skipped']} bağlantı atlandı" if out["robots_skipped"] else "")
-                 + (f"; {sum(1 for p in pages if p.error)} sayfa açılamadı" if any(p.error for p in pages) else "")]
+        lines = [f"{len(ok)} pages read ({time.monotonic() - t0:.0f} s), stop reason: {out['reason']}; question "
+                 f"coverage {out['coverage'] * 100:.0f}%"
+                 + (f"; {out['robots_skipped']} links skipped because of robots.txt" if out["robots_skipped"] else "")
+                 + (f"; {sum(1 for p in pages if p.error)} pages could not be opened" if any(p.error for p in pages) else "")]
         for i, p in enumerate(ok, 1):
-            via = " · tarayıcıyla" if p.via == "browser" else ""
-            body = p.excerpt.strip() or "(ilgili bölüm yok)"
+            via = " · with the browser" if p.via == "browser" else ""
+            body = p.excerpt.strip() or "(no relevant section)"
             # The numbered links inside an excerpt refer to that page's own list; drop the markers to avoid
             # confusing numbers across pages, the page URL is what matters here.
             body = reader.strip_link_marks(body)

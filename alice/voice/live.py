@@ -1309,7 +1309,7 @@ class LiveSession:
                 res: ToolResult = self.agent._execute_calls([call])[0]
                 text = res.text[:3000]
             except Exception as e:  # noqa: BLE001
-                text = f"HATA {type(e).__name__}: {e}"
+                text = f"ERROR {type(e).__name__}: {e}"
             self.log(f"live arka plan işi bitti: {name}: {text[:300]}")
             try:
                 self._deliver(name, text, ws)
@@ -1327,7 +1327,7 @@ class LiveSession:
         ws = getattr(self, "_ws", None) or origin
         if ws is not None:
             turn = getattr(self, "_turn", None)
-            if isinstance(turn, dict) and not text.startswith("HATA"):
+            if isinstance(turn, dict) and not text.startswith(("ERROR", "HATA")):
                 turn["ok"] = turn.get("ok", 0) + 1
             try:
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
@@ -1339,7 +1339,7 @@ class LiveSession:
         if announce is not None:
             first = re.split(r"(?<=[.!?])\s|\n", text.strip(), maxsplit=1)[0][:160]
             label = "Ekran görevi" if name == "computer_task" else "Görev"
-            announce(f"{label} olmadı: {first}" if text.startswith("HATA") else f"{label} bitti: {first}")
+            announce(f"{label} olmadı: {first}" if text.startswith(("ERROR", "HATA")) else f"{label} bitti: {first}")
 
     def _run_think(self, ws, fc: dict[str, Any]) -> None:
         """Have the brain model think about it in the background; when the answer arrives, return it to Live as a
@@ -1361,7 +1361,7 @@ class LiveSession:
                 pass
 
         if not question:
-            respond("HATA: question boş. Kullanıcının sorusunu question'a yaz.")
+            respond("ERROR: question is empty. Put the user's question in question.")
             return
         if getattr(self, "_thinking", 0):
             respond("Önceki soru hâlâ düşünülüyor; yeni think çağırma. Bu soruya kısaca kendin cevap ver ya da "
@@ -1409,7 +1409,7 @@ class LiveSession:
                 text = "Cevap (kendi sesinle, anlamını bozmadan söyle; kısaltabilirsin ama bilgi ekleme): " + answer
             except Exception as e:  # noqa: BLE001
                 self.log(f"live think hata: {e}")
-                text = f"HATA: düşünülemedi ({type(e).__name__}). Kısa cevabını kendin ver ve emin değilsen söyle."
+                text = f"ERROR: could not think it through ({type(e).__name__}). Give your short answer yourself and say if you're unsure."
             timer.cancel()
             with lock:
                 late = answered[0]
@@ -1611,7 +1611,7 @@ class LiveSession:
             try:
                 res = self.agent._execute_calls([call])[0]
             except Exception as e:  # noqa: BLE001 - error escaped converse; the old path re-ran the first sentence
-                res = ToolResult(f"HATA {type(e).__name__}: {e}", is_error=True)
+                res = ToolResult(f"ERROR {type(e).__name__}: {e}", is_error=True)
             self.log(f"live görev kontrolü {json.dumps(fc.get('args') or {}, ensure_ascii=False)}: {res.text[:120]}")
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [
@@ -1635,8 +1635,8 @@ class LiveSession:
 
         def too_slow() -> None:
             self.log(f"live araç zaman aşımı: {fc.get('name')} {json.dumps(fc.get('args') or {}, ensure_ascii=False)[:120]}")
-            respond(f"HATA: araç {self.TOOL_TIMEOUT:.0f} sn içinde bitmedi, iş YAPILMADI. Kullanıcıya olmadığını "
-                    "kısaca söyle (yapıldı deme); başka yoldan dene (ör. computer_task).")
+            respond(f"ERROR: the tool did not finish within {self.TOOL_TIMEOUT:.0f} s; the job was NOT done. Tell the user "
+                    "briefly that it didn't happen (don't say it's done); try another way (e.g. computer_task).")
 
         timer = threading.Timer(self.TOOL_TIMEOUT, too_slow)
         timer.daemon = True
@@ -1662,7 +1662,7 @@ class LiveSession:
         elif res.is_error:
             turn.setdefault("errors", []).append(f"{name}: {text[:120]}")
             fails[name] = fails.get(name, 0) + 1
-            text = "HATA: " + text
+            text = "ERROR: " + text
             if fails[name] >= 2:
                 # The model kept repeating the same tool, then asked the user to "tarayıcı ayarlarını kontrol et".
                 text += ("\nBu araç bu istekte üst üste başarısız oldu: aynısını tekrar deneme. Başka bir araçla dene "

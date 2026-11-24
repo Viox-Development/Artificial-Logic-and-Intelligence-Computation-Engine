@@ -26,12 +26,12 @@ def test_file_monitor_reports_matching_new_lines_once(workdir):
     log = workdir / "app.log"
     log.write_text("eski ERROR satırı\n", encoding="utf-8")  # lines written earlier are not counted
     out = Monitor().run(ctx, "start", kind="file", target=str(log), pattern="error", note="hatayı düzelt")
-    assert "İzleme #" in out.text
+    assert "Watch #" in out.text
     with open(log, "a", encoding="utf-8") as f:
         f.write("bilgi\nERROR: veritabanı yok\n")
     assert ev.wait(10)
     assert "veritabanı yok" in got[0] and "eski" not in got[0] and "hatayı düzelt" in got[0]
-    assert "çalışan izleme yok" in Monitor().run(ctx, "list").text
+    assert "no watches running" in Monitor().run(ctx, "list").text
 
 
 def test_process_monitor_reports_exit(workdir):
@@ -46,14 +46,14 @@ def test_process_monitor_reports_exit(workdir):
     ctx.state["bg_procs"] = {7: BgProc(7, "derle", p, log, time.time())}
     Monitor().run(ctx, "start", kind="process", target="7")
     assert ev.wait(10)
-    assert "süreç bitti" in got[0] and "derleme tamam" in got[0]
+    assert "process ended" in got[0] and "derleme tamam" in got[0]
 
 
 def test_monitor_validation_and_stop(workdir):
     ctx, _, _ = ctx_with_inbox(workdir)
     with pytest.raises(ToolError, match="pattern"):
         Monitor().run(ctx, "start", kind="file", target=str(workdir / "x.log"))
-    with pytest.raises(ToolError, match="arka plan süreci yok"):
+    with pytest.raises(ToolError, match="no background process"):
         Monitor().run(ctx, "start", kind="process", target="99")
     Monitor().run(ctx, "start", kind="file", target=str(workdir / "y.log"), pattern="x")
     w = next(iter(ctx.state["monitors"].values()))
@@ -84,7 +84,7 @@ def test_session_runs_separately_and_reports_back(monkeypatch, workdir):
         seen.setdefault(self.ctx.state.get("session_id"), []).append(prompt)
         self.messages.append({"role": "user", "content": prompt})
         self.messages.append({"role": "assistant", "content": f"bitti: {prompt[:20]}"})
-        if prompt.startswith("[Oturum bitti]"):
+        if prompt.startswith(("[Session finished]", "[Oturum bitti]")):
             reported.set()
         return "ok"
 
@@ -95,7 +95,7 @@ def test_session_runs_separately_and_reports_back(monkeypatch, workdir):
     assert reported.wait(10)
     assert seen[sid] == ["README'yi Türkçeye çevir"]
     back = seen[parent.sid][-1]
-    assert back.startswith("[Oturum bitti] 'Çeviri'") and "bitti: README" in back
+    assert back.startswith("[Session finished] 'Çeviri'") and "bitti: README" in back
     assert api.linked()[0]["id"] == sid
     assert "no such session" in api.message("baska", "x")
     state.shutdown()

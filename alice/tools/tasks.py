@@ -83,7 +83,7 @@ class TaskControl(Tool):
             if not runner.answer(action == "approve"):
                 return ToolResult("the task isn't waiting for approval right now", is_error=True)
             return ToolResult("approved, continuing" if action == "approve" else "rejected, that step won't be done")
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 AGENT_SPEC = obj({
@@ -209,7 +209,7 @@ class TeamTool(Tool):
                                   "\nAsk the user; pass their answer on with action=send to=alice.")
             return ToolResult(f"Proje durumu: {st}\n{team.status_text()}\n"
                               + ("Time ran out; the project keeps running in the background." if st != "stopped" else ""))
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 class CouncilTool(Tool):

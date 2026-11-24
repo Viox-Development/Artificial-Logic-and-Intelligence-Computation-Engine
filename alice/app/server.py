@@ -278,7 +278,7 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
                 args = tc["function"].get("arguments", "")
                 items.append({"type": "tool", "id": tc["id"], "name": tc["function"]["name"],
                               "summary": _summary(tools or {}, tc["function"]["name"], args),
-                              "text": res, "is_error": res.startswith("HATA:"),
+                              "text": res, "is_error": res.startswith(("ERROR:", "HATA:")),
                               "files": (extras.get(tc["id"]) or {}).get("_files") or [],
                               "card": (extras.get(tc["id"]) or {}).get("_card") or {}})
     return items
@@ -2148,7 +2148,7 @@ class AppState:
         final = next((m.get("content") for m in reversed(chat.agent.messages)
                       if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()), "")
         title = chat.ctx.state.get("report_title") or chat.sid
-        text = f"[Oturum bitti] '{title}' ({chat.sid}):\n{(final or '(cevap yok)')[:3000]}"
+        text = f"[Session finished] '{title}' ({chat.sid}):\n{(final or '(no answer)')[:3000]}"
         threading.Thread(target=self.deliver, args=(parent, text), daemon=True, name="alice-report").start()
 
     def _start_turn(self, chat: Chat, text: str, prompt: str, images: list[str]) -> None:
