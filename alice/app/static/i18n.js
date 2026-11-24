@@ -12,6 +12,7 @@
   } catch (e) { /* a broken block leaves the app in English rather than not starting */ }
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? String(vars[k]) : m));
   window.ALICE_LANG = data.lang || "en";
+  window.ALICE_LOCALE = window.ALICE_LANG === "tr" ? "tr-TR" : "en-US";  // dates, numbers, case-insensitive search
   window._ = function (text, vars) {
     const out = (data.catalog && data.catalog[text]) || text;
     return vars ? fill(out, vars) : out;

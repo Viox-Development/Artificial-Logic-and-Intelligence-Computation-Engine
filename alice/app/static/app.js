@@ -141,13 +141,13 @@ function renderMd(text) {
     const src = code ? code.textContent : pre.textContent;
     if (code && AliceHL.langOf(lang)) code.innerHTML = AliceHL.highlight(src, lang);
     const nLines = src.replace(/\n$/, "").split("\n").length;
-    const title = el("span", "cb-lang", lang || "kod");
-    if (nLines > 1) title.appendChild(el("small", "", `${nLines} satır`));
+    const title = el("span", "cb-lang", lang || _("code"));
+    if (nLines > 1) title.appendChild(el("small", "", _("{n} lines", { n: nLines })));
     head.appendChild(title);
     const cp = el("button", "act");
     cp.dataset.copy = "code";
     cp.appendChild(svg(IC.copy));
-    cp.appendChild(document.createTextNode("Kopyala"));
+    cp.appendChild(document.createTextNode(_("Copy")));
     head.appendChild(cp);
     pre.replaceWith(box);
     box.append(head, pre);
@@ -173,9 +173,9 @@ async function copyText(text, btn) {
   }
   if (btn) {
     const old = btn.innerHTML;
-    btn.replaceChildren(svg(IC.check), document.createTextNode("Kopyalandı"));
+    btn.replaceChildren(svg(IC.check), document.createTextNode(_("Copied")));
     setTimeout(() => { btn.innerHTML = old; }, 1400);
-  } else toast("Kopyalandı");
+  } else toast(_("Copied"));
 }
 
 /* ================================================================== kaydırma */
@@ -204,7 +204,7 @@ function clearChat() {
 }
 function greet() {
   const h = new Date().getHours();
-  const part = h < 5 ? "İyi geceler" : h < 12 ? "Günaydın" : h < 18 ? "İyi günler" : h < 23 ? "İyi akşamlar" : "İyi geceler";
+  const part = h < 5 ? _("Good night") : h < 12 ? _("Good morning") : h < 18 ? _("Good afternoon") : h < 23 ? _("Good evening") : _("Good night");
   const name = S.status.user ? `, ${S.status.user}` : "";
   $("#greeting").textContent = part + name;
   if (typeof drawOnboarding === "function" && !greet._ob) { greet._ob = true; drawOnboarding().finally(() => { greet._ob = false; }); }
@@ -227,16 +227,16 @@ function addUser(text, mi, images) {
   }
   b.appendChild(document.createTextNode(text));
   const acts = el("div", "msg-actions");
-  const cp = el("button", "act"); cp.title = "Kopyala"; cp.appendChild(svg(IC.copy));
+  const cp = el("button", "act"); cp.title = _("Copy"); cp.appendChild(svg(IC.copy));
   cp.addEventListener("click", () => copyText(text));
   acts.appendChild(cp);
   if (mi !== undefined && mi !== null) {
-    const ed = el("button", "act"); ed.title = "Mesajı düzenle ve buradan yeniden gönder (çift tıklama da olur)";
-    ed.append(svg(IC.edit), document.createTextNode("Düzenle"));
+    const ed = el("button", "act"); ed.title = _("Edit the message and resend from here (double-click works too)");
+    ed.append(svg(IC.edit), document.createTextNode(_("Edit")));
     ed.addEventListener("click", () => editInline(wrap, text, mi));
     b.addEventListener("dblclick", () => editInline(wrap, text, mi));
-    const rw = el("button", "act"); rw.title = "Bu mesajdan öncesine geri sar (dosyalar dahil)";
-    rw.append(svg(IC.rewind), document.createTextNode("Geri sar"));
+    const rw = el("button", "act"); rw.title = _("Rewind to before this message (files included)");
+    rw.append(svg(IC.rewind), document.createTextNode(_("Rewind")));
     rw.addEventListener("click", () => rewindTo(mi, false));
     acts.append(ed, rw);
   }
@@ -274,11 +274,11 @@ function ensureAi() {
 }
 function aiActions(root, text, source) {
   const acts = el("div", "msg-actions");
-  const cp = el("button", "act"); cp.append(svg(IC.copy), document.createTextNode("Kopyala"));
+  const cp = el("button", "act"); cp.append(svg(IC.copy), document.createTextNode(_("Copy")));
   cp.addEventListener("click", () => copyText(text, cp));
   acts.appendChild(cp);
-  const bad = el("button", "act"); bad.title = "Bu cevabı beğenmedim: test setine eklenir, sonraki sürümlerde denenir";
-  bad.append(svg(IC.down), document.createTextNode("Beğenmedim"));
+  const bad = el("button", "act"); bad.title = _("I didn't like this answer: it goes into the test set and is tried in later versions");
+  bad.append(svg(IC.down), document.createTextNode(_("Didn't like it")));
   bad.addEventListener("click", () => {
     if (acts.querySelector(".fb-note")) return;
     let say = "";
@@ -287,11 +287,11 @@ function aiActions(root, text, source) {
     }
     const note = el("input", "fb-note");
     note.type = "text";
-    note.placeholder = "Neyi beğenmedin? (isteğe bağlı) Enter";
+    note.placeholder = _("What didn't you like? (optional) Enter");
     const send = () => api("/api/feedback", { say, reply: text, note: note.value.trim() }).then((r) => {
       note.remove();
       bad.classList.add("on");
-      toast(r && r.ok ? "Kaydedildi, bunun üstünde çalışacağız" : "kaydedilemedi");
+      toast(r && r.ok ? _("Saved, we'll work on it") : _("could not save"));
     });
     note.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); if (e.key === "Escape") note.remove(); });
     acts.appendChild(note);
@@ -307,7 +307,7 @@ function onThinking(t) {
   if (!c.thought) {
     const d = el("details", "thought");
     const sum = el("summary");
-    sum.append(svg(IC.chev), el("span", "shimmer", "Düşünüyor"));
+    sum.append(svg(IC.chev), el("span", "shimmer", _("Thinking")));
     const body = el("div", "tbody");
     d.append(sum, body);
     c.root.insertBefore(d, c.prose);
@@ -323,7 +323,7 @@ function closeThought(c) {
   c.thought.closed = true;
   const secs = Math.max(1, Math.round((performance.now() - c.tStart) / 1000));
   c.thought.sum.lastChild.className = "";
-  c.thought.sum.lastChild.textContent = `${secs} sn düşündü`;
+  c.thought.sum.lastChild.textContent = _("thought for {secs} s", { secs });
 }
 
 function onDelta(t) {
@@ -374,7 +374,7 @@ function addBtw(ev) {
   if (!card) {
     card = el("div", "btw-card pending");
     card._q = ev.q;
-    card.append(el("div", "btw-q", "Yan soru: " + ev.q), el("div", "btw-a md", "düşünüyor…"));
+    card.append(el("div", "btw-q", _("Side question: {q}", { q: ev.q })), el("div", "btw-a md", _("thinking…")));
     add(card);
   }
   if (!ev.pending) {
@@ -398,21 +398,21 @@ function addNote(text, kind) {
 
 /* =================================================================== araçlar */
 const VERBS = {
-  read_file: ["Okundu", IC.file], write_file: ["Yazıldı", IC.pen], edit_file: ["Düzenlendi", IC.pen],
-  multi_edit: ["Düzenlendi", IC.pen],
-  list_dir: ["Klasör", IC.folder], glob: ["Dosya arandı", IC.search], grep: ["Arandı", IC.search],
-  run_command: ["Komut", IC.term], process_output: ["Süreç çıktısı", IC.term], process_stop: ["Süreç durduruldu", IC.term],
-  web_fetch: ["Sayfa okundu", IC.globe], web_search: ["Web'de arandı", IC.globe], browser: ["Tarayıcı", IC.globe],
-  computer: ["Ekran", IC.screen], windows: ["Pencere", IC.screen], ui_elements: ["Arayüz tarandı", IC.cursor],
-  ui_act: ["Arayüz", IC.cursor], clipboard: ["Pano", IC.copy], system_info: ["Sistem bilgisi", IC.screen],
-  process_list: ["Süreçler", IC.list], process_kill: ["Süreç sonlandırıldı", IC.x], todo_write: ["Plan", IC.list],
-  memory: ["Hafıza", IC.brain], task: ["Alt ajan", IC.spark], reflex: ["Reflex", IC.bolt],
+  read_file: [_("Read"), IC.file], write_file: [_("Written"), IC.pen], edit_file: [_("Edited"), IC.pen],
+  multi_edit: [_("Edited"), IC.pen],
+  list_dir: [_("Folder"), IC.folder], glob: [_("Files searched"), IC.search], grep: [_("Searched"), IC.search],
+  run_command: [_("Command"), IC.term], process_output: [_("Process output"), IC.term], process_stop: [_("Process stopped"), IC.term],
+  web_fetch: [_("Page read"), IC.globe], web_search: [_("Searched the web"), IC.globe], browser: [_("Browser"), IC.globe],
+  computer: [_("Screen"), IC.screen], windows: [_("Window"), IC.screen], ui_elements: [_("UI scanned"), IC.cursor],
+  ui_act: [_("UI"), IC.cursor], clipboard: [_("Clipboard"), IC.copy], system_info: [_("System info"), IC.screen],
+  process_list: [_("Processes"), IC.list], process_kill: [_("Process ended"), IC.x], todo_write: [_("Plan"), IC.list],
+  memory: [_("Memory"), IC.brain], task: [_("Subagent"), IC.spark], reflex: ["Reflex", IC.bolt],
 };
 Object.assign(VERBS, {
-  assign: ["Ajan kuruldu", IC.spark], plan: ["Plan sunuldu", IC.list], review: ["İnceleme kararı", IC.check],
-  message: ["Mesaj", IC.chat], team_send: ["Mesaj", IC.chat], team_wait: ["Cevap beklendi", IC.chat],
-  diff: ["Farka bakıldı", IC.diff], council: ["Kurula soruldu", IC.shield], apply_patch: ["Yama", IC.pen],
-  file_ops: ["Dosya işlemi", IC.folder], git: ["Git", IC.branch], http_request: ["İstek", IC.globe],
+  assign: [_("Agent set up"), IC.spark], plan: [_("Plan presented"), IC.list], review: [_("Review decision"), IC.check],
+  message: [_("Message"), IC.chat], team_send: [_("Message"), IC.chat], team_wait: [_("Waited for an answer"), IC.chat],
+  diff: [_("Looked at the diff"), IC.diff], council: [_("Asked the council"), IC.shield], apply_patch: [_("Patch"), IC.pen],
+  file_ops: [_("File operation"), IC.folder], git: ["Git", IC.branch], http_request: [_("Request"), IC.globe],
 });
 function verbFor(name) {
   if (name.startsWith("mcp__")) {
@@ -428,8 +428,8 @@ const GROUP_KIND = {
   system_info: "sys", process_list: "sys", process_output: "sys",
 };
 const GROUP_TEXT = {
-  file: (n) => `${n} dosya okundu`, dir: (n) => `${n} klasör listelendi`, search: (n) => `${n} arama yapıldı`,
-  web: (n) => `${n} web araması`, page: (n) => `${n} sayfa okundu`, sys: (n) => `${n} sistem sorgusu`,
+  file: (n) => _("{n} files read", { n }), dir: (n) => _("{n} folders listed", { n }), search: (n) => _("{n} searches", { n }),
+  web: (n) => _("{n} web searches", { n }), page: (n) => _("{n} pages read", { n }), sys: (n) => _("{n} system queries", { n }),
 };
 function lastContent() {
   let n = list.lastElementChild;
@@ -477,7 +477,7 @@ function makeSteps() {
   const head = el("button", "steps-head");
   const ic = el("span", "sh-ic");
   ic.append(svg(IC.check, "ok"), el("i", "spin"));
-  const t = el("b", "sh-t", "Çalışıyor");
+  const t = el("b", "sh-t", _("Working"));
   const meta = el("span", "sh-meta");
   head.append(ic, t, meta, el("span", "grow"), svg(IC.chev, "tchev"));
   head.addEventListener("click", () => box.classList.toggle("collapsed"));
@@ -494,10 +494,10 @@ function updateSteps(box) {
   const files = new Set(tools.filter((x) => FILE_TOOLS.has(x._name)).map((x) => x._summary.split(" ")[0]));
   box.classList.toggle("running", running > 0);
   box.classList.toggle("has-err", errs > 0);
-  box._t.textContent = running ? `Çalışıyor · ${tools.length} adım` : `${tools.length} adım`;
+  box._t.textContent = running ? _("Working · {n} steps", { n: tools.length }) : _("{n} steps", { n: tools.length });
   const parts = [];
-  if (files.size) parts.push(`${files.size} dosya`);
-  if (errs) parts.push(`${errs} hata`);
+  if (files.size) parts.push(_("{n} files", { n: files.size }));
+  if (errs) parts.push(_("{n} errors", { n: errs }));
   if (!running && box._t1 && box._t1 > box._t0) parts.push(fmtDur((box._t1 - box._t0) / 1000));
   box._meta.textContent = parts.join(" · ");
 }
@@ -632,7 +632,7 @@ function renderTodo(text, big) {
   const done = items.filter((i) => i.state === "done").length;
   const box = el("div", "todo" + (big ? " big" : ""));
   const head = el("div", "todo-title");
-  head.append(svg(IC.list), el("span", "", "Görevler"), el("span", "todo-n", `${done}/${items.length}`));
+  head.append(svg(IC.list), el("span", "", _("Tasks")), el("span", "todo-n", `${done}/${items.length}`));
   const bar = el("i", "todo-bar");
   const fill = el("i");
   fill.style.width = items.length ? (100 * done) / items.length + "%" : "0";
@@ -661,9 +661,9 @@ function renderTerm(cmd, text, isErr) {
   const c = el("span", "term-cmd");
   c.append(el("span", "pr", "$"), el("span", "", cmd));
   head.appendChild(c);
-  if (code !== null) head.appendChild(el("span", "exit " + (code === 0 ? "ok" : "bad"), `çıkış ${code}`));
-  else if (isErr) head.appendChild(el("span", "exit bad", "hata"));
-  const pre = el("pre", "term-out", out.trim() || "(çıktı yok)");
+  if (code !== null) head.appendChild(el("span", "exit " + (code === 0 ? "ok" : "bad"), _("exit {code}", { code })));
+  else if (isErr) head.appendChild(el("span", "exit bad", _("error")));
+  const pre = el("pre", "term-out", out.trim() || _("(no output)"));
   box.append(head, pre);
   return { box, code };
 }
@@ -674,7 +674,7 @@ function peekText(t, ev) {
   const lines = txt.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
   if (!lines.length) return "";
   const shown = lines.slice(0, 2).map((l) => (l.length > 140 ? l.slice(0, 137) + "…" : l));
-  if (lines.length > 2) shown.push(`… +${lines.length - 2} satır`);
+  if (lines.length > 2) shown.push(_("… +{n} lines", { n: lines.length - 2 }));
   return shown.join("\n");
 }
 
@@ -721,7 +721,7 @@ function finishTool(t, ev, live) {
   } else if (t._name === "run_command" && !/^arka planda/.test(ev.text || "")) {
     const { box, code } = renderTerm(t._summary, ev.text, ev.is_error);
     body.appendChild(box);
-    if (code !== null) t._meta.appendChild(el("span", "exit " + (code === 0 ? "ok" : "bad"), `çıkış ${code}`));
+    if (code !== null) t._meta.appendChild(el("span", "exit " + (code === 0 ? "ok" : "bad"), _("exit {code}", { code })));
   } else if (ev.text) {
     body.appendChild(el("pre", "out", ev.text));
   }
@@ -762,15 +762,15 @@ function fmtSize(n) {
   return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 }
 const FILE_KIND = [
-  [/\.(png|jpe?g|gif|webp|svg|bmp)$/i, "görsel", "#22c55e"], [/\.pdf$/i, "PDF", "#ef4444"],
-  [/\.(md|markdown|txt|log)$/i, "metin", "#a3a3a3"], [/\.(csv|tsv|xlsx?)$/i, "tablo", "#10b981"],
-  [/\.(html?|css)$/i, "web", "#f97316"], [/\.(py|js|ts|json|toml|ya?ml|sh|ps1|sql|xml|ini|cfg)$/i, "kod", "#60a5fa"],
-  [/\.(zip|7z|rar|tar|gz)$/i, "arşiv", "#eab308"], [/\.(exe|msi|apk)$/i, "program", "#a78bfa"],
-  [/\.(mp3|wav|ogg|flac|mp4|mkv|webm)$/i, "medya", "#ec4899"]];
+  [/\.(png|jpe?g|gif|webp|svg|bmp)$/i, _("image"), "#22c55e"], [/\.pdf$/i, "PDF", "#ef4444"],
+  [/\.(md|markdown|txt|log)$/i, _("text"), "#a3a3a3"], [/\.(csv|tsv|xlsx?)$/i, _("table"), "#10b981"],
+  [/\.(html?|css)$/i, "web", "#f97316"], [/\.(py|js|ts|json|toml|ya?ml|sh|ps1|sql|xml|ini|cfg)$/i, _("code"), "#60a5fa"],
+  [/\.(zip|7z|rar|tar|gz)$/i, _("archive"), "#eab308"], [/\.(exe|msi|apk)$/i, "program", "#a78bfa"],
+  [/\.(mp3|wav|ogg|flac|mp4|mkv|webm)$/i, _("media"), "#ec4899"]];
 const PREVIEWABLE = /\.(png|jpe?g|gif|webp|svg|bmp|pdf|md|markdown|txt|log|csv|tsv|json|py|js|ts|html?|css|toml|ya?ml|xml|sh|ps1|sql|ini|cfg)$/i;
 function fileKind(name) {
   for (const [rx, label, color] of FILE_KIND) if (rx.test(name)) return [label, color];
-  return ["dosya", "var(--faint)"];
+  return [_("file"), "var(--faint)"];
 }
 function fileCards(files) {
   const box = el("div", "file-cards");
@@ -784,13 +784,13 @@ function fileCards(files) {
     meta.append(el("b", "", f.name), el("small", "", `${kind} · ${fmtSize(f.size || 0)}` + (dir ? ` · ${dir}` : "")));
     const acts = el("span", "fc-acts");
     if (PREVIEWABLE.test(f.name)) {
-      const pv = el("button", "btn", "Önizle");
+      const pv = el("button", "btn", _("Preview"));
       pv.addEventListener("click", () => previewFile(f));
       acts.appendChild(pv);
     }
-    const open = el("button", "btn ghost", "Aç");
-    open.addEventListener("click", () => api("/api/reveal", { path: f.path }).then((r) => r && !r.ok && toast(r.error || "açılamadı")));
-    const folder = iconAct(IC.folder, "Klasörde göster", () => api("/api/reveal", { path: f.path, folder: true }));
+    const open = el("button", "btn ghost", _("Open"));
+    open.addEventListener("click", () => api("/api/reveal", { path: f.path }).then((r) => r && !r.ok && toast(r.error || _("could not open"))));
+    const folder = iconAct(IC.folder, _("Show in folder"), () => api("/api/reveal", { path: f.path, folder: true }));
     acts.append(open, folder);
     card.title = f.path;
     card.append(ext, meta, acts);
@@ -802,11 +802,11 @@ function fileCards(files) {
 // Dosyayı uygulamadan çıkmadan göster: markdown işlenir, kod renklenir, CSV tablo olur, HTML yalıtılmış çerçevede.
 async function previewFile(f) {
   const r = await api("/api/file_preview?path=" + encodeURIComponent(f.path));
-  if (!r || !r.ok) return toast((r && r.error) || "önizlenemedi");
+  if (!r || !r.ok) return toast((r && r.error) || _("could not preview"));
   showDialog((d) => {
     d.classList.add("preview");
     const head = el("div", "pv-head");
-    const open = el("button", "btn ghost", "Aç");
+    const open = el("button", "btn ghost", _("Open"));
     open.addEventListener("click", () => api("/api/reveal", { path: f.path }));
     head.append(el("b", "", r.name), open);
     const body = el("div", "pv-body");
@@ -847,7 +847,7 @@ async function previewFile(f) {
       body.appendChild(pre);
       if (r.kind === "code" && window.AliceHL && AliceHL.langOf(r.lang)) code.innerHTML = AliceHL.highlight(r.text, r.lang);
     }
-    if (r.truncated) body.appendChild(el("small", "pv-note", "Dosya büyük: yalnız başı gösteriliyor."));
+    if (r.truncated) body.appendChild(el("small", "pv-note", _("The file is large: only the start is shown.")));
     d.append(head, body);
     dialogClose(d);
   });
@@ -889,8 +889,8 @@ function onPermission(ev) {
   const ic = el("span", "perm-ic");
   ic.appendChild(svg(ev.risk === "danger" ? IC.shield : icon));
   const qt = el("div", "perm-qt");
-  const head = ev.risk === "danger" ? "Bu işlem geri alınamayabilir"
-    : ev.risk === "send" ? "Bu mesaj başkasına gidecek" : "ALICE izin istiyor";
+  const head = ev.risk === "danger" ? _("This may not be undoable")
+    : ev.risk === "send" ? _("This message will go to someone else") : _("ALICE asks for permission");
   qt.append(el("b", "", head),
     el("small", "", `${verb} · ${ev.name}`));
   q.append(ic, qt);
@@ -904,9 +904,9 @@ function onPermission(ev) {
   };
   // Tehlikeli ve dışarı giden işlerde kalıcı izin yok (sunucu da kabul etmez).
   const lasting = ev.risk !== "danger" && ev.risk !== "send";
-  acts.append(mk("İzin ver", "y", "primary", "1"), mk("Bu oturumda hep izin ver", "a", "", "2"));
-  if (lasting) acts.append(mk("Bu projede hep izin ver", "p", "", "3"));
-  acts.append(mk("Reddet", "n", "danger", lasting ? "4" : "3"));
+  acts.append(mk(_("Allow"), "y", "primary", "1"), mk(_("Always allow in this session"), "a", "", "2"));
+  if (lasting) acts.append(mk(_("Always allow in this project"), "p", "", "3"));
+  acts.append(mk(_("Deny"), "n", "danger", lasting ? "4" : "3"));
   const pre = el("pre", ev.name === "run_command" ? "cmd" : "", ev.summary);
   card.append(q, pre, acts);
   card._id = ev.id;
@@ -917,8 +917,8 @@ function onPermission(ev) {
 function onPermissionDone(ev) {
   const card = S.perms.get(ev.id);
   if (!card) return;
-  const txt = { y: "İzin verildi", a: "Bu oturumda bu araca hep izin verildi",
-    p: "Bu projede kalıcı izin verildi (.alice/permissions.toml)", n: "Reddedildi" }[ev.answer] || ev.answer;
+  const txt = { y: _("Allowed"), a: _("This tool is always allowed in this session"),
+    p: _("Allowed permanently in this project (.alice/permissions.toml)"), n: _("Denied") }[ev.answer] || ev.answer;
   card._acts.replaceWith(el("div", "perm-done " + (ev.answer === "n" ? "no" : "yes"), txt));
   card.classList.add("answered");
 }
@@ -929,7 +929,7 @@ function onChoice(ev) {
   const card = el("div", "perm choice");
   const q = el("div", "perm-q");
   const qt = el("div", "perm-qt");
-  qt.append(el("b", "", ev.question), el("small", "", ev.multi ? "Birden fazla seçebilirsin" : "ALICE soruyor"));
+  qt.append(el("b", "", ev.question), el("small", "", ev.multi ? _("You can choose more than one") : _("ALICE asks")));
   q.append(qt);
   const acts = el("div", "perm-actions choice-actions");
   const send = (ans) => api("/api/choice", { id: ev.id, answer: ans });
@@ -947,11 +947,11 @@ function onChoice(ev) {
     acts.append(b);
   });
   const other = el("input", "choice-other");
-  other.placeholder = "Başka bir cevap yaz, Enter";
+  other.placeholder = _("Write another answer, Enter");
   other.addEventListener("keydown", (e) => { if (e.key === "Enter" && other.value.trim()) send(other.value.trim()); });
   acts.append(other);
   if (ev.multi) {
-    const ok = el("button", "btn primary", "Gönder");
+    const ok = el("button", "btn primary", _("Send"));
     ok.addEventListener("click", () => send([...picked].join(", ") || other.value.trim()));
     acts.append(ok);
   }
@@ -965,7 +965,7 @@ function onChoice(ev) {
 function onChoiceDone(ev) {
   const card = S.perms.get(ev.id);
   if (!card) return;
-  card._acts.replaceWith(el("div", "perm-done " + (ev.answer ? "yes" : "no"), ev.answer ? "Cevap: " + ev.answer : "Vazgeçildi"));
+  card._acts.replaceWith(el("div", "perm-done " + (ev.answer ? "yes" : "no"), ev.answer ? _("Answer: {answer}", { answer: ev.answer }) : _("Cancelled")));
   card.classList.add("answered");
 }
 function pendingPerm() {
@@ -975,13 +975,13 @@ function pendingPerm() {
 
 /* ==================================================================== durum */
 const MODES = {
-  plan: ["Plan", "Sadece okur ve araştırır, değişiklik yapmadan plan yazar", IC.map],
-  ask: ["Sor", "Okuma dışındaki her işlemde izin ister", IC.hand],
-  auto: ["Otomatik", "Sadece tehlikeli işlemlerde izin ister", IC.shield],
-  yolo: ["Tam erişim", "Hiçbir şey sormaz", IC.unlock],
+  plan: [_("Plan"), _("Only reads and researches, writes a plan without changing anything"), IC.map],
+  ask: [_("Ask"), _("Asks before anything other than reading"), IC.hand],
+  auto: [_("Automatic"), _("Asks only for dangerous actions"), IC.shield],
+  yolo: [_("Full access"), _("Never asks"), IC.unlock],
 };
 function shortModel(ref) {
-  if (!ref) return "model yok";
+  if (!ref) return _("no model");
   const m = ref.split(":").slice(1).join(":");
   return (m.split("/").pop() || ref).replace(/:free$/, "");
 }
@@ -1011,8 +1011,8 @@ function setBusy(v) {
   S.busy = !!v;
   app.classList.toggle("busy", S.busy);
   document.title = S.busy ? "● ALICE" : "ALICE";
-  $("#sendBtn").title = S.busy ? "Durdur (Esc)" : "Gönder (Enter)";
-  if (S.busy && !S.cur && !S.working) showWorking("Çalışıyor");
+  $("#sendBtn").title = S.busy ? _("Stop (Esc)") : _("Send (Enter)");
+  if (S.busy && !S.cur && !S.working) showWorking(_("Working"));
   if (!S.busy) { hideWorking(); markFinals(); flushQueue(); setTimeout(collapseSteps, 0); }
   if (ended) { turnSummary(); refreshChanges(); }
   setTodo(S.todo);
@@ -1028,14 +1028,14 @@ function turnSummary() {
   const row = el("div", "turn-sum" + (t.errs ? " has-err" : ""));
   row.appendChild(svg(t.errs ? IC.x : IC.check));
   const parts = [fmtDur(secs)];
-  if (t.tools) parts.push(`${t.tools} araç`);
-  if (t.errs) parts.push(`${t.errs} hata`);
+  if (t.tools) parts.push(_("{n} tools", { n: t.tools }));
+  if (t.errs) parts.push(_("{n} errors", { n: t.errs }));
   row.appendChild(el("span", "", parts.join(" · ")));
   if (t.files.size) {
     let a = 0, d = 0;
     for (const f of t.files.values()) { a += f.a; d += f.d; }
     const ch = el("button", "ts-files");
-    ch.append(svg(IC.diff), document.createTextNode(`${t.files.size} dosya `), el("span", "a", `+${a}`),
+    ch.append(svg(IC.diff), document.createTextNode(_("{n} files", { n: t.files.size }) + " "), el("span", "a", `+${a}`),
       document.createTextNode(" "), el("span", "d", `−${d}`));
     ch.title = Array.from(t.files.keys()).join("\n");
     ch.addEventListener("click", () => openPanel("changes"));
@@ -1057,7 +1057,7 @@ function renderUpdate(u, manual) {
   // The bar does not pop up by itself when the repo is on another branch (development), when the code only moved on
   // disk through a manual `git pull` (while developing that is every merge, and the bar kept nagging), or when the
   // user said "Sonra"; the dot next to the version stays and "Güncellemeleri denetle" still shows it. An update that
-  // ALICE pulled itself is not hand_pulled, so its "Yeniden başlat" bar still appears for everyone.
+  // ALICE pulled itself is not hand_pulled, so its _("Restart") bar still appears for everyone.
   const handPulled = !u.available && u.stale && u.hand_pulled;
   const quiet = !manual && bar.hidden && ((u.available && u.off_branch) || handPulled || updateDismissed(u));
   const v0 = $("#ver");
@@ -1065,13 +1065,13 @@ function renderUpdate(u, manual) {
   if (quiet) return;
   const n = u.count || 0;
   $("#upText").textContent = !u.available
-    ? "Yeni sürüm indirildi · yeniden başlatınca açılır"
-    : (n ? `Yeni sürüm hazır · ${n} değişiklik` : "Yeni sürüm hazır") + (u.blocked ? ` — ${u.blocked}` : "");
+    ? _("New version downloaded · it opens after a restart")
+    : (n ? _("A new version is ready · {n} changes", { n }) : _("A new version is ready")) + (u.blocked ? ` — ${u.blocked}` : "");
   $("#upText").title = (u.commits || []).join("\n") || `${u.local} → ${u.remote}`;
   const btn = $("#upApply");
   btn.disabled = false;
   btn.hidden = false;
-  btn.textContent = !u.available ? "Yeniden başlat" : u.blocked ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
+  btn.textContent = !u.available ? _("Restart") : u.blocked ? _("Update anyway") : _("Update and restart");
   $("#upLater").hidden = false;
   bar.hidden = false;
 }
@@ -1079,22 +1079,22 @@ async function applyUpdate() {
   const btn = $("#upApply");
   const forced = !!(S.update && S.update.blocked);
   btn.disabled = true;
-  btn.textContent = "Güncelleniyor…";
+  btn.textContent = _("Updating…");
   const r = await api("/api/update/apply", { force: forced });
   if (!r || !r.ok) {
     btn.disabled = false;
-    btn.textContent = forced ? "Yine de güncelle" : "Güncelle ve yeniden başlat";
-    return toast((r && (r.error || r.note)) || "Güncellenemedi");
+    btn.textContent = forced ? _("Update anyway") : _("Update and restart");
+    return toast((r && (r.error || r.note)) || _("Could not update"));
   }
   btn.hidden = true;
   $("#upLater").hidden = true;
-  $("#upText").textContent = r.note + " — ALICE yeniden başlatılıyor, birazdan yeni pencere açılacak.";
+  $("#upText").textContent = r.note + _(" — ALICE is restarting, a new window opens shortly.");
 }
 async function checkUpdate() {
-  toast("Güncelleme denetleniyor…");
+  toast(_("Checking for updates…"));
   const u = await api("/api/update/check", {});
-  if (!u) return toast("Denetlenemedi");
-  if (!u.available && !u.stale) return toast(u.error || "ALICE güncel");
+  if (!u) return toast(_("Could not check"));
+  if (!u.available && !u.stale) return toast(u.error || _("ALICE is up to date"));
   renderUpdate(u, true);
 }
 
@@ -1107,7 +1107,7 @@ function applyStatus(s) {
   if (st.cwd !== undefined) {
     // Üst çubukta sadece klasörün adı; tam yol üzerine gelince.
     $("#cwd").textContent = st.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || st.cwd;
-    $("#cwdBtn").title = st.cwd + "\nKlasörü değiştirmek için tıkla";
+    $("#cwdBtn").title = st.cwd + "\n" + _("Click to change the folder");
   }
   if (st.version) $("#ver").textContent = "ALICE " + st.version;
   if ("update" in s) renderUpdate(s.update);
@@ -1124,18 +1124,18 @@ function applyStatus(s) {
     const merged = { ...S.status, ...st };
     const lab = thinkLabel(merged);
     if (lab) {
-      $("#thinkLabel").textContent = merged.thinking_kind === "none" ? "düşünme ayarı yok" : lab[0];
+      $("#thinkLabel").textContent = merged.thinking_kind === "none" ? _("no thinking setting") : lab[0];
       $("#thinkIcon").innerHTML = (merged.thinking_effective || st.thinking) === "off" ? IC.bolt : IC.brain;
-      $("#thinkBtn").title = merged.thinking_kind === "none" ? "Bu model düşünme ayarı desteklemiyor"
-        : "Düşünme: " + lab[1];
+      $("#thinkBtn").title = merged.thinking_kind === "none" ? _("This model has no thinking setting")
+        : _("Thinking: {level}", { level: lab[1] });
       $("#thinkBtn").classList.toggle("dim", merged.thinking_kind === "none");
     }
   }
   // Sabitlenen model cevap veremeyip yedeğe geçildiyse düğme seçileni, çubuk gerçekten cevap vereni gösterir.
   const served = st.served_model || st.model;
   const fellBack = st.brain_pinned && st.served_model && st.served_model !== st.model;
-  $("#modelBtn").title = fellBack ? `Seçili: ${st.model} · son cevabı veren: ${st.served_model} (seçili model cevap veremedi)` : st.model || "";
-  $("#stModel").textContent = served || "model yok";
+  $("#modelBtn").title = fellBack ? _("Chosen: {model} · last answer from: {served} (the chosen model could not answer)", { model: st.model, served: st.served_model }) : st.model || "";
+  $("#stModel").textContent = served || _("no model");
   $("#stModel").classList.toggle("warn", !!fellBack);
   if (st.stats) renderStats(st.stats, st);
   if (st.ctx_limit) {
@@ -1146,8 +1146,8 @@ function applyStatus(s) {
     m.classList.toggle("hot", pct > 75);
     $("#stCtx span").textContent = `${fmtTok(st.ctx_tokens)} / ${fmtTok(win)}`;
   }
-  if (st.today_requests !== undefined) $("#stReq").textContent = `bugün ${st.today_requests} istek`;
-  if (st.decider) $("#stDec").textContent = `karar: ${st.decider}`;
+  if (st.today_requests !== undefined) $("#stReq").textContent = _("{n} requests today", { n: st.today_requests });
+  if (st.decider) $("#stDec").textContent = _("decider: {name}", { name: st.decider });
   if (st.branch !== undefined) {
     $("#branch").textContent = st.branch;
     $("#branchChip").hidden = !st.branch;
@@ -1198,29 +1198,29 @@ async function loadSessions() {
 function relTime(ts) {
   if (!ts) return "";
   const s = Date.now() / 1000 - ts;
-  if (s < 60) return "şimdi";
-  if (s < 3600) return `${Math.floor(s / 60)} dk`;
-  if (s < 86400) return `${Math.floor(s / 3600)} sa`;
-  if (s < 7 * 86400) return `${Math.floor(s / 86400)} g`;
-  return new Date(ts * 1000).toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  if (s < 60) return _("now");
+  if (s < 3600) return _("{n} min", { n: Math.floor(s / 60) });
+  if (s < 86400) return _("{n} h", { n: Math.floor(s / 3600) });
+  if (s < 7 * 86400) return _("{n} d", { n: Math.floor(s / 86400) });
+  return new Date(ts * 1000).toLocaleDateString(ALICE_LOCALE, { day: "numeric", month: "short" });
 }
 function dayGroup(ts) {
-  if (!ts) return "Daha eski";
+  if (!ts) return _("Older");
   const d = new Date(ts * 1000), now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
-  if (ts >= start) return "Bugün";
-  if (ts >= start - 86400) return "Dün";
-  if (ts >= start - 6 * 86400) return "Bu hafta";
-  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) return "Bu ay";
-  return "Daha eski";
+  if (ts >= start) return _("Today");
+  if (ts >= start - 86400) return _("Yesterday");
+  if (ts >= start - 6 * 86400) return _("This week");
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) return _("This month");
+  return _("Older");
 }
 function drawSessions() {
   const nav = $("#sessions");
   nav.replaceChildren();
-  const q = ($("#sessSearch").value || "").trim().toLocaleLowerCase("tr");
-  const rows = (S.sessions || []).filter((s) => !q || (s.title + " " + s.cwd).toLocaleLowerCase("tr").includes(q));
+  const q = ($("#sessSearch").value || "").trim().toLocaleLowerCase(ALICE_LOCALE);
+  const rows = (S.sessions || []).filter((s) => !q || (s.title + " " + s.cwd).toLocaleLowerCase(ALICE_LOCALE).includes(q));
   if (!rows.length) {
-    nav.appendChild(el("div", "side-empty", q ? "Eşleşen sohbet yok" : "Henüz sohbet yok"));
+    nav.appendChild(el("div", "side-empty", q ? _("No matching chats") : _("No chats yet")));
     drawChatTitle();
     return;
   }
@@ -1228,17 +1228,17 @@ function drawSessions() {
   const ordered = [...rows.filter((s) => s.pinned), ...rows.filter((s) => !s.pinned)];
   let group = null;
   for (const s of ordered) {
-    const g = s.pinned ? "Sabitlenenler" : dayGroup(s.updated);
+    const g = s.pinned ? _("Pinned") : dayGroup(s.updated);
     if (g !== group) { group = g; nav.appendChild(el("div", "side-label", g)); }
     const b = el("div", "sess" + (s.pinned ? " pinned" : ""));
     b.dataset.id = s.id;
     b.tabIndex = 0;
     b.title = `${s.title}\n${s.cwd}`;
-    b.appendChild(el("span", "st", s.title || "(boş)"));
+    b.appendChild(el("span", "st", s.title || _("(empty)")));
     b.appendChild(el("small", "when", relTime(s.updated)));
     const more = el("button", "more");
-    more.title = "Diğer";
-    more.setAttribute("aria-label", "Sohbet işlemleri");
+    more.title = _("More");
+    more.setAttribute("aria-label", _("Chat actions"));
     more.appendChild(svg(IC.more));
     more.addEventListener("click", (e) => { e.stopPropagation(); sessionMenu(more, s); });
     b.appendChild(more);
@@ -1252,15 +1252,15 @@ function drawSessions() {
 }
 function sessionMenu(anchor, s) {
   openMenu(anchor, (m) => {
-    menuItem(m, IC.edit, "Yeniden adlandır", "F2 ya da çift tıkla", () => renameSession(s));
-    menuItem(m, IC.pin, s.pinned ? "Sabitlemeyi kaldır" : "Sabitle", s.pinned ? "" : "Listenin en üstünde durur", async () => {
+    menuItem(m, IC.edit, _("Rename"), _("F2 or double-click"), () => renameSession(s));
+    menuItem(m, IC.pin, s.pinned ? _("Unpin") : _("Pin"), s.pinned ? "" : _("Stays at the top of the list"), async () => {
       await api("/api/session/pin", { id: s.id, pinned: !s.pinned });
       loadSessions();
     });
-    menuItem(m, IC.trash, "Sil", "Geçmişten kalıcı olarak", async () => {
-      if (!(await confirmDialog("Sohbet silinsin mi?", `"${s.title || "(boş)"}" geçmişten kalıcı olarak silinecek.`, "Sil"))) return;
+    menuItem(m, IC.trash, _("Delete"), _("Permanently from history"), async () => {
+      if (!(await confirmDialog(_("Delete the chat?"), _("\"{title}\" will be deleted from history permanently.", { title: s.title || _("(empty)") }), _("Delete")))) return;
       const r = await api("/api/session/delete", { id: s.id });
-      if (r && r.ok === false) return toast(r.error || "Silinemedi");
+      if (r && r.ok === false) return toast(r.error || _("Could not delete"));
       if (s.id === S.status.session) newChat();
       loadSessions();
     });
@@ -1274,7 +1274,7 @@ function renameSession(s, host) {
   const inp = el("input", "rename-in");
   inp.type = "text";
   inp.value = s.title || "";
-  inp.placeholder = s.auto_title || "Sohbet adı";
+  inp.placeholder = s.auto_title || _("Chat name");
   const done = async (save) => {
     if (inp._done) return;
     inp._done = true;
@@ -1301,9 +1301,9 @@ function drawChatTitle() {
   const t = $("#chatTitle");
   if (!t) return;
   const s = (S.sessions || []).find((x) => x.id === S.status.session);
-  t.textContent = s ? (s.title || "(boş)") : "Yeni sohbet";
+  t.textContent = s ? (s.title || _("(empty)")) : _("New chat");
   t.classList.toggle("new", !s);
-  t.title = s ? "Yeniden adlandırmak için tıkla" : "";
+  t.title = s ? _("Click to rename") : "";
   t.disabled = !s;
 }
 // Öndeki sohbet ve arkada hâlâ çalışanlar (bir sohbet çalışırken başka sohbete geçilebilir).
@@ -1332,7 +1332,7 @@ async function resume(id) {
   if (id === S.status.session) { closeSideOnMobile(); return; }
   // Çalışan sohbet durmaz: arkada sürer, kenar çubuğunda işaretlenir.
   const r = await api("/api/resume", { id });
-  if (!r.ok) return toast(r.error || "Oturum yüklenemedi");
+  if (!r.ok) return toast(r.error || _("Could not load the session"));
   leaveChat();
   renderHistory(r.history);
   applyStatus(r);
@@ -1343,22 +1343,22 @@ async function newChat() {
   if (S.proj) closeProject();
   markSection("chat");
   const r = await api("/api/new", {});
-  if (!r.ok) return toast(r.error || "Yeni sohbet açılamadı");
+  if (!r.ok) return toast(r.error || _("Could not open a new chat"));
   leaveChat();
   clearChat(); applyStatus(r); loadSessions(); refreshChanges(); input.focus();
 }
 async function rewindTo(mi, edit) {
-  if (S.busy) return toast("Önce mevcut işi durdur");
-  const ok = await confirmDialog(edit ? "Mesajı düzenle" : "Buraya geri sar",
-    "Konuşma bu mesajdan öncesine döner. ALICE'in bu mesajdan sonra dosya araçlarıyla yaptığı değişiklikler geri alınır " +
-    "(komutlarla yapılan değişiklikler geri alınamaz).", edit ? "Düzenle" : "Geri sar");
+  if (S.busy) return toast(_("Stop the current job first"));
+  const ok = await confirmDialog(edit ? _("Edit the message") : _("Rewind to here"),
+    _("The conversation goes back to before this message. Changes ALICE made with the file tools after it are undone (changes made with commands can't be undone)."),
+    edit ? _("Edit") : _("Rewind"));
   if (!ok) return;
   const r = await api("/api/rewind", { mi });
-  if (!r.ok) return toast(r.error || "Geri sarılamadı");
+  if (!r.ok) return toast(r.error || _("Could not rewind"));
   renderHistory(r.history);
   applyStatus(r);
   refreshChanges();
-  toast(r.restored && r.restored.length ? `Geri sarıldı, ${r.restored.length} dosya eski haline getirildi` : "Geri sarıldı");
+  toast(r.restored && r.restored.length ? _("Rewound, {n} files restored", { n: r.restored.length }) : _("Rewound"));
   if (edit) { input.value = r.text; autosize(); input.focus(); }
 }
 
@@ -1371,9 +1371,9 @@ function editInline(wrap, text, mi) {
   ta.rows = 1;
   const fit = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 320) + "px"; };
   const row = el("div", "edit-row");
-  row.appendChild(el("small", "", "Sonrası silinir, ALICE'in dosya değişiklikleri geri alınır"));
-  const cancel = el("button", "btn", "Vazgeç");
-  const send = el("button", "btn primary", "Gönder");
+  row.appendChild(el("small", "", _("Everything after it is deleted and ALICE's file changes are undone")));
+  const cancel = el("button", "btn", _("Cancel"));
+  const send = el("button", "btn primary", _("Send"));
   row.append(cancel, send);
   box.append(ta, row);
   wrap.classList.add("editing");
@@ -1401,10 +1401,10 @@ async function resendFrom(mi, text) {
   if (S.busy) {
     stop();
     for (let i = 0; i < 50 && S.busy; i++) { await new Promise((r) => setTimeout(r, 200)); await refreshStatus(); }
-    if (S.busy) { toast("ALICE henüz durmadı, biraz sonra tekrar dene"); return false; }
+    if (S.busy) { toast(_("ALICE hasn't stopped yet, try again in a moment")); return false; }
   }
   const r = await api("/api/rewind", { mi });
-  if (!r.ok) { toast(r.error || "Düzenlenemedi"); return false; }
+  if (!r.ok) { toast(r.error || _("Could not edit")); return false; }
   renderHistory(r.history);
   applyStatus(r);
   refreshChanges();
@@ -1437,27 +1437,27 @@ function popRows(pop, title, total, rows, extra) {
   }
 }
 function renderStats(s, st) {
-  const nf = (n) => Number(n || 0).toLocaleString("tr-TR");
+  const nf = (n) => Number(n || 0).toLocaleString(ALICE_LOCALE);
   const stats = $("#stStats"), tok = $("#stTok"), ctx = $("#stCtx");
   stats.hidden = !s.turns;
   if (s.turns) {
-    stats.querySelector("span").textContent = `${s.turns} tur ${s.steps} adım` + (s.tps ? ` · ${s.tps} tok/s` : "");
-    popRows(stats.querySelector(".st-pop"), "Oturum istatistiği", `${s.turns} tur ${s.steps} adım`, [
-      ["Model süresi", fmtDurShort(s.llm_s)], ["Araç süresi", fmtDurShort(s.tool_s)],
-      ["Ort. ilk kelime süresi (TTFT)", s.ttft ? `${s.ttft.toFixed(1)}s` : "—"],
-      ["Saniyede token (TPS)", s.tps ? `${s.tps} tok/s` : "—"]]);
+    stats.querySelector("span").textContent = _("{turns} turns {steps} steps", { turns: s.turns, steps: s.steps }) + (s.tps ? ` · ${s.tps} tok/s` : "");
+    popRows(stats.querySelector(".st-pop"), _("Session stats"), _("{turns} turns {steps} steps", { turns: s.turns, steps: s.steps }), [
+      [_("Model time"), fmtDurShort(s.llm_s)], [_("Tool time"), fmtDurShort(s.tool_s)],
+      [_("Avg. time to first token (TTFT)"), s.ttft ? `${s.ttft.toFixed(1)}s` : "—"],
+      [_("Tokens per second (TPS)"), s.tps ? `${s.tps} tok/s` : "—"]]);
   }
   const total = (s.input || 0) + (s.output || 0);
   tok.hidden = !total;
   if (total) {
     const hit = s.input ? Math.round(100 * (s.cached || 0) / s.input) : 0;
-    tok.querySelector("span").textContent = `${fmtTok(total)} tok` + (s.cached ? ` · önbellek %${hit}` : "");
-    const more = el("button", "act sp-more", "Döküm: tokenlar nereye gitti →");
+    tok.querySelector("span").textContent = `${fmtTok(total)} tok` + (s.cached ? _(" · cache {pct}%", { pct: hit }) : "");
+    const more = el("button", "act sp-more", _("Breakdown: where the tokens went →"));
     more.addEventListener("click", (e) => { e.stopPropagation(); showTokenUsage(); });
-    popRows(tok.querySelector(".st-pop"), "Token kullanımı", `${nf(total)} tok`, [
-      ["Önbellekten (cache hit)", s.cached ? `%${hit}` : "—"], ["Önbelleksiz girdi", nf((s.input || 0) - (s.cached || 0))],
-      ["Önbellekten girdi", nf(s.cached)], ["Önbelleğe yazılan", s.written ? nf(s.written) : "—"],
-      ["Çıktı", nf(s.output)]]);
+    popRows(tok.querySelector(".st-pop"), _("Token usage"), `${nf(total)} tok`, [
+      [_("From cache (cache hit)"), s.cached ? `%${hit}` : "—"], [_("Uncached input"), nf((s.input || 0) - (s.cached || 0))],
+      [_("Input from cache"), nf(s.cached)], [_("Written to cache"), s.written ? nf(s.written) : "—"],
+      [_("Output"), nf(s.output)]]);
     tok.querySelector(".st-pop").appendChild(more);
   }
   const win = st.ctx_window || st.ctx_limit;
@@ -1470,12 +1470,12 @@ function renderStats(s, st) {
       i.style.background = c;
       bar.appendChild(i);
     }
-    const note = el("small", "sp-note", `${fmtTok(st.ctx_limit)} token'a gelince eski konuşma otomatik özetlenir.`);
+    const note = el("small", "sp-note", _("At {n} tokens the older conversation is summarized automatically.", { n: fmtTok(st.ctx_limit) }));
     const box = el("div");
     box.append(bar, note);
-    popRows(ctx.querySelector(".st-pop"), `Bağlamın %${pct}'i dolu`, `~${fmtTok(st.ctx_tokens || s.ctx.total)} / ${fmtTok(win)}`, [
-      ["Sistem talimatı", "~" + fmtTok(s.ctx.system), "var(--faint)"], ["Araç tanımları", "~" + fmtTok(s.ctx.tools), "#a78bfa"],
-      ["Mesajlar", "~" + fmtTok(s.ctx.messages), "var(--accent)"]], box);
+    popRows(ctx.querySelector(".st-pop"), _("Context {pct}% full", { pct }), `~${fmtTok(st.ctx_tokens || s.ctx.total)} / ${fmtTok(win)}`, [
+      [_("System prompt"), "~" + fmtTok(s.ctx.system), "var(--faint)"], [_("Tool definitions"), "~" + fmtTok(s.ctx.tools), "#a78bfa"],
+      [_("Messages"), "~" + fmtTok(s.ctx.messages), "var(--accent)"]], box);
   }
 }
 
@@ -1500,42 +1500,43 @@ function usageBars(rows, label, value, sub, color) {
 }
 function renderUsage(u) {
   const box = el("div", "usage");
-  const nf = (n) => Number(n || 0).toLocaleString("tr-TR");
+  const nf = (n) => Number(n || 0).toLocaleString(ALICE_LOCALE);
   const hit = u.input ? Math.round(100 * (u.cached || 0) / u.input) : 0;
-  box.appendChild(el("div", "us-sum", `${u.turns} tur · ${u.steps} model çağrısı · girdi ${fmtTok(u.input)} ` +
-    `(önbellek %${hit}) · çıktı ${fmtTok(u.output)}`));
-  box.appendChild(el("div", "sec", "Modeller (girdi + çıktı)"));
+  box.appendChild(el("div", "us-sum", _("{turns} turns · {steps} model calls · input {input} (cache {pct}%) · output {output}",
+    { turns: u.turns, steps: u.steps, input: fmtTok(u.input), pct: hit, output: fmtTok(u.output) })));
+  box.appendChild(el("div", "sec", _("Models (input + output)")));
   if (u.models && u.models.length) {
     box.appendChild(usageBars(u.models, (m) => m.model, (m) => m.input + m.output,
-      (m) => `${m.calls} çağrı · girdi ${nf(m.input)} (önbellekten ${nf(m.cached)}` +
-        (m.written ? `, yazılan ${nf(m.written)}` : "") + `) · çıktı ${nf(m.output)} · ${fmtDurShort(m.seconds)}`,
+      (m) => _("{calls} calls · input {input} (from cache {cached}{written}) · output {output} · {time}", {
+        calls: m.calls, input: nf(m.input), cached: nf(m.cached), output: nf(m.output), time: fmtDurShort(m.seconds),
+        written: m.written ? _(", written {n}", { n: nf(m.written) }) : "" }),
       "var(--accent)"));
-  } else box.appendChild(el("div", "note", "Henüz model çağrısı yok."));
-  box.appendChild(el("div", "sec", "Araç çıktıları (bağlama eklenen)"));
+  } else box.appendChild(el("div", "note", _("No model calls yet.")));
+  box.appendChild(el("div", "sec", _("Tool output (added to the context)")));
   if (u.tools && u.tools.length) {
     box.appendChild(usageBars(u.tools.slice(0, 12), (t) => t.tool, (t) => t.tokens,
-      (t) => `${t.calls} kez` + (t.errors ? ` · ${t.errors} hata` : ""), "#a78bfa"));
-  } else box.appendChild(el("div", "note", "Araç kullanılmadı."));
+      (t) => _("{n} times", { n: t.calls }) + (t.errors ? " · " + _("{n} errors", { n: t.errors }) : ""), "#a78bfa"));
+  } else box.appendChild(el("div", "note", _("No tools used.")));
   const c = u.ctx || {};
-  box.appendChild(el("div", "sec", `Bağlam şu an ~${fmtTok(c.total || 0)}`));
-  box.appendChild(usageBars([{ n: "Sistem talimatı", v: c.system || 0 }, { n: "Araç tanımları", v: c.tools || 0 },
-    { n: "Mesajlar", v: c.messages || 0 }], (r) => r.n, (r) => r.v, () => "", "var(--faint)"));
+  box.appendChild(el("div", "sec", _("Context now ~{n}", { n: fmtTok(c.total || 0) })));
+  box.appendChild(usageBars([{ n: _("System prompt"), v: c.system || 0 }, { n: _("Tool definitions"), v: c.tools || 0 },
+    { n: _("Messages"), v: c.messages || 0 }], (r) => r.n, (r) => r.v, () => "", "var(--faint)"));
   const tip = [];
-  if (u.input && hit < 30 && u.steps > 4) tip.push("Önbellek oranı düşük: model sık değişiyorsa her geçişte bağlam baştan ödenir.");
+  if (u.input && hit < 30 && u.steps > 4) tip.push(_("Low cache rate: if the model switches often, the context is paid for again on every switch."));
   const big = (u.tools || [])[0];
-  if (big && c.total && big.tokens > c.total * 0.3) tip.push(`${big.tool} çıktıları bağlamın büyük kısmını tutuyor; daha dar sorgular ya da /compact yardımcı olur.`);
-  if (u.steps && c.tools && c.total && c.tools > c.total * 0.35) tip.push("Araç tanımları bağlamın üçte birinden fazla: gereksiz bağlantıları kapatmak yer açar.");
+  if (big && c.total && big.tokens > c.total * 0.3) tip.push(_("{tool} output fills most of the context; narrower queries or /compact help.", { tool: big.tool }));
+  if (u.steps && c.tools && c.total && c.tools > c.total * 0.35) tip.push(_("Tool definitions are over a third of the context: turning off unneeded connections frees room."));
   for (const t of tip) box.appendChild(el("div", "us-tip", t));
   return box;
 }
 async function showTokenUsage() {
   const u = await api("/api/usage");
-  if (!u || u.ok === false) return toast((u && u.error) || "istatistik alınamadı");
+  if (!u || u.ok === false) return toast((u && u.error) || _("could not get the stats"));
   showDialog((d) => {
     d.classList.add("usage-dialog");
-    d.append(el("h3", "", "Kullanım dökümü"), renderUsage(u));
+    d.append(el("h3", "", _("Usage breakdown")), renderUsage(u));
     const row = el("div", "row");
-    const ok = el("button", "btn primary", "Kapat");
+    const ok = el("button", "btn primary", _("Close"));
     ok.addEventListener("click", closeDialog);
     row.appendChild(ok);
     d.appendChild(row);
