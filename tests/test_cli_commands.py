@@ -382,7 +382,7 @@ def test_brief_install_and_render(monkeypatch, xout):
                                                                         weather_fn=lambda city: "güneşli [18°]"))
     assert extras_cli.brief_cmd([]) == 0
     text = xout()
-    assert "hava: güneşli [18°]" in text and "bugün:" in text
+    assert "weather: güneşli [18°]" in text and "today:" in text
 
 
 def test_report_text_html_install(monkeypatch, xout, tmp_path):
@@ -401,7 +401,7 @@ def test_report_text_html_install(monkeypatch, xout, tmp_path):
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
     assert extras_cli.report_cmd(["--days", "3", "--open"]) == 0
     text = xout()
-    assert "Son 3 gün:" in text and "Ekran kartı sıcaklığı: ort 70°C, en yüksek 80°C" in text
+    assert "Last 3 days:" in text and "Graphics card temperature: avg 70°C, highest 80°C" in text
     assert "GPU sıcak ×1" in text and ".html" in text
     assert len(opened) == 1 and opened[0].startswith("file:")
 
