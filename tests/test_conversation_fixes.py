@@ -238,7 +238,7 @@ def test_switch_to_a_branch_that_only_exists_on_github(tmp_path):
     assert names["ozellik"]["remote"] and not names["main"]["remote"]
     switch_branch(two, "ozellik")  # not local: a branch tracking origin's copy is created
     assert current_branch(two) == "ozellik" and (two / "b.txt").exists()
-    assert "zaten" in switch_branch(two, "ozellik")
+    assert "already on" in switch_branch(two, "ozellik")
     with pytest.raises(ToolError, match="ne yerelde ne de origin"):
         switch_branch(two, "yok-boyle-dal")
     switch_branch(two, "yeni-dal", create=True)
