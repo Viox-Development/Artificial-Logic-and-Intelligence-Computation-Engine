@@ -64,6 +64,7 @@ ALICE ships with about 90 tools. The main groups:
 **Phone and remote access**
 - Android app to talk to ALICE, get notifications, share permission prompts, and place calls.
 - Smartwatch support (heart rate) and remote access from outside your home network through a relay.
+- Details: [docs/guide/phone.md](docs/guide/phone.md).
 
 **Connections**
 - Gmail, GitHub, Spotify, Steam, Discord, YouTube, Blender, and any HTTP API you describe in TOML.
