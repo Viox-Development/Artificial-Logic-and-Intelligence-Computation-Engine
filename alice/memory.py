@@ -385,7 +385,7 @@ class LongMemory:
         try:
             mem.migrate_facts()
         except Exception:  # noqa: BLE001 - the migration is retried on the next start
-            log.debug("eski bilgiler notlara taşınamadı", exc_info=True)
+            log.debug("could not move old facts to notes", exc_info=True)
         return mem
 
     # ------------------------------------------------------------------ notes
@@ -546,7 +546,7 @@ class LongMemory:
                                   when=f.updated)
                 except Exception:  # noqa: BLE001 - if the directory is full, the rest is done later
                     failed += 1
-                    log.debug("bilgi nota taşınamadı: %s", f.text, exc_info=True)
+                    log.debug("could not move a fact to a note: %s", f.text, exc_info=True)
                     continue
                 done.add(f.id)
                 n += 1
@@ -928,7 +928,7 @@ class LongMemory:
         lines = [head] + ([f"Summary: {row[0]}"] if row else [])
 
         def turn(e: Episode) -> str:
-            return f"- Kullanıcı: {_clip(e.user, 240)}" + (f"\n  ALICE: {_clip(e.reply, 240)}" if e.reply else "")
+            return f"- User: {_clip(e.user, 240)}" + (f"\n  ALICE: {_clip(e.reply, 240)}" if e.reply else "")
 
         if turns <= 0:
             return "\n".join(lines)
@@ -971,7 +971,7 @@ class LongMemory:
             i = min(range(len(group)), key=lambda k: abs(group[k].ts - ts))
             window = group[max(0, i - 2): i + 3]
             text = self._session_text(group, turns=0, now=now).splitlines()
-            text += [f"- Kullanıcı: {_clip(e.user, 300)}" + (f"\n  ALICE: {_clip(e.reply, 300)}" if e.reply else "")
+            text += [f"- User: {_clip(e.user, 300)}" + (f"\n  ALICE: {_clip(e.reply, 300)}" if e.reply else "")
                      for e in window]
             out.append("\n".join(text))
             if len(out) >= limit:
@@ -1155,7 +1155,7 @@ class LongMemory:
                         if fails < DIGEST_BAD_TRIES:
                             self._meta("digest_fail_until", repr(time.time() + 900))
                             break
-                        log.debug("konuşma özetlenemedi, atlanıyor (%s deneme)", fails)
+                        log.debug("could not summarise the conversation, skipping (%s tries)", fails)
                     except Exception:  # noqa: BLE001 - no model or quota: retried later
                         self._meta("digest_fail_until", repr(time.time() + 900))
                         break
@@ -1169,7 +1169,7 @@ class LongMemory:
     def _digest_one(self, group: list[Episode]) -> None:
         lines, used = [], 0
         for e in reversed(group):  # in a long conversation the end matters most: go back up to 6000 characters
-            line = f"{datetime.fromtimestamp(e.ts):%H:%M} Kullanıcı: {e.user[:600]}\nALICE: {e.reply[:400]}"
+            line = f"{datetime.fromtimestamp(e.ts):%H:%M} User: {e.user[:600]}\nALICE: {e.reply[:400]}"
             if used + len(line) > 6000:
                 break
             lines.append(line)
@@ -1303,7 +1303,7 @@ class LongMemory:
             try:
                 self.remember(note, "note", source="kullanıcı", cwd=cwd)
             except Exception:  # noqa: BLE001 - directory full: the model tidies up and saves via the memory tool
-                log.debug("açık not kaydedilemedi", exc_info=True)
+                log.debug("could not save the explicit note", exc_info=True)
             self._advance_cursor()
             return
         if self.extractor is None or not self.auto_extract:
@@ -1344,7 +1344,7 @@ class LongMemory:
             turns = self._recent_turns()
             if not turns:
                 return []
-            transcript = "\n".join(f"Kullanıcı: {_clip(e.user, 1200)}\nALICE: {_clip(e.reply, 700)}" for e in turns)
+            transcript = "\n".join(f"User: {_clip(e.user, 1200)}\nALICE: {_clip(e.reply, 700)}" for e in turns)
             notes = self.all_notes(cwd)
             related = keyword_relevant(" ".join(e.user for e in turns), notes, limit=4, min_score=0.2)
             root = project_root(cwd) if cwd else None
@@ -1361,10 +1361,10 @@ class LongMemory:
             done = self.apply_notes(data, cwd=cwd, source="otomatik", max_save=3, max_delete=2)
             self._meta("notes_cursor", str(turns[-1].id))
             if done:
-                log.info("hafıza: %s", ", ".join(done))
+                log.info("memory: %s", ", ".join(done))
             return done
         except Exception:  # noqa: BLE001 - a learning error must not affect the conversation
-            log.debug("konuşmadan not çıkarılamadı", exc_info=True)
+            log.debug("could not extract notes from the conversation", exc_info=True)
             return []
         finally:
             self._learn_lock.release()
@@ -1484,7 +1484,7 @@ class LongMemory:
                     report += self._dream_book(b, prior, DREAM_PROMPT, MEMORY_RULES, MemoryFull)
                     ok = True
                 except Exception as e:  # noqa: BLE001 - no model/quota/bad reply: keep the time gate open
-                    log.debug("Dream başarısız", exc_info=True)
+                    log.debug("dream failed", exc_info=True)
                     report.append(_("{scope}: could not tidy ({error})", scope=b.scope, error=str(e)[:120]))
                     self._dream_failed = True
                 finally:
@@ -1635,7 +1635,7 @@ class LongMemory:
                 if parse_json(out):
                     return out
             except Exception:  # noqa: BLE001 - if the brain chain fails, try the fast model
-                log.debug("güçlü model toparlayamadı", exc_info=True)
+                log.debug("the strong model could not tidy up", exc_info=True)
         return self.extractor(prompt) if self.extractor else ""
 
     def _source(self, fid: int) -> str:
