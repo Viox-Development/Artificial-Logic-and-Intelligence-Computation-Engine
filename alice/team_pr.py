@@ -36,7 +36,7 @@ def prepare(team: Any) -> str:
     top = team._repo_top()
     repo = origin_repo(top)
     if not repo:
-        raise ToolError("PR için proje klasörü GitHub'a bağlı (origin) bir git deposu olmalı")
+        raise ToolError("for a PR the project folder must be a git repository connected to GitHub (origin)")
     base = current_branch(top) or ""
     branch = f"alice/proje-{team.id}"
     wt = alice_home() / "worktrees" / f"proje-{team.id}"
@@ -45,7 +45,7 @@ def prepare(team: Any) -> str:
         _git(top, "worktree", "prune")
         r = _git(top, "worktree", "add", "-b", branch, str(wt), "HEAD", timeout=300)
         if r.returncode != 0:
-            raise ToolError(f"projenin dalı açılamadı: {(r.stderr or r.stdout).strip()[:300]}")
+            raise ToolError(f"could not create the project branch: {(r.stderr or r.stdout).strip()[:300]}")
     rel = Path(team.cwd).resolve().relative_to(top.resolve()) if Path(team.cwd).resolve() != top.resolve() else Path()
     team.pr_repo, team.pr_base, team.pr_branch, team.pr_top = repo, base, branch, str(top)
     team.pr_sha = _git(wt, "rev-parse", "HEAD").stdout.strip()
@@ -53,8 +53,8 @@ def prepare(team: Any) -> str:
     team.pr_session = str(team.parent_ctx.state.get("session_id") or "")
     team.cwd = wt / rel
     dirty = _git(top, "status", "--porcelain").stdout.strip()
-    return (f"proje kendi dalında çalışıyor: {branch} ({wt})"
-            + ("; çalışma klasöründeki commit'lenmemiş değişiklikler projeye girmedi" if dirty else ""))
+    return (f"the project works on its own branch: {branch} ({wt})"
+            + ("; uncommitted changes in the working folder did not go into the project" if dirty else ""))
 
 
 def open_pr(team: Any) -> str:
@@ -68,21 +68,21 @@ def open_pr(team: Any) -> str:
             _git(wt, "add", "-A", "--", ".", ":(exclude).alice-team")  # keep agents' worktrees out of the PR
             r = _git(wt, *IDENT, "commit", "-q", "-m", f"ALICE projesi: {team.title[:60]}")
             if r.returncode != 0:
-                return f"PR açılamadı: commit başarısız ({(r.stderr or r.stdout).strip()[:200]})"
+                return f"could not open the PR: commit failed ({(r.stderr or r.stdout).strip()[:200]})"
         ahead = _git(wt, "rev-list", "--count", f"{team.pr_sha}..HEAD").stdout.strip()
         if ahead in ("", "0"):
-            return "PR açılmadı: projede değişiklik yok"
+            return "PR not opened: no changes in the project"
         # Agents commit with `add -A`: a key or .env added to the project is stopped before it reaches GitHub.
         # The whole range is scanned (commits the agents made earlier on their own branches also go into the push).
         leaks = diff_secrets(wt, [f"{team.pr_sha}..HEAD"])
         if leaks:
-            return ("PR açılmadı: projede anahtar ya da gizli dosya var, GitHub'a gönderilmedi: " + ", ".join(leaks[:8])
-                    + ". Dosyayı çıkarıp .gitignore'a ekle, commit geçmişinden de temizle.")
+            return ("PR not opened: the project has a key or secret file, nothing was sent to GitHub: " + ", ".join(leaks[:8])
+                    + ". Remove the file, add it to .gitignore and clean it from the commit history too.")
         token = github_token(team.parent_ctx.config)
         run_git(["push", "-u", "origin", team.pr_branch], wt, token, timeout=300)
         api = GitHubAPI(token)
-        body = (f"{team.summary or team.goal}\n\n---\nALICE projesi `{team.id}` ({len(team.members)} ajan). "
-                "Bu PR takip ediliyor: kırmızı CI ve inceleme yorumları projeyi başlatan sohbete gelir.")
+        body = ((f"{team.summary or team.goal}\n\n---\nALICE project `{team.id}` ({len(team.members)} agents). "
+                "This PR is being watched: red CI and review comments go to the chat that started the project."))
         data = {"title": team.title[:200], "head": team.pr_branch, "body": body[:60000]}
         try:
             p = api.post(f"/repos/{team.pr_repo}/pulls", {**data, "base": team.pr_base or "main"})
@@ -95,6 +95,6 @@ def open_pr(team: Any) -> str:
         team.pr_url, team.pr_number = str(p.get("html_url") or ""), int(p.get("number") or 0)
         session = str(getattr(team, "pr_session", "") or team.parent_ctx.state.get("session_id") or "")
         prwatch.watch(team.pr_repo, team.pr_number, team.pr_top, session=session)
-        return f"PR #{team.pr_number} açıldı ve takibe alındı: {team.pr_url}"
+        return f"PR #{team.pr_number} opened and being watched: {team.pr_url}"
     except (ToolError, OSError, subprocess.SubprocessError) as e:
-        return f"PR açılamadı: {str(e)[:300]}"
+        return f"could not open the PR: {str(e)[:300]}"

@@ -65,12 +65,12 @@ def test_background_subagent_reports_back_and_can_be_continued(workdir):
     assert "a1" in tool_out and "in the background" in tool_out
     sub = subagents.registry(agent.ctx)["a1"]
     sub.thread.join(5)
-    assert sub.status == "done" and got and got[0].startswith("[Alt ajan a1 · tarama bitti]") and "ilk bulgu" in got[0]
+    assert sub.status == "done" and got and got[0].startswith("[Subagent a1 · tarama finished]") and "ilk bulgu" in got[0]
 
     subagents.resume(agent.ctx, "a1", "devam et").thread.join(5)
     assert sub.result == "ikinci bulgu: Y" and sub.turns == 2
     assert any("ilk bulgu: X" in str(m.get("content")) for m in seen[0])  # it remembers its previous conversation
-    with pytest.raises(ToolError, match="böyle bir alt ajan yok"):
+    with pytest.raises(ToolError, match="no such subagent"):
         subagents.resume(agent.ctx, "a9", "x")
 
 
@@ -179,8 +179,8 @@ def test_project_runs_on_its_own_branch_and_ends_in_a_watched_pr(tmp_path, monke
                            parent_ctx=SimpleNamespace(config=None, state={"session_id": "s1"}),
                            _repo_top=lambda: work)
     note = team_pr.prepare(team)
-    assert "alice/proje-p1" in note and "commit'lenmemiş" in note and team.cwd != work
-    assert team_pr.open_pr(team) == "PR açılmadı: projede değişiklik yok"
+    assert "alice/proje-p1" in note and "uncommitted" in note and team.cwd != work
+    assert team_pr.open_pr(team) == "PR not opened: no changes in the project"
     (team.cwd / "b.txt").write_text("b\n", encoding="utf-8")
     (team.cwd / ".alice-team" / "p1-x").mkdir(parents=True)
     (team.cwd / ".alice-team" / "p1-x" / "f.txt").write_text("ajan kopyası\n", encoding="utf-8")
@@ -188,7 +188,7 @@ def test_project_runs_on_its_own_branch_and_ends_in_a_watched_pr(tmp_path, monke
     tree = subprocess.run(["git", "ls-tree", "-r", "--name-only", "alice/proje-p1"], cwd=remote, capture_output=True,
                           text=True).stdout
     assert "b.txt" in tree and ".alice-team" not in tree  # agents' copies do not go into the PR
-    assert out.startswith("PR #5 açıldı") and watched == [("o/r", 5, "s1")]
+    assert out.startswith("PR #5 opened") and watched == [("o/r", 5, "s1")]
     assert posted[0][1]["head"] == "alice/proje-p1" and posted[0][1]["base"] == "main"
     log = subprocess.run(["git", "log", "--oneline", "alice/proje-p1"], cwd=remote, capture_output=True,
                          text=True).stdout
@@ -221,7 +221,7 @@ def test_project_pr_refuses_to_push_a_secret(tmp_path, monkeypatch):
     team_pr.prepare(team)
     (team.cwd / "conf.py").write_text('KEY = "ghp_' + "a1B2" * 9 + '"\n', encoding="utf-8")
     out = team_pr.open_pr(team)
-    assert out.startswith("PR açılmadı: projede anahtar") and "conf.py" in out
+    assert out.startswith("PR not opened: the project has a key") and "conf.py" in out
     branches = subprocess.run(["git", "branch", "--list", "alice/proje-p2"], cwd=remote, capture_output=True,
                               text=True).stdout
     assert branches.strip() == ""  # nothing was pushed
@@ -348,7 +348,7 @@ def test_two_continue_messages_do_not_run_the_same_subagent_twice(workdir):
     sub = subagents.start(agent, agent.ctx, "ilk")
     sub.thread.join(5)
     subagents.resume(agent.ctx, "a1", "devam")
-    with pytest.raises(ToolError, match="hâlâ çalışıyor"):
+    with pytest.raises(ToolError, match="still running"):
         subagents.resume(agent.ctx, "a1", "devam")
     gate.set()
     sub.thread.join(5)

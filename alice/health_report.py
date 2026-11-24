@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 RUN_EVERY = 20 * 3600
 REMIND_EVERY = 3 * 86400
@@ -60,10 +61,10 @@ def collect(cfg, store, now: float | None = None, network: bool = True,
         else:
             checks = doctor_checks()
         for c in checks:
-            if c.status == "fail" or (c.status == "warn" and "sorun değil" not in c.fix):  # a warning whose fallback works ("sorun değil": "no problem") is not a problem
-                found[f"doctor:{c.name}"] = f"{c.name}: {c.detail}" + (f" (çözüm: {c.fix})" if c.fix else "")
+            if c.status == "fail" or (c.status == "warn" and _("not a problem") not in c.fix):  # a warning whose fallback works ("sorun değil": "no problem") is not a problem
+                found[f"doctor:{c.name}"] = f"{c.name}: {c.detail}" + (_(" (fix: {fix})", fix=c.fix) if c.fix else "")
     except Exception as e:  # noqa: BLE001 - even if the check list crashes, the others keep running
-        found["doctor"] = f"kontroller çalışmadı: {str(e)[:120]}"
+        found["doctor"] = _("the checks did not run: {error}", error=str(e)[:120])
     if store is not None:
         counts: dict[str, list] = {}
         for ev in store.events(since=now - 86400, kind="error", limit=1000):
@@ -96,7 +97,7 @@ def collect(cfg, store, now: float | None = None, network: bool = True,
             t[1] += int(row.get("errors") or 0)
     for ref, (ok, bad) in totals.items():
         if bad >= MODEL_MIN_ERRORS and bad > ok:
-            found[f"model:{ref}"] = f"{ref}: son iki günde {ok + bad} isteğin {bad}'i hata verdi (zincirde atlanıyor)"
+            found[f"model:{ref}"] = _("{ref}: {bad} of {total} requests failed in the last two days (skipped in the chain)", ref=ref, bad=bad, total=ok + bad)
     return found
 
 
@@ -128,8 +129,8 @@ def report(cfg, store, send: Callable[[str, str], bool], now: float | None = Non
         return None
     lines = ["• " + found[k] for k in new]
     if fixed:
-        lines.append("Düzelenler: " + ", ".join(k.split(":", 1)[-1] for k in fixed))
-    title = f"ALICE sağlık raporu: {len(new)} sorun" if new else "ALICE sağlık raporu: sorunlar düzeldi"
+        lines.append(_("Fixed: ") + ", ".join(k.split(":", 1)[-1] for k in fixed))
+    title = _("ALICE health report: {n} problems", n=len(new)) if new else _("ALICE health report: the problems are fixed")
     body = "\n".join(lines)
     for k in new:
         seen[k] = now
@@ -144,6 +145,6 @@ def summary_now(cfg, store, **kw) -> str:
     """For chat questions like "sağlığın nasıl?" (how is my health?): current problems, ignoring notification state."""
     found = collect(cfg, store, **kw)
     if not found:
-        return "Her şey çalışıyor: kontrollerde, hata kayıtlarında ve modellerde sorun yok."
-    return f"{len(found)} sorun:\n" + "\n".join("• " + v for v in found.values())
+        return _("Everything works: no problems in the checks, the error logs or the models.")
+    return _("{n} problems:", n=len(found)) + "\n" + "\n".join("• " + v for v in found.values())
 

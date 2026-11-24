@@ -74,8 +74,8 @@ def test_home_and_root_are_never_sandbox_areas(workdir, monkeypatch):
     from pathlib import Path
 
     assert sandbox.boxable(workdir) == ""
-    assert "olamaz" in sandbox.boxable(Path.home())
-    assert "olamaz" in sandbox.boxable(Path(Path.home().anchor))
+    assert "can't be a sandbox area" in sandbox.boxable(Path.home())
+    assert "can't be a sandbox area" in sandbox.boxable(Path(Path.home().anchor))
     fake_backend(monkeypatch)
     home_ctx = ToolContext(cwd=Path.home(), config=make_config({"brain": ["a:m"]}, sandbox="auto"))
     guard.mark(home_ctx, "web_fetch")
@@ -248,11 +248,11 @@ def test_personal_folders_are_never_sandbox_areas(workdir):
     from pathlib import Path
 
     for name in ("Downloads", "Desktop", "Documents"):
-        assert "kişisel klasör" in sandbox.boxable(Path.home() / name)
-        assert "kişisel klasör" in sandbox.boxable(Path.home() / name / "bir-proje")
+        assert "personal folder" in sandbox.boxable(Path.home() / name)
+        assert "personal folder" in sandbox.boxable(Path.home() / name / "bir-proje")
     from alice.config import alice_home
 
-    assert "kişisel klasör" in sandbox.boxable(alice_home() / "agents")
+    assert "personal folder" in sandbox.boxable(alice_home() / "agents")
     assert sandbox.boxable(workdir) == ""
 
 

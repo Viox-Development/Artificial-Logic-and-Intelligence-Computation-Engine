@@ -39,9 +39,9 @@ _BLANKS = re.compile(r"\n{3,}")
 # If left in place, these give the writing away: the agent must rewrite it.
 _TELLS = [
     (re.compile(r"(?i)\bALICE\b"), "ALICE"),
-    (re.compile(r"(?i)\b(?:claude|anthropic|chatgpt|openai|gemini|copilot)\b"), "model/şirket adı"),
-    (re.compile(r"(?i)\b(?:as an ai|an ai assistant|language model|ai[- ]generated|llm)\b"), "yapay zekâ sözü"),
-    (re.compile(r"(?i)yapay zek[aâ]|dil modeli|asistan(?:ı|ın)?\s+olarak"), "yapay zekâ sözü"),
+    (re.compile(r"(?i)\b(?:claude|anthropic|chatgpt|openai|gemini|copilot)\b"), "model/company name"),
+    (re.compile(r"(?i)\b(?:as an ai|an ai assistant|language model|ai[- ]generated|llm)\b"), "mention of AI"),
+    (re.compile(r"(?i)yapay zek[aâ]|dil modeli|asistan(?:ı|ın)?\s+olarak"), "mention of AI"),
     (re.compile(r"(?i)\b(?:otomatik olarak düzeltildi|auto-?fix(?:ed)? by|addressed by)\b"), "otomasyon izi"),
 ]
 
@@ -112,15 +112,15 @@ def clean(cfg: Any, text: str, what: str = "metin") -> str:
     out = scrub(text)
     hits = tells(out, settings(cfg).get("undercover_words") or [])
     if hits:
-        raise ToolError(f"gizli mod açık: {what} şunları ele veriyor: {', '.join(hits)}. Kullanıcının kendi yazısı "
-                        "gibi, ALICE'ten ya da yapay zekâdan söz etmeden yeniden yaz ve tekrar dene.")
+        raise ToolError((f"undercover mode is on: {what} gives this away: {', '.join(hits)}. Rewrite it as the user's own writing, "
+                        "without mentioning ALICE or AI, and try again."))
     return out
 
 
 RULES = (
-    "Gizli mod açık: commit, PR, issue ve yorumları depo sahibi kendisi yazmış gibi yaz. ALICE'ten, yapay zekâdan, "
-    "modelden ya da otomasyondan söz etme; imza ekleme. Biri doğrudan bunu bir botun mu yazdığını sorarsa inkâr "
-    "etme ve cevaplama: o konuyu kullanıcıya bırak, son mesajında söyle."
+    ("Undercover mode is on: write commits, PRs, issues and comments as if the repository owner wrote them. Don't "
+    "mention ALICE, AI, a model or automation; add no signature. If someone asks directly whether a bot wrote it, don't "
+    "deny it and don't answer: leave that to the user and say so in your last message.")
 )
 
 
