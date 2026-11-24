@@ -20,459 +20,483 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
+from alice.i18n import _
+
 
 def alice_home() -> Path:
     return Path(os.environ.get("ALICE_HOME", Path.home() / ".alice"))
 
 
 DEFAULT_CONFIG_TOML = r'''
-# ALICE config. Bu dosya `alice init` ile oluşturulur, istediğin gibi düzenle.
-# Model referansı formatı: "provider:model_id"  (model_id içinde ":" olabilir, ilk ":" ayırır)
+# ALICE config. `alice init` creates this file; edit it as you like.
+# Model reference format: "provider:model_id"  (model_id may contain ":", the first ":" separates)
 
 [agent]
-advisor = ""                             # danışman modeli (advisor aracı): ör. "cliproxy:claude-opus-5-5"; boş = kapalı
-suggestions = true                       # tur bitince sonraki mesaj için 1-2 öneri düğmesi
-turn_token_budget = 0                    # bir turda harcanabilecek token (önbellek hariç girdi + çıktı); 0 = sınırsız
-# sub_turn_token_budget = 200000         # alt ajanlar için ayrı sınır (yoksa yukarıdaki geçerli)
-# ask  = okuma dışındaki her şeyi sorar
-# auto = tehlikeli komutlar ve sistem klasörlerine yazma dışında her şeye izin verir
-# yolo = hiçbir şey sormaz, tam erişim
+advisor = ""                             # advisor model (advisor tool): e.g. "cliproxy:claude-opus-5-5"; empty = off
+suggestions = true                       # 1-2 suggestion buttons for the next message when a turn ends
+turn_token_budget = 0                    # tokens a turn may spend (input without cache + output); 0 = unlimited
+# sub_turn_token_budget = 200000         # separate limit for subagents (otherwise the one above applies)
+# ask  = asks for everything except reading
+# auto = allows everything except dangerous commands and writing to system folders
+# yolo = asks nothing, full access
 permission_mode = "auto"
-# Başkasına giden mesaj/gönderi/e-posta (Discord, WhatsApp, Gmail...) auto modda da sorulsun mu?
-# Gönderilen mesaj geri alınamaz; false yapmadan önce iki kez düşün.
+# Ask before messages/posts/emails that go to someone else (Discord, WhatsApp, Gmail...) in auto mode too?
+# A sent message can't be taken back; think twice before setting this to false.
 confirm_outward = true
 max_steps = 80
-# Prompt injection koruması: web/mesaj/e-posta gibi dış içerik okunan turda komut çalıştırma ve mesaj gönderme auto
-# modda da onaya bağlanır, içerik modele "güvenilmeyen veri" diye işaretli gider. Kapatmak önerilmez.
+# Prompt injection guard: in a turn that read outside content (web/message/email), running commands and sending
+# messages need approval in auto mode too, and the content goes to the model marked as "untrusted data". Turning it
+# off is not recommended.
 taint_guard = true
-# Komut sandbox'ı (alice/sandbox.py): sandbox'taki komut her yeri okur ama sadece çalıştığı klasöre ve geçici klasöre
-# yazabilir. off | auto (dış içerik okunan turda komut sorulmak yerine sandbox'ta çalışır) | on (her komut).
-# Windows: düşük bütünlük seviyesi; Linux: bubblewrap (apt install bubblewrap); macOS: sandbox-exec.
+# Command sandbox (alice/sandbox.py): a sandboxed command can read everywhere but only write to the folder it runs in
+# and the temp folder. off | auto (in a turn that read outside content, commands run in the sandbox instead of asking)
+# | on (every command). Windows: low integrity level; Linux: bubblewrap (apt install bubblewrap); macOS: sandbox-exec.
 sandbox = "auto"
 sandbox_network = true
-# Sandbox'taki komut ~/.alice'teki anahtar dosyalarını okuyamaz, .env'den gelen ve adı anahtar gibi olan ortam
-# değişkenlerini (*_API_KEY, *_TOKEN, CLIPROXY_*...) almaz. Bir komut gerçekten birine muhtaçsa adını buraya yaz.
+# A sandboxed command can't read the key files in ~/.alice and doesn't get environment variables from .env whose names
+# look like keys (*_API_KEY, *_TOKEN, CLIPROXY_*...). If a command really needs one, write its name here.
 # sandbox_env_allow = ["HF_TOKEN"]
-# İş bitmeden durursa ("şimdi testleri çalıştıracağım" deyip susmak) en fazla kaç kez devam hatırlatılsın. 0 = kapalı.
+# How many times to nudge ALICE to continue when it stops before the job is done ("now I'll run the tests" and then
+# silence). 0 = off.
 finish_nudges = 2
-# "Yaptım/indirildi/yok" gibi sonuç söyleyen cevap bu turdaki araç sonuçlarıyla desteklenmiyorsa (hızlı modelle
-# karşılaştırılır) ALICE bir kez doğrulamaya geri gönderilir. Ekran eylemlerinden sonra yeni pencere/hata kutusu
-# sonuca eklenir (observe_outcomes).
+# If an answer that states a result ("done/downloaded/not found") isn't backed by this turn's tool results (checked
+# with the fast model), ALICE is sent back once to verify. After screen actions, a new window/error box is added to the
+# result (observe_outcomes).
 verify_claims = true
 observe_outcomes = true
-# Model aynı cevapta birden çok run_command isterse (izin gerektirmeyenler) aynı anda çalışır. Aynı depoya ya da
-# paket yöneticisine dokunan komutlar (git, npm, pip, winget...) yine sırayla. false: komutlar hep tek tek.
+# If the model asks for several run_command calls in one answer (ones that need no permission), they run at the same
+# time. Commands touching the same repository or package manager (git, npm, pip, winget...) still run in order.
+# false: commands always run one by one.
 parallel_commands = true
-# web_search önce Google'da arasın (Gemini grounding, GEMINI_API_KEY): kaynaklı, güncel özet. Kota dolarsa ya da
-# hata verirse DuckDuckGo/Bing'e düşer.
+# web_search searches Google first (Gemini grounding, GEMINI_API_KEY): a current summary with sources. If the quota
+# runs out or it fails, it falls back to DuckDuckGo/Bing.
 search_grounding = true
 grounding_model = "gemini-flash-latest"
-# Konuşma bu token sayısını geçince eski kısmı özetlenir. "auto": kullanılan modelin bağlam penceresinin %60'ı
-# (GLM 5.3 ve Gemini'de 1M pencere, Groq gibi dar ücretsiz katmanlarda sağlayıcının max_input_tokens'ı).
+# When the conversation passes this many tokens, the old part is summarised. "auto": 60% of the context window of the
+# model in use (a 1M window on GLM 5.3 and Gemini, the provider's max_input_tokens on narrow free tiers like Groq).
 compact_at_tokens = "auto"
-# Özet isteği konuşmanın kendisinin üstüne eklenir: geçmiş prompt önbelleğinden okunur, baştan ödenmez.
-# false: eski yol (geçmiş ayrı bir döküm olarak yeniden gönderilir).
+# The summary request is added on top of the conversation itself: the history is read from the prompt cache, not paid
+# again. false: the old way (the history is sent again as a separate transcript).
 compact_shared_cache = true
-# Claude API prompt önbelleği süresi: "auto" (ana sohbet 1h, alt ajanlar 5m), "5m" ya da "1h". Oturum boyunca sabit
-# kalır; sohbet ortasında 5m/1h arasında gidip gelmek de önbelleği bozar.
+# Claude API prompt cache lifetime: "auto" (main chat 1h, subagents 5m), "5m" or "1h". Stays fixed for the session;
+# switching between 5m and 1h in the middle of a chat also breaks the cache.
 cache_ttl = "auto"
-# Beklenmeyen önbellek kırılmalarını (system prompt / araç / geçmiş değişti) sohbette de göster. Kayıt her zaman
-# ~/.alice/logs/cache_breaks.log'a yazılır.
+# Also show unexpected cache breaks (system prompt / tools / history changed) in the chat. They are always logged to
+# ~/.alice/logs/cache_breaks.log.
 cache_break_notice = false
-# Bir sohbette bir modele gönderilen düşünme/effort ayarı o sohbet boyunca o modele aynı gider (yönlendirme turu başka
-# seviyeli bir role taşısa bile): effort değişimi Claude'da önbelleği bozar. Seviyeyi elle değiştirince hemen geçerli olur.
+# The thinking/effort setting sent to a model in a chat stays the same for that model for the whole chat (even if
+# routing moves a turn to a role with another level): changing effort breaks the cache on Claude. Changing the level
+# by hand takes effect at once.
 cache_sticky_effort = true
-# Claude API'de eski araç sonuçlarını sunucu tarafında temizle (context editing beta'sı); ALICE kendi geçmişini
-# kısaltmaz. true ya da { trigger = 100000, keep = 6, clear_at_least = 20000, exclude_tools = ["memory"] }.
+# On the Claude API, clear old tool results on the server (the context editing beta); ALICE doesn't shorten its own
+# history. true or { trigger = 100000, keep = 6, clear_at_least = 20000, exclude_tools = ["memory"] }.
 context_editing = false
-# Proje ajanları, yönetici ve kurul üyeleri için üst sınır: her adım bütün konuşmayı yeniden gönderdiği için sınırsız
-# bağlam bir projede on milyonlarca token yakar. 0 = sınır yok.
+# Upper limit for project agents, the lead and council members: every step sends the whole conversation again, so an
+# unlimited context burns tens of millions of tokens in a project. 0 = no limit.
 team_compact_at = 128000
 tool_output_chars = 12000
-# Takım modunda (team aracı) aynı anda çalışabilecek en fazla ajan; fazlası sıraya girer.
+# In team mode (the team tool), the most agents that can run at the same time; the rest wait in line.
 team_max_parallel = 5
-# Proje yöneticisinin bir olaya cevap verirken en fazla araç adımı.
+# The most tool steps the project lead takes when answering an event.
 team_lead_steps = 40
-# Bu kadar dakika hiç adım atmayan ajan "ilerlemiyor" diye bildirilir.
+# An agent that takes no step for this many minutes is reported as "not progressing".
 team_stall_minutes = 10
-# Proje kontrol komutunun (testler) en uzun süresi, saniye.
+# Longest run time of the project check command (tests), in seconds.
 team_check_timeout = 600
-# Projede soru/bitti/takılma/hata olunca masaüstü bildirimi.
+# Desktop notification when a project has a question, is done, is stuck or fails.
 team_notify = true
-# Geçmişte tutulacak en fazla ekran görüntüsü (eski görüntüler metne çevrilir).
+# The most screenshots kept in the history (older ones are turned into text).
 keep_images = 2
-# Ekran görüntüsünün modele gönderilirken küçültüleceği en fazla genişlik.
+# The largest width a screenshot is scaled down to before it is sent to the model.
 screenshot_max_width = 1366
-# Tarayıcı: false = görünür pencere. browser_executable boşsa varsayılan tarayıcı (Chromium tabanlıysa,
-# ör. Opera GX), olmazsa sırayla Chrome, Edge, Playwright Chromium denenir.
+# Browser: false = visible window. If browser_executable is empty, the default browser (if it is Chromium-based, e.g.
+# Opera GX), otherwise Chrome, Edge and Playwright Chromium are tried in order.
 browser_headless = false
 browser_executable = ""
-# Açık tarayıcın --remote-debugging-port=9222 ile çalışıyorsa ALICE yeni pencere açmak yerine ona bağlanır.
+# If your open browser runs with --remote-debugging-port=9222, ALICE connects to it instead of opening a new window.
 browser_cdp = "http://127.0.0.1:9222"
-# Kullanıcının tarayıcısına (opera://inspect "Allow remote debugging") ALICE'ten bağımsız küçük bir köprü süreci
-# bağlanır; çekirdek yeniden başlasa da tarayıcı izni tekrar sormaz. 0 = köprü yok, doğrudan bağlan.
+# A small bridge process, separate from ALICE, connects to your browser (opera://inspect "Allow remote debugging"); the
+# browser doesn't ask for permission again when the core restarts. 0 = no bridge, connect directly.
 browser_bridge_port = 9339
-# ALICE tarayıcı eklentisi (alice/extension, opera://extensions'ta "paketlenmemiş yükle") bu porta bağlanır. Bağlıyken
-# yukarıdaki uzaktan hata ayıklama hiç kullanılmaz: izin penceresi yok, indirmeler/tema ellenmez. 0 = kapalı.
+# The ALICE browser extension (alice/extension, "load unpacked" in opera://extensions) connects to this port. While it
+# is connected, the remote debugging above isn't used at all: no permission window, downloads/theme are left alone.
+# 0 = off.
 browser_ext_port = 9340
-# Bu porta yalnız ilk eşlenen eklenti bağlanabilir (kimliği ~/.alice/browser-ext-id); eklentiyi başka klasörden
-# yükledinse o dosyayı sil ya da kimliği buraya yaz: browser_ext_ids = ["..."]
-# true: rol zincirinde "auto" yazmasan da ölçülen en iyi ücretsiz modeller zincirin sonuna eklenir.
+# Only the first paired extension can connect to this port (its id is in ~/.alice/browser-ext-id); if you loaded the
+# extension from another folder, delete that file or write the id here: browser_ext_ids = ["..."]
+# true: the best measured free models are added to the end of the role chain even if you don't write "auto".
 auto_models = true
-# Arayüzde gizlenen modeller ya da sağlayıcılar ("groq" ya da "groq:model"): otomatik zincirlerde kullanılmaz.
+# Models or providers hidden in the interface ("groq" or "groq:model"): not used in automatic chains.
 hidden_models = []
-# Ana modelin otomatik sırasına girmek için en düşük zekâ puanı (0-100). Güçlü modellerin kotası dolunca ALICE
-# bunun altındaki küçük modellere geçmez, durup söyler. Elle yazdığın/seçtiğin modellere uygulanmaz. 0 = kapalı.
+# The lowest intelligence score (0-100) to enter the main model's automatic order. When the strong models' quota runs
+# out, ALICE doesn't switch to smaller models below this; it stops and says so. Doesn't apply to models you write or
+# pick yourself. 0 = off.
 min_brain_quality = 60
-# false: menüden elle seçtiğin model cevap veremezse ALICE durur. true: rolün otomatik sırasıyla devam eder.
+# false: if the model you picked from the menu can't answer, ALICE stops. true: it continues with the role's automatic
+# order.
 pinned_fallback = false
 
-# Arka plan çekirdeği (`alice core run`): veri toplar, kuralları değerlendirir, görevleri çalıştırır.
+# Background core (`alice core run`): collects data, evaluates rules, runs tasks.
 [core]
-# Kaç saniyede bir veri toplanır.
+# How often data is collected, in seconds.
 interval = 15
-# Veriler kaç gün saklanır.
+# How many days data is kept.
 retention_days = 30
-# Bu saatlerde sessiz mod: sadece uyarı ve üstü, sesli konuşma yok. Boş = kapalı.
+# Quiet mode during these hours: only warnings and above, no speech. Empty = off.
 quiet_hours = "00:30-08:00"
 desktop_notifications = true
-# Zamanlanmış görevler ve araştırma kurallarındaki gözetimsiz ALICE'in izin modu.
-# Onay gerektiren adımlar (auto'da tehlikeli komutlar) gözetimsizken reddedilir.
+# Permission mode of unattended ALICE in scheduled tasks and research rules.
+# Steps that need approval (dangerous commands in auto) are refused while unattended.
 task_permission_mode = "auto"
 
-# Mod program listeleri (küçük harf, süreç adı). Politika alanları da ezilebilir:
+# Program lists of the modes (lowercase, process name). Policy fields can also be overridden:
 # min_severity (info|warn|critical), topics, voice, local_gpu.
 [core.modes.flight]
 programs = ["dcs.exe", "dcs_server.exe", "aces.exe"]
 [core.modes.dev]
 programs = ["unity.exe", "unity hub.exe", "code.exe", "devenv.exe", "rider64.exe"]
 
-# Gmail (birden fazla hesap): alice connect gmail --account <ad>. Yeni önemli e-posta gelince bildirim (çekirdekte).
+# Gmail (several accounts): alice connect gmail --account <name>. Notification when a new important email arrives
+# (in the core).
 [gmail]
 notify = true
 notify_query = "is:unread is:important newer_than:1d"
 
-# Bilgisayar başına dönünce karşılama (alice/presence.py): uzun yokluktan sonra söyleyecek bir şey varsa (takip,
-# bugünün takvimi, önemli e-posta) kısa sesli brifing; yoksa sadece günün ilk dönüşünde selam. Çekirdek çalışırken.
+# Welcome when you're back at the computer (alice/presence.py): after a long absence, a short spoken briefing if there
+# is something to say (follow-ups, today's calendar, important email); otherwise just a hello on the first return of the
+# day. While the core runs.
 [greeting]
 enabled = true
 away_minutes = 90
 min_gap_hours = 3
 quiet_hours = "00:30-07:00"
 
-# Kalıcı izin kuralları (Claude Code'daki allow/deny gibi). Projeye özel kurallar: <proje>/.alice/permissions.toml.
-# Biçim "araç" ya da "araç(desen)"; desen aracın asıl argümanına bakar (komut, yol, url...). deny her modda geçerli.
+# Permanent permission rules (like allow/deny in Claude Code). Project rules: <project>/.alice/permissions.toml.
+# Format "tool" or "tool(pattern)"; the pattern looks at the tool's main argument (command, path, url...). deny applies
+# in every mode.
 [permissions]
-allow = []    # ör. ["run_command(git status*)", "run_command(npm test*)", "edit_file(src/*)"]
-ask = []      # ör. ["run_command(git push*)"]
-deny = []     # ör. ["run_command(*rm -rf*)", "write_file(*.env)"]
+allow = []    # e.g. ["run_command(git status*)", "run_command(npm test*)", "edit_file(src/*)"]
+ask = []      # e.g. ["run_command(git push*)"]
+deny = []     # e.g. ["run_command(*rm -rf*)", "write_file(*.env)"]
 
-# Hook'lar: belli anlarda kendi komutun çalışır (ayrıntı: alice/hooks.py). Örnek, her düzenlemeden sonra formatla:
+# Hooks: your own command runs at certain moments (details: alice/hooks.py). Example, format after every edit:
 # [[hooks.PostToolUse]]
 # matcher = "edit_file|write_file|multi_edit"
 # command = "ruff format \"$ALICE_TOOL_PATH\""
-# Olaylar: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop. Çıkış kodu 2 = engelle / modele geri
-# bildirim ver (stderr). İstersen ayrı dosyada: ~/.alice/hooks.toml
+# Events: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop. Exit code 2 = block / give feedback to the
+# model (stderr). You can also use a separate file: ~/.alice/hooks.toml
 
-# Uzun süreli hafıza (~/.alice/memory.db, tamamen yerel): tercihler, bilgiler ve geçmiş konuşmalar.
-# En önemli bilgiler her konuşmada sistem istemine, sözüne benzeyen eski bilgi/konuşmalar mesaja eklenir.
+# Long-term memory (~/.alice/memory.db, fully local): preferences, facts and past conversations.
+# The most important facts go into the system prompt of every conversation; old facts/conversations similar to what
+# you say are added to the message.
 [memory]
 enabled = true
-# Kullanıcı kendinden bahsedince (seviyorum, benim, her zaman...) konuşma "fast" rolündeki ücretsiz modele verilir,
-# kalıcı bilgiler çıkarılıp kaydedilir. false: sadece "bunu hatırla: ..." ve memory aracı ile kaydedilir.
+# When the user talks about themselves (I love, my, always...), the conversation is given to the free model of the
+# "fast" role and lasting facts are extracted and saved. false: saved only with "remember this: ..." and the memory tool.
 auto_extract = true
 extract_role = "fast"
-# Her mesaja eklenecek en fazla ilgili hatıra.
+# The most related memories added to each message.
 recall_limit = 4
-# Sistem istemine giren bilgi profilinin en fazla uzunluğu (karakter).
+# The longest length (characters) of the fact profile that goes into the system prompt.
 profile_chars = 2500
-# Konuşma kayıtları kaç gün saklanır (bilgiler silinmez). 0 = sonsuz.
+# How many days conversation records are kept (facts are not deleted). 0 = forever.
 keep_days = 365
-# Bir konuşma bu kadar dakika sessizlikten sonra "bitti" sayılır ve özetlenir: kısa özet, kalıcı bilgiler ve takipler
-# (sınavın nasıl geçtiğini sorma, yarım kalan iş). false: özetleme kapalı.
+# After this many minutes of silence a conversation counts as "finished" and is summarised: a short summary, lasting
+# facts and follow-ups (asking how the exam went, unfinished work). false: summarising is off.
 digest = true
 session_gap_minutes = 20
-# Geçmiş sohbetlerde ara (Ayarlar > Hafıza): ALICE gerekince eski sohbetleri arar (search_chats / recent_chats).
-# false: konuşma turları hiç saklanmaz, eski sohbetlerden hiçbir şey mesajlara eklenmez.
+# Search past chats (Settings > Memory): ALICE searches old chats when needed (search_chats / recent_chats).
+# false: conversation turns are never stored, nothing from old chats is added to messages.
 chat_history = true
-# Anlam araması (embedding): bu sağlayıcının OpenAI uyumlu /embeddings ucu kullanılır. Anahtar yoksa ya da "off" ise
-# sadece kelime araması. embed_min: bu benzerliğin (kosinüs) altı ilgisiz sayılır.
+# Meaning search (embedding): this provider's OpenAI-compatible /embeddings endpoint is used. Without a key, or with
+# "off", only word search. embed_min: below this similarity (cosine) counts as unrelated.
 embed_provider = "gemini"
 embed_model = "gemini-embedding-001"
 embed_min = 0.68
 
-# Eklentiler: ~/.alice/plugins/*.py ve buradaki yollar yeni araç ekler (bkz. docs/PLUGINS.md, `alice plugins`).
+# Plugins: ~/.alice/plugins/*.py and the paths here add new tools (see docs/PLUGINS.md, `alice plugins`).
 [plugins]
 enabled = true
-# Kapatılacak eklenti adları.
+# Names of plugins to turn off.
 disabled = []
-# Ek eklenti dosyaları/klasörleri.
+# Extra plugin files/folders.
 paths = []
 
-# ALICE'in sesi ve kulağı (`alice voice`). Ses seçimi: `alice voice audition`.
+# ALICE's voice and ears (`alice voice`). Choosing a voice: `alice voice audition`.
 [voice]
-# true: çekirdek (alice core run) sesli asistanı da başlatır, bildirimleri seslendirir.
+# true: the core (alice core run) also starts the voice assistant and reads notifications aloud.
 enabled = false
-# live: "Hey Alice"ten sonra Gemini Live ile canlı, sesten sese konuşma (~0,5 sn, araya girilebilir, doğal ses).
-# classic: yazıya çevir -> model -> ses. Live açılamazsa (internet/kota) 5 dk classic'e döner.
+# live: after "Hey Alice", a live voice-to-voice conversation with Gemini Live (~0.5 s, can be interrupted, natural
+# voice). classic: speech to text -> model -> voice. If Live can't start (internet/quota), it falls back to classic for
+# 5 min.
 mode = "live"
 live_voice = "Kore"
 live_models = ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest"]
-# Canlı konuşmanın arka ucu: auto (önce ChatGPT Realtime — yerel Claude Code proxy'si üzerinden, en doğal ses —,
-# olmazsa Gemini Live), chatgpt (yalnız ChatGPT), gemini (yalnız Gemini).
+# Back end of the live conversation: auto (ChatGPT Realtime first — through the local Claude Code proxy, the most
+# natural voice —, otherwise Gemini Live), chatgpt (ChatGPT only), gemini (Gemini only).
 live_backend = "auto"
-# ChatGPT Realtime modeli ve sesi (proxy'nin /v1/realtime ucu).
+# ChatGPT Realtime model and voice (the proxy's /v1/realtime endpoint).
 live_realtime_model = "gpt-realtime-2.1"
 live_realtime_voice = "marin"
-# Hoparlör yankısının ALICE'in cevabını yarıda kesmesini önler. Kulaklıkla gerçek barge-in istersen false yap.
+# Keeps the speaker's echo from cutting off ALICE's answer. Set false if you want real barge-in with headphones.
 live_realtime_echo_guard = true
-# Canlı modelin doğrudan çağırdığı hızlı araçlar; gerisi think ile güçlü modele gider ("*" = hepsi, yavaş:
-# 69 aracın şeması her oturumda ~2 sn ekliyordu).
+# Fast tools the live model calls directly; the rest go to the strong model through think ("*" = all, slow: the schema
+# of 69 tools added ~2 s to every session).
 live_realtime_tools = ["youtube", "media", "windows", "weather", "notes", "now", "spotify", "memory"]
-# ChatGPT'nin kendi döküm modeli: duyduklarını loga yazar, "Alice sus"u sesli yolda da yakalar ("" = kapalı).
+# ChatGPT's own transcription model: logs what it hears and also catches "Alice stop" on the voice path ("" = off).
 live_realtime_transcribe = "gpt-4o-mini-transcribe"
-# Cevap bitince ve "Alice" duyulunca bir sonraki oturum arka planda hazırlanır (bağlantı + ayar ≈ 2 sn).
+# When an answer ends and "Alice" is heard, the next session is prepared in the background (connection + setup ≈ 2 s).
 live_realtime_prewarm = true
-# true: ilk cümlede ses yerine yerel Whisper dökümü gönderilir (eski davranış; ChatGPT sesi kendisi duyar).
+# true: for the first sentence a local Whisper transcript is sent instead of audio (the old behaviour; ChatGPT hears
+# the audio itself).
 live_realtime_text_hint = false
-# Alice sustuktan sonra bu kadar saniye kimse konuşmazsa canlı konuşma kapanır, yeniden "Hey Alice" beklenir
-# (en fazla 5: yanındakilerle konuşurken söylenenler komut sanılmasın).
+# If nobody speaks for this many seconds after Alice goes quiet, the live conversation closes and "Hey Alice" is
+# awaited again (at most 5: so that what you say to people around you isn't taken as a command).
 live_idle = 5
-# "Hey Alice" cümlesi yerelde (ekran kartında) uygulama/site adı ipuçlarıyla yazıya dökülür; döküm bu güvenin
-# üstündeyse Live'a ses yerine yazı gider (Live Türkçe cümledeki "GitHub" gibi adları bozuyor). Boş = hep ses.
+# The "Hey Alice" sentence is transcribed locally (on the graphics card) with app/site name hints; if the transcript is
+# above this confidence, text goes to Live instead of audio (Live garbles names like "GitHub" in a Turkish sentence).
+# Empty = always audio.
 live_text_min = -0.7
-# turn: her konuşma turunun başında ekranın bir karesi Live'a gider (ekran Google'a gider). auto: sadece ekrandan
-# söz edilen turlarda ("şuna tıkla", "ekrandaki"). off: ekrandaki işleri reflex katmanı sayfadaki öğe listesiyle
-# yapar, görüntü sadece model computer screenshot isterse gider.
+# turn: at the start of every turn one frame of the screen goes to Live (the screen goes to Google). auto: only in turns
+# that mention the screen ("click this", "on the screen"). off: the reflex layer handles screen jobs with the list of
+# elements on the page; an image goes only if the model asks for a computer screenshot.
 live_screen = "off"
-# Model hiçbir şey demeden araç çağırınca beklerken Live'ın sesiyle hazır kısa cümle ("Bir saniye.") çalınır.
+# When the model calls a tool without saying anything, a short ready-made sentence ("One second.") plays in Live's voice
+# while waiting.
 live_fillers = true
-# think'in modelleri, sırayla. Boş = ses için ölçülmüş hızlı modeller, ardından beyin zinciri.
+# think's models, in order. Empty = the fast models measured for voice, then the brain chain.
 live_think_models = []
-# Konuşma tanımaya ve Live'a ipucu olarak verilen adlar: bunlar + Başlat menüsü programları + yer imleri.
+# Names given as hints to speech recognition and Live: these + Start menu programs + bookmarks.
 vocab = []
-# Konuşman bitti saymak için sessizlik (sn). Kısa = hızlı cevap; çok kısa olursa cümle ortasında keser.
+# Silence (s) to count your speech as finished. Short = quick answer; too short cuts you off mid-sentence.
 end_silence = 0.5
-# "Hey Alice" kontrolü: ekran kartı varsa wake_local_gpu (daha iyi duyar, ~0,1 sn), yoksa işlemcide wake_local.
+# "Hey Alice" check: wake_local_gpu if there is a graphics card (hears better, ~0.1 s), otherwise wake_local on the
+# processor.
 wake_local = "base"
 wake_local_gpu = "small"
-# Ekran kartındaki Whisper modelleri: int8_float16 belleği yarıya indirir (doğruluk aynı); float16 = eski hali.
-# DCS açılınca (uçuş modu) modeller ekran kartından çıkar, kapanınca geri döner.
+# Whisper models on the graphics card: int8_float16 halves the memory (same accuracy); float16 = the old way.
+# When DCS opens (flight mode) the models leave the graphics card and come back when it closes.
 gpu_compute = "int8_float16"
-# Bulut sesi "gemini:<ses>"; yerel motor "xtts" ya da "chatterbox" (boş = yok).
+# Cloud voice "gemini:<voice>"; local engine "xtts" or "chatterbox" (empty = none).
 tts_cloud = "gemini:Aoede"
-# ElevenLabs sesi (elevenlabs.io/voices/<kimlik>); ELEVENLABS_API_KEY varsa her yerde önce bu, sonra yukarıdakiler.
+# ElevenLabs voice (elevenlabs.io/voices/<id>); with ELEVENLABS_API_KEY it is used first everywhere, then the ones above.
 tts_eleven = ""
 tts_eleven_model = "auto"
 tts_local = ""
-# Bulut ve yerel ses düşerse (kota, hata, takılma) ücretsiz, anahtarsız Microsoft Edge sesi (edge-tts): ~1 sn.
-# Türkçe kadın sesi tr-TR-EmelNeural, erkek tr-TR-AhmetNeural. Boş = kapalı.
+# If the cloud and local voices fail (quota, error, hang), the free, keyless Microsoft Edge voice (edge-tts): ~1 s.
+# Turkish female voice tr-TR-EmelNeural, male tr-TR-AhmetNeural; English e.g. en-US-AriaNeural. Empty = off.
 tts_edge = "tr-TR-EmelNeural"
-# Yerel ses sunucusunun Python'u ve portu (`alice voice install-local` doldurur).
+# Python and port of the local voice server (`alice voice install-local` fills them in).
 local_python = ""
 local_port = 8771
-# Yerel ses cümle sonunda uydurabiliyor. local_verify: ses sunucusundaki yerel Whisper (ücretsiz,
-# ekran kartında) her cümleyi dinler, son kelimeden sonrasını keser, saçmaladıysa bir kez yeniden üretir.
+# The local voice can make things up at the end of a sentence. local_verify: the local Whisper on the voice server
+# (free, on the graphics card) listens to every sentence, cuts what comes after the last word and regenerates it once if
+# it talked nonsense.
 local_verify = true
-# tiny | base | small | medium | turbo. Büyüdükçe Türkçesi iyi ama ekran kartı belleği artar.
+# tiny | base | small | medium | turbo. Bigger is better at Turkish but uses more graphics memory.
 local_whisper_model = "small"
-# Sunucuda Whisper yoksa: Groq Whisper ile kes (her cümlede bir istek). false = uzunluğa göre kes.
+# If the server has no Whisper: trim with Groq Whisper (one request per sentence). false = trim by length.
 local_trim_whisper = true
-# Düşük değer daha az "yaratıcı", daha az uydurma (Chatterbox varsayılanı 0.8).
+# A lower value is less "creative", makes up less (Chatterbox default 0.8).
 local_temperature = 0.6
-# cloud: önce bulut, local: önce yerel. Uçuşta (local_gpu = false) her zaman önce bulut.
+# cloud: cloud first, local: local first. In flight (local_gpu = false) always cloud first.
 prefer = "cloud"
-# Gemini ses modelleri, sırayla: kota model başına sayılır, biri dolunca sıradakine geçilir.
+# Gemini voice models, in order: the quota counts per model, when one is full the next is used.
 gemini_tts_models = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview",
                      "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"]
-# Konuşma tanıma zinciri: groq:<model>, local:<faster-whisper modeli>
+# Speech recognition chain: groq:<model>, local:<faster-whisper model>
 stt = ["groq:whisper-large-v3-turbo", "local:large-v3-turbo"]
 stt_cpu_model = "small"
-# ELEVENLABS_API_KEY varsa konuşma önce ElevenLabs Scribe ile yazıya dökülür (Türkçede çok daha iyi), sonra "stt".
+# With ELEVENLABS_API_KEY, speech is first transcribed with ElevenLabs Scribe (much better at Turkish), then "stt".
 stt_eleven = "scribe_v2"
 language = "tr"
-# Ses seviyesi (0-1): ALICE'in konuşması ve uçuş/oyun uyarıları (War Thunder, DCS) ayrı.
+# Volume (0-1): ALICE's speech and the flight/game alerts (War Thunder, DCS) are separate.
 volume = 1.0
 alert_volume = 0.5
-# Bas-konuş tuşu (pynput adı: <scroll_lock>, <f13>, <pause>...). Boş = kapalı.
+# Push-to-talk key (pynput name: <scroll_lock>, <f13>, <pause>...). Empty = off.
 ptt_key = "<scroll_lock>"
-# openWakeWord modeli (.onnx). Boşsa "Hey Alice" Whisper ile, konuşma algılanınca anlaşılır.
+# openWakeWord model (.onnx). If empty, "Hey Alice" is understood with Whisper when speech is detected.
 wake_model = ""
 wake_phrase = true
-# ALICE konuşurken konuşmaya başlarsan susar (Discord'da ve oyunda hariç).
+# If you start talking while ALICE speaks, it goes quiet (except in Discord and in a game).
 barge_in = true
-# Discord'da konuşurken ya da oyundayken: "wake" = "Alice" cümlenin başında olmalı ve ses senin sesin olmalı
-# (ses izi, Sistem → Ses → Sesimi tanıt); "ptt" = mikrofon ALICE'e tamamen kapalı, sadece bas-konuş tuşu.
+# While talking in Discord or in a game: "wake" = "Alice" must be at the start of the sentence and the voice must be
+# yours (voice print, System → Voice → Teach my voice); "ptt" = the microphone is fully closed to ALICE, push-to-talk
+# key only.
 social_mode = "wake"
-# Oyun/uçuş uyarılarını (tehdit, irtifa vb. anonslar) aç/kapatır; sesli sohbet etkilenmez. Boş = kapalı.
-# Kapanınca alçalan, açılınca yükselen bip çalar. WT'nin kendi tuşlarıyla çakışmasın.
+# Turns game/flight alerts (threat, altitude etc. callouts) on/off; voice chat isn't affected. Empty = off.
+# A falling beep plays when it turns off, a rising one when it turns on. Keep it clear of WT's own keys.
 game_mute_key = "ctrl+shift+m"
-# Oyun uyarı sesleri (War Thunder/DCS tehdit ve irtifa anonsları). Varsayılan olarak kapalı.
+# Game alert sounds (War Thunder/DCS threat and altitude callouts). Off by default.
 game_alerts = false
-# ALICE cevap verdikten sonra bu kadar saniye "Hey Alice" demeden devam edebilirsin (en fazla 5).
-# "Alice sus" dersen yeniden "Alice" diyene kadar hiçbir şeyi komut saymaz.
+# After ALICE answers you can go on without saying "Hey Alice" for this many seconds (at most 5).
+# If you say "Alice stop", nothing counts as a command until you say "Alice" again.
 follow_up = 5
 
-# Uçuş simülasyonları (çekirdekle çalışır). DCS için önce: alice dcs install
+# Flight simulators (run with the core). For DCS first: alice dcs install
 [sims]
 dcs = false
 dcs_port = 41230
-# Sesle kanat adamı yönetimi ("İkinci, sağdaki SAM'i bastır"): DCS'in Scripts\Hooks altına kurulan hook bu portu
-# sadece 127.0.0.1'de dinler; yalnızca tek oyunculuda ya da sunucu sensen çalışır. Kanat adamları boşsa oyuncuya
-# en yakın dost AI uçak grupları; sabit sıra için grup adlarını yaz (İkinci = ilk ad, Üçüncü = ikinci ad...).
+# Commanding wingmen by voice ("Two, suppress the SAM on the right"): the hook installed under DCS's Scripts\Hooks
+# listens on this port only on 127.0.0.1; it works only in single player or when you are the server. If wingmen is
+# empty, the friendly AI flight groups nearest to the player; for a fixed order write the group names (Two = first
+# name, Three = second name...).
 dcs_wingmen_port = 41231
 # dcs_wingmen = ["Uzi 2", "Uzi 3"]
 warthunder = false
-# Ekrandan füze görme (War Thunder füzeyi API'de vermiyor, ekranda gösteriyor). Sadece uçuşta, sol kenardaki RWR
-# bölgesi saniyede 6 kez yakalanır ve turkuaz yazıları okunur: TRACK = kilitlendin, LAUNCH/MSL = füze, MSL'nin
-# dairedeki yeri = yön. Oyuna dokunmaz. Bölge ekran yüksekliğine göre kendiliğinden; HUD'u taşıdıysan:
-# alice vision region X Y GENİŞLİK YÜKSEKLİK, dene: alice vision test <klasör>
+# Seeing missiles on the screen (War Thunder doesn't give missiles in its API, it shows them on screen). Only in flight,
+# the RWR area on the left edge is captured 6 times a second and its turquoise text is read: TRACK = you are locked,
+# LAUNCH/MSL = missile, MSL's place in the circle = direction. Doesn't touch the game. The area follows the screen
+# height by itself; if you moved the HUD:
+# alice vision region X Y WIDTH HEIGHT, test: alice vision test <folder>
 missile_vision = true
-# vision_region = [x, y, genişlik, yükseklik]
-# Doğrulama: [sims.vision] method (text|red), confirm, window, hold, fps
+# vision_region = [x, y, width, height]
+# Verification: [sims.vision] method (text|red), confirm, window, hold, fps
 
-# Gece döngüsü ve rüya modu: gece 03-07 arası kendi kayıtlarını okur (tekrarlayan hata, gereksiz anons, yanlış
-# uyanma, bozulan araç), bağlantıları arar; sabah bir kez "şunları buldum, düzelteyim mi?" der. Kod değiştirmez.
-# Elle: alice night. Rapor: ~/.alice/night/
+# Night cycle and dream mode: between 03 and 07 at night it reads its own records (repeated errors, needless callouts,
+# false wakes, broken tools) and looks for connections; in the morning it says once "I found these, shall I fix them?".
+# It doesn't change code. By hand: alice night. Report: ~/.alice/night/
 [night]
 enabled = true
 
-# Önsezi: alışkanlıktan ne yapacağını tahmin edip önceden hazırlar.
+# Anticipation: guesses what you'll do from habit and prepares ahead.
 [anticipate]
-quiet_notifications = true   # maçta Windows "Rahatsız etmeyin" (Discord balonları susar), bitince eski haline
-game_update = true           # oyundan önce Steam güncellemesini kontrol et, gerekirse Steam'i arka planda aç
-morning = true               # sabah genelde ilk sorduğun şeylerin cevabını önceden hazırla
+quiet_notifications = true   # Windows "Do not disturb" during a match (Discord bubbles go quiet), restored afterwards
+game_update = true           # check for a Steam update before the game, open Steam in the background if needed
+morning = true               # prepare the answers to what you usually ask first in the morning
 
-# Zaman makinesi hafıza: ekranda gördüğün yazılar yerelde, şifreli (Windows: DPAPI, Linux/macOS: işletim sisteminin
-# anahtar deposu + Fernet, pip install "alice-harness[timeline]") ve aranabilir bir zaman çizgisine
-# yazılır ("geçen hafta Discord'da paylaşılan linki bul"). Görüntü saklanmaz, sadece yazı. Oyunda, şifre
-# yöneticilerinde ve gizli tarayıcı pencerelerinde kayıt yok. Silmek: alice timeline wipe.
+# Time machine memory: the text you see on screen is written to a local, encrypted (Windows: DPAPI, Linux/macOS: the
+# operating system's keyring + Fernet, pip install "alice-harness[timeline]") and searchable timeline ("find the link
+# shared on Discord last week"). No images are kept, only text. Nothing is recorded in games, password managers and
+# private browser windows. To delete: alice timeline wipe.
 [timeline]
 enabled = false
-every = 30          # saniye
+every = 30          # seconds
 keep_days = 30
-# exclude = ["whatsapp", "banka"]   # program adı ya da başlıkta geçen sözler
+# exclude = ["whatsapp", "bank"]   # program names or words in the title
 
-# Ekran üstü HUD (`alice hud`): oyunun ve masaüstünün üstüne tehdit oku, kenar parlaması, kart çizer.
-# Tıklamalar alttaki pencereye geçer, odak almaz, ALICE'in ekran görüntülerinde görünmez. Oyuna kod enjekte etmez.
-# Özel tam ekranda (exclusive fullscreen) hiçbir pencere oyunun üstüne çizilemez: oyunu kenarlıksız pencerede aç.
+# On-screen HUD (`alice hud`): draws threat arrows, edge glow and cards over the game and the desktop.
+# Clicks go through to the window below, it takes no focus and doesn't show in ALICE's screenshots. It injects no code
+# into the game. Nothing can draw over a game in exclusive fullscreen: run the game in a borderless window.
 [hud]
-# true: çekirdek HUD'u başlatır, çökerse yeniden başlatır.
+# true: the core starts the HUD and restarts it if it crashes.
 enabled = false
 port = 41240
-# 0 ana monitör, 1 sonraki...
+# 0 main monitor, 1 the next...
 monitor = 0
 opacity = 0.92
-# HUD'u tamamen gizle / geri getir.
+# Hide / bring back the HUD completely.
 hotkey = "<ctrl>+<alt>+h"
-# Ne kadar şey görünsün: auto (oyunda yalnız tehdit ve uyarılar, masaüstünde hepsi) | all | game | quiet (yalnız
-# kritik). mode_hotkey sırayla değiştirir; history_hotkey kaçırılan son bildirimleri gösterir.
+# How much is shown: auto (in a game only threats and warnings, on the desktop everything) | all | game | quiet (only
+# critical). mode_hotkey cycles through them; history_hotkey shows the last missed notifications.
 mode = "auto"
 mode_hotkey = "<ctrl>+<alt>+k"
 history_hotkey = "<ctrl>+<alt>+j"
 
-# Akıllı saat (Gadgetbridge). export_path: Gadgetbridge'in otomatik dışa aktardığı veritabanı
-# (Syncthing vb. ile bilgisayara gelen dosya ya da klasör). Boş = kapalı.
+# Smartwatch (Gadgetbridge). export_path: the database Gadgetbridge exports automatically (the file or folder that
+# reaches the computer through Syncthing etc.). Empty = off.
 [watch]
 export_path = ""
 
-# Telefon köprüsü (`alice phone`): telefondan tarayıcıyla ALICE'e ulaşma ve canlı saat verisi.
-# Yerel ağa açılır; adresteki uzun rastgele anahtar olmadan erişilemez. Sadece güvendiğin ağda aç.
+# Phone bridge (`alice phone`): reach ALICE from the phone's browser, and live watch data.
+# It opens on the local network; it can't be reached without the long random key in the address. Only turn it on in a
+# network you trust.
 [phone]
 enabled = false
 port = 8765
 
-# Android TV ve telefon (ADB). tv / phone: "IP:port", ALICE connect'te kendisi yazar.
-# adb: boşsa PATH'teki adb (kurmak için: winget install Google.PlatformTools).
+# Android TV and phone (ADB). tv / phone: "IP:port", ALICE writes them itself on connect.
+# adb: if empty, adb on PATH (to install: winget install Google.PlatformTools).
 [android]
 adb = ""
 tv = ""
 phone = ""
 
-# Samsung (Tizen) TV. host, token (TV'deki izinden sonra) ve mac (kapalıyken açmak için) connect'te yazılır.
+# Samsung (Tizen) TV. host, token (after the permission on the TV) and mac (to turn it on when it's off) are written on
+# connect.
 [samsung_tv]
 host = ""
 token = ""
 mac = ""
 
-# Modem (ZTE ZXHN H3600 vb.): bağlı cihazlar ve yeniden başlatma için yönetim girişi.
-# host boşsa ağ geçidi (x.x.x.1). Şifre buraya değil ~/.alice/.env içine: MODEM_PASSWORD=...
+# Modem (ZTE ZXHN H3600 etc.): admin login for connected devices and restarting.
+# If host is empty, the gateway (x.x.x.1). The password goes in ~/.alice/.env, not here: MODEM_PASSWORD=...
 [modem]
 host = ""
 user = "admin"
 
-# Sabah özeti (`alice brief`, kurmak için `alice brief --install 08:00`).
-# days: haftanın günlerine göre program, ör. pazartesi = "okul", salı = "staj".
+# Morning brief (`alice brief`, to set it up `alice brief --install 08:00`).
+# days: schedule by day of the week, e.g. pazartesi = "school", salı = "internship".
 [brief]
 city = ""
 days = {}
 
-# Hızlı bar: her programın üstünde kısayolla açılan küçük ALICE kutusu (pynput gerekir).
+# Quick bar: a small ALICE box opened with a shortcut on top of any program (needs pynput).
 [quick]
-# true: çekirdek (alice core run) hızlı barı da başlatır.
+# true: the core (alice core run) also starts the quick bar.
 enabled = true
 hotkey = "<ctrl>+<alt>+a"
 region_hotkey = "<ctrl>+<alt>+s"
 clipboard_hotkey = "<ctrl>+<alt>+c"
 
-# Düşünme (reasoning) seviyesi, rol başına: off | low | medium | high | default (modele bırak).
-# Her sağlayıcının kendi ayarına çevrilir (Gemini, Groq, OpenRouter, NVIDIA, Ollama); tanımayan model ayarsız çalışır.
-# Sohbette geçici olarak: /think off, /think brain medium
+# Thinking (reasoning) level per role: off | low | medium | high | default (leave it to the model).
+# Converted to each provider's own setting (Gemini, Groq, OpenRouter, NVIDIA, Ollama); a model that doesn't know it
+# runs without it. Temporarily in a chat: /think off, /think brain medium
 [thinking]
 default = "low"
 fast = "off"
 voice = "off"
 
-# Rol başına model zinciri. Soldan sağa denenir; 429, quota, 5xx, model yok gibi
-# durumlarda bir sonrakine geçilir.
-# "auto": anahtarı olan tüm sağlayıcılardaki ücretsiz modeller gerçek bir araç çağrısıyla ölçülür
-# (çalışıyor mu, ne kadar hızlı) ve kalite önce, hız sonra sıralanır. Ölçüm günde bir arka planda
-# yenilenir (~/.alice/models.json); elle: `alice models --refresh`. "auto"nun önüne/arkasına
-# sabit modeller de yazabilirsin, ör. brain = ["gemini:gemini-flash-latest", "auto"].
+# Model chain per role. Tried from left to right; on 429, quota, 5xx, missing model and the like the next one is used.
+# "auto": the free models of every provider you have a key for are measured with a real tool call (does it work, how
+# fast) and sorted by quality first, speed second. The measurement is refreshed once a day in the background
+# (~/.alice/models.json); by hand: `alice models --refresh`. You can also write fixed models before/after "auto",
+# e.g. brain = ["gemini:gemini-flash-latest", "auto"].
 [roles]
-# Ana beyin (System 2): planlama, kod yazma, araç kullanma.
+# Main brain (System 2): planning, writing code, using tools.
 # Measured best free models first; local Ollama as the last resort. (GLM 5.3 on NVIDIA used to lead this chain but
 # was retired by the provider: every first request timed out before falling back.)
 brain = ["auto", "ollama:qwen3:8b"]
-# Sesli asistan: beyin kadar yetenekli ama ilk kelimesi en çabuk gelen modeller (konuşmaya geç başlamasın).
+# Voice assistant: models as capable as the brain but whose first word comes the fastest (so speech doesn't start late).
 voice = ["auto", "ollama:qwen3:8b"]
-# Hızlı, kısa işler: özet, input'a yazılacak metni üretme, decider emülasyonu.
+# Fast, short jobs: summaries, generating text to type into an input, decider emulation.
 fast = ["auto", "ollama:qwen3:8b"]
-# Ekran görüntüsü anlama. Beyin modeli görsel destekliyorsa direkt ona gider,
-# desteklemiyorsa görüntü önce bu rolle metne çevrilir.
+# Understanding screenshots. If the brain model supports images it goes straight to it,
+# otherwise the image is first turned into text with this role.
 vision = ["auto", "gemini:gemini-flash-lite-latest"]
 
-# System One (hızlı karar) motoru, soldan sağa denenir:
+# System One (fast decision) engine, tried from left to right:
 #   "jev"            = TypeSafe Jev API (TYPESAFE_API_KEY)
-#   "jev-openrouter" = aynı Jev, OpenRouter üzerinden (OPENROUTER_API_KEY + hesapta kredi gerekir,
-#                      kredi yoksa 402 alır ve 1 saat atlanır)
-#   "llm:<rol>"      = o rolün ücretsiz modelleriyle Jev formatını taklit eden yedek
+#   "jev-openrouter" = the same Jev through OpenRouter (OPENROUTER_API_KEY + credit on the account is needed,
+#                      without credit it gets 402 and is skipped for 1 hour)
+#   "llm:<role>"     = a fallback that imitates the Jev format with that role's free models
 [decider]
 chain = ["jev", "jev-openrouter", "llm:fast"]
 jev_url = "https://api.typesafe.ai/v1/systemone"
 jev_model = "jev-latest"
 jev_api_key_env = "TYPESAFE_API_KEY"
-# Jev'e ekran görüntüsü gösterme ve Box (görüntüde yer bulma). TypeSafe'te deneysel ("Danger Zone"): biçim ve
-# doğruluk sürümler arasında değişebilir. Reflex döngüsü bununla listede olmayan, ekranda görünen şeye tıklayabilir.
+# Showing screenshots to Jev and Box (finding a place in an image). Experimental at TypeSafe ("Danger Zone"): the format
+# and accuracy may change between versions. With it the reflex loop can click something visible on the screen that isn't
+# in the list.
 jev_images = true
 openrouter_jev_url = "https://openrouter.ai/api/v1/systemone"
 openrouter_jev_model = "~typesafe/jev-latest"
 openrouter_jev_api_key_env = "OPENROUTER_API_KEY"
-# Bu güvenin altındaki kararlar reflex döngüsünde beyne (System 2) devredilir.
+# Decisions below this confidence are handed to the brain (System 2) in the reflex loop.
 min_confidence = 0.55
 
-# Jev ile otomatik model yönlendirme (alice/providers/jev_route.py). Her mesajda Jev birkaç küçük yargı verir
-# (kod mu, ne kadar düşünme, kaç adımlı iş, sohbet mi); kod katmanı seçer:
-#   strong: kod, derin düşünme, çok adımlı iş -> aşağıdaki modeller, sonra beyin zinciri
-#   light : sohbet ya da kısa soru            -> "light" (boşsa hızlı/fast zinciri), sonra beyin zinciri
-#   normal: geri kalan her şey                -> beyin zinciri
-# TypeSafe anahtarı yoksa, Jev hata verirse ya da menüden model sabitlendiyse her zaman normal zincir.
+# Automatic model routing with Jev (alice/providers/jev_route.py). For every message Jev gives a few small judgements
+# (is it code, how much thinking, how many steps, is it chat); the code layer picks:
+#   strong: code, deep thinking, multi-step work -> the models below, then the brain chain
+#   light : chat or a short question           -> "light" (if empty the fast chain), then the brain chain
+#   normal: everything else                     -> the brain chain
+# Without a TypeSafe key, when Jev fails or when a model is pinned from the menu, always the normal chain.
 [routing]
 enabled = true
 strong = ["cliproxy:claude-opus-5-5", "chatgpt:gpt-5.6-terra"]
 light = []
-# Sesli konuşmanın think'i de yönlendirilsin mi. Seste hız önce: sadece ağır işler (strong) voice_strong'a gider,
-# gerisi [voice] live_think_models sırasıyla devam eder.
+# Route voice conversation's think too? In voice speed comes first: only heavy work (strong) goes to voice_strong,
+# the rest continues in the order of [voice] live_think_models.
 voice = true
 voice_strong = ["cliproxy:claude-sonnet-5-5"]
 
@@ -482,7 +506,7 @@ api_key_env = "GEMINI_API_KEY"
 vision_models = ["gemini-*"]
 max_input_tokens = 1000000
 
-# ChatGPT hesabıyla giriş (ücretsiz plan dahil, Codex limiti): Sistem → Kurulum → ChatGPT ile giriş.
+# Sign in with a ChatGPT account (free plan included, Codex limit): System → Setup → Sign in with ChatGPT.
 [providers.chatgpt]
 base_url = "https://chatgpt.com/backend-api/codex"
 auth = "chatgpt"
@@ -500,8 +524,8 @@ headers = { "HTTP-Referer" = "https://github.com/Viox-Development/Artificial-Log
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
 vision_models = ["meta-llama/llama-4-*"]
-# Groq free tier ~8K TPM: büyük context'li istekler burada 413/429 alır,
-# router bu yüzden bu sağlayıcıyı küçük isteklere saklar.
+# Groq free tier ~8K TPM: requests with a big context get 413/429 here,
+# so the router keeps this provider for small requests.
 max_input_tokens = 8000
 
 [providers.nvidia]
@@ -516,7 +540,7 @@ api_key_env = "CEREBRAS_API_KEY"
 vision_models = []
 max_input_tokens = 30000
 
-# Anahtar eklersen otomatik ölçülüp sıraya girenler (hepsinin ücretsiz katmanı var):
+# These are measured and queued automatically once you add a key (all have a free tier):
 [providers.mistral]
 base_url = "https://api.mistral.ai/v1"
 api_key_env = "MISTRAL_API_KEY"
@@ -529,8 +553,8 @@ api_key_env = "SAMBANOVA_API_KEY"
 vision_models = ["*vision*", "llama-4-*"]
 max_input_tokens = 64000
 
-# Z.ai (GLM'yi yapan şirket): GLM-4.7-Flash, GLM-4.5-Flash ve görsel GLM-4.6V-Flash tamamen ücretsiz.
-# Katalogda paralı GLM-5'ler de var; models listesi sadece ücretsizleri kullandırır.
+# Z.ai (the company that makes GLM): GLM-4.7-Flash, GLM-4.5-Flash and the image model GLM-4.6V-Flash are fully free.
+# The catalogue also has paid GLM-5s; the models list only allows the free ones.
 [providers.zai]
 base_url = "https://api.z.ai/api/paas/v4"
 api_key_env = "ZAI_API_KEY"
@@ -538,7 +562,7 @@ vision_models = ["glm-*v-*", "glm-*v"]
 max_input_tokens = 128000
 models = ["glm-4.7-flash", "glm-4.5-flash", "glm-4.6v-flash"]
 
-# Cohere: deneme anahtarı ücretsiz (ayda ~1000 istek, ticari olmayan kullanım). Command A araç kullanmada güçlü.
+# Cohere: the trial key is free (~1000 requests a month, non-commercial use). Command A is strong at using tools.
 [providers.cohere]
 base_url = "https://api.cohere.ai/compatibility/v1"
 api_key_env = "COHERE_API_KEY"
@@ -546,8 +570,8 @@ vision_models = ["*vision*"]
 max_input_tokens = 128000
 models = ["command-a-plus-05-2026", "command-a-03-2025", "command-a-vision-07-2025"]
 
-# Vercel AI Gateway: her 30 günde $5 ücretsiz kredi, Claude / GPT / Gemini gibi üst modeller tek anahtarla.
-# Krediyle çalıştığı için otomatik zincire girmez; zor bir iş için elle seç, ör.
+# Vercel AI Gateway: $5 free credit every 30 days, top models like Claude / GPT / Gemini with one key.
+# It runs on credit, so it doesn't enter the automatic chain; pick it by hand for a hard job, e.g.
 #   /model brain vercel:anthropic/claude-sonnet-5.5
 [providers.vercel]
 base_url = "https://ai-gateway.vercel.sh/v1"
@@ -556,21 +580,21 @@ vision_models = ["anthropic/*", "openai/gpt-*", "google/gemini-*"]
 max_input_tokens = 200000
 auto = false
 
-# Cloudflare Workers AI: günde 10.000 "neuron" ücretsiz (gpt-oss/Kimi gibi modellerde günde ~150-300 bin token).
-# Adreste hesap kimliği var: CLOUDFLARE_ACCOUNT_ID (dash.cloudflare.com sağ panel) ve CLOUDFLARE_API_TOKEN gerekir.
+# Cloudflare Workers AI: 10,000 "neurons" a day free (~150-300 thousand tokens a day on models like gpt-oss/Kimi).
+# The address holds the account id: CLOUDFLARE_ACCOUNT_ID (right panel of dash.cloudflare.com) and CLOUDFLARE_API_TOKEN
+# are needed.
 [providers.cloudflare]
 base_url = "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1"
 api_key_env = "CLOUDFLARE_API_TOKEN"
 vision_models = ["*vision*", "*gemma-4*", "*llama-4*"]
 max_input_tokens = 128000
-# Kimi K2 ücretsiz planda yok (kimi-k2.5 artık paralı k2.6'ya yönleniyor), listede değil.
+# Kimi K2 isn't in the free plan (kimi-k2.5 now redirects to the paid k2.6), so it isn't listed.
 models = ["@cf/zai-org/glm-4.7-flash", "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
           "@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-4-scout-17b-16e-instruct"]
 
-# Anthropic: resmi Claude API (console.anthropic.com, kullandıkça ücretli). Resmi anthropic paketiyle konuşulur
-# (pip install anthropic). Ücretli olduğu için otomatik zincire girmez; model menüsünden ya da
+# Anthropic: the official Claude API (console.anthropic.com, pay as you go). Talked to with the official anthropic
+# package (pip install anthropic). It is paid, so it doesn't enter the automatic chain; pick it from the model menu or with
 #   /model brain anthropic:claude-opus-5-5
-# ile seç.
 [providers.anthropic]
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
@@ -580,10 +604,10 @@ max_input_tokens = 1000000
 auto = false
 models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
 
-# Claude Code proxy (yerel CLIProxyAPI): Claude Pro/Max, ChatGPT (Codex), Antigravity gibi abonelikleri bu
-# bilgisayarda OpenAI uyumlu uca çevirir (varsayılan http://127.0.0.1:8317/v1). Hesaplar uygulamadaki
-# Bağlantılar → Anahtarlar → "Claude Code proxy" kartından eklenir; kotayı harcadığı için otomatik zincire
-# girmez, model menüsünden seçilir. Kurulum: README → "Claude Code proxy (CLIProxyAPI)".
+# Claude Code proxy (local CLIProxyAPI): turns subscriptions like Claude Pro/Max, ChatGPT (Codex) and Antigravity into
+# an OpenAI-compatible endpoint on this computer (default http://127.0.0.1:8317/v1). Accounts are added from the
+# "Claude Code proxy" card in the app's Connections → Keys; it uses up the quota, so it doesn't enter the automatic
+# chain and is picked from the model menu. Setup: README → "Claude Code proxy (CLIProxyAPI)".
 [providers.cliproxy]
 base_url = "http://127.0.0.1:8317/v1"
 api_key_env = "CLIPROXY_API_KEY"
@@ -599,57 +623,58 @@ api_key_env = ""
 vision_models = ["*vl*", "llava*", "gemma3*"]
 max_input_tokens = 32000
 
-# Yerel Claude Code proxy'si (CLIProxyAPI, ~/.alice/cliproxy). ALICE açılınca gerekirse kendisi indirir ve başlatır.
+# Local Claude Code proxy (CLIProxyAPI, ~/.alice/cliproxy). ALICE downloads and starts it itself when needed.
 [cliproxy]
 auto_start = true
-# Kurulu değilse GitHub sürümünden otomatik indirip kur (checksum doğrulanır); false: karttan "Kur"a basılır.
+# If it isn't installed, download and install it from the GitHub release automatically (the checksum is verified);
+# false: press "Install" on the card.
 auto_install = true
-# Boş = denenmiş sabit sürüm; "latest" ya da "v8.0.57" gibi bir etiket de yazılabilir.
+# Empty = the tested fixed version; a tag like "latest" or "v8.0.57" can also be written.
 version = ""
 
-# git / GitHub araçlarının kuralları. Anahtar önceliği: `gh auth token` (keyring), yoksa .env'deki GITHUB_TOKEN,
-# yoksa GitHub MCP sunucusunun anahtarı, yoksa GITHUB_MODELS_TOKEN.
+# Rules of the git / GitHub tools. Key order: `gh auth token` (keyring), otherwise GITHUB_TOKEN in .env, otherwise the
+# GitHub MCP server's key, otherwise GITHUB_MODELS_TOKEN.
 [connect]
-# Servis bağlantıları (alice/connect): yerleşik tanımlar + ~/.alice/connect/*.toml
-disabled = []       # kapatılacak bağlantı adları, ör. ["discord"]
-paths = []          # ek tanım klasörleri
+# Service connections (alice/connect): built-in definitions + ~/.alice/connect/*.toml
+disabled = []       # names of connections to turn off, e.g. ["discord"]
+paths = []          # extra definition folders
 
 [update]
-# ALICE kendini GitHub'daki depodan günceller.
-# auto   = açılışta sessizce güncelle ve en son sürümle aç (varsayılan)
-# notify = sadece haber ver, güncellemeyi sen başlat
-# off    = hiç bakma
+# ALICE updates itself from the repository on GitHub.
+# auto   = update quietly on start and open with the latest version (default)
+# notify = only tell you, you start the update
+# off    = never look
 mode = "auto"
-# stable = sadece yayınlanmış sürümlere (vX.Y.Z etiketleri) güncelle (varsayılan)
-# main   = main'e giren her commit'e güncelle (geliştiriciler için)
+# stable = update only to published releases (vX.Y.Z tags) (default)
+# main   = update to every commit that lands on main (for developers)
 channel = "stable"
 branch = "main"
-check_every_minutes = 60      # uygulama açıkken arka planda bu sıklıkta bakar
-require_green_ci = true       # yeni commit'in CI'ı kırmızıysa otomatik güncelleme yapılmaz
-startup_timeout = 12          # açılıştaki kontrol en fazla bu kadar saniye bekletir
-startup_check = true          # false: sadece uygulama açıkken ve elle kontrol
+check_every_minutes = 60      # how often it looks in the background while the app is open
+require_green_ci = true       # no automatic update if the new commit's CI is red
+startup_timeout = 12          # the check on start waits at most this many seconds
+startup_check = true          # false: only while the app is open and by hand
 
-[kairos]                                 # arka plan nöbeti: kendi seçtiği aralıklarla uyanıp durumu kollar
+[kairos]                                 # background watch: wakes at intervals it picks itself and keeps an eye on things
 enabled = false
 min_minutes = 20
 max_minutes = 240
 daily_wakes = 16
 quiet_hours = "00:30-07:00"
 
-[buddy]                                  # küçük arkadaş (Tamagotchi)
+[buddy]                                  # little companion (Tamagotchi)
 enabled = true
-chatter = true                           # konuşmalara ara sıra kısa yorum
+chatter = true                           # an occasional short comment in conversations
 
 [github]
-protected_branches = ["main", "master"]  # bunlara (ve deponun ana dalına) push her zaman onay ister
-merge_method = "squash"                  # PR birleştirme: merge | squash | rebase
-require_checks = true                    # CI kırmızı ya da sürüyorsa PR birleştirilmez
-clone_dir = ""                           # GitHub'dan açılan depolar; boş = ~/GitHub/<sahip>/<depo>
-undercover = "off"                       # gizli mod: off | on | auto (yalnız herkese açık depolar). Açıkken commit,
-                                         # PR ve yorumlar imzasız ve ALICE/yapay zekâdan söz etmeden gider
-undercover_words = []                    # gizli modda yazılara girmemesi gereken ek sözcükler (kod adları vb.)
+protected_branches = ["main", "master"]  # pushing to these (and the repository's default branch) always asks
+merge_method = "squash"                  # merging PRs: merge | squash | rebase
+require_checks = true                    # a PR isn't merged while CI is red or still running
+clone_dir = ""                           # repositories opened from GitHub; empty = ~/GitHub/<owner>/<repo>
+undercover = "off"                       # undercover mode: off | on | auto (public repositories only). While on,
+                                         # commits, PRs and comments go unsigned and without mentioning ALICE/AI
+undercover_words = []                    # extra words that must not appear in writing in undercover mode (code names etc.)
 
-# Model bazlı ek parametreler (istek gövdesine eklenir).
+# Extra parameters per model (added to the request body).
 [models."groq:openai/gpt-oss-20b"]
 extra = { reasoning_effort = "low" }
 
@@ -661,51 +686,51 @@ extra = { reasoning_effort = "low" }
 '''
 
 
-ENV_TEMPLATE = """# ALICE API anahtarları. Boş bıraktığın sağlayıcı atlanır.
+ENV_TEMPLATE = """# ALICE API keys. Providers you leave empty are skipped.
 # Google AI Studio  -> https://aistudio.google.com/apikey
 GEMINI_API_KEY=
 # OpenRouter        -> https://openrouter.ai/keys
 OPENROUTER_API_KEY=
 # Groq              -> https://console.groq.com/keys
 GROQ_API_KEY=
-# NVIDIA NIM        -> https://build.nvidia.com  (Developer Program, key nvapi- ile başlar)
+# NVIDIA NIM        -> https://build.nvidia.com  (Developer Program, the key starts with nvapi-)
 NVIDIA_API_KEY=
 # Cerebras          -> https://cloud.cerebras.ai
 CEREBRAS_API_KEY=
-# Mistral           -> https://console.mistral.ai/api-keys  ("Experiment" ücretsiz plan)
+# Mistral           -> https://console.mistral.ai/api-keys  (free "Experiment" plan)
 MISTRAL_API_KEY=
 # SambaNova         -> https://cloud.sambanova.ai/apis
 SAMBANOVA_API_KEY=
-# Z.ai (GLM Flash modelleri ücretsiz, görsel dahil) -> https://z.ai/manage-apikey/apikey-list
+# Z.ai (GLM Flash models are free, images included) -> https://z.ai/manage-apikey/apikey-list
 ZAI_API_KEY=
-# Cohere (deneme anahtarı ücretsiz, ayda ~1000 istek) -> https://dashboard.cohere.com/api-keys
+# Cohere (the trial key is free, ~1000 requests a month) -> https://dashboard.cohere.com/api-keys
 COHERE_API_KEY=
-# Vercel AI Gateway ($5/ay ücretsiz kredi, Claude/GPT; elle seçilir) -> https://vercel.com/d?to=/[team]/~/ai/api-keys
+# Vercel AI Gateway ($5/month free credit, Claude/GPT; picked by hand) -> https://vercel.com/d?to=/[team]/~/ai/api-keys
 AI_GATEWAY_API_KEY=
-# Anthropic (resmi Claude API, kullandıkça ücretli; elle seçilir) -> https://console.anthropic.com/settings/keys
+# Anthropic (official Claude API, pay as you go; picked by hand) -> https://console.anthropic.com/settings/keys
 ANTHROPIC_API_KEY=
-# Claude Code proxy (yerel CLIProxyAPI; Claude, ChatGPT vb. abonelikler, elle seçilir) -> ~/.alice/cliproxy/keys.txt
+# Claude Code proxy (local CLIProxyAPI; Claude, ChatGPT etc. subscriptions, picked by hand) -> ~/.alice/cliproxy/keys.txt
 CLIPROXY_API_KEY=
-# Cloudflare Workers AI (günde 10.000 neuron ücretsiz) -> https://dash.cloudflare.com/profile/api-tokens
-# ("Workers AI" izinli token). Hesap kimliği: dash.cloudflare.com, sağ paneldeki "Account ID".
+# Cloudflare Workers AI (10,000 neurons a day free) -> https://dash.cloudflare.com/profile/api-tokens
+# (a token with "Workers AI" permission). Account id: dash.cloudflare.com, "Account ID" in the right panel.
 CLOUDFLARE_API_TOKEN=
 CLOUDFLARE_ACCOUNT_ID=
-# TypeSafe Jev (opsiyonel, ücretli ama çok ucuz) -> https://typesafe.ai
+# TypeSafe Jev (optional, paid but very cheap) -> https://typesafe.ai
 TYPESAFE_API_KEY=
-# ElevenLabs (ALICE'in sesi; ücretsiz planda ayda ~10.000 karakter, ses Ayarlar'da tts_eleven) -> https://elevenlabs.io/app/settings/api-keys
+# ElevenLabs (ALICE's voice; ~10,000 characters a month on the free plan, the voice is tts_eleven in Settings) -> https://elevenlabs.io/app/settings/api-keys
 ELEVENLABS_API_KEY=
-# GitHub (repo izinli token: depo klonlama, commit/push, PR) -> https://github.com/settings/tokens
+# GitHub (a token with repo permission: cloning repositories, commit/push, PRs) -> https://github.com/settings/tokens
 GITHUB_TOKEN=
-# --- Bağlantılar (alice connect): doldurduğun servis açılır, boş olan atlanır ---
+# --- Connections (alice connect): the services you fill in are turned on, empty ones are skipped ---
 # Steam         -> https://steamcommunity.com/dev/apikey
 STEAM_API_KEY=
-# YouTube Data  -> console.cloud.google.com, YouTube Data API v3 -> API anahtarı
+# YouTube Data  -> console.cloud.google.com, YouTube Data API v3 -> API key
 YOUTUBE_API_KEY=
 # Discord bot   -> https://discord.com/developers/applications
 DISCORD_BOT_TOKEN=
 # Spotify       -> https://developer.spotify.com/dashboard (Redirect URI: http://127.0.0.1:8721/callback)
 SPOTIFY_CLIENT_ID=
-# Google Takvim -> console.cloud.google.com, Calendar API + OAuth client (Desktop app); sonra: alice connect google_calendar
+# Google Calendar -> console.cloud.google.com, Calendar API + OAuth client (Desktop app); then: alice connect google_calendar
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 """
@@ -974,7 +999,7 @@ def load_env_file(path: Path) -> None:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, _, value = line.partition("=")
+        key, _sep, value = line.partition("=")
         key = key.strip().removeprefix("export ").strip()
         value = value.strip().strip('"').strip("'")
         if key and value and key not in os.environ:
@@ -1056,7 +1081,7 @@ class ProviderConfig:
         out = [os.environ.get(self.api_key_env, "").strip()]
         rx = re.compile(rf"{re.escape(self.api_key_env)}_(\d+)")
         extra = sorted((int(m.group(1)), v.strip()) for k, v in os.environ.items() if (m := rx.fullmatch(k)))
-        out += [v for _, v in extra]
+        out += [v for _k, v in extra]
         seen: list[str] = []
         for k in out:
             if k and k not in seen:
@@ -1117,9 +1142,9 @@ class Config:
         out = {}
         for name, p in (self.data.get("providers", {}) or {}).items():
             if not isinstance(p, dict):
-                out[name] = "bir tablo olmalı ([providers.ad] altında base_url = ...)"
+                out[name] = "must be a table (base_url = ... under [providers.name])"
             elif not str(p.get("base_url") or "").strip():
-                out[name] = "base_url yok"
+                out[name] = "no base_url"
         return out
 
     def providers(self) -> dict[str, ProviderConfig]:
@@ -1130,7 +1155,7 @@ class Config:
                 # Custom provider without base_url threw KeyError everywhere (app, doctor, routing): skip and warn once.
                 if name not in _warned_providers:
                     _warned_providers.add(name)
-                    print(f"UYARI: [providers.{name}] kullanılmıyor: {bad[name]}", file=sys.stderr)
+                    print(f"WARNING: [providers.{name}] is not used: {bad[name]}", file=sys.stderr)
                 continue
             out[name] = ProviderConfig(
                 name=name,
@@ -1230,7 +1255,7 @@ def load_config(path: Path | None = None, cwd: Path | None = None) -> Config:
             user = tomllib.loads(cfg_path.read_text(encoding="utf-8-sig"))
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
             # Prevent a single typo in manual edit from silently crashing core/app on launch: open with defaults.
-            print(f"UYARI: {cfg_path} okunamadı, varsayılan ayarlar kullanılıyor: {e}", file=sys.stderr)
+            print(f"WARNING: could not read {cfg_path}, using the default settings: {e}", file=sys.stderr)
             user = {}
         _drop_legacy_defaults(user)
         # Role lists are not merged; the user's list takes precedence entirely.
@@ -1278,7 +1303,7 @@ def _add_missing_env_keys(env: Path) -> list[str]:
         return []
     sep = "" if text.endswith("\n") or not text else "\n"
     try:
-        env.write_text(text + sep + "\n# Yeni sağlayıcılar (ALICE güncellemesiyle eklendi)\n" + "\n".join(add) + "\n",
+        env.write_text(text + sep + "\n# New providers (added by an ALICE update)\n" + "\n".join(add) + "\n",
                        encoding="utf-8")
     except OSError:
         return []
@@ -1309,12 +1334,12 @@ def env_path() -> Path:
 
 # Some services require two values (Cloudflare: token + account id; Google: client id + secret). In the app, they
 # appear in a single card as two distinct named fields; otherwise same title appeared twice, mistaken for "asking same key twice".
-_FIELD_NAMES = {"_ACCOUNT_ID": "Hesap kimliği (Account ID)", "_API_TOKEN": "API token", "_CLIENT_ID": "Client ID",
+_FIELD_NAMES = {"_ACCOUNT_ID": "Account ID", "_API_TOKEN": "API token", "_CLIENT_ID": "Client ID",
                 "_CLIENT_SECRET": "Client secret"}
 
 
 def _field_name(key: str) -> str:
-    return next((v for suf, v in _FIELD_NAMES.items() if key.endswith(suf)), "Anahtar")
+    return _(next((v for suf, v in _FIELD_NAMES.items() if key.endswith(suf)), "Key"))
 
 
 def env_catalog() -> list[dict[str, str]]:
@@ -1344,12 +1369,13 @@ def env_catalog() -> list[dict[str, str]]:
             continue
         m = re.search(r"https?://\S+", text)
         url = m.group(0).rstrip(").,") if m else ""
-        label, _, rest = text.partition("->")
+        label, _sep, rest = text.partition("->")
         rest = rest.replace(url, "", 1).strip(" ()") if url else rest.strip()
         if rest.count(")") > rest.count("("):  # closing parenthesis after link: "(... token). Account..."
             rest = rest.replace(")", "", 1)
-        out.append({"key": key, "label": label.strip() or key, "url": url, "help": rest, "group": group,
-                    "part_of": key, "field": "Anahtar"})
+        # The descriptions in ENV_TEMPLATE are English; the app shows them in the interface language.
+        out.append({"key": key, "label": _(label.strip()) if label.strip() else key, "url": url,
+                    "help": _(rest) if rest else "", "group": group, "part_of": key, "field": _("Key")})
     return out
 
 
@@ -1365,7 +1391,7 @@ def read_env(path: Path | None = None) -> dict[str, str]:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, _, value = line.partition("=")
+        key, _sep, value = line.partition("=")
         key = key.strip().removeprefix("export ").strip()
         value = value.strip().strip('"').strip("'")
         if key and value:
@@ -1387,9 +1413,9 @@ def set_env_value(key: str, value: str, path: Path | None = None) -> Path:
     key = key.strip()
     value = value.strip()
     if not ENV_KEY_RE.fullmatch(key):
-        raise ValueError(f"geçersiz anahtar adı: {key!r}")
+        raise ValueError(f"invalid key name: {key!r}")
     if any(c in value for c in "\r\n\x00"):
-        raise ValueError("değer tek satır olmalı")
+        raise ValueError("the value must be a single line")
     path = path or env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1451,7 +1477,7 @@ def init_home(force: bool = False) -> list[Path]:
     mem = home / "ALICE.md"
     if not mem.exists():
         mem.write_text(
-            "# Kişisel talimatlar\n\nBuraya ALICE'in her oturumda bilmesini istediğin şeyleri yaz.\n",
+            _("# Personal instructions\n\nWrite here what you want ALICE to know in every session.\n"),
             encoding="utf-8",
         )
         written.append(mem)
