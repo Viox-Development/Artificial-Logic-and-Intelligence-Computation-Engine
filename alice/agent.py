@@ -20,6 +20,7 @@ from alice.decider import Decider
 from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
 from alice.providers.openai_compat import ChatResult, StreamCancelled
+from alice.session import NUDGE_PREFIX, SHOT_REMOVED, SUMMARY_HEAD, is_summary, summary_body
 from alice.providers.router import (COOLING_RX, AllProvidersFailed, Router, cache_write_tokens, cached_tokens,  # noqa: F401
                                     estimate_tokens, strip_images)
 from alice.tools.base import COMPUTER, DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
@@ -227,8 +228,8 @@ DENIAL_HALT = ("İzin verilmeyen işlemleri art arda denediğim için durdum: bu
 BUDGET_HALT = ("Bu tur için ayrılan token bütçesini ({used:,} / {budget:,}) doldurduğum için durdum. İş yarıda; "
                "\"devam et\" yazarsan kaldığım yerden sürdürürüm. (Sınır: [agent] turn_token_budget)")
 MAX_CUTOFFS = 3  # a reply cut off at the output limit is continued at most this many times
-CUTOFF_NOTE = ("Cevabın çıktı sınırına takılıp yarıda kesildi. Tam kaldığın yerden, önceki kısmı tekrar etmeden "
-               "ve özür dilemeden devam et.")
+CUTOFF_NOTE = ("Your answer hit the output limit and was cut off. Continue exactly where you stopped, without "
+               "repeating the earlier part and without apologizing.")
 KEEP_OUTPUTS = 6  # the last this-many tool outputs stay in full
 OLD_OUTPUT_CHARS = 1200  # long older ones are shortened to this many characters
 # Changing a message in the history invalidates the provider's prompt cache from that point on. Old outputs are
@@ -246,8 +247,6 @@ AUTO_COMPACT_MAX = 120_000
 AUTO_COMPACT_RATIO = 0.6
 # Tools whose definitions are sent at once even with a warm cache (plan mode must always be able to exit).
 ALWAYS_SEND = frozenset({"exit_plan_mode", "todo_write"})
-SUMMARY_HEAD = "[Önceki konuşmanın özeti]"
-NUDGE_PREFIX = "[devam kontrolü] "
 # If the end of the reply says "I will do it" ("yapacağım"), the work is unfinished.
 _PROMISE_RX = re.compile(
     r"(yapaca[ğg][ıi]m|edece[ğg]im|ba[şs]l[ıi]yorum|bakaca[ğg][ıi]m|deneyece[ğg]im|ekleyece[ğg]im|d[üu]zeltece[ğg]im|"
@@ -279,17 +278,20 @@ def _is_request(m: dict[str, Any]) -> bool:
     if isinstance(c, list):
         c = next((p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"), "")
     return (m.get("role") == "user" and not m.get("_nudge") and not m.get("_image") and isinstance(c, str)
-            and bool(c.strip()) and not c.startswith(SUMMARY_HEAD))
+            and bool(c.strip()) and not is_summary(c))
 
 
-RUNNING_HEAD = "## Süren iş: kullanıcının son isteği (birebir)"
+RUNNING_HEAD = "## Ongoing work: the user's latest request (verbatim)"
+OLD_RUNNING_HEAD = "## Süren iş: kullanıcının son isteği (birebir)"
 
 
 def _last_request(messages: list[dict[str, Any]]) -> str:
     for m in reversed(messages):
         c = m.get("content")
-        if m.get("role") == "user" and isinstance(c, str) and c.startswith(SUMMARY_HEAD) and RUNNING_HEAD in c:
-            return c.split(RUNNING_HEAD, 1)[1].strip()  # an earlier summary already carried it: carry it on
+        if m.get("role") == "user" and is_summary(c):
+            for head in (RUNNING_HEAD, OLD_RUNNING_HEAD):
+                if head in c:
+                    return c.split(head, 1)[1].strip()  # an earlier summary already carried it: carry it on
         if _is_request(m):
             c = m.get("_display") or m.get("content")
             if isinstance(c, list):
@@ -304,8 +306,8 @@ def _fallback_summary(old: list[dict[str, Any]]) -> str:
     for m in old:
         c = m.get("content")
         if m.get("role") == "user" and not m.get("_nudge") and isinstance(c, str) and c.strip():
-            if c.startswith("[Önceki konuşmanın özeti]"):
-                asks.append("(daha eski özet) " + _clip(c[len("[Önceki konuşmanın özeti]"):].strip(), 1500))
+            if is_summary(c):
+                asks.append("(earlier summary) " + _clip(summary_body(c), 1500))
             else:
                 asks.append(_clip(m.get("_display") or c, 600))
         elif m.get("role") == "assistant" and not m.get("_error"):
@@ -316,12 +318,12 @@ def _fallback_summary(old: list[dict[str, Any]]) -> str:
                     hit = re.search(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"', tc["function"].get("arguments") or "")
                     if hit and hit.group(1) not in files:
                         files.append(hit.group(1))
-    parts = ["## Kullanıcının yazdıkları (sırayla)"] + [f"{i}. {a}" for i, a in enumerate(asks[-25:], 1)]
+    parts = ["## What the user wrote (in order)"] + [f"{i}. {a}" for i, a in enumerate(asks[-25:], 1)]
     if files:
-        parts += ["", "## Değiştirilen dosyalar"] + [f"- {f}" for f in files[-40:]]
+        parts += ["", "## Changed files"] + [f"- {f}" for f in files[-40:]]
     if last:
-        parts += ["", "## Son cevabım", _clip(last, 2500)]
-    parts += ["", "(Bu özet otomatik çıkarıldı; ayrıntı gerekiyorsa dosyaları ve git durumunu araçlarla yeniden oku.)"]
+        parts += ["", "## My last answer", _clip(last, 2500)]
+    parts += ["", "(This summary was extracted automatically; if you need details, re-read the files and the git state with the tools.)"]
     return "\n".join(parts)
 
 
@@ -931,8 +933,8 @@ class Agent:
                         back = feedback(self.hooks.run("Stop", {"reply": final}))
                         if back:
                             stop_hooks -= 1
-                            self.messages.append({"role": "user", "content": NUDGE_PREFIX + "Stop hook'u işi bitmiş "
-                                                  "saymadı, devam et:\n" + back, "_nudge": True})
+                            self.messages.append({"role": "user", "content": NUDGE_PREFIX + "The Stop hook didn't "
+                                                  "consider the work finished; continue:\n" + back, "_nudge": True})
                             continue
                     nudge = self._unfinished(msg.get("content") or "") if nudges < self.finish_nudges else ""
                     if not nudge and not verified:
@@ -1142,12 +1144,13 @@ class Agent:
         todos = self.ctx.state.get("todos") or []
         left = [t.get("content", "") for t in todos if isinstance(t, dict) and t.get("status") != "done"]
         if "todo_write" in used and left:
-            return (NUDGE_PREFIX + "Todo listesinde bitmemiş adımlar var: " + "; ".join(left[:6]) + ". Kullanıcıdan bir "
-                    "şey gerekmiyorsa araçlarla kaldığın yerden devam et. Gerçekten bittiyse listeyi güncelle ve "
-                    "sonucu söyle; takıldıysan neden takıldığını açıkça söyle.")
+            return (NUDGE_PREFIX + "There are unfinished steps in the todo list: " + "; ".join(left[:6]) + ". If nothing "
+                    "is needed from the user, carry on with the tools from where you left off. If it is really done, "
+                    "update the list and report the result; if you got stuck, say plainly why. Write in the user's language.")
         if _PROMISE_RX.search(tail) and not _DEFERRED_RX.search(tail):
-            return (NUDGE_PREFIX + "Yapacağını söyledin ama yapmadan durdun. Kullanıcıdan bir şey gerekmiyorsa şimdi "
-                    "araçlarla yap ve bitince sonucu bildir; gerekiyorsa açıkça sor.")
+            return (NUDGE_PREFIX + "You said you would do something but stopped without doing it. If nothing is needed "
+                    "from the user, do it now with the tools and report the result when done; if something is needed, "
+                    "ask plainly. Write in the user's language.")
         return ""
 
     def _unverified(self, text: str) -> str:
@@ -1232,13 +1235,14 @@ class Agent:
             return ""
         if not bad:
             return ""
-        return (NUDGE_PREFIX + "Cevabındaki şu iddiaların bu turdaki araç sonuçlarında dayanağı yok: "
-                + "; ".join(bad[:5]) + ". Ya bir araçla gerçekten doğrula, ya da kullanıcıya bunu doğrulamadığını "
-                "açıkça söyle. Kontrol etmeden 'yaptım/indirildi/yok' deme.\n"
-                "Bu notu kullanıcı GÖRMÜYOR ve o yazmadı; önceki cevabın ekranda duruyor. Bu yüzden: nota cevap verir "
-                "gibi yazma ('Haklısın', 'kontrol ettim', 'bu turda' diye başlama, bu kontrolden söz etme), önceki "
-                "cevabı baştan tekrar etme. Yalnızca kısa bir ek yaz: doğruladıysan sonucu bir iki cümleyle, "
-                "doğrulayamadıysan 'Düzeltme:' diye başlayıp hangi kısmın kesin olmadığını söyle.")
+        return (NUDGE_PREFIX + "These claims in your answer have no basis in this turn's tool results: "
+                + "; ".join(bad[:5]) + ". Either really verify them with a tool, or tell the user plainly that you did not "
+                "verify them. Don't say 'done/downloaded/not there' without checking.\n"
+                "The user does NOT see this note and didn't write it; your previous answer is still on screen. So: don't "
+                "write as if answering the note (don't start with 'You're right' or 'I checked' or 'this turn', don't "
+                "mention this check) and don't repeat the previous answer from the start. Write only a short addition, "
+                "in the user's language: if you verified, the result in a sentence or two; if you couldn't, start "
+                "with the word for 'Correction:' and say which part is not certain.")
 
     def stop(self) -> None:
         """Stop the current turn from another thread (e.g. the Durdur (Stop) button in the app). Does not wait
@@ -1883,7 +1887,7 @@ class Agent:
             return  # pruning on every new screenshot broke the cache at every step: prune in a batch
         self.cache_breaks.expect("eski ekran görüntüleri budandı")
         for i in idx[:-self.keep_images] if self.keep_images else idx:
-            self.messages[i] = {"role": "user", "content": "[eski ekran görüntüsü yer kazanmak için kaldırıldı]", "_image": False}
+            self.messages[i] = {"role": "user", "content": SHOT_REMOVED, "_image": False}
 
     def _shrink_old_outputs(self, force: bool = False) -> None:
         """Shorten old tool outputs: the last KEEP_OUTPUTS results stay as they are, long earlier ones are cut to their
@@ -2007,7 +2011,7 @@ class Agent:
                 if m.get("tool_calls"):
                     c += "\n" + "\n".join(f"-> {tc['function']['name']}({tc['function']['arguments'][:400]})" for tc in m["tool_calls"])
                 # The previous summary is not trimmed: when it was cut to 2500 characters, most of the old context was lost at every compaction.
-                keep = 12000 if isinstance(c, str) and c.startswith(SUMMARY_HEAD) else 2500
+                keep = 12000 if is_summary(c) else 2500
                 transcript.append(f"[{m['role']}] {truncate(c, keep)}")
             try:
                 res: ChatResult = self.router.chat("brain", [
