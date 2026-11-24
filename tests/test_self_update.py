@@ -73,7 +73,7 @@ def test_kilit_doluyken_apply_beklemeden_soyler(at_clone, offline):
     info = updater.check(cfg())
     with updater.update_lock():
         ok, msg = updater.apply_update(info, cfg())
-    assert not ok and "başka bir ALICE süreci" in msg
+    assert not ok and "another ALICE process" in msg
 
 
 def test_baskasi_zaten_cektiyse_tekrar_cekmez(at_clone, offline):
@@ -82,7 +82,7 @@ def test_baskasi_zaten_cektiyse_tekrar_cekmez(at_clone, offline):
     info = updater.check(cfg())
     git(clone, "pull", "-q", "--ff-only")       # another process (or the user) pulled
     ok, msg = updater.apply_update(info, cfg())
-    assert ok and "zaten güncellendi" in msg and git(clone, "rev-parse", "HEAD") == sha
+    assert ok and "already updated" in msg and git(clone, "rev-parse", "HEAD") == sha
 
 
 # ------------------------------------------------------------------------------ stale process
