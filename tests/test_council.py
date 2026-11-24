@@ -165,18 +165,18 @@ def project_script(state):
         if "and the lead of the project" in messages[0]["content"]:
             event, k = since_user(messages)
             last = messages[-1]
-            if "henüz ajan yok" in event or ("Kurul planı onaylamadı" in str(last.get("content")) and k < 3):
+            if "there are no agents yet" in event or ("Kurul planı onaylamadı" in str(last.get("content")) and k < 3):
                 if last["role"] == "tool" and "ajanlar başladı" in str(last.get("content")):
                     return "tamam"
                 second = "Kurul planı onaylamadı" in str(last.get("content"))
                 return tool_call("plan", {"summary": "düzeltilmiş plan" if second else "tek ajan",
                                           "agents": [{"name": "backend", "task": "a.py yaz"}]}, f"p{k}")
-            if "Final kurulu projeyi onayladı" in event and k == 0:
+            if "The final council approved the project" in event and k == 0:
                 return tool_call("finish", {"summary": "bitti"})
             return "tamam"
         # backend agent
         n = steps(messages)
-        if any("Kurul kararı" in str(m.get("content")) for m in messages if m["role"] == "user"):
+        if any("Council decision" in str(m.get("content")) for m in messages if m["role"] == "user"):
             return "rapor: kontrol eklendi"
         return [tool_call("write_file", {"path": "a.py", "content": "def f(x):\n    return 1 / x\n"}), "rapor v1"][min(n, 1)]
 
@@ -263,7 +263,7 @@ def plan_council_script(state):
                 return "tamam"
             if last["role"] == "tool" and "Kurul planı onaylamadı" in str(last.get("content")):
                 return tool_call("plan", {"summary": "düzeltilmiş plan", "agents": [{"name": "web", "task": "site"}]}, "p2")
-            if any("henüz ajan yok" in str(m.get("content")) for m in messages if m["role"] == "user") and \
+            if any("there are no agents yet" in str(m.get("content")) for m in messages if m["role"] == "user") and \
                     not any(m.get("tool_calls") for m in messages if m["role"] == "assistant"):
                 return tool_call("plan", {"summary": "ilk plan", "agents": [{"name": "web", "task": "site"}]}, "p1")
             return "tamam"

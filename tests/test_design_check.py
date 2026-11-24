@@ -75,7 +75,7 @@ def test_design_project_members_get_design_check_and_reviews_see_patterns(workdi
     assert "design_check" in a.tools and "design_check" in web.brief(m)
     assert a.compact_cap == team_compact_cap(ctx.config) == 128000
     m.files = ["index.html"]
-    assert "Otomatik kalıp denetimi" in web._review_note(m)
+    assert "Automatic pattern check" in web._review_note(m)
     assert "Geleceği şekillendiriyoruz" in web.lead_brief() and "128.400+" in web.lead_brief()
 
     import alice.design_check as dc

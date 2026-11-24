@@ -704,7 +704,7 @@ function councilProgress(c) {
     const a = act[r] || { state: "waiting" };
     const row = el("div", "cc-live-row st-" + a.state);
     const st = a.state === "working" ? (a.last ? friendlyLast(a.last) : _("reviewing…"))
-      : a.state === "done" ? (a.vote ? VOTE_TR2[a.vote] : "bitirdi")
+      : a.state === "done" ? (a.vote ? VOTE_TR2[a.vote] : _("finished"))
       : a.state === "failed" ? _("couldn't answer") : _("waiting for its turn");
     row.append(el("i", "dot " + (a.state === "working" ? "st-running" : a.state === "done" ? "st-done" : a.state === "failed" ? "st-failed" : "st-idle")),
       el("b", "", ROLE_TR[r] || r), el("span", "v-" + (a.vote || "none"), st));
@@ -986,6 +986,24 @@ function friendlyLast(last) {
 }
 // Yöneticiye giden olay metinleri (talimat içerir) kısa notlara çevrilir.
 const EVENT_RULES = [
+  [/^The project has started and there are no agents yet/, () => _("The project started; Alice is planning the work.")],
+  [/^The project has started; the agents are working/, () => _("The project started; the agents are working.")],
+  [/^(\S+) finished, waiting for review/, (m) => _("{name} finished its work; it's being reviewed.", { name: m[1] })],
+  [/^(\S+) finished \(no review\)/, (m) => _("{name} finished its work.", { name: m[1] })],
+  [/^(\S+) failed: /, (m) => _("{name} failed.", { name: m[1] })],
+  [/^(\S+) hasn't progressed for (\d+) minutes/, (m) => _("{name} hasn't progressed for {m} minutes.", { name: m[1], m: m[2] })],
+  [/^The user approved agent (\S+)'s work/, (m) => _("You approved {name}'s work.", { name: m[1] })],
+  [/^The user resumed the project/, () => _("You resumed the project.")],
+  [/^All agents are done\. /, () => _("All agents are done; Alice is verifying the result.")],
+  [/^The final council/, () => _("The final council met.")],
+  [/^The council is split on (\S+)'s work/, (m) => _("The council is split on {name}'s work; Alice decides.", { name: m[1] })],
+  [/^The council still doesn't accept (\S+)'s work/, (m) => _("The council still doesn't accept {name}'s work; Alice decides.", { name: m[1] })],
+  [/^Agents are waiting for review/, () => _("Alice was reminded to review.")],
+  [/^You haven't set up any agents yet/, () => _("Alice was reminded to present the plan.")],
+  [/the project isn't closed/, () => _("Alice was reminded to finish the project.")],
+  [/^The user asked the council/, () => _("You asked the council; the result went to Alice.")],
+  [/^The user voted in the council/, () => _("You voted in the council.")],
+  [/^The council could not meet/, () => _("The council couldn't meet; Alice is reviewing itself.")],
   [/^Proje başladı ve henüz ajan yok/, () => _("The project started; Alice is planning the work.")],
   [/^Proje başladı; ajanlar çalışıyor/, () => _("The project started; the agents are working.")],
   [/^(\S+) bitirdi, inceleme bekliyor/, (m) => _("{name} finished its work; it's being reviewed.", { name: m[1] })],
@@ -1014,7 +1032,7 @@ function eventNotes(body) {
     if (msg) { out.push({ kind: "msg", from: msg[1], to: msg[2], text: msg[3] }); continue; }
     const rule = EVENT_RULES.find(([rx]) => rx.test(part));
     if (rule) out.push({ kind: "note", text: rule[1](part.match(rule[0])) });
-    else if (/^(Raporu|Değişen dosyalar|Dal:|İncele:|Kurula sor|İş kurulu|Kontrol turu|-|\(|Bulgular|Şartlar)/.test(part)) continue;
+    else if (/^(Raporu|Değişen dosyalar|Dal:|İncele:|Kurula sor|İş kurulu|Kontrol turu|Report:|Changed files|Branch:|Review:|Ask the council|Work council|Check round|Findings|Conditions|-|\(|Bulgular|Şartlar)/.test(part)) continue;
     else out.push({ kind: "note", text: part.split("\n")[0].slice(0, 160) });
   }
   return out;
@@ -1074,21 +1092,22 @@ function buildFeed(history, isLead) {
     if (it.type === "assistant") { if ((it.text || "").trim()) out.push(chatAi(it.text)); continue; }
     if (it.type === "info") { note(it.text); continue; }
     const txt = it.text || "";
-    if (txt === "Görevine başla.") { note(_("Task started")); continue; }
-    if (txt.startsWith("[olaylar]")) {
-      const body = txt.replace(/^\[olaylar\]\n/, "").replace(/\n\n\[durum\]\n[\s\S]*$/, "");
+    if (txt === "Görevine başla." || txt === "Start your task.") { note(_("Task started")); continue; }
+    if (txt.startsWith("[olaylar]") || txt.startsWith("[events]")) {
+      const body = txt.replace(/^\[(olaylar|events)\]\n/, "").replace(/\n\n\[(durum|status)\]\n[\s\S]*$/, "");
       for (const n of eventNotes(body)) n.kind === "msg" ? msg(n.from, n.to, n.text) : note(n.text);
       continue;
     }
-    if (txt.startsWith("[takım mesaj")) {
-      const body = txt.replace(/^\[takım mesajı\]\n|^\[takım mesajları\]\n/, "").replace(/\n\nBunlara göre işine devam et[\s\S]*$/, "");
+    if (txt.startsWith("[takım mesaj") || txt.startsWith("[team message")) {
+      const body = txt.replace(/^\[(takım mesajı|takım mesajları|team message|team messages)\]\n/, "")
+        .replace(/\n\n(Bunlara göre işine devam et|Continue your work accordingly)[\s\S]*$/, "");
       for (const line of body.split(/\n(?=\[)/)) {
         const m = line.match(/^\[([^\]]+?) -> ([^\]]+?)\] ([\s\S]*)$/);
         if (m) msg(m[1], m[2], m[3]); else note(line.slice(0, 200));
       }
       continue;
     }
-    if (txt.startsWith("Devam et.")) { note(_("Continuing")); continue; }
+    if (txt.startsWith("Devam et.") || txt.startsWith("Continue.")) { note(_("Continuing")); continue; }
     out.push(chatBubble(txt));
   }
   return out;
@@ -1097,10 +1116,12 @@ function feedItem(it) {
   if (it.type === "user") {
     const u = el("div", "pf-user");
     const txt = it.text || "";
-    const label = txt.startsWith("[olaylar]") ? _("events") : txt.startsWith("[takım mesaj") ? _("team message") : txt === "Görevine başla." ? _("start") : "";
+    const label = /^\[(olaylar|events)\]/.test(txt) ? _("events") : /^\[(takım mesaj|team message)/.test(txt) ? _("team message")
+      : txt === "Görevine başla." || txt === "Start your task." ? _("start") : "";
     if (label) u.appendChild(el("small", "", label));
     // Yöneticiye giden olaylardaki "[durum]" tablosu zaten solda görünüyor; konuşmada gizle.
-    u.appendChild(document.createTextNode(txt.replace(/^\[(olaylar|takım mesajı|takım mesajları)\]\n/, "").replace(/\n\n\[durum\]\n[\s\S]*$/, "")));
+    u.appendChild(document.createTextNode(txt.replace(/^\[(olaylar|takım mesajı|takım mesajları|events|team message|team messages)\]\n/, "")
+      .replace(/\n\n\[(durum|status)\]\n[\s\S]*$/, "")));
     return u;
   }
   if (it.type === "assistant") {

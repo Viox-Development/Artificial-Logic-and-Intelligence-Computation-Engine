@@ -66,24 +66,24 @@ def lead_script(state):
     def run(messages):
         event, k = since_user(messages)
         plan = []
-        if "henüz ajan yok" in event:
+        if "there are no agents yet" in event:
             plan += [tool_call("assign", {"name": "backend", "task": "src/api.py içine add(a, b) yaz", "scope": ["src"],
                                           "thinking": "high"}),
                      tool_call("assign", {"name": "tests", "task": "tests/test_api.py yaz", "scope": ["tests"],
                                           "model": "fast", "after": ["backend"]}, "c2")]
         if "[tests -> alice]" in event:
             plan.append(tool_call("message", {"to": "tests", "text": "evet, negatif tutar reddedilsin"}, "c3"))
-        if "backend bitirdi, inceleme bekliyor" in event:
+        if "backend finished, waiting for review" in event:
             plan += [tool_call("diff", {"name": "backend"}, "c4"),
                      tool_call("review", {"name": "backend", "decision": "approve"}, "c5")]
-        if "tests bitirdi, inceleme bekliyor" in event:
+        if "tests finished, waiting for review" in event:
             if not state.get("revised"):
                 state["revised"] = True
                 plan.append(tool_call("review", {"name": "tests", "decision": "revise",
                                                  "feedback": "negatif tutar testi eksik"}, "c6"))
             else:
                 plan.append(tool_call("review", {"name": "tests", "decision": "approve"}, "c7"))
-        if "Bütün ajanlar bitti" in event:
+        if "All agents are done" in event:
             plan.append(tool_call("finish", {"summary": "add() yazıldı ve test edildi."}, "c8"))
         return plan[k] if k < len(plan) else "tamam"
 
@@ -105,7 +105,7 @@ def scripted(state):
                     "rapor: src/api.py yazıldı"][min(n, 1)]
         if me == "tests":
             state.setdefault("tests_started_after", state.get("backend_done", False))
-            # The lead's answer can land before team_wait (delivered after the tool step as a "[takım mesajı]" user
+            # The lead's answer can land before team_wait (delivered after the tool step as a "[team message]" user
             # message) or during it (as the tool result). If it is already here, don't sit out the whole wait.
             answered = any(m["role"] == "user" and "negatif tutar reddedilsin" in str(m.get("content"))
                            for m in messages[1:])
@@ -147,13 +147,13 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     tests = team.members["tests"]
     assert tests.reviews == 1 and tests.result.startswith("rapor: testler v2")
     tool_texts = "\n".join(str(m.get("content")) for m in tests.agent.messages if m["role"] == "tool")
-    assert "kapsam dışı" in tool_texts
+    assert "out of scope" in tool_texts
     # the lead's answer reached the agent: as team_wait's result, or as a team message after the team_send step
     # (which one depends on thread timing; checking only tool results made this test flaky, #379)
     received = "\n".join(str(m.get("content")) for m in tests.agent.messages[1:]
-                         if m["role"] == "tool" or (m["role"] == "user" and "[takım mesajı]" in str(m.get("content"))))
+                         if m["role"] == "tool" or (m["role"] == "user" and "[team message]" in str(m.get("content"))))
     assert "[alice -> tests] evet, negatif tutar reddedilsin" in received
-    assert any(x.sender == "alice" and x.to == "tests" and "düzeltme" in x.text for x in team.log)
+    assert any(x.sender == "alice" and x.to == "tests" and "fix" in x.text for x in team.log)
     assert "def add" in team.diff("backend")
     # agent prompt: no personality, has the task and the team list
     sys = team.members["tests"].agent.messages[0]["content"]
@@ -161,7 +161,7 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     assert "backend" in sys.split("This job started after these finished:")[1].splitlines()[0]
     # the late-joining agent was announced to the earlier one
     backend_users = [str(m["content"]) for m in team.members["backend"].agent.messages if m["role"] == "user"]
-    assert any("yeni ajan katıldı: tests" in c for c in backend_users) or \
+    assert any("a new agent joined the team: tests" in c for c in backend_users) or \
         any(x.sender == "sistem" and "tests" in x.text for x in team.log)
     # finish saves first, then publishes: wait for the last publish
     assert team.wait_until(lambda: [e for e in events if e["type"] == "team"][-1]["status"] == "done", 5)
@@ -213,7 +213,7 @@ def test_lazy_lead_is_nudged_then_project_closes(workdir):
     team.start()
     assert team.wait_until(lambda: team.finished, 20)
     lead_users = [str(m["content"]) for m in team.lead_agent.messages if m["role"] == "user"]
-    assert sum("proje kapanmadı" in c for c in lead_users) == 2
+    assert sum("the project isn't closed" in c for c in lead_users) == 2
     assert team.summary == "tamam"
 
 
@@ -260,7 +260,7 @@ def test_project_is_saved_loaded_and_resumed(workdir):
     assert not loaded.stopped
     assert loaded.wait_until(lambda: m.status == "review" and m.agent is not None, 10)
     contents = [str(x.get("content")) for x in m.agent.messages]
-    assert "Görevine başla." in contents and any("devam et" in c for c in contents)
+    assert "Start your task." in contents and any("Continue" in c for c in contents)
 
 
 def test_after_dependency_and_max_parallel(workdir):
@@ -306,7 +306,7 @@ def test_worktree_member_is_merged_on_approve(workdir):
     assert team.wait_until(lambda: m.status == "review", 10)
     assert not (workdir / "yeni.py").exists()
     note = team.review_member("backend", True)
-    assert "birleştirildi" in note and (workdir / "yeni.py").read_text(encoding="utf-8") == "print(1)\n"
+    assert "merged" in note and (workdir / "yeni.py").read_text(encoding="utf-8") == "print(1)\n"
 
 
 def test_chat_team_tool_waits_for_summary(workdir):
@@ -319,7 +319,7 @@ def test_chat_team_tool_waits_for_summary(workdir):
                     tool_call("team", {"action": "wait", "timeout": 30}, "c2"), "bitti"][min(n, 2)]
         if me == "lead":
             event, k = since_user(messages)
-            if "Bütün ajanlar bitti" in event and k == 0:
+            if "All agents are done" in event and k == 0:
                 return tool_call("finish", {"summary": "özet burada"})
             return "tamam"
         return "rapor"
@@ -454,7 +454,7 @@ def test_check_command_timeout_kills_grandchildren(tmp_path):
                            mark=lambda *a: None)
     t0 = time.monotonic()
     res = _Team.run_check(fake)
-    assert res["code"] == -1 and "zaman aşımı" in res["out"]
+    assert res["code"] == -1 and "timed out" in res["out"]
     assert time.monotonic() - t0 < 20
 
 
