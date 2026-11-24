@@ -38,7 +38,7 @@
     B.box.className = "buddy" + (d.shiny ? " shiny" : "") + " r-" + d.rarity;
     const art = B.box.querySelector(".bd-art");
     art.textContent = (d.art || []).join("\n");
-    art.title = `${d.name} · ${d.rarity} ${d.species} ${d.stars}\n${d.persona}\nOkşamak için tıkla`;
+    art.title = `${d.name} · ${d.rarity} ${d.species} ${d.stars}\n${d.persona}\n` + _("Click to pet");
     const info = B.box.querySelector(".bd-info");
     info.replaceChildren(
       el("div", "bd-name", `${d.name} · sv ${d.level}`),
@@ -75,16 +75,16 @@
       m.appendChild(b);
     };
     item("Besle", () => act("feed"));
-    item("Okşa", () => { hearts(); act("pet"); });
+    item(_("Pet"), () => { hearts(); act("pet"); });
     item("Oyna", () => { act("play"); });
     item("Ad koy", () => {
-      const v = prompt("Yeni adı:", (B.data && B.data.name) || "");
+      const v = prompt(_("New name:"), (B.data && B.data.name) || "");
       if (v) act("rename", v);
     });
-    item("Yeniden Çek (Reroll)", () => {
-      if (confirm("Yeni bir tür ve kişilik çekilsin mi?")) act("reroll");
+    item(_("Reroll"), () => {
+      if (confirm(_("Roll a new species and personality?"))) act("reroll");
     });
-    item("Gizle", () => { setHidden(true); B.box.hidden = true; toast("BUDDY gizlendi; Ayarlar > Asistan'dan geri açabilirsin"); });
+    item("Gizle", () => { setHidden(true); B.box.hidden = true; toast(_("BUDDY hidden; you can bring it back in Settings > Assistant")); });
     B.box.appendChild(m);
   }
 
@@ -98,7 +98,7 @@
     const art = el("pre", "bd-art");
     art.addEventListener("click", () => { hearts(); act("pet"); });
     const more = el("button", "bd-more", "⋯");
-    more.title = "BUDDY menüsü";
+    more.title = _("BUDDY menu");
     more.addEventListener("click", menu);
     B.box.append(say, art, el("div", "bd-info"), more);
     wrap.appendChild(B.box);
