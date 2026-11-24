@@ -731,7 +731,7 @@ def test_candidates_filters_catalogs():
     router = SimpleNamespace(providers_cfg={"ollama": pc("ollama"), "groq": pc("groq", False), "nvidia": pc("nvidia"),
                                             "gemini": pc("gemini"), "openrouter": pc("openrouter")}, client=client)
     refs, errors, catalog = ranking.candidates(router)
-    assert errors == {"groq": "GROQ_KEY tanımlı değil", "nvidia": "401 yetkisiz"}
+    assert errors == {"groq": "GROQ_KEY is not set", "nvidia": "401 yetkisiz"}
     assert catalog["gemini"] == ["bilinmeyen", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-3.8-flash-tts"]
     gem = [r for r in refs if r.startswith("gemini:")]
     # by quality; no tts; an unknown model last is still measured (SambaNova's models were never tried before)
@@ -823,7 +823,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
 
     def emit(s):
         msgs.append(s)
-        if "güncellendi" in s or "başarısız" in s:
+        if "updated" in s or "failed" in s:
             done.set()
 
     assert ranking._refreshing.acquire(blocking=False)
@@ -833,7 +833,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
         ranking._refreshing.release()
     assert ranking.refresh_in_background(router, emit) is True
     assert done.wait(5)
-    assert reloaded == [fresh] and msgs[-1] == "model sırası güncellendi: g:a, g:b, g:c"
+    assert reloaded == [fresh] and msgs[-1] == "model order updated: g:a, g:b, g:c"
 
     def boom(r):
         raise RuntimeError("ağ yok")
@@ -845,7 +845,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
         time.sleep(0.02)
     done.clear()
     assert ranking.refresh_in_background(router, emit) is True
-    assert done.wait(5) and msgs[-1] == "model ölçümü başarısız: ağ yok"
+    assert done.wait(5) and msgs[-1] == "model measurement failed: ağ yok"
 
 
 def test_format_table():
