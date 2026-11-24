@@ -97,5 +97,5 @@ def test_session_runs_separately_and_reports_back(monkeypatch, workdir):
     back = seen[parent.sid][-1]
     assert back.startswith("[Oturum bitti] 'Çeviri'") and "bitti: README" in back
     assert api.linked()[0]["id"] == sid
-    assert "böyle bir oturum yok" in api.message("baska", "x")
+    assert "no such session" in api.message("baska", "x")
     state.shutdown()
