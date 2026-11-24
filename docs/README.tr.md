@@ -4,6 +4,8 @@
 
 **Artificial Logic and Intelligence Computation Engine.** Bilgisayarında çalışan, Claude Code / Codex tarzı bir ajan harness. Fark şu: tek bir ücretli modele bağlı değil, ücretsiz API katmanlarını sırayla kullanıyor ve hızlı arayüz kararları için Jev gibi System One modelleri kullanabiliyor.
 
+> English: the whole guide is translated in [guide/](guide/README.md).
+
 Neler yapabiliyor:
 
 * Dosya okuma/yazma/düzenleme, kod tabanında arama (`grep`, `glob`)
