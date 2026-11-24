@@ -66,7 +66,7 @@ def _asset_url(release: dict[str, Any], name: str) -> str:
     for a in release.get("assets") or []:
         if str(a.get("name")) == name:
             return str(a.get("browser_download_url") or "")
-    raise FileNotFoundError(f"{name} bu sürümde yok")
+    raise FileNotFoundError(f"{name} is not in this release")
 
 
 def checksum_for(checksums_text: str, name: str) -> str:
@@ -75,7 +75,7 @@ def checksum_for(checksums_text: str, name: str) -> str:
         parts = line.split()
         if len(parts) >= 2 and parts[-1].lstrip("*") == name:
             return parts[0].strip().lower()
-    raise ValueError(f"{name} için checksum bulunamadı")
+    raise ValueError(f"no checksum found for {name}")
 
 
 def sha256_of(path: Path) -> str:
@@ -102,7 +102,7 @@ def _extract(archive: Path, dest: Path) -> None:
                 target = (dest / m.name).resolve()
                 if (not (m.isfile() or m.isdir()) or os.path.isabs(m.name)
                         or (target != root and root not in target.parents)):
-                    raise ValueError(f"arşivde güvensiz girdi: {m.name}")
+                    raise ValueError(f"unsafe entry in the archive: {m.name}")
             t.extractall(dest)
     # If tar archive contains a single directory, move contents up
     entries = list(dest.iterdir())
@@ -115,8 +115,8 @@ def _extract(archive: Path, dest: Path) -> None:
 def _write_config(home: Path, keys: dict[str, str]) -> None:
     base = str(home).replace("\\", "/")
     config = f"""config-version: 8
-# ALICE için yerel CLI proxy: Claude Code / ChatGPT hesaplarını OpenAI uyumlu uca çevirir.
-# Bu dosya ALICE tarafından otomatik oluşturuldu; hesaplar uygulamadan bağlanır.
+# Local CLI proxy for ALICE: turns Claude Code / ChatGPT accounts into an OpenAI-compatible endpoint.
+# ALICE created this file automatically; accounts are connected from the app.
 server:
   host: "127.0.0.1"
   port: 8317
@@ -128,8 +128,9 @@ management:
   allow-remote: false
   secret-key: "{keys['management_key']}"
 
-# Birden çok hesap: konuşmalar hesaplar arasında sırayla paylaştırılır; biri limite takılınca sıradakine geçilir.
-# session-affinity: aynı konuşma aynı hesapta kalır (her hesabın prompt önbelleği ayrı; yoksa önbellek hep soğuk).
+# Several accounts: conversations are shared among the accounts in turn; when one hits its limit, the next is used.
+# session-affinity: the same conversation stays on the same account (each account has its own prompt cache; otherwise
+# the cache is always cold).
 routing:
   strategy: "round-robin"
   session-affinity: true
@@ -187,7 +188,7 @@ def _find_checksums(release: dict[str, Any]) -> str:
                 r = c.get(str(a.get("browser_download_url") or ""), headers={"User-Agent": "ALICE"})
                 r.raise_for_status()
                 return r.text
-    raise FileNotFoundError("sürümde checksums.txt yok")
+    raise FileNotFoundError("no checksums.txt in the release")
 
 
 def install(version: str = "", force: bool = False, log: Callable[[str], None] | None = None) -> dict[str, Any]:
@@ -212,12 +213,12 @@ def install(version: str = "", force: bool = False, log: Callable[[str], None] |
         archive = _download(url, Path(tmp) / name)
         got = sha256_of(archive)
         if got != want:
-            return {"ok": False, "error": f"checksum uyuşmadı ({got[:12]}… != {want[:12]}…)"}
-        emit("checksum doğru, açılıyor")
+            return {"ok": False, "error": f"checksum mismatch ({got[:12]}… != {want[:12]}…)"}
+        emit("checksum matches, unpacking")
         _extract(archive, home)
     binary = home / cliproxy.binary_name()
     if not binary.exists():
-        return {"ok": False, "error": "arşivde cli-proxy-api bulunamadı"}
+        return {"ok": False, "error": "cli-proxy-api not found in the archive"}
     if os.name != "nt":
         binary.chmod(binary.stat().st_mode | 0o111)
     ensure_config()

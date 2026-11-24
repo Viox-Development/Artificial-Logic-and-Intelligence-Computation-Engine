@@ -106,8 +106,8 @@ def device_rows(lan_xml: str, wifi_xml: str) -> list[dict[str, str]]:
 class ZTE:
     def __init__(self, host: str, user: str, password: str, client: httpx.Client | None = None):
         if not password:
-            raise ModemError("modem şifresi yok: ~/.alice/.env dosyasına MODEM_PASSWORD=... satırını ekle "
-                             "(şifre genelde modemin altındaki etikette yazar)")
+            raise ModemError(("no modem password: add a MODEM_PASSWORD=... line to ~/.alice/.env "
+                             "(the password is usually on the label under the modem)"))
         self.base = f"http://{host}/"
         self.user, self.password = user or "admin", password
         self.c = client or httpx.Client(timeout=8)
@@ -135,33 +135,33 @@ class ZTE:
             lock = 0
         msg = info.get("loginErrMsg") or ""
         if lock > 0:  # -1 means no lock; it used to give the wrong error "modem girişi -1 sn kilitli"
-            raise ModemError(f"modem girişi {lock} sn kilitli (çok fazla yanlış deneme); sonra tekrar dene")
+            raise ModemError(f"modem login is locked for {lock} s (too many wrong attempts); try again later")
         if msg:
-            raise ModemError(f"modem girişi reddedildi ({msg}): kullanıcı adı ya da şifre yanlış olabilir")
+            raise ModemError(f"modem login refused ({msg}): the user name or password may be wrong")
 
     def login(self) -> None:
         self.menu_now = ""
         try:
             entry = json.loads(self._req("?_type=loginData&_tag=login_entry"))
         except ValueError as e:
-            raise ModemError("bu modemin giriş sayfası beklenen ZTE biçiminde değil") from e
+            raise ModemError("this modem's login page is not in the expected ZTE format") from e
         if not isinstance(entry, dict):
-            raise ModemError("bu modemin giriş sayfası beklenen ZTE biçiminde değil")
+            raise ModemError("this modem's login page is not in the expected ZTE format")
         self._login_error(entry)
         self.token = entry.get("sess_token", "")
         m = re.search(r"<ajax_response_xml_root>(.*?)</ajax_response_xml_root>",
                       self._req("?_type=loginData&_tag=login_token"))
         if not m:
-            raise ModemError("modem giriş tuzunu vermedi")
+            raise ModemError("the modem did not give the login salt")
         hashed = hashlib.sha256((self.password + m.group(1)).encode()).hexdigest()
         body = (f"Password={hashed}&Username={quote(self.user)}&_sessionTOKEN={self.token}"
                 f"&_sessionTOKENByPost={self.token}&action=login")
         try:
             res = json.loads(self._req("?_type=loginData&_tag=login_entry", body))
         except ValueError as e:
-            raise ModemError("modem giriş cevabı beklenen ZTE biçiminde değil") from e
+            raise ModemError("the modem's login answer is not in the expected ZTE format") from e
         if not isinstance(res, dict):
-            raise ModemError("modem giriş cevabı beklenen ZTE biçiminde değil")
+            raise ModemError("the modem's login answer is not in the expected ZTE format")
         self._login_error(res)
         self.token = res.get("sess_token", self.token)
 
@@ -169,7 +169,7 @@ class ZTE:
         text = self._req(path, data)
         if "<IF_ERRORSTR>SessionTimeout</IF_ERRORSTR>" in text:
             if retried:
-                raise ModemError("modem oturumu açılamadı")
+                raise ModemError("could not open a modem session")
             menu, self.menu_now = self.menu_now, ""
             self.login()
             if menu:
@@ -180,7 +180,7 @@ class ZTE:
                 self.token = tok
         if query:
             if "<IF_ERRORSTR>SUCC</IF_ERRORSTR>" not in text:
-                raise ModemError("modem isteği reddetti")
+                raise ModemError("the modem refused the request")
             if m := re.search(r"<_sessionTmpTokenByPost>(.*?)</_sessionTmpTokenByPost>", text):
                 self.post_token = m.group(1)
         return text
