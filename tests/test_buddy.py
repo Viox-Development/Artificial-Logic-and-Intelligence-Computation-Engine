@@ -35,7 +35,7 @@ def test_bones_are_not_read_from_file(tmp_path):
     buddy._save(data, p)
     v = buddy.view(path=p, now=t(12))
     real = buddy.roll()
-    assert v["rarity"] == real.rarity and v["species"] == real.species
+    assert v["rarity"] == real.rarity and v["species"] == buddy.label(buddy.SPECIES_EN, real.species)
 
 
 def test_decay_care_and_night_sleep(tmp_path):
@@ -44,14 +44,14 @@ def test_decay_care_and_night_sleep(tmp_path):
     assert v["name"] and v["food"] == 80
     v = buddy.view(path=p, now=t(22))  # 10 hours without care
     assert v["food"] == 40 and v["happy"] < 80 and v["energy"] == 50
-    assert "afiyetle" in buddy.act("feed", path=p, now=t(22))
-    assert "tok" in buddy.act("feed", path=p, now=t(22) + 60)  # half an hour has not passed
+    assert "ate happily" in buddy.act("feed", path=p, now=t(22))
+    assert "is full" in buddy.act("feed", path=p, now=t(22) + 60)  # half an hour has not passed
     before = buddy.view(path=p, now=t(22))["happy"]
     buddy.act("pet", path=p, now=t(22))
     assert buddy.view(path=p, now=t(22))["happy"] == min(100, before + 15)
     night = buddy.view(path=p, now=t(3, 14))
-    assert night["mood"] == "uyuyor" or night["energy"] > 50
-    assert buddy.act("rename", "Fıstık", path=p) == "Artık adı Fıstık."
+    assert night["mood"] == "asleep" or night["energy"] > 50
+    assert buddy.act("rename", "Fıstık", path=p) == "Its name is now Fıstık."
 
 
 def test_on_turn_feeds_and_sometimes_comments(tmp_path, monkeypatch):
@@ -85,4 +85,4 @@ def test_tool_status_card():
     from alice.tools.companions import Buddy
 
     out = Buddy().run(ToolContext(cwd=".", config=make_config({"brain": ["a:m"]})), "status").text
-    assert "Seviye" in out and buddy.roll().species in out
+    assert "Level" in out and buddy.label(buddy.SPECIES_EN, buddy.roll().species) in out

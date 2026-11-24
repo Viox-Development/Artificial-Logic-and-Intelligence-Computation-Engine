@@ -38,7 +38,7 @@
     B.box.className = "buddy" + (d.shiny ? " shiny" : "") + " r-" + d.rarity;
     const art = B.box.querySelector(".bd-art");
     art.textContent = (d.art || []).join("\n");
-    art.title = `${d.name} · ${d.rarity} ${d.species} ${d.stars}\n${d.persona}\n` + _("Click to pet");
+    art.title = `${d.name} · ${d.rarity_label || d.rarity} ${d.species} ${d.stars}\n${d.persona}\n` + _("Click to pet");
     const info = B.box.querySelector(".bd-info");
     info.replaceChildren(
       el("div", "bd-name", `${d.name} · sv ${d.level}`),

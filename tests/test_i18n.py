@@ -276,3 +276,17 @@ def test_core_mode_names_are_translated():
     tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
     for name in service.MODE_NAMES.values():
         assert name in tr, name
+
+
+def test_buddy_labels_and_google_setup_steps_are_translated():
+    """Buddy labels and the Google setup steps go through _(variable), which the scanner can't see."""
+    from alice import buddy, setup_google
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    for table in (buddy.SPECIES_EN, buddy.RARITY_EN, buddy.MOOD_EN):
+        assert set(table) >= ({*buddy.SPECIES} if table is buddy.SPECIES_EN else set())
+        for text in table.values():
+            assert text in tr, text
+    assert set(buddy.RARITY_EN) == {r for r, *_rest in buddy.RARITIES}
+    for title, _url, how in setup_google.STEPS:
+        assert title in tr and how in tr, title

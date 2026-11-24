@@ -81,7 +81,7 @@ def test_wizard_full_flow_with_downloaded_json(tmp_path, monkeypatch):
     assert opened == [url for _, url, _ in setup_google.STEPS]
     assert "GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com" in (tmp_path / ".env").read_text(encoding="utf-8")
     assert gmail == ["okul", "kisisel"]  # "Okul!" is an invalid name: asked again
-    assert any("Takvim bağlandı" in s for s in said) and "okul (okul@x.com)" in said[-1]
+    assert any("Calendar connected" in s for s in said) and "okul (okul@x.com)" in said[-1]
     monkeypatch.delenv("GOOGLE_CLIENT_ID")
     monkeypatch.delenv("GOOGLE_CLIENT_SECRET")
 

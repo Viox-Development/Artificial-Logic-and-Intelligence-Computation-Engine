@@ -66,9 +66,9 @@ def linux(monkeypatch):
 
 def test_lock_uses_loginctl_then_falls_back_to_xdg_screensaver(linux):
     f = linux({"loginctl", "xdg-screensaver"})
-    assert pc.lock() == "bilgisayar kilitlendi" and f.calls == ["loginctl lock-session"]
+    assert pc.lock() == "computer locked" and f.calls == ["loginctl lock-session"]
     f = linux({"loginctl", "xdg-screensaver"}, {"loginctl": (1, "", "Failed to issue method call")})
-    assert pc.lock() == "bilgisayar kilitlendi"
+    assert pc.lock() == "computer locked"
     assert f.calls == ["loginctl lock-session", "xdg-screensaver lock"]
     linux({"loginctl"}, {"loginctl": (1, "", "No session")})
     with pytest.raises(RuntimeError, match="No session"):
@@ -89,13 +89,13 @@ def test_monitor_off_picks_the_display_servers_command(linux, monkeypatch, env, 
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     f = linux({tool, "xset"})
-    assert pc.monitor_off().startswith("ekran kapatıldı")
+    assert pc.monitor_off().startswith("screen turned off")
     assert f.calls[0].startswith(expected)
 
 
 def test_monitor_off_errors(linux, monkeypatch):
     linux({"xset"})
-    with pytest.raises(RuntimeError, match="desteklenmiyor"):
+    with pytest.raises(RuntimeError, match="isn't supported"):
         pc.monitor_off()  # no DISPLAY, no Wayland compositor we know
     monkeypatch.setenv("DISPLAY", ":0")
     linux()
@@ -103,20 +103,20 @@ def test_monitor_off_errors(linux, monkeypatch):
         pc.monitor_off()
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     linux({"xset"})
-    with pytest.raises(RuntimeError, match="desteklenmiyor"):
+    with pytest.raises(RuntimeError, match="isn't supported"):
         pc.monitor_off()  # xset does not turn off a Wayland screen
 
 
 def test_suspend_and_hibernate_use_systemctl(linux, tmp_path):
     f = linux({"systemctl"})
-    assert pc.suspend() == "uyku moduna geçiyor"
-    assert pc.suspend(hibernate=True) == "hazırda bekletmeye geçiyor"
+    assert pc.suspend() == "going to sleep"
+    assert pc.suspend(hibernate=True) == "hibernating"
     assert f.calls == ["systemctl suspend", "systemctl hibernate"]
     linux({"systemctl"}, {"systemctl hibernate": (1, "", "Not enough swap space for hibernation")})
     with pytest.raises(ToolError, match="swap"):
         PC().run(_ctx(tmp_path), action="hibernate")
     linux()
-    with pytest.raises(RuntimeError, match="systemctl bulunamadı"):
+    with pytest.raises(RuntimeError, match="systemctl not found"):
         pc.suspend()
 
 
@@ -126,11 +126,11 @@ def test_power_profiles(linux, tmp_path):
                                            {"guid": "power-saver", "name": "power-saver", "active": False}]
     f = linux({"powerprofilesctl"}, {"powerprofilesctl list": (0, PROFILES, "")})
     assert PC().run(_ctx(tmp_path), action="plans").text == "  performance\n* balanced\n  power-saver"
-    assert pc.set_plan("tasarruf") == "güç planı: power-saver"
-    assert pc.set_plan("performans") == "güç planı: performance"
+    assert pc.set_plan("tasarruf") == "power plan: power-saver"
+    assert pc.set_plan("performans") == "power plan: performance"
     assert [c for c in f.calls if " set " in c] == ["powerprofilesctl set power-saver",
                                                    "powerprofilesctl set performance"]
-    with pytest.raises(RuntimeError, match="Var olanlar: performance, balanced, power-saver"):
+    with pytest.raises(RuntimeError, match="Available: performance, balanced, power-saver"):
         pc.set_plan("oyun")
     linux()
     with pytest.raises(RuntimeError, match="power-profiles-daemon"):
@@ -144,7 +144,7 @@ def test_brightness_with_brightnessctl(linux, tmp_path):
     assert PC().run(_ctx(tmp_path), action="brightness").text == "1. intel_backlight: %50\n2. acpi_video0: %70"
     assert pc.brightness(140, 1) == "1. intel_backlight: %100"
     assert f.calls[-1] == "brightnessctl --device intel_backlight set 100%"
-    with pytest.raises(RuntimeError, match="3. ekran yok"):
+    with pytest.raises(RuntimeError, match="no screen 3"):
         pc.brightness(10, 3)
     linux({"brightnessctl"}, {"brightnessctl --list": (0, "input3::capslock,leds,0,0%,1\n", "")})
     with pytest.raises(RuntimeError, match="ddcutil"):
@@ -157,10 +157,10 @@ def test_brightness_with_brightnessctl(linux, tmp_path):
 
 def test_still_windows_only_and_other_systems(linux, monkeypatch):
     linux()
-    with pytest.raises(RuntimeError, match="yalnız Windows'ta"):
+    with pytest.raises(RuntimeError, match="only works on Windows"):
         pc.restart_in(0)
     monkeypatch.setattr(pc.sys, "platform", "darwin")
-    with pytest.raises(RuntimeError, match="Windows'ta ve Linux'ta"):
+    with pytest.raises(RuntimeError, match="Windows and Linux"):
         pc.lock()
 
 
@@ -168,8 +168,8 @@ def test_phone_lock_and_sleep_work_on_linux(linux, monkeypatch):
     monkeypatch.setattr(remote, "IS_WIN", False)
     monkeypatch.setattr(remote.sys, "platform", "linux")
     f = linux({"loginctl", "systemctl"})
-    assert remote.action({"action": "lock"}) == "bilgisayar kilitlendi"
-    assert remote.action({"action": "sleep"}) == "uyku moduna geçiyor"
+    assert remote.action({"action": "lock"}) == "computer locked"
+    assert remote.action({"action": "sleep"}) == "going to sleep"
     assert f.calls == ["loginctl lock-session", "systemctl suspend"]
     linux()
     with pytest.raises(ValueError, match="loginctl"):
