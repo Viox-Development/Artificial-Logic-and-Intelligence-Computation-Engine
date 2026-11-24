@@ -259,11 +259,11 @@ def _kill(p: subprocess.Popen) -> None:
         try:
             p.kill()
         except OSError:
-            pass
+            pass  # already exited
     try:
         p.communicate(timeout=5)
     except (subprocess.TimeoutExpired, OSError, ValueError):
-        pass
+        pass  # the process is already gone or its pipes are closed
 
 
 def decision(results: list[HookResult]) -> dict[str, Any]:

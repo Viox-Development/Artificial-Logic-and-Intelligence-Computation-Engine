@@ -154,13 +154,13 @@ def card(path: Path, kind: str) -> Project:
             head = (git / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
             pr.branch = head.rsplit("/", 1)[-1] if head.startswith("ref:") else head[:7]
         except OSError:
-            pass
+            pass  # branch stays unknown
         try:
             m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)',
                           (git / "config").read_text(encoding="utf-8", errors="replace"))
             pr.remote = _clean_remote(m.group(1)) if m else ""
         except OSError:
-            pass
+            pass  # remote stays unknown
         last = commits(path, 1)
         if last:
             pr.active, pr.last_commit = last[0]
@@ -175,7 +175,7 @@ def card(path: Path, kind: str) -> Project:
             if m:
                 pr.kind = f"unity {m.group(1)}"
         except OSError:
-            pass
+            pass  # Unity version stays unknown
     return pr
 
 
@@ -247,7 +247,7 @@ def newest_mtime(path: Path, cap: int = 400) -> float:
             try:
                 best = max(best, os.path.getmtime(os.path.join(dirpath, f)))
             except OSError:
-                pass
+                pass  # file vanished while walking: skip it
             n += 1
         if n > cap:
             break
@@ -364,7 +364,7 @@ def info(p: Project) -> str:
                  if not e.startswith(".")][:40]
         lines.append("Klasör: " + ", ".join(shown))
     except OSError:
-        pass
+        pass  # the folder listing is optional context
     if p.readme:
         lines.append(f"README: {p.readme}")
     return "\n".join(lines)

@@ -260,7 +260,7 @@ def label_low(folder: Path) -> None:
         _labels_path().parent.mkdir(parents=True, exist_ok=True)
         _labels_path().write_text(json.dumps(sorted(done)), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the label is set again next start
 
 
 _REPAIRED: list[bool] = []

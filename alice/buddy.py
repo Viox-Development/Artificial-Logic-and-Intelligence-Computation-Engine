@@ -289,7 +289,7 @@ def act(action: str, value: str = "", path: Path | None = None, now: float | Non
                 from alice.config import set_config_value
                 set_config_value("buddy", "seed", new_seed)
             except Exception:
-                pass
+                pass  # the new seed holds for this process; it is saved again next time
             st.pop("name", None)
             st.pop("persona", None)
             bones = roll(new_seed)

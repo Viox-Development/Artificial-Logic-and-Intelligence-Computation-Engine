@@ -400,4 +400,4 @@ def task_log(text: str) -> None:
         with open(alice_home() / "tasks.log", "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
     except OSError:
-        pass
+        pass  # logging must not break the task

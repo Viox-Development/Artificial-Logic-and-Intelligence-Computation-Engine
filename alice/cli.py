@@ -424,7 +424,7 @@ def repl(agent: Agent, router: Router, ctx: ToolContext, cfg: Config, resume: st
         try:
             sess.save(sid, agent.messages, ctx.cwd)
         except OSError:
-            pass
+            pass  # the session is saved again after the next message
     cleanup(ctx)
 
 
@@ -805,7 +805,7 @@ def default_workspace() -> Path:
         if last.is_dir():
             return last
     except OSError:
-        pass
+        pass  # no saved folder: fall back to the current one
     docs = Path.home() / "Documents"
     ws_dir = (docs if docs.is_dir() else Path.home()) / "ALICE"
     try:
@@ -834,7 +834,7 @@ def _attach_to_core() -> int | None:
     try:
         open_window(url, watch=host.follow(url))
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C closes the window
     return 0
 
 
@@ -907,7 +907,7 @@ def app_cmd(argv: list[str]) -> int:
         else:
             open_window(server.url, prefer=a.window)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C stops the app
     finally:
         server.stop()
         updater.clear_app()
@@ -1096,7 +1096,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         except (AttributeError, OSError):
-            pass
+            pass  # the console stays in its own encoding
     try:
         return _dispatch(argv)
     except ModuleNotFoundError as e:

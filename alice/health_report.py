@@ -44,7 +44,7 @@ def _save(path: Path, st: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the report is computed again on the next check
 
 
 def collect(cfg, store, now: float | None = None, network: bool = True,
@@ -81,7 +81,7 @@ def collect(cfg, store, now: float | None = None, network: bool = True,
             if size > 500:
                 found["db"] = f"core.db {size:.0f} MB oldu"
         except (OSError, TypeError):
-            pass
+            pass  # no database file to measure
     if usage is None:
         try:
             usage = json.loads((alice_home() / "usage.json").read_text(encoding="utf-8"))

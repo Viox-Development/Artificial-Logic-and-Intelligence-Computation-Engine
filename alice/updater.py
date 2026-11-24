@@ -168,7 +168,7 @@ def _install_git(winget: str) -> None:
                         "--accept-package-agreements", "--accept-source-agreements"], capture_output=True,
                        timeout=900, creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        pass  # the next check sees Git is still missing and tries another day
 
 
 def ensure_git(wait: bool = False) -> str | None:
@@ -494,7 +494,7 @@ def write_state(**kw: Any) -> None:
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
-            pass
+            pass  # a leftover temp file is harmless
 
 
 # --------------------------------------------------------------------------------- between processes
@@ -552,7 +552,7 @@ class update_lock:  # noqa: N801 - used as a context manager: with update_lock()
             if time.time() - p.stat().st_mtime > LOCK_STALE or not _holder_alive(p):
                 p.unlink(missing_ok=True)
         except OSError:
-            pass
+            pass  # lock still held by another process: creating it below fails cleanly
         try:
             fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as e:
@@ -565,7 +565,7 @@ class update_lock:  # noqa: N801 - used as a context manager: with update_lock()
         try:
             _lock_path().unlink()
         except OSError:
-            pass
+            pass  # already released
 
 
 def _app_pid_path() -> Path:
@@ -578,7 +578,7 @@ def mark_app() -> None:
         _app_pid_path().parent.mkdir(parents=True, exist_ok=True)
         _app_pid_path().write_text(str(os.getpid()), encoding="utf-8")
     except OSError:
-        pass
+        pass  # without the marker the core may also offer the update
 
 
 def clear_app() -> None:
@@ -586,7 +586,7 @@ def clear_app() -> None:
         if _app_pid_path().read_text(encoding="utf-8").strip() == str(os.getpid()):
             _app_pid_path().unlink()
     except (OSError, ValueError):
-        pass
+        pass  # not ours or already gone
 
 
 def app_running() -> bool:
@@ -660,7 +660,7 @@ def installed_extras() -> list[str]:
             if importlib.util.find_spec(module) is not None:
                 out.append(extra)
         except (ImportError, ValueError):
-            pass
+            pass  # a broken package counts as not installed
     return out
 
 
@@ -833,7 +833,7 @@ def restart(argv: list[str] | None = None, delay: float = 0.3, env: dict[str, st
             kw["start_new_session"] = True
         subprocess.Popen(args, cwd=str(Path.cwd()), **kw)
     except (OSError, subprocess.SubprocessError):
-        pass
+        pass  # could not start the new process; this one still exits as asked
     _before_exit()
     os._exit(0)
 

@@ -66,7 +66,7 @@ def _atomic_write(path: Path, text: str) -> None:
         try:
             tmp.unlink()
         except OSError:
-            pass
+            pass  # a leftover temp file is harmless; the error is raised below
         raise
 
 

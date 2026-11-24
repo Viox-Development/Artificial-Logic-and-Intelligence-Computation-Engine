@@ -1730,7 +1730,7 @@ class Agent:
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception:
-            pass
+            pass  # the tool log must not break a turn
 
     def _take_desktop(self, tool: Tool) -> bool:
         """Several chats can run at once in the app; a tool that drives the screen/browser is used one at a time (see

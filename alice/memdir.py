@@ -201,7 +201,7 @@ def _atomic_write(path: Path, text: str) -> None:
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            pass  # a leftover temp file is harmless; the error is raised below
         raise
 
 
@@ -662,7 +662,7 @@ class NoteBook:
                 else:
                     os.utime(p, (prior, prior))
         except OSError:
-            pass
+            pass  # the note's time is only a hint for sorting
 
     def backup(self) -> Path | None:
         # Category folders too (people/, areas/, ...): a root-only glob left every categorized note out of the
