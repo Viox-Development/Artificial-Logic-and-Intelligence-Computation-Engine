@@ -83,7 +83,7 @@ def test_recall_lets_the_fast_model_pick_and_warns_about_old_notes():
     block = m.recall("testleri çalıştır")
     assert "genel:feedback-testler" in asked[0] and "Unciv" in asked[0]  # descriptions were shown to the model
     assert "**Neden:**" in block and "War Thunder" not in block
-    assert "gün önce yazıldı" in block  # old note: warning to check its current state
+    assert "days ago" in block  # old note: warning to check its current state
 
 
 def test_explicit_note_and_signals():
@@ -428,9 +428,9 @@ def test_dream_merges_fixes_prunes_and_keeps_a_backup():
     assert any("Hayat" in n.body for n in notes(m))  # the explicitly requested note was left untouched
     idx = m.notes.index_raw()
     # The model's proposed index is ignored: it is rebuilt from the notes (no dangling line, no missing note).
-    assert idx.startswith("# Hafıza Dizini") and "olmayan.md" not in idx and "Hayat" in idx
+    assert idx.startswith("# Memory Index") and "olmayan.md" not in idx and "Hayat" in idx
     assert "](user-oyunlar.md)" in idx
-    assert "Unciv'de savaş" in seen[0] and "(kullanıcı istedi)" in seen[0]  # summaries and protection marker reach the model
+    assert "Unciv'de savaş" in seen[0] and "(the user asked for it)" in seen[0]  # summaries and protection marker reach the model
     assert any("İki oyun notu" in x for x in done) and m.notes.backups()  # backup taken
     assert "Dream:" in m.notes.logs_since(0)
     # can be rolled back to the backup

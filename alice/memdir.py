@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 TYPES = ("user", "feedback", "project", "reference")
 TYPE_TR = {"user": "kullanıcı", "feedback": "geri bildirim", "project": "proje", "reference": "kaynak"}
@@ -56,6 +57,10 @@ CATEGORY_TITLES = {"you": "You", "people": "People", "areas": "Areas", "topics":
 SKIP_DIRS = {"logs", "trash"}
 YOU_NOTES = {"profile", "preferences"}
 
+
+# Heading of the generated MEMORY.md (older builds wrote "# Hafıza Dizini").
+INDEX_HEAD = "# Memory Index"
+OLD_INDEX_HEADS = ("# Hafıza Dizini",)
 
 def category_of(rel_parts: tuple[str, ...], name: str) -> str:
     if len(rel_parts) > 1:
@@ -133,7 +138,7 @@ def age_days(ts: float, now: float | None = None) -> int:
 
 def age_text(ts: float, now: float | None = None) -> str:
     d = age_days(ts, now)
-    return "bugün" if d == 0 else "dün" if d == 1 else f"{d} gün önce"
+    return "today" if d == 0 else "yesterday" if d == 1 else f"{d} days ago"
 
 
 def freshness(ts: float, now: float | None = None) -> str:
@@ -142,8 +147,8 @@ def freshness(ts: float, now: float | None = None) -> str:
     d = age_days(ts, now)
     if d <= 1:
         return ""
-    return (f"Bu not {d} gün önce yazıldı: o anki durumu anlatır, şimdiki durum değişmiş olabilir. İçindeki dosya, "
-            "işlev, ayar ya da durum iddialarını kullanmadan önce şimdiki hâlini kontrol et.")
+    return (f"This note was written {d} days ago: it describes things as they were then, and they may have changed. Check the "
+            "current state before using any claims in it about files, functions, settings or status.")
 
 
 def _iso(ts: float) -> str:
@@ -346,7 +351,7 @@ class NoteBook:
     def stamp(self) -> float:
         """Latest modification time in the folder (a cheap check to know when to refresh the system prompt)."""
         try:
-            times = [self.root.stat().st_mtime] + [p.stat().st_mtime for p, _ in self._note_files()]
+            times = [self.root.stat().st_mtime] + [p.stat().st_mtime for p, _cat in self._note_files()]
             if self.index_path.is_file():
                 times.append(self.index_path.stat().st_mtime)
         except OSError:
@@ -437,7 +442,7 @@ class NoteBook:
         description = " ".join(sanitize(description).split())[:300]
         body = sanitize(body).strip()
         if not body and not description:
-            raise ValueError("boş not")
+            raise ValueError(_("empty note"))
         body = body or description
         if len(body) > MAX_BODY:
             body = body[:MAX_BODY - 1] + "…"
@@ -519,7 +524,7 @@ class NoteBook:
             groups.setdefault(n.category, []).append(n)
         order = ["you", "topics", "areas", "people"] + sorted(c for c in groups if c not in (*CATEGORIES, "general"))
         order += ["general"]
-        out = ["# Hafıza Dizini"]
+        out = [INDEX_HEAD]
         for cat in order:
             items = sorted(groups.get(cat, []), key=lambda n: n.name)
             if not items:
@@ -541,9 +546,10 @@ class NoteBook:
         lines = text.strip().splitlines()
         size = len(text.encode("utf-8"))
         if len(lines) > MAX_INDEX_LINES or size > MAX_INDEX_BYTES:
-            raise MemoryFull(f"{INDEX} sınırı aşılacaktı ({len(lines)} satır, {size // 1024} KB; sınır "
-                             f"{MAX_INDEX_LINES} satır / {MAX_INDEX_BYTES // 1000} KB). Benzer notları tek notta "
-                             "birleştir, eskiyenleri sil ya da memory action=dream ile toparla; sonra tekrar kaydet.")
+            raise MemoryFull(_("{index} would go over its limit ({lines} lines, {kb} KB; the limit is {max_lines} lines / {max_kb} KB). "
+                               "Merge similar notes into one, delete outdated ones or tidy up with memory action=dream; then save again.",
+                               index=INDEX, lines=len(lines), kb=size // 1024, max_lines=MAX_INDEX_LINES,
+                               max_kb=MAX_INDEX_BYTES // 1000))
 
     def write_index(self, text: str = "") -> None:
         """Rewrite the index from the notes. The text argument (Dream's proposed index) is ignored on purpose: the
@@ -566,7 +572,7 @@ class NoteBook:
         """The index as it goes into the prompt, generated from the notes (a stale MEMORY.md written by an older
         version or by hand can't hide or misplace a note), cut at the limit with the reason written out."""
         raw = sanitize(self.build_index()).strip() if self.root.is_dir() else ""
-        if raw == "# Hafıza Dizini":
+        if raw == INDEX_HEAD or raw in OLD_INDEX_HEADS:
             return ""
         lines = raw.splitlines()
         size = len(raw.encode("utf-8"))
@@ -577,8 +583,8 @@ class NoteBook:
             cut = cut.encode("utf-8")[:MAX_INDEX_BYTES].decode("utf-8", "ignore")
             cut = cut[:cut.rfind("\n")] if "\n" in cut else cut
         shown = len(cut.splitlines())
-        return (cut + f"\n\n> UYARI: {INDEX} {len(lines)} satır / {size // 1024} KB; yalnız ilk {shown} satırı "
-                "yüklendi. Dizin satırlarını kısa tut, ayrıntıyı nota taşı; memory action=dream ile toparla.")
+        return (cut + f"\n\n> WARNING: {INDEX} is {len(lines)} lines / {size // 1024} KB; only its first {shown} lines were "
+                "loaded. Keep index lines short and move the details into the note; tidy up with memory action=dream.")
 
     def near_limit(self) -> bool:
         raw = self.index_raw()
@@ -592,7 +598,7 @@ class NoteBook:
     def append_log(self, text: str, when: float | None = None) -> Path:
         text = " ".join(sanitize(text).split())
         if not text:
-            raise ValueError("boş kayıt")
+            raise ValueError(_("empty record"))
         p = self.log_path(when)
         with self._lock:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -667,7 +673,7 @@ class NoteBook:
     def backup(self) -> Path | None:
         # Category folders too (people/, areas/, ...): a root-only glob left every categorized note out of the
         # backup, so "Yedeğe dön" could not bring a deleted person or project note back.
-        notes = [p for p in self.root.glob("*.md")] + [p for p, _ in self._note_files() if p.parent != self.root]             if self.root.is_dir() else []
+        notes = [p for p in self.root.glob("*.md")] + [p for p, _cat in self._note_files() if p.parent != self.root]             if self.root.is_dir() else []
         if not notes:
             return None
         base = self.root / ".backups" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -695,7 +701,7 @@ class NoteBook:
         # Read into memory first: pruning the oldest backups below could also delete the one we are restoring.
         files = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob("*.md")}
         self.backup()  # so the restore itself can be undone too
-        current = [(p, p.relative_to(self.root).as_posix()) for p, _ in self._note_files()]
+        current = [(p, p.relative_to(self.root).as_posix()) for p, _cat in self._note_files()]
         for p, rel in current:
             if rel not in files:
                 self.delete(p.stem)
@@ -840,7 +846,7 @@ def _select_more(query: str, notes: list[Note], chooser: Callable[[str], str] | 
             f"{context[-1500:]})"
         prompt = SELECT_PROMPT.format(limit=limit, query=q,
                                       manifest="\n".join(n.manifest_line() for n in notes),
-                                      tools=("\nŞu an kullanılan araçlar: " + ", ".join(tools)) if tools else "")
+                                      tools=("\nTools in use right now: " + ", ".join(tools)) if tools else "")
         box: dict[str, Any] = {}
 
         def run() -> None:
@@ -885,7 +891,7 @@ def keyword_relevant(query: str, notes: list[Note], limit: int = 3, min_score: f
         if score >= min_score and (len(q & (head | body)) >= min(2, len(q))):
             scored.append((score, n))
     scored.sort(key=lambda x: -x[0])
-    return [n for _, n in scored[:limit]]
+    return [n for _score, n in scored[:limit]]
 
 
 SELECT_PROMPT = """You pick which of ALICE's saved memory notes should be shown to her while she answers the \
@@ -936,7 +942,7 @@ Do NOT save: what happened in this conversation, task progress, errors or failur
 (the fix lives in the code), quota or model problems, file paths or code structure, one-off questions (one question \
 about a topic is not an interest), anything already in ALICE.md or the user instructions, secrets.
 How: update the existing note of a subject (same name, merged full content) instead of making a near-duplicate; one \
-subject per note; kebab-case names; Turkish text, technical terms in English. "Remember this" -> save now; \
+subject per note; kebab-case names; text in the user's language, technical terms in English. "Remember this" -> save now; \
 "forget it" -> delete. A note is what was true when it was written: if the present contradicts it, trust the present \
 and fix the note. If the user says to ignore memory, act as if it were empty and don't mention it."""
 
@@ -960,7 +966,7 @@ Answer ONLY with JSON:
 - To change an existing note, save it under the SAME name with the full new content (merge, don't append blindly).
 - A new person goes to people/ under their name; link related notes with [[name]].
 - scope "proje" only for things that matter solely inside the current repository{repo}.
-- Write notes in Turkish (keep technical terms in English). At most 3 saves. Usually nothing qualifies: then \
+- Write notes in the user's language (keep technical terms in English). At most 3 saves. Usually nothing qualifies: then \
 {{"save": [], "delete": []}}.
 - An ALICE reply starting with [doğrulanmadı] is a claim no tool confirmed: never record it as done.
 
@@ -983,7 +989,7 @@ play, ongoing projects, recurring interests) is durable even if never stated as 
 fix notes the newer information contradicts; turn relative dates into absolute ones; give feedback/project notes the \
 rule + **Neden:** + **Nasıl uygulanır:** shape; tighten vague descriptions (they decide recall).
 4. Prune: delete notes that break the rules (one-off task results, errors, bugs and fixes, file paths, test runs, \
-passing moods, plans whose date has passed and no longer matter). Notes marked (kullanıcı istedi) were explicitly \
+passing moods, plans whose date has passed and no longer matter). Notes marked (the user asked for it) were explicitly \
 requested by the user: you may rewrite or merge them but never drop their meaning. When unsure, keep.
 5. Link and file: put each note in the right category (a person -> people), add missing [[name]] links between \
 related notes, and make sure every people note lists its nicknames in aliases. The index is rebuilt from the notes.
@@ -991,8 +997,8 @@ related notes, and make sure every people note lists its nicknames in aliases. T
 Answer ONLY with JSON:
 {{"save": [{{"name": "...", "category": "you|people|areas|topics", "title": "...", "description": "...", \
 "aliases": ["..."], "content": "..."}}], "delete": ["name"], \
-"summary": "1-3 Turkish sentences: what you merged, fixed, added or pruned (or that nothing needed changing)"}}
-Write notes in Turkish (technical terms in English). If the memory is already tight, return empty lists.
+"summary": "1-3 sentences in the user's language: what you merged, fixed, added or pruned (or that nothing needed changing)"}}
+Write notes in the user's language (technical terms in English). If the memory is already tight, return empty lists.
 
 Current MEMORY.md:
 {index}

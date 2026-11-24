@@ -60,19 +60,19 @@ def test_good_code_passes_manifest_check():
 
 
 @pytest.mark.parametrize("code, manifest, problem", [
-    ("import httpx\nr = httpx.get('https://api.steampowered.com/x')\nPLUGIN = 1", NO_NET, "network boş"),
+    ("import httpx\nr = httpx.get('https://api.steampowered.com/x')\nPLUGIN = 1", NO_NET, "network is empty"),
     ("import httpx\nr = httpx.get('https://evil.example/x')\nPLUGIN = 1",
-     {**NO_NET, "network": ["api.steampowered.com"]}, "bildirgede olmayan adres: evil.example"),
-    ("import subprocess\nsubprocess.run(['notepad'])\nPLUGIN = 1", NO_NET, "apps boş"),
-    ("from pathlib import Path\nPath('x.txt').write_text('a')\nPLUGIN = 1", NO_NET, "folders boş"),
-    ("open('x.txt', 'w')\nPLUGIN = 1", NO_NET, "folders boş"),
+     {**NO_NET, "network": ["api.steampowered.com"]}, "address not in the manifest: evil.example"),
+    ("import subprocess\nsubprocess.run(['notepad'])\nPLUGIN = 1", NO_NET, "apps is empty"),
+    ("from pathlib import Path\nPath('x.txt').write_text('a')\nPLUGIN = 1", NO_NET, "folders is empty"),
+    ("open('x.txt', 'w')\nPLUGIN = 1", NO_NET, "folders is empty"),
     ("p = 'C:/Users/kresu/Documents/gizli.txt'\nPLUGIN = 1", {**NO_NET, "folders": ["C:/Users/kresu/Music"]},
-     "bildirgede olmayan klasör"),
-    ("eval('1+1')\nPLUGIN = 1", NO_NET, "eval() kullanılamaz"),
-    ("import ctypes\nPLUGIN = 1", NO_NET, "ctypes modülü kullanılamaz"),
+     "folder not in the manifest"),
+    ("eval('1+1')\nPLUGIN = 1", NO_NET, "eval() can't be used"),
+    ("import ctypes\nPLUGIN = 1", NO_NET, "the ctypes module can't be used"),
     ("x = 1", NO_NET, "PLUGIN"),
-    ("class A:\n    name = 'baska_arac'\nPLUGIN = 1", NO_NET, "'steam_recent_' ile başlamalı"),
-    ("def f(:\n", NO_NET, "sözdizimi"),
+    ("class A:\n    name = 'baska_arac'\nPLUGIN = 1", NO_NET, "must start with 'steam_recent_'"),
+    ("def f(:\n", NO_NET, "syntax error"),
 ])
 def test_manifest_violations_are_rejected(code, manifest, problem):
     probs = selftools.check_code(code, "steam_recent", selftools.normalize_manifest(manifest))
@@ -84,26 +84,26 @@ def test_declared_access_is_allowed():
             "Path('C:/Users/kresu/Music/a.txt').write_text('x')\nPLUGIN = 1")
     m = selftools.normalize_manifest({"network": ["steampowered.com"], "folders": ["C:/Users/kresu/Music"]})
     assert selftools.check_code(code, "steam_recent", m) == []
-    assert selftools.describe_access(m) == "internet: steampowered.com; klasör: C:/Users/kresu/Music"
-    assert selftools.describe_access(selftools.normalize_manifest({})) == "hiçbir şeye erişmez (sadece hesap yapar)"
+    assert selftools.describe_access(m) == "internet: steampowered.com; folder: C:/Users/kresu/Music"
+    assert selftools.describe_access(selftools.normalize_manifest({})) == "accesses nothing (only computes)"
 
 
 # ---------------------------------------------------------------- flow
 def test_prepare_rejects_before_sandbox(monkeypatch):
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: pytest.fail("denetimi geçmeyen kod denenmemeli"))
     ok, msg = selftools.prepare("steam_recent", "son oyunlar", "listeler", {}, "import httpx\nPLUGIN = 1", "t", None)
-    assert not ok and "network boş" in msg
+    assert not ok and "network is empty" in msg
     ok, msg = selftools.prepare("Steam-Recent", "", "x", {}, GOOD, "t", None)
-    assert not ok and "küçük harf" in msg
+    assert not ok and "lowercase" in msg
     ok, msg = selftools.prepare("flight", "", "x", {}, GOOD, "t", None, existing={"flight"})
-    assert not ok and "zaten var" in msg
+    assert not ok and "already exists" in msg
     assert selftools._PENDING == {}
 
 
 def test_failed_test_means_no_pending(monkeypatch):
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: (False, "1 failed"))
     ok, msg = selftools.prepare("steam_recent", "son oyunlar", "listeler", NO_NET, GOOD, GOOD_TEST, None)
-    assert not ok and "geçmedi" in msg and selftools._PENDING == {}
+    assert not ok and "failed" in msg and selftools._PENDING == {}
     assert not (plugins.plugin_dir() / "steam_recent.py").exists()
 
 
@@ -115,14 +115,14 @@ def test_install_only_after_prepare_then_usable_and_tracked(monkeypatch):
     ok, msg = selftools.prepare("steam_recent", "Steam'de son oynadıklarım", "Steam'de son oynanan oyunları "
                                 "listeler.", NO_NET, GOOD, GOOD_TEST, None)
     assert ok and "make_tool action=install name=steam_recent" in msg
-    assert "hiçbir şeye erişmez" in selftools.approval_text("steam_recent")
+    assert "accesses nothing" in selftools.approval_text("steam_recent")
     path, tools = selftools.install("steam_recent")
-    assert path.read_text(encoding="utf-8").startswith('"""ALICE\'in kendi yazdığı araç: steam_recent')
+    assert path.read_text(encoding="utf-8").startswith('"""A tool ALICE wrote herself: steam_recent')
     assert [t.name for t in tools] == ["steam_recent_list"]
     assert tools[0].run(None, n=1).text == "War Thunder"
     reg = selftools.load_registry()["steam_recent"]
     assert reg["uses"] == 1 and reg["errors"] == 0 and reg["need"] == "Steam'de son oynadıklarım"
-    assert "steam_recent" in selftools.listing() and "Kullanım 1" in selftools.listing()
+    assert "steam_recent" in selftools.listing() and "Used 1" in selftools.listing()
 
 
 def test_three_errors_disable_tool_and_loader_skips_it(monkeypatch):
@@ -134,8 +134,8 @@ def test_three_errors_disable_tool_and_loader_skips_it(monkeypatch):
             tools[0].run(None, n=0)
     info = selftools.load_registry()["steam_recent"]
     assert info["errors"] == 3 and info["disabled"] and "liste boş" in info["last_error"]
-    assert "kapalı (3 hata)" in selftools.listing()
-    with pytest.raises(ToolError, match="kapatıldı"):  # it no longer runs in the same session either
+    assert "off (3 errors)" in selftools.listing()
+    with pytest.raises(ToolError, match="turned off"):  # it no longer runs in the same session either
         tools[0].run(None, n=1)
     assert selftools.load_registry()["steam_recent"]["errors"] == 3
     loaded = plugins.load_plugins(None)
@@ -154,10 +154,10 @@ def test_remove_moves_file_aside(monkeypatch):
     selftools.prepare("steam_recent", "x", "listeler", NO_NET, GOOD, GOOD_TEST, None)
     path, tools = selftools.install("steam_recent")
     result = selftools.remove("steam_recent")
-    assert "kaldırıldı" in result
+    assert "removed" in result
     assert not path.exists() and list((plugins.plugin_dir() / "_kaldirilan").glob("steam_recent-*.py"))
     assert selftools.load_registry()["steam_recent"]["disabled"]
-    with pytest.raises(ToolError, match="kaldırıldı"):  # the copy in the running agent stops too
+    with pytest.raises(ToolError, match="removed"):  # the copy in the running agent stops too
         tools[0].run(None, n=1)
 
 
@@ -168,7 +168,7 @@ def test_make_tool_risk_and_approval_summary(monkeypatch):
     assert t.risk_for({"action": "install"}) == DANGER and t.risk_for({"action": "remove"}) == WRITE
     monkeypatch.setattr(selftools, "run_tests", lambda *a, **k: (True, "ok"))
     selftools.prepare("steam_recent", "x", "Son oyunları listeler.", NO_NET, GOOD, GOOD_TEST, None)
-    assert t.summary({"action": "install", "name": "steam_recent"}).startswith("'steam_recent' aracını ekleyeyim mi?")
+    assert t.summary({"action": "install", "name": "steam_recent"}).startswith("Shall I add the 'steam_recent' tool?")
 
 
 def test_make_tool_install_adds_tool_to_running_agent(monkeypatch):

@@ -94,11 +94,11 @@ def describe_access(m: dict[str, Any]) -> str:
     if m["network"]:
         parts.append("internet: " + ", ".join(m["network"]))
     if m["folders"]:
-        parts.append("klasör: " + ", ".join(m["folders"]))
+        parts.append("folder: " + ", ".join(m["folders"]))
     if m["apps"]:
         parts.append("uygulama: " + ", ".join(m["apps"]))
-    out = "; ".join(parts) or "hiçbir şeye erişmez (sadece hesap yapar)"
-    return out + ("; her kullanımda ayrıca onay ister" if m["asks_each_time"] else "")
+    out = "; ".join(parts) or "accesses nothing (only computes)"
+    return out + ("; asks for approval on every use as well" if m["asks_each_time"] else "")
 
 
 def _dotted(node: ast.AST) -> str:
@@ -132,7 +132,7 @@ def check_code(code: str, name: str, manifest: dict[str, Any]) -> list[str]:
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        return [f"sözdizimi hatası: satır {e.lineno}: {e.msg}"]
+        return [f"syntax error: line {e.lineno}: {e.msg}"]
     problems: list[str] = []
     imports: set[str] = set()
     writes = execs = False
@@ -144,7 +144,7 @@ def check_code(code: str, name: str, manifest: dict[str, Any]) -> list[str]:
         elif isinstance(node, ast.Call):
             fn = _dotted(node.func)
             if fn in BANNED_CALLS:
-                problems.append(f"{fn}() kullanılamaz")
+                problems.append(f"{fn}() can't be used")
             if fn.split(".")[0] == "subprocess" or fn in EXEC_CALLS:
                 execs = True
             if fn in WRITE_CALLS or (isinstance(node.func, ast.Attribute) and node.func.attr in WRITE_ATTRS):
@@ -160,25 +160,25 @@ def check_code(code: str, name: str, manifest: dict[str, Any]) -> list[str]:
             s = node.value
             host = _host(s)
             if host and not any(host == h.lower() or host.endswith("." + h.lower()) for h in manifest["network"]):
-                problems.append(f"bildirgede olmayan adres: {host}")
+                problems.append(f"address not in the manifest: {host}")
             if re.match(r"^(?:[a-zA-Z]:[\\/]|~[\\/])", s) and not _under(s, manifest["folders"]):
-                problems.append(f"bildirgede olmayan klasör: {s}")
+                problems.append(f"folder not in the manifest: {s}")
         elif isinstance(node, ast.ClassDef):
             for st in node.body:
                 if isinstance(st, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "name" for t in st.targets) \
                         and isinstance(st.value, ast.Constant) and isinstance(st.value.value, str):
                     if not st.value.value.startswith(f"{name}_") and st.value.value != name:
-                        problems.append(f"araç adı '{st.value.value}' '{name}_' ile başlamalı (çakışma olmasın)")
+                        problems.append(f"the tool name '{st.value.value}' must start with '{name}_' (to avoid clashes)")
     for mod in sorted(imports & BANNED_MODULES):
-        problems.append(f"{mod} modülü kullanılamaz")
+        problems.append(f"the {mod} module can't be used")
     if imports & NET_MODULES and not manifest["network"]:
-        problems.append("kod internete çıkıyor ama bildirgede network boş")
+        problems.append("the code goes to the internet but network is empty in the manifest")
     if (execs or "subprocess" in imports) and not manifest["apps"]:
-        problems.append("kod program çalıştırıyor ama bildirgede apps boş")
+        problems.append("the code runs programs but apps is empty in the manifest")
     if writes and not manifest["folders"]:
-        problems.append("kod dosya yazıyor/siliyor ama bildirgede folders boş")
+        problems.append("the code writes/deletes files but folders is empty in the manifest")
     if not re.search(r"(?m)^(PLUGIN|PLUGINS)\s*=|^def register\(", code):
-        problems.append("PLUGIN = Plugin(...) tanımı yok")
+        problems.append("no PLUGIN = Plugin(...) definition")
     return list(dict.fromkeys(problems))
 
 
@@ -198,8 +198,8 @@ def file_text(name: str, code: str, manifest: dict[str, Any], need: str) -> str:
     lines = code.strip().splitlines()
     future = [ln for ln in lines if ln.strip().startswith("from __future__ import")]
     body = "\n".join(ln for ln in lines if ln not in future)
-    head = (f'"""ALICE\'in kendi yazdığı araç: {name}. İhtiyaç: {need.strip()[:200]}\n'
-            f'Yazıldığı an: {time.strftime("%Y-%m-%d %H:%M")}. Kayıt: ~/.alice/selftools.json"""\n\n'
+    head = (f'"""A tool ALICE wrote herself: {name}. Need: {need.strip()[:200]}\n'
+            f'Written: {time.strftime("%Y-%m-%d %H:%M")}. Record: ~/.alice/selftools.json"""\n\n'
             + ("\n".join(future) + "\n\n" if future else "")
             + f"MANIFEST = {manifest!r}\n\n")
     return head + body.strip() + "\n"
@@ -222,7 +222,7 @@ def run_tests(name: str, source: str, test: str, ctx: Any, timeout: float = TEST
     try:
         argv, env_extra = sandbox.wrap(argv, d, ctx)
     except RuntimeError as e:
-        return False, f"kum havuzu kurulamadı, test çalıştırılmadı: {e}"
+        return False, f"the sandbox couldn't be set up; the test was not run: {e}"
     root = str(Path(__file__).resolve().parent.parent)
     env = {**sandbox.scrub_env(dict(os.environ), ctx), **env_extra, "PYTHONDONTWRITEBYTECODE": "1",
            "PYTHONPATH": os.pathsep.join([str(d), root, os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
@@ -241,31 +241,31 @@ def prepare(name: str, need: str, description: str, manifest: Any, code: str, te
     """Step 1: check, try in the test sandbox; if it passes, put it in the awaiting-approval list."""
     name = (name or "").strip().lower()
     if not NAME.match(name):
-        return False, "ad küçük harf, rakam ve _ olmalı, harfle başlamalı (ör. steam_recent)"
+        return False, "the name must be lowercase letters, digits and _, starting with a letter (e.g. steam_recent)"
     if existing and (name in existing or any(t.startswith(f"{name}_") for t in existing)):
-        return False, f"'{name}' adında bir araç ya da eklenti zaten var: önce onu kullan"
+        return False, f"a tool or plugin called '{name}' already exists: use it first"
     if not description.strip() or not test.strip():
-        return False, "description (ne yaptığı, tek cümle) ve test zorunlu"
+        return False, "description (what it does, one sentence) and test are required"
     m = normalize_manifest(manifest)
     problems = check_code(code, name, m)
     if problems:
-        return False, "Bildirge denetimi geçmedi, araç yazılmadı:\n- " + "\n- ".join(problems)
+        return False, "The manifest check failed; the tool was not written:\n- " + "\n- ".join(problems)
     source = file_text(name, code, m, need)
     ok, out = run_tests(name, source, test, ctx)
     if not ok:
-        return False, f"Test kum havuzunda geçmedi, araç yazılmadı:\n{out}"
+        return False, f"The test failed in the sandbox; the tool was not written:\n{out}"
     _PENDING[name] = {"name": name, "need": need.strip(), "description": description.strip(), "manifest": m,
                       "source": source, "test": test, "at": time.time()}
-    return True, (f"Test kum havuzunda geçti.\n{out.splitlines()[-1] if out else ''}\n"
-                  f"Kullanıcıya bir cümleyle sor: \"{approval_text(name)}\" Onaylarsa make_tool action=install "
+    return True, (f"The test passed in the sandbox.\n{out.splitlines()[-1] if out else ''}\n"
+                  f"Ask the user in one sentence: \"{approval_text(name)}\" If they approve, make_tool action=install "
                   f"name={name}.")
 
 
 def approval_text(name: str) -> str:
     p = _PENDING.get(name)
     if p is None:
-        return f"{name}: onay bekleyen araç yok (önce action=test)"
-    return f"'{name}' aracını ekleyeyim mi? {p['description']} Erişim: {describe_access(p['manifest'])}."
+        return f"{name}: no tool waiting for approval (action=test first)"
+    return f"Shall I add the '{name}' tool? {p['description']} Access: {describe_access(p['manifest'])}."
 
 
 def install(name: str) -> tuple[Path, list[Any]]:
@@ -274,12 +274,12 @@ def install(name: str) -> tuple[Path, list[Any]]:
 
     p = _PENDING.pop(name, None)
     if p is None:
-        raise ValueError("onay bekleyen böyle bir araç yok: önce action=test")
+        raise ValueError("no such tool is waiting for approval: action=test first")
     d = plugins.plugin_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{name}.py"
     if path.exists():
-        raise ValueError(f"{path.name} zaten var; ALICE başkasının eklentisinin üstüne yazmaz")
+        raise ValueError(f"{path.name} already exists; ALICE doesn't overwrite someone else's plugin")
     path.write_text(p["source"], encoding="utf-8")
     (d / "_tests").mkdir(exist_ok=True)
     (d / "_tests" / f"test_{name}.py").write_text(p["test"], encoding="utf-8")
@@ -335,8 +335,8 @@ def _wrap(plugin: str, tool: Any, ask: bool) -> None:
         # Disabling (3 errors) and make_tool remove only took effect on the next load: the tool stayed in the list
         # and kept running in the same session. The registry is checked on every call.
         if (load_registry().get(plugin) or {}).get("disabled"):
-            raise ToolError(f"{plugin} aracı kapatıldı ya da kaldırıldı (make_tool action=list); yeniden yazmadan "
-                            "kullanılamaz")
+            raise ToolError(f"the {plugin} tool was turned off or removed (make_tool action=list); it can't be used without "
+                            "writing it again")
         try:
             res = orig(ctx, **kw)
         except ToolError:
@@ -375,14 +375,14 @@ def record(name: str, error: str = "") -> None:
 def listing() -> str:
     reg = load_registry()
     if not reg:
-        return "Henüz kendi yazdığım bir araç yok."
+        return "I haven't written any tools of my own yet."
     lines = []
     for name, i in sorted(reg.items(), key=lambda kv: kv[1].get("created", "")):
-        state = "kapalı (3 hata)" if i.get("disabled") else "açık"
+        state = "off (3 errors)" if i.get("disabled") else "on"
         err = f", son hata: {i['last_error'][:80]}" if i.get("last_error") else ""
         lines.append(f"- {name} ({i.get('created', '?')}, {state}): {i.get('description', '')} "
-                     f"Kullanım {i.get('uses', 0)}, hata {i.get('errors', 0)}{err}. "
-                     f"Erişim: {describe_access(normalize_manifest(i.get('manifest')))}.")
+                     f"Used {i.get('uses', 0)}, errors {i.get('errors', 0)}{err}. "
+                     f"Access: {describe_access(normalize_manifest(i.get('manifest')))}.")
     return "\n".join(lines)
 
 
@@ -392,11 +392,11 @@ def remove(name: str) -> str:
 
     reg = load_registry()
     if name not in reg:
-        return f"{name}: kendi yazdığım araçlar arasında yok"
+        return f"{name}: not among the tools I wrote"
     src = plugins.plugin_dir() / f"{name}.py"
     if src.exists():
         dst = plugins.plugin_dir() / "_kaldirilan"
         dst.mkdir(exist_ok=True)
         src.replace(dst / f"{name}-{time.strftime('%Y%m%d%H%M%S')}.py")
     _update(name, disabled=True, removed=time.strftime("%Y-%m-%d %H:%M"))
-    return f"{name} kaldırıldı (dosya _kaldirilan klasöründe)"
+    return f"{name} removed (the file is in the _kaldirilan folder)"
