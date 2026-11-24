@@ -15,4 +15,5 @@ It starts with the core (`[quick] enabled = true`); to run it on its own, use `a
 `[quick]` section (`hotkey`, `region_hotkey`, `clipboard_hotkey`). If it isn't used for 10 minutes, the next time it
 opens with a new conversation. Esc closes it; while ALICE is working, Esc stops the job.
 
-On Linux the shortcuts work on X11; Wayland doesn't allow global shortcuts, and ALICE says so (#239).
+On Linux the shortcuts work on X11. Wayland doesn't allow global shortcuts: bind a desktop shortcut to
+`alice quick --open` instead (#239).
