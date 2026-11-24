@@ -333,7 +333,7 @@ class BrowserSession:
         except Exception:  # noqa: BLE001 - the process may already have exited
             pass
 
-    def _mark_closed(self, *_: Any) -> None:
+    def _mark_closed(self, *_args: Any) -> None:
         self._ctx_closed = True
 
     def ensure_page(self):
@@ -584,7 +584,7 @@ class _Watchdog:
         self.timer.start()
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_exc: Any) -> None:
         self.timer.cancel()
 
 

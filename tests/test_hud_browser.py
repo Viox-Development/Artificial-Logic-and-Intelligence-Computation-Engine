@@ -87,7 +87,7 @@ def test_click_frames_element_before_clicking(ctx, hud_on):
     browser.Browser().run(ctx, "click", element_id=3)
     names = [c[0] for c in s.page.calls]
     assert names.index("evaluate") < names.index("click")  # frame first, then click
-    assert hud_on[0]["kind"] == "box" and hud_on[0]["text"] == "tıklıyorum" and hud_on[0]["id"] == "browser"
+    assert hud_on[0]["kind"] == "box" and hud_on[0]["text"] == "clicking" and hud_on[0]["id"] == "browser"
     assert (hud_on[0]["x"], hud_on[0]["y"], hud_on[0]["w"], hud_on[0]["h"]) == (124, 156, 108, 48)
 
 
@@ -128,7 +128,7 @@ def test_highlight_shows_element_with_label(ctx, hud_on):
     assert browser.Browser().risk_for({"action": "highlight"}) == READ
     _attached(ctx, place(dpr=1))
     out = browser.Browser().run(ctx, "highlight", element_id=3, text="Fiyat burada")
-    assert "ekranda" in out.text
+    assert "on screen" in out.text
     assert hud_on[-1]["text"] == "Fiyat burada" and hud_on[-1]["ttl"] == views.SHOW_TTL
 
 
@@ -136,7 +136,7 @@ def test_highlight_falls_back_to_page_outline_without_hud(ctx, monkeypatch):
     monkeypatch.setattr(client, "active", False)
     s = _attached(ctx, place())
     out = browser.Browser().run(ctx, "highlight", element_id=3)
-    assert "sayfada" in out.text
+    assert "on the page" in out.text
     assert any(c[0] == "evaluate" and c[2][:1] == (browser.OUTLINE_JS,) for c in s.page.calls)
     with pytest.raises(Exception, match="element_id"):
         browser.Browser().run(ctx, "highlight")

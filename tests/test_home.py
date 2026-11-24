@@ -350,8 +350,8 @@ def test_samsung_power_on_when_off_sends_wake_on_lan(monkeypatch, tmp_path):
     ctx = _ctx(tmp_path, {})
     ctx.config.data["samsung_tv"] = {"host": "192.168.1.60", "mac": "aa:bb:cc:dd:ee:ff"}
     out = SamsungTV().run(ctx, action="power", state="on").text
-    assert "açılma paketi" in out and sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
-    assert SamsungTV().run(ctx, action="power", state="off").text == "TV zaten kapalı"
+    assert "wake packet sent to the TV" in out and sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
+    assert SamsungTV().run(ctx, action="power", state="off").text == "the TV is already off"
     ctx.config.data["samsung_tv"] = {"host": "192.168.1.60"}
     with pytest.raises(ToolError, match="MAC"):
         SamsungTV().run(ctx, action="power", state="on")
