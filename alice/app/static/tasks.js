@@ -254,7 +254,7 @@ function taskDialog(x) {
         }
         if (tg.type === "event") {
           inp("kind", "flight", _("Event type"), _("e.g. flight (flight debrief), task, info"));
-          inp("match", "Uçuş değerlendirmesi", _("Match"), _("pattern to look for in the title/content (regex)"));
+          inp("match", _("Flight debrief"), _("Match"), _("pattern to look for in the title/content (regex)"));
         }
         if (tg.type === "github") {
           inp("repo", _("owner/repo"), _("Repository"));

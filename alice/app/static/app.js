@@ -1317,7 +1317,7 @@ function markSessions() {
   $$(".sess").forEach((b) => {
     b.classList.toggle("active", b.dataset.id === S.status.session);
     b.classList.toggle("running", running.has(b.dataset.id));
-    if (running.has(b.dataset.id)) b.title = b.title.replace(/^(⏳ arkada çalışıyor\n)?/, "⏳ arkada çalışıyor\n");
+    if (running.has(b.dataset.id)) b.title = b.title.replace(/^(⏳ [^\n]*\n)?/, "⏳ " + _("running in the background") + "\n");
   });
 }
 // Sohbet değişirken: öndekinin bekleyen mesajları yenisine gitmesin, turunun özeti yenisine yazılmasın.

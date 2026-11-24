@@ -585,7 +585,7 @@ function renderThread(det, m, d) {
   if (m.status === "review") {
     const bar = el("div", "pd-review");
     const rvText = m.council_running ? `${m.council && m.council.state === "running" ? councilLine(m.council) +
-      (m.council.phase ? " · " + m.council.phase.toLowerCase() : "") : _("The council met")}. İstersen beklemeden kararı sen ver.`
+      (m.council.phase ? " · " + m.council.phase.toLowerCase() : "") : _("The council met")}. ${_("If you like, make the call yourself without waiting.")}`
       : m.council && m.council.decision === "contested" ? _("The council is split; Alice will decide. You can vote in the Council tab or make the call yourself.")
       : d.review ? _("Awaiting review. Alice is reviewing; you can make the call if you like.") : _("Done, awaiting approval.");
     bar.appendChild(el("div", "pd-rv-t", rvText));
@@ -1171,7 +1171,7 @@ function renderTeamLog(det, d) {
     if (!me) row.appendChild(avatar(x.from === "kurul" ? "" : x.from, "", x.from === "kurul" ? IC.shield : null));
     const body = el("div", "lg-b");
     const top = el("div", "lg-top");
-    top.append(el("b", "", who), el("span", "", x.to === "all" ? "→ herkes" : x.to === "kullanıcı" ? "→ sana" : `→ ${x.to === "alice" ? "Alice" : x.to}`),
+    top.append(el("b", "", who), el("span", "", x.to === "all" ? _("→ everyone") : x.to === "kullanıcı" ? _("→ you") : `→ ${x.to === "alice" ? "Alice" : x.to}`),
       el("small", "", dt.toLocaleTimeString(ALICE_LOCALE, { hour: "2-digit", minute: "2-digit" })));
     body.append(top, clamp(x.text, 6, "lg-t"));
     row.appendChild(body);
