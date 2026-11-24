@@ -57,7 +57,7 @@ def test_as_bool(value, expected):
 
 @pytest.mark.parametrize("value", ["belki", [1], {"a": 1}])
 def test_as_bool_rejects_garbage(value):
-    with pytest.raises(ToolError, match="true ya da false"):
+    with pytest.raises(ToolError, match="true or false"):
         computer.as_bool(value, "submit")
 
 
@@ -77,7 +77,7 @@ def test_click_with_string_coordinates(ctx, pg):
     r = computer.Computer().run(ctx, action="click", x="50", y="20.5")  # previously "50" * 2.0 raised TypeError
     assert pg.calls[-1] == ("click", 110, 41)
     assert r.text == "click (50,20)"
-    with pytest.raises(ToolError, match="x sayı olmalı"):
+    with pytest.raises(ToolError, match="x must be a number"):
         computer.Computer().run(ctx, action="click", x="sol", y=1)
 
 
@@ -93,14 +93,14 @@ def test_wait_with_string_or_null_seconds(ctx, sleeps):
     computer.Computer().run(ctx, action="wait", seconds="2.5")
     computer.Computer().run(ctx, action="wait", seconds=None)  # used to raise TypeError from float(None)
     assert sleeps == [2.5, 1.0]
-    with pytest.raises(ToolError, match="seconds sayı olmalı"):
+    with pytest.raises(ToolError, match="seconds must be a number"):
         computer.Computer().run(ctx, action="wait", seconds="biraz")
 
 
 def test_type_and_key_non_string(ctx, pg, monkeypatch):
     typed: list[str] = []
     monkeypatch.setattr(computer, "type_text", typed.append)
-    assert computer.Computer().run(ctx, action="type", text=2024).text == "4 karakter yazıldı"
+    assert computer.Computer().run(ctx, action="type", text=2024).text == "typed 4 characters"
     assert typed == ["2024"]
     computer.Computer().run(ctx, action="key", keys=5)
     assert pg.calls[-1] == ("press", "5")
@@ -114,9 +114,9 @@ def test_screenshot_after_string_false_and_bad_monitor(ctx, pg, monkeypatch):
     assert not r.images and shots == []  # the "false" text used to trigger an extra screenshot
     computer.Computer().run(ctx, action="screenshot", grid="false", monitor="2")
     assert shots == [(False, 2)]
-    with pytest.raises(ToolError, match="monitor 0 ya da pozitif"):
+    with pytest.raises(ToolError, match="monitor must be 0 or positive"):
         computer.Computer().run(ctx, action="screenshot", monitor=-1)
-    with pytest.raises(ToolError, match="monitor sayı olmalı"):
+    with pytest.raises(ToolError, match="monitor must be a number"):
         computer.Computer().run(ctx, action="screenshot", monitor="ikinci")
 
 
@@ -124,7 +124,7 @@ def test_computer_task_bad_numbers_release_lock(ctx, monkeypatch):
     ctx.router = object()
     monkeypatch.setattr(ca, "log_line", lambda s: None)
     monkeypatch.setattr(ca, "router_asker", lambda r, role: (lambda m: ""))
-    with pytest.raises(ToolError, match="max_steps sayı olmalı"):
+    with pytest.raises(ToolError, match="max_steps must be a number"):
         computer.ComputerTask().run(ctx, goal="x", max_steps="çok")
     assert ca._RUNNING.acquire(blocking=False)
     ca._RUNNING.release()

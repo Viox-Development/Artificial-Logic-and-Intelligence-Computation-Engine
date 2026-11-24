@@ -40,7 +40,7 @@ def test_app_state_uses_real_config_roles(tmp_path):
 def test_service_diagnose_runs(ctx):
     res = ServiceDiagnose().run(ctx)
     assert not res.is_error
-    assert "Çekirdek Servis Teşhisi" in res.text
+    assert "Core service diagnosis" in res.text
 
 
 def test_service_diagnose_opens_and_closes_own_store(ctx):
@@ -52,7 +52,7 @@ def test_service_diagnose_opens_and_closes_own_store(ctx):
 def test_test_run_success(ctx, tmp_path):
     res = TestRun().run(ctx, command=_script(tmp_path, "print('test passed')"))
     assert not res.is_error
-    assert "Bütün testler başarıyla geçti" in res.text
+    assert "All tests passed" in res.text
 
 
 def test_test_run_reports_failure(ctx, tmp_path):

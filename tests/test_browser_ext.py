@@ -193,7 +193,7 @@ def test_browser_tool_works_through_extension(ext):
     fh, ctx = ext
     tool = browser.Browser()
     r = tool.run(ctx, "goto", url="sonorahq.org/download")
-    assert "açıldı" in r.text and "[1] a 'Install'" in r.text
+    assert "opened" in r.text and "[1] a 'Install'" in r.text
     assert ("focus", {"tabId": 2}) in fh.calls  # the open Sonora tab was used; no new tab was opened
     assert any(c == "navigate" and p["tabId"] == 2 for c, p in fh.calls)
     r = tool.run(ctx, "type", element_id=2, text="nükleer", submit=True)
@@ -319,7 +319,7 @@ def test_open_missing_file_says_so_and_lists_lookalikes(tmp_path):
     (tmp_path / "e.exe").write_bytes(b"MZ")
     with pytest.raises(ToolError) as e:
         open_app(str(tmp_path / "Sonora-Setup.exe"))
-    assert "dosya yok" in str(e.value) and "e.exe" in str(e.value) and "download" in str(e.value)
+    assert "file not found" in str(e.value) and "e.exe" in str(e.value) and "download" in str(e.value)
 
 
 def test_downloads_warns_when_saved_under_other_name(ext):
@@ -331,7 +331,7 @@ def test_downloads_warns_when_saved_under_other_name(ext):
                                                "error": "", "bytes": 1, "total": 1}]
                                              if m == "downloads" else orig(m, _timeout, **p))
     out = browser.Browser().run(ctx, "downloads").text
-    assert "DİKKAT: bağlantıdaki ad Sonora-Setup.exe, dosya e.exe adıyla kaydedilmiş" in out
+    assert "NOTE: the name in the link is Sonora-Setup.exe; the file was saved as e.exe" in out
 
 
 def test_sandbox_hint_only_for_access_errors():

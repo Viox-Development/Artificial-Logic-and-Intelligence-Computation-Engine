@@ -246,7 +246,7 @@ def test_grab_screen_scales_and_stores_state(ctx, monkeypatch):
     img = _decode(b64)
     assert img.size == (100, 50)
     assert ctx.state["screen"] == {"scale": 2.0, "left": 10, "top": 20, "w": 100, "h": 50}
-    assert "100x50" in desc and "200x100" in desc and "monitör 1" in desc
+    assert "100x50" in desc and "200x100" in desc and "monitor 1" in desc
     # coordinate conversion should work now
     assert computer.to_real(ctx, 50, 25) == (110, 70)
 
@@ -289,14 +289,14 @@ def test_type_text_restore_failure_is_ignored(pg, monkeypatch, sleeps):
 
 def test_grab_screen_bad_monitor(ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "mss", make_fake_mss())
-    with pytest.raises(ToolError, match="monitör 5 yok, 1 monitör var"):
+    with pytest.raises(ToolError, match="there is no monitor 5; there are 1 monitors"):
         computer.grab_screen(ctx, monitor=5)
 
 
 def test_grab_screen_monitor_zero_uses_all(ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "mss", make_fake_mss(60, 40))
     _, desc = computer.grab_screen(ctx, monitor=0)
-    assert ctx.state["screen"]["left"] == 0 and "monitör 0" in desc
+    assert ctx.state["screen"]["left"] == 0 and "monitor 0" in desc
 
 
 # ------------------------------------------------------------------ Computer tool
@@ -314,7 +314,7 @@ def test_risk_for():
 def test_run_screenshot_returns_image(ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "mss", make_fake_mss())
     r = computer.Computer().run(ctx, action="screenshot")
-    assert len(r.images) == 1 and "ekran görüntüsü" in r.text
+    assert len(r.images) == 1 and "screenshot" in r.text
 
 
 @pytest.mark.parametrize("seconds,expected", [(2, 2.0), (-3, 0.0), (999, 30.0)])
@@ -334,8 +334,8 @@ def test_run_cursor_position_without_and_with_screen(ctx, pg):
 
 def test_run_type_and_key(ctx, pg):
     t = computer.Computer()
-    assert t.run(ctx, action="type", text="abc").text == "3 karakter yazıldı"
-    assert t.run(ctx, action="key", keys="ctrl+c").text == "tuş: ctrl+c"
+    assert t.run(ctx, action="type", text="abc").text == "typed 3 characters"
+    assert t.run(ctx, action="key", keys="ctrl+c").text == "key: ctrl+c"
     assert pg.calls == [("write", "abc", 0.01), ("hotkey", "ctrl", "c")]
 
 
@@ -346,12 +346,12 @@ def test_run_type_and_key_validation(ctx, pg):
     with pytest.raises(ToolError, match="keys"):
         t.run(ctx, action="key", keys="")
     # empty text is valid (not None)
-    assert t.run(ctx, action="type", text="").text == "0 karakter yazıldı"
+    assert t.run(ctx, action="type", text="").text == "typed 0 characters"
 
 
 def test_run_pointer_actions_need_xy_and_screenshot(ctx, pg):
     t = computer.Computer()
-    with pytest.raises(ToolError, match="x ve y"):
+    with pytest.raises(ToolError, match="needs x and y"):
         t.run(ctx, action="click", x=5)
     with pytest.raises(ToolError, match="screenshot"):
         t.run(ctx, action="click", x=5, y=5)
@@ -392,7 +392,7 @@ def test_run_screenshot_after(ctx, pg, monkeypatch, sleeps):
     monkeypatch.setitem(sys.modules, "mss", make_fake_mss())
     ctx.state["screen"] = {"scale": 1.0, "left": 0, "top": 0}
     r = computer.Computer().run(ctx, action="click", x=1, y=1, screenshot_after=True)
-    assert r.text.startswith("click (1,1)\nekran görüntüsü")
+    assert r.text.startswith("click (1,1)\nscreenshot")
     assert len(r.images) == 1 and sleeps == [0.4]
 
 
@@ -434,7 +434,7 @@ def fake_agent_mod(monkeypatch):
 
 
 def test_computer_task_requires_router(ctx):
-    with pytest.raises(ToolError, match="yönlendirici"):
+    with pytest.raises(ToolError, match="no model router"):
         computer.ComputerTask().run(ctx, goal="x")
 
 
@@ -450,7 +450,7 @@ def test_computer_task_runs_agent(ctx, fake_agent_mod):
     assert fake_agent_mod["screen"] == ("screen", 2)
     assert fake_agent_mod["ask"] == ("asker", "vision")
     assert emitted == ["adım 1"]
-    assert fake_agent_mod["logs"][0] == "başladı: not defteri aç"
+    assert fake_agent_mod["logs"][0] == "started: not defteri aç"
     assert fake_agent_mod["logs"][-1] == "bitti: done: özet"
     assert not ca._RUNNING.locked()
 
@@ -527,7 +527,7 @@ def test_computer_task_refuses_when_busy(ctx, fake_agent_mod):
         r = computer.ComputerTask().run(ctx, goal="g")
     finally:
         ca._RUNNING.release()
-    assert r.is_error and "zaten" in r.text
+    assert r.is_error and "already running" in r.text
     assert "goal" not in fake_agent_mod
 
 

@@ -93,7 +93,7 @@ def test_wifi_tool_wake_sends_to_subnet_broadcast_and_explains_bad_mac(monkeypat
     sent = []
     monkeypatch.setattr(net, "wake_on_lan", lambda mac, bc: sent.append((mac, bc)))
     out = Wifi().run(_ctx(tmp_path), action="wake", mac="aa:bb:cc:dd:ee:ff").text
-    assert "gönderildi" in out and sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
+    assert "sent" in out and sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
     monkeypatch.undo()
     monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
     with pytest.raises(ToolError, match="geçersiz MAC"):
@@ -142,7 +142,7 @@ def test_wifi_tool_status_scan_saved_disconnect(netsh, tmp_path):
     assert Wifi().run(ctx, action="scan").text == "EvAgi: %90 WPA2-Personal\n(gizli): %0 "
     assert Wifi().run(ctx, action="saved").text == "EvAgi"
     assert Wifi().run(ctx, action="disconnect").text == "Wi-Fi bağlantısı kesildi"
-    with pytest.raises(ToolError, match="ssid gerekli"):
+    with pytest.raises(ToolError, match="ssid is required"):
         Wifi().run(ctx, action="connect")
 
 
@@ -210,7 +210,7 @@ def test_pc_plans_and_set_plan(windows, tmp_path):
     assert calls[-1] == ["powercfg", "/setactive", "a1841308-3bc4-4ac8-ba48-0d6b2e1bf3f2"]
     with pytest.raises(ToolError, match="Available: Dengeli, Güç tasarrufu"):
         PC().run(_ctx(tmp_path), action="set_plan", plan="oyun")
-    with pytest.raises(ToolError, match="plan gerekli"):
+    with pytest.raises(ToolError, match="plan is required"):
         PC().run(_ctx(tmp_path), action="set_plan")
 
 
@@ -254,7 +254,7 @@ def test_pc_wol_info(windows):
 
 
 def test_pc_unknown_action(tmp_path):
-    with pytest.raises(ToolError, match="bilinmeyen action"):
+    with pytest.raises(ToolError, match="unknown action"):
         PC().run(_ctx(tmp_path), action="dans")
 
 
@@ -376,25 +376,25 @@ def test_phone_battery_notifications_push_and_text(monkeypatch, tmp_path):
                         fake([self.adb, "-s", self.serial, *a]))
     ctx = _ctx(tmp_path, android={"phone": "192.168.1.11:41001"})
     assert Android().run(ctx, device="phone", action="battery").text == "pil %45, şarj oluyor, 31°C"
-    assert Android().run(ctx, device="phone", action="notifications").text == "bildirim yok"
+    assert Android().run(ctx, device="phone", action="notifications").text == "no notifications"
     Android().run(ctx, device="phone", action="type", text="merhaba dünya")
     assert calls[-1][-1] == "input text 'merhaba%sdünya'"
     f = tmp_path / "a.txt"
     f.write_text("x", encoding="utf-8")
     with pytest.raises(ToolError, match="No space left"):
         Android().run(ctx, device="phone", action="send_file", path=str(f))
-    with pytest.raises(ToolError, match="dosya yok"):
+    with pytest.raises(ToolError, match="file not found"):
         Android().run(ctx, device="phone", action="send_file", path=str(tmp_path / "yok.txt"))
 
 
 def test_android_tool_missing_arguments(monkeypatch, tmp_path):
     _adb(monkeypatch, lambda cmd, timeout=15: _done(cmd, "List of devices attached\n192.168.1.50:5555\tdevice\n"))
     ctx = _ctx(tmp_path, android={"tv": "192.168.1.50:5555"})
-    for action, msg in (("key", "key gerekli"), ("open_app", "app gerekli"), ("open_url", "url gerekli"),
-                        ("youtube", "query ya da url"), ("send_file", "path gerekli")):
+    for action, msg in (("key", "key is required"), ("open_app", "app is required"), ("open_url", "url is required"),
+                        ("youtube", "query or url"), ("send_file", "path is required")):
         with pytest.raises(ToolError, match=msg):
             Android().run(ctx, device="tv", action=action)
-    with pytest.raises(ToolError, match="pair için host"):
+    with pytest.raises(ToolError, match="pair needs host"):
         Android().run(ctx, device="phone", action="pair")
 
 
@@ -474,7 +474,7 @@ def test_samsung_info_without_host_and_odd_reply(monkeypatch):
 
 
 def test_samsung_status_before_connect_is_clear(tmp_path):
-    assert SamsungTV().run(_ctx(tmp_path, samsung_tv={}), action="status").text == "TV kapalı (ağda cevap vermiyor)"
+    assert SamsungTV().run(_ctx(tmp_path, samsung_tv={}), action="status").text == "the TV is off (not answering on the network)"
 
 
 def test_samsung_connect_keeps_token_even_if_rest_info_fails(monkeypatch, tmp_path):
@@ -488,7 +488,7 @@ def test_samsung_connect_keeps_token_even_if_rest_info_fails(monkeypatch, tmp_pa
     monkeypatch.setattr(samsung, "info", down)
     ctx = _ctx(tmp_path, samsung_tv={})
     out = SamsungTV().run(ctx, action="connect", host="192.168.1.60").text
-    assert "bağlandı" in out and "MAC okunamadı" in out
+    assert "connected" in out and "could not read the MAC" in out
     assert ctx.config.data["samsung_tv"] == {"host": "192.168.1.60", "token": "77"}
     assert load_config().data["samsung_tv"]["token"] == "77"
 
@@ -508,9 +508,9 @@ def test_samsung_status_and_unknown_key(monkeypatch, tmp_path):
                                                                              "modelName": "QE55"}})
     ctx = _ctx(tmp_path, samsung_tv={"host": "192.168.1.60", "token": "77"})
     assert SamsungTV().run(ctx, action="status").text == "TV on: Salon QE55"
-    assert SamsungTV().run(ctx, action="power", state="on").text == "TV zaten açık"
+    assert SamsungTV().run(ctx, action="power", state="on").text == "the TV is already on"
     _ws(monkeypatch, ClosingWS())
-    with pytest.raises(ToolError, match="bilinmeyen tuş"):
+    with pytest.raises(ToolError, match="unknown key"):
         SamsungTV().run(ctx, action="key", key="uç")
 
 
@@ -703,7 +703,7 @@ def test_zte_tool_logs_out_even_when_device_list_fails(zte_tool):
 
 def test_zte_tool_success_lists_devices_and_logs_out(zte_tool):
     fake = MiniZTE()
-    assert Wifi().run(zte_tool(fake), action="modem_devices").text == "modem bağlı cihaz bildirmedi"
+    assert Wifi().run(zte_tool(fake), action="modem_devices").text == "the modem reported no connected devices"
     assert fake.tags[-1] == "logout_entry"
 
 
@@ -711,13 +711,13 @@ def test_zte_tool_timeout_and_unreachable_messages(zte_tool):
     def slow(req):
         raise httpx.ConnectTimeout("timed out", request=req)
 
-    with pytest.raises(ToolError, match="zamanında cevap vermedi"):
+    with pytest.raises(ToolError, match="did not answer in time"):
         Wifi().run(zte_tool(slow), action="modem_devices")
 
     def refused(req):
         raise httpx.ConnectError("refused", request=req)
 
-    with pytest.raises(ToolError, match=r"modeme ulaşılamadı \(192.168.1.1\): ConnectError"):
+    with pytest.raises(ToolError, match=r"could not reach the modem \(192.168.1.1\): ConnectError"):
         Wifi().run(zte_tool(refused), action="modem_devices")
 
 
@@ -731,5 +731,5 @@ def test_zte_tool_wrong_password_does_not_log_out_or_leak(zte_tool, monkeypatch)
 
 
 def test_wifi_tool_unknown_action(tmp_path):
-    with pytest.raises(ToolError, match="bilinmeyen action"):
+    with pytest.raises(ToolError, match="unknown action"):
         Wifi().run(_ctx(tmp_path), action="uç")

@@ -36,43 +36,43 @@ class AppState(Tool):
         if section in ("all", "mode", "service"):
             mode_info = f"Mod: {state.get('mode', 'bilinmiyor')}"
             if state.get("forced"):
-                mode_info += " (elle sabitlenmiş)"
+                mode_info += " (pinned by hand)"
             out.append(f"### Servis ve Mod\n{mode_info}")
             running = state.get("running", False)
-            out.append(f"Çekirdek Durumu: {'Çalışıyor' if running else 'Durduruldu'}")
+            out.append(f"Core status: {'Running' if running else 'Stopped'}")
             if running:
-                out.append(f"PID: {state.get('pid')}, Başlangıç: {state.get('start_time', 'bilinmiyor')}")
+                out.append(f"PID: {state.get('pid')}, Started: {state.get('start_time', 'unknown')}")
 
         if section in ("all", "tools"):
             enabled = ctx.state.get("tool_groups", set())
-            groups_str = ", ".join(sorted(enabled)) if enabled else "(yalnızca temel araçlar)"
-            out.append(f"### Araç Grupları\nYüklenen: {groups_str}")
+            groups_str = ", ".join(sorted(enabled)) if enabled else "(basic tools only)"
+            out.append(f"### Tool groups\nLoaded: {groups_str}")
             
             fg = ctx.state.get("fg_procs", set())
             if fg:
-                out.append(f"Aktif ön plan işlemi: {len(fg)}")
+                out.append(f"Active foreground process: {len(fg)}")
 
         if section in ("all", "processes"):
             bg_procs = ctx.state.get("bg_procs", {})
             if bg_procs:
-                out.append("### Arka Plan Süreçleri")
+                out.append("### Background processes")
                 for pid, p in bg_procs.items():
-                    status = "çalışıyor" if p.popen.poll() is None else f"bitti (kod {p.popen.returncode})"
+                    status = "running" if p.popen.poll() is None else f"finished (code {p.popen.returncode})"
                     out.append(f"- pid={pid}: {status} :: {p.command[:100]}")
             elif section == "processes":
-                out.append("Aktif arka plan süreci yok.")
+                out.append("No active background processes.")
 
         if section in ("all", "config"):
-            out.append("### Yapılandırma Özeti")
+            out.append("### Configuration summary")
             cfg = ctx.config
             brain_val = getattr(cfg, "brain", None)
             if brain_val and isinstance(brain_val, (list, tuple)):
-                model_str = brain_val[0] if brain_val else "varsayılan"
+                model_str = brain_val[0] if brain_val else "default"
             else:
                 roles = getattr(cfg, "roles", None)
-                model_str = (roles.get("brain") if roles else None) or "varsayılan"
+                model_str = (roles.get("brain") if roles else None) or "default"
             out.append(f"Model: {model_str}")
-            out.append(f"Çalışma Dizini: {ctx.cwd}")
+            out.append(f"Working folder: {ctx.cwd}")
             out.append(f"ALICE Home: {os.environ.get('ALICE_HOME', '~/.alice')}")
 
         return ToolResult("\n".join(out))
@@ -99,12 +99,12 @@ class ServiceDiagnose(Tool):
         
         if service in ("all", "core"):
             state = read_state()
-            out.append(f"### Çekirdek Servis Teşhisi")
+            out.append(f"### Core service diagnosis")
             if state.get("running"):
-                out.append(f"Durum: ÇALIŞIYOR (pid={state.get('pid')})")
+                out.append(f"Status: RUNNING (pid={state.get('pid')})")
                 out.append(f"Mod: {state.get('mode')}")
             else:
-                out.append("Durum: DURDURULDU veya çalışmıyor.")
+                out.append("Status: STOPPED or not running.")
             
             # Fetch errors from the Store (only warning/error severities)
             own_store = False
@@ -117,13 +117,13 @@ class ServiceDiagnose(Tool):
                 errors = [e for e in events if str(getattr(e, "severity", "")).lower() in ("warn", "warning", "error",
                                                                                           "critical")][:20]
                 if errors:
-                    out.append("\n### Son Hatalar/Uyarılar")
+                    out.append("\n### Recent errors/warnings")
                     for e in errors:
                         out.append(e.line())
                 else:
-                    out.append("\nKayıtlı kritik hata bulunmadı.")
+                    out.append("\nNo critical errors recorded.")
             except Exception as e:
-                out.append(f"\nStore okunurken hata oluştu: {e}")
+                out.append(f"\nError while reading the store: {e}")
             finally:
                 if own_store:
                     try:
@@ -136,20 +136,20 @@ class ServiceDiagnose(Tool):
             target_pid = int(service) if service.isdigit() else None
             
             if bg_procs:
-                out.append("\n### Arka Plan Süreç Logları")
+                out.append("\n### Background process logs")
                 for pid, p in bg_procs.items():
                     if target_pid and pid != target_pid:
                         continue
-                    status = "çalışıyor" if p.popen.poll() is None else f"bitti (kod {p.popen.returncode})"
+                    status = "running" if p.popen.poll() is None else f"finished (code {p.popen.returncode})"
                     out.append(f"\n--- PID {pid} ({status}) :: {p.command[:80]} ---")
                     if p.log.exists():
                         lines = p.log.read_text(errors="replace").splitlines()
                         log_tail = "\n".join(lines[-tail_lines:])
-                        out.append(log_tail or "(log boş)")
+                        out.append(log_tail or "(log empty)")
                     else:
-                        out.append("(log dosyası bulunamadı)")
+                        out.append("(log file not found)")
             elif service != "core":
-                 out.append("\nAktif arka plan süreci yok.")
+                 out.append("\nNo active background processes.")
 
         return ToolResult("\n".join(out))
 
@@ -201,13 +201,13 @@ class TestRun(Tool):
             except subprocess.TimeoutExpired:
                 kill_tree(pop.pid)
                 pop.communicate()
-                return ToolResult(f"TEST ZAMAN AŞIMI ({timeout} sn): {full_command}", is_error=True)
+                return ToolResult(f"TEST TIMEOUT ({timeout} s): {full_command}", is_error=True)
             
             out = stdout.decode("utf-8", errors="replace")
             err = stderr.decode("utf-8", errors="replace")
             
         except Exception as e:
-            raise ToolError(f"Test başlatılamadı: {e}") from e
+            raise ToolError(f"Could not start the tests: {e}") from e
 
         duration = time.monotonic() - start_time
         
@@ -223,7 +223,7 @@ class TestRun(Tool):
                                 body, re.M)
             short_failed = re.findall(r"^(?:FAILED|ERROR) (\S+)(?: - (.*))?$", body, re.M)
 
-            filtered = [f"### Test Özeti: {full_command}", f"Süre: {duration:.2f}s, Kod: {returncode}"]
+            filtered = [f"### Test summary: {full_command}", f"Duration: {duration:.2f}s, Code: {returncode}"]
             if summary_match:
                 filtered.append(f"Durum: {summary_match.group(1).strip()}")
 
@@ -232,16 +232,16 @@ class TestRun(Tool):
                 for kind, name, trace in blocks[:10]:
                     filtered.append(f"\n--- {kind}: {name.strip()} ---\n{truncate(trace.strip(), 2000)}")
             elif short_failed:
-                filtered.append("\n### Başarısız Testler")
+                filtered.append("\n### Failed tests")
                 for name, msg in short_failed[:30]:
                     filtered.append(f"- {name}" + (f" — {msg.strip()[:200]}" if msg.strip() else ""))
 
             total_failures = bool(blocks or short_failed)
             if not total_failures and returncode != 0:
-                filtered.append("\n### Çıktı (Hata var ama ayrıştırılamadı)")
+                filtered.append("\n### Output (there are errors but they couldn't be parsed)")
                 filtered.append(truncate(body, 4000))
             elif not total_failures:
-                filtered.append("\nBütün testler başarıyla geçti.")
+                filtered.append("\nAll tests passed.")
 
             return ToolResult("\n".join(filtered), is_error=returncode != 0)
 

@@ -51,10 +51,10 @@ class PC(Tool):
                 return ToolResult(pc.restart_in(minutes))
             if action == "plans":
                 return ToolResult("\n".join(f"{'* ' if p['active'] else '  '}{p['name']}" for p in pc.plans())
-                                  or "güç planı bulunamadı")
+                                  or "power plan not found")
             if action == "set_plan":
                 if not plan:
-                    raise ToolError("plan gerekli")
+                    raise ToolError("plan is required")
                 return ToolResult(pc.set_plan(plan))
             if action == "brightness":
                 return ToolResult(pc.brightness(level, monitor))
@@ -62,7 +62,7 @@ class PC(Tool):
                 return ToolResult(pc.wol_info())
         except (RuntimeError, OSError) as e:
             raise ToolError(str(e)) from e
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 class Wifi(Tool):
@@ -109,12 +109,12 @@ class Wifi(Tool):
             if action == "scan":
                 nets = wifi.scan()
                 return ToolResult("\n".join(f"{n['ssid'] or '(gizli)'}: %{n['signal']} {n['auth']}" for n in nets)
-                                  or "ağ bulunamadı")
+                                  or "network not found")
             if action == "saved":
-                return ToolResult("\n".join(wifi.profiles()) or "kayıtlı ağ yok")
+                return ToolResult("\n".join(wifi.profiles()) or "no saved networks")
             if action == "connect":
                 if not ssid:
-                    raise ToolError("ssid gerekli")
+                    raise ToolError("ssid is required")
                 return ToolResult(wifi.connect(ssid, password))
             if action == "disconnect":
                 return ToolResult(wifi.disconnect())
@@ -123,18 +123,18 @@ class Wifi(Tool):
             if action == "devices":
                 devs = net.devices()
                 return ToolResult("\n".join(f"{d['ip']}  {d['mac']}  {d['name']}".rstrip() for d in devs)
-                                  or "cihaz bulunamadı")
+                                  or "device not found")
             if action == "wake":
                 if not mac:
-                    raise ToolError("mac gerekli")
+                    raise ToolError("mac is required")
                 me = net.local_ip()
                 net.wake_on_lan(mac, me.rsplit(".", 1)[0] + ".255")
-                return ToolResult(f"uyandırma paketi gönderildi: {mac}")
+                return ToolResult(f"wake packet sent: {mac}")
         except ValueError as e:
             raise ToolError(str(e)) from e
         except (RuntimeError, OSError) as e:
             raise ToolError(str(e)) from e
-        raise ToolError(f"bilinmeyen action: {action}")
+        raise ToolError(f"unknown action: {action}")
 
     @staticmethod
     def _zte(ctx: ToolContext, action: str) -> str:
@@ -154,17 +154,17 @@ class Wifi(Tool):
             if action == "modem_restart":
                 router.restart()
                 logged_in = False  # the modem is shutting down, so don't wait for the logout request in vain
-                return "modem yeniden başlıyor; internet 2-3 dakika gidip gelecek"
+                return "the modem is restarting; the internet will drop for 2-3 minutes"
             rows = router.devices()
-            return "\n".join(f"{r['name'] or '(adsız)'}  {r['ip']}  {r['mac']}  {r['link']}" for r in rows) \
-                or "modem bağlı cihaz bildirmedi"
+            return "\n".join(f"{r['name'] or '(unnamed)'}  {r['ip']}  {r['mac']}  {r['link']}" for r in rows) \
+                or "the modem reported no connected devices"
         except httpx.HTTPStatusError as e:
-            raise zte.ModemError(f"modem {host} HTTP {e.response.status_code} döndü: ZTE ZXHN arayüzü değil ya da "
-                                 "bu yazılım sürümü desteklenmiyor") from e
+            raise zte.ModemError(f"modem {host} returned HTTP {e.response.status_code}: not a ZTE ZXHN interface, or "
+                                 "this firmware version isn't supported") from e
         except httpx.TimeoutException as e:
-            raise zte.ModemError(f"modem ({host}) zamanında cevap vermedi") from e
+            raise zte.ModemError(f"the modem ({host}) did not answer in time") from e
         except (httpx.HTTPError, httpx.InvalidURL) as e:
-            raise zte.ModemError(f"modeme ulaşılamadı ({host}): {e.__class__.__name__}; [modem] host doğru mu?") from e
+            raise zte.ModemError(f"could not reach the modem ({host}): {e.__class__.__name__}; is [modem] host right?") from e
         finally:
             # ZTE modems allow only one admin session at a time: log out even if there was an error, so that a
             # user who wants to log in from the browser does not get stuck on the "başka kullanıcı bağlı" warning.
@@ -223,7 +223,7 @@ class Android(Tool):
         try:
             if action == "pair":
                 if not host or not code:
-                    raise ToolError("pair için host (telefonun eşleme ekranındaki IP:port) ve code gerekli")
+                    raise ToolError("pair needs host (the IP:port on the phone's pairing screen) and code")
                 msg, addr = adb.pair_and_connect(host, code, exe)
                 if addr:
                     self._save(ctx, conf, device, addr)
@@ -232,9 +232,9 @@ class Android(Tool):
                 from alice.home.net import scan_port
 
                 hits = scan_port(5555)
-                return ToolResult(("ADB'si açık cihazlar: " + ", ".join(hits) + ". Bağlanmak için connect host=...")
-                                  if hits else "Ağda ADB'si açık cihaz yok: TV'de Geliştirici seçenekleri > Ağ "
-                                  "üzerinden hata ayıklama açık mı?")
+                return ToolResult(("Devices with ADB on: " + ", ".join(hits) + ". To connect: connect host=...")
+                                  if hits else "No device with ADB on in the network: is Developer options > Network "
+                                  "debugging on, on the TV?")
             if action == "connect":
                 target = host or conf.get(device, "")
                 d = adb.Device(target, device, exe)
@@ -257,53 +257,53 @@ class Android(Tool):
                 return ToolResult(d.power(state))
             if action == "key":
                 if not key:
-                    raise ToolError("key gerekli")
+                    raise ToolError("key is required")
                 return ToolResult(d.keys(key, times))
             if action == "open_app":
                 if not app:
-                    raise ToolError("app gerekli")
+                    raise ToolError("app is required")
                 return ToolResult(d.open_app(app))
             if action == "youtube":
                 vid = adb.youtube_id(url) if url else None
                 title = url
                 if not vid:
                     if not query:
-                        raise ToolError("youtube için query ya da url gerekli")
+                        raise ToolError("youtube needs query or url")
                     from alice.tools.extras import youtube_search
 
                     hits = youtube_search(query, 1)
                     if not hits:
-                        return ToolResult("video bulunamadı")
+                        return ToolResult("video not found")
                     title, vid = hits[0]
                 return ToolResult(f"{d.youtube(vid)} ({title})")
             if action == "open_url":
                 if not url:
-                    raise ToolError("url gerekli")
+                    raise ToolError("url is required")
                 return ToolResult(d.open_url(url))
             if action == "type":
                 return ToolResult(d.type_text(text))
             if action == "screenshot":
-                return ToolResult(f"{device} ekranı", images=[d.screenshot()])
+                return ToolResult(f"{device} screen", images=[d.screenshot()])
             if action == "apps":
-                return ToolResult("\n".join(d.packages()) or "uygulama yok")
+                return ToolResult("\n".join(d.packages()) or "no apps")
             if action == "battery":
                 return ToolResult(d.battery())
             if action == "notifications":
                 items = d.notifications()
                 return ToolResult("\n".join(f"[{n['app']}] {n['title']}: {n['text']}".rstrip(": ") for n in items)
-                                  or "bildirim yok")
+                                  or "no notifications")
             if action == "send_file":
                 if not path:
-                    raise ToolError("path gerekli")
+                    raise ToolError("path is required")
                 p = ctx.resolve(path)
                 if not p.is_file():
-                    raise ToolError(f"dosya yok: {p}")
+                    raise ToolError(f"file not found: {p}")
                 return ToolResult(d.push(str(p)))
         except adb.AdbError as e:
             raise ToolError(str(e)) from e
         except (OSError, TimeoutError) as e:
-            raise ToolError(f"{device} komutu çalışmadı: {e}") from e
-        raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"{device} command failed: {e}") from e
+        raise ToolError(f"unknown action: {action}")
 
     @staticmethod
     def _save(ctx: ToolContext, conf: dict, device: str, serial: str) -> None:
@@ -380,8 +380,8 @@ class SamsungTV(Tool):
                         continue
                     if samsung.is_samsung(d):
                         tvs.append(f"{ip} ({(d.get('device') or {}).get('name') or d.get('name') or 'Samsung TV'})")
-                return ToolResult(("Bulunan Samsung TV: " + ", ".join(tvs) + ". Bağlanmak için connect host=...")
-                                  if tvs else "Ağda açık bir Samsung TV bulunamadı (TV açık ve aynı ağda mı?)")
+                return ToolResult(("Bulunan Samsung TV: " + ", ".join(tvs) + ". To connect: connect host=...")
+                                  if tvs else "No Samsung TV found on the network (is the TV on and on the same network?)")
             if action == "connect":
                 target = host or conf.get("host", "")
                 with samsung.Remote(target, conf.get("token", "") if not host or host == conf.get("host") else "") as r:
@@ -393,8 +393,8 @@ class SamsungTV(Tool):
                 except samsung.TVError:
                     mac = ""
                 self._save(ctx, conf, mac=mac)
-                return ToolResult(f"Samsung TV bağlandı ({target})" + ("" if mac else "; MAC okunamadı, kapalıyken "
-                                  "açma çalışmayabilir"))
+                return ToolResult(f"Samsung TV connected ({target})" + ("" if mac else "; could not read the MAC, so turning it on while "
+                                  "off may not work"))
             host = conf.get("host", "")
             if action == "power":
                 return ToolResult(self._power(ctx, conf, state))
@@ -402,7 +402,7 @@ class SamsungTV(Tool):
                 try:
                     d = samsung.info(host)
                 except samsung.TVError:
-                    return ToolResult("TV kapalı (ağda cevap vermiyor)")
+                    return ToolResult("the TV is off (not answering on the network)")
                 dev = d.get("device") or {}
                 return ToolResult(f"TV {samsung.power_state(d)}: {dev.get('name') or ''} {dev.get('modelName') or ''}"
                                   .strip())
@@ -413,21 +413,21 @@ class SamsungTV(Tool):
                     k = samsung.KEYS.get(key.strip().lower()) or (key.upper() if key.upper().startswith("KEY_")
                                                                   else None)
                     if not k:
-                        raise ToolError(f"bilinmeyen tuş: {key}. Geçerli: {', '.join(samsung.KEYS)}")
+                        raise ToolError(f"unknown key: {key}. Valid: {', '.join(samsung.KEYS)}")
                     r.keys(k, times)
                     return ToolResult(f"tv: {key}" + (f" x{times}" if times and times > 1 else ""))
                 if action == "apps":
                     apps = r.installed_apps()
                     return ToolResult("\n".join(f"{a.get('name')} ({a.get('appId')})" for a in apps)
-                                      or "TV uygulama listesini vermedi")
+                                      or "the TV didn't return its app list")
                 if action == "open_app":
                     if not app:
-                        raise ToolError("app gerekli")
+                        raise ToolError("app is required")
                     app_id = samsung.find_app(app, r.installed_apps())
                     if not app_id:
-                        raise ToolError(f"'{app}' TV'de bulunamadı; apps ile listeye bak")
+                        raise ToolError(f"'{app}' not found on the TV; look at the list with apps")
                     r.launch(app_id)
-                    return ToolResult(f"tv: {app} açılıyor")
+                    return ToolResult(f"tv: opening {app}")
                 if action == "youtube":
                     from alice.home.android import youtube_id
 
@@ -435,23 +435,23 @@ class SamsungTV(Tool):
                     title = url
                     if not vid:
                         if not query:
-                            raise ToolError("youtube için query ya da url gerekli")
+                            raise ToolError("youtube needs query or url")
                         from alice.tools.extras import youtube_search
 
                         hits = youtube_search(query, 1)
                         if not hits:
-                            return ToolResult("video bulunamadı")
+                            return ToolResult("video not found")
                         title, vid = hits[0]
                     r.launch(samsung.APPS["youtube"], f"v={vid}")
-                    return ToolResult(f"tv: YouTube'da açılıyor ({title})")
+                    return ToolResult(f"tv: opening on YouTube ({title})")
                 if action == "type":
                     r.send(samsung.text_message(text))
-                    return ToolResult("tv: yazıldı")
+                    return ToolResult("tv: typed")
         except samsung.TVError as e:
             raise ToolError(str(e)) from e
         except (OSError, ValueError) as e:  # Wake-on-LAN: invalid MAC or no network
-            raise ToolError(f"tv komutu çalışmadı: {e}") from e
-        raise ToolError(f"bilinmeyen action: {action}")
+            raise ToolError(f"tv command failed: {e}") from e
+        raise ToolError(f"unknown action: {action}")
 
     @staticmethod
     def _save(ctx: ToolContext, conf: dict, **vals: str) -> None:
@@ -471,18 +471,18 @@ class SamsungTV(Tool):
         except samsung.TVError:
             cur = "off"
         if state == "on" and cur == "on":
-            return "TV zaten açık"
+            return "the TV is already on"
         if state == "off" and cur != "on":
-            return "TV zaten kapalı"
+            return "the TV is already off"
         if cur == "off":  # NIC is asleep: keys can't be sent, so use Wake-on-LAN
             if not conf.get("mac"):
-                raise ToolError("TV kapalı ve MAC adresi bilinmiyor: TV açıkken bir kere connect yap")
+                raise ToolError("the TV is off and its MAC address is unknown: connect once while the TV is on")
             net.wake_on_lan(conf["mac"], (host.rsplit(".", 1)[0] + ".255") if host else "255.255.255.255")
-            return ("TV'ye açılma paketi gönderildi (açılmazsa TV'de Ayarlar > Genel > Ağ > Uzman Ayarları > "
-                    "'Mobil ile aç' açık olmalı)")
+            return ("wake packet sent to the TV (if it doesn't turn on, 'Power On with Mobile' must be on in "
+                    "Settings > General > Network > Expert Settings on the TV)")
         with samsung.Remote(host, conf.get("token", "")) as r:
             r.keys("KEY_POWER")
-        return "TV kapatıldı" if cur == "on" else "TV açıldı"
+        return "TV turned off" if cur == "on" else "TV turned on"
 
 
 TOOLS = [PC(), Wifi(), Android(), SamsungTV()]

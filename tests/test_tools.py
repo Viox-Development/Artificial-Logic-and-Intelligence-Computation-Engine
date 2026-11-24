@@ -329,7 +329,7 @@ def test_browser_does_not_open_separate_window_without_consent(monkeypatch):
     monkeypatch.setattr(browser, "cdp_alive", lambda e, timeout=0.4: False)
     # If a browser with an open debug port (Opera GX, the bridge) is on this machine, don't let the test attach to it.
     monkeypatch.setattr(browser, "user_browser_endpoint", lambda cdp=None, bridge_port=None: None)
-    with pytest.raises(ToolError, match="ayrı pencere"):
+    with pytest.raises(ToolError, match="separate window"):
         browser.BrowserSession(cdp="http://127.0.0.1:9222", allow_launch=False)
 
 
@@ -357,7 +357,7 @@ def test_navigate_site_root_only_switches_tab(monkeypatch):
     monkeypatch.setattr(computer, "press_keys", lambda k: did.append(k))
     monkeypatch.setattr(computer, "type_text", lambda t: did.append(t))
     res = desktop.Windows().run(None, "navigate", target="https://www.youtube.com/")
-    assert did == [] and "geçildi" in res.text
+    assert did == [] and "switched" in res.text
     assert desktop.is_site_root("youtube.com") and not desktop.is_site_root("youtube.com/watch?v=1")
 
 
