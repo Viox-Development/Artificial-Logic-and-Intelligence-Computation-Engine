@@ -277,7 +277,7 @@ def test_gecmis_sohbet_arama_ve_son_sohbetler():
     both = m.recent_chats(5)
     assert both.index("matematik") < both.index("silah")  # newest to oldest
     assert "silah" in m.recent_chats(5, before=now - 2 * day) and "matematik" not in m.recent_chats(5, before=now - 2 * day)
-    assert "bulunamadı" in m.search_chats("uzay gemisi")
+    assert "nothing about" in m.search_chats("uzay gemisi")
     # Old turns are no longer added to every message automatically; the model finds them with search_chats.
     assert "Raycast" not in m.recall("unity silah sistemi")
 
@@ -550,7 +550,7 @@ def test_chat_history_off_keeps_no_turns_and_says_so():
     m = LongMemory(":memory:", {"chat_history": False})
     assert m.record("dün sınavım vardı, kötü geçti", "geçmiş olsun") is None
     assert m.history_counts() == {"episodes": 0, "summaries": 0}
-    assert "kapalı" in m.search_chats("sınav") and "kapalı" in m.recent_chats()
+    assert "is off" in m.search_chats("sınav") and "is off" in m.recent_chats()
     m.chat_history = True
     assert m.record("dün sınavım vardı, kötü geçti", "geçmiş olsun") is not None
     assert m.history_counts()["episodes"] == 1
