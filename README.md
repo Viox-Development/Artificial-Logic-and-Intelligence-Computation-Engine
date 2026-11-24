@@ -280,6 +280,7 @@ The desktop app (`alice app`): windows, shortcuts, rewinding and the side panel 
 - **Git:** ALICE's own git calls ignore hooks, filters, and credential helpers planted in a repository's config, and
   it refuses to commit or push files that look like keys or `.env` files.
 - **Emergency stop:** `Ctrl+C` stops the current task; moving the mouse to the top-left corner stops input control.
+- Details: [docs/guide/permissions.md](docs/guide/permissions.md).
 
 ## Updates
 
