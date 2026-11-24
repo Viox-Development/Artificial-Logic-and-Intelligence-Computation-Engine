@@ -152,11 +152,11 @@ def test_apply_patch_update_requires_read_like_edit_file(ctx, workdir):
     f = workdir / "r.txt"
     f.write_text("bir\n", encoding="utf-8")
     patch = "*** Begin Patch\n*** Update File: r.txt\n-bir\n+BIR\n*** End Patch"
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         ApplyPatch().run(ctx, patch=patch)
     ReadFile().run(ctx, path="r.txt")
     f.write_text("bir\nek\n", encoding="utf-8")  # changed externally after it was read
-    with pytest.raises(ToolError, match="değişti"):
+    with pytest.raises(ToolError, match="changed on disk"):
         ApplyPatch().run(ctx, patch=patch)
     assert f.read_text(encoding="utf-8") == "bir\nek\n"
     ReadFile().run(ctx, path="r.txt")
@@ -190,12 +190,12 @@ def test_file_ops_move_copy_mkdir(ctx, workdir):
     assert (workdir / "kopya.txt").read_text(encoding="utf-8") == "a"
     t.run(ctx, action="move", paths=["a.txt", "b.txt"], destination="arsiv/2026")
     assert (workdir / "arsiv" / "2026" / "b.txt").read_text(encoding="utf-8") == "b" and not (workdir / "a.txt").exists()
-    with pytest.raises(ToolError, match="zaten var"):
+    with pytest.raises(ToolError, match="already exists"):
         t.run(ctx, action="copy", path="kopya.txt", destination="arsiv/2026/a.txt")
     t.run(ctx, action="copy", path="kopya.txt", destination="arsiv/2026/a.txt", overwrite=True)
     t.run(ctx, action="copy", path="arsiv", destination="yedek")
     assert (workdir / "yedek" / "2026" / "a.txt").read_text(encoding="utf-8") == "a"
-    with pytest.raises(ToolError, match="kendi içine"):
+    with pytest.raises(ToolError, match="into itself"):
         t.run(ctx, action="move", path="arsiv", destination="arsiv/2026")
 
 
@@ -206,7 +206,7 @@ def test_file_ops_delete_goes_to_trash(ctx, workdir, isolated_home):
     r = FileOps().run(ctx, action="delete", paths=["sil.txt", "klasor"])
     assert not (workdir / "sil.txt").exists() and not (workdir / "klasor").exists()
     trashed = list((isolated_home / "trash").rglob("sil.txt"))
-    assert trashed and trashed[0].read_text(encoding="utf-8") == "veri" and "çöpe" in r.text
+    assert trashed and trashed[0].read_text(encoding="utf-8") == "veri" and "recycle bin" in r.text
     assert ctx.state["checkpoint"][str(workdir / "sil.txt")] == b"veri"
     with pytest.raises(ToolError, match="yok"):
         FileOps().run(ctx, action="delete", path="sil.txt")
@@ -254,7 +254,7 @@ def test_read_pdf_pages(ctx, workdir):
     assert "sayfa 1/3" in out and "Birinci sayfa" in out and "Ucuncu sayfa" in out
     out = ReadFile().run(ctx, path="d.pdf", pages="2").text
     assert "Ikinci sayfa" in out and "Birinci" not in out
-    with pytest.raises(ToolError, match="aralık dışında"):
+    with pytest.raises(ToolError, match="out of range"):
         ReadFile().run(ctx, path="d.pdf", pages="9")
 
 
@@ -264,7 +264,7 @@ def test_read_ipynb(ctx, workdir):
                      "outputs": [{"output_type": "stream", "text": ["1\n"]}]}]}
     (workdir / "n.ipynb").write_text(json.dumps(nb), encoding="utf-8")
     out = ReadFile().run(ctx, path="n.ipynb").text
-    assert "hücre 1 [markdown]" in out and "print(1)" in out and "# çıktı:" in out and "# 1" in out
+    assert "cell 1 [markdown]" in out and "print(1)" in out and "# output:" in out and "# 1" in out
 
 
 # ------------------------------------------------------------------ groups

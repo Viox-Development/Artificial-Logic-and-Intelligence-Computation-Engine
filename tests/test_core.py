@@ -345,12 +345,12 @@ def test_tools(tmp_path, isolated_home):
     assert s.risk_for({"action": "add"}) == "danger"
     assert "pazar 23:00" in s.summary({"action": "add", "cron": "0 23 * * 0", "description": "yedek"})
     out = s.run(ctx, action="add", cron="0 23 * * 0", prompt="yedekle", description="yedek").text
-    assert "görev kuruldu" in out and "çekirdek çalışmıyor" in out
+    assert "task set up" in out and "core is not running" in out
     tid = TaskStore().tasks[0].id
     s.run(ctx, action="run_now", id=tid)
     assert TaskStore().due()[0][0].id == tid
     # remove with an unknown id must fail (it used to return a success result).
-    with pytest.raises(ToolError, match="görev yok"):
+    with pytest.raises(ToolError, match="no task"):
         s.run(ctx, action="remove", id="olmayan-gorev")
     assert s.run(ctx, action="remove", id=tid).text == "silindi"
     assert TaskStore().get(tid) is None

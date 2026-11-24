@@ -26,11 +26,11 @@ def ctx(workdir):
 def test_edit_requires_read_and_fresh_copy(ctx, workdir):
     f = workdir / "a.txt"
     f.write_text("bir\n", encoding="utf-8")
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         EditFile().run(ctx, path="a.txt", old_string="bir", new_string="iki")
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         WriteFile().run(ctx, path="a.txt", content="x")
-    with pytest.raises(ToolError, match="okunmadı"):
+    with pytest.raises(ToolError, match="has not been read"):
         MultiEdit().run(ctx, path="a.txt", edits=[{"old_string": "bir", "new_string": "iki"}])
     ReadFile().run(ctx, path="a.txt")
     EditFile().run(ctx, path="a.txt", old_string="bir", new_string="iki")
@@ -40,7 +40,7 @@ def test_edit_requires_read_and_fresh_copy(ctx, workdir):
     import os
 
     os.utime(f, ns=(time.time_ns(), time.time_ns() + 10_000_000))
-    with pytest.raises(ToolError, match="değişti"):
+    with pytest.raises(ToolError, match="changed on disk"):
         EditFile().run(ctx, path="a.txt", old_string="başkası", new_string="ben")
 
 
@@ -75,7 +75,7 @@ def test_process_wait_reports_exit(ctx):
     out = RunCommand().run(ctx, command=f'{PY} -c "print(1)"', background=True).text
     pid = int(out.split("pid=")[1].split()[0].strip(",):"))
     r = ProcessWait().run(ctx, pid=pid, timeout=20)
-    assert "bitti (kod 0)" in r.text
+    assert "finished (code 0)" in r.text
 
 
 def test_send_file_shows_cards(ctx, workdir):

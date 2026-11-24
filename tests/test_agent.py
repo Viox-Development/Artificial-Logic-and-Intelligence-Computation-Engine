@@ -373,7 +373,7 @@ def test_large_tool_output_is_saved_not_lost(workdir):
     import re
     from pathlib import Path
 
-    path = Path(re.search(r"tam çıktı dosyada: (.+?\.txt)", msg["content"]).group(1))
+    path = Path(re.search(r"full output in file: (.+?\.txt)", msg["content"]).group(1))
     assert "GİZLİ-ORTA" in path.read_text(encoding="utf-8")  # kesilen kısım dosyada duruyor
 
 

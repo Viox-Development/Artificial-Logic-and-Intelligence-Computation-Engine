@@ -9,7 +9,7 @@ from alice import tool_results
 
 
 def _saved_path(shaped: str) -> Path:
-    m = re.search(r"\[tam çıktı dosyada: (.+?) \(\d+ karakter\)", shaped)
+    m = re.search(r"\[full output in file: (.+?) \(\d+ characters\)", shaped)
     assert m, shaped[-300:]
     return Path(m.group(1))
 

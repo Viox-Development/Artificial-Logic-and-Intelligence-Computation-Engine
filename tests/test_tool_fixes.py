@@ -59,10 +59,10 @@ def test_read_offset_past_end_is_error_not_empty(ctx, workdir):
     from alice.tools.base import ToolError
 
     (workdir / "r.txt").write_text("a\nb\nc\n", encoding="utf-8")
-    with pytest.raises(ToolError, match="3 satır"):
+    with pytest.raises(ToolError, match="3 lines"):
         ReadFile().run(ctx, path="r.txt", offset=50)
     (workdir / "e.txt").write_text("", encoding="utf-8")
-    assert "boş dosya" in ReadFile().run(ctx, path="e.txt").text
+    assert "empty file" in ReadFile().run(ctx, path="e.txt").text
 
 
 def _case_insensitive_fs(path) -> bool:
@@ -146,7 +146,7 @@ def test_process_wait_sees_last_line_written_just_before_exit(ctx, workdir):
 
     ctx.state["bg_procs"] = {7: BgProc(7, "x", Pop(), log, 0.0)}
     r = ProcessWait().run(ctx, pid=7, pattern="error", timeout=5)
-    assert "desen göründü" in r.text and "ERROR boom" in r.text
+    assert "pattern seen" in r.text and "ERROR boom" in r.text
 
 
 def test_moved_downloads_folder_is_found(tmp_path, monkeypatch):

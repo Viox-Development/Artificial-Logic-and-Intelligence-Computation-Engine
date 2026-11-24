@@ -86,7 +86,7 @@ def test_home_and_root_are_never_sandbox_areas(workdir, monkeypatch):
 
 def test_on_mode_without_backend_refuses(workdir, monkeypatch):
     fake_backend(monkeypatch, problem="bubblewrap (bwrap) kurulu değil")
-    with pytest.raises(ToolError, match="sandbox kurulamadı"):
+    with pytest.raises(ToolError, match="sandbox could not be set up"):
         TOOLS["run_command"].run(ctx(workdir, sandbox="on"), "echo hi")
 
 

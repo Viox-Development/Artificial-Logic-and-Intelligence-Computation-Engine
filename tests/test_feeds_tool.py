@@ -109,33 +109,33 @@ def test_arac_akis_ekler_listeler_siler(ffile, ctx):
                 title="{personaname} oyuna girdi", body="{gameextrainfo}",
                 when=json.dumps({"fields": {"gameextrainfo": "*"}}), quiet="23:00-08:00",
                 description="Ahmet Steam'de oyuna girince haber ver").text
-    assert "akış eklendi: ahmet_oyun" in out and "ilk tur sessizdir" in out
+    assert "feed added: ahmet_oyun" in out and "first round is silent" in out
     listed = t.run(ctx, action="list").text
     assert "ahmet_oyun" in listed and "değişince: gameextrainfo" in listed and "sessiz 23:00-08:00" in listed
-    assert t.run(ctx, action="disable", name="ahmet_oyun").text == "kapatıldı"
-    assert "(kapalı)" in t.run(ctx, action="list").text
+    assert t.run(ctx, action="disable", name="ahmet_oyun").text == "turned off"
+    assert "(off)" in t.run(ctx, action="list").text
     assert t.run(ctx, action="remove", name="ahmet_oyun").text == "silindi"
-    assert t.run(ctx, action="list").text == "akış yok"
+    assert t.run(ctx, action="list").text == "no feeds"
 
 
 def test_arac_yanlis_baglanti_ve_eksik_parametreyi_soyler(ffile, ctx):
     t = Feeds()
-    with pytest.raises(ToolError, match="bağlantı yok: slack"):
+    with pytest.raises(ToolError, match="no such connection: slack"):
         t.run(ctx, action="add", name="x", connector="slack", connector_action="m")
     with pytest.raises(ToolError, match="Olanlar: .*messages"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="mesajlar")
-    with pytest.raises(ToolError, match="eksik: channel_id"):
+    with pytest.raises(ToolError, match="missing in args for discord.messages: channel_id"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="messages")
-    with pytest.raises(ToolError, match="gönderiyor"):
+    with pytest.raises(ToolError, match="sends something"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="send", args='{"channel_id": "1"}')
-    with pytest.raises(ToolError, match="geçerli JSON değil"):
+    with pytest.raises(ToolError, match="is not valid JSON"):
         t.run(ctx, action="add", name="x", connector="discord", connector_action="messages", args="{bozuk")
     assert not ffile.exists()
 
 
 def test_connectors_sadece_okuyan_eylemleri_alanlariyla_gosterir(ctx):
     out = Feeds().run(ctx, action="connectors").text
-    assert "steam (hazır)" in out and "profile(steamids*)" in out and "gameextrainfo" in out
+    assert "steam (ready)" in out and "profile(steamids*)" in out and "gameextrainfo" in out
     assert "send(" not in out          # a sending action cannot be given to a feed
 
 
@@ -144,7 +144,7 @@ def test_test_action_ornek_ogeleri_gosterir(ctx, monkeypatch):
                         lambda m, act, args, **k: {"response": {"players": [{"personaname": "Ahmet", "steamid": "1"}]}})
     out = Feeds().run(ctx, action="test_action", connector="steam", connector_action="profile",
                       args={"steamids": "1"}).text
-    assert out.startswith("1 öğe") and '"personaname": "Ahmet"' in out
+    assert out.startswith("1 items") and '"personaname": "Ahmet"' in out
 
 
 def test_risk_ajanli_akis_onay_ister():

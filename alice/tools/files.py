@@ -64,8 +64,8 @@ def glob_regex(pattern: str) -> "re.Pattern[str]":
 
 
 def _limit_note(reason: str) -> str:
-    return (f"[ARAMA YARIDA KESİLDİ: {reason}. Sonuç eksik; 'eşleşme yok' aranan şeyin olmadığı anlamına GELMEZ. "
-            "Daha dar bir klasör (path) ya da dosya filtresi (glob) vererek tekrar ara.]\n")
+    return (f"[SEARCH CUT SHORT: {reason}. The result is incomplete; 'no matches' does NOT mean what you searched for isn't there. "
+            "Search again with a narrower folder (path) or a file filter (glob).]\n")
 
 
 def _with_note(body: str, note: str) -> ToolResult:
@@ -158,10 +158,10 @@ def _page_range(pages: str | None, total: int) -> list[int]:
         try:
             lo, hi = int(a), int(b or a)
         except ValueError as e:
-            raise ToolError(f"pages anlaşılamadı: {pages!r} (ör. '3' ya da '1-5')") from e
+            raise ToolError(f"could not understand pages: {pages!r} (e.g. '3' or '1-5')") from e
         out += [i - 1 for i in range(max(lo, 1), min(hi, total) + 1)]
     if not out:
-        raise ToolError(f"pages={pages!r} aralık dışında; PDF {total} sayfa")
+        raise ToolError(f"pages={pages!r} is out of range; the PDF has {total} pages")
     return out
 
 
@@ -180,7 +180,7 @@ def read_pdf(p: Path, pages: str | None, max_chars: int) -> str:
         except ToolError:
             raise
         except Exception as e:  # noqa: BLE001 - corrupt/encrypted PDF
-            raise ToolError(f"PDF okunamadı: {type(e).__name__}: {e}") from e
+            raise ToolError(f"could not read the PDF: {type(e).__name__}: {e}") from e
         text = "\n\n".join(parts)
     elif shutil.which("pdftotext"):
         cmd = ["pdftotext", "-layout"]
@@ -190,14 +190,14 @@ def read_pdf(p: Path, pages: str | None, max_chars: int) -> str:
         r = subprocess.run(cmd + [str(p), "-"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=60, creationflags=NO_WINDOW)
         if r.returncode != 0:
-            raise ToolError(f"pdftotext hatası: {r.stderr.strip()[:300]}")
+            raise ToolError(f"pdftotext error: {r.stderr.strip()[:300]}")
         text = r.stdout
     else:
-        raise ToolError("PDF okumak için pypdf gerekli: run_command ile 'pip install pypdf' çalıştır, sonra tekrar dene")
+        raise ToolError("reading PDFs needs pypdf: run 'pip install pypdf' with run_command, then try again")
     if not text.strip() or not re.sub(r"--- sayfa \d+/\d+ ---", "", text).strip():
-        return f"{p}: PDF'te metin yok (taranmış görüntü olabilir; sayfaları görmek için ekran/görme araçlarını kullan)"
+        return f"{p}: the PDF has no text (it may be a scanned image; use the screen/vision tools to see the pages)"
     if len(text) > max_chars:
-        text = text[:max_chars] + "\n... [kesildi; pages ile daha küçük aralık iste]"
+        text = text[:max_chars] + "\n... [cut; ask for a smaller range with pages]"
     return text
 
 
@@ -208,18 +208,18 @@ def render_notebook(p: Path) -> str:
     try:
         nb = json.loads(_read_text(p))
     except ValueError as e:
-        raise ToolError(f"ipynb okunamadı: {e}") from e
+        raise ToolError(f"could not read the ipynb: {e}") from e
     out: list[str] = []
     for i, cell in enumerate(nb.get("cells") or [], 1):
         src = cell.get("source") or ""
         src = "".join(src) if isinstance(src, list) else str(src)
-        out.append(f"# %% hücre {i} [{cell.get('cell_type', '?')}]")
+        out.append(f"# %% cell {i} [{cell.get('cell_type', '?')}]")
         out += src.splitlines()
         for o in cell.get("outputs") or []:
             txt = o.get("text") or (o.get("data") or {}).get("text/plain") or o.get("evalue") or ""
             txt = "".join(txt) if isinstance(txt, list) else str(txt)
             if txt.strip():
-                out.append("# çıktı:")
+                out.append("# output:")
                 out += [f"# {ln}" for ln in txt.splitlines()[:30]]
     return "\n".join(out)
 
@@ -292,11 +292,11 @@ def require_read(ctx: ToolContext, p: Path) -> None:
     seen = ctx.state.get("read_files", {})
     key = str(p)
     if key not in seen:
-        raise ToolError(f"'{p.name}' ({p}) bu oturumda okunmadı. Önce read_file ile oku, sonra düzenle "
-                        f"(içerik tahmin edilmesin).") 
+        raise ToolError(f"'{p.name}' ({p}) has not been read in this session. Read it with read_file first, then edit "
+                        f"(don't guess the content).") 
     if seen[key] != _stamp(p):
-        raise ToolError(f"'{p.name}' ({p}) okunduktan sonra diskte değişti: read_file'dan bu yana dosyaya yazıldığı için "
-                        f"eski içerik göreli düzenlenemez. Güncel hâlini read_file ile oku, sonra düzenle.")
+        raise ToolError(f"'{p.name}' ({p}) changed on disk after it was read: it was written to since read_file, so it can't be "
+                        f"edited against the old content. Read its current state with read_file, then edit.")
 
 
 def _find_symbol_range(lines: list[str], symbol: str) -> tuple[int, int]:
@@ -327,7 +327,7 @@ def _find_symbol_range(lines: list[str], symbol: str) -> tuple[int, int]:
                 break
 
     if not matches:
-        raise ToolError(f"'{symbol}' sembolü dosyada bulunamadı.")
+        raise ToolError(f"symbol '{symbol}' was not found in the file.")
 
     start_idx = matches[0]
     start_line = lines[start_idx]
@@ -379,7 +379,7 @@ class ReadFile(Tool):
 
     def summary(self, args: dict[str, Any]) -> str:
         s = args.get("symbol")
-        extra = f" [{s}]" if s else (f" (satır {args['offset']}+)" if args.get("offset") else "")
+        extra = f" [{s}]" if s else (f" (line {args['offset']}+)" if args.get("offset") else "")
         return f"{args.get('path', '')}{extra}"[:120]
 
     def run(self, ctx: ToolContext, path: str, offset: int = 1, limit: int = 2000, pages: str | None = None,
@@ -388,11 +388,11 @@ class ReadFile(Tool):
         if not p.exists():
             raise ToolError(f"dosya yok: {p}")
         if p.is_dir():
-            raise ToolError(f"{p} bir klasör, list_dir kullan")
+            raise ToolError(f"{p} is a folder; use list_dir")
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
             from alice.tools.imaging import file_to_png_b64
             mark_read(ctx, p)
-            return ToolResult(f"görüntü: {p}", images=[file_to_png_b64(p, ctx.config.agent.get("screenshot_max_width", 1366))])
+            return ToolResult(f"image: {p}", images=[file_to_png_b64(p, ctx.config.agent.get("screenshot_max_width", 1366))])
         if p.suffix.lower() == ".pdf":
             content = read_pdf(p, pages, int(ctx.config.agent.get("tool_output_chars", 12000)) * 4)
             mark_read(ctx, p)
@@ -405,22 +405,22 @@ class ReadFile(Tool):
         if symbol:
             s_start, s_end = _find_symbol_range(lines, symbol)
             offset, limit = s_start + 1, (s_end - s_start) + 1
-            header = f"[Sembol '{symbol}' okundu (satır {offset}-{s_end + 1})]\n"
+            header = f"[Read symbol '{symbol}' (lines {offset}-{s_end + 1})]\n"
 
         start = max(int(offset or 1), 1)
         limit = max(int(limit or 2000), 1)
         chunk = lines[start - 1:start - 1 + limit]
         if not chunk and lines:
             # It used to say "(boş dosya)" (empty file): the model took a full file for an empty one.
-            raise ToolError(f"offset={start} dosyanın sonunu geçiyor: {p.name} {len(lines)} satır")
+            raise ToolError(f"offset={start} is past the end of the file: {p.name} has {len(lines)} lines")
         body = "\n".join(f"{i:>6}\t{line[:2000]}" for i, line in enumerate(chunk, start))
         more = len(lines) - (start - 1 + len(chunk))
         if more > 0:
-            body += f"\n... ({more} satır daha, offset={start + len(chunk)} ile devam et)"
+            body += f"\n... ({more} more lines; continue with offset={start + len(chunk)})"
         # Count the file as "read" only once its content is actually delivered: if the symbol is not found, it must not be
         # counted (otherwise edit_file would let an agent edit content it never saw).
         mark_read(ctx, p)
-        return ToolResult(header + (body or "(boş dosya)"))
+        return ToolResult(header + (body or "(empty file)"))
 
 
 class WriteFile(Tool):
@@ -453,16 +453,16 @@ class WriteFile(Tool):
         before = _read_text(p) if existed and not _is_binary(p) else ""
         p.write_text(content, encoding="utf-8", newline="")
         mark_read(ctx, p)  # it knows the state it just wrote, so it can edit right after
-        return ToolResult(f"{'güncellendi' if existed else 'oluşturuldu'}: {p} ({len(content.splitlines())} satır)",
+        return ToolResult(f"{'updated' if existed else 'created'}: {p} ({len(content.splitlines())} lines)",
                           diff=make_diff(path, before, content))
 
 
 def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "") -> tuple[str, int]:
     """Apply one change to the text in memory. Raises ToolError if it is not found or ambiguous."""
     if old == new:
-        raise ToolError(f"{where}old_string ve new_string aynı")
+        raise ToolError(f"{where}old_string and new_string are the same")
     if not old:
-        raise ToolError(f"{where}old_string boş olamaz")
+        raise ToolError(f"{where}old_string can't be empty")
     count = text.count(old)
     if count == 0 and "\r\n" in text:
         # Models often send LF for CRLF files.
@@ -475,11 +475,11 @@ def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "
         norm_old = "".join(old.split())
         norm_text = "".join(text.split())
         if norm_old in norm_text:
-            hint = "\n[İPUCU: Metnin kendisi dosyada var, ama boşluk/girinti/tab farkı var. " \
-                   "read_file çıktısındaki satırları birebir (satır numarası hariç) kopyala.]"
+            hint = "\n[HINT: The text itself is in the file, but with different spaces/indentation/tabs. " \
+                   "Copy the lines from the read_file output exactly (without the line numbers).]"
         else:
             hint = _similar_hint(text, old)
-        raise ToolError(f"{where}old_string dosyada bulunamadı. Dosyayı read_file ile tekrar oku ve birebir kopyala.{hint}")
+        raise ToolError(f"{where}old_string was not found in the file. Read the file again with read_file and copy it exactly.{hint}")
     if "\r\n" in text and text.count("\r\n") == text.count("\n") and "\n" in new and "\r\n" not in old:
         # In a CRLF file, when the old text has no line ending, the new text's LFs were not converted and the file
         # kept mixed line endings.
@@ -493,8 +493,8 @@ def _apply_edit(text: str, old: str, new: str, replace_all: bool, where: str = "
         loc = ""
         if where_at:
             shown = ", ".join(map(str, where_at[:5]))
-            loc = f" (satır {shown}{'...' if len(where_at) > 5 else ''})"
-        raise ToolError(f"{where}old_string {count} kez geçiyor{loc}; bağlam ekle ya da replace_all=true kullan")
+            loc = f" (lines {shown}{'...' if len(where_at) > 5 else ''})"
+        raise ToolError(f"{where}old_string occurs {count} times{loc}; add context or use replace_all=true")
     if replace_all:
         return text.replace(old, new), count
     return text.replace(old, new, 1), 1
@@ -521,9 +521,9 @@ def _similar_hint(text: str, old: str) -> str:
     scored.sort(reverse=True)
     top = scored[:3]
     if not top:
-        return "\n[İPUCU: Benzer bir satır da bulunamadı; dosya büyük ölçüde değişmiş. Tüm dosyayı read_file ile oku.]"
-    shown = "\n  ".join(f"{i}. satır: {line[:100]}" for _, i, line in top)
-    return f"\n[İPUCU: Benzer satırlar bulundu:\n  {shown}\n read_file ile güncel satırlara bakıp birebir kopyala.]"
+        return "\n[HINT: No similar line was found either; the file changed a lot. Read the whole file with read_file.]"
+    shown = "\n  ".join(f"line {i}: {line[:100]}" for _, i, line in top)
+    return f"\n[HINT: Similar lines found:\n  {shown}\n Look at the current lines with read_file and copy them exactly.]"
 
 
 class EditFile(Tool):
@@ -559,7 +559,7 @@ class EditFile(Tool):
         snapshot(ctx, p)
         _write_like(p, text)
         mark_read(ctx, p)
-        return ToolResult(f"düzenlendi: {p} ({n} değişiklik)",
+        return ToolResult(f"edited: {p} ({n} changes)",
                           diff=make_diff(path, before.replace("\r\n", "\n"), text.replace("\r\n", "\n")))
 
 
@@ -583,14 +583,14 @@ class MultiEdit(Tool):
     risk = WRITE
 
     def summary(self, args: dict[str, Any]) -> str:
-        return f"{args.get('path')} ({len(args.get('edits') or [])} değişiklik)"
+        return f"{args.get('path')} ({len(args.get('edits') or [])} changes)"
 
     def run(self, ctx: ToolContext, path: str, edits: list[dict[str, Any]]) -> ToolResult:
         p = ctx.resolve(path)
         if not p.is_file():
             raise ToolError(f"dosya yok: {p}")
         if not edits:
-            raise ToolError("edits boş")
+            raise ToolError("edits is empty")
         require_read(ctx, p)
         before = _read_text(p)
         text = before
@@ -604,7 +604,7 @@ class MultiEdit(Tool):
         snapshot(ctx, p)
         _write_like(p, text)
         mark_read(ctx, p)
-        return ToolResult(f"düzenlendi: {p} ({len(edits)} edit, {total} değişiklik)",
+        return ToolResult(f"edited: {p} ({len(edits)} edits, {total} changes)",
                           diff=make_diff(path, before.replace("\r\n", "\n"), text.replace("\r\n", "\n")))
 
 
@@ -667,7 +667,7 @@ class ListDir(Tool):
     def run(self, ctx: ToolContext, path: str = ".", sort: str = "name", limit: int | None = None) -> ToolResult:
         p = known_folder(path) or ctx.resolve(path)
         if not p.is_dir():
-            raise ToolError(f"klasör yok: {p}")
+            raise ToolError(f"folder not found: {p}")
         newest = sort == "newest"
         limit = max(1, min(int(limit or (30 if newest else 500)), 500))
 
@@ -686,9 +686,9 @@ class ListDir(Tool):
                 rows.append(f"{e.name}/{'  (' + when[2:] + ')' if when else ''}" if e.is_dir()
                             else f"{e.name}  ({e.stat().st_size} B{when})")
             except OSError:
-                rows.append(f"{e.name}  (erişilemedi)")
-        more = f"\n... ve {len(entries) - limit} öğe daha" if len(entries) > limit else ""
-        return ToolResult(f"{p}\n" + "\n".join(rows) + more if rows else f"{p} boş")
+                rows.append(f"{e.name}  (not accessible)")
+        more = f"\n... and {len(entries) - limit} more items" if len(entries) > limit else ""
+        return ToolResult(f"{p}\n" + "\n".join(rows) + more if rows else f"{p} is empty")
 
 
 class Glob(Tool):
@@ -721,7 +721,7 @@ class Glob(Tool):
         # into folders to skip (AppData, node_modules). We walk ourselves and check per folder.
         for root, dirs, files in os.walk(base):
             if ctx.cancelled():
-                note = _limit_note("kullanıcı durdurdu")
+                note = _limit_note("stopped by the user")
                 break
             if time.monotonic() > deadline:
                 note = _limit_note(f"{SEARCH_SECONDS:.0f} sn doldu")
@@ -737,7 +737,7 @@ class Glob(Tool):
                 break
         hits.sort(key=lambda x: x.stat().st_mtime if x.exists() else 0, reverse=True)
         out = [str(h.relative_to(base)) for h in hits[:300]]
-        return _with_note("\n".join(out) if out else "eşleşme yok", note)
+        return _with_note("\n".join(out) if out else "no matches", note)
 
 
 class Grep(Tool):
@@ -796,7 +796,7 @@ class Grep(Tool):
                                         MAX_SCAN_LINES)
             if cut:
                 exact_total = False
-                note = note or _limit_note(f"{MAX_SCAN_LINES} eşleşme satırı tarandı")
+                note = note or _limit_note(f"{MAX_SCAN_LINES} matching lines scanned")
         total = len(lines)
         page = lines[offset:offset + max_results]
         scanned = str(base) if base.is_dir() else str(base.parent)
@@ -804,21 +804,21 @@ class Grep(Tool):
         if not page:
             if offset and total:
                 # offset is past the last page: "eşleşme yok" would mislead; there are matches, just not on this page.
-                body = f"bu sayfada sonuç yok ({shown_total} eşleşme satırı var, offset={offset} son sayfayı geçiyor)"
+                body = f"no results on this page ({shown_total} matching lines, offset={offset} is past the last page)"
             else:
-                body = f"eşleşme yok (pattern={pattern!r}"
+                body = f"no matches (pattern={pattern!r}"
                 if glob:
                     body += f", glob={glob!r}"
                 body += f", taranan alan: {scanned})"
                 if glob:
-                    body += ("\n[İPUCU: glob filtresi çok dar olabilir; önce files_with_matches ile dosyaları gör, "
-                             "sonra path ile tek dosyaya bak.]")
+                    body += ("\n[HINT: the glob filter may be too narrow; first see the files with files_with_matches, "
+                             "then look at a single file with path.]")
         else:
             body = "\n".join(page)
             if total > offset + max_results:
-                body += (f"\n... (toplam {shown_total} eşleşme satırından {offset + max_results} tanesi gösteriliyor; "
-                         f"offset={offset + max_results} ile devam et"
-                         + (", ya da path/glob ile aramayı daralt" if base.is_dir() else "")
+                body += (f"\n... (showing {offset + max_results} of {shown_total} matching lines in total; "
+                         f"continue with offset={offset + max_results}"
+                         + (", or narrow the search with path/glob" if base.is_dir() else "")
                          + ")")
         # Grep: reading matches and their surrounding context lines counts as reading the file,
         # so the model can edit the matched lines without an extra read_file step if the file is unchanged.
@@ -856,7 +856,7 @@ class Grep(Tool):
             return [], _limit_note("60 sn doldu")
         if r.returncode == 2 and not r.stdout.strip():
             # rg error (bad regex, missing path): swallowing it as "eşleşme yok" misleads the model.
-            raise ToolError(f"rg hatası: {(r.stderr or '').strip()[:300]}")
+            raise ToolError(f"rg error: {(r.stderr or '').strip()[:300]}")
         lines = [ln[2:] if ln.startswith("./") or ln.startswith(".\\") else ln for ln in r.stdout.splitlines()]
         return lines, ""
 
@@ -868,7 +868,7 @@ class Grep(Tool):
         try:
             rx = re.compile(pattern, flags)
         except re.error as e:
-            raise ToolError(f"geçersiz regex: {e}") from e
+            raise ToolError(f"invalid regex: {e}") from e
         out: list[str] = []
         note = ""
         truncated = False  # if the scan ended early, the match count is an "at least" number
@@ -877,7 +877,7 @@ class Grep(Tool):
         for n, f in enumerate(files):
             if n % 200 == 0:
                 if ctx.cancelled():
-                    note = _limit_note("kullanıcı durdurdu")
+                    note = _limit_note("stopped by the user")
                     truncated = True
                     break
                 if time.monotonic() > deadline:
@@ -885,7 +885,7 @@ class Grep(Tool):
                     truncated = True
                     break
             if n >= SEARCH_MAX_FILES:
-                note = _limit_note(f"{SEARCH_MAX_FILES} dosyaya bakıldı")
+                note = _limit_note(f"looked at {SEARCH_MAX_FILES} files")
                 truncated = True
                 break
             if glob and not _glob_match(f.name, glob, f.relative_to(base).as_posix() if base.is_dir() else f.name):
@@ -1006,15 +1006,15 @@ class FileOps(Tool):
         if action == "mkdir":
             for s in sources:
                 s.mkdir(parents=True, exist_ok=True)
-            return ToolResult("klasör hazır: " + ", ".join(map(str, sources)))
+            return ToolResult("folder ready: " + ", ".join(map(str, sources)))
         missing = [str(s) for s in sources if not s.exists()]
         if missing:
             raise ToolError(f"yok: {', '.join(missing)}")
         if action == "delete":
-            return ToolResult("çöpe taşındı (geri almak için oradan taşı):\n" +
+            return ToolResult("moved to the recycle bin (move it back from there to undo):\n" +
                               "\n".join(f"{s} -> {self._trash(ctx, s)}" for s in sources))
         if not destination:
-            raise ToolError(f"{action} için destination gerekli")
+            raise ToolError(f"{action} needs a destination")
         dest = ctx.resolve(destination)
         given = Path(destination.rstrip("/\\")).name
         if given and given != dest.name and given.lower() == dest.name.lower():
@@ -1025,14 +1025,14 @@ class FileOps(Tool):
         if into_dir and _same_file(sources[0], dest) and len(sources) == 1:
             into_dir = False  # renaming a folder to its own name (case only), not moving it inside itself
         if len(sources) > 1 and dest.exists() and not dest.is_dir():
-            raise ToolError(f"birden fazla kaynak için destination bir klasör olmalı: {dest}")
+            raise ToolError(f"with more than one source, the destination must be a folder: {dest}")
         plan = [(s, dest / s.name if into_dir else dest) for s in sources]
         for s, d in plan:
             case_rename = action == "move" and d.name != s.name and d.parent == s.parent and _same_file(s, d)
             if not case_rename and (d == s or s in d.parents):
-                raise ToolError(f"{s} kendi içine {action} edilemez")
+                raise ToolError(f"{s} can't be {'moved' if action == 'move' else 'copied'} into itself")
             if d.exists() and not overwrite and not case_rename:
-                raise ToolError(f"hedef zaten var: {d} (üzerine yazmak için overwrite=true)")
+                raise ToolError(f"the destination already exists: {d} (overwrite=true to replace it)")
         done = []
         for s, d in plan:
             d.parent.mkdir(parents=True, exist_ok=True)
@@ -1056,7 +1056,7 @@ class FileOps(Tool):
                 else:
                     shutil.copy2(s, d)
             done.append(f"{s} -> {d}")
-        return ToolResult(f"{'taşındı' if action == 'move' else 'kopyalandı'}:\n" + "\n".join(done))
+        return ToolResult(f"{'moved' if action == 'move' else 'copied'}:\n" + "\n".join(done))
 
     @staticmethod
     def _trash(ctx: ToolContext, p: Path) -> Path:
@@ -1101,7 +1101,7 @@ class NotebookEdit(Tool):
     risk = WRITE
 
     def summary(self, args: dict[str, Any]) -> str:
-        return f"{args.get('path')} hücre {args.get('cell')} ({args.get('mode') or 'replace'})"
+        return f"{args.get('path')} cell {args.get('cell')} ({args.get('mode') or 'replace'})"
 
     def run(self, ctx: ToolContext, path: str, cell: int, mode: str = "replace", source: str = "",
             cell_type: str = "") -> ToolResult:
@@ -1109,32 +1109,32 @@ class NotebookEdit(Tool):
 
         p = ctx.resolve(path)
         if p.suffix.lower() != ".ipynb" or not p.is_file():
-            raise ToolError(f"Jupyter defteri bulunamadı: {p}")
+            raise ToolError(f"Jupyter notebook not found: {p}")
         require_read(ctx, p)
         before = _read_text(p)
         try:
             nb = _json.loads(before)
         except ValueError as e:
-            raise ToolError(f"defter okunamadı (bozuk JSON): {e}") from e
+            raise ToolError(f"could not read the notebook (broken JSON): {e}") from e
         cells = nb.get("cells")
         if not isinstance(cells, list):
-            raise ToolError("defterde hücre listesi yok")
+            raise ToolError("the notebook has no cell list")
         n = len(cells)
         lines = source.splitlines(keepends=True)
         if mode == "insert":
             if not 0 <= cell <= n:
-                raise ToolError(f"insert için hücre 0..{n} arasında olmalı")
+                raise ToolError(f"for insert, the cell must be between 0..{n}")
             kind = cell_type or "code"
             new_cell: dict[str, Any] = {"cell_type": kind, "metadata": {}, "source": lines}
             if kind == "code":
                 new_cell.update(execution_count=None, outputs=[])
             cells.insert(cell, new_cell)
-            done = f"hücre {cell} eklendi ({kind})"
+            done = f"cell {cell} added ({kind})"
         elif not 0 <= cell < n:
-            raise ToolError(f"hücre {cell} yok (defterde {n} hücre var, 0..{n - 1})")
+            raise ToolError(f"there is no cell {cell} (the notebook has {n} cells, 0..{n - 1})")
         elif mode == "delete":
             cells.pop(cell)
-            done = f"hücre {cell} silindi"
+            done = f"cell {cell} deleted"
         elif mode == "replace":
             c = cells[cell]
             c["source"] = lines
@@ -1145,14 +1145,14 @@ class NotebookEdit(Tool):
                     c.pop("execution_count", None)
             if c.get("cell_type") == "code":
                 c["outputs"], c["execution_count"] = [], None
-            done = f"hücre {cell} değiştirildi"
+            done = f"cell {cell} replaced"
         else:
             raise ToolError(f"bilinmeyen mode: {mode}")
         snapshot(ctx, p)
         after = _json.dumps(nb, ensure_ascii=False, indent=1) + "\n"
         p.write_text(after, encoding="utf-8", newline="")
         mark_read(ctx, p)
-        return ToolResult(f"{done}: {p} (toplam {len(cells)} hücre)", diff=make_diff(path, before, after))
+        return ToolResult(f"{done}: {p} ({len(cells)} cells in total)", diff=make_diff(path, before, after))
 
 
 TOOLS = [ReadFile(), WriteFile(), EditFile(), MultiEdit(), ListDir(), Glob(), Grep(), FileOps(), NotebookEdit()]

@@ -256,7 +256,7 @@ def test_background_logs_never_share_a_file(workdir, monkeypatch):
 def test_powershell_error_hints():
     from alice.tools.shell import _ps_hint
 
-    assert "${ad}" in _ps_hint('"$p: $r"', "Variable reference is not valid. ':' was not followed by a valid "
+    assert "${name}" in _ps_hint('"$p: $r"', "Variable reference is not valid. ':' was not followed by a valid "
                                            "variable name character.")
     assert "@{" in _ps_hint("$m = @@{ 'a' = 1 }", "Unrecognized token in source text.")
     assert "write_file" in _ps_hint('& python.exe -c "print(d.get(1))"', "SyntaxError: f-string expression")

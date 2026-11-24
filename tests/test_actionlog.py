@@ -85,7 +85,7 @@ def test_arac_ve_bicim(workdir):
 
 
 def test_bos_kayit(workdir):
-    assert ActionLog().run(None).text.startswith("kayıt yok")
+    assert ActionLog().run(None).text.startswith("nothing recorded")
 
 
 def test_buyuyunce_doner(monkeypatch):

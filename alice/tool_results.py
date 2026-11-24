@@ -16,7 +16,8 @@ from pathlib import Path
 
 KEEP_DAYS = 7
 NO_PERSIST = {"read_file"}  # has its own limit; writing it to a file and reading it back would be a loop
-_MARK = "[tam çıktı dosyada:"
+_MARK = "[full output in file:"
+OLD_MARK = "[tam çıktı dosyada:"  # older builds; text already cut by them is not cut again
 _last_sweep = 0.0
 
 
@@ -59,11 +60,11 @@ def shape(text: str, limit: int, call_id: str, tool: str) -> str:
     """If over the limit, save the whole text and return head, tail and file path; otherwise return the text itself."""
     from alice.tools.base import truncate
 
-    if len(text) <= limit or tool in NO_PERSIST or _MARK in text:
+    if len(text) <= limit or tool in NO_PERSIST or _MARK in text or OLD_MARK in text:
         return truncate(text, limit)
     path = save(text, call_id, tool)
     if path is None:
         return truncate(text, limit)
-    note = (f"\n{_MARK} {path} ({len(text)} karakter) - kesilen kısmı read_file (offset/limit) ya da grep ile "
-            "oku; aracı tekrar çalıştırma]")
+    note = (f"\n{_MARK} {path} ({len(text)} characters) - read the cut part with read_file (offset/limit) or grep; "
+            "don't run the tool again]")
     return truncate(text, max(1000, limit - len(note))) + note

@@ -120,7 +120,7 @@ def test_python_reports_its_error(workdir):
 
 
 def test_python_and_command_are_exclusive(workdir):
-    with pytest.raises(ToolError, match="yalnız birini"):
+    with pytest.raises(ToolError, match="only one of"):
         shell.RunCommand().run(_ctx(workdir), command="echo hi", python="print(1)")
     with pytest.raises(ToolError, match="command"):
         shell.RunCommand().run(_ctx(workdir))

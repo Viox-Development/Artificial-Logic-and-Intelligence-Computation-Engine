@@ -61,11 +61,11 @@ class Metrics(Tool):
         if action == "status":
             s = read_state()
             if not s.get("running"):
-                return ToolResult("çekirdek çalışmıyor (başlatmak için: alice core run, kalıcı için: alice core install)")
+                return ToolResult("the core is not running (start it: alice core run; permanently: alice core install)")
             p = s.get("policy", {})
-            return ToolResult(f"çekirdek çalışıyor, mod: {s.get('mode')}{' (elle sabit)' if s.get('forced') else ''}, "
-                              f"en düşük bildirim: {p.get('min_severity')}, ses: {p.get('voice')}, "
-                              f"yerel GPU: {p.get('local_gpu')}")
+            return ToolResult(f"the core is running, mode: {s.get('mode')}{' (pinned by hand)' if s.get('forced') else ''}, "
+                              f"lowest notification: {p.get('min_severity')}, voice: {p.get('voice')}, "
+                              f"local GPU: {p.get('local_gpu')}")
         if action == "health":
             from alice import health_report
 
@@ -82,9 +82,9 @@ class Metrics(Tool):
                 for a, b in st.mode_spans(m, t0, t1):
                     out.append(f"{m}: {datetime.fromtimestamp(a):%d.%m %H:%M} - {datetime.fromtimestamp(b):%H:%M} "
                                f"({(b - a) / 60:.0f} dk)")
-            return ToolResult("\n".join(out) or "bu aralıkta mod kaydı yok")
+            return ToolResult("\n".join(out) or "no mode records in this range")
         if not key:
-            raise ToolError("key gerekli (anahtarları görmek için action=keys)")
+            raise ToolError("key is required (action=keys to see the keys)")
         if action == "stats":
             keys = st.keys(key, since=t0) if any(c in key for c in "*?[") else [key]
             return ToolResult("\n".join(st.stats(k, t0, t1, mode).line() for k in keys[:30]) or "veri yok")
@@ -93,7 +93,7 @@ class Metrics(Tool):
             return ToolResult("veri yok")
         step = max(1, len(pts) // 60)
         rows = [f"{datetime.fromtimestamp(t):%d.%m %H:%M:%S} {v:.1f}" for t, v in pts[::step]]
-        return ToolResult(f"{key}, {len(pts)} ölçüm" + (f" (her {step}. gösteriliyor)" if step > 1 else "") + "\n"
+        return ToolResult(f"{key}, {len(pts)} measurements" + (f" (1 in every {step} shown)" if step > 1 else "") + "\n"
                           + "\n".join(rows))
 
 
@@ -147,7 +147,7 @@ class Rules(Tool):
         if action == "add":
             for req in ("metric", "op", "threshold", "message"):
                 if fields.get(req) in (None, ""):
-                    raise ToolError(f"add için {req} gerekli")
+                    raise ToolError(f"add needs {req}")
             try:
                 rule = Rule.from_dict({**{k: v for k, v in fields.items() if v is not None}, "action": rule_action,
                                        **({"id": id} if id else {})})
@@ -213,17 +213,17 @@ class Schedule(Tool):
 
         ts = TaskStore()
         if action == "list":
-            return ToolResult("\n".join(t.summary() for t in ts.tasks) or "zamanlanmış görev yok")
+            return ToolResult("\n".join(t.summary() for t in ts.tasks) or "no scheduled tasks")
         if action == "add":
             if not cron or not (prompt or project):
-                raise ToolError("add için cron ve prompt (ya da project) gerekli")
+                raise ToolError("add needs cron and prompt (or project)")
             if project:
                 from alice.team_store import list_templates
 
                 names = [str(t.get("name", "")) for t in list_templates()]
                 if project.lower() not in [n.lower() for n in names]:
-                    raise ToolError(f"'{project}' adında proje şablonu yok. Var olanlar: {', '.join(names) or '(yok)'}"
-                                    ". Şablon, Projeler sayfasında bir projenin menüsünden kaydedilir.")
+                    raise ToolError(f"there is no project template called '{project}'. Available: {', '.join(names) or '(none)'}"
+                                    ". A template is saved from a project's menu on the Projects page.")
             try:
                 task = ScheduledTask(cron=cron, prompt=prompt or "", description=description, catch_up=catch_up,
                                      notify=notify, once=bool(once), created=time.time(), project=project or "",
@@ -234,20 +234,20 @@ class Schedule(Tool):
             from alice.core.service import read_state
 
             warn = "" if read_state().get("running") else \
-                "\nUyarı: çekirdek çalışmıyor; görevin çalışması için `alice core install` ya da `alice core run`."
-            return ToolResult(f"görev kuruldu: {task.summary()}{warn}")
+                "\nWarning: the core is not running; for the task to run: `alice core install` or `alice core run`."
+            return ToolResult(f"task set up: {task.summary()}{warn}")
         if not id:
             raise ToolError("id gerekli")
         if action == "remove":
             if not ts.remove(id):  # treat unknown id as an error so the model doesn't think it was deleted
-                raise ToolError(f"görev yok: {id}. Kimlikler için action=list")
+                raise ToolError(f"no task: {id}. action=list for the ids")
             return ToolResult("silindi")
         task = ts.get(id)
         if task is None:
-            raise ToolError(f"görev yok: {id}")
+            raise ToolError(f"no task: {id}")
         task.pending = True
         ts.save()
-        return ToolResult("bir sonraki çekirdek turunda çalışacak")
+        return ToolResult("it will run on the next core tick")
 
 
 def _obj_arg(name: str, v: Any) -> dict[str, Any]:
@@ -261,9 +261,9 @@ def _obj_arg(name: str, v: Any) -> dict[str, Any]:
     try:
         out = json.loads(str(v))
     except ValueError as e:
-        raise ToolError(f"{name} geçerli JSON değil: {e}") from e
+        raise ToolError(f"{name} is not valid JSON: {e}") from e
     if not isinstance(out, dict):
-        raise ToolError(f"{name} bir JSON nesnesi olmalı, ör. {{\"any\": [\"alice\"]}}")
+        raise ToolError(f"{name} must be a JSON object, e.g. {{\"any\": [\"alice\"]}}")
     return out
 
 
@@ -346,34 +346,34 @@ class Feeds(Tool):
 
         if action == "list":
             feeds, errors = load_feeds()
-            lines = [f"{f.name}{'' if f.enabled else ' (kapalı)'}: {f.describe()}" for f in feeds]
-            return ToolResult("\n".join(lines + [f"hata: {e}" for e in errors]) or "akış yok")
+            lines = [f"{f.name}{'' if f.enabled else ' (off)'}: {f.describe()}" for f in feeds]
+            return ToolResult("\n".join(lines + [f"hata: {e}" for e in errors]) or "no feeds")
         if action == "connectors":
             return ToolResult(_connectors_text(ctx))
         if action == "test_action":
             return ToolResult(_test_action(ctx, connector, connector_action, _obj_arg("args", args)))
         if action in ("remove", "enable", "disable", "test") and not name:
-            raise ToolError(f"{action} için name gerekli")
+            raise ToolError(f"{action} needs name")
         if action == "remove":
-            return ToolResult("silindi" if feedfile.remove_feed(name) else f"akış yok: {name}")
+            return ToolResult("silindi" if feedfile.remove_feed(name) else f"no feed: {name}")
         if action in ("enable", "disable"):
             ok = feedfile.set_enabled(name, action == "enable")
-            return ToolResult(("açıldı" if action == "enable" else "kapatıldı") if ok else f"akış yok: {name}")
+            return ToolResult(("turned on" if action == "enable" else "turned off") if ok else f"no feed: {name}")
         if action == "test":
             feed = next((f for f in load_feeds()[0] if f.name == name), None)
             if feed is None:
-                raise ToolError(f"akış yok: {name}")
+                raise ToolError(f"no feed: {name}")
             try:
                 verdicts = FeedMonitor(cfg=ctx.config, decider=ctx.decider).explain(feed)
             except Exception as e:  # noqa: BLE001 - return connection error clearly to the model
-                raise ToolError(f"yoklanamadı: {e}") from e
+                raise ToolError(f"could not poll: {e}") from e
             lines = [f"{'✓' if v.ok else '✗'} {v.title}" + (f" — {v.body}" if v.body else "")
                      + f"  ({v.reason}{', ' + v.severity if v.ok and v.severity != feed.severity else ''})"
                      for v in verdicts[:15]]
-            return ToolResult(f"{sum(v.ok for v in verdicts)}/{len(verdicts)} öğe geçiyor\n" + "\n".join(lines))
+            return ToolResult(f"{sum(v.ok for v in verdicts)}/{len(verdicts)} items pass\n" + "\n".join(lines))
         if action == "add":
             return ToolResult(_add(ctx, name, connector, connector_action, _obj_arg("args", args), fields))
-        raise ToolError(f"bilinmeyen işlem: {action}")
+        raise ToolError(f"unknown action: {action}")
 
 
 def _connectors_text(ctx: ToolContext) -> str:
@@ -383,14 +383,14 @@ def _connectors_text(ctx: ToolContext) -> str:
     out = []
     for m in sorted(discover(ctx.config)[0].values(), key=lambda x: x.name):
         ok, note = ready(m)
-        out.append(f"{m.name} ({'hazır' if ok else note})")
+        out.append(f"{m.name} ({'ready' if ok else note})")
         for a in m.actions.values():
             if a.writes or a.sends:
                 continue  # feed checks read-only actions only
             params = ", ".join(f"{p.name}{'*' if p.required else ''}" for p in a.params.values())
             fields = f" alanlar: {', '.join(a.fields)}" if a.fields else ""
             out.append(f"  - {a.name}({params}): {a.summary}{fields}")
-    return "\n".join(out) or "bağlantı yok"
+    return "\n".join(out) or "no connections"
 
 
 def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, Any]) -> str:
@@ -401,15 +401,15 @@ def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, 
 
     m = discover(ctx.config)[0].get(connector)
     if m is None:
-        raise ToolError(f"bağlantı yok: {connector}")
+        raise ToolError(f"no such connection: {connector}")
     act = m.actions.get(action)
     if act is None:
         raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
     if act.writes or act.sends:
-        raise ToolError(f"{connector}.{action} bir şey değiştiriyor/gönderiyor; akış sadece okuyan eylemleri yoklar")
+        raise ToolError(f"{connector}.{action} changes/sends something; a feed only polls read-only actions")
     ok, note = ready(m)
     if not ok:
-        raise ToolError(f"{m.label} hazır değil: {note}")
+        raise ToolError(f"{m.label} is not ready: {note}")
     try:
         data = call(m, act, args, cache=False)
     except ConnectError as e:
@@ -417,7 +417,7 @@ def _test_action(ctx: ToolContext, connector: str, action: str, args: dict[str, 
     rows = pick(data, act.pick) if act.pick else data
     rows = rows if isinstance(rows, list) else [rows]
     sample = json.dumps(rows[:3], ensure_ascii=False, indent=1)
-    return f"{len(rows)} öğe. İlk {min(3, len(rows))} tanesi (alan adlarını buradan al):\n{sample[:6000]}"
+    return f"{len(rows)} items. The first {min(3, len(rows))} (take the field names from here):\n{sample[:6000]}"
 
 
 def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[str, Any],
@@ -427,18 +427,18 @@ def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[st
     from alice.core import feedfile
 
     if not (name and connector and action):
-        raise ToolError("add için name, connector ve connector_action gerekli")
+        raise ToolError("add needs name, connector and connector_action")
     m = discover(ctx.config)[0].get(connector)
     if m is None:
-        raise ToolError(f"bağlantı yok: {connector}. feeds action=connectors ile bak")
+        raise ToolError(f"no such connection: {connector}. Look with feeds action=connectors")
     act = m.actions.get(action)
     if act is None:
         raise ToolError(f"{connector}: eylem yok: {action}. Olanlar: {', '.join(sorted(m.actions))}")
     if act.writes or act.sends:
-        raise ToolError(f"{connector}.{action} bir şey değiştiriyor/gönderiyor; akışa okuyan bir eylem ver")
+        raise ToolError(f"{connector}.{action} changes/sends something; give the feed a read-only action")
     missing = [p.name for p in act.params.values() if p.required and not str(args.get(p.name, "")).strip()]
     if missing:
-        raise ToolError(f"{connector}.{action} için args içinde eksik: {', '.join(missing)}")
+        raise ToolError(f"missing in args for {connector}.{action}: {', '.join(missing)}")
     feed: dict[str, Any] = {"name": name, "connector": connector, "action": action, "args": args}
     for k in ("every_minutes", "mode", "watch", "id_field", "title", "body", "quiet", "digest_minutes",
               "cooldown_minutes", "severity", "agent", "description"):
@@ -452,9 +452,9 @@ def _add(ctx: ToolContext, name: str, connector: str, action: str, args: dict[st
         feedfile.add_feed(feed)
     except ValueError as e:
         raise ToolError(str(e)) from e
-    hazır = "" if ready(m)[0] else f" Not: {m.label} henüz hazır değil, anahtar eklenince çalışır."
-    return (f"akış eklendi: {name}. Çekirdek çalışırken {feed.get('every_minutes', 10)} dakikada bir yoklanır; "
-            f"ilk tur sessizdir (mevcut öğeler görüldü sayılır).{hazır} Denemek için: feeds action=test name={name}")
+    hazır = "" if ready(m)[0] else f" Note: {m.label} is not ready yet; it works once the key is added."
+    return (f"feed added: {name}. While the core runs it is polled every {feed.get('every_minutes', 10)} minutes; "
+            f"the first round is silent (current items count as seen).{hazır} To try it: feeds action=test name={name}")
 
 
 class ActionLog(Tool):
@@ -476,7 +476,7 @@ class ActionLog(Tool):
 
         since = time.time() - float(hours) * 3600 if hours else 0.0
         rows = actionlog.recent(max(1, min(int(limit), 200)), since)
-        return ToolResult("\n".join(actionlog.format_row(r) for r in rows) or "kayıt yok: kimseye bir şey gönderilmedi")
+        return ToolResult("\n".join(actionlog.format_row(r) for r in rows) or "nothing recorded: nothing was sent to anyone")
 
 
 TOOLS = [Metrics(), Rules(), Schedule(), Feeds(), ActionLog()]

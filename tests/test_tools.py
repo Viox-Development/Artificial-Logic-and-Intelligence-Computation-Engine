@@ -23,7 +23,7 @@ def ctx(workdir):
 def test_read_with_offset_and_cp1254(ctx, workdir):
     (workdir / "t.txt").write_bytes("şğü\n".encode("cp1254") + b"line2\nline3\n")
     out = ReadFile().run(ctx, path="t.txt", offset=2, limit=1).text
-    assert "line2" in out and "line3" not in out and "devam et" in out
+    assert "line2" in out and "line3" not in out and "continue with" in out
     assert "şğü" in ReadFile().run(ctx, path="t.txt").text
 
 
@@ -444,7 +444,7 @@ def test_list_dir_known_folders_and_newest(tmp_path, monkeypatch):
     out = files.ListDir().run(ctx, path="İndirilenler", sort="newest", limit=2).text
     lines = out.splitlines()
     assert lines[0] == str(dl) and lines[1].startswith("yeni.exe") and lines[2].startswith("orta.pdf")
-    assert "1 öğe daha" in out and "." in lines[1].split("(")[1]  # has a date
+    assert "1 more items" in out and "." in lines[1].split("(")[1]  # has a date
     assert files.ListDir().run(ctx, path="downloads").text.splitlines()[1].startswith("eski.zip")  # by name
     (tmp_path / "OneDrive" / "Desktop").mkdir(parents=True)
     assert files.known_folder("Masaüstü") == tmp_path / "OneDrive" / "Desktop"

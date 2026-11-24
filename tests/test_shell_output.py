@@ -31,8 +31,8 @@ def _script(tmp_path: Path, code: str) -> str:
 def test_output_truncated_and_dumped_to_file(ctx, tmp_path):
     res = RunCommand().run(ctx, command=_script(tmp_path, "print('x' * 3000)"), timeout=60)
     assert "karakter kesildi" in res.text
-    assert "tam çıktı dosyada:" in res.text
-    dump = res.text.split("tam çıktı dosyada:")[1].split(" - ")[0].strip()
+    assert "full output in file:" in res.text
+    dump = res.text.split("full output in file:")[1].split(" - ")[0].strip()
     assert Path(dump).exists() and Path(dump).stat().st_size > 2000
 
 
@@ -85,7 +85,7 @@ def test_timeout_kills_console_children(ctx, tmp_path):
     # On timeout, not only the shell but also the hung console child processes must die.
     pidfile = tmp_path / "child.pid"
     res = RunCommand().run(ctx, command=_spawn_sleeper_script(tmp_path, pidfile), timeout=4)
-    assert res.is_error and "ZAMAN AŞIMI" in res.text
+    assert res.is_error and "TIMEOUT" in res.text
     child = int(pidfile.read_text())
     assert _wait_gone(child)
 
@@ -129,4 +129,4 @@ def test_process_output_tail_chars_zero_or_negative_returns_no_output(ctx, tmp_p
     po = ProcessOutput()
     assert po.run(ctx, pid=42, tail_chars=3).text.endswith("SON")
     for n in (0, -5):
-        assert po.run(ctx, pid=42, tail_chars=n).text == "pid=42 bitti (kod 0)"
+        assert po.run(ctx, pid=42, tail_chars=n).text == "pid=42 finished (code 0)"
