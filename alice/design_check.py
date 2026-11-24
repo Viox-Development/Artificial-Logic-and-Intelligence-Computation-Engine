@@ -38,36 +38,36 @@ class Hit:
 
 # (rule, title, fix, minimum number of occurrences before it counts as a problem)
 RULES: dict[str, tuple[str, str, int]] = {
-    "slash_labels": ("Kod/terminal süsü etiketler (\"AETH-SYS // BRİFİNG-01\", \"SEC-02 // ...\")",
-                     "Bölüm üstü etiketleri kaldır ya da sade bir küçük başlık yap (\"Platformlar\"). '//' ve kod "
-                     "numaraları teknik görünmez, şablon gibi görünür.", 2),
-    "prompt_buttons": ("Düğme/bağlantı metni \">\", \"›\", \"→\" ile başlıyor (\"> PLATFORMLARI İNCELE\")",
-                       "Düğme metni düz bir fiil olsun (\"Platformları incele\"); ok gerekiyorsa metnin sonunda küçük "
-                       "bir simge.", 1),
-    "stat_counters": ("Sayaç/istatistik satırı (\"128.400+\", \"%99,2\", \"640+\")",
-                      "Dört sayılık istatistik şeridi en bilinen yapay zekâ kalıbı. Kaldır ya da tek bir sayıyı "
-                      "bir cümlenin içinde, bağlamıyla kullan.", 3),
-    "fake_annotations": ("Sahte teknik notlar (\"ŞEKİL 01\", \"ÇİZİM NO\", \"REV: D\", \"BRİFİNG\")",
-                         "Dekor amaçlı uydurma teknik etiketleri kaldır; görselin yanında gerçekten bilgi veren bir "
-                         "açıklama yaz ya da hiçbir şey yazma.", 2),
-    "glow": ("Neon parlama gölgeleri (0 0 Npx box/text-shadow, drop-shadow)",
-             "Parlama efektlerini kaldır; derinlik gerekiyorsa yumuşak, renksiz, kısa bir gölge ya da hiç.", 2),
-    "gradient_text": ("Gradyanlı yazı (background-clip: text)",
-                      "Başlıkları düz renkle yaz; vurguyu boyut, kalınlık ve boşlukla ver.", 1),
-    "glass": ("Buzlu cam efekti (backdrop-filter: blur) çok yerde",
-              "Buzlu cam en fazla sabit üst menüde; kartlarda ve bölümlerde kaldır.", 2),
-    "techno_bg": ("Izgara/tarama çizgisi/radar/parçacık arka planları",
-                  "Süs arka planlarını kaldır; düz yüzey, güçlü fotoğraf ya da tipografi kullan.", 2),
-    "uppercase": ("Her yerde BÜYÜK HARF ve geniş harf aralığı",
-                  "Büyük harf + harf aralığını 1-2 küçük yerle sınırla; metnin çoğu normal yazılsın.", 10),
-    "mono_font": ("Arayüzde her yerde monospace yazı tipi",
-                  "Mono yazı tipi sadece gerçek kod/veri için; başlık, etiket ve düğmelerde normal yazı tipi.", 5),
-    "buzzwords": ("Boş slogan ve klişe sözcükler (\"Geleceği şekillendiren\", \"üstünlük\", \"yeni nesil\")",
-                  "Sloganları somut cümlelerle değiştir: kim, ne yapıyor, neyi farklı yapıyor (bir bilgi, bir "
-                  "rakam, bir örnek).", 3),
-    "emoji": ("Simge yerine emoji", "Emojileri kaldır; gerekirse tek tip, ince çizgili SVG simgeler.", 2),
-    "ticker": ("Kayan yazı / daktilo efekti / yanıp sönen imleç",
-               "Kayan bant ve daktilo efektlerini kaldır; metin sabit dursun.", 1),
+    "slash_labels": ("Code/terminal-style decorative labels (\"AETH-SYS // BRIEFING-01\", \"SEC-02 // ...\")",
+                     "Remove the labels above sections, or make them a plain small heading (\"Platforms\"). '//' and code "
+                     "numbers don't look technical, they look like a template.", 2),
+    "prompt_buttons": ("Button/link text starts with \">\", \"›\", \"→\" (\"> EXPLORE PLATFORMS\")",
+                       "Make the button text a plain verb (\"Explore platforms\"); if an arrow is needed, a small icon at "
+                       "the end of the text.", 1),
+    "stat_counters": ("Counter/statistics row (\"128,400+\", \"99.2%\", \"640+\")",
+                      "A strip of four statistics is the best-known AI pattern. Remove it, or use a single number "
+                      "inside a sentence, with its context.", 3),
+    "fake_annotations": ("Fake technical notes (\"FIG. 01\", \"DRAWING NO\", \"REV: D\", \"BRIEFING\")",
+                         "Remove made-up technical labels used as decoration; write a caption that actually informs "
+                         "next to the image, or write nothing.", 2),
+    "glow": ("Neon glow shadows (0 0 Npx box/text-shadow, drop-shadow)",
+             "Remove the glow effects; if depth is needed, a soft, colourless, short shadow, or none.", 2),
+    "gradient_text": ("Gradient text (background-clip: text)",
+                      "Write headings in a solid colour; give emphasis with size, weight and spacing.", 1),
+    "glass": ("Frosted glass effect (backdrop-filter: blur) in many places",
+              "Frosted glass at most on a fixed top menu; remove it from cards and sections.", 2),
+    "techno_bg": ("Grid/scan-line/radar/particle backgrounds",
+                  "Remove decorative backgrounds; use a plain surface, a strong photo or typography.", 2),
+    "uppercase": ("UPPERCASE with wide letter spacing everywhere",
+                  "Limit uppercase + letter spacing to 1-2 small places; most text should be written normally.", 10),
+    "mono_font": ("Monospace font everywhere in the interface",
+                  "A mono font only for real code/data; a normal font for headings, labels and buttons.", 5),
+    "buzzwords": ("Empty slogans and cliché words (\"shaping the future\", \"superiority\", \"next-gen\")",
+                  "Replace slogans with concrete sentences: who, what they do, what they do differently (a fact, a "
+                  "number, an example).", 3),
+    "emoji": ("Emoji instead of icons", "Remove the emoji; if needed, consistent thin-line SVG icons.", 2),
+    "ticker": ("Scrolling text / typewriter effect / blinking cursor",
+               "Remove scrolling bands and typewriter effects; let the text stay still.", 1),
 }
 
 _SLASH = re.compile(r"(?<![:/\w])[A-ZÇĞİÖŞÜ0-9][A-ZÇĞİÖŞÜ0-9.\-_]{1,}\s+//\s+[A-ZÇĞİÖŞÜ0-9]", re.U)
@@ -132,7 +132,7 @@ def _files(root: Path) -> list[Path]:
 
 def lint(root: Path) -> list[Hit]:
     """Count the patterns on the site. Returns the rules over the threshold (most frequent first)."""
-    hits = {k: Hit(k, t, f) for k, (t, f, _) in RULES.items()}
+    hits = {k: Hit(k, t, f) for k, (t, f, _n) in RULES.items()}
     root = Path(root)
     counter_js = False
     for p in _files(root):
@@ -186,7 +186,7 @@ def report(hits: list[Hit], limit: int = 8) -> str:
     rows = []
     for h in hits[:limit]:
         ex = "; ".join(h.examples[:3])
-        rows.append(f"- {h.title} — {h.count} yerde. Örnek: {ex}\n  Düzelt: {h.fix}")
+        rows.append(f"- {h.title} — in {h.count} places. Example: {ex}\n  Fix: {h.fix}")
     return "\n".join(rows)
 
 

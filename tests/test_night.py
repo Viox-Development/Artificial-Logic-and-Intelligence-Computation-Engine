@@ -52,7 +52,7 @@ def test_false_wakes_from_voice_log():
 def test_crashes_group_traceback_last_lines():
     tb = "Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\n    f()\nValueError: kötü\n"
     found = night.crashes(tb * 3 + tb.replace("ValueError: kötü", "KeyError: 'a'"))
-    assert [(f.title, f.count) for f in found] == [("Tekrarlayan çökme: ValueError: kötü", 3)]
+    assert [(f.title, f.count) for f in found] == [("Repeated crash: ValueError: kötü", 3)]
 
 
 def test_insights_short_flights_after_late_nights():
@@ -66,7 +66,7 @@ def test_insights_short_flights_after_late_nights():
             prev_late = (day - 1) % 2 == 0 and day > 1
             flights.append({"start_wall": ts(day, 19, k * 10), "duration_s": 120 if prev_late else 360})
     out = night.insights(flights)
-    assert out and out[0].startswith("Gece 1'den sonra oynadığın günlerin ertesinde uçuşların ortalama")
+    assert out and out[0].startswith("On days after you played past 1:00, your flights last")
     assert night.insights(flights[:5]) == []  # little data: no connection is invented
 
 
@@ -80,15 +80,15 @@ def test_run_writes_report_and_morning_flow(tmp_path, monkeypatch):
     assert r is not None and r["findings"][0]["kind"] == "noisy"
     assert night.maybe_run(st, None, now=now + 600, flights=[], **kw) is None  # once per night
     md = (night.reports_dir() / "2026-10-30.md").read_text(encoding="utf-8")
-    assert "# Gece raporu: 2026-10-30" in md and "Öneri:" in md
-    assert st.added[0][1] == "Gece raporu hazır"
+    assert "# Night report: 2026-10-30" in md and "Suggestion:" in md
+    assert st.added[0][1] == "Night report ready"
 
     said = []
     assert not night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 7))  # not before 8 a.m.
     assert not night.maybe_tell(lambda t, b: False, now=ts(30, 9))  # silenced in flight mode: does not count as told
     assert night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 9, 10))
     assert not night.maybe_tell(lambda t, b: said.append(b) or True, now=ts(30, 10))
-    assert len(said) == 1 and said[0].startswith("Gece 1 şey buldum") and "Düzeltmeyi deneyeyim mi?" in said[0]
+    assert len(said) == 1 and said[0].startswith("I found 1 things overnight") and "Shall I try to fix them?" in said[0]
     assert json.loads((night.reports_dir() / "2026-10-30.json").read_text(encoding="utf-8"))["date"] == "2026-10-30"
 
 
@@ -109,7 +109,7 @@ def test_failed_night_is_retried_three_times(monkeypatch):
 
 
 def test_render_when_all_is_well():
-    assert "Her şey yolunda" in night.render({"date": "x", "findings": [], "insights": [], "tomorrow": []})
+    assert "Everything looks fine" in night.render({"date": "x", "findings": [], "insights": [], "tomorrow": []})
     assert night.morning_text({"findings": [], "insights": [], "tomorrow": []}) == ""
 
 
@@ -152,10 +152,10 @@ def test_struggles_find_loops_repeated_keys_interrupts_and_frustration(tmp_path)
             {"role": "user", "content": "napayım boş boş takılmaca aq"}]  # everyday chat: not counted
     (tmp_path / "s.json").write_text(json.dumps({"messages": msgs}), encoding="utf-8")
     titles = [f.title for f in night.struggles(tmp_path, 0)]
-    assert "Aynı adımı tekrarladı: reflex" in titles
-    assert "Ekran işinde aynı adım 4 kez: pressed enter" in titles
-    assert "Kullanıcı işi yarıda kesti" in titles
-    assert any(t.startswith("Kullanıcı memnun kalmadı: \"yine saçmaladın") for t in titles)
+    assert "Repeated the same step: reflex" in titles
+    assert "The same step 4 times in a screen task: pressed enter" in titles
+    assert "The user stopped the job halfway" in titles
+    assert any(t.startswith("The user wasn't happy: \"yine saçmaladın") for t in titles)
     assert not any("takılmaca" in t for t in titles)
 
 

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 from alice.session import is_stopped
 
 NIGHT_HOURS = (3, 7)        # between these hours, once per night
@@ -110,7 +111,7 @@ def repeated_errors(events: list[Any]) -> list[Finding]:
             break
         e = sample[key]
         out.append(Finding("error", e.title, (e.body or "")[:240], n,
-                           "Hatanın kaynağını bulup düzelteyim ya da gereksizse kaydını kapatayım."))
+                           _("I'll find and fix the cause of the error, or turn off its logging if it's unnecessary.")))
     return out
 
 
@@ -133,9 +134,10 @@ def noisy_callouts(events: list[Any]) -> list[Finding]:
                 j += 1
             worst = max(worst, i - j + 1)
         if worst >= NOISY_COUNT:
-            out.append(Finding("noisy", f"Çok tekrarlanan anons: \"{text[key][:70]}\"",
-                               f"10 dakikada {worst} kez, gün boyunca {len(ts)} kez.", worst,
-                               "Bu anonsun tekrar süresini uzatayım ya da sadece HUD'da göstereyim."))
+            out.append(Finding("noisy", _("Callout repeated too often: \"{text}\"", text=text[key][:70]),
+                               _("{worst} times in 10 minutes, {total} times over the day.", worst=worst,
+                                 total=len(ts)), worst,
+                               _("I'll lengthen this callout's repeat time, or show it only on the HUD.")))
     return sorted(out, key=lambda f: -f.count)
 
 
@@ -153,8 +155,10 @@ def false_wakes(lines: list[str], day: str) -> Finding | None:
             examples.append(f"\"{said[:40]}\"")
     if n < FALSE_WAKES:
         return None
-    return Finding("wake", f"{n} yanlış uyanma", "Örnek: " + ", ".join(examples) if examples else "", n,
-                   "Uyandırma eşiğini biraz yükselteyim ya da bu cümleleri ses modeline yanlış örnek olarak vereyim.")
+    return Finding("wake", _("{n} false wake-ups", n=n),
+                   _("Example: {examples}", examples=", ".join(examples)) if examples else "", n,
+                   _("I'll raise the wake threshold a little, or give these sentences to the voice model as negative "
+                     "examples."))
 
 
 def broken_tools() -> list[Finding]:
@@ -164,8 +168,8 @@ def broken_tools() -> list[Finding]:
         reg = selftools.load_registry()
     except Exception:  # noqa: BLE001
         return []
-    return [Finding("tool", f"Kendi yazdığım araç kapandı: {n}", i.get("last_error", ""), int(i.get("errors", 0)),
-                    "Aracı düzeltip testini yeniden kum havuzunda koşayım ya da kaldırayım.")
+    return [Finding("tool", _("A tool I wrote was disabled: {name}", name=n), i.get("last_error", ""),
+                    int(i.get("errors", 0)), _("I'll fix the tool and rerun its test in the sandbox, or remove it."))
             for n, i in reg.items() if i.get("disabled") and not i.get("removed")]
 
 
@@ -176,8 +180,8 @@ def crashes(log_text: str) -> list[Finding]:
     out = []
     for line, n in Counter(x[:160] for x in last).most_common(3):
         if n >= 2:
-            out.append(Finding("crash", f"Tekrarlayan çökme: {line[:90]}", "", n,
-                               "Hata yığınına bakıp kaynağını düzelteyim."))
+            out.append(Finding("crash", _("Repeated crash: {line}", line=line[:90]), "", n,
+                               _("I'll look at the traceback and fix the cause.")))
     return out
 
 
@@ -188,9 +192,9 @@ def thread_deaths(log_text: str) -> list[Finding]:
                       r"[^\n]*)", log_text)
     out = []
     for (name, err), n in Counter((t, e[:140]) for t, e in hits).most_common(5):
-        out.append(Finding("crash", f"Arka plan işi öldü: {name} ({err[:70]})", err, n,
-                           "O özellik ALICE yeniden başlatılana kadar çalışmadı. Hata yığınına bakıp kaynağını "
-                           "düzelteyim ve iş parçacığı bir daha kalıcı ölmesin."))
+        out.append(Finding("crash", _("A background thread died: {name} ({error})", name=name, error=err[:70]), err, n,
+                           _("That feature didn't work until ALICE was restarted. I'll look at the traceback, fix the "
+                             "cause, and keep the thread from dying for good again.")))
     return out
 
 
@@ -229,10 +233,10 @@ def struggles(sessions: Path | None, since: float) -> list[Finding]:
                 x.get("text", "") for x in content or [] if isinstance(x, dict))
             if role == "user" and not m.get("_nudge") and not m.get("_image") and not text.startswith("["):
                 if FRUSTRATION.search(text) and prev_ask:
-                    out.append(Finding("stuck", f"Kullanıcı memnun kalmadı: \"{text[:60]}\"",
-                                       f"Önceki istek: \"{prev_ask[:120]}\"", 1,
-                                       "O turdaki araç adımlarına bakıp nerede yanlış gittiğini bulayım ve genel bir "
-                                       "düzeltme önereyim (sadece o işe özel yama değil)."))
+                    out.append(Finding("stuck", _("The user wasn't happy: \"{text}\"", text=text[:60]),
+                                       _("Previous request: \"{request}\"", request=prev_ask[:120]), 1,
+                                       _("I'll look at that turn's tool steps, find where it went wrong and "
+                                         "suggest a general fix (not a patch for that one job).")))
                 prev_ask = ask or text
                 ask, calls = text, Counter()
             elif role == "assistant":
@@ -241,23 +245,25 @@ def struggles(sessions: Path | None, since: float) -> list[Finding]:
                     key = f"{fn.get('name')}({str(fn.get('arguments') or '')[:120]})"
                     calls[key] += 1
                     if calls[key] == STUCK_REPEAT:
-                        out.append(Finding("stuck", f"Aynı adımı tekrarladı: {fn.get('name')}",
-                                           f"İstek: \"{ask[:100]}\"; çağrı: {key[:140]}", STUCK_REPEAT,
-                                           "Neden ilerleyemediğine bakıp bu durumda başka yol deneyecek genel bir kural "
-                                           "ekleyeyim."))
+                        out.append(Finding("stuck", _("Repeated the same step: {tool}", tool=fn.get("name")),
+                                           _("Request: \"{request}\"; call: {call}", request=ask[:100],
+                                             call=key[:140]), STUCK_REPEAT,
+                                           _("I'll look at why it couldn't move on and add a general rule to try "
+                                             "another way in this situation.")))
             elif role == "tool":
                 steps = Counter(s.strip() for s in re.findall(
                     r"\d+\. ((?:pressed|clicked|typed|right-clicked|double-clicked) .{1,40}?)(?=\s*(?:\(|\||\n|\d+\. |$))",
                     text))
                 for step, n in steps.items():
                     if n >= STUCK_STEPS:
-                        out.append(Finding("stuck", f"Ekran işinde aynı adım {n} kez: {step.strip()[:40]}",
-                                           f"İstek: \"{ask[:100]}\"", n,
-                                           "Ekranda beklenmedik bir pencere ya da hata olabilir; ekran işinin bu "
-                                           "durumda durup ne gördüğünü söylemesini sağlayayım."))
+                        out.append(Finding("stuck", _("The same step {n} times in a screen task: {step}", n=n,
+                                             step=step.strip()[:40]),
+                                           _("Request: \"{request}\"", request=ask[:100]), n,
+                                           _("There may be an unexpected window or error on screen; I'll make the "
+                                             "screen task stop in this case and say what it sees.")))
                 if is_stopped(text):
-                    out.append(Finding("stuck", "Kullanıcı işi yarıda kesti", f"İstek: \"{ask[:120]}\"", 1,
-                                       "Kesilmeden önceki adımlara bakıp neyin yanlış gittiğini bulayım."))
+                    out.append(Finding("stuck", _("The user stopped the job halfway"), _("Request: \"{request}\"", request=ask[:120]),
+                                       1, _("I'll look at the steps before it was stopped and find what went wrong.")))
     # merge the same finding if it was found more than once
     merged: dict[str, Finding] = {}
     for x in out:
@@ -308,21 +314,21 @@ def insights(flights: list[dict[str, Any]]) -> list[str]:
     if days_late >= MIN_DAYS and days_normal >= MIN_DAYS:
         a, b = avg_min(after_late), avg_min(after_normal)
         if b >= a * 1.25:
-            out.append(f"Gece {LATE_HOUR}'den sonra oynadığın günlerin ertesinde uçuşların ortalama {a:.1f} dakika "
-                       f"sürüyor, diğer günlerde {b:.1f}: yorgunken daha çabuk düşüyorsun.")
+            out.append(_("On days after you played past {hour}:00, your flights last {a} minutes on average, {b} on other "
+                         "days: you crash sooner when tired.", hour=LATE_HOUR, a=f"{a:.1f}", b=f"{b:.1f}"))
         elif a >= b * 1.25:
-            out.append(f"İlginç: geç oynadığın gecelerin ertesinde uçuşların daha uzun sürüyor ({a:.1f} dk, diğer "
-                       f"günlerde {b:.1f}).")
+            out.append(_("Interesting: after nights you played late, your flights last longer ({a} min, {b} on other days).",
+                         a=f"{a:.1f}", b=f"{b:.1f}"))
     buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for f in fs:
         h = datetime.fromtimestamp(float(f["start_wall"])).hour
-        buckets["gece 1-6" if 1 <= h < 6 else "akşam 18-1" if h >= 18 or h < 1 else "gündüz"].append(f)
+        buckets[_("night 1-6") if 1 <= h < 6 else _("evening 18-1") if h >= 18 or h < 1 else _("daytime")].append(f)
     mins = {k: avg_min(v) for k, v in buckets.items() if len(v) >= 10}
     if len(mins) >= 2:
         hi, lo = max(mins, key=mins.__getitem__), min(mins, key=mins.__getitem__)
         if mins[hi] >= mins[lo] * 1.25:
-            out.append(f"Uçuşların {lo} saatlerinde ortalama {mins[lo]:.1f} dakika sürüyor, {hi} saatlerinde "
-                       f"{mins[hi]:.1f}.")
+            out.append(_("Your flights last {lo_min} minutes on average in the {lo} hours, {hi_min} in the {hi} hours.",
+                         lo=lo, lo_min=f"{mins[lo]:.1f}", hi=hi, hi_min=f"{mins[hi]:.1f}"))
     return out
 
 
@@ -385,19 +391,19 @@ def run(store: Any, mem: Any = None, now: float | None = None, flights: list[dic
 
 
 def render(r: dict[str, Any]) -> str:
-    lines = [f"# Gece raporu: {r['date']}", ""]
+    lines = [_("# Night report: {date}", date=r["date"]), ""]
     if r["findings"]:
-        lines += ["## Bulduklarım", ""]
+        lines += [_("## What I found"), ""]
         for i, f in enumerate(r["findings"], 1):
             lines.append(f"{i}. **{f['title']}** ({f['count']}). {f['detail']}".rstrip())
-            lines.append(f"   Öneri: {f['suggestion']}")
+            lines.append(_("   Suggestion: {text}", text=f["suggestion"]))
         lines.append("")
     if r["insights"]:
-        lines += ["## Bağlantılar", ""] + [f"- {x}" for x in r["insights"]] + [""]
+        lines += [_("## Connections"), ""] + [f"- {x}" for x in r["insights"]] + [""]
     if r["tomorrow"]:
-        lines += ["## Yarın", ""] + [f"- {x}" for x in r["tomorrow"]] + [""]
+        lines += [_("## Tomorrow"), ""] + [f"- {x}" for x in r["tomorrow"]] + [""]
     if len(lines) == 2:
-        lines.append("Her şey yolunda görünüyor.")
+        lines.append(_("Everything looks fine."))
     return "\n".join(lines) + "\n"
 
 
@@ -406,11 +412,11 @@ def morning_text(r: dict[str, Any]) -> str:
     fs = r.get("findings") or []
     if fs:
         names = "; ".join(f["title"] for f in fs[:3])
-        parts.append(f"Gece {len(fs)} şey buldum: {names}. Düzeltmeyi deneyeyim mi?")
+        parts.append(_("I found {n} things overnight: {names}. Shall I try to fix them?", n=len(fs), names=names))
     if r.get("insights"):
         parts.append(r["insights"][0])
     if r.get("tomorrow"):
-        parts.append("Bugün: " + "; ".join(r["tomorrow"][:2]) + ".")
+        parts.append(_("Today: {items}.", items="; ".join(r["tomorrow"][:2])))
     return " ".join(parts)
 
 
@@ -430,7 +436,7 @@ def maybe_run(store: Any, mem: Any, now: float | None = None, **kw: Any) -> dict
         _save_state(tried=day, tries=tries, **({"ran": day} if tries >= 3 else {}))
         raise
     _save_state(ran=day)
-    store.add_event("info", "Gece raporu hazır", report["path"], "info", "night")
+    store.add_event("info", _("Night report ready"), report["path"], "info", "night")
     return report
 
 

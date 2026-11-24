@@ -27,7 +27,7 @@ def test_lint_finds_ai_template_patterns(tmp_path):
     rules = {h.rule for h in lint(tmp_path)}
     assert {"slash_labels", "prompt_buttons", "stat_counters", "fake_annotations", "buzzwords"} <= rules
     text = report(lint(tmp_path))
-    assert "Düzelt:" in text and "index.html" in text
+    assert "Fix:" in text and "index.html" in text
 
 
 def test_lint_is_quiet_on_a_plain_site(tmp_path):
