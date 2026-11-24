@@ -20,18 +20,20 @@ MAX_DOC = 40_000
 NO_CHANGE = "DEĞİŞİKLİK YOK"
 _lock = threading.Lock()
 
-PROMPT = """Bir "sihirli belge"yi güncel tutuyorsun. Belge başlığı: {title}
+PROMPT = """You keep a "magic doc" up to date. Document title: {title}
 {purpose}
-Aşağıda belgenin şu anki hâli ve son konuşma var. Konuşmada bu belgenin konusuyla ilgili KALICI yeni bilgi varsa
-(karar, öğrenilen gerçek, değişen adım, çözülen sorun) belgeyi güncelle: yerine yaz, eskiyen bilgiyi düzelt, tekrar
-etme, belgenin düzenini koru, kısa ve net yaz. Geçici ayrıntıları, sohbeti ve tahminleri ekleme.
-Güncelleme gerekmiyorsa yalnız şunu yaz: {no_change}
-Gerekiyorsa belgenin TAM yeni hâlini yaz (ilk satır aynen "# MAGIC DOC: {title}" olmalı), başka hiçbir şey yazma.
+Below are the document as it is now and the latest conversation. If the conversation has LASTING new information on
+this document's subject (a decision, a fact learned, a changed step, a solved problem), update the document: write it
+in place, correct what is outdated, don't repeat, keep the document's structure, write short and clear. Don't add
+passing details, chat or guesses. Keep the document's language.
+If no update is needed, write only this: {no_change}
+If one is needed, write the document's FULL new version (the first line must be exactly "# MAGIC DOC: {title}") and
+nothing else.
 
-# Belgenin şu anki hâli
+# The document now
 {doc}
 
-# Son konuşma
+# Latest conversation
 {talk}"""
 
 
@@ -98,7 +100,7 @@ def update(state: dict[str, Any], router: Any, messages: list[dict[str, Any]], n
         lines = doc.splitlines()
         purpose = ""
         if len(lines) > 1 and re.fullmatch(r"\s*[_*].+[_*]\s*", lines[1] or ""):
-            purpose = "Belgenin amacı: " + lines[1].strip(" _*")
+            purpose = "The document's purpose: " + lines[1].strip(" _*")
         prompt = PROMPT.format(title=title, purpose=purpose, no_change=NO_CHANGE, doc=doc, talk=talk)
         try:
             res = router.chat(role, [{"role": "user", "content": prompt}], max_tokens=6000)

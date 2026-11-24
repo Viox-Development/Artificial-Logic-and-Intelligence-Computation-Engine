@@ -25,19 +25,22 @@ QUERY = ('newer_than:3d -category:promotions -category:social (fatura OR "son ö
          'abonelik OR ödev OR teslim OR sınav OR vize OR final OR staj OR mülakat OR görüşme OR başvuru OR deadline '
          'OR "due date")')
 
-PROMPT = """Bu e-postada kullanıcının kaçırmaması gereken bir TARİH var mı? Sadece mailde açıkça yazan tarihi al, \
-tahmin etme. Bugün: {today}.
-Türler:
-- "bill": kullanıcının KENDİSİNİN ödemesi gereken fatura ya da kredi kartı ekstresi (son ödeme tarihi)
-- "date": ödev/proje teslimi, sınav, staj ya da iş görüşmesi, başvuru son günü, randevu
-- "none": reklam, bülten, tarihsiz bilgi, geçmiş tarih, ödeme makbuzu/"ödemeniz alındı", kartdan OTOMATİK çekilen abonelik yenilemesi (YouTube Premium, Claude, Netflix gibi: kullanıcı bir şey yapmayacak)
-Tarih biçimi: İngilizce mailde "11/04/2026" ay/gün (4 Kasım) olabilir; ayı yazıyla geçen tarihi tercih et, emin değilsen "none".
-Sadece JSON yaz: {{"kind": "bill|date|none", "title": "kısa ad, ör. 'Turkcell faturası' ya da 'Algoritma ödevi \
-teslimi'", "due": "YYYY-MM-DD ya da YYYY-MM-DDTHH:MM", "amount": "349,90 TL ya da null"}}
+PROMPT = """Does this email contain a DATE the user must not miss? Take only a date written plainly in the email, \
+don't guess. Today: {today}.
+Kinds:
+- "bill": a bill or credit card statement the user must pay THEMSELF (due date)
+- "date": homework/project deadline, exam, internship or job interview, application deadline, appointment
+- "none": ads, newsletters, information without a date, a past date, a payment receipt ("ödemeniz alındı" / payment \
+received), a subscription renewal charged to the card AUTOMATICALLY (like YouTube Premium, Claude, Netflix: the user \
+does not have to do anything)
+Date format: in an English email "11/04/2026" may be month/day (4 November); prefer a date with the month written \
+out, and if unsure, "none".
+Write only JSON: {{"kind": "bill|date|none", "title": "a short Turkish name, e.g. 'Turkcell faturası' or 'Algoritma \
+ödevi teslimi'", "due": "YYYY-MM-DD or YYYY-MM-DDTHH:MM", "amount": "349,90 TL or null"}}
 
-Gönderen: {sender}
-Konu: {subject}
-Metin:
+Sender: {sender}
+Subject: {subject}
+Text:
 {body}"""
 
 
