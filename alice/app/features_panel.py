@@ -71,6 +71,9 @@ class FeaturesPanel:
             features.set_wizard_state(lang=lang)
             self.cfg.data.setdefault("ui", {})["language"] = lang
             set_config_value("ui", "language", lang)
+            from alice.i18n import set_language
+
+            set_language(lang)  # texts built in this process (CLI, notifications) follow at once
             return {"ok": True}
         if action == "key":
             key, value = str(d.get("key", "")), str(d.get("value", "")).strip()

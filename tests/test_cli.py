@@ -155,7 +155,7 @@ def test_check_ready_warns_when_no_api_keys(isolated_home, capsys, monkeypatch):
         return
     assert cli._check_ready(router)
     out = capsys.readouterr().out
-    assert "Hiç API anahtarı yok" in out and "GEMINI_API_KEY" in out
+    assert "No API key at all" in out and "GEMINI_API_KEY" in out
 
 
 def test_reflex_rejects_bad_input_before_starting(capsys):
