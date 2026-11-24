@@ -105,9 +105,13 @@ def scripted(state):
                     "rapor: src/api.py yazıldı"][min(n, 1)]
         if me == "tests":
             state.setdefault("tests_started_after", state.get("backend_done", False))
+            # The lead's answer can land before team_wait (delivered after the tool step as a "[takım mesajı]" user
+            # message) or during it (as the tool result). If it is already here, don't sit out the whole wait.
+            answered = any(m["role"] == "user" and "negatif tutar reddedilsin" in str(m.get("content"))
+                           for m in messages[1:])
             return [tool_call("write_file", {"path": "src/api.py", "content": "bozuk"}),
                     tool_call("team_send", {"to": "alice", "text": "negatif tutar reddedilsin mi?"}, "c2"),
-                    tool_call("team_wait", {"seconds": 20}, "c3"),
+                    tool_call("team_wait", {"seconds": 1 if answered else 20}, "c3"),
                     tool_call("write_file", {"path": "tests/test_api.py", "content": "from src.api import add\n"}, "c4"),
                     "rapor: testler v1",
                     "rapor: testler v2 (negatif tutar eklendi)"][min(n, 5)]
@@ -143,7 +147,12 @@ def test_autonomous_project_plans_reviews_and_finishes(workdir):
     tests = team.members["tests"]
     assert tests.reviews == 1 and tests.result.startswith("rapor: testler v2")
     tool_texts = "\n".join(str(m.get("content")) for m in tests.agent.messages if m["role"] == "tool")
-    assert "kapsam dışı" in tool_texts and "negatif tutar reddedilsin" in tool_texts
+    assert "kapsam dışı" in tool_texts
+    # the lead's answer reached the agent: as team_wait's result, or as a team message after the team_send step
+    # (which one depends on thread timing; checking only tool results made this test flaky, #379)
+    received = "\n".join(str(m.get("content")) for m in tests.agent.messages[1:]
+                         if m["role"] == "tool" or (m["role"] == "user" and "[takım mesajı]" in str(m.get("content"))))
+    assert "[alice -> tests] evet, negatif tutar reddedilsin" in received
     assert any(x.sender == "alice" and x.to == "tests" and "düzeltme" in x.text for x in team.log)
     assert "def add" in team.diff("backend")
     # agent prompt: no personality, has the task and the team list
