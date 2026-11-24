@@ -2626,5 +2626,19 @@
  "Everything looks fine.": "Her şey yolunda görünüyor.",
  "I found {n} things overnight: {names}. Shall I try to fix them?": "Gece {n} şey buldum: {names}. Düzeltmeyi deneyeyim mi?",
  "Today: {items}.": "Bugün: {items}.",
- "Night report ready": "Gece raporu hazır"
+ "Night report ready": "Gece raporu hazır",
+ "the project scope needs the working folder to be a git repository; use the general scope": "proje kapsamı için çalışma klasörü bir git deposu olmalı; genel kapsamı kullan",
+ "empty note": "boş bilgi",
+ "empty follow-up": "boş takip",
+ "skipped (the user had deleted it): {note}": "atlandı (kullanıcı silmişti): {note}",
+ "could not save ({error})": "kaydedilemedi ({error})",
+ "added {note}": "eklendi {note}",
+ "updated {note}": "güncellendi {note}",
+ "another Dream is running": "başka bir Dream sürüyor",
+ "{scope}: another process is tidying it": "{scope}: başka bir süreç toparlıyor",
+ "{scope}: could not tidy ({error})": "{scope}: toparlanamadı ({error})",
+ "no changes": "değişiklik yok",
+ "index reorganised": "dizin yeniden düzenlendi",
+ "the new index did not fit ({error})": "yeni dizin sığmadı ({error})",
+ "index repaired": "dizin onarıldı"
 }

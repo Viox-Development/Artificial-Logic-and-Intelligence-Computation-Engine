@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 # Trace for swallowed errors: silent by default, visible with `logging.basicConfig(level=logging.DEBUG)`.
 log = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS forgotten (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, text TEXT NOT NULL, terms TEXT NOT NULL DEFAULT '');
 """
 KEEP_FORGOTTEN = 200  # trace of deleted notes (so auto-extraction and Dream don't write them back)
-FOLLOWUP_KINDS = {"ask": "sor", "remind": "hatırlat", "open": "yarım kaldı"}
+FOLLOWUP_KINDS = {"ask": "ask", "remind": "remind", "open": "unfinished"}
 # Traces left from the old "sevgili/mommy" persona. While they stayed in memory, the new persona kept coming
 # back with "Buradayım bebeğim" (voice.log); Settings > Memory shows them and clears them in one click.
 OLD_ROLE_RX = re.compile(
@@ -223,14 +224,14 @@ def kind_to_type(kind: str, text: str) -> str:
 def _ago(ts: float, now: float | None = None) -> str:
     d = ((now or time.time()) - ts) / 86400
     if d < 1:
-        return "bugün"
+        return "today"
     if d < 2:
-        return "dün"
+        return "yesterday"
     if d < 30:
-        return f"{int(d)} gün önce"
+        return f"{int(d)} days ago"
     if d < 365:
-        return f"{int(d // 30)} ay önce"
-    return f"{int(d // 365)} yıl önce"
+        return f"{int(d // 30)} months ago"
+    return f"{int(d // 365)} years ago"
 
 
 @dataclass
@@ -271,7 +272,7 @@ class Summary:
     text: str
 
     def line(self, now: float | None = None) -> str:
-        return f"{datetime.fromtimestamp(self.start):%d.%m.%Y %H:%M} ({_ago(self.start, now)}) özet: {self.text}"
+        return f"{datetime.fromtimestamp(self.start):%d.%m.%Y %H:%M} ({_ago(self.start, now)}) summary: {self.text}"
 
 
 @dataclass
@@ -411,7 +412,7 @@ class LongMemory:
         if scope in ("proje", "project"):
             books = self.books(cwd)
             if len(books) < 2:
-                raise ValueError("proje kapsamı için çalışma klasörü bir git deposu olmalı; genel kapsamı kullan")
+                raise ValueError(_("the project scope needs the working folder to be a git repository; use the general scope"))
             return books[1]
         return self.notes
 
@@ -622,7 +623,7 @@ class LongMemory:
 
         text = " ".join(str(text or "").split())
         if not text:
-            raise ValueError("boş bilgi")
+            raise ValueError(_("empty note"))
         typ = kind_to_type(kind, text)
         book = self.book(scope, cwd)
         old = self._similar_note(text, book)
@@ -923,8 +924,8 @@ class LongMemory:
         with self._lock:
             row = self.db.execute("SELECT text FROM summaries WHERE start <= ? AND end >= ? ORDER BY id DESC LIMIT 1",
                                   (end, start)).fetchone()
-        head = f"## {datetime.fromtimestamp(start):%d.%m.%Y %H:%M} ({_ago(start, now)}, {len(group)} tur)"
-        lines = [head] + ([f"Özet: {row[0]}"] if row else [])
+        head = f"## {datetime.fromtimestamp(start):%d.%m.%Y %H:%M} ({_ago(start, now)}, {len(group)} turns)"
+        lines = [head] + ([f"Summary: {row[0]}"] if row else [])
 
         def turn(e: Episode) -> str:
             return f"- Kullanıcı: {_clip(e.user, 240)}" + (f"\n  ALICE: {_clip(e.reply, 240)}" if e.reply else "")
@@ -960,7 +961,7 @@ class LongMemory:
         if not picked:
             return f"nothing about '{query}' found in past conversations"
         out, seen, now = [], set(), time.time()
-        for _, ts in sorted(picked, reverse=True):
+        for _score, ts in sorted(picked, reverse=True):
             group = next((g for g in self.sessions(ts - 6 * 3600, ts + 6 * 3600)
                           if g[0].ts - 1 <= ts <= g[-1].ts + self.session_gap), None)
             if not group or group[0].id in seen:
@@ -1038,7 +1039,7 @@ class LongMemory:
     def add_followup(self, text: str, due: float | None = None, kind: str = "ask") -> int:
         text = " ".join(text.split())
         if not text:
-            raise ValueError("boş takip")
+            raise ValueError(_("empty follow-up"))
         kind = kind if kind in FOLLOWUP_KINDS else "ask"
         with self._lock:
             for f in self.followups():  # don't add the same follow-up a second time
@@ -1174,12 +1175,12 @@ class LongMemory:
             lines.append(line)
             used += len(line)
         transcript = "\n".join(reversed(lines))
-        open_items = "\n".join(f.line() for f in self.followups()) or "(yok)"
+        open_items = "\n".join(f.line() for f in self.followups()) or "(none)"
         start = datetime.fromtimestamp(group[0].ts)
         prompt = DIGEST_PROMPT.format(date=f"{start:%Y-%m-%d %A}", open=open_items, transcript=transcript)
         data = parse_json(self.extractor(prompt) if self.extractor else "")
         if not data:
-            raise _BadDigest("özet cevabı boş")
+            raise _BadDigest("empty summary reply")
         # Durable notes are not written from the summary but by end-of-turn extraction and Dream
         # (Dream reads these summaries and distills them).
         summary = strip_filler(data.get("summary") or "") if isinstance(data.get("summary"), str) else ""
@@ -1271,18 +1272,18 @@ class LongMemory:
             notes = b.scan()
             if not notes:
                 continue
-            lines += [f"# Notlar ({b.scope}: {b.root})"]
+            lines += [f"# Notes ({b.scope}: {b.root})"]
             lines += [f"* {n.manifest_line()[2:]}" for n in notes]
         eps = self.recent(10)
         sums = self.summaries(5)
         if sums:
-            lines += ["", "# Konuşma özetleri"] + [f"* {s.line()}" for s in sums]
+            lines += ["", "# Conversation summaries"] + [f"* {s.line()}" for s in sums]
         fups = self.followups()
         if fups:
-            lines += ["", "# Takipler"] + [f"* {f.line()}" for f in fups]
+            lines += ["", "# Follow-ups"] + [f"* {f.line()}" for f in fups]
         if eps:
-            lines += ["", "# Son konuşmalar"] + [f"* {e.line()}" for e in eps]
-        return "\n".join(lines).strip() or "(hafıza boş)"
+            lines += ["", "# Recent conversations"] + [f"* {e.line()}" for e in eps]
+        return "\n".join(lines).strip() or "(memory is empty)"
 
     # ------------------------------------------------------------------ learning
     def learn(self, user: str, reply: str = "", background: bool = True, cwd: Path | str | None = None,
@@ -1348,9 +1349,10 @@ class LongMemory:
             related = keyword_relevant(" ".join(e.user for e in turns), notes, limit=4, min_score=0.2)
             root = project_root(cwd) if cwd else None
             prompt = EXTRACT_PROMPT.format(
-                rules=MEMORY_RULES, manifest="\n".join(n.manifest_line() for n in notes) or "(yok)",
-                related="\n\n".join(f"--- {n.key}\n{n.body}" for n in related) or "(yok)", explicit="",
-                repo=f" ({root.name})" if root else " (şu an bir depoda değilsin: hep genel)", transcript=transcript)
+                rules=MEMORY_RULES, manifest="\n".join(n.manifest_line() for n in notes) or "(none)",
+                related="\n\n".join(f"--- {n.key}\n{n.body}" for n in related) or "(none)", explicit="",
+                repo=f" ({root.name})" if root else " (you are not in a repository right now: always general)",
+                transcript=transcript)
             gone = self.forgotten(15)
             if gone:
                 prompt += ("\n\nThe user DELETED these notes; never save them (or anything saying the same) again:\n"
@@ -1404,7 +1406,7 @@ class LongMemory:
             old = target.get(key)
             if old is None and source in ("otomatik", "dream") and \
                     self._forgotten_like(f"{s.get('title') or ''} {desc} {content}"):
-                done.append(f"atlandı (kullanıcı silmişti): {desc[:60]}")
+                done.append(_("skipped (the user had deleted it): {note}", note=desc[:60]))
                 continue
             try:
                 note, new = target.save(key, desc, typ, content,
@@ -1412,9 +1414,9 @@ class LongMemory:
                                         source=(old.source if old is not None and old.source else source),
                                         category=cat, aliases=aliases)
             except (MemoryFull, ValueError) as e:
-                done.append(f"kaydedilemedi ({e})"[:160])
+                done.append(_("could not save ({error})", error=e)[:160])
                 continue
-            done.append(("eklendi " if new else "güncellendi ") + note.key)
+            done.append(_("added {note}", note=note.key) if new else _("updated {note}", note=note.key))
         removed = 0
         for key in data.get("delete") or []:
             if removed >= max_delete:
@@ -1449,8 +1451,8 @@ class LongMemory:
             groups = groups[:-1]  # an ongoing conversation is not counted
         if len(groups) < self.dream_sessions:
             return False
-        report = self.dream()
-        if any("toparlanamadı" in r for r in report):
+        self.dream()
+        if getattr(self, "_dream_failed", False):
             # A failed Dream rolls the time gate back (so it is retried at the next chance); if the model keeps
             # failing, that would mean a strong-model call every 10 minutes. Waits compound on consecutive failures.
             self._dream_fails = getattr(self, "_dream_fails", 0) + 1
@@ -1465,16 +1467,17 @@ class LongMemory:
         from alice.memdir import DREAM_PROMPT, MEMORY_RULES, MemoryFull
 
         if not self._dream_lock.acquire(blocking=False):
-            return ["başka bir Dream sürüyor"]
+            return [_("another Dream is running")]
         try:
             books = self.all_books()
             if cwd:
                 books += [b for b in self.books(cwd) if b.root not in {x.root for x in books}]
             report: list[str] = []
+            self._dream_failed = False
             for b in books:
                 prior = b.try_lock()
                 if prior is None:
-                    report.append(f"{b.scope}: başka bir süreç toparlıyor")
+                    report.append(_("{scope}: another process is tidying it", scope=b.scope))
                     continue
                 ok = False
                 try:
@@ -1482,10 +1485,11 @@ class LongMemory:
                     ok = True
                 except Exception as e:  # noqa: BLE001 - no model/quota/bad reply: keep the time gate open
                     log.debug("Dream başarısız", exc_info=True)
-                    report.append(f"{b.scope}: toparlanamadı ({str(e)[:120]})")
+                    report.append(_("{scope}: could not tidy ({error})", scope=b.scope, error=str(e)[:120]))
+                    self._dream_failed = True
                 finally:
                     b.release(prior, ok=ok)
-            summary = "; ".join(report) or "değişiklik yok"
+            summary = "; ".join(report) or _("no changes")
             self._meta("dream_summary", summary[:2000])
             self._meta("dream_at", repr(time.time()))
             return report
@@ -1515,26 +1519,26 @@ class LongMemory:
         backup = b.backup()
         listing = "\n\n".join(
             f"--- {n.name}.md [{n.type or '?'}] ({age_text_iso(n.modified)})"
-            f"{' (kullanıcı istedi)' if n.source == 'kullanıcı' else ''}\ndescription: {n.description}\n"
-            f"{_clip(n.body, 2500)}" for n in notes) or "(yok)"
+            f"{' (the user asked for it)' if n.source == 'kullanıcı' else ''}\ndescription: {n.description}\n"
+            f"{_clip(n.body, 2500)}" for n in notes) or "(none)"
         prompt = prompt_tpl.format(today=f"{datetime.now():%Y-%m-%d %A}", scope=f"{b.scope} ({b.root})", rules=rules,
-                                   index=b.index_raw().strip() or "(boş)", notes=listing,
+                                   index=b.index_raw().strip() or "(empty)", notes=listing,
                                    since=datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M"),
-                                   signal="\n\n".join(signal) or "(yeni bir şey yok)")
+                                   signal="\n\n".join(signal) or "(nothing new)")
         data = parse_json(self._synth(prompt))
         if not data:
-            raise ValueError("Dream cevabı boş")
+            raise ValueError("empty Dream reply")
         done = self.apply_notes(data, source="dream", max_save=15, max_delete=max(2, len(notes) // 4), book=b)
         index = data.get("index")
         if isinstance(index, str) and index.strip():
             try:
                 b.write_index(index)
-                done.append("dizin yeniden düzenlendi")
+                done.append(_("index reorganised"))
             except full as e:
                 b.repair_index()
-                done.append(f"yeni dizin sığmadı ({e})"[:160])
+                done.append(_("the new index did not fit ({error})", error=e)[:160])
         elif b.repair_index():
-            done.append("dizin onarıldı")
+            done.append(_("index repaired"))
         summary = data.get("summary")
         if isinstance(summary, str) and summary.strip():
             b.append_log(f"Dream: {summary.strip()}")

@@ -144,7 +144,7 @@ def test_one_off_things_are_not_saved_as_user_notes_and_requested_notes_are_prot
         {"name": "user-kahve", "type": "user", "description": "Kahveyi şekersiz içer", "content": "Şekersiz."},
         {"name": "bad", "type": "secret", "description": "x", "content": "y"},
     ]})
-    assert [n.name for n in notes(m)] == ["user-kahve"] and done == ["eklendi genel:user-kahve"]
+    assert [n.name for n in notes(m)] == ["user-kahve"] and done == ["added genel:user-kahve"]
     m.remember("Kullanıcının adı Hayat.", "fact", source="kullanıcı")
     keep = [n for n in notes(m) if n.source == "kullanıcı"][0]
     m.apply_notes({"delete": [keep.key, "genel:user-kahve"]})
@@ -478,7 +478,7 @@ def test_dream_lock_blocks_a_second_process_and_failure_rolls_back_the_clock():
     real = md._pid_alive
     md._pid_alive = lambda pid: True
     try:
-        assert "başka bir süreç" in " ".join(m.dream(force=True))
+        assert "another process" in " ".join(m.dream(force=True))
     finally:
         md._pid_alive = real
         os.utime(m.notes.lock_path, (0, 0))
