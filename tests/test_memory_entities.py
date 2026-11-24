@@ -70,7 +70,7 @@ def test_model_answers_with_category_and_no_type_are_saved():
     done = m.apply_notes({"save": [{"name": "mitsuki", "category": "people", "aliases": ["mitsu"],
                                     "description": "Mitsuki — ŞΣY sunucusundan arkadaş", "content": "Sunucudan."}]},
                          source="otomatik")
-    assert done == ["eklendi genel:mitsuki"]
+    assert done == ["added genel:mitsuki"]
     n = m.notes.get("mitsuki")
     assert n.category == "people" and "mitsu" in n.aliases
 
