@@ -514,6 +514,8 @@ Büyük bir iş (büyük bir kod tabanında birden çok modül, backend + fronte
 
 ## Claude Code'daki özellikler
 
+> English, and up to date: [guide/features.md](guide/features.md). GitHub anahtarı artık önce `gh auth token`'dan alınıyor; `[github] undercover` (gizli mod) ve `clone_dir` ayarları eklendi.
+
 | Özellik | ALICE'te |
 |---|---|
 | Plan modu | `/plan` ya da mod menüsü: sadece okur/araştırır, değişiklik yapan araçlar reddedilir, plan yazar |

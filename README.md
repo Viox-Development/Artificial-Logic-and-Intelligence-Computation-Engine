@@ -25,7 +25,7 @@ ALICE ships with about 90 tools. The main groups:
 - Git and GitHub: commits, branches, pull requests, CI status, and review comments. Watched pull requests are fixed
   automatically when CI turns red or a trusted review comment arrives.
 - Plan mode, todo lists, sub-agents, custom agent definitions, skills, hooks, and MCP servers, in the style of
-  Claude Code.
+  Claude Code ([docs/guide/features.md](docs/guide/features.md)).
 
 **Projects with agent teams**
 - Big jobs run as projects: a manager plans the work, parallel agents build it in their own git worktrees, a review
