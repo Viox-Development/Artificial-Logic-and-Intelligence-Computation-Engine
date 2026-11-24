@@ -29,7 +29,7 @@ def test_rule_preview_then_save_toggle_remove(tmp_path):
     a = Automations(Router(RULE), rules_path=tmp_path / "r.json", tasks_path=tmp_path / "t.json")
     before = len(RuleSet(tmp_path / "r.json").rules)  # built-in rules that come ready-made
     r = a.action("rule_parse", {"text": "GPU 85'i 2 dakika geçerse haber ver"})
-    assert r["ok"] and r["view"]["condition"] == "pc.gpu.temp > 85, 2 dk boyunca"
+    assert r["ok"] and r["view"]["condition"] == "pc.gpu.temp > 85, for 2 min"
     assert len(RuleSet(tmp_path / "r.json").rules) == before  # a preview does not save
     assert a.action("rule_add", {"rule": json.loads(json.dumps(r["rule"]))})["ok"]
     rules = a.view()["rules"]

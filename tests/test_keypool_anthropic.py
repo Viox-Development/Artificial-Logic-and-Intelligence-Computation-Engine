@@ -67,7 +67,7 @@ def test_rate_limited_key_waits_and_next_key_answers(pc):
     assert [k.key for k in pool.order("m")] == ["key-two-2222", "key-three-3333"]
     assert [k.key for k in pool.order("other")][0] == "key-one-1111"
     rows = pool.status()
-    assert rows[0]["state"] == "beklemede" and rows[0]["preview"] == "••••1111" and "m" in rows[0]["waiting"]
+    assert rows[0]["state"] == "waiting" and rows[0]["preview"] == "••••1111" and "m" in rows[0]["waiting"]
 
 
 def test_daily_quota_is_remembered_across_restarts(pc, monkeypatch):
@@ -85,7 +85,7 @@ def test_bad_key_is_dropped_and_others_keep_working(pc):
     pool = KeyPool(pc, FakeClient)
     pool.chat("m", [])  # key-one
     assert pool.chat("m", []).text == "key-three-3333 cevapladı"  # key-two auth -> next one
-    assert pool.status()[1]["state"] == "kapalı"
+    assert pool.status()[1]["state"] == "off"
 
 
 def test_all_keys_waiting_raises_rate_limit_with_wait(pc):
@@ -122,7 +122,7 @@ def test_router_uses_pool_and_shows_key_status(pc, tmp_path):
     cfg.data["agent"]["key_strategy"] = "fill-first"
     assert r.chat("brain", [{"role": "user", "content": "selam"}]).text == "key-two-2222 cevapladı"
     st = r.key_status()["gemini"]
-    assert [x["state"] for x in st] == ["beklemede", "hazır", "hazır"] and st[1]["uses"] == 1
+    assert [x["state"] for x in st] == ["waiting", "ready", "ready"] and st[1]["uses"] == 1
     assert r.available("gemini:m")[0]  # model did not enter cooldown: the key changed
 
 

@@ -166,3 +166,40 @@ def test_pages_carry_the_language_and_its_catalog(monkeypatch):
     block = re.search(r'<script type="application/json" id="alice-i18n">(.*?)</script>', page).group(1)
     assert '<html lang="tr">' in page and json.loads(block) == {"lang": "tr", "catalog": {"Projects": "Projeler</script>"}}
     assert page.index('id="alice-i18n"') < page.index("/static/i18n.js") < page.index("/static/quick.js")
+
+
+def test_model_reasons_stay_english_and_are_shown_in_the_language():
+    """Router.available reasons go into errors and logs (English), the cooldown parser reads both the new and the old
+    Turkish wording, and only the display text follows the interface language."""
+    from alice.providers.router import COOLING_RX, is_ready, reason_text
+    from alice.team import human_failure
+
+    assert COOLING_RX.search("g:m: cooling down (12 s)").group(1) == "12"
+    assert COOLING_RX.search("g:m: soğumada (30 sn)").group(1) == "30"
+    assert is_ready("ready") and is_ready("hazır") and not is_ready("model not found")
+    assert reason_text("cooling down (12 s)") == "cooling down (12 s)" and reason_text("no GROQ_API_KEY") == "no GROQ_API_KEY"
+    i18n.set_language("tr")
+    assert reason_text("cooling down (12 s)") == "soğumada (12 sn)" and reason_text("no GROQ_API_KEY") == "GROQ_API_KEY yok"
+    assert reason_text("ready") == "hazır" and reason_text("something new") == "something new"
+    assert "2" in human_failure(["g:m: cooling down (7200 s)"])
+
+
+def test_old_turkish_default_rules_follow_the_language(tmp_path):
+    """rules.json written before the switch holds the Turkish default text; it is read as the English key, so the
+    rule is shown and notified in the interface language. A rule the user wrote is left as it is."""
+    from alice.app.automations import rule_view
+    from alice.core.rules import RuleEngine, RuleSet
+
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps([
+        {"metric": "pc.gpu.temp", "op": ">", "threshold": 85, "message": "Ekran kartı {value:.0f}°C, birkaç dakikadır çok sıcak.",
+         "duration": 180, "description": "GPU uzun süre çok ısınırsa söyle", "id": "gpu-hot"},
+        {"metric": "pc.fan", "op": ">", "threshold": 1, "message": "Fan döndü", "description": "kendi kuralım", "id": "mine"}],
+        ensure_ascii=False), encoding="utf-8")
+    rules = {r.id: r for r in RuleSet(path).rules}
+    gpu, mine = rules["gpu-hot"], rules["mine"]
+    assert gpu.message.startswith("The graphics card") and mine.message == "Fan döndü"
+    assert rule_view(gpu)["text"] == "tell me if the GPU stays very hot for a long time"
+    i18n.set_language("tr")
+    assert rule_view(gpu)["text"] == "GPU uzun süre çok ısınırsa söyle" and rule_view(mine)["text"] == "kendi kuralım"
+    assert RuleEngine._format(gpu, "pc.gpu.temp", 91) == "Ekran kartı 91°C, birkaç dakikadır çok sıcak."

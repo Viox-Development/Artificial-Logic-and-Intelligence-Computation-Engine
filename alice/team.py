@@ -193,12 +193,14 @@ class _Stopped(Exception):
 
 def human_failure(reasons: list[str]) -> str:
     """Turns the router's raw error lines ("ref: reason") into a short, readable explanation."""
+    from alice.providers.router import COOLING_RX
+
     out: list[str] = []
     for line in reasons:
         ref, _, why = line.partition(": ")
         name = ref.split(":", 1)[-1].split("/")[-1] or ref
         low = why.lower()
-        if m := re.search(r"soğumada \((\d+) sn\)", why):
+        if m := COOLING_RX.search(why):
             secs = int(m.group(1))
             when = f"~{secs // 3600} sa" if secs >= 3600 else f"~{max(1, secs // 60)} dk"
             text = f"{name} beklemede ({when} sonra açılır)"

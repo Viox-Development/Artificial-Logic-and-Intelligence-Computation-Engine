@@ -50,7 +50,7 @@ from alice.i18n import _
 from alice.decider import Decider
 from alice.memory import attach_memory, shared_memory
 from alice.permissions import MODES, Permissions
-from alice.providers.router import Router, parse_ref
+from alice.providers.router import Router, is_ready, parse_ref, reason_text
 from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
 from alice.tools.base import ToolResult
 
@@ -571,8 +571,8 @@ def print_status(router: Router) -> None:
     t.add_column(_("status"))
     for role, rows in router.status().items():
         for i, (ref, st) in enumerate(rows):
-            style = "green" if st == "hazır" else "dim"
-            t.add_row(role if i == 0 else "", ref, f"[{style}]{st}[/]")
+            style = "green" if is_ready(st) else "dim"
+            t.add_row(role if i == 0 else "", ref, f"[{style}]{reason_text(st)}[/]")
     console.print(t)
 
 

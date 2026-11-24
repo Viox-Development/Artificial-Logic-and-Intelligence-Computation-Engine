@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 from alice.core.notify import Notification, Notifier
 from alice.core.store import Store
 
@@ -68,41 +69,60 @@ class Rule:
         return cls(**{k: v for k, v in d.items() if k in known})
 
     def summary(self) -> str:
-        dur = f" {fmt_duration(self.duration)} boyunca" if self.duration else ""
+        dur = _(" for {duration}", duration=fmt_duration(self.duration)) if self.duration else ""
         modes = f" [{', '.join(self.modes)}]" if self.modes else ""
-        extra = " +Jev onayı" if self.confirm else ""
-        act = " -> ALICE araştırır" if self.action == "agent" else ""
-        off = "" if self.enabled else " (kapalı)"
+        extra = _(" +decider check") if self.confirm else ""
+        act = _(" -> ALICE looks into it") if self.action == "agent" else ""
+        off = "" if self.enabled else _(" (off)")
         return f"{self.id}: {self.metric} {self.op} {self.threshold:g}{dur}{modes}{extra}{act} ({self.severity}){off}"
 
 
 def fmt_duration(sec: float) -> str:
     if sec >= 3600 and sec % 3600 == 0:
-        return f"{sec / 3600:g} sa"
+        return _("{n} h", n=f"{sec / 3600:g}")
     if sec >= 60:
-        return f"{sec / 60:g} dk"
-    return f"{sec:g} sn"
+        return _("{n} min", n=f"{sec / 60:g}")
+    return _("{secs} s", secs=f"{sec:g}")
 
 
 DEFAULT_RULES = [
-    Rule("pc.gpu.temp", ">", 85, "Ekran kartı {value:.0f}°C, birkaç dakikadır çok sıcak.", duration=180,
-         description="GPU uzun süre çok ısınırsa söyle", id="gpu-hot"),
-    Rule("pc.cpu.temp", ">", 90, "İşlemci {value:.0f}°C, birkaç dakikadır çok sıcak.", duration=180,
-         description="CPU uzun süre çok ısınırsa söyle", id="cpu-hot"),
-    Rule("pc.mem.percent", ">", 92, "Bellek %{value:.0f} dolu.", duration=300,
-         description="RAM uzun süre dolu kalırsa söyle", id="mem-full"),
-    Rule("pc.disk.*.percent", ">", 95, "{match} diski %{value:.0f} dolu.", cooldown=6 * 3600,
-         description="disk dolmak üzereyse söyle", id="disk-full"),
-    Rule("pc.disk.*.free_gb", "<", 10, "{match} diskinde {value:.1f} GB boş yer kaldı. Ne yer kaplıyor bakayım mı?",
-         cooldown=6 * 3600, description="bir diskte 10 GB'tan az yer kalırsa söyle", id="disk-low"),
-    Rule("pc.proc.*.mem_mb", ">", 8000, "{match} {value:.0f} MB bellek kullanıyor ve düşmüyor.", duration=600,
-         cooldown=3 * 3600, description="bir program belleği şişirirse söyle", id="proc-bloat"),
-    Rule("watch.hr", ">", 125, "Nabzın {value:.0f}, bir süredir yüksek. İyi misin?", duration=600, cooldown=2 * 3600,
+    Rule("pc.gpu.temp", ">", 85, "The graphics card is at {value:.0f}°C and has been very hot for a few minutes.", duration=180,
+         description="tell me if the GPU stays very hot for a long time", id="gpu-hot"),
+    Rule("pc.cpu.temp", ">", 90, "The processor is at {value:.0f}°C and has been very hot for a few minutes.", duration=180,
+         description="tell me if the CPU stays very hot for a long time", id="cpu-hot"),
+    Rule("pc.mem.percent", ">", 92, "Memory is {value:.0f}% full.", duration=300,
+         description="tell me if RAM stays full for a long time", id="mem-full"),
+    Rule("pc.disk.*.percent", ">", 95, "Disk {match} is {value:.0f}% full.", cooldown=6 * 3600,
+         description="tell me if a disk is about to fill up", id="disk-full"),
+    Rule("pc.disk.*.free_gb", "<", 10, "Only {value:.1f} GB free left on disk {match}. Shall I look at what's taking up space?",
+         cooldown=6 * 3600, description="tell me if a disk has less than 10 GB free", id="disk-low"),
+    Rule("pc.proc.*.mem_mb", ">", 8000, "{match} is using {value:.0f} MB of memory and it isn't going down.", duration=600,
+         cooldown=3 * 3600, description="tell me if a program keeps bloating its memory", id="proc-bloat"),
+    Rule("watch.hr", ">", 125, "Your heart rate is {value:.0f} and has been high for a while. Are you okay?", duration=600, cooldown=2 * 3600,
          topic="health", modes=["normal", "dev", "quiet"],
          confirm="The user is likely sitting at the computer (not exercising). Is this sustained high heart rate "
                  "worth a gentle check-in?",
-         description="nabzım uzun süre yüksek kalırsa beni uyar", id="hr-high"),
+         description="warn me if my heart rate stays high for a long time", id="hr-high"),
 ]
+
+# The defaults are stored in English and shown in the interface language with _(). rules.json files written before
+# that hold the Turkish text; it is turned into the English key on load so it follows the language too.
+OLD_DEFAULT_TEXT = {
+    "Ekran kartı {value:.0f}°C, birkaç dakikadır çok sıcak.": "The graphics card is at {value:.0f}°C and has been very hot for a few minutes.",
+    "GPU uzun süre çok ısınırsa söyle": "tell me if the GPU stays very hot for a long time",
+    "İşlemci {value:.0f}°C, birkaç dakikadır çok sıcak.": "The processor is at {value:.0f}°C and has been very hot for a few minutes.",
+    "CPU uzun süre çok ısınırsa söyle": "tell me if the CPU stays very hot for a long time",
+    "Bellek %{value:.0f} dolu.": "Memory is {value:.0f}% full.",
+    "RAM uzun süre dolu kalırsa söyle": "tell me if RAM stays full for a long time",
+    "{match} diski %{value:.0f} dolu.": "Disk {match} is {value:.0f}% full.",
+    "disk dolmak üzereyse söyle": "tell me if a disk is about to fill up",
+    "{match} diskinde {value:.1f} GB boş yer kaldı. Ne yer kaplıyor bakayım mı?": "Only {value:.1f} GB free left on disk {match}. Shall I look at what's taking up space?",
+    "bir diskte 10 GB'tan az yer kalırsa söyle": "tell me if a disk has less than 10 GB free",
+    "{match} {value:.0f} MB bellek kullanıyor ve düşmüyor.": "{match} is using {value:.0f} MB of memory and it isn't going down.",
+    "bir program belleği şişirirse söyle": "tell me if a program keeps bloating its memory",
+    "Nabzın {value:.0f}, bir süredir yüksek. İyi misin?": "Your heart rate is {value:.0f} and has been high for a while. Are you okay?",
+    "nabzım uzun süre yüksek kalırsa beni uyar": "warn me if my heart rate stays high for a long time",
+}
 
 # Defaults added after rules.json was first written: added on load if they are missing.
 ADDED_LATER = {"disk-low"}
@@ -126,6 +146,9 @@ class RuleSet:
         rules = []
         for d in data:
             try:
+                if isinstance(d, dict):
+                    d = {**d, **{k: OLD_DEFAULT_TEXT[v] for k, v in d.items() if k in ("message", "description")
+                                 and isinstance(v, str) and v in OLD_DEFAULT_TEXT}}
                 rules.append(Rule.from_dict(d))
             except (TypeError, ValueError, AttributeError):
                 continue
@@ -213,7 +236,7 @@ class RuleEngine:
                 return None
             return last[1] if cmp(last[1], rule.threshold) else None
         pts = self.store.series(key, since=now - rule.duration, until=now)
-        if not pts or any(not cmp(v, rule.threshold) for _, v in pts):
+        if not pts or any(not cmp(v, rule.threshold) for _ts, v in pts):
             return None
         # If the measurements don't cover most of the window (service just started, data gap),
         # the condition is not yet counted as held for "a long time"; the last measurement must also be fresh.
@@ -257,10 +280,10 @@ class RuleEngine:
     def _format(rule: Rule, key: str, value: float) -> str:
         match = ""
         if "*" in rule.metric:
-            pre, _, post = rule.metric.partition("*")
+            pre, _star, post = rule.metric.partition("*")
             match = key[len(pre):len(key) - len(post) if post else None]
         try:
-            return rule.message.format(value=value, key=key, match=match, threshold=rule.threshold)
+            return _(rule.message).format(value=value, key=key, match=match, threshold=rule.threshold)
         except (KeyError, IndexError, ValueError):
             return f"{rule.message} ({key} = {value:g})"
 
@@ -271,7 +294,7 @@ class RuleEngine:
 
         recent = self.store.series(key, since=time.time() - 3600)[-12:]
         state = (f"Mode: {self.mode()}. Metric {key} = {value:g} (rule: {rule.op} {rule.threshold:g}). "
-                 f"Recent values: {', '.join(f'{v:g}' for _, v in recent)}. Alert text: {text}. "
+                 f"Recent values: {', '.join(f'{v:g}' for _ts, v in recent)}. Alert text: {text}. "
                  f"User's own words: {rule.description}")
         try:
             d = self.decider.decide(state, {"notify": Noul(rule.confirm)})

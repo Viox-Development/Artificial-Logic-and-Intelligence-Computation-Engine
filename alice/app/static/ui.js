@@ -129,7 +129,7 @@ async function modelMenu(anchor) {
         if (!rows.length) continue;
         m.appendChild(el("div", "menu-title", provLabel(p) + (p.note ? " · limit " + p.note : "")));
         for (const x of rows) {
-          menuItem(m, null, x.model, x.status === "hazır" ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
+          menuItem(m, null, x.model, x.ok ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
         }
       }
       m.appendChild(el("div", "menu-sep"));
@@ -260,7 +260,7 @@ function modelsPage(pane, data) {
         for (const x of rows) {
           const row = el("div", "pc-model" + (x.hidden ? " off" : "") + (all.pinned === x.ref ? " pinned" : ""));
           const l = el("span", "l");
-          l.append(el("span", "m", x.model), el("small", "", x.tested ? x.status : (x.status === "hazır" ? _("ready · not measured") : x.status)));
+          l.append(el("span", "m", x.model), el("small", "", x.tested ? x.status : (x.ok ? _("ready · not measured") : x.status)));
           const q = el("span", "q"); q.title = _("Quality score"); q.style.setProperty("--q", (x.quality || 0) + "%");
           const pin = el("button", "icon-btn" + (all.pinned === x.ref ? " on" : ""));
           pin.title = all.pinned === x.ref ? _("Unpin") : _("Pin this model");
@@ -290,7 +290,7 @@ function modelsPage(pane, data) {
     c.appendChild(el("b", "", _("{role} order", { role: names[role] || role })));
     const ol = el("ol");
     for (const r of rows) {
-      const li = el("li", r.status === "hazır" ? "ok" : "");
+      const li = el("li", r.ok ? "ok" : "");
       li.append(el("span", "", r.ref), el("small", "", r.status));
       ol.appendChild(li);
     }
@@ -2402,7 +2402,7 @@ function keysPane(pane, data) {
     if (g === "model") cliproxySection(pane);  // abonelik hesapları: model sağlayıcılarının hemen altında
   }
 }
-/* Anahtar havuzu: sağlayıcının ek anahtarları ve her birinin durumu (hazır, beklemede, kapalı). */
+/* Key pool: a provider's extra keys and the state of each (ready, waiting, off). */
 function keyPool(k) {
   const box = el("div", "kc-pool");
   const pool = k.pool || [];
@@ -2410,15 +2410,17 @@ function keyPool(k) {
   if (pool.length > 1) {
     for (const x of pool) {
       const waits = Object.entries(x.waiting || {});
-      const st = x.state === "beklemede" && waits.length
-        ? "beklemede · " + waits.slice(0, 2).map(([m, sec]) => `${m.split("/").pop()} ${sec > 3600 ? Math.round(sec / 3600) + " sa" : sec > 60 ? Math.round(sec / 60) + " dk" : sec + " sn"}`).join(", ")
-        : x.state;
-      const r = el("div", "kc-key " + (x.state === "hazır" ? "ok" : x.state === "kapalı" ? "bad" : "wait"));
-      r.append(el("span", "kc-dot"), el("code", "", x.preview), el("small", "", st + (x.uses ? ` · ${x.uses} istek` : "")));
-      if (x.error && x.state === "kapalı") r.title = x.error;
+      const label = { ready: _("ready"), waiting: _("waiting"), off: _("off") }[x.state] || x.state;
+      const st = x.state === "waiting" && waits.length
+        ? label + " · " + waits.slice(0, 2).map(([m, sec]) => m.split("/").pop() + " " + (sec > 3600 ? _("{n} h", { n: Math.round(sec / 3600) })
+          : sec > 60 ? _("{n} min", { n: Math.round(sec / 60) }) : _("{secs} s", { secs: sec }))).join(", ")
+        : label;
+      const r = el("div", "kc-key " + (x.state === "ready" ? "ok" : x.state === "off" ? "bad" : "wait"));
+      r.append(el("span", "kc-dot"), el("code", "", x.preview), el("small", "", st + (x.uses ? " · " + _("{n} requests", { n: x.uses }) : "")));
+      if (x.error && x.state === "off") r.title = x.error;
       const ex = x.index > 1 ? extra[x.index - 2] : null;
       if (ex && ex.source === "file") r.appendChild(iconAct(IC.trash, _("Delete this key"), () => api("/api/keys/set", { key: ex.key, value: "" })
-        .then((res) => { toast(res && res.ok ? "anahtar silindi" : (res && res.error) || "silinemedi"); showSettings("apikeys"); }), "danger"));
+        .then((res) => { toast(res && res.ok ? _("key deleted") : (res && res.error) || _("could not delete")); showSettings("apikeys"); }), "danger"));
       box.appendChild(r);
     }
   }
@@ -2688,7 +2690,7 @@ function keyRow(parts) {
   card.appendChild(head);
   const pooled = !many && k.provider && k.set;
   if (pooled && (k.pool || []).length > 1) {
-    l.querySelector("small").textContent = `${k.pool.length} anahtar · ` + k.pool.filter((x) => x.state === "hazır").length + _(" ready");
+    l.querySelector("small").textContent = _("{n} keys · {ready} ready", { n: k.pool.length, ready: k.pool.filter((x) => x.state === "ready").length });
   }
   const form = el("div", "kc-form");
   form.hidden = true;

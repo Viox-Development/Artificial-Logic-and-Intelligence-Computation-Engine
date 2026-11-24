@@ -184,14 +184,15 @@ class KeyPool:
                     pass
 
     def status(self) -> list[dict[str, Any]]:
-        """For the UI: last 4 characters of each key, usage and waiting models (the key itself is not included)."""
+        """For the UI: last 4 characters of each key, its state (ready / waiting / off), usage and waiting models (the key
+        itself is not included)."""
         from alice.config import mask_secret
 
         now = time.monotonic()
         rows = []
         for i, ks in enumerate(self.keys):
             waits = {m: int(u - now) for (fp, m), u in self.until.items() if fp == ks.fp and u > now}
-            state = "kapalı" if ks.dead else ("beklemede" if waits else "hazır")
+            state = "off" if ks.dead else ("waiting" if waits else "ready")
             rows.append({"index": i + 1, "preview": mask_secret(ks.key), "state": state, "uses": ks.uses,
                          "errors": ks.errors, "waiting": waits, "error": ks.dead or ks.last_error})
         return rows

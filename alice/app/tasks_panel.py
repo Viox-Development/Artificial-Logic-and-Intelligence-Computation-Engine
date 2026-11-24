@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from alice.core.tasks import (PERMISSIONS, ROLES, TEMPLATES, TRIGGERS, Task, TaskBook, approval_view, describe_trigger,
-                              inbox, task_view, template)
+from alice.core.tasks import (PERMISSIONS, ROLES, TRIGGERS, Task, TaskBook, approval_view, describe_trigger,
+                              inbox, task_view, template, template_list)
 
 PARSE_PROMPT = """Turn the user's request into a standing background task for a desktop assistant (ALICE) running on
 the user's own PC. Reply ONLY with JSON:
@@ -48,7 +48,7 @@ class TasksPanel:
         names = {t.id: t.name for t in tasks}
         recent = [approval_view(b, a, names) for a in b.approvals(None, limit=40) if a.status != "pending"][:15]
         return {"tasks": [task_view(b, t) for t in tasks], "approvals": inbox(b), "answered": recent,
-                "templates": TEMPLATES, "triggers": list(TRIGGERS), "permissions": list(PERMISSIONS),
+                "templates": template_list(), "triggers": list(TRIGGERS), "permissions": list(PERMISSIONS),
                 "roles": list(ROLES), "groups": sorted(groups.GROUPS),
                 "core": bool(service.read_state().get("running"))}
 

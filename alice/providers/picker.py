@@ -121,6 +121,8 @@ def pool(router) -> list[str]:
             continue
     res = (getattr(router, "auto_cache", None) or {}).get("results") or {}
     refs += [r for r, v in res.items() if isinstance(v, dict) and (v.get("ok") or v.get("ever_ok"))]
+    from alice.providers.router import COOLING_RX  # router imports picker
+
     out: list[str] = []
     for r in refs:
         if r in out or r in ranking.RANDOM_ROUTERS or r in getattr(router, "no_tools", set()) \
@@ -130,7 +132,7 @@ def pool(router) -> list[str]:
             ok, why = router.available(r)
         except Exception:  # noqa: BLE001 - undefined provider, etc.
             continue
-        if ok or why.startswith("soğumada"):  # a briefly busy model should not drop out of the pool
+        if ok or COOLING_RX.search(why):  # a briefly busy model should not drop out of the pool
             # (the router tries models in order anyway)
             out.append(r)
     return out

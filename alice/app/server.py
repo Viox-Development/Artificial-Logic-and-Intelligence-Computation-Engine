@@ -2633,7 +2633,9 @@ def make_handler(state: AppState):
                                    "brain": state.router.chain("brain"),
                                    "pinned": state.router.role_overrides.get("brain", [None])[0]})
             if u.path == "/api/models":
-                return self._json({role: [{"ref": r, "status": st} for r, st in rows]
+                from alice.providers.router import is_ready, reason_text
+
+                return self._json({role: [{"ref": r, "status": reason_text(st), "ok": is_ready(st)} for r, st in rows]
                                    for role, rows in state.router.status().items()})
             return self._send(404, b"not found", "text/plain")
 

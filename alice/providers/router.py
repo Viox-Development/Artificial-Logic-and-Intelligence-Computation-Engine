@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from alice.config import Config, ProviderConfig, alice_home
+from alice.i18n import _
 from alice.providers import context, ranking, thinking
 from alice.providers.chatgpt import make_client
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
@@ -82,6 +83,26 @@ def seconds_until_reset(provider: str, base_url: str = "", now: datetime | None 
     local = now.astimezone(tz)
     midnight = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return max(60.0, (midnight - local).total_seconds() + 60)
+
+
+# Why a model can't be used right now. The reasons go into errors the model and logs see, so they are English;
+# older builds wrote them in Turkish ("soğumada (N sn)"), and parsers accept both.
+READY = ("ready", "ready (chosen by hand)")
+COOLING_RX = re.compile(r"(?:cooling down|soğumada) \((\d+) (?:s|sn)\)")
+
+
+def is_ready(why: str) -> bool:
+    return why in READY or why in ("hazır", "hazır (elle seçildi)")
+
+
+def reason_text(why: str) -> str:
+    """A reason from Router.available in the interface language, for the UI and the terminal."""
+    if m := COOLING_RX.search(why):
+        return _("cooling down ({secs} s)", secs=m.group(1))
+    if why.startswith("no ") and " " not in why[3:]:
+        return _("no {key}", key=why[3:])
+    return {"ready": _("ready"), "ready (chosen by hand)": _("ready (chosen by hand)"), "unknown provider": _("unknown provider"),
+            "provider off (auth)": _("provider off (auth)"), "model not found": _("model not found")}.get(why, why)
 
 
 def account_key(provider: str) -> str:
@@ -494,7 +515,7 @@ class Router:
         catalog = self.auto_cache.get("catalog") or {}
         for chain in self.config.roles.values():
             for ref in chain or []:
-                p, _, model = ref.partition(":")
+                p, _sep, model = ref.partition(":")
                 if catalog.get(p) and model not in catalog[p]:
                     dead.add(ref)
         return dead
@@ -624,7 +645,8 @@ class Router:
                 if ref.partition(":")[0] != name or ref in dead:
                     continue
                 r = res.get(ref) or {}
-                rows.append({"ref": ref, "model": ref.partition(":")[2], "status": self.available(ref)[1],
+                ok, why = self.available(ref)
+                rows.append({"ref": ref, "model": ref.partition(":")[2], "status": reason_text(why), "ok": ok,
                              "hidden": ref in hidden or (_hidden_match(ref, hidden) and name == "cliproxy"),
                              "quality": r.get("quality", ranking.quality(ref)),
                              "latency": round(float(r.get("latency") or 0), 1), "tested": bool(r)})
@@ -749,7 +771,7 @@ class Router:
             if is_pool(c) and len(c.keys) == len(keys):
                 out[name] = c.status()
             else:
-                out[name] = [{"index": i + 1, "preview": mask_secret(k), "state": "hazır", "uses": 0, "errors": 0,
+                out[name] = [{"index": i + 1, "preview": mask_secret(k), "state": "ready", "uses": 0, "errors": 0,
                               "waiting": {}, "error": ""} for i, k in enumerate(keys)]
         return out
 
@@ -770,7 +792,7 @@ class Router:
     def close(self) -> None:
         """Close the opened provider clients (their HTTP connection pools). They are reopened if used later."""
         while self._clients:
-            _, c = self._clients.popitem()
+            _name, c = self._clients.popitem()
             close = getattr(c, "close", None)
             if callable(close):
                 try:
@@ -788,26 +810,26 @@ class Router:
         order; a manually chosen model is still tried on every request (timeouts used to block it for minutes)."""
         now = time.monotonic() if now is None else now
         try:
-            p, _ = parse_ref(ref)
+            p, _model = parse_ref(ref)
         except ValueError as e:
             return False, str(e)
         pc = self.providers_cfg.get(p)
         if pc is None:
-            return False, "bilinmeyen sağlayıcı"
+            return False, "unknown provider"
         if not pc.enabled:
-            return False, f"{pc.api_key_env} yok"
+            return False, f"no {pc.api_key_env}"
         if pinned:
-            return True, "hazır (elle seçildi)"
+            return True, "ready (chosen by hand)"
         if p in self.dead_providers:
-            return False, "sağlayıcı kapalı (auth)"
+            return False, "provider off (auth)"
         if ref in self.dead_models:
-            return False, "model bulunamadı"
+            return False, "model not found"
         until = self.cooldown_until.get(ref, 0.0)
         if ref.endswith(":free"):
             until = max(until, self.cooldown_until.get(account_key(p), 0.0))
         if until > now:
-            return False, f"soğumada ({int(until - now)} sn)"
-        return True, "hazır"
+            return False, f"cooling down ({int(until - now)} s)"
+        return True, "ready"
 
     def context_limit(self, ref: str) -> int:
         """The model's context window: its own value if known, else the provider setting (see context.py)."""

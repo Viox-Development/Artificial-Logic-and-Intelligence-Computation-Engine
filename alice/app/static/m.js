@@ -435,7 +435,7 @@ async function modelSheet() {
   const opts = [["reset", _("Automatic"), _("The first suitable model; the next one at the limit")]];
   for (const p of (all && all.providers) || []) {
     if (!p.enabled || p.hidden) continue;
-    for (const m of p.models || []) if (!m.hidden) opts.push([m.ref, m.model, p.name + " · " + m.status, m.status !== "hazır"]);
+    for (const m of p.models || []) if (!m.hidden) opts.push([m.ref, m.model, p.name + " · " + m.status, !m.ok]);
   }
   const v = await pickSheet("Model", "", opts, all && all.pinned ? all.pinned : "reset");
   if (!v) return;

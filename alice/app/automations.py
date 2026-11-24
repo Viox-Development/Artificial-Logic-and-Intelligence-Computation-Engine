@@ -18,6 +18,7 @@ from typing import Any
 
 from alice.core.rules import Rule, RuleSet, fmt_duration, parse_rule
 from alice.core.schedule import Cron, ScheduledTask, TaskStore, parse_task
+from alice.i18n import _
 
 
 def _when(ts: float | None) -> str:
@@ -25,10 +26,10 @@ def _when(ts: float | None) -> str:
 
 
 def rule_view(r: Rule) -> dict[str, Any]:
-    cond = f"{r.metric} {r.op} {r.threshold:g}" + (f", {fmt_duration(r.duration)} boyunca" if r.duration else "")
+    cond = f"{r.metric} {r.op} {r.threshold:g}" + (_(", for {duration}", duration=fmt_duration(r.duration)) if r.duration else "")
     # "Ekran kartı {value:.0f}°C" -> "Ekran kartı …°C": so placeholders don't show up raw on screen
-    message = re.sub(r"\{(value|match|key|threshold)(:[^}]*)?\}", "…", r.message)
-    return {"id": r.id, "text": r.description or cond, "condition": cond, "message": message, "severity": r.severity,
+    message = re.sub(r"\{(value|match|key|threshold)(:[^}]*)?\}", "…", _(r.message))
+    return {"id": r.id, "text": _(r.description) if r.description else cond, "condition": cond, "message": message, "severity": r.severity,
             "modes": r.modes, "confirm": r.confirm, "agent": r.prompt if r.action == "agent" else "",
             "enabled": r.enabled}
 
@@ -200,7 +201,7 @@ class Automations:
         """Poll now and show what the condition says for each item (no notification is sent)."""
         from alice.core.feeds import FeedMonitor, load_feeds
 
-        feeds, _ = load_feeds()
+        feeds, _errors = load_feeds()
         feed = next((f for f in feeds if f.name == d.get("name")), None)
         if feed is None:
             return {"ok": False, "error": "akış yok"}

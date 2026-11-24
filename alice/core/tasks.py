@@ -745,7 +745,7 @@ class TaskRunner:
             self.book.remember(task.id, f"Kullanıcı reddetti: {a.title}" + (f" ({a.reply})" if a.reply else ""))
             self.book.finish(a.id, True, "reddedildi, yapılmadı")
             return
-        mem, _ = self._context(task)
+        mem, _recent = self._context(task)
         if a.status == "approved":
             answer = "APPROVED." + (f" Their note: {a.reply}" if a.reply else "")
             todo = "Do the job you proposed now; only that, nothing more. The user gave permission for this job."
@@ -762,32 +762,41 @@ class TaskRunner:
 
 
 # --------------------------------------------------------------------------- templates
+# Shown in the interface language (template_list); the English text is the translation key.
 TEMPLATES: list[dict[str, Any]] = [
-    {"template": "github-issues", "name": "GitHub issue'larına cevap taslağı",
-     "responsibility": "Depoya açılan her yeni issue'yu oku, gerekiyorsa kodda ilgili yere bak ve kısa, nazik, "
-                       "yardımcı bir cevap taslağı hazırla. Taslağı `task_ask` ile bana göster; onaylarsam issue'ya "
-                       "yorum olarak yaz. Etiket önerin varsa ekle. Spam ya da kopya issue'ları belirt.",
-     "trigger": {"type": "github", "repo": "sahip/depo", "what": "issues", "every_minutes": 10},
+    {"template": "github-issues", "name": "Draft replies to GitHub issues",
+     "responsibility": "Read every new issue opened in the repository, look at the relevant code if needed and draft a "
+                       "short, kind, helpful reply. Show me the draft with `task_ask`; if I approve, post it as a comment "
+                       "on the issue. Add label suggestions if you have any. Point out spam or duplicate issues.",
+     "trigger": {"type": "github", "repo": "owner/repo", "what": "issues", "every_minutes": 10},
      "tools": ["github", "web"], "permission": "read", "role": "brain"},
-    {"template": "downloads-cleanup", "name": "Disk dolunca İndirilenler temizliği",
-     "responsibility": "Disk dolmaya yaklaştığında İndirilenler klasörüne bak: eski kurulum dosyaları, büyük "
-                       "arşivler, kopyalar ve aylardır açılmamış dosyalar. Silinecekleri boyutlarıyla listele, kaç GB "
-                       "açılacağını yaz ve `task_ask` ile onay iste; onaylarsam yalnız listedekileri Geri "
-                       "Dönüşüm Kutusu'na taşı. Önemli görünen belgeleri asla önerme.",
+    {"template": "downloads-cleanup", "name": "Clean up Downloads when the disk fills up",
+     "responsibility": "When the disk gets close to full, look at the Downloads folder: old installers, big archives, "
+                       "duplicates and files not opened for months. List what to delete with sizes, say how many GB it "
+                       "frees and ask for approval with `task_ask`; if I approve, move only the listed files to the "
+                       "Recycle Bin. Never suggest documents that look important.",
      "trigger": {"type": "metric", "metric": "pc.disk.*.percent", "op": ">", "threshold": 90, "cooldown": 86400},
      "tools": ["files", "system"], "permission": "read", "role": "fast"},
-    {"template": "flight-coach", "name": "Uçuş sonrası koçluk notu",
-     "responsibility": "Her DCS / War Thunder uçuşu bittiğinde uçuş değerlendirmesini oku ve bana kısa bir koçluk "
-                       "notu yaz: iyi giden bir şey, düzeltilecek en önemli bir şey (somut sayılarla: G, hız, yakıt, "
-                       "iniş) ve bir sonraki uçuş için tek bir alıştırma. Önceki notlarına bakıp ilerlemeyi söyle; "
-                       "her uçuştan öğrendiğini `task_note` ile kaydet.",
+    {"template": "flight-coach", "name": "Coaching note after a flight",
+     "responsibility": "When each DCS / War Thunder flight ends, read the flight debrief and write me a short coaching "
+                       "note: one thing that went well, the single most important thing to fix (with concrete numbers: "
+                       "G, speed, fuel, landing) and one exercise for the next flight. Look at your earlier notes and "
+                       "tell me about progress; save what you learn from each flight with `task_note`.",
+     # the flight debrief event's title, which the core writes in Turkish
      "trigger": {"type": "event", "kind": "flight", "match": "Uçuş değerlendirmesi"},
      "tools": ["flight", "now"], "permission": "read", "role": "brain"},
 ]
 
 
+def template_list() -> list[dict[str, Any]]:
+    """The templates with their name and duty in the interface language."""
+    from alice.i18n import _
+
+    return [dict(t, name=_(t["name"]), responsibility=_(t["responsibility"]), trigger=dict(t["trigger"])) for t in TEMPLATES]
+
+
 def template(name: str) -> dict[str, Any] | None:
-    return next((dict(t, trigger=dict(t["trigger"])) for t in TEMPLATES if t["template"] == name), None)
+    return next((t for t in template_list() if t["template"] == name), None)
 
 
 # --------------------------------------------------------------------------- views (app / phone)
