@@ -194,40 +194,43 @@ def as_dicts(hits: list[Hit]) -> list[dict[str, Any]]:
     return [{"rule": h.rule, "title": h.title, "count": h.count, "examples": h.examples, "fix": h.fix} for h in hits]
 
 
-CRITIC_PROMPT = """Sen deneyimli bir sanat yönetmenisin. Ekte bir web sitesinin ekran görüntüleri var ({views}).
-Proje: {goal}
+CRITIC_PROMPT = """You are an experienced art director. Attached are screenshots of a website ({views}).
+Project: {goal}
 {design}
-Görevin: bu site gerçek, iyi bir tasarım stüdyosunun elinden mi çıkmış, yoksa yapay zekâ ile üretilmiş bir şablon
-gibi mi duruyor? Dürüst ve sert ol; nezaket için iyi deme.
+Your job: does this site look like it came from a real, good design studio, or like a template made with AI? Be
+honest and harsh; don't call it good out of politeness.
 
-Şu kalıplar yapay zekâ işaretidir: kod/terminal süsü etiketler ("XX // YY"), ">" ile başlayan düğmeler, sayaç
-satırları ("128.400+"), sahte teknik notlar ("ŞEKİL 01"), neon parlamalar, gradyan yazı, koyu lacivert üstüne tek
-neon vurgu rengi, her yerde büyük harf ve mono yazı, boş sloganlar, kutu içinde küçük çizimler, her bölümde aynı kart
-ızgarası, fotoğraf yerine soyut süsler.
+These patterns are signs of AI: code/terminal decoration labels ("XX // YY"), buttons starting with ">", counter rows
+("128.400+"), fake technical notes ("ŞEKİL 01"), neon glows, gradient text, a single neon accent on dark navy,
+uppercase and mono type everywhere, empty slogans, small drawings in boxes, the same card grid in every section,
+abstract decoration instead of photos.
 
-Türkçe ve kısa yaz:
-1. İlk izlenim (tek cümle) ve 1-10 arası puan: özgünlük, görsel hiyerarşi, tipografi, boşluk/düzen.
-2. En önemli 5 sorun: her biri hangi görüntüde nerede, neden kötü, somut olarak nasıl düzeltilir (renk, boyut,
-   yerleşim, içerik). Genel tavsiye değil, uygulanabilir talimat.
-3. Korunması gereken 1-2 iyi şey (varsa)."""
+Write in Turkish, briefly:
+1. First impression (one sentence) and a score from 1-10 for: originality, visual hierarchy, typography,
+   spacing/layout.
+2. The 5 most important problems: for each, in which screenshot and where, why it is bad, and concretely how to fix
+   it (color, size, placement, content). Not general advice: instructions that can be applied.
+3. 1-2 good things worth keeping (if any)."""
 
 
-STUDY_PROMPT = """Sen deneyimli bir sanat yönetmenisin ve bir tasarım ekibi için referans araştırması yapıyorsun.
-Ekte gerçek bir sitenin ekran görüntüleri var: {url} ({views}; "uzun" sayfanın aşağısını da gösterir). Çerez
-penceresi ya da açılır pencere varsa yok say.
-Bizim projemiz: {goal}
+STUDY_PROMPT = """You are an experienced art director doing reference research for a design team.
+Attached are screenshots of a real site: {url} ({views}; "uzun" (long) also shows the lower part of the page).
+Ignore any cookie banner or pop-up.
+Our project: {goal}
 {note}
-Bu sitenin tasarımını somut ve ölçülebilir biçimde çöz (sıfat değil gözlem yaz). Türkçe, kısa maddeler:
-1. Genel his ve kime konuşuyor (tek cümle).
-2. Düzen: ızgara, kenar boşlukları, ilk ekranda ne var, bölümler nasıl sıralanıyor, boşluk ritmi (bölümler arası
-   kabaca kaç px), simetri/asimetri.
-3. Tipografi: başlık yazı tipi türü (serif/sans/grotesk, dar/geniş), ağırlık, ana başlığın yaklaşık boyutu (px) ve
-   satır yüksekliği, gövde metni boyutu, büyük harf kullanımı, başlık uzunluğu (kaç sözcük).
-4. Renk: zemin, metin, vurgu renkleri (yaklaşık hex) ve oranları (ör. %80 beyaz, %15 koyu, %5 vurgu).
-5. Görsel dil: fotoğraf mı çizim mi, kadraj, ne gösteriyor; süsleme var mı.
-6. Metin tonu: ana başlığı ve bir alt başlığı aynen yaz; nasıl konuşuyor.
-7. Bunu iyi yapan 3 şey: bizim siteye nasıl uygulanır (somut talimat).
-8. Kaçınılacak 1 şey (varsa)."""
+Break down this site's design in concrete, measurable terms (write observations, not adjectives). In Turkish, short
+bullet points:
+1. Overall feel and who it speaks to (one sentence).
+2. Layout: grid, margins, what is on the first screen, how the sections are ordered, spacing rhythm (roughly how many
+   px between sections), symmetry/asymmetry.
+3. Typography: heading typeface kind (serif/sans/grotesque, narrow/wide), weight, approximate size (px) and line
+   height of the main heading, body text size, use of uppercase, heading length (how many words).
+4. Color: background, text and accent colors (approximate hex) and their proportions (e.g. 80% white, 15% dark, 5%
+   accent).
+5. Visual language: photos or illustrations, framing, what they show; any decoration.
+6. Tone of the copy: write the main heading and one subheading exactly; how it speaks.
+7. 3 things it does well: how to apply them to our site (concrete instructions).
+8. 1 thing to avoid (if any)."""
 
 
 def _vision_chat(router, text: str, images: list[str], max_tokens: int = 1500) -> str:
@@ -258,7 +261,7 @@ def _vision_chat(router, text: str, images: list[str], max_tokens: int = 1500) -
 def study(router, shots: dict[str, str], url: str, goal: str, note: str = "") -> str:
     """Analyze the reference site's screenshots: layout, typography, color, visual language, takeaways."""
     text = STUDY_PROMPT.format(url=url, views=", ".join(shots), goal=goal[:600],
-                               note=f"Özellikle bak: {note}\n" if note.strip() else "")
+                               note=f"Look especially at: {note}\n" if note.strip() else "")
     return _vision_chat(router, text, list(shots.values()), max_tokens=1800)
 
 
@@ -270,10 +273,10 @@ def critique(router, shots: dict[str, str], goal: str, design: str = "", lint_te
         return ""
     refs = dict(list((refs or {}).items())[:2])
     text = CRITIC_PROMPT.format(views=", ".join(shots), goal=goal[:600],
-                                design=f"Tasarım yönü belgesinden özet:\n{design[:1500]}\n" if design.strip() else "")
+                                design=f"Summary of the design direction document:\n{design[:1500]}\n" if design.strip() else "")
     if refs:
-        text += ("\n\nSondaki görüntüler ekibin örnek aldığı referans siteler (" + ", ".join(refs) + "). Bizim siteyi "
-                 "onlarla karşılaştır: aynı kalitede mi, aradaki en büyük fark ne?")
+        text += ("\n\nThe last screenshots are the reference sites the team took as examples (" + ", ".join(refs) + "). "
+                 "Compare our site with them: is it the same quality, and what is the biggest difference?")
     if lint_text:
-        text += f"\n\nKoddan otomatik bulunan kalıplar (görüntüde de kontrol et):\n{lint_text[:2000]}"
+        text += f"\n\nPatterns found automatically in the code (check them in the screenshots too):\n{lint_text[:2000]}"
     return _vision_chat(router, text, list(shots.values()) + list(refs.values()))
