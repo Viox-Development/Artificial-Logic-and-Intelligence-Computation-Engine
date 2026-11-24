@@ -833,6 +833,8 @@ depth = 3
 
 ## Karşılama, Gmail ve güvenlik
 
+> English: [guide/assistant.md](guide/assistant.md)
+
 Hepsinin durumu tek yerde: `alice doctor` (Google araması, anlam araması, hafıza, projeler, Takvim, Gmail hesapları,
 sandbox, karşılama, kurallar/hook/skill, güncelleme sağlığı; eksik olan için ne yapılacağı yazar) ve uygulamada
 **Sistem > Asistan**: aynı durum listesi, sandbox/koruma/karşılama/özet/e-posta bildirimi ayarları, "bu projede hep
