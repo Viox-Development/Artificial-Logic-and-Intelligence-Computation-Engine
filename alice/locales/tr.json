@@ -2647,5 +2647,13 @@
  "the council reached its decision": "kurul kararını verdi",
  "clicking": "tıklıyorum",
  "typing": "yazıyorum",
- "selecting": "seçiyorum"
+ "selecting": "seçiyorum",
+ "did not vote": "oy vermedi",
+ "all the findings it relied on were refuted": "dayandığı bulguların hepsi çürütüldü",
+ "no finding backs it up": "gerekçe gösteren bulgu yok",
+ "Reviewing the plan": "Plan inceleniyor",
+ "Independent review": "Bağımsız inceleme",
+ "The verifier is checking the findings": "Kontrolcü bulguları doğruluyor",
+ "Debate round {n}": "Tartışma turu {n}",
+ "[council / verifier] {summary}": "[kurul / kontrolcü] {summary}"
 }

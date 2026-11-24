@@ -29,10 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.tools.base import ToolContext
 
 VOTES = ("approve", "conditional", "reject")
-VOTE_TR = {"approve": "onay", "conditional": "şartlı onay", "reject": "ret"}
+VOTE_TR = {"approve": "approve", "conditional": "conditional approve", "reject": "reject"}  # report labels (English)
 VOTE_SCORE = {"approve": 1.0, "conditional": 0.75, "reject": 0.0}
 APPROVE_AT, REJECT_BELOW = 0.6, 0.4
 USER_WEIGHT = 3.0
@@ -40,10 +41,10 @@ MAX_ROUNDS = 3
 REVIEWER_STEPS = 14
 PLAN_STEPS = 5  # reading a few files is enough for a plan review; the council should not take minutes
 SEVERITIES = ("critical", "major", "minor")
-SEV_TR = {"critical": "kritik", "major": "önemli", "minor": "küçük"}
-STATUS_TR = {"confirmed": "doğrulandı", "refuted": "çürütüldü", "unclear": "belirsiz", "pending": "bekliyor"}
-KIND_TR = {"plan": "Plan kurulu", "work": "İş kurulu", "recheck": "Kontrol turu", "final": "Final kurulu",
-           "adhoc": "Kurula sor"}
+SEV_TR = {"critical": "critical", "major": "major", "minor": "minor"}
+STATUS_TR = {"confirmed": "confirmed", "refuted": "refuted", "unclear": "unclear", "pending": "pending"}
+KIND_TR = {"plan": "Plan council", "work": "Work council", "recheck": "Check round", "final": "Final council",
+           "adhoc": "Ask the council"}
 
 # Tools the council uses: reading and research. The verifier can also run commands (for tests).
 READ_TOOLS = {"read_file", "list_dir", "glob", "grep", "web_fetch", "web_search", "git"}
@@ -59,29 +60,29 @@ class Role:
 
 
 ROLES: dict[str, Role] = {
-    "critic": Role("critic", "eleştirmen", (
+    "critic": Role("critic", "critic", (
         "You are a harsh but evidence-based critic. Find the bugs, gaps, missed cases, risks and bad design in the "
         "work. Let nothing slide and write no praise. But every finding needs evidence: file:line, a quote or steps to "
         "reproduce. Don't write findings without evidence; the verifier refutes them and your vote doesn't count.")),
-    "advocate": Role("advocate", "savunucu", (
+    "advocate": Role("advocate", "advocate", (
         "You are the advocate. Bring out the work's strengths and right decisions; refute exaggerated or wrong "
         "criticism with evidence, and keep the council from rejecting the work needlessly. But don't deny real bugs; "
         "be honest.")),
-    "verifier": Role("verifier", "kontrolcü", (
+    "verifier": Role("verifier", "verifier", (
         "You are the neutral verifier. You take no side: you check the claims yourself (read the file, run the tests "
         "or the code if needed) and say confirmed/refuted/unclear for each finding. Don't change files or do anything "
         "lasting.")),
-    "security": Role("security", "güvenlik", (
+    "security": Role("security", "security", (
         "You are the security expert. Look for vulnerabilities, leaks of secrets (keys, passwords), unvalidated "
         "input, dangerous use of commands/paths, and permission mistakes."), True,
         r"auth|token|şifre|password|secret|anahtar|key|izin|permission|güvenlik|security|shell|exec|komut|sql|"
         r"crypto|şifrele|login|giriş|cookie|session|upload|path|yol|http|request|input|girdi|\.env"),
-    "performance": Role("performance", "performans", (
+    "performance": Role("performance", "performance", (
         "You are the performance expert. Look at slowness, needless loops and repeated work, memory use, network/disk "
         "calls, scaling and cost."), True,
         r"performans|performance|hız|yavaş|slow|speed|cache|önbellek|döngü|loop|sorgu|query|bellek|memory|async|"
         r"thread|paralel|büyük|ölçek|scale|optimiz|batch|stream"),
-    "ux": Role("ux", "kullanıcı gözü", (
+    "ux": Role("ux", "user's eye", (
         "You are the user's eye. Check, from the user's side, whether it is clear and usable, whether error messages "
         "and texts are good, and whether the interface is consistent and accessible."), True,
         r"arayüz|ui\b|ux|ekran|buton|düğme|button|css|html|\.js\b|jsx|tsx|sayfa|page|mesaj|metin|text|kullanıcı|"
@@ -216,7 +217,7 @@ def parse_block(text: str) -> dict[str, Any]:
     cands = blocks[::-1] + [text[i:] for i in [m.start() for m in re.finditer(r"\{", text)][::-1][:6]]
     for c in cands:
         try:
-            val, _ = json.JSONDecoder().raw_decode(c.strip())
+            val, _end = json.JSONDecoder().raw_decode(c.strip())
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(val, dict):
@@ -297,15 +298,15 @@ def tally(votes: list[Vote], findings: list[Finding], user: dict[str, Any] | Non
     for v in votes:
         v.counted, v.note = True, ""
         if not v.last:
-            v.counted, v.note = False, "oy vermedi"
+            v.counted, v.note = False, _("did not vote")
             continue
         if v.last in ("reject", "conditional") and v.role != "verifier":
             basis = [by_id[i] for i in v.basis if i in by_id]
             if basis and all(f.status == "refuted" for f in basis):
-                v.counted, v.note = False, "dayandığı bulguların hepsi çürütüldü"
+                v.counted, v.note = False, _("all the findings it relied on were refuted")
                 continue
             if not basis and v.last == "reject" and not v.conditions:
-                v.counted, v.note = False, "gerekçe gösteren bulgu yok"
+                v.counted, v.note = False, _("no finding backs it up")
                 continue
         v.weight = 2.0 if relevant and v.role in relevant else 1.0
         total += v.weight
@@ -399,7 +400,7 @@ class Council:
         parent = self.ctx.state.get("agent")
         router = self.ctx.router
         if parent is None or router is None:
-            raise RuntimeError("kurul bu bağlamda çalışamıyor")
+            raise RuntimeError("the council can't run in this context")
         allowed = READ_TOOLS | ({"run_command", "process_output", "process_stop"} if role == "verifier" else set())
         tools = [t for n, t in parent.tools.items() if n in allowed]
         cctx = ToolContext(cwd=self.cwd, config=self.ctx.config, router=router, decider=self.ctx.decider,
@@ -495,7 +496,7 @@ Always end your last message with the requested JSON block inside ```json ... ``
         try:
             self._round1()
             self._verify()
-            for _ in range(self.rounds - 1):
+            for _round in range(self.rounds - 1):
                 if not self._contested():
                     break
                 if not self._debate():
@@ -602,7 +603,7 @@ Always end your last message with the requested JSON block inside ```json ... ``
 
     def _round1(self) -> None:
         self.round = 1
-        self._set_phase("Plan inceleniyor" if self.kind == "plan" else "Bağımsız inceleme")
+        self._set_phase(_("Reviewing the plan") if self.kind == "plan" else _("Independent review"))
         reviewers = [r for r in self.roles if r != "verifier"] or ["critic"]
         ask = ("Check whether the previous findings were fixed; write only serious problems that still stand or are "
                "new." if self.kind == "recheck" else
@@ -656,7 +657,7 @@ Always end your last message with the requested JSON block inside ```json ... ``
 
     def _verify(self) -> None:
         self.round = max(self.round, 1)
-        self._set_phase("Kontrolcü bulguları doğruluyor")
+        self._set_phase(_("The verifier is checking the findings"))
         fmt = ('{"checks": [{"id": "F1", "status": "confirmed|refuted|unclear", "note": "what you tried, what you saw"}], '
                '"findings": [{"severity": "...", "title": "...", "evidence": "...", "fix": "..."}], '
                '"vote": "approve|conditional|reject", "reason": "..."}')
@@ -686,7 +687,7 @@ Always end your last message with the requested JSON block inside ```json ... ``
             if isinstance(f, dict) and str(f.get("title") or "").strip():
                 n += 1
                 if self.kind == "plan":  # the verifier's own findings also follow the plan rules
-                    self.findings.append(plan_finding(f"F{n}", "verifier", f, status="confirmed", check="kendi baktı"))
+                    self.findings.append(plan_finding(f"F{n}", "verifier", f, status="confirmed", check="checked it itself"))
                 else:
                     sev = str(f.get("severity") or "major").lower()
                     self.findings.append(Finding(f"F{n}", "verifier", sev if sev in SEVERITIES else "major",
@@ -723,7 +724,7 @@ Always end your last message with the requested JSON block inside ```json ... ``
     def _debate(self) -> bool:
         """One debate round. Returns False if nobody changed their view (the debate ends)."""
         self.round += 1
-        self._set_phase(f"Tartışma turu {self.round}", everyone=True)
+        self._set_phase(_("Debate round {n}", n=self.round), everyone=True)
         positions = "\n".join(f"- {v.role}: {v.last or 'no vote'}. {v.reason}"
                               for v in self.votes.values())
         fmt = ('{"vote": "approve|conditional|reject", "reason": "...", "conditions": ["..."], "stances": [{"id": '
@@ -811,33 +812,33 @@ def retally(snap: dict[str, Any], user_vote: dict[str, Any] | None) -> dict[str,
 def report(snap: dict[str, Any]) -> str:
     """Plain-text summary of the council result (for the manager, agents and chat)."""
     res = snap.get("result") or {}
-    dec = {"approve": "ONAY", "approve_conditions": "ŞARTLI ONAY", "revise": "DÜZELTME GEREKLİ",
-           "contested": "ÇEKİŞMELİ (karar senin)"}.get(res.get("decision", ""), "?")
-    lines = [f"{KIND_TR.get(snap.get('kind'), 'Kurul')}: {dec} (onay oranı %{round(100 * res.get('score', 0))}"
+    dec = {"approve": "APPROVED", "approve_conditions": "APPROVED WITH CONDITIONS", "revise": "REVISION NEEDED",
+           "contested": "CONTESTED (your call)"}.get(res.get("decision", ""), "?")
+    lines = [f"{KIND_TR.get(snap.get('kind'), 'Council')}: {dec} (approval {round(100 * res.get('score', 0))}%"
              f"{', veto: ' + ', '.join(res['veto']) if res.get('veto') else ''})"]
     if res.get("error"):
-        lines.append(f"Kurul tamamlanamadı: {res['error']}")
+        lines.append(f"The council could not finish: {res['error']}")
     if snap.get("rubric"):
-        lines.append("Plan puanları (1-5): " + ", ".join(f"{k} {v}" for k, v in snap["rubric"].items()))
+        lines.append("Plan scores (1-5): " + ", ".join(f"{k} {v}" for k, v in snap["rubric"].items()))
     for v in snap.get("votes", []):
         role = ROLES.get(v["role"]).title if v["role"] in ROLES else v["role"]
         change = f"{VOTE_TR.get(v['first'], '-')} → " if v.get("first") and v["first"] != v.get("last") else ""
-        lines.append(f"- {role}: {change}{VOTE_TR.get(v.get('last'), 'oy yok')}"
-                     f"{' (sayılmadı: ' + v['note'] + ')' if not v.get('counted', True) else ''}. {v.get('reason', '')}")
+        lines.append(f"- {role}: {change}{VOTE_TR.get(v.get('last'), 'no vote')}"
+                     f"{' (not counted: ' + v['note'] + ')' if not v.get('counted', True) else ''}. {v.get('reason', '')}")
     real = [f for f in snap.get("findings", []) if f.get("status") != "refuted"]
     if real:
-        lines.append("Bulgular:")
+        lines.append("Findings:")
         for f in real:
             where = f" [{f['area']}{' / ' + f['agent'] if f.get('agent') else ''}]" if f.get("area") else ""
             lines.append(f"- [{f['id']}] {SEV_TR.get(f['severity'], f['severity'])} ({STATUS_TR.get(f['status'])}){where}: "
-                         f"{f['title']}. Öneri: {f.get('fix', '')}")
+                         f"{f['title']}. Suggestion: {f.get('fix', '')}")
     gone = len(snap.get("findings", [])) - len(real)
     if gone:
-        lines.append(f"({gone} bulgu kontrolcü tarafından çürütüldü)")
+        lines.append(f"({gone} findings refuted by the verifier)")
     if res.get("conditions"):
-        lines.append("Şartlar: " + "; ".join(res["conditions"]))
+        lines.append("Conditions: " + "; ".join(res["conditions"]))
     if snap.get("user_vote"):
-        lines.append(f"Kullanıcının oyu: {VOTE_TR.get(snap['user_vote'].get('vote'), '?')} "
+        lines.append(f"The user's vote: {VOTE_TR.get(snap['user_vote'].get('vote'), '?')} "
                      f"{snap['user_vote'].get('note', '')}")
     return "\n".join(lines)
 
@@ -847,10 +848,10 @@ def fix_list(snap: dict[str, Any]) -> str:
     res = snap.get("result") or {}
     found = [f for f in snap.get("findings", []) if f.get("status") in ("confirmed", "unclear")]
     items = [f"- [{f['id']}] ({SEV_TR.get(f['severity'], f['severity'])}) {f['title']} — {f.get('fix', '')}"
-             f"{' Kanıt: ' + f['evidence'][:200] if f.get('evidence') else ''}" for f in found]
+             f"{' Evidence: ' + f['evidence'][:200] if f.get('evidence') else ''}" for f in found]
     seen = [f"{f['title']} {f.get('fix', '')}" for f in found]
-    items += [f"- şart: {c}" for c in dedupe(res.get("conditions", []), seen)]
-    return "\n".join(items) or "- (kurul somut bulgu yazmadı; raporunu gözden geçir)"
+    items += [f"- condition: {c}" for c in dedupe(res.get("conditions", []), seen)]
+    return "\n".join(items) or "- (the council wrote no concrete finding; look over its report)"
 
 
 def blocking(snap: dict[str, Any]) -> bool:
@@ -903,4 +904,4 @@ class _QuietUI:
 
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
         ask = getattr(self.base, "ask_permission", None)
-        return ask(name, f"[kurul / kontrolcü] {summary}", risk) if ask else "n"
+        return ask(name, _("[council / verifier] {summary}", summary=summary), risk) if ask else "n"
