@@ -348,23 +348,23 @@ def test_notes_add_list_search_undo(xout):
     from alice.extras import notes
 
     assert extras_cli.notes_cmd(["list"]) == 0
-    assert "not yok" in xout()
+    assert "no notes" in xout()
     assert extras_cli.notes_cmd(["add", "Süt", "al"]) == 0
     notes.add("eski not", ts=time.time() - 10 * 86400)
     assert extras_cli.notes_cmd([]) == 0
     text = xout()
-    assert "not alındı" in text and "Süt al" in text and "eski not" in text
+    assert "note saved" in text and "Süt al" in text and "eski not" in text
 
     assert extras_cli.notes_cmd(["search", "sut"]) == 0  # Turkish letter folding
     assert extras_cli.notes_cmd(["search", "not", "1d"]) == 0  # a note from 10 days ago falls outside the period
     tail = xout().split("eski not")[-1]
-    assert "not yok" in tail
+    assert "no notes" in tail
 
     assert extras_cli.notes_cmd(["undo"]) == 0
-    assert "silindi: eski not" in xout()
+    assert "deleted: eski not" in xout()
     extras_cli.notes_cmd(["undo"])
     assert extras_cli.notes_cmd(["undo"]) == 0
-    assert notes.all_notes() == [] and xout().rstrip().endswith("not yok")
+    assert notes.all_notes() == [] and xout().rstrip().endswith("no notes")
 
 
 def test_brief_install_and_render(monkeypatch, xout):
@@ -373,7 +373,7 @@ def test_brief_install_and_render(monkeypatch, xout):
 
     assert extras_cli.brief_cmd(["--install", "07:30", "--weekdays"]) == 0
     t = TaskStore().get("brief")
-    assert t.cron == "30 7 * * 1-5" and "kuruldu" in xout()
+    assert t.cron == "30 7 * * 1-5" and "set up" in xout()
     assert extras_cli.brief_cmd(["--install", "--weekdays"]) == 0  # no time given: 08:00
     assert TaskStore().get("brief").cron == "0 8 * * 1-5"
 

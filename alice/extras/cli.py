@@ -12,6 +12,8 @@ import webbrowser
 from rich.console import Console
 from rich.markup import escape
 
+from alice.i18n import _
+
 console = Console(highlight=False)
 
 
@@ -22,11 +24,11 @@ def notes_cmd(argv: list[str]) -> int:
     sub = argv[0] if argv else "list"
     if sub == "add" and len(argv) > 1:
         notes.add(" ".join(argv[1:]))
-        console.print("[green]not alındı[/]")
+        console.print(_("[green]note saved[/]"))
         return 0
     if sub == "undo":
         n = notes.remove_last()
-        console.print(f"silindi: {escape(n.text)}" if n else "[dim]not yok[/]")
+        console.print(_("deleted: {text}", text=escape(n.text)) if n else _("[dim]no notes[/]"))
         return 0
     if sub == "search" and len(argv) > 1:
         found = notes.search(argv[1], parse_time(argv[2]) if len(argv) > 2 else None)
@@ -35,7 +37,7 @@ def notes_cmd(argv: list[str]) -> int:
     for n in found:
         console.print(escape(n.line()))
     if not found:
-        console.print("[dim]not yok[/]")
+        console.print(_("[dim]no notes[/]"))
     return 0
 
 
@@ -49,7 +51,7 @@ def brief_cmd(argv: list[str]) -> int:
         i = argv.index("--install")
         at = argv[i + 1] if len(argv) > i + 1 and ":" in argv[i + 1] else "08:00"
         t = brief.install(at, weekdays_only="--weekdays" in argv)
-        console.print(f"[green]kuruldu:[/] {escape(t.summary())}")
+        console.print(_("[green]set up:[/] {summary}", summary=escape(t.summary())))
         return 0
     cfg = load_config()
     with Store() as st:
@@ -65,13 +67,14 @@ def report_cmd(argv: list[str]) -> int:
         i = argv.index("--install")
         at = argv[i + 1] if len(argv) > i + 1 and ":" in argv[i + 1] else "20:00"
         t = report.install(at)
-        console.print(f"[green]kuruldu:[/] {escape(t.summary())}")
+        console.print(_("[green]set up:[/] {summary}", summary=escape(t.summary())))
         return 0
     days = 7
     if "--days" in argv:
         val = argv[argv.index("--days") + 1] if argv.index("--days") + 1 < len(argv) else ""
         if not val.isdigit() or int(val) < 1:
-            console.print(f"--days bir gün sayısı olmalı, ör. alice report --days 7 (verilen: {val or 'yok'})",
+            console.print(_("--days must be a number of days, e.g. alice report --days 7 (given: {value})",
+                            value=val or _("nothing")),
                           markup=False)
             return 2
         days = int(val)
