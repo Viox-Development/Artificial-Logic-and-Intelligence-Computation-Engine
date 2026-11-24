@@ -48,7 +48,7 @@ def _registry(ctx: ToolContext) -> dict[int, Watcher]:
 
 def _deliver(ctx: ToolContext) -> Callable[[str], Any]:
     fn = ctx.state.get("deliver")
-    return fn if callable(fn) else (lambda text: ctx.emit(text))
+    return fn if callable(fn) else ctx.emit
 
 
 class Monitor(Tool):

@@ -178,5 +178,5 @@ def setup_cmd(argv: list[str]) -> int:
             console.print(f"[red]bağlanamadı: {escape(str(e))}[/]")
             return None
 
-    return run(lambda q: console.input(q), lambda s: console.print(escape(s)), connect_calendar=connect_calendar,
+    return run(console.input, lambda s: console.print(escape(s)), connect_calendar=connect_calendar,
                connect_gmail=connect_gmail)

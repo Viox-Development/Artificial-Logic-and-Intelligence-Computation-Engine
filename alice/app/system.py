@@ -218,7 +218,7 @@ class SystemPanel:
         if action == "start":
             return self._background("başlatılıyor", lambda: (service.start_detached(), time.sleep(3)))
         if action == "stop":
-            return self._background("durduruluyor", lambda: stop_core())
+            return self._background("durduruluyor", stop_core)
         if action == "restart":
             if self._restart_in_core():
                 return {"ok": True, "restarting": True}

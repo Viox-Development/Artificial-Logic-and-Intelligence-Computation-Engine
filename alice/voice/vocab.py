@@ -149,7 +149,7 @@ def known_names(cfg=None, refresh: bool = False) -> list[str]:
         extra = [str(x) for x in v.get("vocab", []) or []]
         groups: list[Iterable[str]] = [extra, COMMON]
         if v.get("vocab_auto", True):
-            for source in (lambda: memory_names(), lambda: project_names(cfg), bookmark_names, start_menu_apps):
+            for source in (memory_names, lambda: project_names(cfg), bookmark_names, start_menu_apps):
                 try:
                     groups.append(source())
                 except Exception:  # noqa: BLE001 - hint; if unreadable, continue with general list
