@@ -18,12 +18,13 @@ from rich.console import Console
 from rich.markup import escape
 
 from alice.config import load_config
+from alice.i18n import _
 
 console = Console(highlight=False)
 
 
 def _confirm(question: str) -> bool:
-    return console.input(f"{question} [bold][e/h][/] > ").strip().lower() in ("e", "evet", "y", "yes", "")
+    return console.input(_("{question} [bold][y/n][/] > ", question=question)).strip().lower() in ("e", "evet", "y", "yes", "")
 
 
 def core_cmd(argv: list[str]) -> int:
@@ -37,7 +38,7 @@ def core_cmd(argv: list[str]) -> int:
             return 0  # started from another Python (e.g. .venv startup shortcut): restarted with registered Python
         cfg = load_config()
         if not service.acquire_lock():
-            console.print("[yellow]çekirdek zaten çalışıyor[/]")
+            console.print(_("[yellow]the core is already running[/]"))
             return 1
         if "--once" not in argv:
             service.enable_crash_log()
@@ -93,8 +94,8 @@ def core_cmd(argv: list[str]) -> int:
                 for e in reversed(core.store.events(limit=10)):
                     console.print(escape(e.line()))
                 return 0
-            console.print(f"[bold magenta]ALICE çekirdek[/] çalışıyor, her {core.interval:g} sn. "
-                          "[dim]Durdurmak için Ctrl+C[/]")
+            console.print(_("[bold magenta]ALICE core[/] running, every {secs} s. [dim]Ctrl+C to stop[/]",
+                            secs=f"{core.interval:g}"))
             if "--tray" in argv and service.run_tray(core):
                 return 0
             core.run_forever()
@@ -119,28 +120,28 @@ def core_cmd(argv: list[str]) -> int:
         return 0
     if sub == "install":
         p = service.install_autostart()
-        console.print(f"[green]otomatik başlatma kuruldu:[/] {p}")
+        console.print(_("[green]auto-start set up:[/] {path}", path=p))
         if "pystray" not in sys.modules:
             import importlib.util
 
             if importlib.util.find_spec("pystray") is None:
-                console.print("[dim]Tepsi simgesi için: " + escape('pip install "alice-harness[core]"') + "[/]")
+                console.print(_("[dim]For the tray icon: {command}[/]", command=escape('pip install "alice-harness[core]"')))
         return 0
     if sub == "uninstall":
-        console.print("[green]kaldırıldı[/]" if service.uninstall_autostart() else "[dim]zaten kurulu değil[/]")
+        console.print(_("[green]removed[/]") if service.uninstall_autostart() else _("[dim]not set up anyway[/]"))
         return 0
     if sub == "mode":
         if len(argv) < 2 or argv[1] not in ("auto", "normal", "dev", "flight", "quiet"):
-            console.print("kullanım: alice core mode <auto|normal|dev|flight|quiet>")
+            console.print(_("usage: alice core mode <auto|normal|dev|flight|quiet>"))
             return 2
         service.force_mode(None if argv[1] == "auto" else argv[1])
-        console.print(f"mod: [bold]{argv[1]}[/]")
+        console.print(_("mode: [bold]{mode}[/]", mode=argv[1]))
         return 0
     if sub == "stats":
         from alice.core.store import Store, parse_time
 
         if len(argv) < 2:
-            console.print("kullanım: alice core stats <anahtar|glob> [süre, ör. 1d]")
+            console.print(_("usage: alice core stats <key|glob> [period, e.g. 1d]"))
             return 2
         since = parse_time(argv[2] if len(argv) > 2 else "1d")
         with Store() as st:
@@ -152,21 +153,22 @@ def core_cmd(argv: list[str]) -> int:
         s = service.read_state()
         if s.get("running"):
             p = s.get("policy", {})
-            console.print(f"[green]çalışıyor[/] (pid {s.get('pid')}), mod: [bold]{s.get('mode')}[/]"
-                          f"{' (elle sabit)' if s.get('forced') else ''}, en düşük bildirim: {p.get('min_severity')}, "
-                          f"yerel GPU: {p.get('local_gpu')}")
+            console.print(_("[green]running[/] (pid {pid}), mode: [bold]{mode}[/]{forced}, lowest notification: "
+                            "{severity}, local GPU: {gpu}", pid=s.get("pid"), mode=s.get("mode"),
+                            forced=_(" (set by hand)") if s.get("forced") else "", severity=p.get("min_severity"),
+                            gpu=p.get("local_gpu")))
         else:
-            console.print("[yellow]çalışmıyor[/]  [dim]başlat: alice core run · kalıcı: alice core install[/]")
+            console.print(_("[yellow]not running[/]  [dim]start: alice core run · permanently: alice core install[/]"))
         from alice.core.store import Store
 
         with Store() as st:
             evs = st.events(limit=10)
         if evs:
-            console.print("[bold]Son olaylar[/]")
+            console.print(_("[bold]Recent events[/]"))
             for e in reversed(evs):
                 console.print("  " + escape(e.line()))
         return 0
-    console.print(f"bilinmeyen çekirdek komutu: {sub}", markup=False)
+    console.print(_("unknown core command: {command}", command=sub), markup=False)
     console.print(__doc__, markup=False)
     return 2
 
@@ -177,9 +179,9 @@ def _start_phone(cfg, core, state=None):
     try:
         ps = PhoneServer(cfg, core.store, state=state)
     except OSError as e:
-        console.print(f"[yellow]telefon köprüsü açılamadı:[/] {e}")
+        console.print(_("[yellow]could not open the phone bridge:[/] {error}", error=e))
         return None
-    console.print(f"telefon: {ps.url}")
+    console.print(_("phone: {url}", url=ps.url))
     return ps
 
 
@@ -382,7 +384,7 @@ def _start_voice(cfg, core):
                 speaker.stop_alerts()
             state = "kapalı" if speaker.alerts_muted else "açık"
             voice_log(f"oyun uyarı sesi {state} ({alert_mute_key})")
-            console.print(f"[dim]oyun uyarı sesi {state}[/]")
+            console.print(_("[dim]game alert sound {state}[/]", state=state))
             try:
                 from alice.config import set_config_value
 
@@ -409,7 +411,7 @@ def _start_voice(cfg, core):
         core.anticipator.hooks.append(lambda: speaker.prewarm(callouts(), limit=int(v.get("prewarm_per_start", 12)),
                                                               log=voice_log))
     if not mic_available():
-        console.print("[yellow]mikrofon yok;[/] ALICE sadece bildirimleri seslendirecek")
+        console.print(_("[yellow]no microphone;[/] ALICE will only speak notifications"))
         return None
     va = VoiceAssistant(agent, speaker, stt, ptt_key=v.get("ptt_key", ""),
                         wake_model=v.get("wake_model", ""), wake_phrase=v.get("wake_phrase", True),
@@ -501,11 +503,11 @@ def feeds_cmd(argv: list[str]) -> int:
     if sub == "--new":
         p = feeds_path()
         if p.exists():
-            console.print(f"[yellow]zaten var:[/] {p}")
+            console.print(_("[yellow]already exists:[/] {path}", path=p))
             return 1
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(FEED_TEMPLATE, encoding="utf-8")
-        console.print(f"[green]oluşturuldu:[/] {p}")
+        console.print(_("[green]created:[/] {path}", path=p))
         return 0
 
     feeds, errors = load_feeds()
@@ -515,7 +517,7 @@ def feeds_cmd(argv: list[str]) -> int:
     if sub == "--test" and len(argv) > 1:
         feed = next((f for f in feeds if f.name == argv[1]), None)
         if feed is None:
-            console.print(f"[red]akış yok:[/] {escape(argv[1])}")
+            console.print(_("[red]no such feed:[/] {name}", name=escape(argv[1])))
             return 1
         cfg = load_config()
         decider = None
@@ -531,20 +533,21 @@ def feeds_cmd(argv: list[str]) -> int:
             console.print(f"[red]{escape(str(e))}[/]")
             return 1
         passed = sum(v.ok for v in verdicts)
-        console.print(f"[bold]{len(verdicts)} öğe, {passed} tanesi koşulu geçiyor[/]  [dim]{escape(feed.describe())}[/]")
+        console.print(_("[bold]{n} items, {passed} meet the condition[/]  [dim]{feed}[/]", n=len(verdicts), passed=passed,
+                        feed=escape(feed.describe())))
         for v in verdicts[:15]:
             mark = "[red]![/]" if v.ok and v.severity == "critical" else ("[green]✓[/]" if v.ok else "[dim]✗[/]")
             line = escape(v.title + (f" — {v.body}" if v.body else ""))[:140]
             console.print(f"  {mark} {line}  [dim]{escape(v.reason)}[/]")
         if feed.mode == "change":
-            console.print("[dim]change modunda bildirim, izlenen alan bir önceki yoklamadan farklıysa gider.[/]")
+            console.print(_("[dim]in change mode a notification goes out when the watched field differs from the previous poll.[/]"))
         return 0
 
     if not feeds:
-        console.print(f"[dim]akış yok. Örnek dosya oluşturmak için: alice feeds --new  ({feeds_path()})[/]")
+        console.print(_("[dim]no feeds. To create a sample file: alice feeds --new  ({path})[/]", path=feeds_path()))
         return 0
     for f in feeds:
-        console.print(f"[bold]{escape(f.name)}[/]" + ("" if f.enabled else " [dim](kapalı)[/]")
+        console.print(f"[bold]{escape(f.name)}[/]" + ("" if f.enabled else _(" [dim](off)[/]"))
                       + f"  [dim]{escape(f.describe())}[/]")
     return 0
 
@@ -558,7 +561,7 @@ def rules_cmd(argv: list[str]) -> int:
         for r in rs.rules:
             console.print(escape(r.summary()) + (f"  [dim]{escape(r.description)}[/]" if r.description else ""))
         if not rs.rules:
-            console.print("[dim]kural yok[/]")
+            console.print(_("[dim]no rules[/]"))
         return 0
     if sub == "add" and len(argv) > 1:
         from alice.core.store import Store
@@ -566,24 +569,24 @@ def rules_cmd(argv: list[str]) -> int:
 
         text = " ".join(argv[1:])
         try:
-            with console.status("kurala çevriliyor..."), Store() as st:
+            with console.status(_("turning it into a rule...")), Store() as st:
                 rule = parse_rule(text, Router(load_config()), st)
         except (ValueError, TypeError, AllProvidersFailed) as e:
-            console.print(f"[red]anlaşılamadı:[/] {escape(str(e))}")
+            console.print(_("[red]not understood:[/] {error}", error=escape(str(e))))
             return 1
-        console.print(f"[bold]{escape(rule.summary())}[/]\n  mesaj: {escape(rule.message)}")
+        console.print(f"[bold]{escape(rule.summary())}[/]\n" + _("  message: {message}", message=escape(rule.message)))
         if rule.confirm:
-            console.print(f"  Jev'e sorulacak: {escape(rule.confirm)}")
+            console.print(_("  will ask you: {question}", question=escape(rule.confirm)))
         if rule.action == "agent":
-            console.print(f"  tetiklenince ALICE: {escape(rule.prompt)}")
-        if not _confirm("Kurulsun mu?"):
+            console.print(_("  when triggered, ALICE: {prompt}", prompt=escape(rule.prompt)))
+        if not _confirm(_("Set it up?")):
             return 1
         rs.add(rule)
-        console.print("[green]kuruldu[/]")
+        console.print(_("[green]set up[/]"))
         return 0
     if sub in ("rm", "on", "off") and len(argv) > 1:
         ok = rs.remove(argv[1]) if sub == "rm" else rs.set_enabled(argv[1], sub == "on")
-        console.print("[green]tamam[/]" if ok else f"[red]kural yok: {escape(argv[1])}[/]")
+        console.print(_("[green]done[/]") if ok else _("[red]no such rule: {id}[/]", id=escape(argv[1])))
         return 0 if ok else 1
     console.print(__doc__, markup=False)
     return 2
@@ -598,43 +601,43 @@ def tasks_cmd(argv: list[str]) -> int:
         for t in ts.tasks:
             console.print(escape(t.summary()))
             if t.last_result:
-                console.print(f"  [dim]son sonuç: {escape(t.last_result[:150])}[/]")
+                console.print(_("  [dim]last result: {result}[/]", result=escape(t.last_result[:150])))
         if not ts.tasks:
-            console.print("[dim]zamanlanmış görev yok[/]")
+            console.print(_("[dim]no scheduled tasks[/]"))
         return 0
     if sub == "add" and len(argv) > 1:
         from alice.providers.router import AllProvidersFailed, Router
 
         text = " ".join(argv[1:])
         try:
-            with console.status("zamanlamaya çevriliyor..."):
+            with console.status(_("turning it into a schedule...")):
                 task = parse_task(text, Router(load_config()))
         except (ValueError, TypeError, AllProvidersFailed) as e:
-            console.print(f"[red]anlaşılamadı:[/] {escape(str(e))}")
+            console.print(_("[red]not understood:[/] {error}", error=escape(str(e))))
             return 1
-        console.print(f"[bold]Ne zaman:[/] {Cron(task.cron).describe()}  [dim]({task.cron})[/]\n"
-                      f"[bold]Ne yapılacak:[/] {escape(task.prompt)}\n"
-                      f"[bold]Kaçırılırsa:[/] {'açılışta telafi edilir' if task.catch_up else 'atlanır'}")
-        if not _confirm("Kurulsun mu?"):
+        console.print(_("[bold]When:[/] {when}  [dim]({cron})[/]\n[bold]What:[/] {prompt}\n[bold]If missed:[/] {missed}",
+                        when=Cron(task.cron).describe(), cron=task.cron, prompt=escape(task.prompt),
+                        missed=_("made up for on start") if task.catch_up else _("skipped")))
+        if not _confirm(_("Set it up?")):
             return 1
         ts.add(task)
-        console.print(f"[green]kuruldu[/] ({task.id}), sonraki: {task.next_run():%d.%m %H:%M}")
+        console.print(_("[green]set up[/] ({id}), next: {next}", id=task.id, next=f"{task.next_run():%d.%m %H:%M}"))
         from alice.core.service import read_state
 
         if not read_state().get("running"):
-            console.print("[yellow]çekirdek çalışmıyor;[/] görevin çalışması için [bold]alice core install[/]")
+            console.print(_("[yellow]the core is not running;[/] for the task to run: [bold]alice core install[/]"))
         return 0
     if sub in ("rm", "run") and len(argv) > 1:
         t = ts.get(argv[1])
         if t is None:
-            console.print(f"[red]görev yok: {escape(argv[1])}[/]")
+            console.print(_("[red]no such task: {id}[/]", id=escape(argv[1])))
             return 1
         if sub == "rm":
             ts.remove(t.id)
         else:
             t.pending = True
             ts.save()
-        console.print("[green]tamam[/]" + (" (bir sonraki çekirdek turunda çalışacak)" if sub == "run" else ""))
+        console.print(_("[green]done[/]") + (_(" (it runs on the next core tick)") if sub == "run" else ""))
         return 0
     console.print(__doc__, markup=False)
     return 2
