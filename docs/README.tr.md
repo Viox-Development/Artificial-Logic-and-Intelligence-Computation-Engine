@@ -794,6 +794,8 @@ alice voice on        # çekirdekle birlikte açılsın (kapatmak: alice voice o
 
 ## Hafıza, projeler ve takip
 
+> English, and up to date: [guide/memory.md](guide/memory.md). Kalıcı bilgiler artık `memory.db`'de değil, `~/.alice/memory/*.md` notlarında (MEMORY.md dizini, kategoriler, Dream ile günlük toparlama); `memory.db` konuşma kaydı, özetler ve takipler için.
+
 ALICE'in hafızası tamamen yerelde, `~/.alice/memory.db` içinde.
 
 * **Kalıcı bilgiler:** tercihler, kişiler, alışkanlıklar. "Bunu hatırla: ..." anında kaydedilir; kendinden bahsettiğin cümleler arka planda hızlı modele verilip çıkarılır.
