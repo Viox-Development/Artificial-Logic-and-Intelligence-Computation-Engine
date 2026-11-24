@@ -223,7 +223,7 @@ def cleanup(ctx: "ToolContext") -> None:
                 log.debug("eklenti temizliği hata verdi: %s", p.name, exc_info=True)
 
 
-TEMPLATE = '''"""ALICE eklentisi: {name}. Ayrıntı: docs/PLUGINS.md"""
+TEMPLATE = '''"""ALICE plugin: {name}. Details: docs/PLUGINS.md"""
 
 from alice.plugins import Plugin
 from alice.tools.base import READ, Tool, ToolContext, ToolResult, obj
@@ -231,8 +231,8 @@ from alice.tools.base import READ, Tool, ToolContext, ToolResult, obj
 
 class Hello(Tool):
     name = "{name}_hello"
-    description = "Örnek araç: verilen ada selam verir. Gerçek bir iş yapmaz; kendi aracını yazarken şablon olarak kullan."
-    parameters = obj({{"who": {{"type": "string", "description": "Selam verilecek kişinin adı, ör. 'Ayşe'."}}}}, ["who"])
+    description = "Example tool: greets the given name. Does no real work; use it as a template for your own tool."
+    parameters = obj({{"who": {{"type": "string", "description": "Name of the person to greet, e.g. 'Ayşe'."}}}}, ["who"])
     risk = READ
     parallel_safe = True
 
@@ -243,7 +243,7 @@ class Hello(Tool):
 PLUGIN = Plugin(
     name="{name}",
     tools=[Hello()],
-    description="örnek eklenti",
+    description="example plugin",
     keywords=r"selam|merhaba",
 )
 '''

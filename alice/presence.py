@@ -156,49 +156,50 @@ def has_news(b: dict[str, Any]) -> bool:
     return bool(b["followups"] or b["events"] or b["mail"])
 
 
-COMPOSE_PROMPT = """Kullanıcı bilgisayarının başına döndü ({away} uzaktaydı). Onu sesli, kısa ve doğal bir şekilde \
-karşıla. Kişiliğin aşağıda; o karakterle konuş. Kurallar: Türkçe, en fazla 3 kısa cümle, liste/markdown/emoji yok, \
-saatleri okunur yaz ("üçte"). "{greeting}" gibi bir selamla başla (adını biliyorsan kullan). Takip edilecekleri doğal \
-sor ya da hatırlat; birden çok şey varsa en önemlisini öne al, gerisini tek cümlede topla. Söylenecek bir şey yoksa \
-sadece kısa bir selam ver. Uydurma: sadece aşağıdakileri kullan.
+COMPOSE_PROMPT = """The user is back at the computer (they were away for {away}). Welcome them by voice, short \
+and natural. Your personality is below; speak as that character. Rules: Turkish, at most 3 short sentences, no \
+lists/markdown/emoji, write times as they are spoken ("üçte"). Start with a greeting like "{greeting}" (use their name \
+if you know it). Ask about or remind them of the follow-ups naturally; if there are several things, put the most \
+important first and gather the rest in one sentence. If there is nothing to say, just give a short greeting. Don't \
+make anything up: use only what is below.
 
-Kişilik (özet):
+Personality (summary):
 {persona}
 
-Kullanıcı hakkında bilinenler:
+What is known about the user:
 {profile}
 
-Takipler (sorulacak/hatırlatılacak/yarım kalan):
+Follow-ups (to ask about / to remind / unfinished):
 {followups}
-Bugünün kalan takvimi:
+The rest of today's calendar:
 {events}
-Okunmamış önemli e-postalar:
+Unread important emails:
 {mail}{morning}"""
 
 MORNING_PROMPT = """
 
-Bu günün ilk karşılaması: kısa bir sabah özeti yap (en fazla 5 cümle). Sıra: hava (tek cümle, şemsiye ya da mont gerekiyorsa söyle), bugün ne var (program ve takvim), sonra takipler ve e-postalar, en son dünden kalanlar ve ALICE'in kendi sorunu.
-Hava: {weather}
-Bugünün programı: {program}
-Dünden kalan notlar: {notes}
-ALICE'in kendi sorunu (sağlık raporu): {health}"""
+This is the first welcome of the day: give a short morning summary (at most 5 sentences). Order: weather (one sentence; say if an umbrella or a coat is needed), what is on today (schedule and calendar), then follow-ups and emails, last what is left from yesterday and ALICE's own problem.
+Weather: {weather}
+Today's schedule: {program}
+Notes left from yesterday: {notes}
+ALICE's own problem (health report): {health}"""
 
 
 def compose(b: dict[str, Any], mem=None, router=None) -> str:
-    fups = "\n".join(f"- ({f.kind}) {f.text}" for f in b["followups"]) or "(yok)"
-    events = "\n".join(f"- {e}" for e in b["events"]) or "(yok)"
-    mail = "\n".join(f"- {m}" for m in b["mail"]) or "(yok)"
+    fups = "\n".join(f"- ({f.kind}) {f.text}" for f in b["followups"]) or "(none)"
+    events = "\n".join(f"- {e}" for e in b["events"]) or "(none)"
+    mail = "\n".join(f"- {m}" for m in b["mail"]) or "(none)"
     mo = b.get("morning")
-    morning = MORNING_PROMPT.format(weather=mo.get("weather") or "(yok)", program=mo.get("program") or "(yok)",
-                                    notes="; ".join(mo.get("notes") or []) or "(yok)",
-                                    health=mo.get("health") or "(yok)") if mo else ""
+    morning = MORNING_PROMPT.format(weather=mo.get("weather") or "(none)", program=mo.get("program") or "(none)",
+                                    notes="; ".join(mo.get("notes") or []) or "(none)",
+                                    health=mo.get("health") or "(none)") if mo else ""
     if router is not None:
         try:
             from alice.config import personality_text
 
             profile = mem.profile(chars=1200, recent=0) if mem is not None else ""
             prompt = COMPOSE_PROMPT.format(away=b["away"], greeting=b["greeting"], persona=personality_text()[:1500]
-                                           or "(varsayılan: sakin, kısa, sıcak)", profile=profile[:1500] or "(yok)",
+                                           or "(default: calm, short, warm)", profile=profile[:1500] or "(none)",
                                            followups=fups, events=events, mail=mail, morning=morning)
             res = router.chat("fast", [{"role": "user", "content": prompt}], temperature=0.7,
                               max_tokens=380 if mo else 220)
