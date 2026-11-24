@@ -110,7 +110,7 @@ def test_new_comments_split_trusted_outside_and_skip_alice_replies():
     assert [c["id"] for c in outside] == [2]
     w.seen = [1, 3]
     assert prwatch.new_comments(w, data)[0] == []  # already-seen ones are not handled again
-    assert "konu T1" in gh.format_threads(data) and "(dışarıdan)" in gh.format_threads(data)
+    assert "konu T1" in gh.format_threads(data) and "(outside)" in gh.format_threads(data)
 
 
 def test_reply_is_signed_so_watcher_ignores_it():
@@ -223,7 +223,7 @@ def test_ci_wait_polls_until_done(monkeypatch):
     ctx = ToolContext(cwd=Path("."), config=make_config({"brain": ["a:m"]}))
     ctx.state["github_api"] = api
     out = gh.GitHub().run(ctx, "ci_wait", repo="o/r", number=7)
-    assert "kırmızı" in out.text and "ci_logs" in out.text
+    assert "red" in out.text and "ci_logs" in out.text
 
 
 # ------------------------------------------------------------------------------------------ code review
