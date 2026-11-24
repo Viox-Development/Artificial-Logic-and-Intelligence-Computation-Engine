@@ -120,7 +120,7 @@ def test_deleted_note_is_not_recreated_by_extraction_or_dream_until_user_saves_i
     again = {"save": [{"name": "user-youtube", "type": "user", "description": "Kullanıcı YouTube'da çok vakit geçirir",
                        "content": "Kullanıcı YouTube ve sosyal medya sitelerinde çok vakit geçirir."}]}
     done = m.apply_notes(again, source="dream")
-    assert m.notes.scan() == [] and "kullanıcı silmişti" in done[0]
+    assert m.notes.scan() == [] and "the user had deleted it" in done[0]
     other = {"save": [{"name": "user-kahve", "type": "user", "description": "Kullanıcı kahveyi şekersiz içer",
                        "content": "Kullanıcı kahveyi şekersiz içer."}]}
     assert m.apply_notes(other, source="otomatik") and len(m.notes.scan()) == 1  # unrelated note is not blocked
@@ -140,7 +140,7 @@ def test_unnamed_model_save_is_checked_against_its_own_name_not_a_note_called_no
                        "description": "Kullanıcı YouTube'da çok vakit geçirir",
                        "content": "Kullanıcı YouTube ve sosyal medya sitelerinde çok vakit geçirir."}]}
     done = m.apply_notes(again, source="otomatik")
-    assert "kullanıcı silmişti" in done[0]
+    assert "the user had deleted it" in done[0]
     assert [n.name for n in m.notes.scan()] == ["not"]
     fresh = {"save": [{"type": "user", "title": "Kahve", "description": "Kullanıcı kahveyi şekersiz içer",
                        "content": "Kullanıcı kahveyi şekersiz içer."}]}
