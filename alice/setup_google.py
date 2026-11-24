@@ -16,23 +16,29 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import _
+
 STEPS = [
-    ("Proje", "https://console.cloud.google.com/projectcreate",
-     "Proje adı olarak 'ALICE' yaz, Oluştur'a bas. Sağ üstte projenin seçili olduğundan emin ol."),
-    ("Takvim API'si", "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
-     "'Etkinleştir' (Enable) düğmesine bas."),
-    ("Gmail API'si", "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
-     "'Etkinleştir' (Enable) düğmesine bas."),
-    ("İzin ekranı", "https://console.cloud.google.com/auth/branding",
-     "Başla (Get started): uygulama adı 'ALICE', destek e-postası kendi adresin; Kitle (Audience): External; "
-     "iletişim e-postası yine kendi adresin; kaydet."),
-    ("Test kullanıcısı", "https://console.cloud.google.com/auth/audience",
-     "'Test users' altında 'Add users' ile bağlayacağın HER Gmail adresini ekle (okul, kişisel...). Eklemezsen "
-     "girişte 'erişim engellendi' hatası alırsın."),
-    ("İstemci", "https://console.cloud.google.com/auth/clients/create",
-     "Application type: Desktop app, ad: ALICE, Oluştur. Çıkan pencerede 'Download JSON' ile dosyayı indir "
-     "(ya da Client ID ve Client secret'ı kopyala)."),
+    ("Project", "https://console.cloud.google.com/projectcreate",
+     "Enter 'ALICE' as the project name and click Create. Make sure the project is selected at the top right."),
+    ("Calendar API", "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+     "Click 'Enable'."),
+    ("Gmail API", "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
+     "Click 'Enable'."),
+    ("Consent screen", "https://console.cloud.google.com/auth/branding",
+     "Get started: app name 'ALICE', support e-mail your own address; Audience: External; contact e-mail your "
+     "own address again; save."),
+    ("Test users", "https://console.cloud.google.com/auth/audience",
+     "Under 'Test users', use 'Add users' to add EVERY Gmail address you will connect (school, personal...). If "
+     "you don't, sign-in fails with 'access blocked'."),
+    ("Client", "https://console.cloud.google.com/auth/clients/create",
+     "Application type: Desktop app, name: ALICE, Create. In the window that opens, download the file with "
+     "'Download JSON' (or copy the Client ID and Client secret)."),
 ]
+
+
+# Yes answers to [Y/n] prompts, in both languages ("" = the default, yes).
+YES = ("", "y", "yes", "e", "evet")
 
 
 def set_env(path: Path, key: str, value: str) -> None:
@@ -62,7 +68,7 @@ def read_client_json(text: str) -> tuple[str, str]:
     block = data.get("installed") or data.get("web") or data
     cid, secret = str(block.get("client_id") or ""), str(block.get("client_secret") or "")
     if not cid.endswith(".apps.googleusercontent.com"):
-        raise ValueError("bu bir Google OAuth istemci dosyası değil (client_id bulunamadı)")
+        raise ValueError(_("this is not a Google OAuth client file (no client_id found)"))
     return cid, secret
 
 
@@ -82,29 +88,29 @@ def run(ask: Callable[[str], str], say: Callable[[str], None], open_url: Callabl
     from alice.config import alice_home
 
     env_path = env_path or alice_home() / ".env"
-    say("Google Takvim + Gmail kurulumu. Her adımda sayfa tarayıcıda açılacak; işin bitince Enter'a bas.")
+    say(_("Google Calendar + Gmail setup. Each step opens a page in the browser; press Enter when you're done."))
     if os.environ.get("GOOGLE_CLIENT_ID", "").strip():
-        say("Google istemcisi zaten ayarlı, Cloud adımları atlanıyor.")
+        say(_("The Google client is already set up; skipping the Cloud steps."))
     else:
         for i, (title, url, how) in enumerate(STEPS, 1):
-            say(f"\n{i}/{len(STEPS)} {title}: {how}")
+            say(f"\n{i}/{len(STEPS)} {_(title)}: {_(how)}")
             open_url(url)
-            if ask("  bitince Enter (atlamak için 's', çıkmak için 'q') > ").strip().lower() == "q":
-                say("Yarıda bırakıldı. Tekrar: alice setup google")
+            if ask(_("  Enter when done ('s' to skip, 'q' to quit) > ")).strip().lower() == "q":
+                say(_("Stopped halfway. To resume: alice setup google"))
                 return 1
         cid = secret = ""
         found = find_downloaded_json(downloads)
         if found:
-            ans = ask(f"\nİndirilenlerde {found.name} bulundu. Bunu kullanayım mı? [E/h] > ").strip().lower()
-            if ans in ("", "e", "evet", "y"):
+            ans = ask(_("\nFound {name} in Downloads. Use it? [Y/n] > ", name=found.name)).strip().lower()
+            if ans in YES:
                 try:
                     cid, secret = read_client_json(found.read_text(encoding="utf-8"))
                 except (OSError, ValueError) as e:
-                    say(f"okunamadı: {e}")
+                    say(_("could not read it: {error}", error=e))
         while not cid:
-            raw = ask("\nİndirdiğin JSON dosyasının yolunu ya da Client ID'yi yapıştır (boş = çık) > ").strip().strip('"')
+            raw = ask(_("\nPaste the path of the downloaded JSON file or the Client ID (empty = quit) > ")).strip().strip('"')
             if not raw:
-                say("İstemci girilmedi. Tekrar: alice setup google")
+                say(_("No client entered. To resume: alice setup google"))
                 return 1
             try:
                 if raw.endswith(".json") or raw.startswith("{"):
@@ -112,35 +118,34 @@ def run(ask: Callable[[str], str], say: Callable[[str], None], open_url: Callabl
                                                    else raw)
                 elif raw.endswith(".apps.googleusercontent.com"):
                     cid = raw
-                    secret = ask("Client secret'ı yapıştır > ").strip()
+                    secret = ask(_("Paste the Client secret > ")).strip()
                 else:
-                    say("Bu bir Client ID ya da JSON dosyası gibi görünmüyor (….apps.googleusercontent.com olmalı).")
+                    say(_("That doesn't look like a Client ID or a JSON file (it should end in .apps.googleusercontent.com)."))
             except (OSError, ValueError) as e:
-                say(f"okunamadı: {e}")
+                say(_("could not read it: {error}", error=e))
         set_env(env_path, "GOOGLE_CLIENT_ID", cid)
         if secret:
             set_env(env_path, "GOOGLE_CLIENT_SECRET", secret)
-        say(f"İstemci kaydedildi: {env_path}")
+        say(_("Client saved: {path}", path=env_path))
 
-    if ask("\nGoogle Takvim'i bağlayayım mı? [E/h] > ").strip().lower() in ("", "e", "evet", "y"):
+    if ask(_("\nConnect Google Calendar? [Y/n] > ")).strip().lower() in YES:
         ok = connect_calendar() if connect_calendar else False
-        say("Takvim bağlandı." if ok else "Takvim bağlanamadı; sonra tekrar dene: alice connect google_calendar")
+        say(_("Calendar connected.") if ok else _("Calendar could not connect; try again later: alice connect google_calendar"))
     connected = []
     while True:
-        acc = ask("\nBağlanacak Gmail hesabına bir ad ver (ör. kisisel, okul; boş = bitir) > ").strip().lower()
+        acc = ask(_("\nName the Gmail account to connect (e.g. personal, school; empty = finish) > ")).strip().lower()
         if not acc:
             break
         if not re.fullmatch(r"[a-z0-9_-]{1,30}", acc):
-            say("Ad sadece harf, rakam, - ve _ olsun (Türkçe karakter yok), ör. okul.")
+            say(_("Use only letters, digits, - and _ (no accented letters), e.g. school."))
             continue
-        say("Tarayıcıda o hesabı seç (test kullanıcısı olarak eklediğin adreslerden biri olmalı).")
+        say(_("Pick that account in the browser (it must be one of the addresses you added as test users)."))
         email = connect_gmail(acc) if connect_gmail else ""
         if email is None:
             continue
         connected.append(f"{acc}" + (f" ({email})" if email else ""))
-        say(f"bağlandı: {connected[-1]}")
-    say("\nBitti. " + (f"Gmail: {', '.join(connected)}. " if connected else "") +
-        "Kontrol için: alice doctor")
+        say(_("connected: {account}", account=connected[-1]))
+    say(_("\nDone. ") + (f"Gmail: {', '.join(connected)}. " if connected else "") + _("To check: alice doctor"))
     return 0
 
 
@@ -150,7 +155,7 @@ def setup_cmd(argv: list[str]) -> int:
 
     console = Console()
     if not argv or argv[0] != "google":
-        console.print("kullanım: alice setup google   (Google Takvim + Gmail kurulumu)")
+        console.print(_("usage: alice setup google   (Google Calendar + Gmail setup)"))
         return 2
 
     def connect_calendar() -> bool:
@@ -175,7 +180,7 @@ def setup_cmd(argv: list[str]) -> int:
         try:
             return gmail.connect(acc, emit=lambda s: console.print(f"[dim]{s}[/]"))
         except Exception as e:  # noqa: BLE001
-            console.print(f"[red]bağlanamadı: {escape(str(e))}[/]")
+            console.print(_("[red]could not connect: {error}[/]", error=escape(str(e))))
             return None
 
     return run(console.input, lambda s: console.print(escape(s)), connect_calendar=connect_calendar,

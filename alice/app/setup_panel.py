@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.app.automations import open_file
+from alice.i18n import _
 
 
 class Job:
@@ -95,7 +96,7 @@ class SetupPanel:
             "models": {**self.models.view(), "probed_at": cache.get("probed_at", ""),
                        "chains": cache.get("chains") or {},
                        "auto": all("auto" in (self.cfg.roles.get(r) or []) for r in ("brain", "fast", "vision"))},
-            "google": {"steps": [{"title": t, "url": u, "how": h} for t, u, h in STEPS],
+            "google": {"steps": [{"title": _(t), "url": u, "how": _(h)} for t, u, h in STEPS],
                        "client": bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
                        "found_json": found.name if found else ""},
             "chatgpt": {**self._chatgpt_status(chatgpt), **self.chatgpt.view()},

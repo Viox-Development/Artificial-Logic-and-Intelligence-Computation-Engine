@@ -206,9 +206,9 @@ def test_pc_plans_and_set_plan(windows, tmp_path):
 
     windows(fake)
     assert PC().run(_ctx(tmp_path), action="plans").text == "* Dengeli\n  Güç tasarrufu"
-    assert PC().run(_ctx(tmp_path), action="set_plan", plan="power saver").text == "güç planı: Güç tasarrufu"
+    assert PC().run(_ctx(tmp_path), action="set_plan", plan="power saver").text == "power plan: Güç tasarrufu"
     assert calls[-1] == ["powercfg", "/setactive", "a1841308-3bc4-4ac8-ba48-0d6b2e1bf3f2"]
-    with pytest.raises(ToolError, match="Var olanlar: Dengeli, Güç tasarrufu"):
+    with pytest.raises(ToolError, match="Available: Dengeli, Güç tasarrufu"):
         PC().run(_ctx(tmp_path), action="set_plan", plan="oyun")
     with pytest.raises(ToolError, match="plan gerekli"):
         PC().run(_ctx(tmp_path), action="set_plan")
@@ -216,8 +216,8 @@ def test_pc_plans_and_set_plan(windows, tmp_path):
 
 def test_pc_restart_and_errors(windows, tmp_path):
     windows(lambda cmd, timeout=15: _done(cmd))
-    assert pc.restart_in(2) == "120 sn sonra yeniden başlayacak (iptal: media cancel_shutdown)"
-    assert pc.restart_in(-5) == "yeniden başlıyor"
+    assert pc.restart_in(2) == "restarting in 120 s (cancel: media cancel_shutdown)"
+    assert pc.restart_in(-5) == "restarting"
     windows(lambda cmd, timeout=15: _done(cmd, "", "Erişim engellendi.", 5))
     with pytest.raises(ToolError, match="Erişim engellendi"):
         PC().run(_ctx(tmp_path), action="restart", minutes=1)
@@ -234,8 +234,8 @@ def test_pc_internal_display_brightness_via_wmi(windows):
     seen = []
     windows(lambda cmd, timeout=15: seen.append(cmd[-1]) or _done(cmd, "70\r\n" if "CurrentBrightness" in cmd[-1]
                                                                    else "ok"))
-    assert pc._wmi_brightness(None) == "dahili ekran %70"
-    assert pc._wmi_brightness(40) == "dahili ekran %40" and "[byte]40" in seen[-1]
+    assert pc._wmi_brightness(None) == "built-in screen 70%"
+    assert pc._wmi_brightness(40) == "built-in screen 40%" and "[byte]40" in seen[-1]
     windows(lambda cmd, timeout=15: _done(cmd, "", "Desteklenmiyor", 1))
     with pytest.raises(RuntimeError, match="DDC/CI"):
         pc._wmi_brightness(None)
@@ -249,8 +249,8 @@ def test_pc_wol_info(windows):
 
     windows(fake)
     out = pc.wol_info()
-    assert "IP: 192.168.1.34" in out and "Yayın adresi: 192.168.1.255" in out
-    assert "MAC D8:BB:C1:00:11:22" in out and "Uyandırabilen aygıtlar: Realtek" in out
+    assert "IP: 192.168.1.34" in out and "Broadcast address: 192.168.1.255" in out
+    assert "MAC D8:BB:C1:00:11:22" in out and "Devices that can wake it: Realtek" in out
 
 
 def test_pc_unknown_action(tmp_path):

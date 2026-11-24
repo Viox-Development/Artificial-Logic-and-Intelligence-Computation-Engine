@@ -50,7 +50,7 @@ def test_job_reports_progress_result_and_error():
 def test_view_and_unknown_actions():
     p = panel()
     v = p.view()
-    assert v["google"]["steps"][0]["title"] == "Proje" and not v["google"]["client"]
+    assert v["google"]["steps"][0]["title"] == "Project" and not v["google"]["client"]
     assert v["phone"]["enabled"] is False and v["plugins"]["items"] == [] and v["models"]["state"] == "idle"
     assert not p.action("uç", {})["ok"] and not p.action("_run_doctor", {})["ok"]
 

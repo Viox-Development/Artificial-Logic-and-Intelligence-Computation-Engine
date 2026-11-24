@@ -29,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alice.i18n import _, pick
+
 SALT = "alice-buddy/1"
 DEFAULTS: dict[str, Any] = {"enabled": True, "chatter": True}
 
@@ -57,6 +59,17 @@ SPECIES: dict[str, list[str]] = {
     "bulut": ["  .--. ", ".({e}  {e}).", "(______)", "  ' '  "],
     "yengeç": ["v  _  v", " \\({e}{e})/", " /|  |\\", "  ‾  ‾ "],
 }
+# Keys stay Turkish (the seeded roll sorts them, and the app's CSS uses the rarity); these are the display names,
+# shown through _().
+SPECIES_EN = {'baykuş': 'owl', 'tilki': 'fox', 'kaplumbağa': 'turtle', 'ahtapot': 'octopus', 'kirpi': 'hedgehog', 'penguen': 'penguin', 'ejder': 'dragon', 'robot': 'robot', 'hayalet': 'ghost', 'mantar': 'mushroom', 'kurbağa': 'frog', 'yarasa': 'bat', 'salyangoz': 'snail', 'kaktüs': 'cactus', 'bulut': 'cloud', 'yengeç': 'crab'}
+RARITY_EN = {'yaygın': 'common', 'sıradışı': 'uncommon', 'nadir': 'rare', 'destansı': 'epic', 'efsanevi': 'legendary'}
+MOOD_EN = {'uyuyor': 'asleep', 'aç': 'hungry', 'yorgun': 'tired', 'çok mutlu': 'very happy', 'keyifli': 'cheerful', 'durgun': 'listless', 'küs': 'sulking'}
+
+
+def label(table: dict[str, str], key: str) -> str:
+    return _(table.get(key, key))
+
+
 NAMES = ("Pıtır", "Fıstık", "Bıcır", "Zıpzıp", "Mırnav", "Köpük", "Tarçın", "Kıvılcım", "Bulgur", "Pofuduk", "Limon",
          "Şeker", "Boncuk", "Duman", "Mısır", "Zeytin")
 _lock = threading.Lock()
@@ -101,13 +114,13 @@ def roll(seed: str | None = None) -> Bones:
             seed = None
     digest = hashlib.sha256(f"{seed or user_seed()}|{SALT}".encode()).digest()
     rng = random.Random(int.from_bytes(digest[:8], "big"))
-    pick = rng.uniform(0, sum(w for _, w, _ in RARITIES))
+    point = rng.uniform(0, sum(w for _n, w, _f in RARITIES))
     rarity, floor = RARITIES[-1][0], RARITIES[-1][2]
     for name, weight, fl in RARITIES:
-        if pick < weight:
+        if point < weight:
             rarity, floor = name, fl
             break
-        pick -= weight
+        point -= weight
     species = rng.choice(sorted(SPECIES))
     eye = rng.choice(EYES)
     hat = "yok" if rarity == "yaygın" else rng.choice(sorted(h for h in HATS if h != "yok"))
@@ -188,8 +201,9 @@ def _soul(st: dict[str, Any], bones: Bones, router: Any = None) -> None:
         try:
             top = max(bones.stats, key=bones.stats.get)
             res = router.chat("fast", [{"role": "user", "content": (
-                f"Küçük bir {bones.species} maskot için Türkçe, sevimli, tek kelimelik bir ad ve tek cümlelik kişilik "
-                f"yaz. En güçlü yanı {top}. Yalnız JSON: {{\"name\": \"...\", \"persona\": \"...\"}}")}],
+                f"Write a cute one-word name and a one-sentence personality for a small {SPECIES_EN.get(bones.species)} "
+                f"mascot, in {pick('English', 'Turkish')}. Its strongest trait: {top}. JSON only: "
+                f"{{\"name\": \"...\", \"persona\": \"...\"}}")}],
                 temperature=0.9, max_tokens=120)
             raw = (getattr(res, "text", None) or (res.message.get("content") if hasattr(res, "message") else "") or "").strip()
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
@@ -199,7 +213,8 @@ def _soul(st: dict[str, Any], bones: Bones, router: Any = None) -> None:
             pass
     rng = random.Random(hashlib.sha256((user_seed() + "|ad").encode()).digest())
     st["name"] = name or rng.choice(NAMES)
-    st["persona"] = persona or f"Meraklı ve biraz {'yaramaz' if bones.stats['KAOS'] > 50 else 'sakin'} bir {bones.species}."
+    st["persona"] = persona or (_("A curious, slightly mischievous {species}.") if bones.stats["KAOS"] > 50 else
+                                _("A curious, rather calm {species}.")).format(species=label(SPECIES_EN, bones.species))
     st["born"] = time.time()
 
 
@@ -230,9 +245,10 @@ def view(cfg: Any = None, path: Path | None = None, router: Any = None, now: flo
     word = mood_word(st, now)
     say = st.get("say") or {}
     return {
-        "name": st["name"], "persona": st.get("persona", ""), "species": bones.species, "rarity": bones.rarity,
+        "name": st["name"], "persona": st.get("persona", ""), "species": label(SPECIES_EN, bones.species),
+        "rarity": bones.rarity, "rarity_label": label(RARITY_EN, bones.rarity),
         "stars": STARS[bones.rarity], "shiny": bones.shiny, "hat": bones.hat, "stats": bones.stats,
-        "art": bones.art(_face_eye(word, bones)), "mood": word,
+        "art": bones.art(_face_eye(word, bones)), "mood": label(MOOD_EN, word),
         "food": round(st["food"]), "energy": round(st["energy"]), "happy": round(st["mood"]),
         "xp": int(st.get("xp", 0)), "level": level(int(st.get("xp", 0))),
         "say": say.get("text", "") if now - float(say.get("ts", 0)) < 90 else "",
@@ -253,35 +269,35 @@ def act(action: str, value: str = "", path: Path | None = None, now: float | Non
             st["pets"] = int(st.get("pets", 0)) + 1
             st["xp"] = int(st.get("xp", 0)) + 1
             pet_replies = [
-                f"{name} mırıldandı, keyfi yerine geldi.",
-                f"{name} gözlerini kısıp sana sokuldu.",
-                f"{name} mutlu bir ses çıkararak neşelendi.",
-                f"{name} okşanmanın tadını çıkarıyor."
+                _("{name} purred and cheered up.", name=name),
+                _("{name} squinted and snuggled up to you.", name=name),
+                _("{name} made a happy sound.", name=name),
+                _("{name} is enjoying the petting.", name=name)
             ]
             out = random.choice(pet_replies)
         elif action == "play":
             if st.get("energy", 80) < 15:
-                out = f"{name} çok yorgun, biraz dinlenmesi gerek."
+                out = _("{name} is very tired and needs some rest.", name=name)
             else:
                 st["energy"] = _clamp(st["energy"] - 12)
                 st["mood"] = _clamp(st["mood"] + 20)
                 st["xp"] = int(st.get("xp", 0)) + 3
-                out = f"{name} seninle oyun oynadı, çok eğlendi! (+3 XP)"
+                out = _("{name} played with you and had a lot of fun! (+3 XP)", name=name)
         elif action == "feed":
             if now - float(st.get("fed", 0)) < 30 * 60:
-                out = f"{name} tok, az önce yedi."
+                out = _("{name} is full; it just ate.", name=name)
             else:
                 st["food"] = _clamp(st["food"] + 30)
                 st["mood"] = _clamp(st["mood"] + 5)
                 st["xp"] = int(st.get("xp", 0)) + 1
                 st["fed"] = now
-                out = f"{name} afiyetle yedi."
+                out = _("{name} ate happily.", name=name)
         elif action == "rename":
             new = " ".join(value.split())[:20]
             if not new:
-                return "yeni ad gerekli"
+                return _("a new name is needed")
             st["name"] = new
-            out = f"Artık adı {new}."
+            out = _("Its name is now {name}.", name=new)
         elif action == "reroll":
             import uuid
             new_seed = uuid.uuid4().hex[:12]
@@ -294,9 +310,10 @@ def act(action: str, value: str = "", path: Path | None = None, now: float | Non
             st.pop("persona", None)
             bones = roll(new_seed)
             _soul(st, bones)
-            out = f"Yeni bir dost katıldı! Türü: {bones.species} ({bones.rarity}), adı: {st['name']}."
+            out = _("A new friend joined! Species: {species} ({rarity}), name: {name}.", species=label(SPECIES_EN, bones.species),
+                    rarity=label(RARITY_EN, bones.rarity), name=st["name"])
         else:
-            return f"bilinmeyen işlem: {action}"
+            return _("unknown action: {action}", action=action)
         _save(st, path)
     return out
 
@@ -325,10 +342,11 @@ def on_turn(cfg: Any, router: Any = None, user: str = "", reply: str = "", path:
         return ""
     try:
         res = router.chat("fast", [{"role": "user", "content": (
-            f"Sen {st['name']} adında küçük bir {bones.species}sın; kişiliğin: {st.get('persona', '')}. Şu an "
-            f"{word}sın. Sahibin ile asistanı arasındaki son konuşmaya en fazla 10 kelimelik, Türkçe, sevimli bir "
-            "yan yorum yap. Tavsiye verme, soru sorma, emoji kullanma. Yalnız yorumu yaz.\n\n"
-            f"Sahibi: {user[:400]}\nAsistan: {reply[:400]}")}], temperature=0.9, max_tokens=40)
+            f"You are a small {SPECIES_EN.get(bones.species)} called {st['name']}; your personality: "
+            f"{st.get('persona', '')}. Right now you are {MOOD_EN.get(word, word)}. Make a cute side comment of at "
+            f"most 10 words, in {pick('English', 'Turkish')}, on the latest exchange between your owner and their "
+            "assistant. No advice, no questions, no emoji. Write only the comment.\n\n"
+            f"Owner: {user[:400]}\nAssistant: {reply[:400]}")}], temperature=0.9, max_tokens=40)
         raw_c = getattr(res, "text", None) or (res.message.get("content") if hasattr(res, "message") else "") or ""
         if isinstance(raw_c, list):
             raw_c = "".join(p.get("text", "") for p in raw_c if isinstance(p, dict))
@@ -348,7 +366,9 @@ def card(cfg: Any = None, path: Path | None = None) -> str:
     """Text card (for tool and CLI)."""
     v = view(cfg, path)
     stats = "  ".join(f"{k} {n}" for k, n in v["stats"].items())
+    shiny = _(" ✨shiny") if v["shiny"] else ""
     return "\n".join(v["art"]) + (
-        f"\n{v['name']} — {v['rarity']} {v['species']} {v['stars']}{' ✨parlak' if v['shiny'] else ''}"
-        f"\nSeviye {v['level']} · {v['mood']} · tokluk {v['food']} · enerji {v['energy']} · keyif {v['happy']}"
-        f"\n{stats}\n{v['persona']}")
+        f"\n{v['name']} — {v['rarity_label']} {v['species']} {v['stars']}{shiny}"
+        + _("\nLevel {level} · {mood} · fullness {food} · energy {energy} · happiness {happy}", level=v["level"],
+            mood=v["mood"], food=v["food"], energy=v["energy"], happy=v["happy"])
+        + f"\n{stats}\n{v['persona']}")
