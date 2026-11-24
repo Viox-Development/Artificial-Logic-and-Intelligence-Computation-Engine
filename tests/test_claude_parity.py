@@ -342,11 +342,11 @@ def test_notebook_edit_replace_insert_delete(workdir):
 
 # ----------------------------------------------------------------------------------------- commands
 def test_review_builtins_and_user_override(workdir):
-    assert "Kod incelemesi" in builtin_prompt("/review PR 12") and "PR 12" in builtin_prompt("/review PR 12")
-    assert "Güvenlik incelemesi" in builtin_prompt("/security-review")
+    assert "code review" in builtin_prompt("/review PR 12") and "PR 12" in builtin_prompt("/review PR 12")
+    assert "security review" in builtin_prompt("/security-review")
     assert builtin_prompt("/yok") is None
     deep = builtin_prompt("/review derin PR 12")
-    assert "focus=deep" in deep and "PR 12" in deep and "derin" not in deep.split("Kapsam:")[1]
+    assert "focus=deep" in deep and "PR 12" in deep and "derin" not in deep.split("Scope:")[1]
     assert "focus=performance" in builtin_prompt("/review performans")
     d = workdir / ".alice" / "commands"
     d.mkdir(parents=True)
