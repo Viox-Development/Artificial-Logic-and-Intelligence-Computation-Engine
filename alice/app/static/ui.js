@@ -2003,7 +2003,7 @@ function setupPane(pane) {
     const dc = d.dcs;
     const installed = dc.dirs.some((x) => x.installed);
     const c5 = card(_("Flight data and kneeboard"), dc.dirs.length
-      ? dc.dirs.map((x) => x.path + (x.installed ? " ✓ kurulu" : _(" · not installed"))).join(" · ") + (dc.mission ? _(" · last mission: ") + dc.mission : "")
+      ? dc.dirs.map((x) => x.path + (x.installed ? _(" ✓ installed") : _(" · not installed"))).join(" · ") + (dc.mission ? _(" · last mission: ") + dc.mission : "")
       : _("DCS Saved Games folder not found (DCS must have been opened once)."),
       ...(dc.dirs.length ? [btn(_("Write the kneeboard"), () => act("dcs_kneeboard").then(done((r) => _("{n} pages written", { n: r.pages }) + (r.mission ? " (" + r.mission + ")" : "")))),
         btn(installed ? _("Remove") : _("Install"), () => act("dcs_install", { on: !installed }).then(done(installed ? _("removed") : _("installed; restart DCS"))), !installed)] : []));
@@ -2050,7 +2050,7 @@ function setupPane(pane) {
 /* Ayarlar > Modeller > Puanlama: her model zekâ / hız / ilk kelime / akış'ta 0-100 puan alır; rolün ağırlıklarıyla
    genel puan çıkar ve otomatik sıra buna göre kurulur. Ağırlık değişince modeller tekrar ölçülmeden sıra yenilenir. */
 const ROLE_NAMES = { brain: _("Main model"), voice: _("Voice"), fast: _("Quick tasks"), vision: _("Images") };
-const METRIC_SHORT = { zeka: "Zekâ", hiz: _("Speed"), tepki: _("First token"), akis: _("Streaming"), baglam: _("Context"), guven: _("Reliability") };
+const METRIC_SHORT = { zeka: _("Intelligence"), hiz: _("Speed"), tepki: _("First token"), akis: _("Streaming"), baglam: _("Context"), guven: _("Reliability") };
 const kTok = (n) => !n ? "?" : n >= 1000000 ? Math.round(n / 100000) / 10 + "M" : Math.round(n / 1000) + "K";
 let scoreRole = "brain";
 const FAIL_WHY = { quota: _("quota full"), rate_limit: _("rate limit"), network: _("timeout / connection"), server: _("server error"),
@@ -2145,7 +2145,7 @@ function scorePane() {
         [...new Set(failed.map((r) => FAIL_WHY[r.error] || r.error || "?"))].join(", ") + ")"));
       for (const r of failed.sort((a, b) => (b.metrics.zeka || 0) - (a.metrics.zeka || 0))) {
         const line = el("div", "score-failed-row");
-        line.append(el("b", "", r.ref), el("span", "", " · zekâ " + (r.known ? Math.round(r.metrics.zeka) : "?") + " · "
+        line.append(el("b", "", r.ref), el("span", "", " · " + _("intelligence") + " " + (r.known ? Math.round(r.metrics.zeka) : "?") + " · "
           + (FAIL_WHY[r.error] || r.error || "?")));
         if (r.error_text) line.title = r.error_text;
         det.appendChild(line);
@@ -2229,7 +2229,7 @@ function memoryPane(pane, data) {
     people: _("👥 People (people & links)"),
     areas: _("🌐 Areas (projects & areas of life)"),
     topics: _("💡 Topics (hardware & interests)"),
-    general: "📝 Genel Notlar"
+    general: _("📝 General notes")
   };
 
   const lists = [];
