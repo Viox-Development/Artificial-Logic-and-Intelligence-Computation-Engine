@@ -2721,5 +2721,6 @@
  "Project finished": "Proje bitti",
  "An agent failed": "Ajan hata verdi",
  "{name} stopped": "{name} durduruldu",
- "project stopped": "proje durduruldu"
+ "project stopped": "proje durduruldu",
+ "The plan council objected to the corrected plan too; the plan was started with the council's notes.": "Plan kurulu düzeltilmiş plana da itiraz etti; plan kurulun notlarıyla başlatıldı."
 }

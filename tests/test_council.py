@@ -165,10 +165,10 @@ def project_script(state):
         if "and the lead of the project" in messages[0]["content"]:
             event, k = since_user(messages)
             last = messages[-1]
-            if "there are no agents yet" in event or ("Kurul planı onaylamadı" in str(last.get("content")) and k < 3):
-                if last["role"] == "tool" and "ajanlar başladı" in str(last.get("content")):
+            if "there are no agents yet" in event or ("The council did not approve the plan" in str(last.get("content")) and k < 3):
+                if last["role"] == "tool" and "the agents started" in str(last.get("content")):
                     return "tamam"
-                second = "Kurul planı onaylamadı" in str(last.get("content"))
+                second = "The council did not approve the plan" in str(last.get("content"))
                 return tool_call("plan", {"summary": "düzeltilmiş plan" if second else "tek ajan",
                                           "agents": [{"name": "backend", "task": "a.py yaz"}]}, f"p{k}")
             if "The final council approved the project" in event and k == 0:
@@ -259,9 +259,9 @@ def plan_council_script(state):
             return js(vote="approve", scores={"kapsam": 5})
         if "and the lead of the project" in messages[0]["content"]:
             last = messages[-1]
-            if last["role"] == "tool" and "ajanlar başladı" in str(last.get("content")):
+            if last["role"] == "tool" and "the agents started" in str(last.get("content")):
                 return "tamam"
-            if last["role"] == "tool" and "Kurul planı onaylamadı" in str(last.get("content")):
+            if last["role"] == "tool" and "The council did not approve the plan" in str(last.get("content")):
                 return tool_call("plan", {"summary": "düzeltilmiş plan", "agents": [{"name": "web", "task": "site"}]}, "p2")
             if any("there are no agents yet" in str(m.get("content")) for m in messages if m["role"] == "user") and \
                     not any(m.get("tool_calls") for m in messages if m["role"] == "assistant"):
@@ -286,7 +286,7 @@ def test_plan_council_blocks_only_plan_breaking_issues_and_routes_notes(workdir)
     assert "Kurul notu: sayfalar tarayıcıda açılıp bakılsın" in team.members["web"].constraints
     sys_prompt, material = next((s, p) for r, s, p in state["prompts"] if r == "critic")
     assert "Plan review" in sys_prompt and "Off limits: implementation details" in sys_prompt
-    assert "Proje klasörü" in material and "index.html" in material and "DESIGN.md" in material
+    assert "Project folder" in material and "index.html" in material and "DESIGN.md" in material
     # The work review can also arrive as soon as the agent starts: look at the last *plan* review.
     second = [p for r, s, p in state["prompts"] if r == "critic" and "Plan review" in s][-1]
     assert "The previous council's findings" in second  # the corrected plan is reviewed against the earlier one
@@ -301,7 +301,7 @@ def test_plan_starts_with_notes_after_one_revision(workdir):
     assert team.wait_until(lambda: "web" in team.members, 30), team.status_text()
     assert [c["result"]["decision"] for c in team.councils if c["kind"] == "plan"] == ["revise", "revise"]
     assert not team.questions  # the user was not asked; it started with notes
-    assert any("notlarıyla başlatıldı" in x["text"] for x in team.timeline)
+    assert any("council's notes" in x["text"] for x in team.timeline)
     assert "Kurul notu" in team.members["web"].constraints
 
 

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from alice.i18n import _
 from alice.team import (
     ACTIVE,
     COUNCIL,
@@ -33,7 +34,7 @@ class TeamSend(Tool):
                    "interface/contract, ask for a decision, or ask for a change in someone else's area. Write briefly "
                    "and clearly.")
     parameters = obj({
-        "to": {"type": "string", "description": f"Ajan adı, '{LEAD}' (yönetici) ya da 'all' (herkes)."},
+        "to": {"type": "string", "description": f"Agent name, '{LEAD}' (the lead) or 'all' (everyone)."},
         "text": {"type": "string", "description": "Mesaj."},
     }, ["to", "text"])
     risk = READ
@@ -42,8 +43,8 @@ class TeamSend(Tool):
         self.team, self.me = team, me
         if me == LEAD:
             self.name = "message"
-            self.description = ("Ajana ya da herkese ('all') mesaj gönderir: soruya cevap, yön değişikliği, yeni bilgi. "
-                                "Bitmiş ajana yazınca kaldığı yerden devam eder.")
+            self.description = ("Sends a message to an agent or to everyone ('all'): an answer to a question, a change of direction, new information. "
+                                "Writing to a finished agent makes it continue where it left off.")
 
     def summary(self, args: dict[str, Any]) -> str:
         return f"{args.get('to')}: {str(args.get('text', ''))[:120]}"
@@ -73,22 +74,22 @@ class DesignCheck(Tool):
         root = ctx.cwd
         entry = find_entry(root) or find_entry(self.team.cwd)
         if not entry:
-            return ToolResult("Sitenin giriş sayfası (index.html) bulunamadı; önce sayfayı oluştur.", is_error=True)
+            return ToolResult("The site's entry page (index.html) wasn't found; create the page first.", is_error=True)
         base = root if find_entry(root) else self.team.cwd
         slop = report(lint(base))
         shots = screenshots(base, entry)
-        parts = [f"Giriş sayfası: {entry}"]
-        parts.append("Kalıp denetimi: temiz." if not slop else "Kalıp denetimi — düzeltilmesi gerekenler:\n" + slop)
+        parts = [f"Entry page: {entry}"]
+        parts.append("Pattern check: clean." if not slop else "Pattern check — things to fix:\n" + slop)
         if not shots:
-            parts.append("Ekran görüntüsü alınamadı (bilgisayarda Edge/Chrome ya da Playwright bulunamadı); sadece "
-                         "kalıp denetimi yapıldı.")
+            parts.append("Couldn't take a screenshot (no Edge/Chrome or Playwright on this computer); only the "
+                         "pattern check was done.")
         elif self.critiques < self.MAX_CRITIQUES:
             self.critiques += 1
             design = self.team.design_brief(self.team.members[self.me]) if self.me in self.team.members else ""
-            goal = self.team.goal + (f"\nÖzellikle bak: {focus}" if focus else "")
+            goal = self.team.goal + (f"\nLook especially at: {focus}" if focus else "")
             text = critique(ctx.router, shots, goal, design, slop, refs=research_refs(self.team.cwd))
             if text:
-                parts.append("Sanat yönetmeninin eleştirisi:\n" + text)
+                parts.append("The art director's critique:\n" + text)
                 self.team.mark(self.me, "design", f"design_check: {text.splitlines()[0][:140]}")
         return ToolResult("\n\n".join(parts), images=list(shots.values()))
 
@@ -123,16 +124,16 @@ class SiteStudy(Tool):
             url = "https://" + url
         host = urlparse(url).hostname or ""
         if not host or host in ("localhost", "127.0.0.1") or host.startswith(("10.", "192.168.", "169.254.")):
-            return ToolResult("Sadece internetteki gerçek siteler incelenebilir.", is_error=True)
+            return ToolResult("Only real sites on the internet can be studied.", is_error=True)
         if self.studies >= self.MAX_STUDIES:
-            return ToolResult(f"Bu ajan için {self.MAX_STUDIES} site incelendi; elindekilerle devam et.", is_error=True)
+            return ToolResult(f"{self.MAX_STUDIES} sites were studied for this agent; continue with what you have.", is_error=True)
         ok, info = reachable(url)
         if not ok:
-            return ToolResult(f"{url} açılamadı ({info}); başka bir referans dene.", is_error=True)
+            return ToolResult(f"{url} couldn't be opened ({info}); try another reference.", is_error=True)
         shots = capture(info, timeout=40, settle=2500, viewports=STUDY_VIEWPORTS)
         if not shots:
-            return ToolResult("Ekran görüntüsü alınamadı (Edge/Chrome ya da Playwright yok). web_fetch ile metnine "
-                              "bakabilirsin ama görünüşü hakkında tahmin yürütme.", is_error=True)
+            return ToolResult("Couldn't take a screenshot (no Edge/Chrome or Playwright). You can look at its text with web_fetch, "
+                              "but don't guess about how it looks.", is_error=True)
         self.studies += 1
         slug = re.sub(r"[^a-z0-9]+", "-", host.lower().removeprefix("www.")).strip("-")[:40] or "site"
         out_dir = self.team.cwd / RESEARCH_DIR
@@ -152,9 +153,9 @@ class SiteStudy(Tool):
                 pass  # the study is still returned in the result
             self.team.mark(self.me, "design", f"site_study {host}: {text.splitlines()[0][:120]}")
         else:
-            text = ("(Görsel model çözümleme yapamadı; görüntüler ekte. Görebiliyorsan kendin çözümle, göremiyorsan "
-                    "bu siteyi referans olarak kullanma.)")
-        return ToolResult(f"{info} incelendi; görüntüler {RESEARCH_DIR}/{slug}-*.png\n\n{text}",
+            text = ("(The vision model couldn't analyse it; the images are attached. If you can see them, analyse them yourself; if not, "
+                    "don't use this site as a reference.)")
+        return ToolResult(f"{info} studied; images {RESEARCH_DIR}/{slug}-*.png\n\n{text}",
                           images=[shots[k] for k in ("masaüstü", "telefon") if k in shots])
 
 
@@ -181,7 +182,7 @@ class TeamWait(Tool):
                 m.status = "running"
             self.team._changed()
         if not msgs:
-            return ToolResult("süre doldu, mesaj gelmedi. Bekleyebileceğin başka bir şey yoksa işine devam et.")
+            return ToolResult("time ran out, no message came. If there is nothing else to wait for, continue your work.")
         return ToolResult("\n".join(x.line() for x in msgs))
 
 
@@ -204,8 +205,8 @@ def _tree(root: Path, limit: int = 80) -> str:
                             break
                     kids = sorted(kids)[:12]
                 except OSError:
-                    kids = ["(okunamadı)"]
-                rows.append(f"{p.name}/  ({', '.join(kids) or 'boş'})")
+                    kids = ["(unreadable)"]
+                rows.append(f"{p.name}/  ({', '.join(kids) or 'empty'})")
             else:
                 rows.append(p.name)
             if len(rows) >= limit:
@@ -213,7 +214,7 @@ def _tree(root: Path, limit: int = 80) -> str:
                 break
     except OSError:
         pass  # unreadable folder: list what was found so far
-    return "\n".join(rows) or "(klasör boş)"
+    return "\n".join(rows) or "(empty folder)"
 
 
 def route_plan_notes(snap: dict[str, Any], specs: list[dict[str, Any]]) -> list[str]:
@@ -267,59 +268,59 @@ class LeadPlan(Tool):
         if not specs:
             raise ToolError("en az bir ajan gerekli")
         if len(specs) + len(t.members) > MAX_MEMBERS:
-            raise ToolError(f"bir projede en çok {MAX_MEMBERS} ajan olur")
+            raise ToolError(f"a project can have at most {MAX_MEMBERS} agents")
         names = [str(a.get("name") or "").strip().lower() for a in specs]
         bad = [n for n in names if not NAME_RX.match(n) or n in (LEAD, "all", USER, SYSTEM, COUNCIL) or n in t.members]
         if bad or len(set(names)) != len(names):
-            raise ToolError(f"geçersiz ya da tekrarlanan ajan adı: {', '.join(bad) or 'tekrar var'}")
+            raise ToolError(f"invalid or repeated agent name: {', '.join(bad) or 'a repeat'}")
         _check_specs(t, specs, names)  # don't convene the council for nothing: definition errors first
         cond_note = ""
         if t.council and t.plan_council and not skip_council:
             lines = [f"- {a.get('name')}: {a.get('task')} | model={a.get('model') or 'auto'} "
-                     f"düşünme={a.get('thinking', 'default')} yer={a.get('isolation', 'shared')} "
-                     f"kapsam={a.get('scope') or 'her yer'} sonra={a.get('after') or '-'} sınır={a.get('constraints') or '-'}"
+                     f"thinking={a.get('thinking', 'default')} place={a.get('isolation', 'shared')} "
+                     f"scope={a.get('scope') or 'anywhere'} after={a.get('after') or '-'} limits={a.get('constraints') or '-'}"
                      for a in specs]
-            context = (f"# Yaklaşım\n{summary}\n\n# Ajanlar\n" + "\n".join(lines) +
-                       f"\n\n# Proje klasörü ({t.cwd})\n{_tree(t.cwd)}")
+            context = (f"# Approach\n{summary}\n\n# Agents\n" + "\n".join(lines) +
+                       f"\n\n# Project folder ({t.cwd})\n{_tree(t.cwd)}")
             if t.is_design():
-                context += (f"\n\n# Not\nBu bir tasarım işi: plan kod yazılmadan önce özgün bir tasarım yönü "
-                            f"({DESIGN_FILE}) belirleyen bir adımla başlamalı ve sayfa ajanları ona bağlı (after) olmalı. "
-                            f"Bu adım yoksa 'tasarım' alanında önemli bulgu yaz.")
+                context += (f"\n\n# Note\nThis is a design job: the plan must start, before any code is written, with a step that sets an "
+                            f"original design direction ({DESIGN_FILE}), and the page agents must depend on it (after). "
+                            f"If that step is missing, write a major finding in the 'tasarım' area.")
             # A revised plan is reviewed by the council that rejected it (found by its id).
             prev = next((c for c in reversed(t.councils) if c.get("id") == t.plan_prev_id), None) \
                 if t.plan_rejects and t.plan_prev_id else None
             with t.cond:  # council threads decrement under the lock; lost unlocked increments would stick the counter
                 t.council_busy += 1
             try:
-                snap = t._council("plan", f"Proje planı: {t.goal}", context, t.councils, previous=prev)
+                snap = t._council("plan", f"Project plan: {t.goal}", context, t.councils, previous=prev)
             finally:
                 with t.cond:
                     t.council_busy -= 1
             if snap.get("state") == "stopped":
-                return ToolResult("Proje durduruldu; plan kurulu yarıda kaldı. Sürdürülünce planı tekrar sun.",
+                return ToolResult("The project was stopped; the plan council was cut short. Present the plan again when it is resumed.",
                                   is_error=True)
             failed = snap.get("state") == "failed"  # if the council crashed, the plan does not count as rejected
             dec = (snap.get("result") or {}).get("decision")
             if not failed and dec not in ("approve", "approve_conditions") and t.plan_rejects < 1:
                 t.plan_rejects += 1
                 t.plan_prev_id = str(snap.get("id") or "")
-                return ToolResult("Kurul planı onaylamadı. Engelleyici bulguları gider (sadece onları; ayrıntı avına "
-                                  "çıkma), planı düzeltip plan ile tekrar sun.\n\n" + report(snap), is_error=True)
+                return ToolResult("The council did not approve the plan. Fix the blocking findings (only those; don't go hunting for details), "
+                                  "correct the plan and present it again with plan.\n\n" + report(snap), is_error=True)
             general = route_plan_notes(snap, specs)
             if failed:
-                general.insert(0, "Plan kurulu çalışamadı; plan kurulsuz başlatıldı.")
+                general.insert(0, "The plan council couldn't meet; the plan was started without it.")
             elif dec not in ("approve", "approve_conditions"):
-                note = "Plan kurulu düzeltilmiş plana da itiraz etti; plan kurulun notlarıyla başlatıldı."
+                note = _("The plan council objected to the corrected plan too; the plan was started with the council's notes.")
                 t.mark(COUNCIL, "plan", note)
                 t._emit(f"{t.title}: {note}", kind="info")
                 general.insert(0, note)
-            cond_note = "\n\n" + report(snap) + (("\n\nGenel notlar (ajanlara dağıtılmadı, sen göz önünde tut):\n" +
+            cond_note = "\n\n" + report(snap) + (("\n\nGeneral notes (not given to the agents; keep them in mind):\n" +
                                                    "\n".join(f"- {x}" for x in general)) if general else "")
         t.plan_rejects, t.plan_prev_id = 0, ""  # the plan is starting: the next plan is a new plan
         added = []
         for spec in specs:
             added.append(t.add_member(spec, announce=False).name)
-        return ToolResult(f"Plan onaylandı, ajanlar başladı: {', '.join(added)}{cond_note}")
+        return ToolResult(f"Plan approved, the agents started: {', '.join(added)}{cond_note}")
 
 
 def _check_specs(t: Team, specs: list[dict[str, Any]], names: list[str]) -> None:
@@ -327,18 +328,18 @@ def _check_specs(t: Team, specs: list[dict[str, Any]], names: list[str]) -> None
     known = set(names) | set(t.members)
     for a, name in zip(specs, names):
         if not str(a.get("task") or "").strip():
-            raise ToolError(f"{name}: task boş")
+            raise ToolError(f"{name}: task is empty")
         if str(a.get("isolation") or "shared") not in ISOLATIONS:
-            raise ToolError(f"{name}: isolation {', '.join(ISOLATIONS)} olmalı")
+            raise ToolError(f"{name}: isolation must be {', '.join(ISOLATIONS)}")
         if str(a.get("thinking") or "default") not in THINKING:
-            raise ToolError(f"{name}: thinking {', '.join(THINKING)} olmalı")
+            raise ToolError(f"{name}: thinking must be {', '.join(THINKING)}")
         t._check_model(str(a.get("model") or "auto").strip(), name)
         unknown = [str(x).strip().lower() for x in a.get("after") or [] if str(x).strip().lower() not in known]
         if unknown:
-            raise ToolError(f"{name}: after içinde olmayan ajan: {', '.join(unknown)}")
+            raise ToolError(f"{name}: unknown agent in after: {', '.join(unknown)}")
         if names.index(name) < len(names) and any(names.index(str(x).strip().lower()) > names.index(name)
                                                   for x in a.get("after") or [] if str(x).strip().lower() in names):
-            raise ToolError(f"{name}: after'daki ajanlar listede ondan önce gelmeli")
+            raise ToolError(f"{name}: the agents in after must come before it in the list")
 
 
 class LeadAssign(Tool):
@@ -372,7 +373,7 @@ class LeadAssign(Tool):
 
     def run(self, ctx: ToolContext, **spec: Any) -> ToolResult:
         m = self.team.add_member(spec)
-        when = f"; {', '.join(m.after)} onaylanınca başlayacak" if m.status == "queued" and m.after else ""
+        when = f"; starts when {', '.join(m.after)} is approved" if m.status == "queued" and m.after else ""
         return ToolResult(f"{m.name} eklendi ({m.status}{when})")
 
 
@@ -427,9 +428,9 @@ class LeadAskUser(Tool):
 
     def run(self, ctx: ToolContext, question: str) -> ToolResult:
         if not (question or "").strip():
-            raise ToolError("soru boş")
+            raise ToolError("the question is empty")
         self.team.ask_user(question)
-        return ToolResult("soru kullanıcıya iletildi; cevap gelince sana olay olarak gelecek.")
+        return ToolResult("the question was passed to the user; the answer will come to you as an event.")
 
 
 class LeadFinish(Tool):
@@ -446,13 +447,13 @@ class LeadFinish(Tool):
 
     def run(self, ctx: ToolContext, summary: str) -> ToolResult:
         if self.team.council_busy:
-            return ToolResult("kurul hâlâ toplanıyor; sonucu sana olay olarak gelecek, sonra bitir.", is_error=True)
+            return ToolResult("the council is still meeting; its result will come to you as an event, then finish.", is_error=True)
         open_ = [m.name for m in self.team.members.values() if m.status in ACTIVE + ("review", "queued")]
         if open_:
-            return ToolResult(f"henüz bitmemiş ya da incelenmemiş ajanlar var: {', '.join(open_)}. Önce onları "
-                              "bitir/onayla ya da durdur.", is_error=True)
+            return ToolResult(f"there are agents not finished or not reviewed yet: {', '.join(open_)}. First "
+                              "finish/approve or stop them.", is_error=True)
         self.team.finish(summary or "")
-        return ToolResult("proje bitti; özet kullanıcıya iletildi.")
+        return ToolResult("project finished; the summary was passed to the user.")
 
 
 class LeadStatus(Tool):
