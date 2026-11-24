@@ -19,7 +19,7 @@ function taskBadge() {
   if (!dot) return;
   const n = TASKS ? (TASKS.approvals || []).length : 0;
   dot.hidden = !n;
-  dot.title = n ? n + " onay bekliyor" : "";
+  dot.title = n ? _("{n} waiting for approval", { n }) : "";
 }
 // Onay kutusu rozeti: sayfa açık değilken de yeni onayları görmek için ara ara bakılır.
 setInterval(() => { if (!document.hidden) api("/api/tasks/approvals").then((r) => {
@@ -73,7 +73,7 @@ function drawTasks() {
   }
   // Onay kutusu
   const inbox = d.approvals || [];
-  page.appendChild(el("div", "sec", inbox.length ? `Onay bekleyenler (${inbox.length})` : "Onay kutusu"));
+  page.appendChild(el("div", "sec", inbox.length ? `Onay bekleyenler (${inbox.length})` : _("Approval box")));
   if (!inbox.length) page.appendChild(el("div", "list-row muted", _("No approvals waiting. When a task needs a decision it shows here and on your phone.")));
   for (const a of inbox) page.appendChild(approvalCard(a));
   // Görevler
@@ -154,10 +154,10 @@ function taskRow(x) {
   const run = el("button", "btn", _("Run now"));
   run.addEventListener("click", () => taskCall("run", { id: x.id }).then(taskAfter(TASKS && TASKS.core ? _("runs on the next core tick") : _("runs when the core starts"))));
   r.append(el("i", "dot " + (x.running ? "st-running" : x.enabled ? "st-done" : "st-paused")), l, run,
-    switchEl(x.enabled, x.enabled ? "Duraklat" : "Devam ettir", (on) => taskCall("enable", { id: x.id, enabled: on }).then(taskAfter(on ? "devam ediyor" : _("paused")))),
+    switchEl(x.enabled, x.enabled ? _("Pause") : _("Resume"), (on) => taskCall("enable", { id: x.id, enabled: on }).then(taskAfter(on ? _("running again") : _("paused")))),
     iconAct(IC.edit, _("Edit"), () => taskDialog(x)),
-    iconAct(IC.trash, "Sil", async () => {
-      if (await confirmDialog(_("Delete the task?"), _("The \"{name}\" task, its log and its memory will be deleted.", { name: x.name }), "Sil")) taskCall("remove", { id: x.id }).then(taskAfter(_("task deleted")));
+    iconAct(IC.trash, _("Delete"), async () => {
+      if (await confirmDialog(_("Delete the task?"), _("The \"{name}\" task, its log and its memory will be deleted.", { name: x.name }), _("Delete"))) taskCall("remove", { id: x.id }).then(taskAfter(_("task deleted")));
     }, "danger"));
   return r;
 }
@@ -209,7 +209,7 @@ function taskDialog(x) {
     const row = el("div", "row");
     const cancel = el("button", "btn", _("Cancel"));
     cancel.addEventListener("click", closeDialog);
-    const save = el("button", "btn primary", editing ? "Kaydet" : _("Create"));
+    const save = el("button", "btn primary", editing ? _("Save") : _("Create"));
     save.addEventListener("click", async () => {
       const body = { name: v.name, responsibility: v.responsibility, trigger: v.trigger, tools: v.tools, permission: v.permission, role: v.role, notify: v.notify };
       if (v.template) body.template = v.template;
@@ -266,7 +266,7 @@ function taskDialog(x) {
         }
         if (tg.type === "folder") {
           inp("path", "C:\\Users\\…\\Downloads", _("Folder"));
-          inp("pattern", "*", "Dosya deseni", _("e.g. *.pdf"));
+          inp("pattern", "*", _("File pattern"), _("e.g. *.pdf"));
         }
         if (tg.type === "manual") tf.appendChild(el("small", "enroll-note", _("Runs only with \"Run now\".")));
       };

@@ -885,7 +885,7 @@ async function drawProjects() {
 function askBox(pid, q) {
   const box = el("div", "ask");
   const p = el("div");
-  p.append(el("b", "", (q.member || "Alice") + " soruyor: "), document.createTextNode(q.text));
+  p.append(el("b", "", _("{name} asks: ", { name: q.member || "Alice" })), document.createTextNode(q.text));
   const row = el("div", "ans");
   const inp = el("input");
   inp.placeholder = _("Your answer…");
@@ -1767,7 +1767,7 @@ function drawCall() {
   orb.append(el("i", "r1"), el("i", "r2"), img);
   orb.addEventListener("click", () => { if (c.state === "active") { haptic(14); bargeIn(); } });
   const perm = [...S.pending.values()].find((p) => p.sid && p.sid === c.sid);
-  const mode = el("div", "c-mode", c.state === "ringing" ? "" : perm ? _("Waiting for your approval") : { listening: c.muted ? _("Microphone off") : "Dinliyorum", thinking: _("Thinking…"),
+  const mode = el("div", "c-mode", c.state === "ringing" ? "" : perm ? _("Waiting for your approval") : { listening: c.muted ? _("Microphone off") : _("Listening"), thinking: _("Thinking…"),
     speaking: _("Speaking · tap to interrupt"), idle: "" }[c.mode || "idle"] || "");
   const said = el("div", "c-said", c.caption || "");
   const heard = el("div", "c-heard", c.heard ? "“" + c.heard + "”" : "");
