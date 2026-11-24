@@ -84,7 +84,7 @@ def test_design_project_members_get_design_check_and_reviews_see_patterns(workdi
     monkeypatch.setattr(site, "screenshots", lambda root, entry="": {"masaüstü": "AAAA"})
     monkeypatch.setattr(dc, "critique", lambda router, shots, goal, design="", lint_text="", **kw: "Puan 2/10: şablon.")
     res = a.tools["design_check"].run(a.ctx)
-    assert "Kalıp denetimi" in res.text and "Puan 2/10" in res.text and res.images == ["AAAA"]
+    assert "Pattern check" in res.text and "Puan 2/10" in res.text and res.images == ["AAAA"]
     assert any(x["kind"] == "design" for x in web.timeline)
 
     other = Team(ctx, "Ödeme servisini yeniden düzenle", council=False)
@@ -169,7 +169,7 @@ def test_site_study_saves_references_and_feeds_comparisons(workdir, monkeypatch)
     assert a.tools["site_study"].run(a.ctx, url="http://127.0.0.1:8000").is_error
 
     monkeypatch.setattr(site, "reachable", lambda url, timeout=12.0: (False, "HTTP 403"))
-    assert "açılamadı" in a.tools["site_study"].run(a.ctx, url="https://x.com").text
+    assert "couldn't be opened" in a.tools["site_study"].run(a.ctx, url="https://x.com").text
 
 
 def test_critical_check_needs_whole_words():
