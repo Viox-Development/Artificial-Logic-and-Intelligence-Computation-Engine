@@ -146,5 +146,5 @@ def maybe_send(store, mem, router, send: Callable[[str, str], bool], now: float 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(st), encoding="utf-8")
     except OSError:
-        pass
+        pass  # unsaved state only means the summary may be offered again
     return text

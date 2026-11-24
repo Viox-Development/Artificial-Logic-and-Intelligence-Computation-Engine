@@ -45,7 +45,7 @@ def discover(timeout: float = 2.5) -> list[str]:
             if m and (loc := m.group(1).decode(errors="replace")) not in out:
                 out.append(loc)
     except OSError:
-        pass
+        pass  # no network or multicast blocked: no modem found
     finally:
         s.close()
     return out
@@ -140,7 +140,7 @@ def info() -> str:
                     try:
                         lines.append(fn(soap(url, svc, action, c)))
                     except (httpx.HTTPError, ET.ParseError, ValueError):
-                        pass
+                        pass  # the modem doesn't support this query: skip that line
             if d["common"]:
                 try:
                     link = soap(d["common"], WAN_COMMON, "GetCommonLinkProperties", c)
@@ -154,7 +154,7 @@ def info() -> str:
                         lines.append(f"Trafik (modem açıldığından beri, sayaç taşabilir): indirilen "
                                      f"{fmt_bytes(int(rx))}, gönderilen {fmt_bytes(int(tx))}")
                 except (httpx.HTTPError, ET.ParseError, ValueError):
-                    pass
+                    pass  # the modem doesn't report line speed or traffic: skip those lines
             break
         if not lines:
             gw = gateway_guess()

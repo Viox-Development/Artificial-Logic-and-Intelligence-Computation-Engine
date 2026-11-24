@@ -95,7 +95,7 @@ class KeyPool:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(json.dumps(data, indent=1), encoding="utf-8")
         except OSError:
-            pass
+            pass  # key state is a convenience; it is rebuilt from the next requests
 
     # --------------------------------------------------------------------------------------- selection
     def _waiting(self, ks: KeyState, model: str, now: float) -> float:

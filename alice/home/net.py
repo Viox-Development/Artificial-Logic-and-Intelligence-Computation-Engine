@@ -112,7 +112,7 @@ def _poke(host: str) -> None:
     try:
         s.sendto(b"", (host, 9))
     except OSError:
-        pass
+        pass  # unreachable host: the ARP table simply won't list it
     finally:
         s.close()
 

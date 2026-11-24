@@ -58,7 +58,7 @@ def clear_notes() -> None:
     try:
         notes_path().unlink()
     except OSError:
-        pass
+        pass  # no notes to clear
 
 
 class Page:

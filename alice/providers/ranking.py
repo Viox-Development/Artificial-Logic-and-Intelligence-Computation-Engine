@@ -440,13 +440,13 @@ def _write_health(text: str) -> None:
         os.replace(tmp, path)
         tmp = ""
     except OSError:
-        pass
+        pass  # health data is rebuilt from the next requests
     finally:
         if tmp:
             try:
                 os.unlink(tmp)
             except OSError:
-                pass
+                pass  # a leftover temp file is harmless
 
 
 def reliability(ref: str, now: float | None = None) -> tuple[float, float]:
@@ -692,7 +692,7 @@ def refresh(router, emit: Callable[[str], None] = lambda s: None, path: Path | N
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the ranking is still returned; it is measured again next time
     return cache
 
 
@@ -713,7 +713,7 @@ def rebuild(router, weights: dict[str, dict[str, float]] | None = None, path: Pa
     try:
         p.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the chains are still returned; the cache is rewritten next time
     router.reload_auto(cache)
     return cache
 

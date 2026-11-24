@@ -84,7 +84,7 @@ def _spotify_local(m: Manifest, args: dict[str, Any], why: str) -> str:
         try:
             runner.call(m, m.actions["play"], {}, cache=False)
         except runner.ConnectError:
-            pass
+            pass  # the app is open at least; the warning below covers a failed resume
     if _wait_playing(m, LOCAL_WAIT):
         return f"{why}; parça Spotify uygulamasında açıldı, doğrulandı: çalıyor"
     return (f"UYARI: {why}; Spotify uygulamasında açıldı ama çalmaya başlamadı. "

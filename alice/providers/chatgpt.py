@@ -108,7 +108,7 @@ def _write(store: dict[str, Any]) -> None:
     try:
         os.chmod(tmp, 0o600)
     except OSError:
-        pass
+        pass  # best effort; some file systems don't support these permissions
     try:
         os.replace(tmp, p)
     except OSError:  # Windows: the target can't be replaced if another process has it open right now
@@ -116,7 +116,7 @@ def _write(store: dict[str, Any]) -> None:
         try:
             tmp.unlink()
         except OSError:
-            pass
+            pass  # a leftover temp file is overwritten next time
 
 
 def load_auth(key: str | None = None) -> dict[str, Any]:
@@ -188,7 +188,7 @@ def remove(key: str | None = None) -> bool:
         try:
             auth_path().unlink()
         except OSError:
-            pass
+            pass  # already removed
     return True
 
 
@@ -689,7 +689,7 @@ def codex_prompt(client: httpx.Client) -> str:
         _codex_prompt = p.read_text(encoding="utf-8")
         return _codex_prompt
     except OSError:
-        pass
+        pass  # not cached yet: download it below
     for url in CODEX_PROMPT_URLS:
         try:
             r = client.get(url)
@@ -703,7 +703,7 @@ def codex_prompt(client: httpx.Client) -> str:
     try:
         p.write_text(r.text, encoding="utf-8")
     except OSError:
-        pass
+        pass  # the prompt is in memory; it is downloaded again next start
     return _codex_prompt
 
 
@@ -1017,12 +1017,12 @@ def _abort_stream(r: httpx.Response) -> None:
         try:
             socket.socket.shutdown(sock, socket.SHUT_RDWR)  # SSLSocket.shutdown resets _sslobj, so use the raw socket
         except (OSError, TypeError, ValueError):
-            pass
+            pass  # already closed or not a real socket
         try:
             sock.close()
             return
         except (OSError, TypeError, ValueError):
-            pass
+            pass  # already closed: close the response below
     try:
         r.close()
     except Exception:  # noqa: BLE001

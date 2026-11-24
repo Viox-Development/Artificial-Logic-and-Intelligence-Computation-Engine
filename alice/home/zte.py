@@ -218,7 +218,7 @@ class ZTE:
         try:
             self._req("?_type=loginData&_tag=logout_entry", f"IF_LogOff=1&_sessionTOKEN={self.token}")
         except httpx.HTTPError:
-            pass
+            pass  # the session expires on the modem anyway
 
     def close(self) -> None:
         self.c.close()

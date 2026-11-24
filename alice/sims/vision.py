@@ -358,7 +358,7 @@ def record(cfg: dict[str, Any], seconds: float = 3600.0) -> int:
     try:
         time.sleep(seconds)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl+C ends sample collection early
     finally:
         keys.stop()
     return 0

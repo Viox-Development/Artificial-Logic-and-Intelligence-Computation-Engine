@@ -233,4 +233,4 @@ class CacheBreakDetector:
             with open(self.log_dir / "cache_breaks.log", "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {brk.text()}\n")
         except OSError:
-            pass
+            pass  # logging must not break a request

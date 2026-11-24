@@ -275,7 +275,7 @@ class UsageTracker:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self.path.write_text(json.dumps(self.data, indent=1), encoding="utf-8")
             except OSError:
-                pass
+                pass  # usage is kept in memory and saved on the next call
 
     def today(self) -> dict[str, Any]:
         return self.data.get(date.today().isoformat(), {})
@@ -348,7 +348,7 @@ class Router:
             self.cooldown_path.parent.mkdir(parents=True, exist_ok=True)
             self.cooldown_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
         except OSError:
-            pass
+            pass  # cooldowns are kept in memory for this process
 
     def thinking_level(self, role: str) -> str:
         return self.thinking_overrides.get(role) or self.thinking_overrides.get("*") or thinking.level_for(
@@ -615,7 +615,7 @@ class Router:
             try:
                 refs.update(self.chain(role))
             except KeyError:
-                pass
+                pass  # role without a chain: nothing to add
         hidden = self.hidden()
         out: list[dict[str, Any]] = []
         for name, pc in sorted(self.providers_cfg.items()):
@@ -699,7 +699,7 @@ class Router:
                 keys = [k for pc in self.providers_cfg.values() for k in getattr(pc, "api_keys", None) or []]
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(redact(line, *keys).split())}\n")
         except OSError:
-            pass
+            pass  # logging must not break a request
 
     def _log_cache(self, role: str, ref: str, usage: dict[str, Any] | None, messages: list[dict[str, Any]],
                    tools: list[dict[str, Any]] | None) -> None:
@@ -725,7 +725,7 @@ class Router:
                         f"cached={cached_tokens(u)} write={cache_write_tokens(u)} msgs={len(messages)} "
                         f"tools={len(tools or [])} th={h(names)} sh={h(sys0)}\n")
         except (OSError, TypeError, ValueError, AttributeError):
-            pass
+            pass  # cache diagnostics must not break a request
 
     def client(self, provider: str) -> Any:
         if provider not in self._clients:

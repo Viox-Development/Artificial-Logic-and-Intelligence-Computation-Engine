@@ -181,7 +181,7 @@ def learn_cruise(folder: Path | None = None) -> dict[str, dict[str, float]]:
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "cruise.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the estimate is computed again after the next flight
     _learned_cache.clear()
     return result
 

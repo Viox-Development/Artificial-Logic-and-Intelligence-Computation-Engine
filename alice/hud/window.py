@@ -96,7 +96,7 @@ class Receiver:
         try:
             self.sock.close()
         except OSError:
-            pass
+            pass  # socket already closed
 
 
 # ----------------------------------------------------------------------- Win32

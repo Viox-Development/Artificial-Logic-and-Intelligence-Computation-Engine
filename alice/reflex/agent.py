@@ -223,7 +223,7 @@ class ScreenAgent:
             with p.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except OSError:
-            pass
+            pass  # tracing must not break the screen agent
 
     def _text_for(self, item: Item, goal: str, inputs: dict[str, str]) -> str:
         label = item.label.lower()
@@ -258,7 +258,7 @@ class ScreenAgent:
                 mixed = {k: (probs[k] / total + second.get(k, 0.0)) / 2 for k in top}
                 top = sorted(mixed, key=mixed.get, reverse=True)
             except DeciderError:
-                pass
+                pass  # keep the first look's ranking
         return next((i for i in scr.items if i.key == top[0]), None)
 
     def _keyboard(self, goal: str, inputs: dict[str, str]) -> str:
