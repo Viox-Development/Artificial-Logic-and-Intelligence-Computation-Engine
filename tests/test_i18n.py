@@ -290,3 +290,10 @@ def test_buddy_labels_and_google_setup_steps_are_translated():
     assert set(buddy.RARITY_EN) == {r for r, *_rest in buddy.RARITIES}
     for title, _url, how in setup_google.STEPS:
         assert title in tr and how in tr, title
+
+
+def test_catalogue_keys_are_sorted():
+    # Sorted keys let parallel changes add translations in different places instead of all at the end,
+    # so they don't conflict with each other.
+    keys = list(json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8")))
+    assert keys == sorted(keys), "sort alice/locales/tr.json: json.dumps(..., indent=1, sort_keys=True)"
