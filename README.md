@@ -76,7 +76,7 @@ ALICE ships with about 90 tools. The main groups:
 
 **Flight sims**
 - Live threat and missile callouts, checklists, kneeboard, debriefs, and coaching from your death patterns for
-  War Thunder and DCS, plus voice commands for DCS wingmen.
+  War Thunder and DCS, plus voice commands for DCS wingmen ([docs/guide/sims.md](docs/guide/sims.md)).
 
 **Self-updating**
 - Installs new releases on its own, with a smoke test and automatic rollback if the new version fails to start.
