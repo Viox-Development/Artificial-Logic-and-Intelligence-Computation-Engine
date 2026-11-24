@@ -107,24 +107,24 @@ def audit(text: str) -> list[Issue]:
             m = _INJECT_RX.search(line)
             if m:
                 issues.append(Issue(
-                    n, "high", f"Komut enjeksiyonu: {m.group(1)} doğrudan betikte",
-                    f"`{m.group(1)}` dışarıdan biri tarafından yazılabilen bir metin (başlık, gövde, yorum, dal adı, "
-                    "commit mesajı). ${{ }} betik çalışmadan önce metne gömülür: içinde `\"; curl ... | sh` gibi bir "
-                    "şey varsa runner'da komut olarak çalışır ve iş akışının sırlarına erişir.",
-                    "Değeri bir ortam değişkenine al (env: TITLE: ${{ ... }}) ve betikte \"$TITLE\" diye tırnaklı kullan."))
+                    n, "high", f"Command injection: {m.group(1)} directly in a script",
+                    (f"`{m.group(1)}` is text anyone outside can write (title, body, comment, branch name, "
+                    "commit message). ${{ }} is pasted into the text before the script runs: if it holds something like "
+                    "`\"; curl ... | sh`, it runs as a command on the runner and can reach the workflow's secrets."),
+                    "Put the value in an environment variable (env: TITLE: ${{ ... }}) and use it quoted in the script as \"$TITLE\"."))
         if privileged and _PR_HEAD_RX.search(line) and re.search(r"\b(ref|repository)\s*:", line):
             issues.append(Issue(
-                n, "critical", "Ayrıcalıklı tetikleyicide PR kodu checkout ediliyor (pwn request)",
-                "pull_request_target/workflow_run iş akışı ana dalın yetkileri ve sırlarıyla çalışır. PR'ın kodunu "
-                "checkout edip derlemek/çalıştırmak (npm install, make, test betikleri) saldırganın koduna o sırları ve "
-                "GITHUB_TOKEN'ın yazma yetkisini verir.",
-                "PR kodunu çalıştıran işleri `pull_request` tetikleyicisine taşı; sır gerekiyorsa sonucu artifact olarak "
-                "ayrı bir workflow_run işine aktar ve orada PR kodunu çalıştırma."))
+                n, "critical", "PR code is checked out under a privileged trigger (pwn request)",
+                ("A pull_request_target/workflow_run workflow runs with the default branch's permissions and secrets. Checking "
+                "out and building/running the PR's code (npm install, make, test scripts) gives the attacker's code those "
+                "secrets and the write access of GITHUB_TOKEN."),
+                ("Move the jobs that run PR code to the `pull_request` trigger; if secrets are needed, pass the result as an "
+                "artifact to a separate workflow_run job and don't run PR code there.")))
         if re.match(r"^\s*permissions\s*:\s*['\"]?write-all['\"]?\s*$", line):
             issues.append(Issue(
                 n, "medium", "permissions: write-all",
-                "Token'a depodaki her şeye yazma yetkisi verir; işte bir enjeksiyon olursa zarar en büyük olur.",
-                "Yalnız gereken izinleri yaz (ör. contents: read, pull-requests: write)."))
+                "Gives the token write access to everything in the repository; an injection in a job does the most damage.",
+                "Write only the permissions needed (e.g. contents: read, pull-requests: write)."))
         m = _USES_RX.match(line)
         if m:
             name, ref = m.group(1), m.group(2)
@@ -132,8 +132,8 @@ def audit(text: str) -> list[Issue]:
             if (not name.startswith(("./", "docker://")) and "/" in name and owner not in _TRUSTED_OWNERS
                     and not _SHA_RX.match(ref)):
                 issues.append(Issue(
-                    n, "low", f"Aksiyon commit'e sabitlenmemiş: {name}@{ref}",
-                    "Etiket ya da dal sonradan başka bir commit'e taşınabilir; aksiyonun sahibi (ya da hesabını ele "
-                    "geçiren) iş akışında istediği kodu çalıştırır.",
-                    f"Tam commit SHA'sı kullan: uses: {name}@<40 karakterlik sha>  # {ref}"))
+                    n, "low", f"Action not pinned to a commit: {name}@{ref}",
+                    ("A tag or branch can later be moved to another commit; the action's owner (or whoever takes over their "
+                    "account) runs any code they like in the workflow."),
+                    f"Use the full commit SHA: uses: {name}@<40-character sha>  # {ref}"))
     return issues

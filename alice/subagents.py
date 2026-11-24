@@ -4,7 +4,7 @@ Claude Code).
 Before, a subagent locked the chat and ran one at a time, wrote to the main chat's screen, and was forgotten when done:
 - Parallel: multiple `task` calls in the same response run at the same time.
 - Background: starts with background=true and the chat goes on; when it finishes, its result arrives in the chat as an
-  "[Alt ajan ...]" message.
+  "[Subagent ...]" message.
 - Resume: send a new message to a finished subagent by its id; its conversation (what it read and found) is kept.
 - Visibility: each subagent's status, step and last tool show live in the side panel's "Agents" tab; from there
   it can be stopped or sent a follow-up message.
@@ -85,7 +85,7 @@ class SubUI:
         self.changed()
 
     def info(self, msg: str) -> None:
-        if "adım limiti" in msg or "hiçbir model" in msg:
+        if any(w in msg for w in ("adım limiti", "hiçbir model", "step limit", "No model for the")):
             self.sub.last = msg.splitlines()[0][:160]
             self.changed()
 
@@ -138,7 +138,7 @@ def build_child(parent: Any, kind: str, ui: Any, ctx: ToolContext) -> tuple[Any,
             from alice.tools.base import ToolError
 
             names = ", ".join(load_agents(parent.ctx.cwd)) or "(yok)"
-            raise ToolError(f"'{kind}' adında alt ajan yok. Tanımlı olanlar: {names}")
+            raise ToolError(f"no subagent named '{kind}'. Defined ones: {names}")
         child = spawn(parent, adef, ctx=ctx, ui=ui)
         steps = adef.max_steps
     else:
@@ -184,16 +184,16 @@ def resume(ctx: ToolContext, sub_id: str, text: str, background: bool = False) -
     with _state_lock:  # check and "running" mark together: two follow-ups must not run one agent twice
         sub = registry(ctx).get(sub_id.strip())
         if sub is None:
-            raise ToolError(f"böyle bir alt ajan yok: {sub_id}. Bu sohbettekiler: "
-                            f"{', '.join(registry(ctx)) or '(yok)'}")
+            raise ToolError((f"no such subagent: {sub_id}. The ones in this chat: "
+                            f"{', '.join(registry(ctx)) or '(none)'}"))
         if sub.status == "running":
-            raise ToolError(f"{sub.id} hâlâ çalışıyor; bitmesini bekle ya da durdur")
+            raise ToolError(f"{sub.id} is still running; wait for it to finish or stop it")
         prev_status, sub.status = sub.status, "running"
     if sub.child is None:  # app was reopened: the subagent is re-created with its conversation from the record
         parent = ctx.state.get("agent")
         try:
             if parent is None:
-                raise ToolError("alt ajan bu bağlamda sürdürülemiyor")
+                raise ToolError("the subagent can't be continued in this context")
             sub.child, _ = build_child(parent, sub.kind, _make_ui(sub, parent, ctx), child_context(ctx))
         except Exception:
             sub.status = prev_status
@@ -218,7 +218,7 @@ def _go(ctx: ToolContext, sub: Sub, text: str) -> None:
     def run() -> None:
         try:
             out = sub.child.run_turn(text, max_steps=sub.max_steps)
-            sub.result = out or "(alt ajan boş cevap döndürdü)"
+            sub.result = out or "(the subagent returned an empty answer)"
             sub.status = "stopped" if sub.child.cancel.is_set() else "done"
         except Exception as e:  # noqa: BLE001 - the subagent's error must not bring down the chat
             sub.result, sub.status = f"alt ajan hata verdi: {e}", "failed"
@@ -232,8 +232,8 @@ def _go(ctx: ToolContext, sub: Sub, text: str) -> None:
         if lock is not None and owner is not None and not getattr(parent, "busy", False):
             lock.release(owner)
         if sub.background and sub.status != "stopped" and callable(deliver):
-            deliver(f"[Alt ajan {sub.id} · {sub.label} {'bitti' if sub.status == 'done' else 'başarısız'}]\n"
-                    f"{sub.result[:6000]}\n\n(Devam ettirmek için: task id={sub.id} prompt=...)")
+            deliver((f"[Subagent {sub.id} · {sub.label} {'finished' if sub.status == 'done' else 'failed'}]\n"
+                    f"{sub.result[:6000]}\n\n(To continue it: task id={sub.id} prompt=...)"))
 
     sub.thread = threading.Thread(target=run, daemon=True, name=f"alice-sub-{sub.id}")
     sub.thread.start()

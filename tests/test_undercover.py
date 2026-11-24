@@ -56,7 +56,7 @@ def test_clean_rejects_remaining_tells():
     c = cfg(words=["Projekt-Kuzgun"])
     with pytest.raises(ToolError, match="ALICE"):
         undercover.clean(c, "ALICE bu hatayı düzeltti")
-    with pytest.raises(ToolError, match="yapay zekâ"):
+    with pytest.raises(ToolError, match="mention of AI"):
         undercover.clean(c, "As an AI, I fixed the bug")
     with pytest.raises(ToolError, match="Projekt-Kuzgun"):
         undercover.clean(c, "projekt-kuzgun için hazırlık")
@@ -93,7 +93,7 @@ def test_github_tool_hidden_reply_and_pr(monkeypatch, tmp_path):
     assert gh.ALICE_MARK not in body and undercover.is_own(api.next_id)
     tool.run(ctx, "pr_comment", repo="o/r", number=7, body="Testler eklendi.\n\n🤖 Generated with ALICE")
     assert api.calls[-1][2]["body"] == "Testler eklendi." and undercover.is_own(api.next_id)
-    with pytest.raises(ToolError, match="gizli mod"):
+    with pytest.raises(ToolError, match="undercover mode"):
         tool.run(ctx, "issue_create", repo="o/r", title="Claude ile bulunan hata", body="x")
 
 
@@ -114,7 +114,7 @@ def test_commit_message_is_cleaned(tmp_path, monkeypatch):
     (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
     ctx = ToolContext(cwd=tmp_path, config=cfg("on"))
     tool = gh.Git()
-    with pytest.raises(ToolError, match="gizli mod"):
+    with pytest.raises(ToolError, match="undercover mode"):
         tool.run(ctx, "commit", message="ALICE: dosya eklendi", all=True)
     tool.run(ctx, "commit", message="Dosya eklendi\n\nCo-Authored-By: Claude <noreply@anthropic.com>", all=True)
     msg = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=tmp_path, capture_output=True, text=True).stdout
@@ -127,4 +127,4 @@ def test_fix_prompt_hidden_rules():
     w = prwatch.Watch("o/r", 7)
     assert gh.ALICE_MARK in prwatch.fix_prompt(w, pr, p)
     hidden = prwatch.fix_prompt(w, pr, p, hidden=True)
-    assert gh.ALICE_MARK not in hidden and "Gizli mod" in hidden
+    assert gh.ALICE_MARK not in hidden and "Undercover mode" in hidden

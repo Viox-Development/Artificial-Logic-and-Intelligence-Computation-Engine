@@ -253,7 +253,7 @@ def test_custom_subagent_prompt_tools_and_model(workdir):
     assert {t["function"]["name"] for t in child_call["tools"]} == {"read_file", "grep"}
     agent2, _, _ = make_agent([tool_call("task", {"prompt": "x", "agent": "olmayan"}), "tamam"], workdir)
     agent2.run_turn("x")
-    assert "adında alt ajan yok" in next(m for m in agent2.messages if m["role"] == "tool")["content"]
+    assert "no subagent named" in next(m for m in agent2.messages if m["role"] == "tool")["content"]
 
 
 # ----------------------------------------------------------------------------------------- choice question

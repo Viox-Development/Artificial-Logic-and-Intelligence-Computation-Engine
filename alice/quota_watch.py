@@ -11,6 +11,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from alice.i18n import _
+
 THRESHOLDS = (80, 95)
 INTERVAL = 300.0  # sec
 
@@ -69,11 +71,12 @@ class QuotaWatch:
 
     @staticmethod
     def _message(acc: dict[str, Any], w: dict[str, Any], pct: int, accounts: list[dict[str, Any]]) -> str:
-        service = acc.get("provider_name") or acc.get("provider") or "hesap"
+        service = acc.get("provider_name") or acc.get("provider") or _("account")
         reset = int(w.get("reset") or 0)
-        when = f", {datetime.fromtimestamp(reset).strftime('%d.%m %H:%M')}'de sıfırlanır" if reset else ""
+        when = _(", resets {when}", when=datetime.fromtimestamp(reset).strftime("%d.%m %H:%M")) if reset else ""
         others = [a for a in accounts if a is not acc and a.get("provider") == acc.get("provider") and a.get("ready")
                   and int((a.get("quota") or {}).get("percent") or 0) < 80]
-        tail = (f" Diğer {service} hesabı hazır, dolunca istekler ona geçer." if others else
-                f" Başka hazır {service} hesabı yok; dolunca istekler sıradaki modele düşer.")
-        return f"Kota uyarısı: {service} hesabı {acc.get('email') or acc.get('name')} {w.get('label')} kotasının %{pct}'ini kullandı{when}.{tail}"
+        tail = (_(" Another {service} account is ready; requests move to it when this one is full.", service=service) if others else
+                _(" No other {service} account is ready; when it is full, requests fall back to the next model.", service=service))
+        return _("Quota warning: the {service} account {account} used {pct}% of its {window} quota{when}.",
+                 service=service, account=acc.get("email") or acc.get("name"), window=w.get("label"), pct=pct, when=when) + tail

@@ -61,18 +61,18 @@ def backend() -> tuple[str, str]:
     if IS_WIN:
         res = ("lowil", "")
     elif sys.platform == "darwin":
-        res = ("sandbox-exec", "" if shutil.which("sandbox-exec") else "sandbox-exec bulunamadı")
+        res = ("sandbox-exec", "" if shutil.which("sandbox-exec") else "sandbox-exec not found")
     else:
         exe = shutil.which("bwrap")
         if not exe:
-            res = ("bwrap", "bubblewrap (bwrap) kurulu değil: sudo apt install bubblewrap")
+            res = ("bwrap", "bubblewrap (bwrap) is not installed: sudo apt install bubblewrap")
         else:
             try:
                 r = subprocess.run([exe, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "true"],
                                    capture_output=True, timeout=10)
-                res = ("bwrap", "" if r.returncode == 0 else f"bwrap çalışmıyor: {r.stderr.decode()[:160]}")
+                res = ("bwrap", "" if r.returncode == 0 else f"bwrap does not work: {r.stderr.decode()[:160]}")
             except (OSError, subprocess.SubprocessError) as e:
-                res = ("bwrap", f"bwrap çalışmıyor: {e}")
+                res = ("bwrap", f"bwrap does not work: {e}")
     _probe["result"] = res
     return res
 
@@ -89,8 +89,8 @@ def boxable(folder: Path) -> str:
     except OSError as e:
         return str(e)
     if p == Path(p.anchor) or p == home or p in home.parents or is_system_path(p):
-        return (f"{p} sandbox alanı olamaz (ev klasörü, kök ya da sistem klasörü); bir proje klasöründe çalış "
-                "ya da cwd ver")
+        return ((f"{p} can't be a sandbox area (home folder, root or a system folder); work in a project folder "
+                "or give cwd"))
     # Kişisel klasörler de olamaz: Windows'ta etiketlenen klasöre düşük seviyeli bir komut dosya bırakabilir.
     # Downloads etiketlenince oradan açılan kurulum dosyaları da düşük yetkiyle çalışıyordu.
     from alice.config import alice_home
@@ -102,7 +102,7 @@ def boxable(folder: Path) -> str:
         except OSError:
             continue
         if p == d or d in p.parents:
-            return (f"{p} sandbox alanı olamaz (kişisel klasör: {d.name}); bir proje klasöründe çalış ya da cwd ver")
+            return (f"{p} can't be a sandbox area (personal folder: {d.name}); work in a project folder or give cwd")
     return ""
 
 
@@ -252,7 +252,7 @@ def label_low(folder: Path) -> None:
     r = subprocess.run(["icacls", str(folder), "/setintegritylevel", "(OI)(CI)low", "/T", "/C", "/Q"],
                        capture_output=True, text=True, timeout=300, creationflags=0x08000000)
     if r.returncode != 0:
-        raise RuntimeError(f"proje klasörü sandbox için hazırlanamadı (icacls): {(r.stderr or r.stdout)[:200]}")
+        raise RuntimeError(f"could not prepare the project folder for the sandbox (icacls): {(r.stderr or r.stdout)[:200]}")
     _restore_exes(folder)
     _EXE_FIXED.add(key)
     done.add(key)

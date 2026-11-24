@@ -25,17 +25,17 @@ def test_report_says_new_problems_once_then_fixed(tmp_path):
     kw = dict(doctor_checks=lambda: checks, usage=usage, path=path)
 
     body = hr.report(None, store, send, now=now, **kw)
-    assert sent[0][0] == "ALICE sağlık raporu: 4 sorun"
-    assert "Gmail: token yenilenemedi (çözüm: tekrar bağla)" in body and "OCR" not in body
+    assert sent[0][0] == "ALICE health report: 4 problems"
+    assert "Gmail: token yenilenemedi (fix: tekrar bağla)" in body and "OCR" not in body
     assert "takvim takibi hata verdi (4 kez" in body and "C: diski %95 dolu" in body
     assert "nvidia:glm" in body and "gemini:ok" not in body
 
     assert hr.report(None, store, send, now=now + 3600, **kw) is None  # not checked before the day is over
     body = hr.report(None, store, send, now=now + 86400, **kw)  # the ongoing problem (Gmail) is not repeated
-    assert body == "Düzelenler: takvim takibi hata verdi, C"  # errors older than 24 hours and disk space that was freed
+    assert body == "Fixed: takvim takibi hata verdi, C"  # errors older than 24 hours and disk space that was freed
     checks.clear()
     body = hr.report(None, store, send, now=now + 2 * 86400, **kw)
-    assert body == "Düzelenler: Gmail, nvidia:glm" and len(sent) == 3
+    assert body == "Fixed: Gmail, nvidia:glm" and len(sent) == 3
 
 
 def test_report_waits_for_morning_and_retries_when_muted(tmp_path):
@@ -50,4 +50,4 @@ def test_report_waits_for_morning_and_retries_when_muted(tmp_path):
 
 
 def test_summary_now_when_all_good():
-    assert hr.summary_now(None, Store(":memory:"), doctor_checks=lambda: [], usage={}).startswith("Her şey çalışıyor")
+    assert hr.summary_now(None, Store(":memory:"), doctor_checks=lambda: [], usage={}).startswith("Everything works")

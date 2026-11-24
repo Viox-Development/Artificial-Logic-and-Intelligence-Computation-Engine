@@ -113,7 +113,7 @@ def test_task_runs_child_and_reports(ctx, fake_child):
 
 def test_task_empty_answer(ctx, fake_child):
     ctx.state["agent"] = FakeParent("")
-    assert "(alt ajan boş cevap döndürdü)" in meta.Task().run(ctx, prompt="x").text
+    assert "(the subagent returned an empty answer)" in meta.Task().run(ctx, prompt="x").text
 
 
 # ================================================================== meta: Reflex
