@@ -209,7 +209,7 @@ def test_keyring_timeline_works_end_to_end(fake_keyring, tmp_path):
 
 def test_keyring_missing_backend_gives_a_clear_error(fake_keyring):
     fake_keyring(fail=True)
-    with pytest.raises(RuntimeError, match="anahtar deposu kullanılamıyor"):
+    with pytest.raises(RuntimeError, match="keyring is not available"):
         timeline.protect(b"x")
 
 
@@ -218,7 +218,7 @@ def test_row_from_another_key_is_skipped_not_crashing(fake_keyring, tmp_path):
     enc = timeline.protect(b"eski")
     kr.store.clear()  # the key was lost/replaced: a new one is created
     timeline._FERNET.clear()
-    with pytest.raises(OSError, match="çözülemedi"):
+    with pytest.raises(OSError, match="could not be decrypted"):
         timeline.unprotect(enc)
 
 
