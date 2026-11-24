@@ -21,6 +21,8 @@ import httpx
 
 from alice.config import alice_home
 
+from alice.i18n import _
+
 TIMEOUT = 6.0
 
 # Services displayed for "add account" in the UI (those supported by CLIProxyAPI for OAuth).
@@ -153,7 +155,7 @@ def model_group(model: str) -> tuple[str, str, str]:
     for prefixes, gid, label in GROUPS:
         if low.startswith(prefixes):
             return gid, label, f"cliproxy:{prefixes[0]}*"
-    return "other", "Diğer (proxy)", ""
+    return "other", _("Other (proxy)"), ""
 
 
 def tidy_models(ids: list[str], keep: int = 2) -> list[str]:
@@ -187,7 +189,7 @@ def tidy_models(ids: list[str], keep: int = 2) -> list[str]:
 def _req(method: str, path: str) -> dict[str, Any]:
     s = settings()
     if not s["key"]:
-        raise RuntimeError("CLIProxyAPI yönetim anahtarı yok (~/.alice/cliproxy/keys.txt)")
+        raise RuntimeError(_("no CLIProxyAPI management key (~/.alice/cliproxy/keys.txt)"))
     url = f"http://127.0.0.1:{s['port']}{path}"
     with httpx.Client(timeout=TIMEOUT) as c:
         r = c.request(method, url, headers={"Authorization": f"Bearer {s['key']}"})
@@ -274,7 +276,7 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
     global _last_start
     s = settings()
     if not s["installed"]:
-        return {"ok": False, "error": "CLIProxyAPI kurulu değil"}
+        return {"ok": False, "error": _("CLIProxyAPI is not installed")}
     if running():
         return {"ok": True, "already": True}
     with _start_lock:
@@ -282,11 +284,11 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
             return {"ok": True, "already": True}
         now = time.monotonic()
         if now - _last_start < START_RETRY_SECONDS and _last_start:
-            return {"ok": False, "error": "az önce denendi; biraz sonra yeniden denenecek"}
+            return {"ok": False, "error": _("just tried; will try again in a bit")}
         _last_start = now
         exe = s["dir"] / binary_name()
         if not exe.exists():
-            return {"ok": False, "error": f"{binary_name()} bulunamadı"}
+            return {"ok": False, "error": _("{name} not found", name=binary_name())}
         ensure_affinity(s["dir"] / "config.yaml")
         ensure_routing_retry(s["dir"] / "config.yaml")
         try:
@@ -302,7 +304,7 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
         try:
             subprocess.Popen([str(exe), "-config", str(s["dir"] / "config.yaml")], **kwargs)
         except OSError as e:
-            return {"ok": False, "error": f"başlatılamadı: {e}"}
+            return {"ok": False, "error": _("could not start: {error}", error=e)}
         finally:
             if log is not subprocess.DEVNULL:
                 log.close()
@@ -311,13 +313,13 @@ def start(wait_seconds: float = 8.0) -> dict[str, Any]:
             if running():
                 return {"ok": True, "started": True}
             time.sleep(0.3)
-    return {"ok": False, "error": "proxy başladı ama cevap vermedi (server.out.log)"}
+    return {"ok": False, "error": _("the proxy started but didn't answer (server.out.log)")}
 
 
 def ensure_started() -> dict[str, Any]:
     """Start if installed and down; silently skip if not installed."""
     if not settings()["installed"]:
-        return {"ok": True, "skipped": "kurulu değil"}
+        return {"ok": True, "skipped": _("not installed")}
     if running():
         return {"ok": True, "already": True}
     return start()
@@ -355,15 +357,16 @@ def _num(value: Any) -> float | None:
 
 
 # (signal prefix, label). Claude: 5-hour and weekly window; ChatGPT (Codex): primary and secondary window.
-_WINDOWS = (("Anthropic-Ratelimit-Unified-5h", "5 saat"), ("Anthropic-Ratelimit-Unified-7d", "7 gün"),
-            ("X-Codex-Primary", "kısa dönem"), ("X-Codex-Secondary", "hafta"))
+# Window labels: English keys, translated where they are shown (_window_label).
+_WINDOWS = (("Anthropic-Ratelimit-Unified-5h", "5 hours"), ("Anthropic-Ratelimit-Unified-7d", "7 days"),
+            ("X-Codex-Primary", "short term"), ("X-Codex-Secondary", "week"))
 
 
 def _window_label(sig: dict[str, Any], prefix: str, label: str) -> str:
     mins = _num(sig.get(f"{prefix}-Window-Minutes"))
     if not mins:
-        return label
-    return f"{round(mins / 1440)} gün" if mins >= 1440 else f"{round(mins / 60)} saat" if mins >= 60 else f"{round(mins)} dk"
+        return _(label)
+    return _("{n} days", n=round(mins / 1440)) if mins >= 1440 else _("{n} hours", n=round(mins / 60)) if mins >= 60 else _("{n} min", n=round(mins))
 
 
 def _iso_ts(value: Any) -> float:
@@ -410,7 +413,7 @@ def _quota_summary(quota: Any, now: float | None = None) -> dict[str, Any]:
 
 def _duration(seconds: float) -> str:
     if seconds >= 86400:
-        return f"{round(seconds / 86400)} gün"
+        return _("{n} days", n=round(seconds / 86400))
     if seconds >= 3600:
         return f"{round(seconds / 3600)} sa"
     return f"{max(1, round(seconds / 60))} dk"
@@ -438,7 +441,7 @@ def _cooldown_summary(cooldowns: Any, now: float | None = None) -> str:
         elif left > 0:
             best = max(best, left)
     # Expired records are not considered blockers: if proxy left without clearing, account stayed "busy" forever.
-    return _duration(best) if best > 0 else "kısa süre" if unknown else ""
+    return _duration(best) if best > 0 else _("a short while") if unknown else ""
 
 
 _SIGN_IN_CODES = ("invalid_grant", "refresh_failed", "unauthorized", "invalid_token")
@@ -452,8 +455,8 @@ def _account_error(f: dict[str, Any]) -> tuple[bool, str]:
     msg = str(err.get("message") or f.get("status_message") or "")
     if bool(f.get("requires_sign_in")) or code in _SIGN_IN_CODES:
         if "restricted" in msg.lower():
-            return True, "hesap kısıtlanmış (sağlayıcı girişi reddediyor)"
-        return True, "giriş süresi dolmuş"
+            return True, _("the account is restricted (the provider refuses the sign-in)")
+        return True, _("the sign-in expired")
     if str(f.get("status") or "").lower() == "error" or f.get("unavailable"):
         if f.get("quota_blocked") or _cooldown_summary(f.get("cooldowns")):
             return False, ""  # quota: displayed separately
@@ -536,7 +539,7 @@ def status() -> dict[str, Any]:
         "error": "",
     }
     if not s["installed"]:
-        out["error"] = "CLIProxyAPI kurulu değil"
+        out["error"] = _("CLIProxyAPI is not installed")
         return out
     try:
         data = _req("GET", "/v8/management/credentials")
@@ -571,7 +574,7 @@ def login_url(provider: str) -> dict[str, Any]:
         return {"ok": False, "error": str(e)[:200]}
     url = str(d.get("url") or "")
     if not url:
-        return {"ok": False, "error": "giriş linki alınamadı"}
+        return {"ok": False, "error": _("could not get the sign-in link")}
     return {"ok": True, "url": url, "state": str(d.get("state") or ""), "provider": provider}
 
 
@@ -603,7 +606,7 @@ def remove(name: str) -> dict[str, Any]:
     """Remove an account (auth file). Name must be the file name: claude-....json."""
     name = str(name or "").strip()
     if not name.endswith(".json") or "/" in name or "\\" in name or ".." in name:
-        return {"ok": False, "error": "geçersiz hesap adı"}
+        return {"ok": False, "error": _("invalid account name")}
     try:
         _req("DELETE", f"/v8/management/credentials?name={quote(name)}")
     except Exception as e:  # noqa: BLE001

@@ -40,7 +40,7 @@ class Job:
 
     def start(self, fn: Callable[["Job"], Any]) -> dict[str, Any]:
         if self._thread is not None and self._thread.is_alive():
-            return {"ok": False, "error": "zaten sürüyor"}
+            return {"ok": False, "error": _("already running")}
         with self._lock:
             self.s = {"state": "running", "lines": [], "result": None, "error": "", "started": time.time()}
 
@@ -141,7 +141,7 @@ class SetupPanel:
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action) if action in self.ACTIONS else None
         if fn is None:
-            return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+            return {"ok": False, "error": _("unknown action: {action}", action=action)}
         try:
             return fn(d)
         except (ValueError, OSError) as e:
@@ -169,12 +169,12 @@ class SetupPanel:
                             f"{dec.latency * 1000:.0f} ms, {dec.engine}")
             decider_ok = True
         except DeciderError as e:
-            decider_line, decider_ok = f"çalışmıyor: {e}", False
-        job.say("Jev görsel testi…")
+            decider_line, decider_ok = _("not working: {error}", error=e), False
+        job.say(_("Jev image test…"))
         from alice.decider import image_check
 
         image = image_check(decider)
-        job.say("özellikler kontrol ediliyor…")
+        job.say(_("checking the features…"))
         checks = [c.__dict__ for c in run_all(self.cfg, Path.home())]
         return {"providers": providers, "decider": decider_line, "decider_ok": decider_ok, "checks": checks,
                 "image": image}
@@ -226,13 +226,13 @@ class SetupPanel:
                 return {"ok": False, "error": "rol gerekli"}
             new = d.get("weights") or {}
             if not isinstance(new, dict):
-                return {"ok": False, "error": "ağırlıklar metrik → sayı eşlemesi olmalı"}
+                return {"ok": False, "error": _("the weights must map metric → number")}
             try:
                 vals = {k: float(new.get(k, weights[role][k])) for k in ranking.METRICS}
             except (TypeError, ValueError):
-                return {"ok": False, "error": "ağırlıklar sayı olmalı"}
+                return {"ok": False, "error": _("the weights must be numbers")}
             if any(not 0 <= v <= 100 for v in vals.values()) or not sum(vals.values()):
-                return {"ok": False, "error": "ağırlıklar 0-100 arası olmalı, hepsi sıfır olamaz"}
+                return {"ok": False, "error": _("the weights must be 0-100 and can't all be zero")}
             weights[role] = vals
         ranking.save_weights(weights)
         ranking.rebuild(self.router, weights)
@@ -259,10 +259,10 @@ class SetupPanel:
         from alice.providers import chatgpt
 
         def run(job: Job) -> dict[str, Any]:
-            job.say("tarayıcıda ChatGPT girişi açılıyor; giriş yapıp izin ver (5 dk içinde)")
+            job.say(_("opening the ChatGPT sign-in in the browser; sign in and allow it (within 5 min)"))
             info = chatgpt.login(emit=job.say)
             self._chatgpt_reset()
-            job.say(f"giriş tamam: {info.get('email') or 'ChatGPT hesabı'} ({info.get('plan') or 'plan bilinmiyor'})")
+            job.say(_("signed in: {account} ({plan})", account=info.get("email") or _("ChatGPT account"), plan=info.get("plan") or _("plan unknown")))
             models = self._chatgpt_models(job)
             try:
                 chatgpt.fetch_usage()
@@ -299,11 +299,11 @@ class SetupPanel:
             models = [m["id"] for m in ChatGPTProvider(pc).list_models()]
         except Exception as e:  # noqa: BLE001 - show on screen
             if job:
-                job.say(f"model listesi alınamadı: {e}")
+                job.say(_("could not get the model list: {error}", error=e))
             return []
         if job:
-            job.say(f"{len(models)} model açık: {', '.join(models[:6])}. Model menüsünden seçebilirsin; otomatik "
-                    "sıraya girmeleri için 'Yeniden ölç'.")
+            job.say(_("{n} models available: {models}. You can pick them from the model menu; for them to join the automatic "
+                      "order, use 'Measure again'.", n=len(models), models=", ".join(models[:6])))
         return models
 
     def _chatgpt_status(self, chatgpt: Any) -> dict[str, Any]:
@@ -317,7 +317,7 @@ class SetupPanel:
 
         name = str(d.get("name", "")).strip()
         if not name or " " in name:
-            return {"ok": False, "error": "model adı yaz (ör. gpt-5.5)"}
+            return {"ok": False, "error": _("enter a model name (e.g. gpt-5.5)")}
         return {"ok": True, "models": chatgpt.add_model(name)}
 
     def _chatgpt_models_retry(self, d: dict[str, Any]) -> dict[str, Any]:
@@ -325,7 +325,7 @@ class SetupPanel:
 
         pc = (getattr(self.router, "providers_cfg", None) or {}).get("chatgpt")
         if pc is None or not chatgpt.logged_in():
-            return {"ok": False, "error": "önce giriş yap"}
+            return {"ok": False, "error": _("sign in first")}
         chatgpt.retry_models(pc)
         return {"ok": True}
 
@@ -335,7 +335,7 @@ class SetupPanel:
         try:
             limits = chatgpt.fetch_usage()
         except Exception as e:  # noqa: BLE001 - last known remains
-            return {"ok": False, "error": f"limit okunamadı: {e}"}
+            return {"ok": False, "error": _("could not read the limit: {error}", error=e)}
         if not chatgpt.cached_models():
             self._chatgpt_models()
         return {"ok": True, "limits": limits}
@@ -358,7 +358,7 @@ class SetupPanel:
 
         i = int(d.get("step", 0))
         if not 0 <= i < len(STEPS):
-            return {"ok": False, "error": "adım yok"}
+            return {"ok": False, "error": _("no step")}
         webbrowser.open(STEPS[i][1])
         return {"ok": True}
 
@@ -371,16 +371,16 @@ class SetupPanel:
         if d.get("use_download"):
             found = find_downloaded_json()
             if found is None:
-                return {"ok": False, "error": "İndirilenler klasöründe client_secret_*.json yok"}
+                return {"ok": False, "error": _("no client_secret_*.json in the Downloads folder")}
             cid, secret = read_client_json(found.read_text(encoding="utf-8"))
         elif raw.startswith("{"):
             cid, secret = read_client_json(raw)
         elif raw.endswith(".apps.googleusercontent.com"):
             cid, secret = raw, str(d.get("secret", "")).strip()
             if not secret:
-                return {"ok": False, "error": "Client secret'ı da yapıştır"}
+                return {"ok": False, "error": _("Paste the Client secret too")}
         else:
-            return {"ok": False, "error": "Client ID ….apps.googleusercontent.com ile biter; ya da JSON'un içeriğini yapıştır"}
+            return {"ok": False, "error": _("A Client ID ends in ….apps.googleusercontent.com; or paste the content of the JSON")}
         set_env_value("GOOGLE_CLIENT_ID", cid)
         set_env_value("GOOGLE_CLIENT_SECRET", secret)
         return {"ok": True}
@@ -416,7 +416,7 @@ class SetupPanel:
 
         dirs = dcs.saved_games_dirs()
         if not dirs:
-            return {"ok": False, "error": "DCS Saved Games klasörü bulunamadı (DCS bir kez açılmış olmalı)"}
+            return {"ok": False, "error": _("DCS Saved Games folder not found (DCS must have been opened once)")}
         done = dcs.install(dirs) if d.get("on", True) else dcs.uninstall(dirs)
         return {"ok": True, "count": len(done)}
 
@@ -426,7 +426,7 @@ class SetupPanel:
 
         dirs = dcs.saved_games_dirs()
         if not dirs:
-            return {"ok": False, "error": "DCS Saved Games klasörü bulunamadı"}
+            return {"ok": False, "error": _("DCS Saved Games folder not found")}
         path = dcs.latest_mission(dirs)
         info = dcs.read_mission(path) if path else None
         written = kb.write(kb.render(info, kb.load_notes()), kb.kneeboard_dirs(dirs))
@@ -438,7 +438,7 @@ class SetupPanel:
 
         name = str(d.get("name", "")).strip()
         if not plugins._NAME.match(name):
-            return {"ok": False, "error": "ad küçük harf, rakam, - ya da _ olsun ve harfle başlasın"}
+            return {"ok": False, "error": _("the name must use lowercase letters, digits, - or _ and start with a letter")}
         folder = plugins.plugin_dir()
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{name.replace('-', '_')}.py"
@@ -470,5 +470,5 @@ class SetupPanel:
         except (RuntimeError, subprocess.CalledProcessError) as e:
             return {"ok": False, "error": str(e)}
         if not made:
-            return {"ok": False, "error": "kısayol oluşturulamadı (sadece Windows)"}
+            return {"ok": False, "error": _("could not create the shortcut (Windows only)")}
         return {"ok": True, "paths": [str(p) for p in made]}

@@ -18,6 +18,8 @@ import sys
 import time
 from typing import Any
 
+from alice.i18n import _
+
 IS_WIN = sys.platform == "win32"
 SCREEN_W = 1280          # screen width sent to the phone
 SCREEN_QUALITY = 62
@@ -227,7 +229,7 @@ def _sleep() -> str:
     import ctypes
 
     ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
-    return "bilgisayar uyku moduna geçiyor"
+    return _("going to sleep")
 
 
 def _foreground_title() -> str | None:
@@ -252,12 +254,12 @@ def _type(text: str, enter: bool = False) -> str:
 
     title = _foreground_title()
     if title == "":
-        raise ValueError("bilgisayarda odakta bir pencere yok: önce aşağıdaki listeden bir pencereyi öne getir")
+        raise ValueError(_("no window has focus on the computer: first bring a window to the front from the list below"))
     type_text(text)
     if enter:
         press_keys("enter")
     _screen_cache["at"] = 0.0  # show the result right away
-    return f"yazıldı → {title[:60]}" if title else "yazıldı"
+    return _("typed → {title}", title=title[:60]) if title else _("typed")
 
 
 def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
@@ -270,9 +272,9 @@ def _screen_point(d: dict[str, Any]) -> tuple[int, int]:
     try:
         fx, fy = float(d.get("x")), float(d.get("y"))
     except (TypeError, ValueError):
-        raise ValueError("dokunulan yer okunamadı") from None
+        raise ValueError(_("could not read where you touched")) from None
     if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
-        raise ValueError("dokunulan yer ekranın dışında")
+        raise ValueError(_("the touched point is off the screen"))
     with screen_capture() as sct:
         m = sct.monitors[1]
     return m["left"] + round(fx * (m["width"] - 1)), m["top"] + round(fy * (m["height"] - 1))
@@ -309,7 +311,7 @@ def _clipboard(text: str) -> str:
     import pyperclip
 
     pyperclip.copy(text)
-    return "bilgisayarın panosuna kopyalandı"
+    return _("copied to the computer's clipboard")
 
 
 def _hud_toggle() -> str:
@@ -319,7 +321,7 @@ def _hud_toggle() -> str:
     hud = load_config().data.get("hud", {}) or {}
     client.configure(int(hud.get("port") or PORT))
     client.send({"kind": "toggle"})
-    return "HUD gizlendi/gösterildi"
+    return _("HUD hidden/shown")
 
 
 def action(d: dict[str, Any]) -> str:
@@ -349,12 +351,12 @@ def action(d: dict[str, Any]) -> str:
 
         target = str(d.get("target") or "").strip()
         if not target:
-            raise ValueError("açılacak bir şey yazılmadı")
+            raise ValueError(_("nothing to open was written"))
         return open_app(target)
     if a == "type":
         text = str(d.get("text") or "")
         if not text:
-            raise ValueError("yazılacak metin boş")
+            raise ValueError(_("the text to type is empty"))
         return _type(text[:2000], enter=bool(d.get("enter")))
     if a == "click":  # tap on the live screen on the phone
         return _click(d)
@@ -369,6 +371,6 @@ def action(d: dict[str, Any]) -> str:
 
         title = str(d.get("title") or "").strip()
         if not title:
-            raise ValueError("pencere seçilmedi")
-        return focus_window(title) + " öne getirildi"
-    raise ValueError(f"bilinmeyen işlem: {a}")
+            raise ValueError(_("no window selected"))
+        return focus_window(title) + _(" brought to the front")
+    raise ValueError(_("unknown action: {action}", action=a))

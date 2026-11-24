@@ -14,14 +14,15 @@ import time
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 from alice.core import service
 
 MODES = ("auto", "normal", "dev", "flight", "quiet")
 STOP_WAIT = 15.0  # terminate process if core does not shut down within this period
-OPTIONAL = (("sounddevice", "mikrofon ve ses çalma"), ("pynput", "bas-konuş ve kısayollar"),
-            ("webrtcvad", "daha iyi konuşma algılama"), ("faster_whisper", "yerel Whisper (Groq yoksa)"),
-            ("openwakeword", "yerel 'Hey Alice'"), ("sherpa_onnx", "sadece senin sesine cevap"),
-            ("pystray", "tepsi simgesi"))
+OPTIONAL = (("sounddevice", "microphone and sound playback"), ("pynput", "push-to-talk and shortcuts"),
+            ("webrtcvad", "better speech detection"), ("faster_whisper", "local Whisper (if there is no Groq)"),
+            ("openwakeword", "local 'Hey Alice'"), ("sherpa_onnx", "answer only your voice"),
+            ("pystray", "tray icon"))
 
 
 def _events(limit: int = 12) -> list[dict[str, Any]]:
@@ -109,7 +110,7 @@ class MicTest:
 
     def start(self) -> dict[str, Any]:
         if self._thread is not None and self._thread.is_alive():
-            return {"ok": False, "error": "test sürüyor"}
+            return {"ok": False, "error": _("a test is running")}
         self._set(state="listening", level=0.0, peak=0.0, left=self.seconds, text="", engine="", message="")
         self._thread = threading.Thread(target=self._run, daemon=True, name="alice-mic-test")
         self._thread.start()
@@ -121,10 +122,10 @@ class MicTest:
         try:
             mic = (self.make_mic or Microphone)()
         except ModuleNotFoundError as e:
-            self._set(state="error", message=f"{e.name or 'sounddevice'} kurulu değil")
+            self._set(state="error", message=_("{name} is not installed", name=e.name or "sounddevice"))
             return
         except Exception as e:  # noqa: BLE001
-            self._set(state="error", message=f"mikrofon açılamadı: {e}")
+            self._set(state="error", message=_("could not open the microphone: {error}", error=e))
             return
         frames: list[bytes] = []
         peak = 0.0
@@ -138,12 +139,12 @@ class MicTest:
                     peak = max(peak, lvl)
                     self._set(level=round(min(1.0, lvl * 6), 3), peak=round(peak, 4), left=round(left, 1))
         except Exception as e:  # noqa: BLE001
-            self._set(state="error", message=f"mikrofon okunamadı: {e}")
+            self._set(state="error", message=_("could not read the microphone: {error}", error=e))
             return
         self._set(state="transcribing", level=0.0, left=0.0)
         if peak < 0.004:
-            self._set(state="done", message="mikrofondan ses gelmiyor: Windows ses ayarlarında doğru mikrofon seçili mi, "
-                                            "sesi kapalı mı?")
+            self._set(state="done", message=_("no sound from the microphone: is the right microphone selected in the Windows sound settings, "
+                                              "and is it muted?"))
             return
         from alice.voice.stt import STTError, make_stt
 
@@ -151,9 +152,9 @@ class MicTest:
             stt = (self.make_stt or make_stt)(self.cfg)
             text = stt.transcribe(Audio(b"".join(frames), 16000))
             self._set(state="done", text=text, engine=str(getattr(stt, "last", "") or ""),
-                      message="" if text.strip() else "ses geldi ama konuşma anlaşılmadı")
+                      message="" if text.strip() else _("sound came in but no speech was understood"))
         except STTError as e:
-            self._set(state="done", message=f"yazıya çevrilemedi: {e}")
+            self._set(state="done", message=_("could not transcribe: {error}", error=e))
 
 
 class SystemPanel:
@@ -192,7 +193,7 @@ class SystemPanel:
                      "autostart": service.autostart_path().exists()},
             "voice": {"enabled": bool(v.get("enabled")), "mic": mic_available(), "stt": stt,
                       "wake_phrase": bool(v.get("wake_phrase", True)), "ptt_key": str(v.get("ptt_key", "") or "")},
-            "packages": [{"name": m, "why": why, "ok": importlib.util.find_spec(m) is not None} for m, why in OPTIONAL],
+            "packages": [{"name": m, "why": _(why), "ok": importlib.util.find_spec(m) is not None} for m, why in OPTIONAL],
             "events": _events(),
             "modes": list(MODES),
         }
@@ -216,20 +217,20 @@ class SystemPanel:
         from alice.config import set_config_value
 
         if action == "start":
-            return self._background("başlatılıyor", lambda: (service.start_detached(), time.sleep(3)))
+            return self._background(_("starting"), lambda: (service.start_detached(), time.sleep(3)))
         if action == "stop":
             return self._background("durduruluyor", stop_core)
         if action == "restart":
             if self._restart_in_core():
                 return {"ok": True, "restarting": True}
-            return self._background("yeniden başlatılıyor",
+            return self._background(_("restarting"),
                                     lambda: (stop_core(), service.start_detached(), time.sleep(3)))
         if action == "autostart":
             if d.get("on"):
                 try:
                     service.install_autostart()
                 except Exception as e:  # noqa: BLE001
-                    return {"ok": False, "error": f"kurulamadı: {e}"}
+                    return {"ok": False, "error": _("could not install: {error}", error=e)}
             else:
                 service.uninstall_autostart()
             return {"ok": True}
@@ -249,8 +250,8 @@ class SystemPanel:
                 return {"ok": True}
             if running and self._restart_in_core():
                 return {"ok": True, "restarting": True}
-            return self._background("yeniden başlatılıyor" if running else "başlatılıyor",
+            return self._background(_("restarting") if running else _("starting"),
                                     lambda: (stop_core(), service.start_detached(), time.sleep(3)))
         if action == "mic_test":
             return self.mic_test.start()
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}

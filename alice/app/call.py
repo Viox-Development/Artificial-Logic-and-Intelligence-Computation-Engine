@@ -27,6 +27,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from alice.i18n import _
+
 RING_SECONDS = 45.0
 END_MARK = "[kapat]"
 GREETINGS = ("Efendim?", "Alo, söyle.", "Söyle bakalım, dinliyorum.")
@@ -109,7 +111,7 @@ class CallManager:
     def _get(self, cid: str) -> Call:
         c = self.call
         if c is None or c.id != cid:
-            raise KeyError("böyle bir görüşme yok")
+            raise KeyError(_("no such call"))
         return c
 
     def active(self) -> Call | None:
@@ -192,7 +194,7 @@ class CallManager:
         """ALICE calls the user: incoming call screen opens on the phone. If not answered, remains as a missed call."""
         with self._lock:
             if self.active():
-                return {"ok": False, "error": "zaten bir görüşme var"}
+                return {"ok": False, "error": _("there is already a call")}
             c = Call(id=secrets.token_hex(6), outbound=True, reason=reason.strip()[:120],
                      opening=message.strip() or reason.strip())
             self.call = c
@@ -203,7 +205,7 @@ class CallManager:
             time.sleep(RING_SECONDS)
             if c.state == "ringing":
                 self._end(c, "missed")
-                self.publish({"type": "info", "text": f"ALICE seni aradı, açmadın: {c.reason or c.opening}"})
+                self.publish({"type": "info", "text": _("ALICE called you; you didn't pick up: {reason}", reason=c.reason or c.opening)})
 
         threading.Thread(target=timeout, daemon=True).start()
         return {"ok": True, "id": c.id}
@@ -216,7 +218,7 @@ class CallManager:
                 assert old is not None
                 if old.outbound and old.state == "ringing":  # both called simultaneously: answer incoming call
                     return self.answer(old.id)
-                return {"ok": False, "error": "zaten bir görüşme var"}
+                return {"ok": False, "error": _("there is already a call")}
             c = Call(id=secrets.token_hex(6), outbound=False, state="active", answered=time.time())
             self.call = c
         c.live = self._live_ok()
@@ -269,12 +271,12 @@ class CallManager:
         c = self._get(cid)
         text = text.strip()
         if c.state != "active":
-            return {"ok": False, "error": "görüşme açık değil"}
+            return {"ok": False, "error": _("no call is open")}
         if not text:
-            return {"ok": False, "error": "boş"}
+            return {"ok": False, "error": _("empty")}
         if c.live:  # in call "Type" or phone's own speech recognition (if microphone couldn't be opened)
             if c.rt is None or not c.rt.inject(text):
-                return {"ok": False, "error": "ALICE henüz hazır değil, bir saniye sonra tekrar dene"}
+                return {"ok": False, "error": _("ALICE isn't ready yet; try again in a second")}
             c.lines.append({"who": "user", "text": text})
             self.publish({"type": "call_text", "id": c.id, "who": "user", "text": text})
             return {"ok": True, "turn": c.turn}
@@ -462,7 +464,7 @@ class CallManager:
         if self._live_factory is None:
             from alice.voice.assistant import voice_log
 
-            voice_log(f"arama: telefondan mikrofon {c.mic_bytes // 1024} kB, en yüksek ses %{c.mic_peak * 100 // 32767}")
+            voice_log(f"call: phone microphone {c.mic_bytes // 1024} kB, peak level {c.mic_peak * 100 // 32767}%")
         if c.mic_bytes == 0:
             self.publish({"type": "call_mic_missing", "id": c.id})
 
