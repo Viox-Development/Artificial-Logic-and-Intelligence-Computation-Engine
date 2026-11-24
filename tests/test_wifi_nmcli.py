@@ -127,10 +127,10 @@ def test_disconnect_and_radio(nmcli, tmp_path):
     assert Wifi().risk_for({"action": "radio_off"}) == "computer"
 
     f = nmcli({"DEVICE,TYPE,CONNECTION": "wlan0:wifi:--\n"})
-    assert wifi.disconnect() == "Wi-Fi'a zaten bağlı değil."
+    assert wifi.disconnect() == "Already not connected to Wi-Fi."
     assert len(f.calls) == 1
     nmcli({"DEVICE,TYPE,CONNECTION": "eth0:ethernet:Wired\n"})
-    with pytest.raises(RuntimeError, match="aygıtı bulunamadı"):
+    with pytest.raises(RuntimeError, match="device not found"):
         wifi.disconnect()
 
 
