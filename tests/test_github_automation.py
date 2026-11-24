@@ -153,7 +153,7 @@ def test_red_ci_is_fixed_once_per_commit_in_a_separate_worktree(fixer):
     assert "FAILED tests/test_a.py::test_x" in p and "<untrusted_content" in p and "action=push branch=ozellik" in p
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=api, run_fix=run)
     assert len(seen["prompts"]) == 1  # the same CI failure on the same commit is handled once
-    assert any("ele alındı" in n for n in notes)
+    assert any("handled" in n for n in notes)
 
 
 def test_comments_trigger_fix_but_outsiders_only_notify(fixer):
@@ -167,7 +167,7 @@ def test_comments_trigger_fix_but_outsiders_only_notify(fixer):
     prwatch.check_all(make_config({"brain": ["a:m"]}), lambda t, b: notes.append(t), api=api, run_fix=run)
     assert len(seen["prompts"]) == 1 and "burada None gelebilir" in seen["prompts"][0]
     assert "şunu yap" not in seen["prompts"][0]
-    assert any("dışarıdan" in n for n in notes)
+    assert any("outside comment" in n for n in notes)
     assert {1, 2} <= set(prwatch.load()[0].seen)
 
 
@@ -181,15 +181,15 @@ def test_attempt_limit_and_fork_and_merged(fixer):
     prwatch.save(rows)
     notes = []
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr(), checks=red), run_fix=run)
-    assert not seen["prompts"] and any("düzeltme durdu" in n for n in notes)
+    assert not seen["prompts"] and any("fixing stopped" in n for n in notes)
     prwatch.watch("o/r", 7)
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr(fork=True), checks=red), run_fix=run)
-    assert not seen["prompts"] and any("düzeltilemiyor" in n for n in notes)
+    assert not seen["prompts"] and any("can't be fixed" in n for n in notes)
     prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr(merged=True)), run_fix=run)
     rows = prwatch.load()
-    assert any("birleşti" in n for n in notes)
+    assert any("merged" in n for n in notes)
     # merged PR stays on the panel marked finished instead of disappearing ("izlenen PR yok" bug)
-    assert len(rows) == 1 and rows[0].finished and rows[0].status.endswith("izleme bitti")
+    assert len(rows) == 1 and rows[0].finished and rows[0].status.endswith("watching ended")
     assert not prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr()), run_fix=run)  # no longer checked
 
 
@@ -299,10 +299,10 @@ def test_fix_goes_to_the_chat_that_wrote_the_code(fixer):
 
     cfg = make_config({"brain": ["a:m"]})
     out = prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr(), checks=red), run_fix=run, deliver=deliver)
-    assert "meşgul" in out[0] and not prwatch.load()[0].handled  # a busy chat is not interrupted; retried later
+    assert "chat busy" in out[0] and not prwatch.load()[0].handled  # a busy chat is not interrupted; retried later
     prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr(), checks=red), run_fix=run, deliver=deliver)
     sid, text = sent[-1]
-    assert sid == "20261112-101500" and text.startswith("[PR takibi]") and "baştan araştırma yapma" in text
+    assert sid == "20261112-101500" and text.startswith("[PR watch]") and "don't research from scratch" in text
     assert "git action=worktree" in text  # does not touch the user's uncommitted work
     assert not seen["prompts"]  # did not go to the clean-context agent
     assert "ci:abc123" in prwatch.load()[0].handled
@@ -315,7 +315,7 @@ def test_falls_back_to_clean_agent_when_chat_unreachable(fixer):
     red = {"state": "failure", "failed": ["test"], "pending": [], "total": 1}
     prwatch.check_all(make_config({"brain": ["a:m"]}), lambda t, b: None, api=FakeAPI(pr=pr(), checks=red),
                       run_fix=run, deliver=lambda sid, text: "arkada zaten 3 sohbet çalışıyor")
-    assert len(seen["prompts"]) == 1 and not seen["prompts"][0].startswith("[PR takibi]")
+    assert len(seen["prompts"]) == 1 and not seen["prompts"][0].startswith("[PR watch]")
 
 
 def test_each_new_commit_is_reviewed_once(fixer):
@@ -325,7 +325,7 @@ def test_each_new_commit_is_reviewed_once(fixer):
     notes = []
     for _ in range(2):
         prwatch.check_all(cfg, lambda t, b: notes.append(t), api=FakeAPI(pr=pr()), run_fix=run)
-    assert seen["reviews"] == ["abc123"] and any("incelendi" in n for n in notes)
+    assert seen["reviews"] == ["abc123"] and any("reviewed" in n for n in notes)
     prwatch.check_all(cfg, lambda t, b: None, api=FakeAPI(pr=pr(sha="def456")), run_fix=run)
     assert seen["reviews"] == ["abc123", "def456"]
     prwatch.watch("o/r", 8, auto_review=False)
@@ -349,7 +349,7 @@ def test_watch_tool_records_the_chat_session():
     ctx.state["session_id"] = "20261112-101500"
     ctx.state["github_api"] = FakeAPI()
     out = gh.GitHub().run(ctx, "watch", repo="o/r", number=7)
-    assert "bu sohbete gelir" in out.text and prwatch.load()[0].session == "20261112-101500"
+    assert "come to this chat" in out.text and prwatch.load()[0].session == "20261112-101500"
 
 
 def test_bot_trust_needs_exact_name_and_a_real_bot():

@@ -34,7 +34,7 @@ def test_set_flag_toggles_only_known_flags(home):
     prwatch.watch("o/r", 7)
     assert prwatch.set_flag("o/r", 7, "auto_merge", True)
     w = prwatch.load()[0]
-    assert w.auto_merge and "auto_merge açıldı" in w.status
+    assert w.auto_merge and "auto_merge on" in w.status
     assert not prwatch.set_flag("o/r", 7, "path", True)  # an unknown field cannot be changed
     assert not prwatch.set_flag("o/r", 8, "auto_fix", False)  # PR not being watched
 
