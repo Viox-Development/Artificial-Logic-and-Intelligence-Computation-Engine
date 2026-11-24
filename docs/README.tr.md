@@ -939,6 +939,8 @@ Desteklenen profiller: F-16C (AoA 11-15°) ve F/A-18C. Diğer uçaklarda genel d
 
 ## Akıllı saat ve telefon
 
+> English: [guide/phone.md](guide/phone.md)
+
 Huawei Watch GT 2 Pro'nun kendi nabız yayını olmadığı için veri telefondaki Gadgetbridge üzerinden gelir. İki yol var:
 
 1. **Dışa aktarılan veritabanı (birkaç dakikada bir):** Gadgetbridge'de otomatik dışa aktarmayı aç, dosyayı Syncthing gibi bir araçla bilgisayara senkronla ve `config.toml` içinde `[watch] export_path` olarak o dosyayı ya da klasörü yaz. Çekirdek dosya değiştikçe nabız, adım, stres ve SpO2'yi içe alır. Elle: `alice watch import Gadgetbridge.db`.
