@@ -33,10 +33,10 @@ def test_brief_and_report_install_show_remove():
     b = p.notes_view()["brief"]
     assert b["at"] == "07:45" and b["weekdays"] and TaskStore().get("brief").cron == "45 7 * * 1-5"
     assert not p.notes_action("brief_install", {"at": "25:00"})["ok"]
-    assert "bugün:" in p.notes_action("brief_show", {})["text"]
+    assert "today:" in p.notes_action("brief_show", {})["text"]
     assert p.notes_action("report_install", {"at": "21:30"})["ok"] and p.notes_view()["report"]["at"] == "21:30"
     r = p.notes_action("report_show", {"days": 7})
-    assert r["ok"] and r["text"].startswith("Son 7 gün") and r["path"].endswith(".html")
+    assert r["ok"] and r["text"].startswith("Last 7 days") and r["path"].endswith(".html")
     assert p.notes_action("brief_remove", {})["ok"] and p.notes_view()["brief"] is None
     assert not p.notes_action("uç", {})["ok"]
 

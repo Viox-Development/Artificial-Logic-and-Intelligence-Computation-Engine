@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 WEEKDAY = 6        # Sunday
 HOUR = 19          # from this hour on
@@ -36,7 +37,7 @@ def state_path() -> Path:
 def app_minutes(samples: list[tuple[float, str]]) -> dict[str, float]:
     """Minutes per program from the foreground-program samples (gaps between samples are capped at GAP_CAP)."""
     out: dict[str, float] = {}
-    for (t0, app), (t1, _) in zip(samples, samples[1:]):
+    for (t0, app), (t1, _app) in zip(samples, samples[1:]):
         name = (app or "").lower()
         if name in IGNORED_APPS:
             continue
@@ -58,40 +59,41 @@ def gather(store, mem=None, now: float | None = None, flights: list[dict[str, An
         for f in week:
             by_ac[f.get("aircraft") or "?"] = by_ac.get(f.get("aircraft") or "?", 0) + 1
         lands = [abs(f["touchdown_vv_ms"]) for f in week if f.get("touchdown_vv_ms") is not None]
-        data["uçuşlar"] = (f"{len(week)} uçuş, toplam {sum(f.get('duration_s') or 0 for f in week) / 60:.0f} dk; "
+        data["flights"] = (f"{len(week)} flights, {sum(f.get('duration_s') or 0 for f in week) / 60:.0f} min in total; "
                            + ", ".join(f"{a} {n}" for a, n in sorted(by_ac.items(), key=lambda x: -x[1])[:4])
-                           + (f"; en yumuşak iniş {min(lands):.1f} m/s" if lands else ""))
+                           + (f"; softest landing {min(lands):.1f} m/s" if lands else ""))
     if store is not None:
         apps = app_minutes(store.texts("pc.foreground", since, now))
         top = sorted(apps.items(), key=lambda x: -x[1])[:5]
         if top:
-            data["en çok kullanılan programlar"] = ", ".join(
-                f"{APP_NAMES.get(a, a.removesuffix('.exe'))} {m / 60:.1f} saat" for a, m in top if m >= 20)
+            data["most used programs"] = ", ".join(
+                f"{APP_NAMES.get(a, a.removesuffix('.exe'))} {m / 60:.1f} h" for a, m in top if m >= 20)
         from alice.core.watchdogs import outages
 
         n, mins = outages(store, since)
         if n:
-            data["internet kesintileri"] = f"{n} kez, toplam {mins:.0f} dk"
-        for mode, label in (("flight", "oyun/uçuş modu"), ("dev", "geliştirme modu")):
+            data["internet outages"] = f"{n} times, {mins:.0f} min in total"
+        for mode, label in (("flight", "game/flight mode"), ("dev", "development mode")):
             mins = sum(b - a for a, b in store.mode_spans(mode, since, now)) / 60
             if mins >= 30:
-                data[label] = f"{mins / 60:.1f} saat"
+                data[label] = f"{mins / 60:.1f} h"
     if mem is not None:
         try:
             sums = [s.text for s in mem.summaries(30, within_days=7)]
             if sums:
-                data["konuşmalar"] = " | ".join(x[:160] for x in sums[:12])
+                data["conversations"] = " | ".join(x[:160] for x in sums[:12])
             done = [f.text for f in mem.followups(include_done=True)
                     if f.done and f.kind == "remind" and float(f.due or 0) >= since]
             if done:
-                data["tamamlanan hatırlatmalar"] = "; ".join(done[:6])
+                data["completed reminders"] = "; ".join(done[:6])
         except Exception:  # noqa: BLE001 - produce a summary even without memory
             pass
     return data
 
 
 PROMPT = """Give the user a short spoken summary of their week. Your personality is below; speak as that \
-character. Rules: Turkish, at most 5 short sentences, no lists/markdown/emoji, round the numbers ("yaklaşık 6 saat"). \
+character. Rules: in the user's language, at most 5 short sentences, no lists/markdown/emoji, round the numbers
+("about 6 hours"). \
 First the overall mood of the week, then the highlights (flights, what took the most time, one or two themes from what \
 you talked about), last a single light suggestion for next week. Don't judge, just point things out. Don't make \
 anything up: use only what is below.
@@ -110,17 +112,18 @@ def compose(data: dict[str, Any], router=None) -> str:
             from alice.config import personality_text
 
             res = router.chat("fast", [{"role": "user", "content": PROMPT.format(
-                persona=personality_text()[:1500] or "(sakin, kısa, sıcak)", data=lines)}], temperature=0.7,
+                persona=personality_text()[:1500] or "(calm, brief, warm)", data=lines)}], temperature=0.7,
                 max_tokens=400)
             text = (res.message.get("content") or "").strip()
             if text:
                 return text
         except Exception:  # noqa: BLE001 - no model: template text
             pass
-    parts = ["Haftanın özeti."]
+    parts = [_("Your week in summary.")]
     for k, v in data.items():
-        if k != "konuşmalar" and v:
-            parts.append(f"{k[0].upper() + k[1:]}: {v}.")
+        if k != "conversations" and v:
+            label = _(k)
+            parts.append(f"{label[0].upper() + label[1:]}: {v}.")
     return " ".join(parts)
 
 
@@ -140,7 +143,7 @@ def maybe_send(store, mem, router, send: Callable[[str, str], bool], now: float 
         return None
     data = gather(store, mem, now, **kw)
     text = compose(data, router) if data else None
-    if text and not send("Haftanın özeti", text):
+    if text and not send(_("Your week in summary"), text):
         return None  # the mode muted it (you are flying): retry in the next round
     st["week"] = week
     try:
