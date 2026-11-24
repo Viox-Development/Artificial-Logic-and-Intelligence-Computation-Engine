@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from alice.core.notify import Notification, Notifier
@@ -18,7 +19,8 @@ ACTIVE: "SimHub | None" = None
 
 
 class SimHub:
-    def __init__(self, cfg: dict[str, Any], store: Store, notifier: Notifier, processes=set, show=None):
+    def __init__(self, cfg: dict[str, Any], store: Store, notifier: Notifier,
+                 processes: Callable[[], set[str]] = set, show=None):
         self.cfg = cfg
         self.show = show  # Draws on the HUD (alice.hud.client.show); if None, sound only
         self.store = store
