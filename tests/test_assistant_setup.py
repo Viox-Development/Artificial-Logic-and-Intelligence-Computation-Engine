@@ -137,7 +137,7 @@ def test_assistant_tab_status_settings_rules_and_gmail(app, workdir, isolated_ho
     assert client.post("/api/assistant/action", json={"action": "gmail_logout", "account": "okul"}).json()["ok"]
     assert client.get("/api/assistant").json()["gmail"] == []
     r = client.post("/api/assistant/action", json={"action": "gmail_connect", "account": "iş"}).json()
-    assert not r["ok"] and "harf" in r["error"]
+    assert not r["ok"] and "letters" in r["error"]
     r = client.post("/api/assistant/action", json={"action": "gmail_connect", "account": "is"}).json()
-    assert not r["ok"] and "Kurulum" in r["error"]
+    assert not r["ok"] and "Setup" in r["error"]
 

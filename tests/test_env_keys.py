@@ -99,7 +99,7 @@ def test_app_keys_tab_saves_without_leaking_value(app, monkeypatch):
 def test_app_keys_rejects_unknown_key_and_needs_token(app):
     state, client, _ = app
     r = client.post("/api/keys/set", json={"key": "PATH", "value": "C:\\evil"})
-    assert r.status_code == 400 and "bilinmeyen" in r.json()["error"]
+    assert r.status_code == 400 and "unknown key" in r.json()["error"]
     anon = httpx.post(str(client.base_url) + "/api/keys/set", json={"key": "GROQ_API_KEY", "value": "x"}, timeout=5)
     assert anon.status_code in (401, 403)
     assert os.environ.get("GROQ_API_KEY") != "x"
@@ -138,7 +138,7 @@ def test_voice_tab_lists_previews_and_sets_voice(app, monkeypatch):
     state, client, _ = app
     view = client.get("/api/voice").json()
     assert view["live"] == "Kore" and len(view["voices"]) == 30 and not view["can_preview"]
-    assert client.post("/api/voice/preview", json={"voice": "Puck"}).json()["error"].startswith("örnek için Gemini")
+    assert client.post("/api/voice/preview", json={"voice": "Puck"}).json()["error"].startswith("a Gemini key is needed")
     made = []
 
     class FakeTTS:
