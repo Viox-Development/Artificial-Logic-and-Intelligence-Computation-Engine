@@ -438,14 +438,14 @@ def _ws(monkeypatch, ws):
 def test_samsung_closed_connection_is_explained(monkeypatch):
     _ws(monkeypatch, ClosingWS())
     with samsung.Remote("192.168.1.60", "77") as r:
-        with pytest.raises(samsung.TVError, match="bağlantısını kapattı"):
+        with pytest.raises(samsung.TVError, match="closed the remote-control connection"):
             r.installed_apps()
     _ws(monkeypatch, ClosingWS(on_send=True))
     with samsung.Remote("192.168.1.60", "77") as r:
-        with pytest.raises(samsung.TVError, match="bağlantısını kapattı"):
+        with pytest.raises(samsung.TVError, match="closed the remote-control connection"):
             r.keys("KEY_HOME")
     _ws(monkeypatch, ClosingWS(hello=False))
-    with pytest.raises(samsung.TVError, match="bağlantısını kapattı"):
+    with pytest.raises(samsung.TVError, match="closed the remote-control connection"):
         with samsung.Remote("192.168.1.60", "77"):
             pass
 
@@ -453,23 +453,23 @@ def test_samsung_closed_connection_is_explained(monkeypatch):
 def test_samsung_tool_key_on_closed_connection_is_tool_error(monkeypatch, tmp_path):
     _ws(monkeypatch, ClosingWS(on_send=True))
     ctx = _ctx(tmp_path, samsung_tv={"host": "192.168.1.60", "token": "77"})
-    with pytest.raises(ToolError, match="bağlantısını kapattı"):
+    with pytest.raises(ToolError, match="closed the remote-control connection"):
         SamsungTV().run(ctx, action="key", key="volume_up")
 
 
 def test_samsung_info_without_host_and_odd_reply(monkeypatch):
-    with pytest.raises(samsung.TVError, match="adresi yok"):
+    with pytest.raises(samsung.TVError, match="no Samsung TV address"):
         samsung.info("")
     monkeypatch.setattr(samsung.httpx, "get", lambda url, timeout: httpx.Response(
         200, json=[1, 2], request=httpx.Request("GET", url)))
-    with pytest.raises(samsung.TVError, match="Samsung TV gibi"):
+    with pytest.raises(samsung.TVError, match="like a Samsung TV"):
         samsung.info("192.168.1.60")
 
     def down(url, timeout):
         raise httpx.ConnectTimeout("timed out")
 
     monkeypatch.setattr(samsung.httpx, "get", down)
-    with pytest.raises(samsung.TVError, match="kapalı ya da ağda değil"):
+    with pytest.raises(samsung.TVError, match="off or not on the network"):
         samsung.info("192.168.1.60")
 
 
@@ -558,9 +558,9 @@ def test_modem_info_full_report_skips_broken_location(monkeypatch):
                                                    "http://192.168.1.1:5000/desc.xml"])
     _mock_httpx(monkeypatch, handler)
     out = modem.info().splitlines()
-    assert out == ["Modem: ZTE H3600 (192.168.1.1)", "Dış IP: 88.1.2.3",
-                   "Bağlantı: Connected, açık kalma süresi 1 sa 1 dk", "Hat hızı: 100 / 0 Mbps",
-                   "Trafik (modem açıldığından beri, sayaç taşabilir): indirilen 3.0 GB, gönderilen 512.0 MB"]
+    assert out == ["Modem: ZTE H3600 (192.168.1.1)", "External IP: 88.1.2.3",
+                   "Connection: Connected, up for 1 h 1 min", "Line speed: 100 / 0 Mbps",
+                   "Traffic (since the modem started, the counter can wrap): downloaded 3.0 GB, uploaded 512.0 MB"]
 
 
 def test_modem_info_soap_failure_is_skipped(monkeypatch):
@@ -579,7 +579,7 @@ def test_modem_info_without_upnp_reads_gateway_title(monkeypatch):
     _mock_httpx(monkeypatch, lambda req: httpx.Response(200, text="<title>ZXHN H3600</title>",
                                                         headers={"server": "Mini web server"}))
     out = modem.info()
-    assert "ağ geçidi 192.168.1.1" in out and "'ZXHN H3600'" in out and "sunucu: Mini web server" in out
+    assert "gateway 192.168.1.1" in out and "'ZXHN H3600'" in out and "server: Mini web server" in out
 
 
 def test_modem_info_when_nothing_answers(monkeypatch):
@@ -588,7 +588,7 @@ def test_modem_info_when_nothing_answers(monkeypatch):
 
     monkeypatch.setattr(modem, "discover", lambda: [])
     _mock_httpx(monkeypatch, handler)
-    assert "Modem bulunamadı (UPnP kapalı, 192.168.1.1 cevap vermiyor)" in modem.info()
+    assert "Modem not found (UPnP is off, 192.168.1.1 does not answer)" in modem.info()
 
 
 def test_discover_collects_unique_locations(monkeypatch):
@@ -621,7 +621,7 @@ def test_discover_collects_unique_locations(monkeypatch):
 def test_fmt_helpers_edges():
     assert modem.fmt_bytes(512) == "512 B"
     assert modem.fmt_bytes(3 * 1024 ** 5) == "3072.0 TB"
-    assert modem.fmt_uptime(59) == "0 sa 0 dk"
+    assert modem.fmt_uptime(59) == "0 h 0 min"
     assert modem.page_title("<html>başlıksız</html>") == ""
 
 
@@ -655,13 +655,13 @@ def test_zte_tmp_token_with_mixed_escapes_does_not_crash():
 def test_zte_non_json_login_reply_is_modem_error():
     r = zte.ZTE("192.168.1.1", "admin", "pw", httpx.Client(transport=httpx.MockTransport(
         MiniZTE(login_reply="<html>Giriş</html>"))))
-    with pytest.raises(zte.ModemError, match="giriş cevabı"):
+    with pytest.raises(zte.ModemError, match="login answer"):
         r.login()
 
 
 def test_zte_odd_locking_time_does_not_crash():
     zte.ZTE._login_error({"lockingTime": "yok", "loginErrMsg": ""})
-    with pytest.raises(zte.ModemError, match="60 sn kilitli"):
+    with pytest.raises(zte.ModemError, match="locked for 60 s"):
         zte.ZTE._login_error({"lockingTime": "60"})
     zte.ZTE._login_error({"lockingTime": -1, "loginErrMsg": ""})  # -1 means no lock: must not say "-1 sn kilitli"
 
@@ -726,7 +726,7 @@ def test_zte_tool_wrong_password_does_not_log_out_or_leak(zte_tool, monkeypatch)
     fake = MiniZTE(login_reply='{"lockingTime": 0, "loginErrMsg": "pwd error"}')
     with pytest.raises(ToolError) as e:
         Wifi().run(zte_tool(fake), action="modem_devices")
-    assert "reddedildi" in str(e.value) and "YanlisSifre" not in str(e.value)
+    assert "refused" in str(e.value) and "YanlisSifre" not in str(e.value)
     assert "logout_entry" not in fake.tags
 
 

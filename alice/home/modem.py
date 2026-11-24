@@ -104,7 +104,7 @@ def fmt_bytes(n: int) -> str:
 def fmt_uptime(sec: int) -> str:
     d, rem = divmod(int(sec), 86400)
     h, m = rem // 3600, rem % 3600 // 60
-    return (f"{d} gün " if d else "") + f"{h} sa {m} dk"
+    return (f"{d} d " if d else "") + f"{h} h {m} min"
 
 
 def page_title(html: str) -> str:
@@ -130,12 +130,12 @@ def info() -> str:
                 continue
             host = urlparse(loc).hostname
             model = " ".join(x for x in (d["manufacturer"], d["model"], d["model_number"]) if x)
-            lines.append(f"Modem: {model or d['name'] or 'bilinmiyor'} ({host})")
+            lines.append(f"Modem: {model or d['name'] or 'unknown'} ({host})")
             if d["wan"]:
                 svc, url = d["wan"]
-                for action, fn in (("GetExternalIPAddress", lambda r: f"Dış IP: {r.get('NewExternalIPAddress')}"),
-                                   ("GetStatusInfo", lambda r: f"Bağlantı: {r.get('NewConnectionStatus')}"
-                                    + (f", açık kalma süresi {fmt_uptime(int(r['NewUptime']))}"
+                for action, fn in (("GetExternalIPAddress", lambda r: f"External IP: {r.get('NewExternalIPAddress')}"),
+                                   ("GetStatusInfo", lambda r: f"Connection: {r.get('NewConnectionStatus')}"
+                                    + (f", up for {fmt_uptime(int(r['NewUptime']))}"
                                        if r.get("NewUptime", "").isdigit() else ""))):
                     try:
                         lines.append(fn(soap(url, svc, action, c)))
@@ -147,12 +147,12 @@ def info() -> str:
                     down, up = link.get("NewLayer1DownstreamMaxBitRate"), link.get("NewLayer1UpstreamMaxBitRate")
                     if down and down.isdigit() and int(down):
                         up_n = int(up) if up and up.isdigit() else 0
-                        lines.append(f"Hat hızı: {int(down) / 1e6:.0f} / {up_n / 1e6:.0f} Mbps")
+                        lines.append(f"Line speed: {int(down) / 1e6:.0f} / {up_n / 1e6:.0f} Mbps")
                     rx = soap(d["common"], WAN_COMMON, "GetTotalBytesReceived", c).get("NewTotalBytesReceived", "")
                     tx = soap(d["common"], WAN_COMMON, "GetTotalBytesSent", c).get("NewTotalBytesSent", "")
                     if rx.isdigit() and tx.isdigit():
-                        lines.append(f"Trafik (modem açıldığından beri, sayaç taşabilir): indirilen "
-                                     f"{fmt_bytes(int(rx))}, gönderilen {fmt_bytes(int(tx))}")
+                        lines.append((f"Traffic (since the modem started, the counter can wrap): downloaded "
+                                     f"{fmt_bytes(int(rx))}, uploaded {fmt_bytes(int(tx))}"))
                 except (httpx.HTTPError, ET.ParseError, ValueError):
                     pass  # the modem doesn't report line speed or traffic: skip those lines
             break
@@ -162,9 +162,9 @@ def info() -> str:
                 r = c.get(f"http://{gw}/")
                 title = page_title(r.text)
                 server = r.headers.get("server", "")
-                lines.append(f"UPnP kapalı; ağ geçidi {gw}, yönetim sayfası başlığı: '{title or '-'}'"
-                             + (f", sunucu: {server}" if server else ""))
+                lines.append(f"UPnP is off; gateway {gw}, admin page title: '{title or '-'}'"
+                             + (f", server: {server}" if server else ""))
             except httpx.HTTPError:
-                lines.append(f"Modem bulunamadı (UPnP kapalı, {gw} cevap vermiyor)")
-            lines.append("Modeli kesin öğrenmek için modemin altındaki etikete ya da tarayıcıda yönetim sayfasına bak.")
+                lines.append(f"Modem not found (UPnP is off, {gw} does not answer)")
+            lines.append("To find out the model for sure, look at the label under the modem or at the admin page in a browser.")
     return "\n".join(lines)

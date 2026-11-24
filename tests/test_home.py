@@ -335,7 +335,7 @@ def test_samsung_remote_takes_token_and_sends_keys(monkeypatch):
 
 def test_samsung_remote_denied_is_explained(monkeypatch):
     _fake_connect(monkeypatch, FakeWS([{"event": "ms.channel.unauthorized"}]))
-    with pytest.raises(samsung.TVError, match="İzin ver"):
+    with pytest.raises(samsung.TVError, match="Allow"):
         with samsung.Remote("192.168.1.60"):
             pass
 
@@ -411,7 +411,7 @@ def test_modem_description_and_soap_parse():
     assert d["common"] == "http://192.168.1.1:37215/upnp/control/WANCommonIFC1"
     r = modem.parse_soap(SOAP_REPLY)
     assert r["NewConnectionStatus"] == "Connected" and r["NewUptime"] == "183900"
-    assert modem.fmt_uptime(183900) == "2 gün 3 sa 5 dk"
+    assert modem.fmt_uptime(183900) == "2 d 3 h 5 min"
     assert modem.fmt_bytes(5 * 1024 ** 3) == "5.0 GB"
     assert modem.page_title("<html><TITLE>\n ZXHN H298A </TITLE>") == "ZXHN H298A"
 
@@ -505,7 +505,7 @@ def test_zte_login_devices_and_session_timeout_relogin():
 
 
 def test_zte_wrong_password_and_missing_password():
-    with pytest.raises(zte.ModemError, match="şifre yanlış"):
+    with pytest.raises(zte.ModemError, match="password may be wrong"):
         _router(FakeZTE(), "yanlis").login()
     with pytest.raises(zte.ModemError, match="MODEM_PASSWORD"):
         zte.ZTE("192.168.1.1", "admin", "")

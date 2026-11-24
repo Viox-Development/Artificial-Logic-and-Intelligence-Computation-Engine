@@ -41,15 +41,15 @@ class TVError(RuntimeError):
 def info(host: str, timeout: float = 3) -> dict:
     """REST device info. Raises TVError if the TV is fully off (network asleep)."""
     if not host:
-        raise TVError("Samsung TV adresi yok: önce find ya da host ile connect")
+        raise TVError("no Samsung TV address: connect with find or host first")
     try:
         r = httpx.get(f"http://{host}:8001/api/v2/", timeout=timeout)
         r.raise_for_status()
         data = r.json()
     except (httpx.HTTPError, httpx.InvalidURL, ValueError) as e:
-        raise TVError(f"TV'ye ulaşılamadı ({host}): kapalı ya da ağda değil") from e
+        raise TVError(f"could not reach the TV ({host}): it is off or not on the network") from e
     if not isinstance(data, dict):
-        raise TVError(f"{host}:8001 bir Samsung TV gibi cevap vermedi")
+        raise TVError(f"{host}:8001 did not answer like a Samsung TV")
     return data
 
 
@@ -102,13 +102,13 @@ def _closed(e: BaseException) -> bool:
     return any(c.__name__ == "ConnectionClosed" for c in type(e).__mro__)
 
 
-CLOSED_MSG = "TV uzaktan kumanda bağlantısını kapattı: TV kapanmış ya da izin geri alınmış olabilir, tekrar dene"
+CLOSED_MSG = "the TV closed the remote-control connection: the TV may have turned off or the permission was revoked, try again"
 
 
 class Remote:
     def __init__(self, host: str, token: str = "", timeout: float = 30):
         if not host:
-            raise TVError("Samsung TV adresi yok: önce find ya da host ile connect")
+            raise TVError("no Samsung TV address: connect with find or host first")
         self.host, self.token, self.timeout = host, token, timeout
         self.ws = None
 
@@ -120,7 +120,7 @@ class Remote:
         try:
             from websockets.sync.client import connect
         except ImportError as e:
-            raise TVError("websockets kurulu değil: pip install websockets") from e
+            raise TVError("websockets is not installed: pip install websockets") from e
         ctx = ssl.create_default_context()
         # The TV uses its own self-signed certificate; the connection is on the local network only.
         ctx.check_hostname = False
@@ -128,7 +128,7 @@ class Remote:
         try:
             self.ws = connect(self.url(), ssl=ctx, open_timeout=5, close_timeout=2)
         except Exception as e:  # websockets connection errors come from different exception classes
-            raise TVError(f"TV'nin uzaktan kumanda bağlantısı açılamadı ({self.host}): {e.__class__.__name__}") from e
+            raise TVError(f"could not open the TV's remote-control connection ({self.host}): {e.__class__.__name__}") from e
         # If approval is pending, a prompt appears on the TV screen; give the user time to allow it.
         deadline = time.monotonic() + (self.timeout if not self.token else 8)
         while time.monotonic() < deadline:
@@ -141,11 +141,11 @@ class Remote:
                 return self
             if ev in ("ms.channel.unauthorized", "ms.channel.timeOut"):
                 self.ws.close()
-                raise TVError("TV bağlantıya izin vermedi: TV ekranında çıkan soruda 'İzin ver'i seç ve tekrar dene "
-                              "(reddedildiyse TV'de Ayarlar > Genel > Harici Aygıt Yöneticisi > Aygıt Bağlantı "
-                              "Yöneticisi > Aygıt Listesi'nden ALICE'e izin ver)")
+                raise TVError(("the TV did not allow the connection: choose 'Allow' in the question on the TV screen and try again "
+                              "(if it was denied, allow ALICE on the TV under Settings > General > External Device Manager > "
+                              "Device Connection Manager > Device List)"))
         self.ws.close()
-        raise TVError("TV cevap vermedi: ekranda izin sorusu çıktıysa onayla ve tekrar dene")
+        raise TVError("the TV did not answer: if a permission question appeared on the screen, accept it and try again")
 
     def __exit__(self, *exc) -> None:
         if self.ws is not None:
