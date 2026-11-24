@@ -178,7 +178,7 @@ def test_anahtar_yoksa_anlasilir_hata(m, monkeypatch):
     monkeypatch.delenv("DENEME_KEY", raising=False)
     with pytest.raises(runner.ConnectError, match="DENEME_KEY"):
         runner.build(m, m.actions["liste"], {"owner": "x"})
-    assert runner.ready(m) == (False, "DENEME_KEY yok — anahtarı buradan al")
+    assert runner.ready(m) == (False, "DENEME_KEY is missing — anahtarı buradan al")
 
 
 def test_bearer_ve_prefix_header_a_gider(tmp_path, monkeypatch):
@@ -206,19 +206,19 @@ def test_limit_asilinca_kalan_sayisi_yazilir(m):
     act = m.actions["liste"]
     act.limit = 2
     data = {"response": {"items": [{"name": str(i), "count": i} for i in range(5)]}}
-    assert runner.render(data, act).endswith("… 3 sonuç daha")
+    assert runner.render(data, act).endswith("… 3 more results")
 
 
 def test_http_hatalari_anlasilir(m, monkeypatch):
     monkeypatch.setenv("DENEME_KEY", "k")
-    for status, parca in ((401, "yetki"), (429, "hız sınırı"), (500, "HTTP 500")):
+    for status, parca in ((401, "permission"), (429, "rate limit"), (500, "HTTP 500")):
         with pytest.raises(runner.ConnectError, match=parca):
             runner.call(m, m.actions["liste"], {"owner": "x"}, client=FakeHTTP(None, status, "patladı"))
 
 
 def test_bos_sonuc(m):
-    assert runner.render({"response": {"items": []}}, m.actions["liste"]) == "sonuç yok"
-    assert runner.render({}, m.actions["liste"]) == "sonuç yok"
+    assert runner.render({"response": {"items": []}}, m.actions["liste"]) == "no results"
+    assert runner.render({}, m.actions["liste"]) == "no results"
 
 
 def test_pick_ic_ice_alan_okur():
@@ -408,7 +408,7 @@ def test_oauth_tarayicinin_bos_on_baglantisina_takilmaz(monkeypatch):
 def test_oauth_zaman_asimi_adresi_soyler():
     auth = mf.Auth(kind="oauth2", client_id_env="X", authorize_url="https://s.example/a",
                    token_url="https://s.example/t")
-    with pytest.raises(oauth.OAuthError, match="süre doldu"):
+    with pytest.raises(oauth.OAuthError, match="time ran out"):
         oauth.authorize(auth, "servis", "cid", open_browser=lambda _u: None, timeout=0.5)
 
 
@@ -514,7 +514,7 @@ def test_uzun_retry_after_beklemez(m, monkeypatch):
     monkeypatch.setenv("DENEME_KEY", "k")
     monkeypatch.setattr(runner, "_sleep", lambda s: pytest.fail("60 sn beklememeli"))
     http = SeqHTTP((429, None, {"Retry-After": "60"}))
-    with pytest.raises(runner.ConnectError, match="hız sınırı"):
+    with pytest.raises(runner.ConnectError, match="rate limit"):
         runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
     assert http.calls == 1
 
@@ -526,7 +526,7 @@ def test_ag_hatasinda_okuyan_eylem_tekrar_dener_gonderen_denemez(m, monkeypatch)
     runner.call(m, m.actions["liste"], {"owner": "x"}, client=http)
     assert http.calls == 2
     http = SeqHTTP(ConnectionError("koptu"), (200, {"id": "1"}))
-    with pytest.raises(runner.ConnectError, match="istek başarısız"):
+    with pytest.raises(runner.ConnectError, match="the request failed"):
         runner.call(m, m.actions["gonder"], {"box_id": "1", "text": "a"}, client=http)
     assert http.calls == 1
     http = SeqHTTP((503, None), (200, {"id": "1"}))

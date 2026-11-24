@@ -42,6 +42,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
+from alice.i18n import _
 from alice.config import alice_home
 
 NAME_RX = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
@@ -122,10 +123,10 @@ class Manifest:
 
 def _param(name: str, raw: Any) -> Param:
     if not isinstance(raw, dict):
-        raise ManifestError(f"parametre {name}: tablo olmalı")
+        raise ManifestError(_("parameter {name}: must be a table", name=name))
     into = str(raw.get("into", ""))
     if into and into not in ("query", "path", "body", "header", "template"):
-        raise ManifestError(f"parametre {name}: into query|path|body|header|template olmalı")
+        raise ManifestError(_("parameter {name}: into must be query|path|body|header|template", name=name))
     return Param(name=name, type=str(raw.get("type", "string")), description=str(raw.get("description", "")),
                  required=bool(raw.get("required")), into=into,
                  enum=[str(x) for x in raw.get("enum", [])], default=raw.get("default"))
@@ -133,10 +134,10 @@ def _param(name: str, raw: Any) -> Param:
 
 def _action(name: str, raw: Any) -> Action:
     if not isinstance(raw, dict):
-        raise ManifestError(f"eylem {name}: tablo olmalı")
+        raise ManifestError(_("action {name}: must be a table", name=name))
     method = str(raw.get("method", "GET")).upper()
     if method not in METHODS:
-        raise ManifestError(f"eylem {name}: method {' | '.join(METHODS)} olmalı")
+        raise ManifestError(_("action {name}: method must be {methods}", name=name, methods=" | ".join(METHODS)))
     params = {k: _param(k, v) for k, v in (raw.get("params") or {}).items()}
     return Action(
         name=name, summary=str(raw.get("summary", "")), method=method, path=str(raw.get("path", "/")),
@@ -151,10 +152,10 @@ def _action(name: str, raw: Any) -> Action:
 def _auth(raw: Any) -> Auth:
     raw = raw or {}
     if not isinstance(raw, dict):
-        raise ManifestError("auth: tablo olmalı")
+        raise ManifestError(_("auth: must be a table"))
     kind = str(raw.get("kind", "none"))
     if kind not in AUTH_KINDS:
-        raise ManifestError(f"auth.kind {' | '.join(AUTH_KINDS)} olmalı")
+        raise ManifestError(_("auth.kind must be {kinds}", kinds=" | ".join(AUTH_KINDS)))
     a = Auth(kind=kind, env=str(raw.get("env", "")), place=str(raw.get("place", "header")),
              name=str(raw.get("name", "Authorization")), prefix=str(raw.get("prefix", "")),
              help=str(raw.get("help", "")), client_id_env=str(raw.get("client_id_env", "")),
@@ -164,21 +165,21 @@ def _auth(raw: Any) -> Auth:
              redirect_port=int(raw.get("redirect_port", 0) or 0),
              extra_authorize={str(k): str(v) for k, v in (raw.get("extra_authorize") or {}).items()})
     if a.kind in ("api_key", "bearer") and not a.env:
-        raise ManifestError(f"auth.kind={a.kind} için auth.env (ortam değişkeni adı) gerekir")
+        raise ManifestError(_("auth.kind={kind} needs auth.env (the environment variable name)", kind=a.kind))
     if a.kind == "oauth2" and not (a.authorize_url and a.token_url and a.client_id_env):
-        raise ManifestError("auth.kind=oauth2 için authorize_url, token_url ve client_id_env gerekir")
+        raise ManifestError(_("auth.kind=oauth2 needs authorize_url, token_url and client_id_env"))
     if a.place not in ("query", "header"):
-        raise ManifestError("auth.place query ya da header olmalı")
+        raise ManifestError(_("auth.place must be query or header"))
     return a
 
 
 def parse(data: dict[str, Any], source: str = "") -> Manifest:
     name = str(data.get("name", "")).strip()
     if not NAME_RX.match(name):
-        raise ManifestError(f"name küçük harf/rakam/alt çizgi olmalı: {name!r}")
+        raise ManifestError(_("name must be lowercase letters/digits/underscores: {name}", name=repr(name)))
     base = str(data.get("base_url", "")).rstrip("/")
     if not base.startswith(("http://", "https://")):
-        raise ManifestError("base_url http(s) ile başlamalı")
+        raise ManifestError(_("base_url must start with http(s)"))
     actions = {k: _action(k, v) for k, v in (data.get("actions") or {}).items()}
     if not actions:
         raise ManifestError("en az bir [actions.<ad>] gerekir")
@@ -191,7 +192,7 @@ def load_file(p: Path) -> Manifest:
     try:
         data = tomllib.loads(p.read_text(encoding="utf-8-sig"))
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise ManifestError(f"{p.name}: okunamadı: {e}") from e
+        raise ManifestError(_("{name}: could not read it: {error}", name=p.name, error=e)) from e
     return parse(data, source=str(p))
 
 
@@ -216,7 +217,7 @@ def discover(cfg: Any = None, emit: Any = None) -> tuple[dict[str, Manifest], li
             except ManifestError as e:
                 errors.append(str(e))
                 if emit:
-                    emit(f"bağlantı tanımı atlandı: {e}")
+                    emit(_("connection definition skipped: {error}", error=e))
                 continue
             if m.name in disabled:
                 continue

@@ -120,7 +120,7 @@ def test_profile_xml_escapes_and_open_network():
 def test_wifi_connect_refuses_unknown_secured_network_without_password(monkeypatch):
     monkeypatch.setattr(wifi, "profiles", lambda: [])
     monkeypatch.setattr(wifi, "scan", lambda: [{"ssid": "Komsu", "signal": 40, "auth": "WPA2-Personal"}])
-    with pytest.raises(RuntimeError, match="şifre"):
+    with pytest.raises(RuntimeError, match="password"):
         wifi.connect("Komsu")
 
 
@@ -247,7 +247,7 @@ def test_android_unauthorized_is_explained(monkeypatch, tmp_path):
 
     monkeypatch.setattr(android, "run", fake)
     monkeypatch.setattr(android.shutil, "which", lambda n: "/usr/bin/adb")
-    with pytest.raises(ToolError, match="Her zaman izin ver"):
+    with pytest.raises(ToolError, match="Always allow"):
         Android().run(_ctx(tmp_path, {"tv": "192.168.1.50"}), device="tv", action="key", key="home")
 
 
@@ -550,7 +550,7 @@ def test_pair_timeout_is_explained(monkeypatch):
         raise TimeoutError("adb 20 sn içinde cevap vermedi")
 
     monkeypatch.setattr(android, "run", slow)
-    with pytest.raises(android.AdbError, match="eşleme cevap vermedi"):
+    with pytest.raises(android.AdbError, match="pairing did not answer"):
         android.pair("192.168.1.50:39241", "029998")
 
 
@@ -596,7 +596,7 @@ def adb_sim(monkeypatch):
 def test_pair_then_connects_on_mdns_port_not_pairing_port(adb_sim):
     f = adb_sim(mdns="adb-x\t_adb-tls-connect._tcp\t192.168.1.11:41001\n", connect_ok={"192.168.1.11:41001"})
     msg, addr = android.pair_and_connect("192.168.1.11:37351", "016607")
-    assert addr == "192.168.1.11:41001" and "bağlı" in msg
+    assert addr == "192.168.1.11:41001" and "connected" in msg
     assert ["connect", "192.168.1.11:37351"] not in f.calls
 
 
@@ -613,12 +613,12 @@ def test_pair_without_connect_port_asks_for_the_right_line(adb_sim, monkeypatch)
     monkeypatch.setattr(android, "find_connect_address",
                         lambda ip, adb="", skip=None: None)
     msg, addr = android.pair_and_connect("192.168.1.11:37351", "016607")
-    assert addr is None and "eşleme penceresindeki port değil" in msg
+    assert addr is None and "not the port in the pairing window" in msg
 
 
 def test_repeated_pair_protocol_fault_is_explained(adb_sim):
     adb_sim(pair_out="error: protocol fault (couldn't read status message): No error")
-    with pytest.raises(android.AdbError, match="connect yeter"):
+    with pytest.raises(android.AdbError, match="connect is enough"):
         android.pair("192.168.1.11:37351", "016607")
 
 

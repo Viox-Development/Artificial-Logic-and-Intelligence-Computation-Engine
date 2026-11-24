@@ -10,6 +10,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from alice.i18n import _
 from alice.connect import store
 from alice.connect.manifest import Action, Auth, Manifest
 
@@ -47,13 +48,13 @@ def token_for(m: Manifest) -> str:
 
     row = store.get(m.name)
     if not row.get("access_token"):
-        raise ConnectError(f"{m.label} bağlı değil. Bağlanmak için: alice connect {m.name}")
+        raise ConnectError(_("{label} is not connected. To connect: alice connect {name}", label=m.label, name=m.name))
     if store.expired(row):
         if not row.get("refresh_token"):
-            raise ConnectError(f"{m.label}: oturum bitti, tekrar bağlan: alice connect {m.name}")
+            raise ConnectError(_("{label}: the session ended; connect again: alice connect {name}", label=m.label, name=m.name))
         cid = os.environ.get(m.auth.client_id_env, "").strip()
         if not cid:
-            raise ConnectError(f"{m.auth.client_id_env} yok; ~/.alice/.env'e ekleyip tekrar bağlan.")
+            raise ConnectError(_("{env} is missing; add it to ~/.alice/.env and connect again.", env=m.auth.client_id_env))
         try:
             row = oauth.refresh(m.auth, m.name, cid, os.environ.get(m.auth.client_secret_env, "").strip())
         except oauth.OAuthError as e:
@@ -65,21 +66,21 @@ def ready(m: Manifest) -> tuple[bool, str]:
     """(is_ready, reason). To display status in tool list and `alice connect`."""
     a = m.auth
     if a.kind == "none":
-        return True, "hazır"
+        return True, _("ready")
     if a.kind in ("api_key", "bearer"):
         if api_key(a):
-            return True, "hazır"
-        return False, f"{a.env} yok" + (f" — {a.help}" if a.help else "")
+            return True, _("ready")
+        return False, _("{env} is missing", env=a.env) + (f" — {a.help}" if a.help else "")
     row = store.get(m.name)
     if not row.get("access_token"):
-        return False, f"bağlı değil (alice connect {m.name})"
+        return False, _("not connected (alice connect {name})", name=m.name)
     if store.expired(row) and not row.get("refresh_token"):
-        return False, f"oturum bitti (alice connect {m.name})"
+        return False, _("the session ended (alice connect {name})", name=m.name)
     from alice.connect import oauth
 
     if oauth.needs_sign_in(m.name):
-        return False, f"giriş geçersiz, yeniden giriş gerekiyor (alice connect {m.name})"
-    return True, "bağlı"
+        return False, _("the sign-in is invalid; sign in again (alice connect {name})", name=m.name)
+    return True, _("connected")
 
 
 def _apply_auth(m: Manifest, headers: dict[str, str], query: dict[str, Any]) -> None:
@@ -91,7 +92,7 @@ def _apply_auth(m: Manifest, headers: dict[str, str], query: dict[str, Any]) -> 
         return
     key = api_key(a)
     if not key:
-        raise ConnectError(f"{m.label} için {a.env} yok. ~/.alice/.env dosyasına ekle."
+        raise ConnectError(_("{env} is missing for {label}. Add it to the ~/.alice/.env file.", env=a.env, label=m.label)
                            + (f" Anahtar: {a.help}" if a.help else ""))
     if a.kind == "bearer":
         headers["Authorization"] = f"Bearer {key}"
@@ -214,7 +215,7 @@ def _request(m: Manifest, act: Action, args: dict[str, Any], client: Any, timeou
             if attempt == 0 and safe:
                 _sleep(1.0)
                 continue
-            raise ConnectError(f"{m.label}: istek başarısız: {e}") from e
+            raise ConnectError(_("{label}: the request failed: {error}", label=m.label, error=e)) from e
         if attempt == 0 and r.status_code in RETRY_STATUSES and (safe or r.status_code == 429):
             wait = _retry_wait(r)
             if wait is not None:
@@ -222,9 +223,9 @@ def _request(m: Manifest, act: Action, args: dict[str, Any], client: Any, timeou
                 continue
         break
     if r.status_code == 401:
-        raise ConnectError(f"{m.label}: yetki reddedildi (401). Tekrar bağlan: alice connect {m.name}")
+        raise ConnectError(_("{label}: permission denied (401). Connect again: alice connect {name}", label=m.label, name=m.name))
     if r.status_code == 429:
-        raise ConnectError(f"{m.label}: hız sınırına takıldı (429), biraz sonra tekrar dene.")
+        raise ConnectError(_("{label}: rate limit hit (429); try again in a bit.", label=m.label))
     if r.status_code >= 400:
         raise ConnectError(f"{m.label}: HTTP {r.status_code}: {r.text[:300]}")
     if not r.content:
@@ -252,11 +253,11 @@ def render(data: Any, act: Action, limit_chars: int = 12000) -> str:
     if act.pick:
         data = pick(data, act.pick)
     if data is None:
-        return "sonuç yok"
+        return "no results"
     if isinstance(data, list):
         rows = data[: act.limit]
         if not rows:
-            return "sonuç yok"
+            return "no results"
         out = []
         for i, row in enumerate(rows, 1):
             if isinstance(row, dict) and act.fields:
@@ -265,7 +266,7 @@ def render(data: Any, act: Action, limit_chars: int = 12000) -> str:
             else:
                 out.append(f"{i}. {_short(row, 300)}")
         more = len(data) - len(rows)
-        return "\n".join(out) + (f"\n… {more} sonuç daha" if more > 0 else "")
+        return "\n".join(out) + (f"\n… {more} more results" if more > 0 else "")
     if isinstance(data, dict) and act.fields:
         parts = [f"{f}: {_short(pick(data, f))}" for f in act.fields if pick(data, f) is not None]
         if parts:

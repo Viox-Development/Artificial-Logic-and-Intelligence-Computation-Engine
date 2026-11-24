@@ -139,7 +139,9 @@ def check_calendar(cfg, network: bool = True) -> Check:
             return Check(name, "fail", _("connected but can't be read: {error}", error=str(e)[:120]), _connect_calendar())
     if ok:
         return Check(name, "ok", _("connected"))
-    if "yeniden giriş" in why:
+    from alice.connect import oauth
+
+    if oauth.needs_sign_in(m.name):
         # Was connected, but Google rejects the sign-in: not "off" (disabled), but something the user must fix.
         return Check(name, "fail", _("the Google sign-in is invalid; ALICE can't refresh the token itself"),
                      _connect_calendar() + _(". If it happens every week, set the OAuth app to 'In production' in "
