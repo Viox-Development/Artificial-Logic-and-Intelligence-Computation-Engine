@@ -255,7 +255,8 @@ alice update --check                                   # is a new release availa
 
 Other commands: `alice voice`, `alice phone`, `alice watch`, `alice connect`, `alice feeds`, `alice notes`,
 `alice brief`, `alice report`, `alice log`, `alice hud`, `alice timeline`, `alice night`, `alice relay`,
-`alice plugins`, `alice reflex`, `alice dcs`, `alice eval`. Every command accepts `--help`.
+`alice plugins`, `alice reflex`, `alice dcs`, `alice eval`. Every command accepts `--help`. More in
+[docs/guide/terminal.md](docs/guide/terminal.md).
 
 In the REPL: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (or Shift+Tab), `/model`, `/think`, `/memory`, `/mcp`,
 `/tools`, `/usage`, `/sessions`, `/resume`, `/rewind`, `/compact`, `/update`.
