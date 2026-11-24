@@ -88,3 +88,25 @@ def test_cli_messages_follow_the_language():
     i18n.set_language("tr")
     assert i18n._("Permission needed") == "İzin gerekiyor"
     assert i18n._("[green]Session loaded:[/] {sid} ({n} messages)", sid="x", n=2) == "[green]oturum yüklendi:[/] x (2 mesaj)"
+
+
+def _binds_underscore(node: ast.AST) -> bool:
+    """True when the node rebinds the name `_` (assignment, loop/with/except target, comprehension, parameter)."""
+    if isinstance(node, ast.Name) and node.id == "_" and isinstance(node.ctx, ast.Store):
+        return True
+    if isinstance(node, ast.arg) and node.arg == "_":
+        return True
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_"
+
+
+def test_modules_that_translate_never_rebind_underscore():
+    """`agent, speaker, _ = ...` in a module that imports _ from alice.i18n turns every later _() in that function
+    into a call on the unpacked value (it crashed `alice core run` with no microphone)."""
+    bad = []
+    for p in ROOT.rglob("*.py"):
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        imports = any(isinstance(n, ast.ImportFrom) and n.module == "alice.i18n" and any(a.name == "_" for a in n.names)
+                      for n in ast.walk(tree))
+        if imports and p.name != "i18n.py":
+            bad += [f"{p.relative_to(ROOT.parent)}:{n.lineno}" for n in ast.walk(tree) if _binds_underscore(n)]
+    assert not bad, "rename these to something other than _:\n" + "\n".join(bad)

@@ -341,7 +341,7 @@ def _start_voice(cfg, core):
         stt.wake_gate.warm_up(log=voice_log)
         _raise_priority(v, voice_log)
     threading.Thread(target=known_names, args=(cfg,), daemon=True, name="alice-vocab").start()
-    agent, speaker, _ = build_voice_agent(cfg)
+    agent, speaker, _ctx = build_voice_agent(cfg)
 
     def gpu_hook(pol) -> None:
         gpu_ok = pol.local_gpu is not False
