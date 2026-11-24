@@ -41,7 +41,7 @@ STATIC = Path(__file__).parent / "static"
 STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "tasks.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
                 "main.js": "text/javascript", "app.css": "text/css", "marked.min.js": "text/javascript",
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
-                "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript",
+                "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript", "i18n.js": "text/javascript",
                 "Geist.woff2": "font/woff2", "GeistMono.woff2": "font/woff2"}
 # media-src: "Listen" sample in System → Voice is played from a data: URL. Missing; default-src 'none' caused
 # the browser was silently blocking audio.
@@ -51,6 +51,18 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "frame-src 'self' blob:")
 # frame-src blob: In file preview, a PDF opens in an iframe from a blob: URL; 'self' does not cover blob:, so the PDF
 # preview stayed blank. Only the page itself can generate blob: URLs.
+
+
+def _page(name: str, token: str) -> str:
+    """An app page with its token, language and translations filled in (static/i18n.js reads the JSON block)."""
+    from alice.i18n import catalog
+
+    lang = ui_language()
+    data = json.dumps({"lang": lang, "catalog": catalog(lang)}, ensure_ascii=False).replace("</", "<\\/")
+    return ((STATIC / name).read_text(encoding="utf-8").replace("{{TOKEN}}", token).replace("{{LANG}}", lang)
+            .replace("{{I18N}}", data))
+
+
 # The previewed site runs in a sandboxed frame (separate origin): it cannot touch ALICE's page or API.
 PREVIEW_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
 # Request body limit: sized to fit 6 screenshots (1600 px PNG, base64) or a long audio recording.
@@ -2382,19 +2394,19 @@ def make_handler(state: AppState):
             if u.path == "/":
                 if not self._token_ok(q):
                     return self._deny()
-                html = (STATIC / "index.html").read_text(encoding="utf-8").replace("{{TOKEN}}", state.token)
+                html = _page("index.html", state.token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8", {"Content-Security-Policy": CSP})
             if u.path == "/quick":
                 if not self._token_ok(q):
                     return self._deny()
-                html = (STATIC / "quick.html").read_text(encoding="utf-8").replace("{{TOKEN}}", state.token)
+                html = _page("quick.html", state.token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
                                   {"Content-Security-Policy": CSP.replace("img-src 'self' data:",
                                                                           "img-src 'self' data:; media-src 'self' blob:")})
             if u.path == "/m":  # mobile web app
                 if not self._token_ok(q):
                     return self._deny()
-                html = (STATIC / "m.html").read_text(encoding="utf-8").replace("{{TOKEN}}", state.token)
+                html = _page("m.html", state.token)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
                                   {"Content-Security-Policy": CSP.replace("img-src 'self' data:",
                                                                           "img-src 'self' data: blob:")})

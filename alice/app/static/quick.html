@@ -1,9 +1,11 @@
 <!doctype html>
-<html lang="tr">
+<html lang="{{LANG}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="alice-token" content="{{TOKEN}}">
+<script type="application/json" id="alice-i18n">{{I18N}}</script>
+<script src="/static/i18n.js"></script>
 <title>ALICE</title>
 <link rel="icon" href="/static/alice.png">
 <link rel="stylesheet" href="/static/quick.css">
@@ -14,13 +16,13 @@
 <body>
 <div id="bar">
   <img src="/static/alice.png" alt="Alice" class="logo">
-  <div id="attach" hidden><img alt="seçilen alan"><button id="dropImg" title="Görseli kaldır">×</button></div>
-  <textarea id="q" rows="1" placeholder="ALICE'e sor… (Enter gönder, Esc kapat)" autofocus></textarea>
-  <button id="mic" title="Basılı tut ve konuş (ya da Ctrl+Boşluk)" aria-label="Konuş">
+  <div id="attach" hidden><img alt="selected area" data-i18n-attr="alt"><button id="dropImg" title="Remove the image" data-i18n-attr="title">×</button></div>
+  <textarea id="q" rows="1" placeholder="Ask ALICE… (Enter sends, Esc closes)" data-i18n-attr="placeholder" autofocus></textarea>
+  <button id="mic" title="Hold and speak (or Ctrl+Space)" aria-label="Speak" data-i18n-attr="title aria-label">
     <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
   </button>
 </div>
 <div id="out" hidden></div>
-<div id="foot"><span id="status"></span><a id="projLink" href="#">Projeler</a><span class="keys">Ctrl+N yeni · Esc kapat</span></div>
+<div id="foot"><span id="status"></span><a id="projLink" href="#" data-i18n>Projects</a><span class="keys" data-i18n>Ctrl+N new · Esc closes</span></div>
 </body>
 </html>

@@ -426,6 +426,8 @@ function wzDone() {
     el("span", "grow"),
     wzBtn(wt("finish"), async () => {
       await api("/api/features/action", { action: "done" });
+      // The page was built in the old language; reload so the rest of the app uses the one chosen here.
+      if (WZ.lang !== window.ALICE_LANG) { location.reload(); return; }
       closeWizard();
       const inp = $("#input");
       if (inp) inp.focus();

@@ -1,15 +1,15 @@
 "use strict";
-/* ALICE hızlı bar: soru yaz ya da söyle, cevap altta akar. */
+/* ALICE quick bar: type or say a question, the answer streams below. */
 
 const TOKEN = document.querySelector('meta[name="alice-token"]').content;
-// Telefondan Projeler'e geçiş: tam uygulama aynı sunucuda.
+// Link to Projects: the full app is on the same server.
 document.getElementById("projLink").href = "/?t=" + encodeURIComponent(TOKEN) + "#projects";
 const $ = (s) => document.querySelector(s);
 const q = $("#q"), out = $("#out"), statusEl = $("#status"), mic = $("#mic");
 let image = null;   // base64 PNG
 let cur = null;     // akan cevap: {el, text}
 let busy = false;
-let session = "";   // öndeki sohbet: olay akışı bütün sohbetlerin (arkadakiler, telefon) olaylarını taşır
+let session = "";   // the chat in front: the event stream carries events of every chat (background ones, the phone)
 
 async function api(path, body) {
   const opts = { headers: { "X-Alice-Token": TOKEN } };
@@ -50,13 +50,13 @@ function setImage(b64) {
 async function send(text) {
   text = (text ?? q.value).trim();
   if (!text && !image) return;
-  if (busy) { setStatus("önceki iş sürüyor (Esc durdurur)"); return; }
-  // Mesaj öndeki sohbete gider; masaüstünde sohbet değişmiş olabilir (her değişim olay olarak gelmiyor).
+  if (busy) { setStatus(_("the previous job is still running (Esc stops it)")); return; }
+  // The message goes to the chat in front; it may have changed on the desktop (not every change arrives as an event).
   const st = await api("/api/state");
   if (st && st.session) session = st.session;
-  const r = await api("/api/send", { text: text || "Bu ekran görüntüsünde ne var? Bir hata varsa açıkla ve çözümünü söyle.",
+  const r = await api("/api/send", { text: text || _("What is in this screenshot? If there is an error, explain it and say how to fix it."),
                                      images: image ? [image] : [] });
-  if (!r.ok) { addErr(r.error || "gönderilemedi"); return; }
+  if (!r.ok) { addErr(r.error || _("could not send")); return; }
   q.value = "";
   setImage(null);
   autosize();
@@ -68,7 +68,7 @@ function addErr(t) { out.appendChild(el("div", "err", t)); show(); }
 const handlers = {
   status: (ev) => { if (ev.session) session = ev.session; },
   user: (ev) => { out.appendChild(el("div", "user", ev.text)); show(); },
-  busy: (ev) => { busy = ev.value; setStatus(busy ? "düşünüyor…" : ""); },
+  busy: (ev) => { busy = ev.value; setStatus(busy ? _("thinking…") : ""); },
   stream_start: () => { cur = null; },
   delta: (ev) => {
     if (!cur) { cur = { el: el("div", "msg"), text: "" }; out.appendChild(cur.el); }
@@ -83,12 +83,12 @@ const handlers = {
     cur = null;
     show();
   },
-  tool_start: (ev) => { out.appendChild(el("div", "tool", `● ${ev.name} ${ev.summary || ""}`.slice(0, 160))); setStatus(`${ev.name} çalışıyor…`); show(); },
+  tool_start: (ev) => { out.appendChild(el("div", "tool", `● ${ev.name} ${ev.summary || ""}`.slice(0, 160))); setStatus(_("{name} running…", { name: ev.name })); show(); },
   tool_end: (ev) => { if (ev.is_error) addErr(`${ev.name}: ${(ev.text || "").slice(0, 200)}`); },
   permission: (ev) => {
-    const box = el("div", "perm", `İzin gerekiyor: ${ev.name} — ${ev.summary}`);
+    const box = el("div", "perm", _("Permission needed: {name} — {summary}", { name: ev.name, summary: ev.summary }));
     box.id = "perm-" + ev.id;
-    for (const [ans, label] of [["y", "Evet"], ["n", "Hayır"], ["a", "Hep izin ver"], ["p", "Projede kalıcı"]]) {
+    for (const [ans, label] of [["y", _("Yes")], ["n", _("No")], ["a", _("Always allow")], ["p", _("Always in this project")]]) {
       const b = el("button", null, label);
       b.onclick = () => api("/api/permission", { id: ev.id, answer: ans });
       box.appendChild(b);
@@ -109,21 +109,21 @@ const handlers = {
     show();
   },
   ask_choice_done: (ev) => { const b = document.getElementById("perm-" + ev.id); if (b) b.remove(); },
-  info: (ev) => { if (/hata|başarısız|veremedi/i.test(ev.text)) addErr(ev.text); },
+  info: (ev) => { if (/hata|başarısız|veremedi|error|failed/i.test(ev.text)) addErr(ev.text); },
 };
 
 function connect() {
   const es = new EventSource("/api/events?t=" + encodeURIComponent(TOKEN));
-  es.onopen = () => { if (statusEl.dataset.offline) { delete statusEl.dataset.offline; setStatus(busy ? "düşünüyor…" : ""); } };
+  es.onopen = () => { if (statusEl.dataset.offline) { delete statusEl.dataset.offline; setStatus(busy ? _("thinking…") : ""); } };
   es.onerror = () => {
     statusEl.dataset.offline = "1";
-    setStatus("ALICE'e bağlantı koptu, yeniden bağlanıyor…");
+    setStatus(_("lost the connection to ALICE, reconnecting…"));
     if (es.readyState === EventSource.CLOSED) { es.close(); setTimeout(connect, 3000); }
   };
   es.onmessage = (m) => {
     let ev;
     try { ev = JSON.parse(m.data); } catch { return; }
-    // Arkadaki sohbetin ya da telefonun akışı, izin kartı ve "bitti" olayı hızlı bara karışmasın.
+    // Keep the stream, permission cards and "done" events of background chats or the phone out of the quick bar.
     if (ev.sid && session && ev.sid !== session) return;
     if (handlers[ev.type]) handlers[ev.type](ev);
   };
@@ -145,7 +145,7 @@ async function startRec() {
       rec = null;
       mic.classList.remove("rec");
       if (blob.size < 2000) { setStatus(""); return; }
-      setStatus("anlaşılıyor…");
+      setStatus(_("transcribing…"));
       const b64 = await new Promise((res) => {
         const fr = new FileReader();
         fr.onload = () => res(String(fr.result).split(",")[1]);
@@ -153,14 +153,14 @@ async function startRec() {
       });
       const r = await api("/api/transcribe", { audio: b64, mime: blob.type });
       setStatus("");
-      if (!r.ok) { addErr("anlaşılamadı: " + (r.error || "")); return; }
+      if (!r.ok) { addErr(_("not understood: {error}", { error: r.error || "" })); return; }
       if (r.text) send(r.text);
     };
     rec.start();
     mic.classList.add("rec");
-    setStatus("dinliyorum… (bırakınca gönderilir)");
+    setStatus(_("listening… (sent when you let go)"));
   } catch (e) {
-    addErr("mikrofon açılamadı: " + e);
+    addErr(_("could not open the microphone: {error}", { error: e }));
   }
 }
 const stopRec = () => { if (rec && rec.state === "recording") rec.stop(); };
@@ -169,7 +169,7 @@ mic.addEventListener("pointerdown", (e) => { e.preventDefault(); startRec(); });
 mic.addEventListener("pointerup", stopRec);
 mic.addEventListener("pointerleave", stopRec);
 
-/* ------------------------------------------------------------------ tuşlar */
+/* ------------------------------------------------------------------- keys */
 q.addEventListener("input", autosize);
 q.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
@@ -200,7 +200,7 @@ q.addEventListener("paste", (e) => {
   fr.readAsDataURL(item.getAsFile());
 });
 
-/* ----------------------------------------------------------------- açılış */
+/* ----------------------------------------------------------------- startup */
 (async function boot() {
   connect();
   const p = await api("/api/quick/pending");

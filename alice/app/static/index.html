@@ -1,9 +1,11 @@
 <!doctype html>
-<html lang="tr">
+<html lang="{{LANG}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="alice-token" content="{{TOKEN}}">
+<script type="application/json" id="alice-i18n">{{I18N}}</script>
+<script src="/static/i18n.js"></script>
 <title>ALICE</title>
 <link rel="icon" href="/static/alice.png">
 <link rel="stylesheet" href="/static/app.css">
@@ -21,30 +23,30 @@
 <body>
 <div id="zoomLayer">
 <div id="app" class="empty">
-  <nav id="rail" aria-label="Bölümler">
+  <nav id="rail" aria-label="Sections" data-i18n-attr="aria-label">
     <button class="rail-logo" data-sec="chat" title="ALICE"><img src="/static/alice.png" alt="Alice"></button>
-    <button class="rbtn" data-sec="chat" title="Sohbetler">
+    <button class="rbtn" data-sec="chat" title="Chats" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4 3v-3a2 2 0 0 1-2-2z"/></svg>
     </button>
-    <button class="rbtn" data-sec="projects" title="Projeler: paralel çalışan ajan takımları">
+    <button class="rbtn" data-sec="projects" title="Projects: agent teams working in parallel" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="7" height="7" rx="1.5"/><rect x="13.5" y="4" width="7" height="7" rx="1.5"/><rect x="3.5" y="14" width="7" height="6" rx="1.5"/><rect x="13.5" y="14" width="7" height="6" rx="1.5"/></svg>
       <i class="rdot" id="projDot" hidden></i>
     </button>
-    <button class="rbtn" data-sec="tasks" title="Görevler: arka planda yürüttüğü sorumluluklar ve onay kutusu">
+    <button class="rbtn" data-sec="tasks" title="Tasks: duties it runs in the background, and the approval box" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/></svg>
       <i class="rdot" id="taskDot" hidden></i>
     </button>
-    <button class="rbtn" data-sec="auto" title="Otomasyonlar: kurallar, görevler, notlar">
+    <button class="rbtn" data-sec="auto" title="Automations: rules, tasks, notes" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><path d="M13 3L5 13h6l-1 8 8-10h-6z"/></svg>
     </button>
-    <button class="rbtn" data-sec="system" title="Sistem: çekirdek, asistan, ses">
+    <button class="rbtn" data-sec="system" title="System: core, assistant, voice" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9zM9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>
     </button>
-    <button class="rbtn" data-sec="connect" title="Bağlantılar ve anahtarlar">
+    <button class="rbtn" data-sec="connect" title="Connections and keys" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
     </button>
     <span class="grow"></span>
-    <button class="rbtn" data-sec="settings" id="settingsBtn" title="Ayarlar (Ctrl+,)">
+    <button class="rbtn" data-sec="settings" id="settingsBtn" title="Settings (Ctrl+,)" data-i18n-attr="title">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       <span id="ver"></span>
     </button>
@@ -54,20 +56,20 @@
 
   <aside id="sidebar">
     <div class="side-top">
-      <h2 id="sideTitle">Sohbetler</h2>
-      <button class="icon-btn" id="newChat" title="Yeni sohbet (Ctrl+Shift+O)">
+      <h2 id="sideTitle" data-i18n>Chats</h2>
+      <button class="icon-btn" id="newChat" title="New chat (Ctrl+Shift+O)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="icon-btn" id="newProject" title="Yeni proje: paralel çalışan ajan takımı">
+      <button class="icon-btn" id="newProject" title="New project: an agent team working in parallel" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="icon-btn" id="collapseSide" title="Kenar çubuğunu gizle (Ctrl+B)">
+      <button class="icon-btn" id="collapseSide" title="Hide the sidebar (Ctrl+B)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
       </button>
     </div>
     <label class="side-search">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.3-4.3"/></svg>
-      <input id="sessSearch" type="text" placeholder="Sohbetlerde ara" spellcheck="false" autocomplete="off">
+      <input id="sessSearch" type="text" placeholder="Search chats" data-i18n-attr="placeholder" spellcheck="false" autocomplete="off">
     </label>
     <nav id="projects"></nav>
     <nav id="sessions"></nav>
@@ -76,32 +78,32 @@
 
   <main>
     <header id="topbar">
-      <button class="icon-btn" id="openSide" title="Kenar çubuğunu göster (Ctrl+B)">
+      <button class="icon-btn" id="openSide" title="Show the sidebar (Ctrl+B)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
       </button>
-      <button id="chatTitle" class="chat-title new" disabled>Yeni sohbet</button>
-      <button id="cwdBtn" class="cwd-chip" title="Çalışma klasörünü değiştir">
+      <button id="chatTitle" class="chat-title new" disabled data-i18n>New chat</button>
+      <button id="cwdBtn" class="cwd-chip" title="Change the working folder" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/></svg>
         <span id="cwd">…</span>
       </button>
-      <button id="branchChip" class="branch-chip" hidden title="Git dalı · değiştirmek için tıkla">
+      <button id="branchChip" class="branch-chip" hidden title="Git branch · click to change it" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-11.2 7.3"/></svg>
         <span id="branch"></span>
       </button>
       <span class="grow"></span>
-      <button id="paletteBtn" class="top-btn" title="Komut paleti (Ctrl+K)">
+      <button id="paletteBtn" class="top-btn" title="Command palette (Ctrl+K)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.3-4.3"/></svg>
-        <span>Ara</span><kbd>Ctrl K</kbd>
+        <span data-i18n>Search</span><kbd>Ctrl K</kbd>
       </button>
-      <button id="changesBtn" class="top-btn changes" hidden title="Bu oturumdaki değişiklikler">
+      <button id="changesBtn" class="top-btn changes" hidden title="Changes in this session" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 14h6M12 11v6"/></svg>
         <span class="a" id="chA">+0</span><span class="d" id="chD">−0</span>
       </button>
-      <button class="icon-btn" id="wideBtn" title="Sohbeti genişlet/daralt (Ctrl+Shift+E)">
+      <button class="icon-btn" id="wideBtn" title="Widen/narrow the chat (Ctrl+Shift+E)" data-i18n-attr="title">
         <svg class="i-wide" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M3 12h18"/></svg>
         <svg class="i-narrow" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5M20 7l-5 5 5 5M9 12h6"/></svg>
       </button>
-      <button class="icon-btn" id="panelBtn" title="Yan paneli aç/kapat (Ctrl+J)">
+      <button class="icon-btn" id="panelBtn" title="Open/close the side panel (Ctrl+J)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg>
       </button>
     </header>
@@ -112,7 +114,7 @@
     <section id="scroller">
       <div id="hero">
         <div class="hero-mark"><img src="/static/alice.png" alt="Alice"></div>
-        <h1 id="greeting">Merhaba</h1>
+        <h1 id="greeting" data-i18n>Hello</h1>
       </div>
       <div id="messages"></div>
     </section>
@@ -121,18 +123,18 @@
       <div id="dockTop">
         <div id="update" hidden role="status">
           <svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4"/><path d="M5 18h14"/></svg>
-          <span id="upText">Yeni sürüm hazır</span>
-          <button id="upApply" class="up-btn">Güncelle ve yeniden başlat</button>
-          <button id="upLater" class="up-btn ghost">Sonra</button>
+          <span id="upText" data-i18n>A new version is ready</span>
+          <button id="upApply" class="up-btn" data-i18n>Update and restart</button>
+          <button id="upLater" class="up-btn ghost" data-i18n>Later</button>
         </div>
-        <div id="conn" hidden role="status">ALICE'e bağlantı koptu, yeniden bağlanıyor…</div>
-        <button id="jump" hidden title="En alta in">
+        <div id="conn" hidden role="status" data-i18n>lost the connection to ALICE, reconnecting…</div>
+        <button id="jump" hidden title="Jump to the bottom" data-i18n-attr="title">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
         </button>
       </div>
       <div id="team" hidden></div>
       <div id="queue"></div>
-      <button id="planbar" hidden title="Planı yan panelde aç">
+      <button id="planbar" hidden title="Open the plan in the side panel" data-i18n-attr="title">
         <span class="pb-ring"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" class="bg"/><circle cx="18" cy="18" r="15" class="fg" id="pbArc"/></svg></span>
         <span class="pb-count" id="pbCount">0/0</span>
         <span class="pb-text" id="pbText"></span>
@@ -142,26 +144,26 @@
         <div id="popup" hidden></div>
         <div id="composer">
           <div id="attachments"></div>
-          <textarea id="input" rows="1" placeholder="ALICE'e bir iş ver…" spellcheck="false"></textarea>
+          <textarea id="input" rows="1" placeholder="Give ALICE a job…" data-i18n-attr="placeholder" spellcheck="false"></textarea>
           <div class="c-row">
-            <button class="c-btn" id="attachBtn" title="Görsel ekle (yapıştırabilir ya da sürükleyebilirsin)">
+            <button class="c-btn" id="attachBtn" title="Add an image (you can paste or drag it too)" data-i18n-attr="title">
               <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
             </button>
-            <button class="c-btn pill" id="modeBtn" title="İzin modu (Shift+Tab)">
+            <button class="c-btn pill" id="modeBtn" title="Permission mode (Shift+Tab)" data-i18n-attr="title">
               <svg viewBox="0 0 24 24" id="modeIcon"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>
-              <span id="modeLabel">Otomatik</span>
+              <span id="modeLabel" data-i18n>Automatic</span>
             </button>
             <span class="grow"></span>
-            <button class="c-btn pill think" id="thinkBtn" title="Düşünme seviyesi">
+            <button class="c-btn pill think" id="thinkBtn" title="Thinking level" data-i18n-attr="title">
               <svg viewBox="0 0 24 24" id="thinkIcon"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>
-              <span id="thinkLabel">düşünme</span>
+              <span id="thinkLabel" data-i18n>thinking</span>
               <svg viewBox="0 0 24 24" class="caret"><path d="M7 10l5 5 5-5"/></svg>
             </button>
             <button class="c-btn pill model" id="modelBtn" title="Model">
               <span id="modelLabel">model</span>
               <svg viewBox="0 0 24 24" class="caret"><path d="M7 10l5 5 5-5"/></svg>
             </button>
-            <button id="sendBtn" title="Gönder (Enter)">
+            <button id="sendBtn" title="Send (Enter)" data-i18n-attr="title">
               <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V6M6 11l6-6 6 6"/></svg>
               <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
             </button>
@@ -171,14 +173,14 @@
       </div>
       <div id="onboard" hidden></div>
       <div id="starterSuggest">
-        <button class="sg" data-text="Bu klasördeki projeyi incele ve ne yaptığını kısaca anlat">
-          <svg viewBox="0 0 24 24"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>Kod</button>
-        <button class="sg" data-text="Bilgisayarımın donanımını çıkar, RAM'i en çok kullanan programları göster">
-          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Bilgisayar</button>
-        <button class="sg" data-text="Ekrana bak ve şu an açık olan pencereleri söyle">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/></svg>Ekran</button>
-        <button class="sg" data-text="Web'de araştır: ">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Araştır</button>
+        <button class="sg" data-text="Look at the project in this folder and briefly explain what it does" data-i18n-attr="data-text">
+          <svg viewBox="0 0 24 24"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg><span data-i18n>Code</span></button>
+        <button class="sg" data-text="List my computer's hardware and show the programs using the most RAM" data-i18n-attr="data-text">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span data-i18n>Computer</span></button>
+        <button class="sg" data-text="Look at the screen and tell me which windows are open" data-i18n-attr="data-text">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/></svg><span data-i18n>Screen</span></button>
+        <button class="sg" data-text="Research on the web: " data-i18n-attr="data-text">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span data-i18n>Research</span></button>
       </div>
       <div id="statusbar">
         <span id="stModel"></span>
@@ -196,7 +198,7 @@
         <span class="sep st-br st-more">·</span>
         <span id="stBranch" class="st-br st-more"></span>
         <span class="sep st-more">·</span>
-        <span id="stClock" class="st-more" title="Oturum süresi"></span>
+        <span id="stClock" class="st-more" title="Session time" data-i18n-attr="title"></span>
       </div>
     </div>
   </main>
@@ -205,13 +207,13 @@
     <div class="panel-head">
       <div class="tabs" role="tablist">
         <button class="tab" data-tab="plan">Plan</button>
-        <button class="tab" data-tab="changes">Değişiklikler <span class="badge" id="chCount"></span></button>
-        <button class="tab" data-tab="context">Bağlam</button>
-        <button class="tab" data-tab="browser">Tarayıcı</button>
-        <button class="tab" data-tab="prs">PR'lar</button>
-        <button class="tab" data-tab="agents">Ajanlar</button>
+        <button class="tab" data-tab="changes"><span data-i18n>Changes</span> <span class="badge" id="chCount"></span></button>
+        <button class="tab" data-tab="context" data-i18n>Context</button>
+        <button class="tab" data-tab="browser" data-i18n>Browser</button>
+        <button class="tab" data-tab="prs" data-i18n>PRs</button>
+        <button class="tab" data-tab="agents" data-i18n>Agents</button>
       </div>
-      <button class="icon-btn" id="panelClose" title="Kapat (Ctrl+J)">
+      <button class="icon-btn" id="panelClose" title="Close (Ctrl+J)" data-i18n-attr="title">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>
@@ -223,17 +225,17 @@
   <div class="pal">
     <div class="pal-in">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.3-4.3"/></svg>
-      <input id="palInput" type="text" placeholder="Komut, sohbet ya da ayar ara…" spellcheck="false" autocomplete="off">
+      <input id="palInput" type="text" placeholder="Search commands, chats or settings…" data-i18n-attr="placeholder" spellcheck="false" autocomplete="off">
       <kbd>Esc</kbd>
     </div>
     <div class="pal-list" id="palList"></div>
-    <div class="pal-foot"><span><kbd>↑</kbd><kbd>↓</kbd> gez</span><span><kbd>Enter</kbd> seç</span><span><kbd>Esc</kbd> kapat</span></div>
+    <div class="pal-foot"><span><kbd>↑</kbd><kbd>↓</kbd> <span data-i18n>move</span></span><span><kbd>Enter</kbd> <span data-i18n>choose</span></span><span><kbd>Esc</kbd> <span data-i18n>close</span></span></div>
   </div>
 </div>
 
 <div id="menu" hidden></div>
 <div id="overlay" hidden><div class="dialog" id="dialog"></div></div>
-<div id="dropzone" hidden><div>Görseli bırak</div></div>
+<div id="dropzone" hidden><div data-i18n>Drop the image</div></div>
 <div id="toast" hidden></div>
 </div>
 </body>
