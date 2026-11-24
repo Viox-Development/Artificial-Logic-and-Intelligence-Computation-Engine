@@ -331,8 +331,8 @@ def test_next_session_gets_previous_turns_and_log_has_reply():
     line = [m for m in logs if m.startswith("realtime duyulan:")][0]
     assert "video açar mısın" in line and "Bir bakayım. Açtım." in line and "think(" in line
     instr = s._session_config()["session"]["instructions"]
-    assert "Az önceki konuşma" in instr and "video açar mısın" in instr and "Açtım." in instr
-    assert "aksan" in instr  # pronunciation instruction was not truncated
+    assert "Recent conversation" in instr and "video açar mısın" in instr and "Açtım." in instr
+    assert "accent" in instr  # pronunciation instruction was not truncated
 
 
 def test_voice_choice_and_unsupported_voice_falls_back():
