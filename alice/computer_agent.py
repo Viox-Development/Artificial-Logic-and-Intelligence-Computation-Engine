@@ -233,7 +233,7 @@ class Screen:
 
             target = str(a.get("target") or "").strip()
             if not target:  # empty target was treated as Path("") = "." on Windows, opening the working directory
-                raise ValueError("open için target gerekli")
+                raise ValueError("open: target is required")
             if is_script_target(target):  # do not run a script read from the screen without confirmation
                 raise ValueError("betik/kurulum dosyası ekran görevinden açılmaz; kullanıcıya sor")
             res = open_app(target)
