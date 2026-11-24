@@ -55,13 +55,13 @@ def test_ktok_formats_thousands_and_millions():
 def test_status_line_uses_last_ref_window_and_shortens_cwd(env, tmp_path):
     cfg, router, ctx, agent = env
     line = cli.status_line(agent, router, ctx)
-    assert " a:m1 " in line and "izin: auto" in line and "context 1.5k/" in line and "karar: -" in line
+    assert " a:m1 " in line and "mode: auto" in line and "context 1.5k/" in line and "decider: -" in line
     router.last_ref["brain"] = "b:m2"
     agent.decider = SimpleNamespace(names=["llm:fast"])
     deep = tmp_path / ("x" * 50)
     ctx.cwd = deep
     line = cli.status_line(agent, router, ctx)
-    assert " b:m2 " in line and "karar: llm:fast" in line
+    assert " b:m2 " in line and "decider: llm:fast" in line
     assert "…" + str(deep)[-39:] in line
 
 
@@ -69,7 +69,7 @@ def test_status_line_without_any_model_uses_compact_at(env):
     cfg, _router, ctx, agent = env
     router = Router(make_config({"brain": []}), auto_cache={})
     line = cli.status_line(agent, router, ctx)
-    assert "model yok" in line and "context 1.5k/50.0k" in line
+    assert "no model" in line and "context 1.5k/50.0k" in line
 
 
 def test_check_ready(env, out):
@@ -77,7 +77,7 @@ def test_check_ready(env, out):
     assert cli._check_ready(router) is True
     empty = Router(make_config({"brain": []}), auto_cache={})
     assert cli._check_ready(empty) is False
-    assert "Kullanılabilir beyin modeli yok" in out()
+    assert "No usable brain model" in out()
 
 
 def test_print_diff_counts_and_truncates(out):
@@ -88,7 +88,7 @@ def test_print_diff_counts_and_truncates(out):
     assert "@@ -1,2 +1,2 @@" in text and "-old" in text and "+new" in text and " ctx" in text
     assert "--- a/x.py" not in text  # header lines are not repeated in the body
     cli.print_diff("\n".join(f"+l{i}" for i in range(50)), max_lines=10)
-    assert "… +40 satır" in out()
+    assert "… +40 lines" in out()
 
 
 def test_print_diff_without_file_header(out):
@@ -105,12 +105,12 @@ def test_tool_output_compact_and_long(out):
     ui.tool_end("2", "grep", ToolResult("a\nb\nc", is_error=True))
     text = out()
     assert "read_file x.py  ⎿ tek satır" in text
-    assert "grep foo  ⎿ 3 satır" in text
+    assert "grep foo  ⎿ 3 lines" in text
     ui.tool_start("3", "run_command", "ls")
     ui.tool_end("3", "run_command", ToolResult("\n".join(f"s{i}" for i in range(10)), images=["img"]))
     text = out()
     assert "run_command ls" in text and "⎿ s0" in text and "s5" in text and "s6" not in text
-    assert "… +4 satır" in text and "(+1 görüntü)" in text
+    assert "… +4 lines" in text and "(+1 images)" in text
 
 
 def test_tool_output_with_diff(out):
@@ -132,7 +132,7 @@ def test_ask_permission_parses_answers(monkeypatch, out, answers, expected):
     it = iter(answers)
     monkeypatch.setattr(cli.console, "input", lambda prompt="": next(it))
     assert cli.RichUI().ask_permission("run_command", "rm x", "danger") == expected
-    assert "İzin gerekiyor" in out()
+    assert "Permission needed" in out()
 
 
 def test_stream_and_thinking(out):
@@ -144,7 +144,7 @@ def test_stream_and_thinking(out):
     ui.stream_delta("haba")
     assert ui._buf == "Merhaba"
     ui.stream_reset()
-    assert ui._buf == "" and "yedek model" in out()
+    assert ui._buf == "" and "fallback model" in out()
     ui.stream_end("**Bitti**", "a:m1")
     ui.info("bilgi [x]")
     text = out()
@@ -193,8 +193,8 @@ def test_slash_mode_plan_clear_compact(env, out):
     agent.compact = lambda: True
     cli.handle_slash("/compact", agent, router, ctx, cfg)
     text = out()
-    assert "izin modu: plan" in text and "konuşma sıfırlandı" in text
-    assert "özetlenecek bir şey yok" in text and "özetlendi" in text
+    assert "Permission mode: plan" in text and "Conversation cleared" in text
+    assert "Nothing to summarize" in text and "Summarized" in text
 
 
 def test_slash_model_override_reset_and_bad_ref(env, out):
@@ -217,13 +217,13 @@ def test_slash_think_sets_overrides(env, out):
     assert router.thinking_level("fast") == "off" and router.thinking_level("brain") == "high"
     cli.handle_slash("/think saçma", agent, router, ctx, cfg)
     assert router.thinking_overrides == {"*": "high", "fast": "off"}
-    assert "düşünme: brain=high, fast=off" in out()
+    assert "Thinking: brain=high, fast=off" in out() and "[thinking]" in out()
 
 
 def test_slash_tools_mcp_usage_memory(env, out):
     cfg, router, ctx, agent = env
     cli.handle_slash("/mcp", agent, router, ctx, cfg)
-    assert "MCP sunucusu yok" in out()
+    assert "No MCP servers" in out()
     agent.tools = {"read_file": SimpleNamespace(name="read_file", risk="read", description="Dosya okur\nayrıntı"),
                    "mcp__gh__issues": SimpleNamespace(name="mcp__gh__issues", risk="write", description="Issue")}
     cli.handle_slash("/tools", agent, router, ctx, cfg)
@@ -238,7 +238,7 @@ def test_slash_tools_mcp_usage_memory(env, out):
     assert "mcp__gh__issues (write) Issue" in text
     assert "a:m1" in text and "Bugünkü kullanım" in text
     assert "# Hafıza [x]" in text
-    assert "bilinmeyen komut /olmayan" in text
+    assert "Unknown command /olmayan" in text
 
 
 def test_slash_sessions_and_resume(env, out):
@@ -246,7 +246,7 @@ def test_slash_sessions_and_resume(env, out):
 
     cfg, router, ctx, agent = env
     cli.handle_slash("/resume", agent, router, ctx, cfg)
-    assert "oturum yok" in out()
+    assert "No session" in out()
     sess.save("20260101-101010", [{"role": "system", "content": "s"}, {"role": "user", "content": "eski soru"}],
               ctx.cwd)
     cli.handle_slash("/sessions", agent, router, ctx, cfg)
@@ -261,7 +261,7 @@ def test_slash_cwd(env, out):
     cli.handle_slash("/cwd alt", agent, router, ctx, cfg)
     assert ctx.cwd.name == "alt"
     cli.handle_slash("/cwd yok-boyle", agent, router, ctx, cfg)
-    assert ctx.cwd.name == "alt" and "klasör yok" in out()
+    assert ctx.cwd.name == "alt" and "No such folder" in out()
     cli.handle_slash("/cwd", agent, router, ctx, cfg)
 
 
@@ -276,7 +276,7 @@ def test_rewind_prompt_no_turns(env, out):
     _cfg, _router, _ctx, agent = env
     agent.messages += [{"role": "user", "content": "[Önceki konuşmanın özeti] ..."}]
     assert cli.rewind_prompt(agent) is None
-    assert "geri sarılacak mesaj yok" in out()
+    assert "No message to rewind to" in out()
 
 
 def test_rewind_prompt_picks_numbered_turn(env, monkeypatch, out):
@@ -291,8 +291,8 @@ def test_rewind_prompt_picks_numbered_turn(env, monkeypatch, out):
     assert cli.rewind_prompt(agent) == ("prefill", "eski metin")
     assert calls == [1]  # 3rd (oldest) user message
     text = out()
-    assert "1 görünen" in text and "2 (görselli mesaj)" in text and "3 birinci" in text
-    assert "ikinci satır" not in text and "2 dosya eski haline" in text
+    assert "1 görünen" in text and "2 (message with an image)" in text and "3 birinci" in text
+    assert "ikinci satır" not in text and "2 files restored" in text
 
 
 @pytest.mark.parametrize("ans", ["", "0", "9", "abc"])
@@ -538,7 +538,7 @@ def test_repl_resume_missing_and_eof(monkeypatch, env, out):
     monkeypatch.setattr(cli, "make_prompt_session", lambda *a: PS())
     monkeypatch.setattr(cli, "cleanup", lambda c: None)
     cli.repl(agent, router, ctx, cfg, resume="yok")
-    assert "yüklenecek oturum bulunamadı" in out()
+    assert "No session to load" in out()
 
 
 def test_repl_resume_existing(monkeypatch, env, out):
@@ -557,7 +557,7 @@ def test_repl_resume_existing(monkeypatch, env, out):
     monkeypatch.setattr(cli, "cleanup", lambda c: None)
     cli.repl(agent, router, ctx, cfg, resume="")
     assert agent.messages[1] == {"role": "user", "content": "eski"}
-    assert "oturum yüklendi: 20250101-000000 (1 mesaj)" in out()
+    assert "Session loaded: 20250101-000000 (1 messages)" in out()
 
 
 # ---------------------------------------------------------------- doctor/models
@@ -751,4 +751,4 @@ def test_make_prompt_session_cycles_mode_with_shift_tab(env):
         assert agent.permissions.mode == "yolo"
         stab.handler(ev)
         assert agent.permissions.mode == "plan"
-        assert "izin: plan" in ps.bottom_toolbar()
+        assert "mode: plan" in ps.bottom_toolbar()

@@ -62,7 +62,7 @@ include = ["alice*"]
 "alice.app" = ["static/*"]
 "alice.sims" = ["*.lua", "checklists/*.md"]
 "alice.connect" = ["builtin/*.toml"]
-"alice" = ["apps.toml"]
+"alice" = ["apps.toml", "locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

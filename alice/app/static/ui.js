@@ -2954,6 +2954,9 @@ async function showSettings(tab) {
     if (tab === "general") {
       pane.append(el("h2", "", "Genel"));
       pane.append(
+        setRow("Dil / Language", "Arayüzün ve ALICE'in mesajlarının dili; çeviri sürüyor, bir kısmı henüz Türkçe",
+          segmented([["en", "English"], ["tr", "Türkçe"]], S.status.language || "en",
+            (v) => api("/api/features/action", { action: "lang", lang: v }).then((r) => { if (r && r.ok) { S.status.language = v; toast(v === "tr" ? "Dil: Türkçe" : "Language: English"); } }))),
         setRow("Tema", "Sistem seçilirse Windows'un açık/koyu ayarını izler",
           segmented([["system", "Sistem"], ["light", "Açık"], ["dark", "Koyu"]], PREFS.theme, (v) => setPref("theme", v))),
         setRow("Yazı boyutu", "Sohbet metninin boyutu",

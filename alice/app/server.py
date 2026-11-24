@@ -31,6 +31,7 @@ from alice import session as sess
 from alice.agent import Agent, parse_args
 from alice.config import Config, alice_home
 from alice.decider import Decider
+from alice.i18n import language as ui_language
 from alice.permissions import MODES, Permissions
 from alice.providers.router import Router, parse_ref
 from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
@@ -981,6 +982,7 @@ class AppState:
             "team": self.team_snapshot(),
             "update": self.update.as_dict() if self._update_shown() else None,
             "update_mode": self._update_mode(),
+            "language": ui_language(),
         }
 
     def subagents_view(self) -> dict[str, Any]:

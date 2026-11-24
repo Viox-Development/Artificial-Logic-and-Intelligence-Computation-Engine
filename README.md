@@ -319,6 +319,9 @@ vision = ["auto", "gemini:gemini-flash-lite-latest"]
 
 [thinking]
 default = "low"   # off | low | medium | high
+
+[ui]
+language = "en"  # or "tr": the app's and the CLI's messages (being translated, #214)
 ```
 
 More: [configuration](docs/guide/config.md), [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md),

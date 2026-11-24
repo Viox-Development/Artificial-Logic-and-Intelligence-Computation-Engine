@@ -46,6 +46,7 @@ from rich.table import Table
 from alice import __version__
 from alice.agent import Agent
 from alice.config import Config, alice_home, init_home, load_config, refresh_home
+from alice.i18n import _
 from alice.decider import Decider
 from alice.memory import attach_memory, shared_memory
 from alice.permissions import MODES, Permissions
@@ -129,7 +130,7 @@ class RichUI:
         self._buf = ""
         self._think = ""
         m = self.model_label()
-        self._spin_start(f"düşünüyor{' · ' + m if m else ''}...")
+        self._spin_start(_("thinking{model}...", model=" · " + m if m else ""))
 
     def stream_delta(self, text: str) -> None:
         from rich.live import Live
@@ -146,13 +147,13 @@ class RichUI:
         self._think = (getattr(self, "_think", "") + text)[-300:]
         if self._spin is not None and not self._buf:
             last = " ".join(self._think.split())[-70:]
-            self._spin.update(f"[dim]düşünüyor… {escape(last)}[/]")
+            self._spin.update("[dim]" + _("thinking… {text}", text=escape(last)) + "[/]")
 
     def stream_reset(self) -> None:
         self._live_stop()
         self._buf = ""
-        console.print("[dim]  ↪ model akış ortasında düştü, yedek model baştan yazıyor[/]")
-        self._spin_start("yeniden deneniyor...")
+        console.print("[dim]  ↪ " + _("the model dropped mid-stream; a fallback model is starting over") + "[/]")
+        self._spin_start(_("retrying..."))
 
     def stream_end(self, text: str, source: str) -> None:
         self._spin_stop()
@@ -171,14 +172,14 @@ class RichUI:
             self._pending_summary[call_id] = summary
         else:
             console.print(f"[cyan]●[/] [bold]{name}[/] [dim]{escape(summary)}[/]")
-        self._spin_start(f"{name} çalışıyor...")
+        self._spin_start(_("{name} running...", name=name))
 
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None:
         self._spin_stop()
         if name in COMPACT_TOOLS:
             summary = getattr(self, "_pending_summary", {}).pop(call_id, "")
             lines = result.text.strip().splitlines()
-            tail = lines[0][:90] if len(lines) == 1 else f"{len(lines)} satır"
+            tail = lines[0][:90] if len(lines) == 1 else _("{n} lines", n=len(lines))
             color = "red" if result.is_error else "dim"
             console.print(f"[cyan]●[/] [bold]{name}[/] [dim]{escape(summary)}[/]  [{color}]⎿ {escape(tail)}[/]")
             return
@@ -191,19 +192,19 @@ class RichUI:
         style = "red" if result.is_error else "dim"
         out = [f"  ⎿ {escape(lines[0][:200])}"] + [f"    {escape(line[:200])}" for line in lines[1:6]]
         if len(lines) > 6:
-            out.append(f"    … +{len(lines) - 6} satır")
+            out.append("    … +" + _("{n} lines", n=len(lines) - 6))
         if result.images:
-            out.append(f"    (+{len(result.images)} görüntü)")
+            out.append("    (+" + _("{n} images", n=len(result.images)) + ")")
         console.print(f"[{style}]" + "\n".join(out) + "[/]")
 
     def ask_permission(self, name: str, summary: str, risk: str) -> str:
         self._spin_stop()
         self._live_stop()
         color = "red" if risk == "danger" else ("magenta" if risk == "send" else "yellow")
-        console.print(f"[{color}]? İzin gerekiyor[/] [bold]{name}[/] ({risk})\n  {escape(summary)}")
+        console.print(f"[{color}]? " + _("Permission needed") + f"[/] [bold]{name}[/] ({risk})\n  {escape(summary)}")
         while True:
-            ans = console.input("  [bold][y][/]evet  [bold][n][/]hayır  [bold][a][/]bu oturumda hep  "
-                                "[bold][p][/]bu projede hep (kalıcı) > ").strip().lower()
+            ans = console.input("  " + _("[bold][y][/]yes  [bold][n][/]no  [bold][a][/]always this session  "
+                                              "[bold][p][/]always in this project (saved)") + " > ").strip().lower()
             if ans in ("y", "e", "evet", "yes", ""):
                 return "y"
             if ans in ("n", "h", "hayır", "no"):
@@ -219,8 +220,8 @@ class RichUI:
         console.print(f"[cyan]? {escape(question)}[/]")
         for i, o in enumerate(options, 1):
             console.print(f"  [bold]{i}[/] {escape(o)}")
-        hint = "numaralar virgülle" if multi else "numara"
-        ans = console.input(f"  {hint} ya da kendi cevabın (boş = vazgeç) > ").strip()
+        hint = _("numbers separated by commas") if multi else _("a number")
+        ans = console.input("  " + _("{hint}, or your own answer (empty = cancel)", hint=hint) + " > ").strip()
         picks = [p.strip() for p in ans.split(",")] if ans else []
         if picks and all(p.isdigit() and 1 <= int(p) <= len(options) for p in picks):
             chosen = [options[int(p) - 1] for p in (picks if multi else picks[:1])]
@@ -297,7 +298,7 @@ def print_diff(diff: str, max_lines: int = 40) -> None:
         else:
             console.print(f"    [dim]{escape(ln)}[/]", soft_wrap=True)
     if len(body) > max_lines:
-        console.print(f"    [dim]… +{len(body) - max_lines} satır[/]")
+        console.print("    [dim]… +" + _("{n} lines", n=len(body) - max_lines) + "[/]")
 
 
 def build(cfg: Config, cwd: Path, mode: str, verbose: bool = False) -> tuple[Agent, Router, ToolContext]:
@@ -316,11 +317,12 @@ def _check_ready(router: Router) -> bool:
     if router.first_available("brain"):
         if not any(pc.needs_key and pc.api_key for pc in router.providers_cfg.values()):
             # The only keyless option is local Ollama; often not installed, tell what to do instead of an error list.
-            console.print(f"[yellow]Hiç API anahtarı yok, sadece yerel Ollama denenecek.[/] {alice_home() / '.env'} "
-                          "dosyasına en az bir anahtar ekle (en kolayı GEMINI_API_KEY), sonra [bold]alice doctor[/].")
+            console.print(_("[yellow]No API key at all; only local Ollama will be tried.[/] Add at least one key to {env} "
+                            "(GEMINI_API_KEY is the easiest), then run [bold]alice doctor[/].",
+                            env=alice_home() / ".env"))
         return True
-    console.print("[red]Kullanılabilir beyin modeli yok.[/] Önce [bold]alice init[/] çalıştır ve "
-                  f"{alice_home() / '.env'} dosyasına en az bir API anahtarı ekle (en kolayı GEMINI_API_KEY).")
+    console.print(_("[red]No usable brain model.[/] Run [bold]alice init[/] first and add at least one API key to "
+                    "{env} (GEMINI_API_KEY is the easiest).", env=alice_home() / ".env"))
     return False
 
 
@@ -330,7 +332,7 @@ def _ktok(n: int) -> str:
 
 
 def status_line(agent: Agent, router: Router, ctx: ToolContext) -> str:
-    model = router.last_ref.get("brain") or router.first_available("brain") or "model yok"
+    model = router.last_ref.get("brain") or router.first_available("brain") or _("no model")
     toks = agent.context_tokens()
     req = sum(r["requests"] for r in router.usage.today().values())
     dec = agent.decider.names[0] if agent.decider else "-"
@@ -338,8 +340,9 @@ def status_line(agent: Agent, router: Router, ctx: ToolContext) -> str:
     if len(cwd) > 40:
         cwd = "…" + cwd[-39:]
     window = router.context_limit(model) if ":" in model else agent.compact_at
-    return (f" {model} │ izin: {agent.permissions.mode} │ context {_ktok(toks)}/{_ktok(window)} │ "
-            f"bugün {req} istek │ karar: {dec} │ {cwd} ")
+    return " " + _("{model} │ mode: {mode} │ context {used}/{window} │ today {req} requests │ decider: {dec} │ {cwd}",
+                   model=model, mode=agent.permissions.mode, used=_ktok(toks), window=_ktok(window), req=req,
+                   dec=dec, cwd=cwd) + " "
 
 
 def make_prompt_session(agent: Agent, router: Router, ctx: ToolContext):
@@ -350,7 +353,7 @@ def make_prompt_session(agent: Agent, router: Router, ctx: ToolContext):
     kb = KeyBindings()
 
     @kb.add("enter")
-    def _(event):
+    def _enter(event):
         buf = event.current_buffer
         # If line ends with "\", move to next line (method that works across all terminals).
         if buf.document.text_before_cursor.endswith("\\"):
@@ -360,14 +363,14 @@ def make_prompt_session(agent: Agent, router: Router, ctx: ToolContext):
             buf.validate_and_handle()
 
     @kb.add("s-tab")  # cycle permission mode
-    def _(event):
+    def _cycle_mode(event):
         order = list(MODES)
         agent.permissions.mode = order[(order.index(agent.permissions.mode) + 1) % len(order)]
         event.app.invalidate()
 
     @kb.add("escape", "enter")  # Alt+Enter
     @kb.add("c-j")              # Ctrl+J
-    def _(event):
+    def _newline(event):
         event.current_buffer.insert_text("\n")
 
     alice_home().mkdir(parents=True, exist_ok=True)
@@ -390,13 +393,14 @@ def repl(agent: Agent, router: Router, ctx: ToolContext, cfg: Config, resume: st
         if loaded:
             sid, msgs = loaded
             agent.messages = agent.messages[:1] + msgs
-            console.print(f"[green]oturum yüklendi:[/] {sid} ({len(msgs)} mesaj)")
+            console.print(_("[green]Session loaded:[/] {sid} ({n} messages)", sid=sid, n=len(msgs)))
         else:
-            console.print("[yellow]yüklenecek oturum bulunamadı[/]")
+            console.print(_("[yellow]No session to load[/]"))
 
     ps = make_prompt_session(agent, router, ctx)
-    console.print(f"[bold magenta]ALICE[/] v{__version__}  [dim]/help komutlar · Enter gönder · Alt+Enter ya da "
-                  "satır sonu \\ ile yeni satır · Ctrl+C durdur[/]")
+    console.print(f"[bold magenta]ALICE[/] v{__version__}  [dim]" + _("/help commands · Enter sends · Alt+Enter or \\ at "
+                                                                    "the end of a line for a new line · Ctrl+C stops")
+                  + "[/]")
     prefill = ""
     while True:
         try:
@@ -420,7 +424,7 @@ def repl(agent: Agent, router: Router, ctx: ToolContext, cfg: Config, resume: st
             text = res[1]
         t0 = time.monotonic()
         agent.run_turn(text)
-        console.print(f"[dim]  {time.monotonic() - t0:.1f} sn[/]")
+        console.print("[dim]  " + _("{s} s", s=f"{time.monotonic() - t0:.1f}") + "[/]")
         try:
             sess.save(sid, agent.messages, ctx.cwd)
         except OSError:
@@ -447,29 +451,30 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
         console.print(HELP)
     elif cmd == "/clear":
         agent.reset()
-        console.print("[green]konuşma sıfırlandı[/]")
+        console.print(_("[green]Conversation cleared[/]"))
     elif cmd == "/compact":
-        console.print("[green]özetlendi[/]" if agent.compact() else "[yellow]özetlenecek bir şey yok[/]")
+        console.print(_("[green]Summarized[/]") if agent.compact() else _("[yellow]Nothing to summarize[/]"))
     elif cmd in ("/mode", "/plan"):
         if cmd == "/plan":
             agent.permissions.mode = "plan"
         elif args and args[0] in MODES:
             agent.permissions.mode = args[0]
         elif args:
-            console.print(f"[red]bilinmeyen mod: {escape(args[0])}[/] (seçenekler: {' | '.join(MODES)})")
-        console.print(f"izin modu: [bold]{agent.permissions.mode}[/]")
+            console.print(_("[red]Unknown mode: {mode}[/] (options: {options})", mode=escape(args[0]),
+                            options=" | ".join(MODES)))
+        console.print(_("Permission mode: [bold]{mode}[/]", mode=agent.permissions.mode))
     elif cmd == "/rewind":
         return rewind_prompt(agent)
     elif cmd == "/mcp":
         mcp = [t for t in agent.tools.values() if t.name.startswith("mcp__")]
         if not mcp:
-            console.print("[dim]MCP sunucusu yok. config.toml'a " + escape("[mcp.servers.<isim>]")
-                          + " ekle (README'de örnek var).[/]")
+            console.print("[dim]" + _("No MCP servers. Add {section} to config.toml (there is an example in the README).",
+                                     section=escape("[mcp.servers.<name>]")) + "[/]")
         for t in mcp:
             console.print(f"[bold]{t.name}[/] [dim]({t.risk})[/] {t.description[:110]}")
     elif cmd == "/memory":
         mem = agent.memory or shared_memory(agent.config)
-        console.print(mem.export_markdown() if mem is not None else "[dim](hafıza kapalı)[/]", markup=False)
+        console.print(mem.export_markdown() if mem is not None else _("(memory is off)"), markup=False)
     elif cmd == "/model":
         if len(args) >= 2:
             role, ref = args[0], args[1]
@@ -490,8 +495,9 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
             role = args[0] if len(args) >= 2 else "*"
             router.thinking_overrides[role] = args[-1]
         roles = ["brain", "fast", "voice", "vision"]
-        console.print("düşünme: " + ", ".join(f"{r}={router.thinking_level(r)}" for r in roles)
-                      + f"  [dim](kalıcı için config.toml [thinking]; seçenekler: {' | '.join(LEVELS)})[/]")
+        console.print(_("Thinking: {levels}", levels=", ".join(f"{r}={router.thinking_level(r)}" for r in roles))
+                      + "  [dim]" + _("(to keep it, use {section} in config.toml; options: {options})",
+                                     section=escape("[thinking]"), options=" | ".join(LEVELS)) + "[/]")
     elif cmd == "/usage":
         print_usage(router)
     elif cmd == "/tools":
@@ -504,9 +510,9 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
         loaded = sess.load(args[0] if args else None)
         if loaded:
             agent.messages = agent.messages[:1] + loaded[1]
-            console.print(f"[green]yüklendi:[/] {loaded[0]}")
+            console.print(_("[green]Loaded:[/] {sid}", sid=loaded[0]))
         else:
-            console.print("[yellow]oturum yok[/]")
+            console.print(_("[yellow]No session[/]"))
     elif cmd == "/update":
         from alice import updater
 
@@ -514,27 +520,28 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
         if info.error and not info.available:
             console.print(f"[yellow]{escape(info.error)}[/]")
         elif not info.available:
-            console.print(f"[green]ALICE güncel[/] ({info.branch} @ {info.local[:7]})")
+            console.print(_("[green]ALICE is up to date[/] ({branch} @ {commit})", branch=info.branch, commit=info.local[:7]))
         elif args and args[0] in ("apply", "yap"):
             ok, msg = updater.apply_update(info, cfg, force="--force" in args,
                                            emit=lambda s: console.print(f"[dim]{s}[/]"))
             console.print(("[green]" if ok else "[red]") + escape(msg) + "[/] "
-                          + ("[dim](yeni sürüm için ALICE'i kapatıp aç)[/]" if ok else ""))
+                          + (_("[dim](restart ALICE for the new version)[/]") if ok else ""))
         else:
-            console.print(f"[bold]Yeni sürüm var:[/] {info.local[:7]} → {info.remote[:7]} (CI: {info.ci})")
+            console.print(_("[bold]New version available:[/] {old} → {new} (CI: {ci})", old=info.local[:7],
+                            new=info.remote[:7], ci=info.ci))
             for line in info.commits[:8]:
                 console.print(f"  [dim]·[/] {escape(line)}")
-            console.print("[dim]çekmek için: /update apply[/]")
+            console.print(_("[dim]to update: /update apply[/]"))
     elif cmd == "/cwd":
         if args:
             p = ctx.resolve(" ".join(args))
             if p.is_dir():
                 ctx.cwd = p
             else:
-                console.print(f"[red]klasör yok: {p}[/]")
+                console.print(_("[red]No such folder: {path}[/]", path=p))
         console.print(str(ctx.cwd))
     else:
-        console.print(f"[red]bilinmeyen komut {cmd}[/] (/help)")
+        console.print(_("[red]Unknown command {cmd}[/] (/help)", cmd=cmd))
     return None
 
 
@@ -543,17 +550,17 @@ def rewind_prompt(agent: Agent):
              if m.get("role") == "user" and not m.get("_image") and not m.get("_nudge") and i > 0
              and not str(m.get("content", "")).startswith("[Önceki konuşmanın özeti]")][-9:]
     if not turns:
-        console.print("[yellow]geri sarılacak mesaj yok[/]")
+        console.print(_("[yellow]No message to rewind to[/]"))
         return None
-    for n, (_, m) in enumerate(reversed(turns), 1):
-        text = m.get("_display") or (m["content"] if isinstance(m["content"], str) else "(görselli mesaj)")
+    for n, (_idx, m) in enumerate(reversed(turns), 1):
+        text = m.get("_display") or (m["content"] if isinstance(m["content"], str) else _("(message with an image)"))
         console.print(f"  [bold]{n}[/] {escape(text.splitlines()[0][:90])}")
-    ans = console.input("Hangi mesajın öncesine dönülsün? (numara, boş = vazgeç) > ").strip()
+    ans = console.input(_("Go back to before which message? (number, empty = cancel)") + " > ").strip()
     if not ans.isdigit() or not 1 <= int(ans) <= len(turns):
         return None
     mi = list(reversed(turns))[int(ans) - 1][0]
     text, restored = agent.rewind(mi)
-    console.print("[green]geri sarıldı[/]" + (f", {len(restored)} dosya eski haline getirildi" if restored else ""))
+    console.print(_("[green]Rewound[/]") + (_(", {n} files restored", n=len(restored)) if restored else ""))
     return ("prefill", text)
 
 
@@ -770,7 +777,7 @@ def update_cmd(argv: list[str]) -> int:
         console.print(f"[yellow]{info.error}[/]")
         return 1
     if not info.available:
-        console.print(f"[green]ALICE güncel[/] ({info.branch} @ {info.local[:7]})")
+        console.print(_("[green]ALICE is up to date[/] ({branch} @ {commit})", branch=info.branch, commit=info.local[:7]))
         return 0
     console.print(f"[bold]Yeni sürüm var:[/] {info.local[:7]} → {info.remote[:7]} "
                   f"({info.branch}, CI: {info.ci})")

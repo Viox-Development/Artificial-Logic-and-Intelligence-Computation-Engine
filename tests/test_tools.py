@@ -148,7 +148,7 @@ def test_cli_status_line_and_prompt_session(workdir):
     cfg = make_config({"brain": ["a:m"], "fast": ["a:m"]})
     agent, router, ctx = build(cfg, workdir, "auto")
     line = status_line(agent, router, ctx)
-    assert "a:m" in line and "izin: auto" in line and "context" in line
+    assert "a:m" in line and "mode: auto" in line and "context" in line
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
