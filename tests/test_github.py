@@ -211,7 +211,7 @@ def test_push_to_protected_branch_needs_explicit_flag(repo):
     t = Git()
     (work / "a.txt").write_text("değişti\n", encoding="utf-8")
     t.run(ctx, action="commit", message="ana dala", files=["a.txt"])
-    with pytest.raises(ToolError, match="korumalı"):
+    with pytest.raises(ToolError, match="protected branch"):
         t.run(ctx, action="push")
     assert t.risk_for({"action": "push", "protected": True}) == "danger"
     t.run(ctx, action="push", protected=True)
@@ -223,18 +223,18 @@ def test_push_to_protected_branch_needs_explicit_flag(repo):
 def test_commit_refuses_secrets(repo, name, content):
     work, _ = repo
     (work / name).write_text(content, encoding="utf-8")
-    with pytest.raises(ToolError, match="anahtar"):
+    with pytest.raises(ToolError, match="key or secret"):
         Git().run(ctx_for(work), action="commit", message="x", all=True)
 
 
 @needs_git
 def test_commit_without_changes_and_outside_repo(repo, tmp_path):
     work, _ = repo
-    with pytest.raises(ToolError, match="değişiklik yok"):
+    with pytest.raises(ToolError, match="nothing to commit"):
         Git().run(ctx_for(work), action="commit", message="x", all=True)
     empty = tmp_path / "bos"
     empty.mkdir()
-    with pytest.raises(ToolError, match="git deposu değil"):
+    with pytest.raises(ToolError, match="not a git repository"):
         Git().run(ctx_for(empty), action="status")
 
 
@@ -314,27 +314,27 @@ def gh_ctx(api, cwd=None):
 
 
 def test_merge_refuses_red_ci_and_drafts():
-    with pytest.raises(ToolError, match="kırmızı: test \\(windows\\)"):
+    with pytest.raises(ToolError, match="red: test \\(windows\\)"):
         GitHub().run(gh_ctx(fake_api(pr_routes("failure"))), action="pr_merge", repo="o/r", number=5)
-    with pytest.raises(ToolError, match="taslak"):
+    with pytest.raises(ToolError, match="draft"):
         GitHub().run(gh_ctx(fake_api(pr_routes(draft=True))), action="pr_merge", repo="o/r", number=5)
-    with pytest.raises(ToolError, match="ÇAKIŞ|çakış"):
+    with pytest.raises(ToolError, match="CONFLICT|conflict"):
         GitHub().run(gh_ctx(fake_api(pr_routes(mergeable=False))), action="pr_merge", repo="o/r", number=5)
 
 
 def test_merge_green_uses_configured_method():
     calls: list = []
     out = GitHub().run(gh_ctx(fake_api(pr_routes(), calls)), action="pr_merge", repo="o/r", number=5)
-    assert "birleştirildi (squash)" in out.text
+    assert "merged (squash)" in out.text
     put = [c for c in calls if c[0] == "PUT"][0]
     assert put[2] == {"merge_method": "squash", "sha": "abc"}
     # force: if the user explicitly asks, it merges even with red CI
     out = GitHub().run(gh_ctx(fake_api(pr_routes("failure"))), action="pr_merge", repo="o/r", number=5, force=True)
-    assert "birleştirildi" in out.text
+    assert "merged" in out.text
 
 
 def test_api_errors_are_explained():
-    with pytest.raises(ToolError, match="depo yok ya da token"):
+    with pytest.raises(ToolError, match="doesn't exist or the token"):
         GitHub().run(gh_ctx(fake_api({})), action="prs", repo="o/yok")
     with pytest.raises(ToolError, match="GITHUB_TOKEN"):
         GitHubAPI(None)
@@ -352,7 +352,7 @@ def test_repos_listing_filters():
 def test_pr_create_refuses_protected_branch(repo):
     work, _ = repo
     api = fake_api({("GET", "/repos/o/r"): {"default_branch": "main"}})
-    with pytest.raises(ToolError, match="korumalı daldan"):
+    with pytest.raises(ToolError, match="from a protected branch"):
         GitHub().run(gh_ctx(api, work), action="pr_create", repo="o/r", title="x")
 
 
@@ -374,9 +374,9 @@ def test_clone_or_update_layout(monkeypatch, tmp_path):
     monkeypatch.setattr("alice.tools.github.run_git", lambda args, cwd, token=None, **kw: calls.append(args) or (0, ""))
     cfg = cfg_with(github={"clone_dir": str(tmp_path / "gh")})
     path, note = clone_or_update(cfg, "https://github.com/hayat/alice.git", token="t")
-    assert path == tmp_path / "gh" / "hayat" / "alice" and note == "klonlandı"
+    assert path == tmp_path / "gh" / "hayat" / "alice" and note == "cloned"
     assert calls[0][:2] == ["clone", "https://github.com/hayat/alice.git"]
-    with pytest.raises(ToolError, match="sahip/depo"):
+    with pytest.raises(ToolError, match="owner/repo"):
         clone_or_update(cfg, "../etc", token="t")
 
 
@@ -388,7 +388,7 @@ def test_clone_switches_working_folder(monkeypatch, tmp_path):
     moved = []
     ctx.state["set_cwd"] = moved.append
     out = GitHub().run(ctx, action="clone", repo="o/r")
-    assert moved == [target] and "Çalışma klasörü" in out.text
+    assert moved == [target] and "working folder" in out.text
 
 
 # ------------------------------------------------------------------------------------- UI
