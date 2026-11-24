@@ -31,6 +31,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from alice.i18n import _
+
 DEFAULTS = {"enabled": True, "away_minutes": 90, "min_gap_hours": 3, "quiet_hours": "00:30-07:00",
             "morning_until": 13}  # morning summary if first greeting is before this hour
 
@@ -67,19 +69,19 @@ def settings(cfg) -> dict[str, Any]:
 def part_of_day(now: datetime) -> str:
     h = now.hour
     if 5 <= h < 12:
-        return "Günaydın"
+        return _("Good morning")
     if 12 <= h < 18:
-        return "İyi günler"
-    return "İyi akşamlar"
+        return _("Good afternoon")
+    return _("Good evening")
 
 
 def _away_text(seconds: float) -> str:
     h = seconds / 3600
     if h >= 20:
-        return "dünden beri"
+        return "since yesterday"
     if h >= 1.5:
-        return f"yaklaşık {round(h)} saattir"
-    return f"{int(seconds // 60)} dakikadır"
+        return f"about {round(h)} hours"
+    return f"{int(seconds // 60)} minutes"
 
 
 # ------------------------------------------------------------------------------------------- briefing
@@ -101,7 +103,7 @@ def today_events(cfg, now: datetime, client: Any = None) -> list[str]:
     out = []
     for ev in (data or {}).get("items") or []:
         st = (ev.get("start") or {}).get("dateTime") or ""
-        when = st[11:16] if len(st) >= 16 else "gün boyu"
+        when = st[11:16] if len(st) >= 16 else "all day"
         if ev.get("summary"):
             out.append(f"{when} {ev['summary']}")
     return out
@@ -157,11 +159,11 @@ def has_news(b: dict[str, Any]) -> bool:
 
 
 COMPOSE_PROMPT = """The user is back at the computer (they were away for {away}). Welcome them by voice, short \
-and natural. Your personality is below; speak as that character. Rules: Turkish, at most 3 short sentences, no \
-lists/markdown/emoji, write times as they are spoken ("üçte"). Start with a greeting like "{greeting}" (use their name \
-if you know it). Ask about or remind them of the follow-ups naturally; if there are several things, put the most \
-important first and gather the rest in one sentence. If there is nothing to say, just give a short greeting. Don't \
-make anything up: use only what is below.
+and natural. Your personality is below; speak as that character. Rules: in the user's language, at most 3 short \
+sentences, no lists/markdown/emoji, write times as they are spoken ("at three"). Start with a greeting like \
+"{greeting}" (use their name if you know it). Ask about or remind them of the follow-ups naturally; if there are \
+several things, put the most important first and gather the rest in one sentence. If there is nothing to say, just \
+give a short greeting. Don't make anything up: use only what is below.
 
 Personality (summary):
 {persona}
@@ -208,15 +210,15 @@ def compose(b: dict[str, Any], mem=None, router=None) -> str:
                 return text
         except Exception:  # noqa: BLE001 - fallback sentence if no model
             pass
-    parts = [f"{b['greeting']}, hoş geldin."]
+    parts = [_("{greeting}, welcome back.", greeting=b["greeting"])]
     if mo and mo.get("weather"):
         parts.append(mo["weather"] + ".")
     if b["followups"]:
         parts.append(b["followups"][0].text)
     if b["events"]:
-        parts.append(f"Bugün takviminde {len(b['events'])} şey var, ilki {b['events'][0]}.")
+        parts.append(_("You have {n} things on your calendar today, the first is {first}.", n=len(b["events"]), first=b["events"][0]))
     if b["mail"]:
-        parts.append(f"{len(b['mail'])} önemli e-postan var.")
+        parts.append(_("You have {n} important emails.", n=len(b["mail"])))
     return " ".join(parts)
 
 
@@ -313,7 +315,7 @@ class Greeter:
             text = compose(b, mem, self.router())
             from alice.core.notify import Notification
 
-            if not self.notify(Notification("Hoş geldin", text, "info", "presence", kind="info",
+            if not self.notify(Notification(_("Welcome back!"), text, "info", "presence", kind="info",
                                             emotion="cheerful")):
                 return ""  # mode silenced: do not count, can be retried later
             self.last_greet = time.time()
@@ -330,7 +332,7 @@ class Greeter:
     def _after(self, mem, b: dict[str, Any], text: str) -> None:
         if mem is not None:
             try:
-                mem.record("(bilgisayarın başına döndü)", text, "karşılama")
+                mem.record("(came back to the computer)", text, "greeting")
                 for f in b["followups"]:
                     if f.kind in ("ask", "remind"):
                         mem.done_followup(f.id)  # asked; answer comes in conversation

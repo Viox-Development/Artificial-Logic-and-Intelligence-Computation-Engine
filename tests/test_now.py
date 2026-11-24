@@ -55,23 +55,23 @@ def test_snapshot_collects_state_and_shot_from_six():
                      "watch.hr": (now - 30, 131.0, None)}, events=sixes)
     s = snapshot(st, now=now, flights=flights, state={"mode": "flight"})
     assert (s.mode, s.app, s.in_game, s.flights_today, s.recent, s.shot_from_six, s.hr) == \
-        ("uçuş", "War Thunder", True, 5, 5, 3, 131.0)
+        ("flight", "War Thunder", True, 5, 5, 3, 131.0)
     assert round(s.avg_min_today, 1) == 2.5 and round(s.avg_min_usual, 1) == 5.0
-    assert line(s) == "mod uçuş, War Thunder'da, bugün 5 uçuş, ort 2.5 dk, son 5 uçuşun 3'ünde arkadan, nabız 131"
+    assert line(s) == "mode flight, in War Thunder, 5 flights today, avg 2.5 min, hit from behind in 3 of the last 5 flights, heart rate 131"
     text = describe(s)
-    assert "Son 5 uçuşunun 3'ünde düşmeden önce arkanda düşman vardı" in text
-    assert "Nabzın 131." in text and "Bir maç ara vermek iyi gelebilir." in text
+    assert "In 3 of your last 5 flights an enemy was behind you before you went down" in text
+    assert "Your heart rate is 131." in text and "Sitting out a match might help." in text
 
 
 def test_snapshot_is_quiet_with_no_data():
     s = snapshot(Store(), now=ts(20, 12), flights=[], state={})
-    assert line(s) == "" and describe(s) == "Şu an kayda değer bir şey yok." and s.advice == []
+    assert line(s) == "" and describe(s) == "Nothing notable right now." and s.advice == []
 
 
 def test_advice_needs_enough_evidence():
     assert advise(Snapshot(at=0, recent=2, shot_from_six=2)) == []
     assert advise(Snapshot(at=0, recent=5, shot_from_six=2)) == []
-    assert advise(Snapshot(at=0, hr=125.0)) == ["Nabzın 125."]
+    assert advise(Snapshot(at=0, hr=125.0)) == ["Your heart rate is 125."]
 
 
 def test_anticipator_prepares_once_before_usual_session():
@@ -84,7 +84,7 @@ def test_anticipator_prepares_once_before_usual_session():
     assert not a.check(ts(9, 20, 0))      # 1 hour left: too early
     assert a.check(ts(9, 20, 45))         # 15 min left: prepare
     assert not a.check(ts(9, 20, 50))     # once per day
-    assert ran == [1] and st.added[0][1] == "Önsezi: uçuşa hazırlık"
+    assert ran == [1] and st.added[0][1] == "Anticipation: getting ready for a flight"
     assert not Anticipator(st, hooks=[]).check(ts(10, 20, 45))  # no hooks: does nothing
 
 

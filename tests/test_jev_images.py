@@ -75,7 +75,7 @@ def test_images_off_or_llm_engine_refuse_and_decider_skips_them():
 
     dec = Decider([LLMEngine(Router())])
     assert not dec.supports_images
-    with pytest.raises(DeciderError, match="görsel"):
+    with pytest.raises(DeciderError, match="image"):
         dec.decide({"s": "r"}, {"b": Box("x")}, images={"r": jpeg()})
     assert not calls
 
@@ -283,7 +283,7 @@ def test_image_check_reports_box_position():
                       "confidence": 0.9}}})
 
     r = image_check(Decider([jev(handler)]))
-    assert r["status"] == "ok" and "doğru yerde" in r["detail"]
+    assert r["status"] == "ok" and "in the right place" in r["detail"]
 
     def wrong(req):
         return httpx.Response(200, json={"answers": {

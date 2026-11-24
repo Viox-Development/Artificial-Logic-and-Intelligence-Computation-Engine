@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
+from alice.i18n import _
+
 GAME_KEY = "pc.proc.aces.exe.cpu"   # the core writes this every 15 s while War Thunder is open
 SESSION_GAP = 2 * 3600.0            # new session if it is reopened after a break this long
 SIX_BEFORE_DEATH = 45.0             # "Arkanda düşman" (enemy behind) said this long before the end: hit from behind
@@ -29,7 +31,7 @@ MIN_SESSIONS = 3
 APP_NAMES = {"aces.exe": "War Thunder", "dcs.exe": "DCS", "opera.exe": "Opera", "chrome.exe": "Chrome",
              "discord.exe": "Discord", "code.exe": "VS Code", "claude.exe": "Claude", "spotify.exe": "Spotify",
              "steam.exe": "Steam", "whatsapp.root.exe": "WhatsApp", "blender.exe": "Blender"}
-MODE_NAMES = {"normal": "normal", "dev": "geliştirme", "flight": "uçuş", "quiet": "sessiz"}
+MODE_NAMES = {"normal": "normal", "dev": "development", "flight": "flight", "quiet": "quiet"}
 
 
 @dataclass
@@ -79,7 +81,7 @@ def predict_next(starts: list[float], now: float) -> float | None:
 
 
 def game_times(store: Any, now: float, days: int = 28) -> list[float]:
-    return [t for t, _ in store.series(GAME_KEY, since=now - days * 86400)]
+    return [t for t, _v in store.series(GAME_KEY, since=now - days * 86400)]
 
 
 # ---------------------------------------------------------------------- now
@@ -130,16 +132,14 @@ def snapshot(store: Any, now: float | None = None, flights: list[dict[str, Any]]
 def advise(s: Snapshot) -> list[str]:
     out = []
     if s.recent >= 3 and s.shot_from_six >= max(2, s.recent // 2 + 1):
-        from alice.sims.coach import ek
-
-        out.append(f"Son {s.recent} uçuşunun {ek(s.shot_from_six)}nde düşmeden önce arkanda düşman vardı: dönüşlerde "
-                   "arkanı kontrol et, alçakta uzun dönme.")
+        out.append(f"In {s.shot_from_six} of your last {s.recent} flights an enemy was behind you before you went down: check your "
+                   "six in turns and don't make long turns down low.")
     if s.avg_min_today and s.avg_min_usual and s.flights_today >= 3 and s.avg_min_today < s.avg_min_usual * 0.7:
-        out.append(f"Bugün uçuşların ortalama {s.avg_min_today:.1f} dakika sürüyor, normalde {s.avg_min_usual:.1f}.")
+        out.append(f"Today your flights last {s.avg_min_today:.1f} minutes on average, usually {s.avg_min_usual:.1f}.")
     if s.hr is not None and s.hr >= HR_HIGH:
-        out.append(f"Nabzın {s.hr:.0f}.")
+        out.append(f"Your heart rate is {s.hr:.0f}.")
     if len(out) >= 2 or (s.hr is not None and s.hr >= HR_HIGH and s.in_game):
-        out.append("Bir maç ara vermek iyi gelebilir.")
+        out.append("Sitting out a match might help.")
     return out
 
 
@@ -147,29 +147,26 @@ def line(s: Snapshot) -> str:
     """Short status appended to every spoken sentence (the model uses it if needed, does not read it out)."""
     parts = []
     if s.mode:
-        parts.append(f"mod {s.mode}")
+        parts.append(f"mode {s.mode}")
     if s.in_game:
-        parts.append("War Thunder'da")
+        parts.append("in War Thunder")
     elif s.app:
-        parts.append(f"önde {s.app}")
+        parts.append(f"in front: {s.app}")
     if s.flights_today:
-        parts.append(f"bugün {s.flights_today} uçuş" + (f", ort {s.avg_min_today:.1f} dk" if s.avg_min_today else ""))
+        parts.append(f"{s.flights_today} flights today" + (f", avg {s.avg_min_today:.1f} min" if s.avg_min_today else ""))
     if s.recent and s.shot_from_six:
-        from alice.sims.coach import ek
-
-        parts.append(f"son {s.recent} uçuşun {ek(s.shot_from_six)}nde arkadan")
+        parts.append(f"hit from behind in {s.shot_from_six} of the last {s.recent} flights")
     if s.hr is not None:
-        parts.append(f"nabız {s.hr:.0f}")
+        parts.append(f"heart rate {s.hr:.0f}")
     return ", ".join(parts)
 
 
 def describe(s: Snapshot) -> str:
-    lines = [line(s) or "Şu an kayda değer bir şey yok."]
+    lines = [line(s) or "Nothing notable right now."]
     if s.avg_min_usual and s.avg_min_today:
-        lines.append(f"Uçuşların normalde ortalama {s.avg_min_usual:.1f} dakika sürüyor.")
+        lines.append(f"Your flights usually last {s.avg_min_usual:.1f} minutes on average.")
     if s.next_game:
-        lines.append(f"Alışkanlığına göre War Thunder'ı genelde {datetime.fromtimestamp(s.next_game):%H:%M} gibi "
-                     "açıyorsun.")
+        lines.append(f"By habit you usually open War Thunder around {datetime.fromtimestamp(s.next_game):%H:%M}.")
     lines += s.advice
     return "\n".join(lines)
 
@@ -191,7 +188,7 @@ def _refresh(now: float) -> None:
 
         ready = ready_line()
         if ready:
-            text = (text + "; " if text else "") + "hazır cevaplar: " + ready
+            text = (text + "; " if text else "") + "ready answers: " + ready
     except Exception:  # noqa: BLE001
         pass
     _cache.update(at=now, line=text, busy=False)
@@ -238,7 +235,7 @@ class Anticipator:
                 h()
             except Exception:  # noqa: BLE001 - even if a preparation fails, nothing breaks
                 pass
-        self.store.add_event("info", "Önsezi: uçuşa hazırlık",
-                             f"War Thunder'ı genelde {datetime.fromtimestamp(at):%H:%M} gibi açıyorsun; uçuş sesleri "
-                             "önceden hazırlandı.", "info", "now")
+        self.store.add_event("info", _("Anticipation: getting ready for a flight"),
+                             _("You usually open War Thunder around {time}; the flight sounds were prepared in advance.",
+                               time=f"{datetime.fromtimestamp(at):%H:%M}"), "info", "now")
         return True

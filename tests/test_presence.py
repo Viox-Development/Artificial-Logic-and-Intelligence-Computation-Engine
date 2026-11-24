@@ -22,9 +22,9 @@ def wait_for(cond, timeout=3.0):
 
 
 def test_part_of_day():
-    assert part_of_day(datetime(2026, 10, 22, 8)) == "Günaydın"
-    assert part_of_day(datetime(2026, 10, 22, 14)) == "İyi günler"
-    assert part_of_day(datetime(2026, 10, 22, 21)) == "İyi akşamlar"
+    assert part_of_day(datetime(2026, 10, 22, 8)) == "Good morning"
+    assert part_of_day(datetime(2026, 10, 22, 14)) == "Good afternoon"
+    assert part_of_day(datetime(2026, 10, 22, 21)) == "Good evening"
 
 
 def test_greets_after_long_absence_with_followups():
@@ -41,10 +41,10 @@ def test_greets_after_long_absence_with_followups():
     assert g.tick()  # came back
     assert wait_for(lambda: sent)
     text = sent[0].body
-    assert text.startswith("İyi günler") and "Matematik" in text and sent[0].topic == "presence"
+    assert text.startswith("Good afternoon") and "Matematik" in text and sent[0].topic == "presence"
     assert wait_for(lambda: voice.armed_until > time.monotonic())  # answers without needing "Hey Alice"
     assert mem.due_followups() == [] and [f.id for f in mem.followups(include_done=True)] == [fid]
-    assert mem.recent(1)[0].channel == "karşılama"  # Live sees it in the most recent conversation
+    assert mem.recent(1)[0].channel == "greeting"  # Live sees it in the most recent conversation
     assert not g.tick()  # does not greet again
 
 
@@ -52,7 +52,7 @@ def test_silent_without_news_after_first_greeting_and_respects_gap_and_quiet():
     sent = []
     g = Greeter(cfg(), lambda n: sent.append(n) or True, idle=lambda: 0.0, clock=lambda: datetime(2026, 10, 22, 10),
                 morning=lambda c, n: {})
-    assert g.greet(7200) .startswith("Günaydın")  # first return of the day: short greeting
+    assert g.greet(7200) .startswith("Good morning")  # first return of the day: short greeting
     assert g.greet(7200) == ""  # same day, nothing to say: stay quiet
     assert len(sent) == 1
     g2 = Greeter(cfg(quiet_hours="00:00-23:59"), lambda n: True, idle=lambda: 0.0,
@@ -94,7 +94,7 @@ def test_morning_summary_on_startup_once_per_day(tmp_path):
     g = mk(8)
     assert g.tick()  # computer opened in the morning: the day's first summary, without measuring absence
     assert wait_for(lambda: sent)
-    assert sent[0].body.startswith("Günaydın") and "yağmurlu" in sent[0].body
+    assert sent[0].body.startswith("Good morning") and "yağmurlu" in sent[0].body
     assert not mk(9).tick()  # ALICE restarted: does not say it again the same day (stored in the file)
     assert not Greeter(cfg(), lambda n: True, idle=lambda: 5.0, clock=lambda: datetime(2026, 10, 23, 15),
                        morning=lambda c, n: info, state_path=st).tick()  # afternoon start: no morning summary
