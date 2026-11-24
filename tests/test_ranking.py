@@ -95,9 +95,9 @@ def test_fallback_is_announced_and_logged(isolated_home):
     r = Router(cfg, provider_factory=lambda pc: provs[pc.name], usage_path=isolated_home / "usage.json",
                on_event=events.append, auto_cache={})
     assert r.chat("brain", [{"role": "user", "content": "selam"}]).text == "merhaba"
-    assert any("n:m1 (503) hata verdi, g:m2 modeline geçildi" in e for e in events)
+    assert any("n:m1 (503) failed, switched to g:m2" in e for e in events)
     log = (isolated_home / "logs" / "providers.log").read_text(encoding="utf-8")
-    assert "n:m1" in log and "HATA" in log and "geçildi" in log
+    assert "n:m1" in log and "HATA" in log and "switched to" in log
 
 
 def test_refresh_writes_cache(monkeypatch, tmp_path):

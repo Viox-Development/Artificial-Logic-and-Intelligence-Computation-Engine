@@ -133,7 +133,7 @@ def _short_error(err: str) -> str:
 def parse_ref(ref: str) -> tuple[str, str]:
     provider, sep, model = ref.partition(":")
     if not sep or not model:
-        raise ValueError(f"geçersiz model referansı: {ref!r} (beklenen 'provider:model')")
+        raise ValueError(f"invalid model reference: {ref!r} (expected 'provider:model')")
     return provider, model
 
 
@@ -167,7 +167,7 @@ def strip_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if p.get("type") == "text":
                     texts.append(p.get("text", ""))
                 elif p.get("type") == "image_url":
-                    texts.append("[görüntü: bu model görsel desteklemiyor, atlandı]")
+                    texts.append("[image: this model does not support images, skipped]")
             m = {**m, "content": "\n".join(texts)}
         out.append(m)
     return out
@@ -236,8 +236,9 @@ class StreamSink(Protocol):
 
 class AllProvidersFailed(Exception):
     def __init__(self, role: str, errors: list[str], pinned: bool = False):
-        head = ("Seçtiğin model cevap veremedi; elle seçildiği için başka modele geçilmedi. Model menüsünden başka "
-                "bir model ya da Otomatik seç:" if pinned else f"'{role}' rolündeki hiçbir model cevap veremedi:")
+        head = (_("The model you chose couldn't answer; I didn't switch because you picked it by hand. "
+                  "Pick another model from the model menu, or choose Auto:") if pinned
+                else _("No model for the '{role}' role could answer:", role=role))
         super().__init__(head + "\n  " + "\n  ".join(errors))
         self.errors = errors
         self.pinned = pinned
@@ -413,7 +414,7 @@ class Router:
             return [role]  # direct model reference
         raw = self.config.roles.get(role)
         if raw is None:
-            raise KeyError(f"tanımsız rol: {role}")
+            raise KeyError(f"undefined role: {role}")
         if "auto" not in raw and self.config.agent.get("auto_models", True):
             # Hand-written chains are also backed by measured models: hand-written ones first, then the measured ones.
             raw = list(raw) + ["auto"]
@@ -666,7 +667,7 @@ class Router:
                 # State is read first, then the error. If the background list request finished between the two reads
                 # (used to read the error first), both looked empty: the menu showed neither models nor error.
                 state = models_state() if pc.enabled and not rows else ""
-                entry.update(key="ChatGPT girişi", note=limit_note() if pc.enabled else "",
+                entry.update(key=_("ChatGPT sign-in"), note=limit_note() if pc.enabled else "",
                              error=models_error() if pc.enabled and not rows else "",
                              loading=state == "loading")
             out.append(entry)
@@ -890,7 +891,8 @@ class Router:
                     errors.append(f"{ref}: does not support tools")
                     continue
                 if est > self.size_limit.get(ref, 10**9):
-                    errors.append(f"{ref}: istek ~{est} token, bu model daha önce ~{self.size_limit[ref]} üstünü reddetti")
+                    errors.append(f"{ref}: request ~{est} tokens, this model earlier rejected anything over "
+                                  f"~{self.size_limit[ref]}")
                     continue
                 vision = pc.supports_vision(model) and ref not in self.no_vision
                 msgs = clean_messages(messages if vision else strip_images(messages),
@@ -972,7 +974,7 @@ class Router:
                         if think and e.kind == "bad_request":
                             # Provider rejected the thinking parameter: don't send it again, retry without it.
                             self.no_thinking.add(ref)
-                            self._log(f"{ref} düşünme ayarını kabul etmedi ({e}); ayarsız deneniyor")
+                            self._log(f"{ref} rejected the thinking setting ({e}); retrying without it")
                             kw["extra"] = {k: v for k, v in extra.items() if k not in think} or None
                         elif (e.kind == "too_large" and "max_tokens" in str(e) and out
                               and min(8192, max(out * 4, 1024)) > out):
@@ -980,13 +982,13 @@ class Router:
                             # the input isn't large, so widen the budget, retry this model once more, and remember it.
                             self.out_floor[ref] = min(8192, max(out * 4, 1024))
                             kw["max_tokens"] = self.out_floor[ref]
-                            self._log(f"{ref} cevabı max_tokens={out} içinde bitiremedi; {kw['max_tokens']} ile "
-                                      "deneniyor")
+                            self._log(f"{ref} could not finish within max_tokens={out}; retrying with "
+                                      f"{kw['max_tokens']}")
                         else:
                             raise
                         res = call()
                     if looks_garbled(res.text):
-                        raise ProviderError("garbled", "model anlamsız, birbirine karışmış dillerde metin üretti")
+                        raise ProviderError("garbled", "the model produced garbled text mixing several languages")
                 except ProviderError as e:
                     if emitted[0]:
                         stream.on_reset()
@@ -1012,7 +1014,7 @@ class Router:
                 others = [f for f in failed if f.rpartition(" (")[0] != ref]
                 if others:
                     # The UI shows this as a note: which model failed, and who took over.
-                    msg = f"{role}: {', '.join(others[-3:])} hata verdi, {ref} modeline geçildi"
+                    msg = _("{role}: {failed} failed, switched to {ref}", role=role, failed=", ".join(others[-3:]), ref=ref)
                     self.on_event(msg)
                     self._log(msg)
                 if self.last_ref.get(role) != ref and not role.startswith(("team:", "council:")):  # the panel shows this
@@ -1031,10 +1033,10 @@ class Router:
             wait_limit = max(self.max_wait, 60.0) if is_pinned else self.max_wait
             if waits and min(waits) <= wait_limit and attempts <= max_attempts:
                 w = min(waits) + 0.5
-                self.on_event(f"tüm modeller meşgul, {w:.0f} sn bekleniyor")
+                self.on_event(_("all models are busy, waiting {s} s", s=f"{w:.0f}"))
                 self.sleep(w)
                 continue
-            self._log(f"{role} TÜM MODELLER BAŞARISIZ: " + " | ".join(errors))
+            self._log(f"{role} ALL MODELS FAILED: " + " | ".join(errors))
             raise AllProvidersFailed(role, errors, pinned=role in self.role_overrides and role in self.config.roles)
 
     def _penalize(self, ref: str, provider: str, e: ProviderError, had_tools: bool, had_format: bool,
@@ -1101,7 +1103,7 @@ class Router:
                 self.cooldown_until[ref] = now + 60
         else:
             base = COOLDOWNS.get(e.kind, 30.0)
-            if e.kind == "network" and "zaman aşımı" in str(e):
+            if e.kind == "network" and ("zaman aşımı" in str(e) or "timed out" in str(e)):
                 # A model that hangs without replying (GLM-5.3 on NVIDIA), retried after 30 s, made every request
                 # kept waiting out the full timeout (180 s) each time: for a while, carry on with the next one.
                 base = TIMEOUT_COOLDOWN

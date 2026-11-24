@@ -2233,5 +2233,10 @@
  "🌐 Areas (projects & areas of life)": "🌐 Areas (Projeler & Hayat Alanları)",
  "👤 You (user & preferences)": "👤 You (Kullanıcı & Tercihler)",
  "👥 People (people & links)": "👥 People (İnsanlar & Çapraz Bağlar)",
- "💡 Topics (hardware & interests)": "💡 Topics (Donanım & İlgi Alanları)"
+ "💡 Topics (hardware & interests)": "💡 Topics (Donanım & İlgi Alanları)",
+ "The model you chose couldn't answer; I didn't switch because you picked it by hand. Pick another model from the model menu, or choose Auto:": "Seçtiğin model cevap veremedi; elle seçildiği için başka modele geçilmedi. Model menüsünden başka bir model ya da Otomatik seç:",
+ "No model for the '{role}' role could answer:": "'{role}' rolündeki hiçbir model cevap veremedi:",
+ "ChatGPT sign-in": "ChatGPT girişi",
+ "{role}: {failed} failed, switched to {ref}": "{role}: {failed} hata verdi, {ref} modeline geçildi",
+ "all models are busy, waiting {s} s": "tüm modeller meşgul, {s} sn bekleniyor"
 }
