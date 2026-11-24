@@ -117,7 +117,7 @@ def test_enroll_command_records_saves_and_verifies(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(vcli, "_record_one", lambda mic, vad, seconds=15.0: next(takes))
     assert vcli._enroll(None, []) == 0
     out = capsys.readouterr().out
-    assert "tekrar oku" in out and "sesin kaydedildi" in out and "seni tanıdı" in out
+    assert "read it again" in out and "your voice is saved" in out and "recognized you" in out
     assert sid.load_profile()["samples"] == len(sid.ENROLL_SENTENCES)
     assert vcli._enroll(None, ["--off"]) == 0 and sid.load_profile() is None
 
