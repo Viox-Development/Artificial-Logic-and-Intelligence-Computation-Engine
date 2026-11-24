@@ -31,6 +31,7 @@ ALICE ships with about 90 tools. The main groups:
 - Big jobs run as projects: a manager plans the work, parallel agents build it in their own git worktrees, a review
   council (critic, advocate, checker, experts) votes on plans and results, and the project ends in a pull request.
 - A preview tab serves and screenshots web projects so the council can check them like a user would.
+- Details: [docs/guide/projects.md](docs/guide/projects.md), [docs/guide/council.md](docs/guide/council.md).
 
 **Using your computer**
 - Screenshots, mouse, and keyboard, plus Windows UI Automation to click controls by ID instead of guessing pixels.
