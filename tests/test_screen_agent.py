@@ -153,14 +153,14 @@ def test_type_key_and_drag_actions():
 def test_useless_action_is_not_repeated_forever():
     obs = FakeScreen()
     res = ScreenAgent(obs, Brain([{"action": "press_key", "key": "tab"}] * 5), settle=0).run("bir şey yap")
-    assert res.status == "needs_help" and "değiştirmedi" in res.reason
+    assert res.status == "needs_help" and "didn't change" in res.reason
     assert len(obs.acts) == 2
 
 
 def test_missing_target_uses_screen_or_asks_for_help():
     obs = FakeScreen()
     res = ScreenAgent(obs, Brain([{"action": "click", "missing": 0.9}]), settle=0).run("dişli ikonuna bas")
-    assert res.status == "needs_help" and "bulunamadı" in res.reason  # can't look at the screen
+    assert res.status == "needs_help" and "found" in res.reason  # can't look at the screen
 
     obs = FakeScreen()
     obs.image = Image.new("RGB", (1200, 800))
@@ -173,7 +173,7 @@ def test_missing_target_uses_screen_or_asks_for_help():
 
 def test_unsure_action_kind_escalates():
     res = ScreenAgent(FakeScreen(), Brain([{"action": "click", "conf": 0.2}]), settle=0).run("x")
-    assert res.status == "needs_help" and "emin değil" in res.reason
+    assert res.status == "needs_help" and "not sure" in res.reason
 
 
 # ------------------------------------------------------------------------------------------- actions
@@ -454,7 +454,7 @@ def test_reflex_refuses_to_type_into_alice_itself(monkeypatch, tmp_path):
 
     monkeypatch.setattr(observers, "foreground_title", lambda: "ALICE")
     ctx = ToolContext(cwd=tmp_path, config=None, router=object(), decider=object())
-    with pytest.raises(ToolError, match="ALICE'in kendisi"):
+    with pytest.raises(ToolError, match="ALICE itself"):
         Reflex().run(ctx, goal="Not Defteri'ni aç, Ctrl+S'ye bas", target="desktop")
     observers.DesktopObserver(ctx, None, "ALICE'te ilk projeye tıkla")  # fine when the target is ALICE itself
     observers.DesktopObserver(ctx, "Not Defteri", "merhaba yaz")  # fine when a window is given
@@ -589,7 +589,7 @@ def test_agent_types_on_keyboard_in_one_step_and_reports_the_result():
     assert len(brain.calls) == 1 and "type_keys" in brain.calls[0][1]["action"].criteria
     assert "Press ctrl+shift+s" in brain.calls[0][1]["key"].criteria.values()  # the combination the tool gave
     report = res.report()
-    assert "ekranda başa göre çıkan: Gösterim 7.006.652" in report and "kaybolan: Gösterim 0" in report
+    assert "what's on screen, by relevance: Gösterim 7.006.652" in report and "disappeared: Gösterim 0" in report
     assert brain.calls[0][0]["recent_actions"][0].startswith("typed '1234*5678=' on the keyboard -> screen changed")
 
     # Previous input is cleared: it had been typed after the leftover "2" from the previous action (212345678).
@@ -685,9 +685,9 @@ def test_stuck_agent_consults_and_continues_without_the_main_model():
     agent = ScreenAgent(obs, brain, settle=0)
     agent.consult = lambda situation: asked.append(situation) or {"next": "Click the Ayarlar button"}
     res = agent.run("ayarlarda bildirimleri bul")
-    assert res.status == "done" and asked and asked[0]["stuck_because"].startswith("aynı eylem")
+    assert res.status == "done" and asked and asked[0]["stuck_because"].startswith("the same action")
     assert "Button 'Ayarlar' (bottom-middle)" in asked[0]["on_screen"]
-    assert "(danışma 1) Click the Ayarlar button" in res.log and ("click", "Ayarlar") in obs.acts
+    assert "(consult 1) Click the Ayarlar button" in res.log and ("click", "Ayarlar") in obs.acts
     agent = ScreenAgent(Panel(), ProbBrain([{"probs": {"i1": 1.0}}] * 2), settle=0)
     agent.consult = lambda situation: {"give_up": True}
     assert agent.run("x").status == "needs_help"  # if the consultant gives up, control returns to the main model
@@ -879,7 +879,7 @@ def test_read_only_goal_never_touches_the_screen():
     obs = FakeScreen()
     brain = Brain([{"action": "click", "item": "Uydurma bir savunma"}])
     res = ScreenAgent(obs, brain, translate=lambda g: g, settle=0).run("Listeyi oku, hiçbir şeye basma")
-    assert res.status == "needs_help" and obs.acts == [] and "yasaklıyor" in res.reason
+    assert res.status == "needs_help" and obs.acts == [] and "forbids" in res.reason
 
     obs = FakeScreen()
     agent = ScreenAgent(obs, Brain([{"action": "click", "item": "Uydurma bir savunma"}]), translate=lambda g: g, settle=0)
@@ -907,7 +907,7 @@ def test_typing_into_a_button_is_refused():
     obs = Page()
     res = ScreenAgent(obs, Brain([{"action": "type_text", "item": "Next"}]), translate=lambda g: g, settle=0).run(
         "Enter code kutusuna 361819 yaz", inputs={"code": "361819"})
-    assert res.status == "needs_help" and obs.acts == [] and "düğme" in res.reason
+    assert res.status == "needs_help" and obs.acts == [] and "button" in res.reason
 
     obs = Page()  # if the text inside the field is picked, it is clicked and typed into as before
     ScreenAgent(obs, Brain([{"action": "type_text", "item": "Enter code"}, {"done": 0.95}]), translate=lambda g: g,
@@ -936,7 +936,7 @@ def test_multi_part_goal_is_split_and_each_step_runs_on_its_own():
     asked = []
     agent.plan = lambda g: asked.append(g) or ["İlk projeyi aç", "Proje sayfasının açıldığını gör"]
     res = agent.run(goal)
-    assert asked == [goal] and res.status == "steps_done" and "2 adımı da yapıldı" in res.reason
+    assert asked == [goal] and res.status == "steps_done" and "all 2 steps of the plan were done" in res.reason
     assert [c[0]["goal"] for c in brain.calls] == ["İlk projeyi aç", "Proje sayfasının açıldığını gör"]
     assert "(plan 1/2) İlk projeyi aç" in res.log and "(plan 2/2) Proje sayfasının açıldığını gör" in res.log
     assert obs.acts == [("click", "Uydurma bir savunma", "", "", None)]
@@ -947,7 +947,7 @@ def test_multi_part_goal_is_split_and_each_step_runs_on_its_own():
     agent = ScreenAgent(obs, brain, translate=lambda g: g, settle=0)
     agent.plan = lambda g: ["İlk projeyi aç", "Olmayan düğmeye bas", "Kaydet"]
     res = agent.run(goal)
-    assert res.status == "needs_help" and "planın 2. adımı (2/3) yapılamadı: Olmayan düğmeye bas" in res.reason
+    assert res.status == "needs_help" and "step 2 of the plan (2/3) could not be done: Olmayan düğmeye bas" in res.reason
     assert not any("(plan 3/3)" in line for line in res.log)
 
 

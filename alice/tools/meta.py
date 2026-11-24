@@ -428,7 +428,7 @@ class Reflex(Tool):
         res = loop.run(goal, max_steps=max_steps, inputs=inputs, notes=notes or "", **extra)
         status = getattr(res, "status", "")
         verdict = reflex_verdict(status)
-        if status in ("max_steps", "needs_help") and multi_part_goal(goal) and "planın" not in getattr(res, "reason", ""):
+        if status in ("max_steps", "needs_help") and multi_part_goal(goal) and not any(w in getattr(res, "reason", "") for w in ("planın", "of the plan")):
             # A long goal was tried as one piece and did not finish: the main model must not resend the same long goal.
             verdict += ("\nThis goal had several jobs in it. Don't send the same one again: look at the steps above, find where "
                         "it stopped and call the rest one by one with short single-job goals (one menu, one field, one "

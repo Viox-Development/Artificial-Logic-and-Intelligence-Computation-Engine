@@ -65,7 +65,7 @@ def test_navigates_to_goal():
 
 def test_low_confidence_escalates():
     res = ReflexLoop(FakeObserver(), ScriptedDecider([("click_1", 0.2, 0.0)]), settle=0).run("x")
-    assert res.status == "needs_help" and "düşük güven" in res.reason
+    assert res.status == "needs_help" and "low confidence" in res.reason
 
 
 def test_typing_uses_inputs_then_writer():
@@ -84,7 +84,7 @@ def test_typing_uses_inputs_then_writer():
 def test_repeated_action_detected():
     dec = ScriptedDecider([("scroll_down", 0.9, 0.0)] * 5)
     res = ReflexLoop(FakeObserver(), dec, settle=0).run("x")
-    assert res.status == "needs_help" and "tekrar" in res.reason
+    assert res.status == "needs_help" and "repeating" in res.reason
 
 
 def test_rank_prefers_goal_words():
@@ -150,7 +150,7 @@ def test_desktop_reflex_frames_click_on_hud(monkeypatch):
     item = Item("k", "ocr", "text", "Görünüm", rect=(0.4, 0.4, 0.6, 0.5))
     obs.act("right_click", item)
     assert seen == [(600, 410, "right_click", False)] and clicks == [(600, 410)]
-    with pytest.raises(ValueError, match="yeri bilinmiyor"):  # not a HUD error, the action's own error
+    with pytest.raises(ValueError, match="position of .* is unknown"):  # not a HUD error, the action's own error
         obs.act("right_click", Item("n", "ocr", "text", "yeri yok"))
     assert len(seen) == 1
 
