@@ -597,7 +597,7 @@ def test_click_target_previews_before_click(hud_on, monkeypatch):
     assert views.click_target(500, 300, "double_click")
     assert hud_on[0]["kind"] == "cursor" and (hud_on[0]["x"], hud_on[0]["y"]) == (500, 300)  # ALICE's pointer
     assert hud_on[0]["action"] == "double_click"
-    assert hud_on[0]["text"] == "çift tıklıyorum" and waited == [views.CLICK_PREVIEW]
+    assert hud_on[0]["text"] == "double-clicking" and waited == [views.CLICK_PREVIEW]
 
 
 def test_voice_ui_sends_speech_card(hud_on):
@@ -805,19 +805,19 @@ def test_modes_filter_by_density():
     m.apply({"kind": "mode", "value": "quiet"}, 0.0)
     assert [i.id for i in m.visible()] == ["six"] or {i.id for i in m.visible()} == {"six", "__mode__"}
     m.apply({"kind": "mode"}, 0.0)  # shortcut: switches to the next mode and says so briefly
-    assert m.mode == "auto" and any(i.id == "__mode__" and "otomatik" in i.data["text"] for i in m.visible())
+    assert m.mode == "auto" and any(i.id == "__mode__" and "automatic" in i.data["text"] for i in m.visible())
 
 
 def test_history_hotkey_shows_missed_cards():
     m = HudModel()
     m.apply({"kind": "history"}, 0.0)
-    assert "Henüz" in m.items[-1].data["text"]
+    assert "No notifications" in m.items[-1].data["text"]
     for t in ("Bir", "İki", "Üç", "Dört"):
         m.apply({"kind": "card", "title": t, "text": f"{t} yazısı", "ttl": 1}, 0.0)
     m.expire(5.0)
     m.apply({"kind": "history"}, 5.0)
     h = m.items[-1]
-    assert h.id == "__history__" and h.data["title"] == "Son bildirimler"
+    assert h.id == "__history__" and h.data["title"] == "Recent notifications"
     assert h.data["text"].index("Dört") < h.data["text"].index("Üç") and "Bir" not in h.data["text"]
 
 
@@ -830,7 +830,7 @@ def test_voice_state_dedupes_and_clears(hud_on, monkeypatch):
     assert not views.voice_state("listen")  # same state: not sent again
     assert views.voice_state("work", "ekranda")
     assert views.voice_state(None)
-    assert [m.get("text") for m in hud_on] == ["Dinliyorum", "Çalışıyorum · ekranda", None]
+    assert [m.get("text") for m in hud_on] == ["I'm listening", "I'm working · ekranda", None]
     assert hud_on[0]["icon"] == "wave" and hud_on[-1] == {"kind": "clear", "id": "voice"}
 
 

@@ -477,7 +477,7 @@ def test_computer_task_shows_progress_on_hud(ctx, fake_agent_mod, monkeypatch):
     ctx.router = object()
     computer.ComputerTask().run(ctx, goal="g")
     texts = [m.get("text") for m in sent if m.get("id") == "task"]
-    assert texts[:2] == ["Ekran görevi · 1. adım", "Ekran görevi · 2. adım"]
+    assert texts[:2] == ["Screen task · step 1", "Screen task · step 2"]
     assert sent[-1] == {"kind": "clear", "id": "task"}  # removed from the HUD ("Ada") when finished
 
 

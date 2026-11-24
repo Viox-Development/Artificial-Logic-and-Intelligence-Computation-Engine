@@ -170,7 +170,7 @@ def test_ask_region_paths(fake_server, monkeypatch):
 
     monkeypatch.setattr(quick, "select_region", broken)
     qb.ask_region()
-    assert qb.state.bus.events == [{"type": "info", "text": "alan seçilemedi: tkinter yok"}] and urls == []
+    assert qb.state.bus.events == [{"type": "info", "text": "could not select an area: tkinter yok"}] and urls == []
     monkeypatch.setattr(quick, "select_region", lambda: None)  # Esc
     qb.ask_region()
     assert urls == []
@@ -296,7 +296,7 @@ def test_quick_cmd_prints_and_stops(monkeypatch, capsys):
     QB.ok = True
     assert quick.quick_cmd(["--open"]) == 0
     out = capsys.readouterr().out
-    assert "A aç" in out and made[0].opened == 1 and made[0].stopped
+    assert "A open" in out and made[0].opened == 1 and made[0].stopped
     QB.ok = False
     QB.hotkey_problem = "pynput yok"  # the real reason is shown (pynput missing, Wayland, no display)
     assert quick.quick_cmd([]) == 0
@@ -434,13 +434,13 @@ def test_phone_cmd(monkeypatch, capsys):
 
 def test_watch_cmd_status_empty_and_usage(capsys):
     assert phone.watch_cmd([]) == 0
-    assert "henüz saat verisi yok" in capsys.readouterr().out
+    assert "no watch data yet" in capsys.readouterr().out
     assert phone.watch_cmd(["nonsense"]) == 2
     assert "alice watch status" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("age,expected", [(30, "30 sn önce"), (600, "10 dk önce"), (9000, "2.5 sa önce"),
-                                          (None, "hiç")])
+@pytest.mark.parametrize("age,expected", [(30, "30 s ago"), (600, "10 min ago"), (9000, "2.5 h ago"),
+                                          (None, "never")])
 def test_watch_cmd_status_age_format(monkeypatch, capsys, age, expected):
     def cadence(st, key):
         if key == "watch.hr":
@@ -450,8 +450,8 @@ def test_watch_cmd_status_age_format(monkeypatch, capsys, age, expected):
 
     monkeypatch.setattr("alice.health.watch.cadence", cadence)
     assert phone.watch_cmd(["status"]) == 0
-    out = capsys.readouterr().out
-    assert f"son örnek {expected}" in out and "tipik aralık 12 sn" in out and "canlı" in out
+    out = " ".join(capsys.readouterr().out.split())  # the console may wrap long lines
+    assert f"last sample {expected}" in out and "typical gap 12 s" in out and "canlı" in out
     assert "watch.steps" not in out
 
 
@@ -465,7 +465,7 @@ def test_watch_cmd_import(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("alice.health.watch.import_gadgetbridge", imp)
     assert phone.watch_cmd(["import", str(tmp_path / "Gadgetbridge.db")]) == 0
     out = capsys.readouterr().out
-    assert "içe alındı:" in out and "watch.hr 5" in out and got[0].name == "Gadgetbridge.db"
+    assert "imported:" in out and "watch.hr 5" in out and got[0].name == "Gadgetbridge.db"
     monkeypatch.setattr("alice.health.watch.import_gadgetbridge", lambda p, s: {})
     phone.watch_cmd(["import", "x.db"])
     assert "yeni veri yok" in capsys.readouterr().out

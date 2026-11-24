@@ -22,10 +22,11 @@ from pathlib import Path
 from typing import Any
 
 from alice.config import Config, alice_home
+from alice.i18n import _
 
 IDLE_NEW = 600  # if unused for this many seconds, quick bar opens with a new conversation
 
-EXPLAIN_CLIPBOARD = "Panoya kopyaladığım şunu kısaca açıkla; bir hataysa nedenini ve çözümünü söyle:\n\n{text}"
+EXPLAIN_CLIPBOARD = "Briefly explain this, which I copied to the clipboard; if it's an error, tell me the cause and the fix:\n\n{text}"
 
 
 def screen_size() -> tuple[int, int]:
@@ -75,7 +76,7 @@ def select_region():
     canvas = tk.Canvas(root, width=mon["width"], height=mon["height"], highlightthickness=0, cursor="crosshair")
     canvas.pack()
     canvas.create_image(0, 0, image=dim, anchor="nw")
-    canvas.create_text(mon["width"] // 2, 30, text="Sormak istediğin alanı seç · Esc vazgeç", fill="white",
+    canvas.create_text(mon["width"] // 2, 30, text=_("Select the area you want to ask about · Esc to cancel"), fill="white",
                        font=("Segoe UI", 14))
     rect = {"id": None, "x": 0, "y": 0, "bright": None, "photo": None}
 
@@ -171,7 +172,7 @@ class QuickBar:
         try:
             img = select_region()
         except Exception as e:  # if tkinter/mss is not available
-            self.state.bus.publish({"type": "info", "text": f"alan seçilemedi: {e}"})
+            self.state.bus.publish({"type": "info", "text": _("could not select an area: {error}", error=e)})
             return
         if img is not None:
             self.open(image=png_b64(img))
@@ -179,7 +180,7 @@ class QuickBar:
     def explain_clipboard(self) -> None:
         text = read_clipboard().strip()
         if text:
-            self.open(text=EXPLAIN_CLIPBOARD.format(text=text[:6000]), autosend=True)
+            self.open(text=_(EXPLAIN_CLIPBOARD, text=text[:6000]), autosend=True)
         else:
             self.open()
 
@@ -213,7 +214,7 @@ class QuickBar:
         if hk.start():
             self._listener = hk
             return True
-        self.hotkey_problem = getattr(hk, "problem", "") or "kısayollar başka bir program tarafından kullanılıyor"
+        self.hotkey_problem = getattr(hk, "problem", "") or _("the shortcuts are used by another program")
         return False
 
     def stop(self) -> None:
@@ -266,12 +267,12 @@ def quick_cmd(argv: list[str]) -> int:
         qb.open()
     ok = qb.start_hotkeys()
     if not ok:
-        why = getattr(qb, "hotkey_problem", "") or "kısayollar başlatılamadı"
-        console.print(f"[yellow]Kısayollar çalışmıyor:[/] {escape(why)}. Hızlı bar adresi: {qb.url}")
+        why = getattr(qb, "hotkey_problem", "") or _("the shortcuts could not be started")
+        console.print("[yellow]" + _("Shortcuts are not working:") + f"[/] {escape(why)}. " + _("Quick bar address: {url}", url=qb.url))
     else:
         hk = qb.hotkeys
-        console.print(f"[bold magenta]ALICE hızlı bar[/] hazır: {hk['open']} aç · {hk['region']} alan seç · "
-                      f"{hk['clipboard']} panoyu açıklat. [dim]Ctrl+C çık[/]")
+        console.print(("[bold magenta]" + _("ALICE quick bar") + "[/] " + _("ready: {open} open · {region} select an area · {clipboard} explain the clipboard.",
+                        open=hk["open"], region=hk["region"], clipboard=hk["clipboard"]) + " [dim]" + _("Ctrl+C to quit") + "[/]"))
     try:
         while True:
             time.sleep(3600)
