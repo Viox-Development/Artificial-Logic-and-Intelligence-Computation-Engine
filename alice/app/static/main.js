@@ -1,10 +1,10 @@
 "use strict";
 
-/* ALICE — sunucu olayları ve açılış.
-   Sıradan (modül olmayan) betikler: hepsi aynı kapsamı paylaşır, index.html'deki sırayla yüklenir
-   (app.js → projects.js → ui.js → main.js). Yükleme anında çalışan kod sadece önceki dosyaları kullanır. */
+/* ALICE — server events and startup.
+   Plain (non-module) scripts: they all share one scope and load in index.html's order
+   (i18n.js → app.js → projects.js → ui.js → main.js). Code that runs at load time uses only earlier files. */
 
-/* ==================================================================== olaylar */
+/* ===================================================================== events */
 const handlers = {
   status: applyStatus,
   team: onTeamEvent,
@@ -15,11 +15,11 @@ const handlers = {
   btw: (ev) => addBtw(ev),
   suggest: (ev) => showSuggest(ev.items),
   busy: (ev) => { S.status.busy = ev.value; setBusy(ev.value); if (ev.value) showSuggest([]); else loadSessions(); },
-  stream_start: () => { if (!S.cur) showWorking("Düşünüyor"); },
+  stream_start: () => { if (!S.cur) showWorking(_("Thinking")); },
   thinking: (ev) => onThinking(ev.text),
   delta: (ev) => onDelta(ev.text),
   stream_reset: () => { if (S.cur) { S.cur.text = ""; S.cur.prose.replaceChildren(); } },
-  stream_end: (ev) => { onStreamEnd(ev.text, ev.source); if (S.busy) showWorking("Çalışıyor"); },
+  stream_end: (ev) => { onStreamEnd(ev.text, ev.source); if (S.busy) showWorking(_("Working")); },
   tool_start: (ev) => {
     toolRow(ev.id, ev.name, ev.summary, true);
     // Ajan web'de iş yaparken yerleşik tarayıcı paneli kendiliğinden açılır (Ayarlar'dan kapatılabilir).
@@ -31,7 +31,7 @@ const handlers = {
     // Sonuç (diff, plan kartı) eklenmeden önce alttaysak, eklendikten sonra da altta kal.
     const stick = nearBottom();
     finishTool(t, ev, true);
-    if (S.busy) showWorking("Çalışıyor");
+    if (S.busy) showWorking(_("Working"));
     toBottom(stick);
   },
   update: renderUpdate,
@@ -39,13 +39,13 @@ const handlers = {
   permission_done: onPermissionDone,
   ask_choice: onChoice,
   ask_choice_done: onChoiceDone,
-  info: (ev) => addNote(ev.text, /hata|başarısız|cevap veremedi|başlatılamadı/i.test(ev.text) ? "err" :
+  info: (ev) => addNote(ev.text, /hata|başarısız|cevap veremedi|başlatılamadı|error|failed|could not/i.test(ev.text) ? "err" :
     /durduruldu|limit/i.test(ev.text) ? "warn" : ""),
   route: (ev) => {
     const m = ev.text.match(/^brain -> (.+)$/);
     if (m) { applyStatus({ model: m[1] }); return; }
     // Model geçişleri ve sağlayıcı hataları: hangi modelin neden atlandığı görünsün.
-    if (!/^(fast|vision) -> /.test(ev.text)) addNote(ev.text, /hata|geçildi|meşgul|atlandı/i.test(ev.text) ? "warn" : "");
+    if (!/^(fast|vision) -> /.test(ev.text)) addNote(ev.text, /hata|geçildi|meşgul|atlandı|error|switched|busy|skipped/i.test(ev.text) ? "warn" : "");
   },
 };
 // Çalışıyor göstergesini her zaman en altta tut.
@@ -73,7 +73,7 @@ function connect() {
   es.onopen = () => {
     setOnline(true);
     if (connectedOnce) {
-      loadHistory().then(() => { if (S.busy) showWorking("Çalışıyor"); });
+      loadHistory().then(() => { if (S.busy) showWorking(_("Working")); });
       loadSessions();
       loadProjects();
       if (S.proj) refreshProject();
@@ -97,15 +97,15 @@ function connect() {
 
 function sessionTitle(id) {
   const s = (S.sessions || []).find((x) => x.id === id);
-  return s && s.title ? `“${s.title.slice(0, 40)}”` : "Arkadaki sohbet";
+  return s && s.title ? `“${s.title.slice(0, 40)}”` : _("A background chat");
 }
 function onBackground(ev) {
   if (ev.type === "busy") {
-    if (!ev.value) toast(`${sessionTitle(ev.sid)} bitti`);
+    if (!ev.value) toast(_("{chat} finished", { chat: sessionTitle(ev.sid) }));
     refreshStatus();
     loadSessions();
   } else if (ev.type === "permission" || ev.type === "ask_choice") {
-    toast(`${sessionTitle(ev.sid)} senden onay bekliyor; ona geçince görürsün`);
+    toast(_("{chat} is waiting for your approval; you'll see it when you switch to it", { chat: sessionTitle(ev.sid) }));
     refreshStatus();
   }
 }
@@ -118,7 +118,7 @@ function onBackground(ev) {
   loadSessions();
   maybeWizard();  // first start after the installer: language, a model, optional features
   await loadProjects();
-  // Telefondan/bağlantıdan gelen adres: #projects (listeyi aç) ya da #p=<id> (projeyi aç)
+  // Address from the phone or a link: #projects (open the list) or #p=<id> (open the project)
   const h = location.hash;
   if (h.startsWith("#p=")) openProject(decodeURIComponent(h.slice(3)));
   else if (h === "#projects") {
@@ -132,18 +132,18 @@ function onBackground(ev) {
   input.focus();
   refreshChanges();
   if (PREFS.panel) openPanel();
-  // SSE kısa süre koparsa tur bitti olayı kaçabilir ve arayüz sonsuza kadar "Çalışıyor"da kalır.
-  // Durumu her zaman sunucudan uzlaştır; busy iken de bu yalnızca hafif bir GET isteğidir.
+  // If SSE drops briefly the turn-done event can be missed and the UI stays on "Working" forever.
+  // Always reconcile the state with the server; even while busy this is only a light GET.
   setInterval(refreshStatus, 10000);
   const clock = () => {
     const m = Math.floor((Date.now() - S.started) / 60000);
-    $("#stClock").textContent = m < 60 ? `${m} dk` : `${Math.floor(m / 60)} sa ${m % 60} dk`;
+    $("#stClock").textContent = m < 60 ? _("{m} min", { m }) : _("{h} h {m} min", { h: Math.floor(m / 60), m: m % 60 });
   };
   clock();
   setInterval(clock, 30000);
 })();
 
-/* "Sen yokken": pencere 20 dakikadan uzun gizli kaldıysa dönüşte öndeki sohbetin nerede kaldığını özetle. */
+/* "While you were away": if the window was hidden for over 20 minutes, summarize where the chat in front stands. */
 (() => {
   let hiddenAt = 0;
   document.addEventListener("visibilitychange", async () => {
@@ -153,14 +153,14 @@ function onBackground(ev) {
     const r = await api("/api/recap").catch(() => null);
     if (!r || !r.text) return;
     const card = el("div", "btw-card recap");
-    card.append(el("div", "btw-q", "Sen yokken"), el("div", "btw-a", r.text));
+    card.append(el("div", "btw-q", _("While you were away")), el("div", "btw-a", r.text));
     add(card);
     toBottom(true);
   });
 })();
 
-/* Sonraki mesaj önerileri: tur bitince en fazla iki düğme. Tıklayınca kutuya yazılır (değiştirip gönderebilirsin);
-   yazmaya başlayınca ya da yeni tur başlayınca kaybolur. */
+/* Next-message suggestions: at most two buttons when a turn ends. A click puts it in the box (edit it before sending);
+   they disappear when you start typing or a new turn starts. */
 function showSuggest(items) {
   let box = document.getElementById("turnSuggest");
   if (!box) {
