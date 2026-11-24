@@ -220,7 +220,7 @@ def save_nick(nick: str) -> None:
     try:
         _nick_path().write_text(json.dumps({"nick": nick}, ensure_ascii=False), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the nickname is asked again next time
 
 
 class WarThunderPoller:

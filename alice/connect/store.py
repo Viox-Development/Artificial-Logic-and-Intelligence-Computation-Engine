@@ -48,7 +48,7 @@ def _write(data: dict[str, Any]) -> None:
     try:
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
-        pass
+        pass  # best effort; some file systems don't support these permissions
 
 
 def get(name: str) -> dict[str, Any]:

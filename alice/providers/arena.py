@@ -201,7 +201,7 @@ def refresh(emit: Callable[[str], None] = lambda s: None, get: Callable[..., Any
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
-        pass
+        pass  # the cache is rebuilt on the next fetch
     set_cache(data)
     emit(f"LMArena sıralaması güncellendi ({len(scores)} model, {published})")
     return data

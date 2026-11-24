@@ -133,7 +133,7 @@ def scan(cfg, router, mem, notify: Callable[[str, str], bool], now: float | None
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(st), encoding="utf-8")
     except OSError:
-        pass
+        pass  # state is a convenience: at worst a mail is checked again next round
     if added:
         notify("E-postadan hatırlatma kuruldu", "\n".join(added) + "\nTakvime de eklememi istersen söyle.")
     return added
