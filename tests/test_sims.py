@@ -393,11 +393,11 @@ def test_dcs_extra_fields_described():
                   "wp_num": 3, "weapons": "AIM-120C x2, AIM-9X x2", "gun": 510, "warnings": "LeftEngineFailure",
                   "gear": 0, "flaps": 0})
     text = "\n".join(describe_extra(s))
-    assert "Mach 0.62" in text and "manyetik yön 006°" in text and "yatış -20°" in text
-    assert "radar irtifa 3,000 ft" in text and "devir %92" in text
-    assert "rüzgar 000° yönünden 19 kt" in text  # wind from the north pushes south
-    assert "sıradaki waypoint 3: 000° (gerçek), 10.0 nm" in text
-    assert "AIM-120C x2" in text and "top mermisi 510" in text and "UYARI / ARIZA: LeftEngineFailure" in text
+    assert "Mach 0.62" in text and "magnetic heading 006°" in text and "bank -20°" in text
+    assert "radar altitude 3,000 ft" in text and "rpm 92%" in text
+    assert "wind from 000° at 19 kt" in text  # wind from the north pushes south
+    assert "next waypoint 3: 000° (true), 10.0 nm" in text
+    assert "AIM-120C x2" in text and "gun rounds 510" in text and "WARNING / FAILURE: LeftEngineFailure" in text
 
 
 def test_warthunder_extra_fields():
@@ -408,8 +408,8 @@ def test_warthunder_extra_fields():
                   "oil temp 1, C": 80, "Mfuel, kg": 300, "Mfuel0, kg": 600, "flaps, %": 20},
                  {"type": "spitfire", "compass": 270, "aviahorizon_roll": 10, "aviahorizon_pitch": 2}, 1.0)
     text = "\n".join(describe_extra(s))
-    assert s.heading == 270 and "Mach 0.45" in text and "gaz %100" in text and "yağ 80°C" in text
-    assert "yakıt %50" in text and "flap %20" in text
+    assert s.heading == 270 and "Mach 0.45" in text and "throttle 100%" in text and "oil 80°C" in text
+    assert "fuel 50%" in text and "flaps 20%" in text
 
 
 def test_proactive_callouts():

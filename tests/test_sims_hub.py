@@ -300,7 +300,7 @@ def test_status_in_air_full(h):
     assert "  yakıt 2000 kg, tüketim 3600 kg/sa, 33 dk kaldı, üs 10 nm, bingo 490 kg (+1510 kg pay)" in lines
     # home is to the east (z+), nose points north: turn 90° right
     assert "  üs (kalkış noktası): 090° yönünde (gerçek kuzey), 10 nm, şu an burnun 000°: 90° sağa dön" in lines
-    assert "  silahlar: AIM-120 x2" in lines
+    assert "  weapons: AIM-120 x2" in lines
     assert not any("BİLİNMİYOR" in ln for ln in lines)
     assert "  kurulu uyarı: üsse 5 mil kalınca söylenecek" in lines
     assert lines[-1] == "  chaff 30, flare 15"

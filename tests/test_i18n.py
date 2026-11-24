@@ -99,7 +99,7 @@ def _source_strings() -> dict[str, str]:
     found = _app_strings()
     for p in ROOT.rglob("*.py"):
         for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_"
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("_", "spoken")
                     and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
                 found.setdefault(node.args[0].value, f"{p.relative_to(ROOT.parent)}:{node.lineno}")
     return found

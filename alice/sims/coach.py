@@ -138,6 +138,6 @@ def patterns(ctxs: list[dict[str, Any]]) -> dict[str, str]:
 
 
 # Short tip added to an announcement during a match (pattern -> addition). The flight code uses it once.
-HINTS = {"sam": "Geçen ölümlerinin çoğu hava savunmasındandı, alçal ya da çık.",
-         "low_turn_six": "Alçakta uzun dönme, irtifa kazan.",
-         "six": "Arkanı kontrol et."}
+HINTS = {"sam": "Most of your recent deaths were to air defences, go low or climb.",
+         "low_turn_six": "Don't make long turns down low, gain altitude.",
+         "six": "Check your six."}  # spoken in the speech language (spoken())

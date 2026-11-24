@@ -120,7 +120,7 @@ def snapshot(store: Any, now: float | None = None, flights: list[dict[str, Any]]
     if recent and now - float(recent[-1].get("end_wall") or 0) < 6 * 3600:
         lo = float(recent[0]["start_wall"])
         sixes = [e.ts for e in store.events(since=lo, kind="flight", limit=2000)
-                 if (e.body or "").startswith("Arkanda düşman")]
+                 if (e.body or "").startswith(("Arkanda düşman", "Enemy behind you"))]
         snap.recent = len(recent)
         snap.shot_from_six = sum(1 for f in recent if f.get("touchdown_vv_ms") is None and any(
             0 <= float(f.get("end_wall") or 0) - t <= SIX_BEFORE_DEATH for t in sixes))

@@ -150,6 +150,18 @@ def speech_language_name(value: Any = None) -> str:
     return LANGUAGE_NAMES.get(lang, lang)
 
 
+def spoken(text: str, /, **values: Any) -> str:
+    """`text` in the speech language, with `values` filled in: for what ALICE says aloud (flight callouts), which
+    follows [voice] language rather than the interface."""
+    out = catalog(speech_language()).get(text, text)
+    if not values:
+        return out
+    try:
+        return out.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return text.format(**values)
+
+
 def pick(en: str, tr: str) -> str:
     """For the rare text that is built in code instead of looked up: the English or the Turkish one."""
     return tr if language() == "tr" else en

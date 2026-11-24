@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import re
 
+from alice.i18n import spoken
 from alice.sims import flight
 from alice.voice.audio import Audio
 from alice.voice.speaker import Speaker
@@ -36,8 +38,10 @@ def test_sabit_uyarilar_kodda_soylenenlerle_ayni():
     src = inspect.getsource(flight)
     items = flight.callouts()
     assert len(items) > 20 and items[0][0].startswith("Yere yaklaşıyorsun")
+    # The cached sentence must be the one the code says: both go through spoken() with the same English key.
+    said = {spoken(k) for k in re.findall(r'spoken\("((?:[^"\\]|\\.)+)"\)', src)}
     for text, _ in items[:4]:
-        assert f'"{text}"' in src  # if the sentence changes in the code, it won't match the cached one
+        assert text in said  # if the sentence changes in the code, it won't match the cached one
 
 
 def test_onceden_uretilir_sinirli_ve_tekrar_uretilmez(tmp_path):
@@ -58,3 +62,12 @@ def test_ucusta_ve_kota_dolunca_durur(tmp_path):
     assert sp.prewarm(flight.callouts(), limit=5, background=False) == 1
     flying = TTSRouter(Engine(), None, policy=lambda: {"local_gpu": False}, cache=SpeechCache(tmp_path / "b"))
     assert Speaker(flying, Player()).prewarm(flight.callouts(), background=False) == 0
+
+
+def test_callouts_follow_the_speech_language(monkeypatch):
+    monkeypatch.setenv("ALICE_SPEECH_LANG", "en")
+    items = flight.callouts()
+    assert items[0][0] == "Ground close, pull up!" and ("Warning: left engine fire.", "urgent") in items
+    assert flight.clock_from(3) == "3" and flight.FlightCompanion._km(1200) == "1.2 kilometres"
+    monkeypatch.setenv("ALICE_SPEECH_LANG", "tr")
+    assert flight.clock_from(3) == "3'ten" and flight.FlightCompanion._km(1200) == "1,2 kilometre"
