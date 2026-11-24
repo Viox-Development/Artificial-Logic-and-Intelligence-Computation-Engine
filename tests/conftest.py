@@ -36,6 +36,11 @@ def isolated_home(tmp_path, monkeypatch):
 
     monkeypatch.setattr(arena, "_cache", None)  # LMArena verisi yok: testler elle yazılmış tabloyla çalışır
     monkeypatch.setattr(ranking, "_offset", (0.0, 0))
+    from alice import i18n
+
+    # Interface language: English unless a test sets it; a test that switches it (the "lang" action) must not leak.
+    monkeypatch.delenv("ALICE_LANG", raising=False)
+    i18n.set_language(None)
     from alice import anticipate
 
     # Gerçek Windows "Rahatsız etmeyin" ayarına testte asla dokunulmasın (bir test uçuş moduna geçince açık kalmıştı)
