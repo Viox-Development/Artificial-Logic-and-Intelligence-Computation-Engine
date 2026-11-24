@@ -75,7 +75,7 @@ def _fernet():
 # ----------------------------------------------------------------------- DPAPI
 def _blob_cls():
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     class BLOB(ctypes.Structure):
         _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
@@ -232,7 +232,7 @@ def different(prev: Any, cur: Any) -> bool:
 def _foreground() -> tuple[str, str, tuple[int, int, int, int] | None]:
     """(program, title, window box)."""
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     from alice.core.monitors import foreground_process
 

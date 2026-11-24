@@ -576,7 +576,7 @@ class DesktopObserver:
         if sys.platform != "win32":
             return None
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         from alice.tools.imaging import screen_capture
         from PIL import Image

@@ -111,7 +111,7 @@ def monitor_rect(index: int = 0) -> tuple[int, int, int, int] | None:
     if not IS_WIN:
         return None
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     class MONITORINFO(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
@@ -142,7 +142,7 @@ class Win32:
 
     def __init__(self):
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         self.ctypes, self.wt = ctypes, wintypes
         self.user32 = u = ctypes.windll.user32

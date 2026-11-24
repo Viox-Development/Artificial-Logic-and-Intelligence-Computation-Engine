@@ -131,7 +131,7 @@ def foreground_process() -> str | None:
         return None
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         hwnd = user32.GetForegroundWindow()
@@ -153,7 +153,7 @@ def _private_ws_reader() -> Callable[[int], int | None] | None:
     _PRIVATE_READER = None
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS_EX2 (Windows 10 1809+)
             _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
@@ -195,9 +195,8 @@ def _win_proc_stats() -> list[tuple[int, str, int, float]] | None:
     if sys.platform != "win32":
         return None
     try:
-        from psutil import _psplatform
-
-        mem_info, times = _psplatform.cext.proc_memory_info, _psplatform.cext.proc_times
+        cext = psutil._psplatform.cext  # type: ignore[attr-defined]
+        mem_info, times = cext.proc_memory_info, cext.proc_times
     except (ImportError, AttributeError):
         return None
     out = []

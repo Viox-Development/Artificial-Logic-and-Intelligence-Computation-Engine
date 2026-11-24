@@ -63,13 +63,14 @@ def set_volume(percent: int) -> str:
     percent = max(0, min(100, int(percent)))
     if sys.platform == "win32":
         try:
-            from ctypes import POINTER, cast
+            import ctypes
 
             from comtypes import CLSCTX_ALL
             from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
             dev = AudioUtilities.GetSpeakers()
-            vol = cast(dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None), POINTER(IAudioEndpointVolume))
+            vol = ctypes.cast(dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None),
+                              ctypes.POINTER(IAudioEndpointVolume))
             vol.SetMasterVolumeLevelScalar(percent / 100, None)
             return f"ses %{percent}"
         except Exception:

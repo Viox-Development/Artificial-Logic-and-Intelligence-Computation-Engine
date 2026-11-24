@@ -28,7 +28,7 @@ IGNORE_CLASSES = {"tooltips_class32", "SysShadow", "Shell_TrayWnd", "Progman", "
 
 def _win32():
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     return ctypes, wintypes, ctypes.windll.user32
 

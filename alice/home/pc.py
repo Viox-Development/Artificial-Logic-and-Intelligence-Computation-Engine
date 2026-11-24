@@ -215,7 +215,7 @@ VCP_BRIGHTNESS = 0x10
 def _physical_monitors() -> list[tuple[object, str]]:
     """External monitors that speak DDC/CI: [(handle, description)]. Call _release when done."""
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     class PHYSICAL_MONITOR(ctypes.Structure):
         _fields_ = [("handle", wintypes.HANDLE), ("desc", ctypes.c_wchar * 128)]
@@ -298,7 +298,7 @@ def brightness(level: int | None = None, monitor: int | None = None) -> str:
     if _linux():
         return _linux_brightness(level, monitor)
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     mons = _physical_monitors()
     lines = []

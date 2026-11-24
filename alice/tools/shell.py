@@ -456,7 +456,7 @@ def _visible_window_pids() -> set[int]:
     if not IS_WIN:
         return set()
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
     pids: set[int] = set()
