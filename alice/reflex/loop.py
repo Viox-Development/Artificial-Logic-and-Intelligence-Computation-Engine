@@ -109,13 +109,13 @@ class ReflexResult:
     changes: dict[str, list[str]] | None = None  # başa göre ekranda çıkan/kaybolan yazılar
 
     def report(self) -> str:
-        head = f"reflex: {self.status} ({self.steps} adım) - {self.reason}\nekran: {self.title} | {self.location}"
-        out = head + ("\nadımlar:\n" + "\n".join(self.log[-15:]) if self.log else "")
+        head = f"reflex: {self.status} ({self.steps} steps) - {self.reason}\nscreen: {self.title} | {self.location}"
+        out = head + ("\nsteps:\n" + "\n".join(self.log[-15:]) if self.log else "")
         c = self.changes or {}
         if c.get("appeared") or c.get("disappeared"):
             # Sonuç (hesap makinesindeki sayı) burada görünür; ana model okumak için ayrı tur harcamaz.
-            out += ("\nekranda başa göre çıkan: " + "; ".join(c.get("appeared") or ["-"])
-                    + "\nkaybolan: " + "; ".join(c.get("disappeared") or ["-"]))
+            out += ("\nwhat's on screen, by relevance: " + "; ".join(c.get("appeared") or ["-"])
+                    + "\ndisappeared: " + "; ".join(c.get("disappeared") or ["-"]))
         return out
 
 
@@ -156,21 +156,21 @@ class ReflexLoop:
         """Pencerenin Jev'e gidecek görüntüsü, Box kesirlerini asıl görüntüye çevirme çarpanı ve asıl görüntü;
         olmuyorsa None."""
         snap = getattr(self.obs, "snapshot", None)
-        why = ("" if self.visual else "görsel istek bu çalışmada reddedildi") or \
-              ("" if callable(snap) else "bu gözlemci ekran görüntüsü alamıyor") or \
+        why = ("" if self.visual else "the image request was refused in this run") or \
+              ("" if callable(snap) else "this observer can't take screenshots") or \
               ("" if getattr(self.decider, "supports_images", False)
-               else "görsel karar yok (TypeSafe anahtarı yok, [decider] jev_images kapalı ya da Jev görseli reddetti)")
+               else "no visual decision (no TypeSafe key, [decider] jev_images off, or Jev refused the image)")
         img = None
         if not why:
             try:
                 img = snap()
             except Exception as e:  # noqa: BLE001 - görüntü alınamadı: görselsiz devam
-                why = f"ekran görüntüsü alınamadı: {e}"
+                why = f"could not take a screenshot: {e}"
             else:
-                why = "" if img is not None else "öndeki pencerenin görüntüsü alınamadı"
+                why = "" if img is not None else "could not capture the foreground window"
         if why:
             if why != self._no_look:  # her adımda aynı uyarıyı tekrarlama
-                self.emit(f"ekrana bakılmıyor, sadece erişilebilirlik ağacıyla devam: {why}")
+                self.emit(f"not looking at the screen; continuing with the accessibility tree only: {why}")
                 self._no_look = why
             return None
         return prepare_image(img), padded_fraction(img.size), img
@@ -190,7 +190,7 @@ class ReflexLoop:
                 {"goal": goal, "screen": ZOOM_REF, "note": "`screen` is a zoomed-in part of the window"},
                 {"target_visible": Noul(TARGET_VISIBLE), "target": Box(TARGET)}, images={ZOOM_REF: prepare_image(crop)})
         except DeciderError as e:
-            self.emit(f"yakından bakılamadı: {e}")
+            self.emit(f"could not look closer: {e}")
             return None
         zb = d["target"].value
         sx, sy = padded_fraction(crop.size)
@@ -209,7 +209,7 @@ class ReflexLoop:
             try:
                 ob = self.obs.observe()
             except Exception as e:  # noqa: BLE001
-                return ReflexResult("error", step - 1, f"gözlem hatası: {e}", log)
+                return ReflexResult("error", step - 1, f"observation error: {e}", log)
             cands = rank(ob.elements, goal, self.max_cands, typed)
             options: dict[str, str] = {}
             by_key: dict[str, Element] = {}
@@ -236,7 +236,7 @@ class ReflexLoop:
                     }, images={SCREEN_REF: look[0]})
                 except DeciderError as e:
                     self.visual = False
-                    self.emit(f"görsel karar olmadı, görselsiz devam: {e}")
+                    self.emit(f"no visual decision; continuing without the image: {e}")
             if d is None:
                 state = (
                     f"GOAL: {goal}\nSCREEN: {ob.title} | {ob.location}\n"
@@ -249,25 +249,25 @@ class ReflexLoop:
                         "done": Noul("Looking at the SCREEN and RECENT ACTIONS, is the GOAL already fully achieved?"),
                     })
                 except DeciderError as e:
-                    return ReflexResult("error", step - 1, f"karar motoru hatası: {e}", log, ob.title, ob.location)
+                    return ReflexResult("error", step - 1, f"decision engine error: {e}", log, ob.title, ob.location)
             nxt, done = d["next"], d["done"]
             tv = d.answers.get("target_visible")
             seen_on_screen = tv.value if tv is not None else None
-            self.emit(f"[{step}] {nxt.value} (güven {nxt.confidence:.2f}, bitti? {done.value:.2f}"
-                      + (f", ekranda var mı? {seen_on_screen:.2f}" if seen_on_screen is not None else "")
+            self.emit(f"[{step}] {nxt.value} (confidence {nxt.confidence:.2f}, done? {done.value:.2f}"
+                      + (f", on screen? {seen_on_screen:.2f}" if seen_on_screen is not None else "")
                       + f") {(time.monotonic() - t0) * 1000:.0f} ms via {d.engine}"
-                      + (" [görsel]" if seen_on_screen is not None else " [metin]"))
+                      + (" [visual]" if seen_on_screen is not None else " [text]"))
 
             if done.value >= 0.85 or nxt.value == "done":
-                return ReflexResult("done", step - 1, "hedefe ulaşıldı", log, ob.title, ob.location)
+                return ReflexResult("done", step - 1, "goal reached", log, ob.title, ob.location)
             if (seen_on_screen is not None and seen_on_screen >= ZOOM_MIN and nxt.value != VISUAL_KEY
                     and (nxt.value == "stuck" or nxt.confidence < self.min_conf)):
                 # Seçeneklerde yok (ör. WebView2 penceresi ağaçta sadece "Document") ama Jev hedefi ekranda görüyor:
                 # pes etmek yerine gördüğü yere tıkla.
-                self.emit(f"[{step}] seçeneklerde uygun yok ama hedef ekranda görünüyor: ekrandaki yere tıklanıyor")
+                self.emit(f"[{step}] no suitable option, but the goal is visible on screen: clicking that place on screen")
                 nxt = replace(nxt, value=VISUAL_KEY)
             if nxt.value == "stuck":
-                return ReflexResult("needs_help", step - 1, "uygun seçenek yok", log, ob.title, ob.location)
+                return ReflexResult("needs_help", step - 1, "no suitable option", log, ob.title, ob.location)
             if nxt.value == VISUAL_KEY:
                 # Box her zaman bir kutu döndürür: "ekranda var mı?" düşükse kutuya güvenme, beyne bırak.
                 seen = d["target_visible"].value
@@ -278,43 +278,43 @@ class ReflexLoop:
                 fx, fy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
                 close = self._zoom(goal, look[2], box) if look is not None and seen >= ZOOM_MIN else None
                 if close is not None:
-                    self.emit(f"[{step}] yakından: var mı? {close[0]:.2f}, kutu ({close[1]:.2f}, {close[2]:.2f}) "
-                              f"(uzaktan {seen:.2f}, ({fx:.2f}, {fy:.2f}))")
+                    self.emit(f"[{step}] close up: there? {close[0]:.2f}, box ({close[1]:.2f}, {close[2]:.2f}) "
+                              f"(from afar {seen:.2f}, ({fx:.2f}, {fy:.2f}))")
                     if close[0] >= VISIBLE_MIN:
                         seen, fx, fy = close
                 if seen < VISIBLE_MIN:
-                    near = f", yakından {close[0]:.2f}" if close is not None else ""
+                    near = f", close up {close[0]:.2f}" if close is not None else ""
                     return ReflexResult("needs_help", step - 1,
-                                        f"ekranda tıklanacak şey bulunamadı (var mı? {seen:.2f}{near})",
+                                        f"nothing to click found on screen (there? {seen:.2f}{near})",
                                         log, ob.title, ob.location)
                 last_keys.append(f"{VISUAL_KEY}@{fx:.2f},{fy:.2f}")
                 if len(last_keys) >= 3 and len(set(last_keys[-3:])) == 1:
-                    return ReflexResult("needs_help", step - 1, "aynı yere tekrar tekrar tıklanıyor",
+                    return ReflexResult("needs_help", step - 1, "clicking the same place again and again",
                                         log, ob.title, ob.location)
                 try:
                     self.obs.click_at(fx, fy)
-                    log.append(f"{step}. ekranda tıklandı ({fx:.2f}, {fy:.2f}) var mı? {seen:.2f}")
+                    log.append(f"{step}. clicked on screen ({fx:.2f}, {fy:.2f}) there? {seen:.2f}")
                 except Exception as e:  # noqa: BLE001
-                    log.append(f"{step}. ekranda tıklama -> HATA {e}")
+                    log.append(f"{step}. click on screen -> ERROR {e}")
                     time.sleep(self.settle)
                     continue
                 time.sleep(self.settle)
                 if single_click_goal(goal):
-                    return ReflexResult("clicked", step, f"ekranda hedef görülen yere tıklandı ({fx:.2f}, {fy:.2f})",
+                    return ReflexResult("clicked", step, f"clicked where the goal was seen on screen ({fx:.2f}, {fy:.2f})",
                                         log, ob.title, ob.location)
                 continue
             if nxt.confidence < self.min_conf and not _named_in_goal(nxt.value, by_key, ob.elements, goal):
                 return ReflexResult("needs_help", step - 1,
-                                    f"düşük güven ({nxt.confidence:.2f}) - '{options.get(nxt.value, nxt.value)}'",
+                                    f"low confidence ({nxt.confidence:.2f}) - '{options.get(nxt.value, nxt.value)}'",
                                     log, ob.title, ob.location)
             el = by_key.get(nxt.value)
             if el is not None and login_text(f"{el.label} {el.value}", goal):
                 # Giriş kullanıcının işi (bkz. LOGIN_RX): oturumu kapalı sitede numara yazmaya kalkmasın.
-                return ReflexResult("needs_login", step - 1, f"giriş ekranı: '{el.label[:60]}' kullanıcının girişini "
-                                    "istiyor", log, ob.title, ob.location)
+                return ReflexResult("needs_login", step - 1, f"sign-in screen: '{el.label[:60]}' asks for the user's "
+                                    "sign-in", log, ob.title, ob.location)
             last_keys.append(nxt.value)
             if len(last_keys) >= 3 and len(set(last_keys[-3:])) == 1:
-                return ReflexResult("needs_help", step - 1, f"aynı aksiyon tekrarlanıyor: {nxt.value}",
+                return ReflexResult("needs_help", step - 1, f"the same action keeps repeating: {nxt.value}",
                                     log, ob.title, ob.location)
 
             try:
@@ -324,7 +324,7 @@ class ReflexLoop:
                 continue
             log.append(f"{step}. {entry}")
             time.sleep(self.settle)
-        return ReflexResult("max_steps", max_steps, "adım limiti doldu", log, ob.title, ob.location)
+        return ReflexResult("max_steps", max_steps, "the step limit ran out", log, ob.title, ob.location)
 
     def _act(self, key: str, by_key: dict[str, Element], goal: str, inputs: dict[str, str],
              typed: set[int], options: dict[str, str]) -> str:
@@ -354,7 +354,7 @@ class ReflexLoop:
         if len(inputs) == 1:
             return next(iter(inputs.values()))
         if self.text_writer is None:
-            raise DeciderError("metin üretici yok")
+            raise DeciderError("no text generator")
         return self.text_writer(goal, el.describe())
 
 

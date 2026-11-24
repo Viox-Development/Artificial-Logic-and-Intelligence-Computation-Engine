@@ -219,7 +219,7 @@ def test_back_and_forth_loop_is_stopped():
 
     obs = Flip()
     res = ScreenAgent(obs, Brain(), settle=0).run("pick a tech", max_steps=15)
-    assert res.status == "needs_help" and "döngü" in res.reason and obs.acts == 4
+    assert res.status == "needs_help" and "loop" in res.reason and obs.acts == 4
 
 
 def test_agent_gives_jev_changes_since_start_and_keeps_evidence():
@@ -676,5 +676,5 @@ def test_agent_stops_after_first_change_and_drags_what_it_sees():
 
     board = Board()
     res = ScreenAgent(board, Brain(visible=0.2), settle=0).run("drag the card", max_steps=3)
-    assert res.status == "needs_help" and "sürüklenecek" in res.reason and board.drags == []
+    assert res.status == "needs_help" and "nothing to drag" in res.reason and board.drags == []
 

@@ -201,19 +201,19 @@ def test_reflex_zooms_in_when_unsure_and_clicks_the_close_up_box():
     assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
     crop = Image.open(__import__("io").BytesIO(dec.zooms[0][1]))
     assert crop.size == (360, 320)  # 30% x 40% of the window, at full resolution (not downscaled)
-    assert any("yakından: var mı? 0.92" in ln for ln in lines)
+    assert any("close up: there? 0.92" in ln for ln in lines)
 
 
 def test_reflex_gives_up_when_close_up_also_unsure():
     obs = WebViewObserver()
     res = ReflexLoop(obs, VisualDecider(obs, visible=0.6, zoom_visible=0.3), settle=0).run("Ayarlar'ı aç")
-    assert res.status == "needs_help" and "yakından 0.30" in res.reason and obs.clicked == []
+    assert res.status == "needs_help" and "close up 0.30" in res.reason and obs.clicked == []
 
 
 def test_reflex_does_not_trust_box_when_target_not_visible():
     obs = WebViewObserver()
     res = ReflexLoop(obs, VisualDecider(obs, visible=0.3), settle=0).run("Ayarlar'ı aç")
-    assert res.status == "needs_help" and "bulunamadı" in res.reason and obs.clicked == []
+    assert res.status == "needs_help" and "found" in res.reason and obs.clicked == []
 
 
 def test_reflex_falls_back_to_text_when_image_request_fails():
@@ -253,7 +253,7 @@ def test_reflex_clicks_seen_target_even_when_jev_picks_stuck():
     lines = []
     res = ReflexLoop(obs, dec, settle=0, emit=lines.append).run("Projelerdeki ilk projeye tıkla")
     assert res.status == "clicked" and obs.clicked == [(0.85, 0.15)]
-    assert "[görsel]" in lines[0] and "ekranda var mı? 0.95" in lines[0]
+    assert "[visual]" in lines[0] and "on screen? 0.95" in lines[0]
 
 
 def test_reflex_says_why_it_cannot_look():
@@ -270,7 +270,7 @@ def test_reflex_says_why_it_cannot_look():
     lines = []
     res = ReflexLoop(obs, TextOnly(), settle=0, emit=lines.append).run("Ayarlar'ı aç")
     assert res.status == "needs_help"
-    assert "ekrana bakılmıyor" in lines[0] and "jev_images" in lines[0] and "[metin]" in lines[1]
+    assert "not looking at the screen" in lines[0] and "jev_images" in lines[0] and "[text]" in lines[1]
 
 
 def test_image_check_reports_box_position():

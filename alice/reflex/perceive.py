@@ -212,14 +212,14 @@ def _engine() -> Any:
     import sys
 
     if sys.platform != "win32":
-        _ocr_error = "ekran okuma (OCR) şimdilik sadece Windows'ta"
+        _ocr_error = "screen reading (OCR) is Windows-only for now"
         raise RuntimeError(_ocr_error)
     try:
         from winrt.windows.media.ocr import OcrEngine
     except ImportError:
         from alice.deps import install_command
 
-        _ocr_error = f"OCR paketi bu Python'da kurulu değil (ALICE açılışta kendisi kurar), elle: {install_command([])}"
+        _ocr_error = f"the OCR package isn't installed in this Python (ALICE installs it at startup), by hand: {install_command([])}"
         raise RuntimeError(_ocr_error) from None
     eng = OcrEngine.try_create_from_user_profile_languages()
     if eng is None:

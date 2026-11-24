@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from alice.reflex.perceive import (Item, Screen, build_items, changed_regions, mark_fresh, ocr_available, ocr_changed,
                                    ocr_image)
+from alice.i18n import _
 from alice.tools.base import ToolContext, ToolError
 
 EDITABLE_TAGS = {"input", "textarea"}
@@ -100,7 +101,7 @@ def focused_control() -> str:
 
         el = UIAElementInfo(IUIA().iuia.GetFocusedElement())
         window, p = "", el.parent
-        for _ in range(20):
+        for _try in range(20):
             if p is None or not p.control_type:
                 break
             if p.control_type == "Window":
@@ -164,9 +165,9 @@ class Element:
     def describe(self) -> str:
         s = f"{self.kind} '{self.label}'"
         if self.value:
-            s += f" (şu an: '{self.value}')"
+            s += f" (now: '{self.value}')"
         if not self.in_view:
-            s += " [aşağıda]"
+            s += " [below]"
         return s
 
 
@@ -257,13 +258,13 @@ class BrowserObserver:
     def click(self, element_id: int) -> None:
         loc = self.b.locator(element_id)
         loc.scroll_into_view_if_needed(timeout=5000)
-        self._frame(loc, "tıklıyorum")
+        self._frame(loc, _("clicking"))
         loc.click(timeout=8000)
         self.b.page.wait_for_timeout(500)
 
     def type(self, element_id: int, text: str, submit: bool) -> None:
         loc = self.b.locator(element_id)
-        self._frame(loc, "yazıyorum")
+        self._frame(loc, _("typing"))
         loc.fill(text, timeout=8000)
         if submit:
             loc.press("Enter")
@@ -288,7 +289,7 @@ class BrowserObserver:
             drop: Item | None = None) -> None:
         page = self.b.page
         if action in ("click", "double_click", "right_click", "type_text", "drag") and item is None:
-            raise ValueError(f"{action} için öğe gerekli")
+            raise ValueError(f"{action} needs an element")
         if action == "click":
             self.click(item.ref)
         elif action == "double_click":
@@ -310,7 +311,7 @@ class BrowserObserver:
                 page.keyboard.up(k)
         elif action == "drag":
             if drop is None:
-                raise ValueError("sürüklemek için hedef öğe gerekli")
+                raise ValueError("dragging needs a target element")
             self.b.locator(item.ref).drag_to(self.b.locator(drop.ref), timeout=8000)
         elif action in ("scroll_down", "scroll_up"):
             self.scroll(action == "scroll_down")
@@ -373,15 +374,15 @@ class DesktopObserver:
                 and foreground_title().strip() == "ALICE":
             # The foreground window is ALICE's own chat: "open Notepad, press Ctrl+S" was pressing Escape and Ctrl+S
             # here (reflex does not open applications).
-            raise ToolError("öndeki pencere ALICE'in kendisi; hedef pencereyi önce app/windows aracıyla açıp öne "
-                            "getir ve title ver (ör. title='Not Defteri')")
+            raise ToolError("the foreground window is ALICE itself; first open the target window with the app/windows tool, bring it to the "
+                            "front and give title (e.g. title='Not Defteri')")
         if not (window_title or "").strip() and goal:
             other = named_window(goal, foreground_title(), _open_windows())
             if other:
                 # No title given, and the goal names another open window: "type 1-10 into Notepad" was typed into the
                 # foreground Calculator.
-                raise ToolError(f"hedef '{other}' penceresinden söz ediyor ama öndeki pencere "
-                                f"'{foreground_title()}'; title='{other}' ver")
+                raise ToolError(f"the goal mentions the '{other}' window but the foreground window is "
+                                f"'{foreground_title()}'; give title='{other}'")
         self._rect: tuple[int, int, int, int] | None = None  # position on screen of the last screenshot
 
     def screen(self, goal: str = "") -> Screen:
@@ -470,7 +471,7 @@ class DesktopObserver:
 
     def _point(self, item: Item) -> tuple[int, int]:
         if item.center is None or self._rect is None:
-            raise ValueError(f"'{item.label}' öğesinin ekrandaki yeri bilinmiyor")
+            raise ValueError(f"the on-screen position of '{item.label}' is unknown")
         left, top, w, h = self._rect
         return round(left + item.center[0] * w), round(top + item.center[1] * h)
 
@@ -480,7 +481,7 @@ class DesktopObserver:
         from alice.tools.desktop import ui_act
 
         if action in ("click", "double_click", "right_click", "type_text", "drag") and item is None:
-            raise ValueError(f"{action} için öğe gerekli")
+            raise ValueError(f"{action} needs an element")
         if item is not None and action in ("click", "double_click", "right_click", "type_text", "drag"):
             self._frame(item, action)
         pg = _pyautogui()
@@ -508,7 +509,7 @@ class DesktopObserver:
             hold_keys(keys, self.hold_seconds)
         elif action == "drag":
             if drop is None:
-                raise ValueError("sürüklemek için hedef öğe gerekli")
+                raise ValueError("dragging needs a target element")
             x, y = self._point(item)
             tx, ty = self._point(drop)
             pg.moveTo(x, y)
@@ -593,7 +594,7 @@ class DesktopObserver:
         root = u32.GetAncestor(hwnd, 3) or hwnd  # 3: GA_ROOTOWNER
         hwnds = [root]
 
-        def owned(h: int, _: int) -> bool:
+        def owned(h: int, _lparam: int) -> bool:
             if h != root and u32.IsWindowVisible(h) and u32.GetAncestor(h, 3) == root:
                 hwnds.append(h)
             return True
@@ -618,7 +619,7 @@ class DesktopObserver:
         from alice.tools.computer import _pyautogui
 
         if self._rect is None:
-            raise RuntimeError("önce ekran görüntüsü alınmalı")
+            raise RuntimeError("a screenshot must be taken first")
         left, top, w, h = self._rect
         _pyautogui().click(round(left + fx * w), round(top + fy * h))
 
@@ -627,7 +628,7 @@ class DesktopObserver:
         from alice.tools.computer import _pyautogui
 
         if self._rect is None:
-            raise RuntimeError("önce ekran görüntüsü alınmalı")
+            raise RuntimeError("a screenshot must be taken first")
         left, top, w, h = self._rect
         pg = _pyautogui()
         pg.moveTo(round(left + fx * w), round(top + fy * h))

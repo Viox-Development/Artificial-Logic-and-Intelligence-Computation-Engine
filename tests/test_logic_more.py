@@ -212,7 +212,7 @@ def test_element_describe():
 
     assert Element(1, "button", "Gönder", False).describe() == "button 'Gönder'"
     assert Element(2, "input[email]", "E-posta", True, "a@b.c", in_view=False).describe() == \
-        "input[email] 'E-posta' (şu an: 'a@b.c') [aşağıda]"
+        "input[email] 'E-posta' (now: 'a@b.c') [below]"
 
 
 class _Page:
