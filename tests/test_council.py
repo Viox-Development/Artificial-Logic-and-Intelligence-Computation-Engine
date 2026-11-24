@@ -87,8 +87,8 @@ def test_refuted_finding_does_not_block(workdir):
     assert snap["findings"][0]["status"] == "refuted"
     assert snap["result"]["decision"] == "approve"
     critic = next(v for v in snap["votes"] if v["role"] == "critic")
-    assert not critic["counted"] and "çürütüldü" in critic["note"]
-    assert "ONAY" in report(snap) and "çürütüldü" in report(snap)
+    assert not critic["counted"] and "refuted" in critic["note"]
+    assert "APPROVED" in report(snap) and "refuted" in report(snap)
     assert not any(k.startswith("council:") for k in ctx.router.role_overrides)  # roles were cleaned up
 
 
@@ -134,7 +134,7 @@ def test_chat_council_tool_and_slash_command(workdir):
     agent, _, ctx = make(script, workdir)
     assert agent.run_turn(council_prompt("README")) == "Kurul onayladı."
     tool_text = next(m["content"] for m in agent.messages if m["role"] == "tool")
-    assert "Kurula sor: ONAY" in tool_text and "eleştirmen" in tool_text
+    assert "Ask the council: APPROVED" in tool_text and "critic" in tool_text
     assert "council tool" in council_prompt("x")
 
 
@@ -353,7 +353,7 @@ def test_council_reports_live_progress(workdir):
     c.on_change = lambda: seen.append((c.phase, {r: a.get("state") for r, a in c.activity.items()}))
     snap = c.run()
     phases = [p for p, _ in seen]
-    assert "Plan inceleniyor" in phases and "Kontrolcü bulguları doğruluyor" in phases
+    assert "Reviewing the plan" in phases and "The verifier is checking the findings" in phases
     assert any("working" in states.values() for _, states in seen)
     assert all(a["state"] == "done" and a["vote"] == "approve" for a in snap["activity"].values())
 
