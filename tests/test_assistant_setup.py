@@ -20,17 +20,17 @@ from tests.conftest import FakeProvider, make_config
 def test_doctor_checks_run_offline(workdir):
     checks = doctor.run_all(make_config({"brain": ["a:m"]}), workdir, network=False)
     names = [c.name for c in checks]
-    assert len(checks) == 11 and "Gmail" in names and "Komut sandbox'ı" in names
+    assert len(checks) == 11 and "Gmail" in names and "Command sandbox" in names
     assert all(c.status in ("ok", "warn", "off", "fail") for c in checks)
     gm = next(c for c in checks if c.name == "Gmail")
     assert gm.status == "off" and "alice setup google" in gm.fix
-    assert next(c for c in checks if c.name == "Google araması").status == "off"  # no key
+    assert next(c for c in checks if c.name == "Google search").status == "off"  # no key
 
 
 def test_doctor_one_broken_check_does_not_stop_others(monkeypatch, workdir):
     monkeypatch.setattr(doctor, "check_memory", lambda cfg: 1 / 0)
     checks = doctor.run_all(make_config({"brain": ["a:m"]}), workdir, network=False)
-    mem = next(c for c in checks if c.name == "Hafıza")
+    mem = next(c for c in checks if c.name == "Memory")
     assert mem.status == "fail" and "ZeroDivisionError" in mem.detail and len(checks) == 11
 
 

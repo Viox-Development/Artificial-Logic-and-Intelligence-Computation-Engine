@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from alice.i18n import _
+
 
 @dataclass
 class Check:
@@ -28,92 +30,101 @@ def _safe(name: str, fn: Callable[[], Check]) -> Check:
 
 
 # ------------------------------------------------------------------------------------------- checks
+def _connect_calendar() -> str:
+    return _("System → Setup → Connect calendar (command: alice connect google_calendar)")
+
+
 def check_grounding(cfg, network: bool = True) -> Check:
-    name = "Google araması"
+    name = _("Google search")
     if not cfg.agent.get("search_grounding", True):
-        return Check(name, "off", "kapalı ([agent] search_grounding = false)")
+        return Check(name, "off", _("off ([agent] search_grounding = false)"))
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
-        return Check(name, "off", "GEMINI_API_KEY yok: web_search DuckDuckGo/Bing kullanır", "GEMINI_API_KEY ekle")
+        return Check(name, "off", _("no GEMINI_API_KEY: web_search uses DuckDuckGo/Bing"), _("add GEMINI_API_KEY"))
     if not network:
-        return Check(name, "ok", "anahtar var (test edilmedi)")
+        return Check(name, "ok", _("key present (not tested)"))
     from alice.tools import web
 
     t0 = time.monotonic()
     try:
-        res = web.gemini_search("bugünün tarihi", key, str(cfg.agent.get("grounding_model", "gemini-flash-latest")),
+        res = web.gemini_search("today's date", key, str(cfg.agent.get("grounding_model", "gemini-flash-latest")),
                                 timeout=20)
     except ValueError as e:
-        return Check(name, "warn", f"çalışmıyor ({str(e)[:120]}); DuckDuckGo/Bing'e düşülüyor",
-                     "ücretsiz anahtarda grounding kapalı olabilir; sorun değil, klasik arama çalışır")
+        return Check(name, "warn", _("not working ({error}); falling back to DuckDuckGo/Bing", error=str(e)[:120]),
+                     _("grounding may be off on a free key; that's fine, the classic search works"))
     finally:
         web._grounding["down_until"] = 0.0  # the doctor's probe must not lock real usage for an hour
-    return Check(name, "ok", f"çalışıyor ({time.monotonic() - t0:.1f} sn, {len(res['sources'])} kaynak)")
+    return Check(name, "ok", _("working ({secs} s, {n} sources)", secs=f"{time.monotonic() - t0:.1f}",
+                                n=len(res["sources"])))
 
 
 def check_embedding(cfg, network: bool = True) -> Check:
-    name = "Anlam araması (hafıza)"
+    name = _("Semantic search (memory)")
     from alice.memvec import Embedder
 
     o = dict(cfg.data.get("memory") or {})
     emb = Embedder.from_config(cfg, o)
     if emb is None:
-        return Check(name, "off", f"embedding yok (sağlayıcı: {o.get('embed_provider', 'gemini')}, anahtar yok ya da off)"
-                     "; hafıza kelime aramasıyla çalışır")
+        return Check(name, "off", _("no embeddings (provider: {provider}, no key or off); memory uses keyword search",
+                                    provider=o.get("embed_provider", "gemini")))
     if not network:
-        return Check(name, "ok", f"{emb.model} (test edilmedi)")
+        return Check(name, "ok", _("{model} (not tested)", model=emb.model))
     t0 = time.monotonic()
     try:
         vec = emb.embed(["deneme"])[0]
     except Exception as e:  # noqa: BLE001
-        return Check(name, "warn", f"{emb.model} çalışmıyor: {str(e)[:120]}; kelime aramasına düşülüyor")
-    return Check(name, "ok", f"{emb.model}, {len(vec)} boyut, {time.monotonic() - t0:.1f} sn")
+        return Check(name, "warn", _("{model} not working: {error}; falling back to keyword search", model=emb.model,
+                                      error=str(e)[:120]))
+    return Check(name, "ok", _("{model}, {dims} dimensions, {secs} s", model=emb.model, dims=len(vec),
+                                secs=f"{time.monotonic() - t0:.1f}"))
 
 
 def check_memory(cfg) -> Check:
-    name = "Hafıza"
+    name = _("Memory")
     from alice.config import alice_home
 
     if not (cfg.data.get("memory") or {}).get("enabled", True):
-        return Check(name, "off", "kapalı ([memory] enabled = false)")
+        return Check(name, "off", _("off ([memory] enabled = false)"))
     if not (alice_home() / "memory.db").is_file():
-        return Check(name, "ok", "henüz boş (ilk konuşmalarla dolacak)")
+        return Check(name, "ok", _("empty so far (it fills up with the first conversations)"))
     from alice.memory import shared_memory
 
     mem = shared_memory(cfg)
     if mem is None:
-        return Check(name, "off", "kapalı")
+        return Check(name, "off", _("off"))
     with mem._lock:
         vecs = mem.db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
     sums = len(mem.summaries(1000))
     notes = sum(len(b.scan()) for b in mem.all_books())
-    return Check(name, "ok", f"{notes} not, {sums} konuşma özeti, {len(mem.followups())} açık takip, "
-                 f"{vecs} vektör")
+    return Check(name, "ok", _("{notes} notes, {sums} conversation summaries, {followups} open follow-ups, {vecs} vectors",
+                               notes=notes, sums=sums, followups=len(mem.followups()), vecs=vecs))
 
 
 def check_projects(cfg) -> Check:
-    name = "Projeler"
+    name = _("Projects")
     from alice import projects
 
     if not projects.enabled(cfg):
-        return Check(name, "off", "kapalı ([projects] enabled = false)")
+        return Check(name, "off", _("off ([projects] enabled = false)"))
     scanned, found = projects.load()
     if not scanned:
-        return Check(name, "warn", "henüz taranmadı (ilk açılışta arka planda taranır)", "alice ile bir konuşma başlat")
+        return Check(name, "warn", _("not scanned yet (scanned in the background on first start)"),
+                     _("start a conversation with alice"))
     age = (time.time() - scanned) / 3600
     top = ", ".join(p.name for p in found[:4])
-    return Check(name, "ok" if found else "warn", f"{len(found)} proje ({age:.0f} saat önce tarandı)"
-                 + (f": {top}" if top else ""), "" if found else "[projects] paths'e proje klasörünü ekle")
+    return Check(name, "ok" if found else "warn", _("{n} projects (scanned {hours} hours ago)", n=len(found),
+                                                       hours=f"{age:.0f}")
+                 + (f": {top}" if top else ""), "" if found else _("add your project folder to [projects] paths"))
 
 
 def check_calendar(cfg, network: bool = True) -> Check:
-    name = "Google Takvim"
+    name = _("Google Calendar")
     from alice.connect import runner
     from alice.connect.manifest import discover
 
     m = discover(cfg)[0].get("google_calendar")
     if m is None:
-        return Check(name, "off", "bağlantı tanımı kapalı")
+        return Check(name, "off", _("connection definition is off"))
     ok, why = runner.ready(m)
     if ok and network and "upcoming" in m.actions:
         # Looked "Bağlı" (connected) but 404'd on every request ({calendarId} unfilled): read it once for real.
@@ -125,17 +136,16 @@ def check_calendar(cfg, network: bool = True) -> Check:
                                                    "timeMax": (now + timedelta(days=1)).isoformat(), "maxResults": 1},
                         cache=False)
         except Exception as e:  # noqa: BLE001
-            return Check(name, "fail", f"bağlı ama okunamıyor: {str(e)[:120]}",
-                         "Sistem → Kurulum → Takvimi bağla (komut: alice connect google_calendar)")
+            return Check(name, "fail", _("connected but can't be read: {error}", error=str(e)[:120]), _connect_calendar())
     if ok:
-        return Check(name, "ok", "bağlı")
+        return Check(name, "ok", _("connected"))
     if "yeniden giriş" in why:
         # Was connected, but Google rejects the sign-in: not "off" (disabled), but something the user must fix.
-        return Check(name, "fail", "Google girişi geçersiz; ALICE jetonu kendisi yenileyemiyor",
-                     "Sistem → Kurulum → Takvimi bağla (komut: alice connect google_calendar). Her hafta "
-                     "tekrarlıyorsa Google Cloud'da OAuth uygulamasını 'In production'a al")
-    fix = "Sistem → Kurulum → Google (komut: alice setup google)" if "GOOGLE_CLIENT_ID" in why or \
-        not os.environ.get("GOOGLE_CLIENT_ID") else "Sistem → Kurulum → Takvimi bağla (komut: alice connect google_calendar)"
+        return Check(name, "fail", _("the Google sign-in is invalid; ALICE can't refresh the token itself"),
+                     _connect_calendar() + _(". If it happens every week, set the OAuth app to 'In production' in "
+                                            "Google Cloud"))
+    fix = _("System → Setup → Google (command: alice setup google)") if "GOOGLE_CLIENT_ID" in why or \
+        not os.environ.get("GOOGLE_CLIENT_ID") else _connect_calendar()
     return Check(name, "off", why, fix)
 
 
@@ -146,14 +156,14 @@ def check_gmail(cfg, network: bool = True) -> Check:
 
     accs = gmail.accounts()
     if not accs:
-        return Check(name, "off", "bağlı hesap yok", "Sistem → Kurulum → Gmail ekle (komut: alice setup google)")
+        return Check(name, "off", _("no connected account"), _("System → Setup → Add Gmail (command: alice setup google)"))
     from alice.connect import oauth
 
     parts, bad = [], []
     for acc in accs:
         email = store.get(gmail.PREFIX + acc).get("email", "")
         if oauth.needs_sign_in(gmail.PREFIX + acc):
-            bad.append(f"{acc}: giriş geçersiz, yeniden giriş gerekiyor")
+            bad.append(_("{account}: sign-in invalid, sign in again", account=acc))
             continue
         if network:
             try:
@@ -163,42 +173,45 @@ def check_gmail(cfg, network: bool = True) -> Check:
                 continue
         parts.append(f"{acc}" + (f" ({email})" if email else ""))
     if bad:
-        return Check(name, "warn", "; ".join(parts + bad), "bozuk hesabı tekrar bağla: Sistem → Kurulum → Gmail ekle (aynı ad)")
+        return Check(name, "warn", "; ".join(parts + bad),
+                     _("connect the broken account again: System → Setup → Add Gmail (same name)"))
     return Check(name, "ok", ", ".join(parts))
 
 
 def check_sandbox(cfg) -> Check:
-    name = "Komut sandbox'ı"
+    name = _("Command sandbox")
     from alice import sandbox
 
     ctx = type("C", (), {"config": cfg})()
     m = sandbox.mode(ctx)
     if m == "off":
-        return Check(name, "off", "kapalı ([agent] sandbox = off)")
+        return Check(name, "off", _("off ([agent] sandbox = off)"))
     backend, problem = sandbox.backend()
     if problem:
-        return Check(name, "warn", f"{m} modu ama kurulamıyor: {problem}"
-                     + ("; dış içerik okunan turda komutlar onay sorar" if m == "auto" else "; komutlar hata verir"),
+        return Check(name, "warn", _("{mode} mode but it can't be set up: {problem}", mode=m, problem=problem)
+                     + (_("; in a turn that read outside content, commands ask for approval") if m == "auto"
+                        else _("; commands fail")),
                      problem.split(": ", 1)[-1] if "apt" in problem else "")
-    return Check(name, "ok", f"{m} modu, altyapı: {backend}")
+    return Check(name, "ok", _("{mode} mode, backend: {backend}", mode=m, backend=backend))
 
 
 def check_greeting(cfg) -> Check:
-    name = "Dönüşte karşılama"
+    name = _("Welcome back")
     from alice import presence
 
     s = presence.settings(cfg)
     if not s.get("enabled", True):
-        return Check(name, "off", "kapalı ([greeting] enabled = false)")
+        return Check(name, "off", _("off ([greeting] enabled = false)"))
     idle = presence.idle_seconds()
     if idle is None:
-        return Check(name, "warn", "boşta kalma süresi ölçülemiyor (Linux'ta xprintidle gerekir)",
+        return Check(name, "warn", _("idle time can't be measured (Linux needs xprintidle)"),
                      "sudo apt install xprintidle")
-    return Check(name, "ok", f"{s['away_minutes']} dk yokluktan sonra; şu an {idle:.0f} sn boşta (çekirdek çalışırken)")
+    return Check(name, "ok", _("after {minutes} min away; idle for {secs} s now (while the core runs)",
+                                minutes=s["away_minutes"], secs=f"{idle:.0f}"))
 
 
 def check_rules(cfg, cwd=None) -> Check:
-    name = "Kurallar, hook, skill"
+    name = _("Rules, hooks, skills")
     from alice.hooks import Hooks
     from alice.permissions import Permissions
     from alice.skills import load_agents, load_skills
@@ -206,52 +219,55 @@ def check_rules(cfg, cwd=None) -> Check:
     ctx = type("C", (), {"config": cfg, "cwd": cwd})()
     rules = Permissions("auto").rules_for(ctx)
     hooks = Hooks.from_config(cfg, cwd)
-    return Check(name, "ok", f"izin kuralı {sum(len(v) for v in rules.values())} (allow {len(rules['allow'])}, deny "
-                 f"{len(rules['deny'])}), hook {len(hooks.hooks)}, skill {len(load_skills(cwd))}, "
-                 f"alt ajan {len(load_agents(cwd))}")
+    return Check(name, "ok", _("permission rules {rules} (allow {allow}, deny {deny}), hooks {hooks}, skills {skills}, "
+                               "subagents {agents}", rules=sum(len(v) for v in rules.values()),
+                               allow=len(rules["allow"]), deny=len(rules["deny"]), hooks=len(hooks.hooks),
+                               skills=len(load_skills(cwd)), agents=len(load_agents(cwd))))
 
 
 def check_update_health(cfg) -> Check:
-    name = "Güncelleme sağlığı"
+    name = _("Update health")
     from alice import updater
 
     st = updater.read_state()
     rb = st.get("rollback") if isinstance(st.get("rollback"), dict) else None
     bad = st.get("bad") or []
     if rb and time.time() - float(rb.get("ts") or 0) < 7 * 86400:
-        return Check(name, "warn", f"son güncelleme geri alındı ({str(rb.get('from'))[:7]} → {str(rb.get('to'))[:7]}): "
-                     f"{rb.get('reason')}", "düzeltme commit'i gelince otomatik güncellenir")
+        return Check(name, "warn", _("the last update was rolled back ({old} → {new}): {reason}",
+                                     old=str(rb.get("from"))[:7], new=str(rb.get("to"))[:7], reason=rb.get("reason")),
+                     _("it updates by itself once a fix commit arrives"))
     if st.get("pending_health"):
-        return Check(name, "ok", "yeni sürüm deneniyor (90 sn ayakta kalınca sağlam sayılır)")
-    return Check(name, "ok", "sorun yok" + (f" ({len(bad)} bozuk sürüm atlandı)" if bad else ""))
+        return Check(name, "ok", _("trying a new version (counted as healthy after 90 s up)"))
+    return Check(name, "ok", _("no problems") + (_(" ({n} broken versions skipped)", n=len(bad)) if bad else ""))
 
 
 def check_ocr(cfg) -> Check:
-    name = "Ekran okuma (OCR)"
+    name = _("Screen reading (OCR)")
     from alice.reflex import perceive
 
     ok, why = perceive.ocr_available()
     if ok:
-        return Check(name, "ok", "Windows OCR hazır: refleks ekrandaki yazıları da okur")
+        return Check(name, "ok", _("Windows OCR ready: reflex reads the text on screen too"))
     from alice.deps import install_command
 
-    return Check(name, "off", f"{why}; refleks sadece erişilebilirlik ağacıyla çalışır",
-                 f"ALICE açılışta eksik paketleri kendisi kurar; hemen: {install_command([])}" if "paket" in why else "")
+    return Check(name, "off", _("{why}; reflex works only with the accessibility tree", why=why),
+                 _("ALICE installs missing packages itself on start; right now: {command}",
+                   command=install_command([])) if "paket" in why else "")
 
 
 def run_all(cfg, cwd=None, network: bool = True) -> list[Check]:
     return [
-        _safe("Google araması", lambda: check_grounding(cfg, network)),
-        _safe("Anlam araması (hafıza)", lambda: check_embedding(cfg, network)),
-        _safe("Hafıza", lambda: check_memory(cfg)),
-        _safe("Projeler", lambda: check_projects(cfg)),
-        _safe("Google Takvim", lambda: check_calendar(cfg, network)),
+        _safe(_("Google search"), lambda: check_grounding(cfg, network)),
+        _safe(_("Semantic search (memory)"), lambda: check_embedding(cfg, network)),
+        _safe(_("Memory"), lambda: check_memory(cfg)),
+        _safe(_("Projects"), lambda: check_projects(cfg)),
+        _safe(_("Google Calendar"), lambda: check_calendar(cfg, network)),
         _safe("Gmail", lambda: check_gmail(cfg, network)),
-        _safe("Komut sandbox'ı", lambda: check_sandbox(cfg)),
-        _safe("Dönüşte karşılama", lambda: check_greeting(cfg)),
-        _safe("Kurallar, hook, skill", lambda: check_rules(cfg, cwd)),
-        _safe("Ekran okuma (OCR)", lambda: check_ocr(cfg)),
-        _safe("Güncelleme sağlığı", lambda: check_update_health(cfg)),
+        _safe(_("Command sandbox"), lambda: check_sandbox(cfg)),
+        _safe(_("Welcome back"), lambda: check_greeting(cfg)),
+        _safe(_("Rules, hooks, skills"), lambda: check_rules(cfg, cwd)),
+        _safe(_("Screen reading (OCR)"), lambda: check_ocr(cfg)),
+        _safe(_("Update health"), lambda: check_update_health(cfg)),
     ]
 
 
@@ -274,7 +290,7 @@ def test_ref(router, name: str, pc: Any, explicit: str = "") -> str:
     return f"{name}:{models[0]}" if models else ""
 
 
-PROBE_TIMEOUT = 30.0  # sec: in "Hepsini dene" (Try all), a provider waits at most this long (normally 180 sec)
+PROBE_TIMEOUT = 30.0  # sec: in "Try all", a provider waits at most this long (normally 180 sec)
 PROBE_TOKENS = 512  # thinking models (GLM Flash) think first; with 50 tokens they were cut off before answering
 
 
@@ -320,7 +336,7 @@ def test_refs(router, name: str, pc: Any, explicit: str = "", limit: int = 3) ->
 
 
 def short_err(err: str, limit: int = 160) -> str:
-    """Short readable text from a provider error: the "message" inside instead of raw JSON; known cases in Turkish."""
+    """Short readable text from a provider error: the "message" inside instead of raw JSON; known cases in plain words."""
     import re
 
     kind = ""
@@ -329,14 +345,15 @@ def short_err(err: str, limit: int = 160) -> str:
         kind, err = m.group(1), err[m.end():]
     low = err.lower()
     if "payment_method_required" in low or "payment method is required" in low:
-        return "ödeme yöntemi istiyor: sağlayıcı ücretsiz kullanım için de hesaba kart eklenmesini şart koşuyor"
+        return _("wants a payment method: the provider requires a card on the account even for free use")
     if "insufficient" in low and ("credit" in low or "balance" in low or "funds" in low):
-        return "kredisi bitmiş ya da yok"
+        return _("out of credit or has none")
     msg = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', err)
     text = (msg.group(1) if msg else err).replace("\\n", " ").strip()
     text = " ".join(text.split())
-    prefix = {"auth": "anahtar reddedildi", "quota": "kota dolu ya da ödeme gerekli", "not_found": "model yok",
-              "rate_limit": "hız sınırı/yoğun", "server": "sağlayıcı hatası", "too_large": "istek çok büyük"}.get(kind, "")
+    prefix = {"auth": _("key rejected"), "quota": _("quota full or payment needed"), "not_found": _("no such model"),
+              "rate_limit": _("rate limited/busy"), "server": _("provider error"),
+              "too_large": _("request too large")}.get(kind, "")
     out = f"{prefix}: {text}" if prefix and text else (prefix or text)
     return out if len(out) <= limit else out[:limit - 1] + "…"
 
@@ -365,51 +382,51 @@ def probe_providers(cfg: Any, emit: Callable[[str], None] = lambda s: None,
         row = {"name": name, "key": key, "env": pc.api_key_env or "", "model": "", "status": "off", "detail": ""}
         rows.append(row)
         if not pc.enabled:
-            row["detail"] = (f"anahtar yok ({pc.api_key_env})" if key == "yok"
-                             else "hesap kimliği eksik" if "${" in pc.base_url else "kapalı")
+            row["detail"] = (_("no key ({env})", env=pc.api_key_env) if key == "yok"
+                             else _("account ID missing") if "${" in pc.base_url else _("off"))
             continue
         credit = not getattr(pc, "auto", True)
         refs = test_refs(router, name, pc, explicit.get(name, ""), limit=1 if credit else 3)
         if not refs:
-            row["detail"] = "anahtar var ama model listesi alınamadı (adres ya da anahtar yanlış olabilir)"
+            row["detail"] = _("key present but the model list couldn't be fetched (the address or key may be wrong)")
             continue
         tried: list[str] = []
         for ref in refs:
-            emit(f"{name} deneniyor ({ref.split(':', 1)[1]})…")
+            emit(_("trying {name} ({model})…", name=name, model=ref.split(":", 1)[1]))
             row["model"] = ref
             t0 = time.monotonic()
             try:
                 res = router.chat(ref, [{"role": "user", "content": "Reply with just: ok"}], max_tokens=PROBE_TOKENS)
             except AllProvidersFailed as e:
-                err = (e.errors[-1] if e.errors else "hata").split(": ", 1)[-1]
+                err = (e.errors[-1] if e.errors else _("error")).split(": ", 1)[-1]
                 tried.append(f"{ref.split(':', 1)[1]}: {short_err(err, 70)}")
                 if not pc.needs_key and ("unreachable" in err or "bağlanılamadı" in err):
-                    row.update(status="off", detail="çalışmıyor (yerel model; kurmadıysan sorun değil)")
+                    row.update(status="off", detail=_("not running (a local model; fine if you didn't install it)"))
                     break
                 if err.startswith("[auth]"):
-                    row.update(status="fail", detail=short_err(err) + " · Bağlantılar → Anahtarlar'dan kontrol et")
+                    row.update(status="fail", detail=short_err(err) + _(" · check it in Connections → Keys"))
                     break
                 if "payment" in err.lower() and "required" in err.lower():
                     row.update(status="fail", detail=short_err(err))
                     break  # other models are on the same account too: no need to try them
                 if err.startswith(("[rate_limit]", "[server]")):
-                    row.update(status="warn", detail="şu an yoğun ya da hız sınırında (sağlayıcı tarafı, geçici); "
-                                                     "ALICE sıradaki modelle devam eder")
+                    row.update(status="warn", detail=_("busy or rate limited right now (provider side, temporary); "
+                                                       "ALICE goes on with the next model"))
                 elif "zaman aşımı" in err:
-                    row.update(status="fail", detail=f"{timeout:.0f} sn'de cevap vermedi; şu an yavaş ya da takılı, "
-                                                     "ALICE bir süre sıradaki modelle devam eder")
+                    row.update(status="fail", detail=_("no answer in {secs} s; slow or stuck right now, ALICE goes on "
+                                                       "with the next model for a while", secs=f"{timeout:.0f}"))
                 else:
                     row.update(status="fail", detail=short_err(err))
                 continue
             if not (res.text or "").strip():
-                tried.append(f"{ref.split(':', 1)[1]}: boş cevap")
-                row.update(status="fail", detail="boş cevap döndü")
+                tried.append(_("{model}: empty answer", model=ref.split(":", 1)[1]))
+                row.update(status="fail", detail=_("returned an empty answer"))
                 continue
-            row.update(status="ok", detail=f"{time.monotonic() - t0:.1f} sn" + (" · kredi harcar (çok az)" if credit
-                                                                                   else ""))
+            row.update(status="ok", detail=_("{secs} s", secs=f"{time.monotonic() - t0:.1f}")
+                       + (_(" · uses credit (very little)") if credit else ""))
             break
         if row["status"] != "ok" and len(tried) > 1:
-            row["detail"] += " · denenenler: " + "; ".join(tried)
+            row["detail"] += _(" · tried: {items}", items="; ".join(tried))
         elif row["status"] == "ok" and tried:
-            row["detail"] += f" · ilk denenen olmadı ({tried[0][:60]})"
+            row["detail"] += _(" · the first one tried failed ({why})", why=tried[0][:60])
     return rows

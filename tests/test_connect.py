@@ -418,7 +418,7 @@ def test_cli_listeler_ve_sablon_olusturur(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(mf, "user_dir", lambda: tmp_path / "connect")
     assert connect_cmd([]) == 0
-    assert "Bağlantılar" in capsys.readouterr().out
+    assert "Connections" in capsys.readouterr().out
     assert connect_cmd(["mysite", "--new"]) == 0
     p = tmp_path / "connect" / "mysite.toml"
     assert p.exists() and 'name = "mysite"' in p.read_text(encoding="utf-8")

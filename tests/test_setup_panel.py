@@ -216,11 +216,11 @@ def test_probe_explains_each_provider_without_false_alarms(monkeypatch):
     rows = {r["name"]: r for r in probe_providers(make_config({"brain": ["auto"]}, prov),
                                                     factory=lambda pc: FakeProvider(pc.name, script(pc.name)))}
     assert rows["zai"]["status"] == "ok" and seen["zai"] == PROBE_TOKENS >= 400  # let a thinking model answer
-    assert rows["nvidia"]["status"] == "fail" and "cevap vermedi" in rows["nvidia"]["detail"]
-    assert rows["ollama"]["status"] == "off" and "kurmadıysan sorun değil" in rows["ollama"]["detail"]
-    assert rows["samba"]["status"] == "off" and "model listesi alınamadı" in rows["samba"]["detail"]
+    assert rows["nvidia"]["status"] == "fail" and "no answer in" in rows["nvidia"]["detail"]
+    assert rows["ollama"]["status"] == "off" and "fine if you didn't install it" in rows["ollama"]["detail"]
+    assert rows["samba"]["status"] == "off" and "model list couldn't be fetched" in rows["samba"]["detail"]
     assert rows["mistral"]["status"] == "off" and rows["mistral"]["detail"].count("MK") == 1
-    assert rows["busy"]["status"] == "warn" and "geçici" in rows["busy"]["detail"]
+    assert rows["busy"]["status"] == "warn" and "temporary" in rows["busy"]["detail"]
 
 
 def test_timed_out_model_is_skipped_for_ten_minutes():
@@ -283,9 +283,9 @@ def test_probe_uses_catalog_tries_siblings_and_cheapest_credit_model(monkeypatch
                                                     factory=lambda pc: P(pc.name, reply(pc.name)))}
     assert rows["samba"]["status"] == "ok" and rows["samba"]["model"] == "samba:DeepSeek-V3.1"  # from the catalog
     assert rows["zai"]["status"] == "ok" and rows["zai"]["model"] == "zai:glm-4.5-flash"  # sibling of the busy one
-    assert "ilk denenen olmadı" in rows["zai"]["detail"]
+    assert "the first one tried failed" in rows["zai"]["detail"]
     assert rows["vercel"]["status"] == "ok" and rows["vercel"]["model"] == "vercel:openai/gpt-5-nano"  # cheapest
-    assert "kredi" in rows["vercel"]["detail"] and not any("claude" in a for a in asked)
+    assert "credit" in rows["vercel"]["detail"] and not any("claude" in a for a in asked)
 
 
 def _seed_cache():
@@ -371,10 +371,10 @@ def test_short_err_turns_raw_json_into_readable_text():
 
     pay = ('[quota] {"error":{"balance_units":0,"billing_portal_url":"https://cloud.sambanova.ai/plans/billing",'
            '"code":"PAYMENT_METHOD_REQUIRED","message":"A payment method is required."}}')
-    assert short_err(pay).startswith("ödeme yöntemi istiyor")
+    assert short_err(pay).startswith("wants a payment method")
     busy = '[rate_limit] {"error":{"code":null,"message":"Meta-Llama-3.3-70B-Instruct is currently experiencing high traffic"}}'
-    assert short_err(busy) == "hız sınırı/yoğun: Meta-Llama-3.3-70B-Instruct is currently experiencing high traffic"
-    assert short_err('[auth] {"error":{"message":"Invalid API key"}}') == "anahtar reddedildi: Invalid API key"
+    assert short_err(busy) == "rate limited/busy: Meta-Llama-3.3-70B-Instruct is currently experiencing high traffic"
+    assert short_err('[auth] {"error":{"message":"Invalid API key"}}') == "key rejected: Invalid API key"
     assert len(short_err("[server] " + "x" * 500)) <= 160 and "{" not in short_err(busy)
 
 
@@ -394,7 +394,7 @@ def test_payment_required_stops_trying_other_models(monkeypatch):
 
     prov = {"samba": {"base_url": "http://s", "api_key_env": "SK", "models": ["a", "b", "c"]}}
     row = probe_providers(make_config({"brain": ["auto"]}, prov), factory=lambda pc: FakeProvider(pc.name, reply))[0]
-    assert row["status"] == "fail" and row["detail"].startswith("ödeme yöntemi istiyor") and asked == ["a"]
+    assert row["status"] == "fail" and row["detail"].startswith("wants a payment method") and asked == ["a"]
 
 
 def test_scores_view_shows_current_order_not_the_one_from_measurement_time():

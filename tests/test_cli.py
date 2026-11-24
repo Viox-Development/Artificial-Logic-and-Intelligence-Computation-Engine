@@ -174,7 +174,7 @@ def test_core_unknown_subcommand_keeps_brackets(capsys):
 
     assert core_cmd(["foo"]) == 2
     out = capsys.readouterr().out
-    assert "bilinmeyen çekirdek komutu: foo" in out and "[--tray]" in out
+    assert "unknown core command: foo" in out and "[--tray]" in out
 
 
 def test_voice_unknown_subcommand(capsys):
@@ -182,4 +182,4 @@ def test_voice_unknown_subcommand(capsys):
 
     assert voice_cmd(["foo"]) == 2
     out = capsys.readouterr().out
-    assert "bilinmeyen ses komutu: foo" in out and "[--voices" in out
+    assert "unknown voice command: foo" in out and "[--voices" in out

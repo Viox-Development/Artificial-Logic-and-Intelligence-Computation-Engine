@@ -59,7 +59,7 @@ def test_core_mode_validates_and_forces(out):
     assert service.force_path().read_text(encoding="utf-8") == "flight"
     assert core_cli.core_cmd(["mode", "auto"]) == 0
     assert not service.force_path().exists()
-    assert "mod: flight" in out() and "mod: auto" in out()
+    assert "mode: flight" in out() and "mode: auto" in out()
 
 
 def test_core_install_uninstall(monkeypatch, out, tmp_path):
@@ -71,8 +71,8 @@ def test_core_install_uninstall(monkeypatch, out, tmp_path):
     assert core_cli.core_cmd(["uninstall"]) == 0
     assert core_cli.core_cmd(["uninstall"]) == 0
     text = out()
-    assert "otomatik başlatma kuruldu" in text and "ALICE Core.desktop" in text
-    assert "kaldırıldı" in text and "zaten kurulu değil" in text
+    assert "auto-start set up" in text and "ALICE Core.desktop" in text
+    assert "removed" in text and "not set up anyway" in text
 
 
 def test_core_stats_single_and_glob(out):
@@ -99,7 +99,7 @@ def test_core_status_not_running_lists_events(out):
     Store().add_event("alert", "GPU sıcak", "85 derece", severity="warn")
     assert core_cli.core_cmd([]) == 0
     text = out()
-    assert "çalışmıyor" in text and "Son olaylar" in text and "GPU sıcak: 85 derece" in text
+    assert "not running" in text and "Recent events" in text and "GPU sıcak: 85 derece" in text
 
 
 def test_core_status_running(out):
@@ -109,7 +109,7 @@ def test_core_status_running(out):
                                     encoding="utf-8")
     assert core_cli.core_cmd(["status"]) == 0
     text = out()
-    assert f"çalışıyor (pid {os.getpid()}), mod: dev (elle sabit), en düşük bildirim: warn, yerel GPU: False" in text
+    assert f"running (pid {os.getpid()}), mode: dev (set by hand), lowest notification: warn, local GPU: False" in text
 
 
 class _FakeCore:
@@ -156,7 +156,7 @@ def fake_core(monkeypatch):
 def test_core_run_refuses_second_instance(monkeypatch, out):
     monkeypatch.setattr(service, "acquire_lock", lambda: False)
     assert core_cli.core_cmd(["run"]) == 1
-    assert "zaten çalışıyor" in out()
+    assert "already running" in out()
 
 
 def test_core_run_once_ticks_and_releases_lock(monkeypatch, out, fake_core):
@@ -193,7 +193,7 @@ def test_core_run_forever_stops_helpers_on_ctrl_c(monkeypatch, out, fake_core):
     from alice.hud import client
 
     assert sims_show == [client.show]  # flight threats also go to the HUD while it is open
-    assert "her 15 sn" in out()
+    assert "every 15 s" in out()
 
 
 def test_core_run_tray(monkeypatch, out, fake_core):
@@ -235,7 +235,7 @@ def test_start_phone_handles_port_error(monkeypatch, out):
 
     monkeypatch.setattr(phone, "PhoneServer", Ok)
     assert isinstance(core_cli._start_phone(None, SimpleNamespace(store=None)), Ok)
-    assert "telefon: http://192.168.1.2:8765/" in out()
+    assert "phone: http://192.168.1.2:8765/" in out()
 
 
 # ----------------------------------------------------------------- rules_cmd
@@ -251,7 +251,7 @@ def test_rules_list_defaults_and_toggle(out):
     assert core_cli.rules_cmd(["rm", "gpu-hot"]) == 0
     assert RuleSet().get("gpu-hot") is None
     assert core_cli.rules_cmd(["rm", "gpu-hot"]) == 1
-    assert "kural yok: gpu-hot" in out()
+    assert "no such rule: gpu-hot" in out()
     assert core_cli.rules_cmd(["add"]) == 2  # add without a sentence: usage
 
 
@@ -262,7 +262,7 @@ def test_rules_list_empty(out):
     rs.rules = []
     rs.save()
     assert core_cli.rules_cmd(["list"]) == 0
-    assert "kural yok" in out()
+    assert "no rules" in out()
 
 
 def test_rules_add_confirms_before_saving(monkeypatch, out):
@@ -280,8 +280,8 @@ def test_rules_add_confirms_before_saving(monkeypatch, out):
     assert core_cli.rules_cmd(["add", "nabız"]) == 0
     assert RuleSet().get("hr2") is not None
     text = out()
-    assert "Jev'e sorulacak: Spor mu yapıyor?" in text and "tetiklenince ALICE: nabzı incele" in text
-    assert "kuruldu" in text
+    assert "will ask you: Spor mu yapıyor?" in text and "when triggered, ALICE: nabzı incele" in text
+    assert "set up" in text
 
 
 def test_rules_add_reports_parse_errors(monkeypatch, out):
@@ -292,15 +292,15 @@ def test_rules_add_reports_parse_errors(monkeypatch, out):
 
     monkeypatch.setattr(rules, "parse_rule", bad)
     assert core_cli.rules_cmd(["add", "saçma"]) == 1
-    assert "anlaşılamadı: eşik yok" in out()
+    assert "not understood: eşik yok" in out()
 
 
 # ----------------------------------------------------------------- tasks_cmd
 def test_tasks_list_empty_and_unknown(out):
     assert core_cli.tasks_cmd([]) == 0
-    assert "zamanlanmış görev yok" in out()
+    assert "no scheduled tasks" in out()
     assert core_cli.tasks_cmd(["rm", "yok"]) == 1
-    assert "görev yok: yok" in out()
+    assert "no such task: yok" in out()
     assert core_cli.tasks_cmd(["bilinmeyen"]) == 2
 
 
@@ -316,18 +316,18 @@ def test_tasks_add_run_rm(monkeypatch, out):
     _answer(monkeypatch, "")
     assert core_cli.tasks_cmd(["add", "her", "pazar"]) == 0
     text = out()
-    assert "Ne zaman: pazar 23:00" in text and "Kaçırılırsa: atlanır" in text
-    assert "kuruldu (t1)" in text and "çekirdek çalışmıyor" in text
+    assert "When: pazar 23:00" in text and "If missed: skipped" in text
+    assert "set up (t1)" in text and "the core is not running" in text
 
     ts = TaskStore()
     ts.get("t1").last_result = "yedek tamam " * 30
     ts.save()
     assert core_cli.tasks_cmd(["list"]) == 0
-    assert "son sonuç: yedek tamam" in out()
+    assert "last result: yedek tamam" in out()
 
     assert core_cli.tasks_cmd(["run", "t1"]) == 0
     assert TaskStore().get("t1").pending is True
-    assert "bir sonraki çekirdek turunda" in out()
+    assert "on the next core tick" in out()
     assert core_cli.tasks_cmd(["rm", "t1"]) == 0
     assert TaskStore().tasks == []
 
@@ -340,7 +340,7 @@ def test_tasks_add_parse_error(monkeypatch, out):
 
     monkeypatch.setattr(schedule, "parse_task", bad)
     assert core_cli.tasks_cmd(["add", "bir", "ara"]) == 1
-    assert "anlaşılamadı: cron yok" in out()
+    assert "not understood: cron yok" in out()
 
 
 # ---------------------------------------------------------------- extras/cli
@@ -348,23 +348,23 @@ def test_notes_add_list_search_undo(xout):
     from alice.extras import notes
 
     assert extras_cli.notes_cmd(["list"]) == 0
-    assert "not yok" in xout()
+    assert "no notes" in xout()
     assert extras_cli.notes_cmd(["add", "Süt", "al"]) == 0
     notes.add("eski not", ts=time.time() - 10 * 86400)
     assert extras_cli.notes_cmd([]) == 0
     text = xout()
-    assert "not alındı" in text and "Süt al" in text and "eski not" in text
+    assert "note saved" in text and "Süt al" in text and "eski not" in text
 
     assert extras_cli.notes_cmd(["search", "sut"]) == 0  # Turkish letter folding
     assert extras_cli.notes_cmd(["search", "not", "1d"]) == 0  # a note from 10 days ago falls outside the period
     tail = xout().split("eski not")[-1]
-    assert "not yok" in tail
+    assert "no notes" in tail
 
     assert extras_cli.notes_cmd(["undo"]) == 0
-    assert "silindi: eski not" in xout()
+    assert "deleted: eski not" in xout()
     extras_cli.notes_cmd(["undo"])
     assert extras_cli.notes_cmd(["undo"]) == 0
-    assert notes.all_notes() == [] and xout().rstrip().endswith("not yok")
+    assert notes.all_notes() == [] and xout().rstrip().endswith("no notes")
 
 
 def test_brief_install_and_render(monkeypatch, xout):
@@ -373,7 +373,7 @@ def test_brief_install_and_render(monkeypatch, xout):
 
     assert extras_cli.brief_cmd(["--install", "07:30", "--weekdays"]) == 0
     t = TaskStore().get("brief")
-    assert t.cron == "30 7 * * 1-5" and "kuruldu" in xout()
+    assert t.cron == "30 7 * * 1-5" and "set up" in xout()
     assert extras_cli.brief_cmd(["--install", "--weekdays"]) == 0  # no time given: 08:00
     assert TaskStore().get("brief").cron == "0 8 * * 1-5"
 
