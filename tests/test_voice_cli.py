@@ -61,8 +61,8 @@ def test_off_and_use_write_config(out):
     assert _voice_cfg()["tts_local"] == "chatterbox"
     assert vcli.voice_cmd(["use", "openai:alloy"]) == 2
     text = out()
-    assert "ses kapalı" in text and "bulut sesi: gemini:Kore" in text and "yerel ses: chatterbox" in text
-    assert "bilinmeyen aday" in text
+    assert "voice off" in text and "cloud voice: gemini:Kore" in text and "local voice: chatterbox" in text
+    assert "unknown candidate" in text
 
 
 def test_on_starts_core_and_autostart(monkeypatch, out, tmp_path):
@@ -76,7 +76,7 @@ def test_on_starts_core_and_autostart(monkeypatch, out, tmp_path):
     monkeypatch.setattr(service, "install_autostart", lambda: installed.append(True))
     assert vcli.voice_cmd(["on"]) == 0
     assert _voice_cfg()["enabled"] is True and started == [True] and installed == [True]
-    assert "Çekirdek başlatıldı" in out()
+    assert "Core started" in out()
 
 
 def test_on_when_core_running_and_autostart_fails(monkeypatch, out, tmp_path):
@@ -93,7 +93,7 @@ def test_on_when_core_running_and_autostart_fails(monkeypatch, out, tmp_path):
     monkeypatch.setattr(service, "install_autostart", boom)
     assert vcli.voice_cmd(["on"]) == 0
     text = out()
-    assert "Çekirdek zaten açık" in text and "otomatik başlatma kurulamadı: erişim yok" in text
+    assert "The core is already running" in text and "could not set up auto-start: erişim yok" in text
 
 
 def test_install_local(monkeypatch, out):
@@ -105,7 +105,7 @@ def test_install_local(monkeypatch, out):
 
     monkeypatch.setattr(install_local, "install", ok)
     assert vcli.voice_cmd(["install-local"]) == 0
-    assert "indiriliyor [x]" in out() and "yerel ses kuruldu" in out()
+    assert "indiriliyor [x]" in out() and "local voice installed" in out()
 
     def fail(emit):
         raise RuntimeError("Python 3.11 bulunamadı")
@@ -122,14 +122,14 @@ def test_models_compares_account_with_order(monkeypatch, out):
     monkeypatch.setattr(tts_mod, "list_gemini_tts_models", lambda key: ["m-a", "m-c"])
     assert vcli._models(_cfg(), []) == 0
     text = out()
-    assert "Hesabındaki ses modelleri: m-a, m-c" in text
-    assert "✓ m-a" in text and "✗ yok m-b" in text and "Sırada olmayan ama hesabında olanlar: m-c" in text
+    assert "Voice models on your account: m-a, m-c" in text
+    assert "✓ m-a" in text and "✗ missing m-b" in text and "On your account but not in the order: m-c" in text
 
 
 def test_models_errors(monkeypatch, out):
     monkeypatch.setattr(tts_mod, "make_cloud", lambda cfg: None)
     assert vcli._models(_cfg(), []) == 1
-    assert "GEMINI_API_KEY yok" in out()
+    assert "no GEMINI_API_KEY" in out()
 
     def boom(key):
         raise httpx.ConnectError("bağlantı yok")
@@ -137,14 +137,14 @@ def test_models_errors(monkeypatch, out):
     monkeypatch.setattr(tts_mod, "make_cloud", lambda cfg: SimpleNamespace(api_key="k", models=[]))
     monkeypatch.setattr(tts_mod, "list_gemini_tts_models", boom)
     assert vcli._models(_cfg(), []) == 1
-    assert "model listesi alınamadı: bağlantı yok" in out()
+    assert "could not fetch the model list: bağlantı yok" in out()
 
 
 def test_models_empty_account(monkeypatch, out):
     monkeypatch.setattr(tts_mod, "make_cloud", lambda cfg: SimpleNamespace(api_key="k", models=["m-a"]))
     monkeypatch.setattr(tts_mod, "list_gemini_tts_models", lambda key: [])
     assert vcli._models(_cfg(), []) == 0
-    assert "hiç yok" in out()
+    assert "on your account: none" in out()
 
 
 # --------------------------------------------------------------------- status
@@ -162,8 +162,8 @@ def test_status_minimal(monkeypatch, out):
     _status_fakes(monkeypatch, cloud=None, mic=False)
     assert vcli._status(_cfg(tts_local=""), []) == 0
     text = out()
-    assert "GEMINI_API_KEY yok" in text and "Yerel ses: yok" in text and "Duygu kütüphanesi: yok" in text
-    assert "Konuşma tanıma: yok" in text and "Ses çalma: sahte" in text and "Mikrofon: yok" in text
+    assert "no GEMINI_API_KEY" in text and "Local voice: none" in text and "Emotion library: none" in text
+    assert "Speech recognition: none" in text and "Playback: sahte" in text and "Microphone: no" in text
     assert "sounddevice" in text and "openwakeword" in text
 
 
@@ -182,16 +182,16 @@ def test_status_with_library_mismatch_and_chatterbox(monkeypatch, out, tmp_path)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="True\n"))
     assert vcli._status(_cfg(tts_local="chatterbox", local_python=sys.executable), []) == 0
     text = out()
-    assert "Bulut sesi: gemini:Aoede hazır" in text
-    assert "Yerel ses: chatterbox sunucu açık" in text and "yerel Whisper): var" in text
-    assert "(gemini:Kore; sakin, acil)" in text and "kütüphane farklı" in text
-    assert "Konuşma tanıma: groq" in text and "Mikrofon: var" in text
+    assert "Cloud voice: gemini:Aoede ready" in text
+    assert "Local voice: chatterbox server running" in text and "local Whisper): yes" in text
+    assert "(gemini:Kore; sakin, acil)" in text and "the library differs" in text
+    assert "Speech recognition: groq" in text and "Microphone: yes" in text
 
 
 def test_status_chatterbox_not_installed(monkeypatch, out, tmp_path):
     _status_fakes(monkeypatch, cloud=None, local=SimpleNamespace(healthy=lambda: False))
     assert vcli._status(_cfg(tts_local="chatterbox", local_python=str(tmp_path / "yok")), []) == 0
-    assert "kurulu değil (alice voice install-local)" in out()
+    assert "not installed (alice voice install-local)" in out()
 
 
 # ----------------------------------------------------------------- audition
@@ -229,7 +229,7 @@ def test_audition_builds_engines_and_opens_page(monkeypatch, out, tmp_path):
     assert runs[0] == (["gemini:Aoede"], ["calm"])
     assert runs[1] == (["gemini:Aoede", "gemini:Kore", "xtts"], ["calm", "urgent"])
     assert opened == [page.as_uri()]
-    assert "bilinmeyen yerel motor: bilinmez" in out() and "hazır:" in out()
+    assert "unknown local engine: bilinmez" in out() and "ready:" in out()
 
 
 def test_audition_with_ref_and_no_open(monkeypatch, out, tmp_path):
@@ -248,13 +248,13 @@ def test_audition_with_ref_and_no_open(monkeypatch, out, tmp_path):
     assert vcli._audition(_cfg(), ["--local", "chatterbox", "--ref", str(ref), "--no-open"]) == 0
     assert local.library.clip("urgent") == ref
     text = out()
-    assert "bulut sesleri atlanıyor" in text and "Whisper yok" in text
+    assert "skipping cloud voices" in text and "no Whisper" in text
 
 
 def test_audition_nothing_to_try(monkeypatch, out):
     monkeypatch.setattr(tts_mod, "make_cloud", lambda cfg, ref: None)
     assert vcli._audition(_cfg(), ["--voices", "Aoede"]) == 1
-    assert "denenecek ses yok" in out()
+    assert "no voices to try" in out()
 
 
 def test_single_ref_library(tmp_path):
@@ -296,7 +296,7 @@ def test_library(monkeypatch, out, tmp_path):
     assert vcli._library(_cfg(), []) == 0
     assert calls == [True, False]
     text = out()
-    assert "eksik kaldı: acil, şakacı" in text and f"hazır: {tmp_path}" in text and "ses: gemini:Leda" in text
+    assert "still missing: urgent, playful" in text and f"ready: {tmp_path}" in text and "voice: gemini:Leda" in text
 
 
 # ------------------------------------------------------------------------ say
@@ -331,7 +331,7 @@ def test_say_saves_wav_with_detail(monkeypatch, out, tmp_path):
     target = str(tmp_path / "o.wav")
     assert vcli._say(_cfg(), ["Yakıt", "kritik!", "--emotion", "urgent", "--out", target]) == 0
     assert r.calls == [("Yakıt kritik!", "urgent")] and r.audio.saved == target
-    assert "gemini:Aoede · tts-model · notes · urgent · 1.5 sn" in out()
+    assert "gemini:Aoede · tts-model · notes · urgent · 1.5 s" in out()
 
 
 def test_say_engine_choice_and_playback(monkeypatch, out):
@@ -357,7 +357,7 @@ def test_say_engine_choice_and_playback(monkeypatch, out):
 
     monkeypatch.setattr(audio, "Player", lambda: SimpleNamespace(available=False))
     assert vcli._say(_cfg(), ["selam"]) == 1
-    assert "ses çalınamıyor" in out()
+    assert "can't play audio" in out()
 
 
 def test_say_reports_tts_error(monkeypatch, out):
@@ -375,7 +375,7 @@ def test_mic_test_failure_to_open(monkeypatch, out):
 
     monkeypatch.setattr(audio, "Microphone", boom)
     assert vcli._test(_cfg(), []) == 1
-    assert "mikrofon açılamadı: aygıt yok" in out()
+    assert "could not open the microphone: aygıt yok" in out()
 
 
 def _clock(*ticks: float):
@@ -421,7 +421,7 @@ def test_mic_test_records_and_transcribes(monkeypatch, out):
 
     monkeypatch.setattr(stt, "make_stt", lambda cfg: SimpleNamespace(transcribe=transcribe, last="groq"))
     assert vcli._test(_cfg(), []) == 0
-    assert "duyulan (groq, 0.5 sn): merhaba alice" in out()
+    assert "heard (groq, 0.5 s): merhaba alice" in out()
     assert len(heard) == 1
 
     def fail(a):
@@ -439,7 +439,7 @@ def test_run_requires_mic(monkeypatch, out):
 
     monkeypatch.setattr(audio, "mic_available", lambda: False)
     assert vcli._run(_cfg(), []) == 1
-    assert "mikrofon yok" in out()
+    assert "no microphone" in out()
 
 
 def test_run_wires_assistant(monkeypatch, out):
@@ -469,4 +469,4 @@ def test_run_wires_assistant(monkeypatch, out):
     assert vcli._run(_cfg(follow_up=3, wake_model=""), ["--ptt", "<f13>", "--no-wake"]) == 0
     assert seen["ptt_key"] == "<f13>" and seen["wake_phrase"] is False and seen["follow_up"] == 3.0
     assert seen["stopped"] and seen["cleaned"] == "CTX" and seen["agent"] == "AJAN" and seen["stt"] == "STT"
-    assert "dinliyor (bas-konuş: <f13>)" in out()
+    assert "listening (push-to-talk: <f13>)" in out()
