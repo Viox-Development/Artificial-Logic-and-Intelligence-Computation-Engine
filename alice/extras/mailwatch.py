@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 EVERY = 2 * 3600
 QUERY = ('newer_than:3d -category:promotions -category:social (fatura OR "son ödeme" OR ekstre OR invoice OR '
@@ -135,5 +136,5 @@ def scan(cfg, router, mem, notify: Callable[[str, str], bool], now: float | None
     except OSError:
         pass  # state is a convenience: at worst a mail is checked again next round
     if added:
-        notify("E-postadan hatırlatma kuruldu", "\n".join(added) + "\nTakvime de eklememi istersen söyle.")
+        notify(_("Reminder set from an email"), "\n".join(added) + "\n" + _("Tell me if you want it on the calendar too."))
     return added

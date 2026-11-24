@@ -70,15 +70,15 @@ def _open_local(uri: str) -> bool:
 
 def _spotify_play(m: Manifest, args: dict[str, Any]) -> str:
     if _wait_playing(m, API_WAIT):
-        return "doğrulandı: çalıyor"
-    return _spotify_local(m, args, "API 'tamam' dedi ama çalmadı")
+        return "verified: playing"
+    return _spotify_local(m, args, "the API said OK but nothing is playing")
 
 
 def _spotify_local(m: Manifest, args: dict[str, Any], why: str) -> str:
     """Open track (or app if no uri) locally; launches if app is closed. Then check if it is actually playing."""
     uris = [str(u) for u in (args.get("uris") or []) if str(u).startswith("spotify:")]
     if not _open_local(uris[0] if uris else "spotify:"):
-        return (f"UYARI: {why} ve Spotify uygulaması açılamadı. Spotify uygulamasını açıp tekrar dene.")
+        return (f"WARNING: {why} and the Spotify app could not be opened. Open the Spotify app and try again.")
     if not uris:  # app brought to foreground: resume from where it left off
         runner._sleep(2.0)
         try:
@@ -86,6 +86,6 @@ def _spotify_local(m: Manifest, args: dict[str, Any], why: str) -> str:
         except runner.ConnectError:
             pass  # the app is open at least; the warning below covers a failed resume
     if _wait_playing(m, LOCAL_WAIT):
-        return f"{why}; parça Spotify uygulamasında açıldı, doğrulandı: çalıyor"
-    return (f"UYARI: {why}; Spotify uygulamasında açıldı ama çalmaya başlamadı. "
-            "Spotify uygulamasını kapatıp açmak gerekebilir.")
+        return f"{why}; the track was opened in the Spotify app, verified: playing"
+    return (f"WARNING: {why}; it was opened in the Spotify app but did not start playing. "
+            "The Spotify app may need to be restarted.")

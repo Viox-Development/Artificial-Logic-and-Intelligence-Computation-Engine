@@ -38,7 +38,7 @@ def task_view(t: ScheduledTask) -> dict[str, Any]:
     try:
         nxt = _when(t.next_run(datetime.now().timestamp()).timestamp()) if t.enabled else ""
     except ValueError:
-        nxt = "hiç gelmiyor"
+        nxt = _("never comes")
     return {"id": t.id, "text": t.description or t.prompt[:80], "prompt": t.prompt, "when": Cron(t.cron).describe(),
             "cron": t.cron, "next": nxt, "last": _when(t.last_run), "result": t.last_result[:600],
             "catch_up": t.catch_up, "once": t.once, "enabled": t.enabled, "pending": t.pending}
@@ -106,7 +106,7 @@ class Automations:
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, "_" + action, None) if action.isidentifier() else None
         if fn is None:
-            return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+            return {"ok": False, "error": _("unknown action: {action}", action=action)}
         try:
             return fn(d)
         except (ValueError, TypeError, KeyError) as e:
@@ -167,7 +167,7 @@ class Automations:
         ts = TaskStore(self.tasks_path)
         t = ts.get(str(d.get("id", "")))
         if t is None:
-            return {"ok": False, "error": "görev yok"}
+            return {"ok": False, "error": _("no such task")}
         for k, v in change.items():
             setattr(t, k, v)
         ts.save()
@@ -194,7 +194,7 @@ class Automations:
         try:
             open_file(p)
         except OSError as e:
-            return {"ok": False, "error": f"açılamadı: {e} ({p})"}
+            return {"ok": False, "error": _("could not open: {error}", error=f"{e} ({p})")}
         return {"ok": True, "created": created, "path": str(p)}
 
     def _feed_test(self, d: dict[str, Any]) -> dict[str, Any]:
@@ -204,7 +204,7 @@ class Automations:
         feeds, _errors = load_feeds()
         feed = next((f for f in feeds if f.name == d.get("name")), None)
         if feed is None:
-            return {"ok": False, "error": "akış yok"}
+            return {"ok": False, "error": _("no such feed")}
         decider = None
         if feed.when.ask or feed.escalate.ask:
             from alice.decider import Decider

@@ -210,7 +210,7 @@ def human_failure(reasons: list[str]) -> str:
         low = why.lower()
         if m := COOLING_RX.search(why):
             secs = int(m.group(1))
-            when = f"~{secs // 3600} sa" if secs >= 3600 else f"~{max(1, secs // 60)} dk"
+            when = _("~{n} h", n=secs // 3600) if secs >= 3600 else _("~{n} min", n=max(1, secs // 60))
             text = _("{name} is waiting (opens in {when})", name=name, when=when)
         elif "model sınırı" in low or "model limit" in low or "too_large" in low or "context" in low:
             text = _("the conversation is too long for {name}", name=name)

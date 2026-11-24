@@ -202,7 +202,7 @@ def warning(changed: list[str]) -> str:
     if not changed:
         return ""
     names = ", ".join(changed[:8]) + (" ..." if len(changed) > 8 else "")
-    return ("\n[GÜVENLİK UYARISI] Sandbox'taki komut deponun git ayarlarını/hook'larını değiştirdi: " + names +
-            ". Bunlar git her çalıştığında (commit, status, pull) çalışabilir. ALICE'in kendi git çağrıları hook'ları "
-            "kapalı çalışır, ama kullanıcının kendi git'i ve editörü çalıştırır. Kullanıcıya bu değişikliği açıkça "
-            "bildir; o istemedikçe bu dosyaları kullanma, gerekiyorsa kullanıcı onayıyla geri al.]")
+    return ("\n[SECURITY WARNING] The sandboxed command changed the repository's git settings/hooks: " + names +
+            ". These can run every time git runs (commit, status, pull). ALICE's own git calls run with hooks off, "
+            "but the user's own git and editor run them. Tell the user about this change clearly; don't use these "
+            "files unless they want to, and undo it with the user's approval if needed.]")
