@@ -108,7 +108,8 @@ function onProjectNote(ev) {
   if (ev.kind === "ask" || ev.kind === "done") toast(ev.kind === "ask" ? "Proje sana soruyor" : "Proje bitti");
   loadProjects();
 }
-function fmtSecs(n) { return n < 60 ? `${n} sn` : n < 3600 ? `${Math.floor(n / 60)} dk ${n % 60} sn` : `${Math.floor(n / 3600)} sa ${Math.floor((n % 3600) / 60)} dk`; }
+function fmtSecs(n) { return n < 60 ? _("{secs} s", { secs: n }) : n < 3600 ? _("{m} min {s} s", { m: Math.floor(n / 60), s: n % 60 })
+  : _("{h} h {m} min", { h: Math.floor(n / 3600), m: Math.floor((n % 3600) / 60) }); }
 async function teamAction(action, name, text) {
   if (!S.team) return;
   const r = await api("/api/project/action", { id: S.team.id, action, name, text: text || "" });
