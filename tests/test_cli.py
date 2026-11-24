@@ -43,12 +43,19 @@ def test_package_version_falls_back_without_metadata(monkeypatch):
     assert cli.package_version() == __version__
 
 
-def test_main_help_is_turkish_and_lists_subcommands(capsys):
+def test_main_help_follows_the_language_and_lists_subcommands(capsys):
+    from alice import i18n
+
     with pytest.raises(SystemExit) as e:
         cli.main(["--help"])
     out = capsys.readouterr().out
     assert e.value.code == 0
-    assert "kullanım: alice" in out and "bu yardımı göster" in out and "sürümü göster" in out
+    assert "usage: alice" in out and "show this help and exit" in out and "show the version and exit" in out
+    i18n.set_language("tr")
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    tr = capsys.readouterr().out
+    assert "kullanım: alice" in tr and "bu yardımı göster" in tr and "sürümü göster" in tr
     for sub in ("alice doctor", "alice voice", "alice plugins", "alice core"):
         assert sub in out
 
@@ -57,7 +64,7 @@ def test_typo_subcommand_suggests_instead_of_starting_agent(monkeypatch, capsys)
     _no_agent(monkeypatch)
     assert cli.main(["doctr"]) == 2
     out = capsys.readouterr().out
-    assert "alice doctor" in out and "Bilinmeyen komut" in out
+    assert "alice doctor" in out and "Unknown command" in out
     assert cli.main(["status"]) == 2
     assert "alice core status" in capsys.readouterr().out
 
@@ -87,14 +94,21 @@ def test_strict_args_for_simple_commands(capsys):
         cli.main(["doctor", "--bogus"])
     assert e.value.code == 2
     err = capsys.readouterr().err
-    assert "tanınmayan argüman" in err and "alice doctor --help" in err
+    assert "unrecognized arguments" in err and "alice doctor --help" in err
 
 
-def test_invalid_mode_message_is_turkish(capsys):
+def test_invalid_mode_message_follows_the_language(capsys):
+    from alice import i18n
+
     with pytest.raises(SystemExit):
         cli.main(["--mode", "bad"])
     err = capsys.readouterr().err
-    assert "geçersiz seçim" in err and "seçenekler:" in err
+    assert "invalid choice" in err and "choose from" in err
+    i18n.set_language("tr")
+    with pytest.raises(SystemExit):
+        cli.main(["--mode", "bad"])
+    err = capsys.readouterr().err
+    assert "geçersiz seçim" in err and "seçenekler:" in err and "hata:" in err
 
 
 def test_missing_optional_extra_prints_install_hint(monkeypatch, capsys):
@@ -127,13 +141,13 @@ def test_oneshot_without_prompt(monkeypatch, capsys):
     _no_agent(monkeypatch)
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     assert cli.main(["-p"]) == 2
-    assert "-p için görev yok" in capsys.readouterr().out
+    assert "No task for -p" in capsys.readouterr().out
 
 
 def test_invalid_model_ref(monkeypatch, capsys):
     _no_agent(monkeypatch)
     assert cli.main(["--model", "sadece-ad", "selam", "dünya"]) == 2
-    assert "--model geçersiz" in capsys.readouterr().out
+    assert "--model is invalid" in capsys.readouterr().out
 
 
 def test_check_ready_warns_when_no_api_keys(isolated_home, capsys, monkeypatch):
