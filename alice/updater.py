@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 REPO = "Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine"
 API = "https://api.github.com"
@@ -200,9 +201,9 @@ def _git_run(args: list[str], cwd: Path, timeout: float, env: dict[str, str]) ->
         r = subprocess.run([git_exe() or "git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout, env=env, creationflags=NO_WINDOW)
     except FileNotFoundError:
-        return 127, "git bulunamadı"
+        return 127, _("git not found")
     except subprocess.TimeoutExpired:
-        return 124, f"git {args[0]} zaman aşımına uğradı"
+        return 124, _("git {cmd} timed out", cmd=args[0])
     except OSError as e:  # noqa: BLE001
         return 1, str(e)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
@@ -245,7 +246,7 @@ def bootstrap_repo(root: Path, branch: str = "main") -> tuple[Path | None, str]:
         code, out = _git(args, root, timeout=300 if args[0] == "fetch" else 30)
         if code != 0:
             shutil.rmtree(root / ".git", ignore_errors=True)  # no half-made repo left; the next check retries
-            return None, f"git {args[0]} başarısız: {out.strip()[-200:]}"
+            return None, _("git {cmd} failed: {output}", cmd=args[0], output=out.strip()[-200:])
     return repo_dir(), ""
 
 
@@ -256,12 +257,13 @@ def _find_repo(branch: str = "main") -> tuple[Path | None, str]:
         return repo, ""
     root = install_root()
     if root is None:
-        return None, f"ALICE git deposundan kurulmamış; güncelleme için depoyu klonla (git clone https://github.com/{REPO})"
+        return None, _("ALICE was not installed from a git repository; to update, clone the repo "
+                       "(git clone https://github.com/{repo})", repo=REPO)
     if ensure_git() is None:
         if git_installing():
-            return None, "Git arka planda kuruluyor; kurulum bitince güncelleme kendiliğinden denenecek"
-        return None, ("Git bulunamadı; otomatik güncelleme için Git gerekiyor. Git'i kur (winget install Git.Git "
-                      "ya da git-scm.com) ve ALICE'i yeniden aç")
+            return None, _("Git is installing in the background; the update will be tried again when it finishes")
+        return None, _("Git was not found; automatic updates need Git. Install Git (winget install Git.Git or "
+                       "git-scm.com) and reopen ALICE")
     # The app and the core may both get here at once: one installing .git must not let the other delete it half-made.
     try:
         with update_lock():
@@ -269,16 +271,16 @@ def _find_repo(branch: str = "main") -> tuple[Path | None, str]:
             if repo is not None:
                 return repo, ""
             if (root / ".git").exists():
-                return None, f"{root} bir git deposu ama git onu okuyamadı"
+                return None, _("{path} is a git repository but git could not read it", path=root)
             repo, err = bootstrap_repo(root, branch)
     except UpdateBusy as e:
-        return None, f"{e}; birazdan tekrar denenecek"
+        return None, _("{error}; will try again shortly", error=e)
     if repo is not None:
         return repo, ""
     if err:
-        return None, f"güncelleme geçmişi indirilemedi ({err}); internet bağlantını kontrol et"
-    return None, (f"ALICE git deposundan kurulmamış; güncelleme için depoyu klonla (git clone https://github.com/{REPO}) "
-                  "ya da en son ALICE-Setup.exe'yi kur")
+        return None, _("could not download the update history ({error}); check your internet connection", error=err)
+    return None, _("ALICE was not installed from a git repository; to update, clone the repo "
+                   "(git clone https://github.com/{repo}) or install the latest ALICE-Setup.exe", repo=REPO)
 
 
 def local_commit(repo: Path) -> str:
@@ -300,14 +302,14 @@ def remote_head(repo: Path, branch: str, timeout: float = 20.0) -> tuple[str, st
     """(sha, error). One network round trip: ls-remote does not fetch."""
     code, out = _git(["ls-remote", "--heads", "origin", branch], repo, timeout=timeout)
     if code != 0:
-        return "", out.strip().splitlines()[-1] if out.strip() else "ls-remote başarısız"
+        return "", out.strip().splitlines()[-1] if out.strip() else _("ls-remote failed")
     # ls-remote matches the pattern from the end: "main" also returns "refs/heads/x/main", and that branch (sorted
     # first) was taken, so the wrong commit was treated as a "new version". The full name is searched.
     for line in out.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[1] == f"refs/heads/{branch}":
             return parts[0], ""
-    return "", f"uzak dal bulunamadı: {branch}"
+    return "", _("remote branch not found: {branch}", branch=branch)
 
 
 TAG_RX = re.compile(r"^refs/tags/v(\d+)\.(\d+)\.(\d+)$")
@@ -317,7 +319,7 @@ def latest_release(repo: Path, timeout: float = 20.0) -> tuple[str, str, str]:
     """En yüksek sürüm etiketi: (commit sha, etiket, hata). Açıklamalı etiketlerde commit'in kendisi (^{}) alınır."""
     code, out = _git(["ls-remote", "--tags", "origin", "refs/tags/v*"], repo, timeout=timeout)
     if code != 0:
-        return "", "", out.strip().splitlines()[-1] if out.strip() else "ls-remote başarısız"
+        return "", "", out.strip().splitlines()[-1] if out.strip() else _("ls-remote failed")
     shas: dict[str, str] = {}
     for line in out.splitlines():
         parts = line.split()
@@ -329,14 +331,14 @@ def latest_release(repo: Path, timeout: float = 20.0) -> tuple[str, str, str]:
         if TAG_RX.match(ref) and (peeled or ref not in shas):
             shas[ref] = sha
     if not shas:
-        return "", "", "henüz yayınlanmış bir sürüm yok"
+        return "", "", _("no release has been published yet")
     best = max(shas, key=lambda r: tuple(int(x) for x in TAG_RX.match(r).groups()))  # type: ignore[union-attr]
     return shas[best], best.removeprefix("refs/tags/"), ""
 
 
 def contains(repo: Path, sha: str, head: str = "HEAD") -> bool:
     """Is `sha` already in the local branch (an ancestor of head, or head itself)? False if the commit is not local."""
-    code, _ = _git(["merge-base", "--is-ancestor", sha, head], repo, timeout=20)
+    code, _out = _git(["merge-base", "--is-ancestor", sha, head], repo, timeout=20)
     return code == 0
 
 
@@ -435,15 +437,16 @@ class UpdateInfo:
         if not self.available:
             return ""
         if self.bad:
-            return "bu sürüm daha önce açılamadı ve geri alındı; yeni bir düzeltme bekleniyor"
+            return _("this version failed to start before and was rolled back; waiting for a new fix")
         if self.on and self.on not in ("HEAD", self.branch):
-            return f"depo '{self.on}' dalında; otomatik güncelleme yalnız {self.branch} dalında yapılır"
+            return _("the repo is on the '{on}' branch; automatic updates only run on {branch}", on=self.on,
+                     branch=self.branch)
         if self.dirty:
-            return "depoda kaydedilmemiş değişiklikler var"
+            return _("the repo has uncommitted changes")
         if self.ci == "red":
-            return "yeni commit'in CI'ı kırmızı"
+            return _("CI of the new commit is red")
         if self.ci == "pending":
-            return "CI hâlâ sürüyor"  # if it turns green at a check a few minutes later, it passes by itself
+            return _("CI is still running")  # if it turns green at a check a few minutes later, it passes by itself
         return ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -556,7 +559,7 @@ class update_lock:  # noqa: N801 - used as a context manager: with update_lock()
         try:
             fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as e:
-            raise UpdateBusy("başka bir ALICE süreci şu an güncelliyor") from e
+            raise UpdateBusy(_("another ALICE process is updating right now")) from e
         with os.fdopen(fd, "w") as f:
             f.write(str(os.getpid()))
         return self
@@ -676,17 +679,17 @@ def install_deps(repo: Path, emit: Callable[[str], None] | None = None) -> bool:
     extras = installed_extras()
     target = f".[{','.join(extras)}]" if extras else "."
     if emit:
-        emit(f"bağımlılıklar kuruluyor: pip install -e {target}")
+        emit(_("installing dependencies: pip install -e {target}", target=target))
     try:
         r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", target], cwd=str(repo),
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
                            creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as e:  # noqa: BLE001
         if emit:
-            emit(f"pip çalıştırılamadı: {e}")
+            emit(_("could not run pip: {error}", error=e))
         return False
     if r.returncode != 0 and emit:
-        emit(f"pip hatası: {(r.stderr or r.stdout or '').strip()[-400:]}")
+        emit(_("pip error: {output}", output=(r.stderr or r.stdout or '').strip()[-400:]))
     return r.returncode == 0
 
 
@@ -698,9 +701,9 @@ def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = 
     if info.error and not info.available:
         return False, info.error
     if not info.available:
-        return False, "zaten en son sürümdesin"
+        return False, _("you're already on the latest version")
     if info.blocked and not force:
-        return False, f"güncelleme yapılmadı: {info.blocked}"
+        return False, _("update not applied: {reason}", reason=info.blocked)
     repo = info.repo
     assert repo is not None
     try:
@@ -713,34 +716,34 @@ def apply_update(info: UpdateInfo | None = None, cfg: Any = None, force: bool = 
 def _apply_locked(info: UpdateInfo, repo: Path, say: Callable[[str], None]) -> tuple[bool, str]:
     if local_commit(repo) != info.local:
         # Another process already pulled while we waited for the lock: don't pull again, the result is the same.
-        return True, f"zaten güncellendi: {local_commit(repo)[:7]}"
-    say(f"güncelleme çekiliyor: {info.local[:7]} → {info.tag or info.remote[:7]}")
+        return True, _("already updated: {sha}", sha=local_commit(repo)[:7])
+    say(_("pulling the update: {old} → {new}", old=info.local[:7], new=info.tag or info.remote[:7]))
     ref = ["tag", info.tag] if info.tag else [info.branch]
     code, out = _git(["fetch", "--prune", "origin", *ref], repo, timeout=300)
     if code != 0:
-        return False, f"fetch başarısız: {out.strip()[-300:]}"
+        return False, _("fetch failed: {output}", output=out.strip()[-300:])
     # Etikette açıklamalı etiket nesnesi değil commit'in kendisi birleştirilir (yoksa ff yerine birleştirme ister).
     code, out = _git(["merge", "--ff-only", info.remote if info.tag else "FETCH_HEAD"], repo, timeout=120)
     if code != 0:
-        return False, ("fast-forward yapılamadı (yerel commit'lerin olabilir): " + out.strip()[-300:])
+        return False, _("fast-forward failed (you may have local commits): {output}", output=out.strip()[-300:])
     new = local_commit(repo)
     if new == info.local:
         # Nothing was pulled: restarting after "güncellendi" (updated) would loop at startup.
         write_state(local=new, remote=info.remote)
-        return False, "zaten en son sürümdesin"
+        return False, _("you're already on the latest version")
     if _pip_needed(repo, info.local, new):
         install_deps(repo, say)
     problem = smoke_test(repo)
     if problem:
-        say(f"yeni sürüm açılamıyor, geri alınıyor: {problem}")
-        rolled = rollback(repo, info.local, new, f"duman testi: {problem}")
-        return False, ("yeni sürüm açılamadı, önceki sürüme dönüldü" if rolled else
-                       "yeni sürüm açılamadı ve geri alınamadı") + f": {problem}"
+        say(_("the new version can't start, rolling back: {problem}", problem=problem))
+        rolled = rollback(repo, info.local, new, _("smoke test: {problem}", problem=problem))
+        return False, (_("the new version could not start; went back to the previous version") if rolled else
+                       _("the new version could not start and could not be rolled back")) + f": {problem}"
     changes = local_log(repo, info.local, new) or info.commits
     write_state(last_update=time.time(), local=new, remote=new, update_from=info.local, update_to=new,
                 changes=changes, announced_app=False, announced_core=False, pending_health=new, bad_boots=0)
     n = len(changes)
-    return True, f"güncellendi: {info.local[:7]} → {new[:7]}" + (f" ({n} commit)" if n else "")
+    return True, _("updated: {old} → {new}", old=info.local[:7], new=new[:7]) + (_(" ({n} commits)", n=n) if n else "")
 
 
 # --------------------------------------------------------------------------------- rollback
@@ -752,13 +755,13 @@ def smoke_test(repo: Path, timeout: float = 180.0) -> str:
                            encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW,
                            env={**os.environ, "PYTHONPATH": str(repo), "ALICE_NO_UPDATE": "1"})
     except subprocess.TimeoutExpired:
-        return "içe aktarma zaman aşımına uğradı"
+        return _("import timed out")
     except OSError as e:
-        return f"python çalıştırılamadı: {e}"
+        return _("could not run python: {error}", error=e)
     if r.returncode == 0:
         return ""
     lines = [ln for ln in (r.stderr or r.stdout or "").strip().splitlines() if ln.strip()]
-    return (lines[-1] if lines else f"çıkış kodu {r.returncode}")[:300]
+    return (lines[-1] if lines else _("exit code {code}", code=r.returncode))[:300]
 
 
 def rollback(repo: Path, good: str, bad: str, reason: str) -> bool:
@@ -766,9 +769,9 @@ def rollback(repo: Path, good: str, bad: str, reason: str) -> bool:
 
     --keep: when `alice update --force` pulled into a dirty tree and the smoke test failed, --hard deleted the user's
     unsaved changes. --keep preserves them (the fast-forward had not touched conflicting files anyway)."""
-    code, _ = _git(["reset", "--keep", good], repo, timeout=60)
+    code, _out = _git(["reset", "--keep", good], repo, timeout=60)
     if code != 0 and not is_dirty(repo):
-        code, _ = _git(["reset", "--hard", good], repo, timeout=60)
+        code, _out = _git(["reset", "--hard", good], repo, timeout=60)
     st = read_state()
     bads = [b for b in (st.get("bad") or []) if b != bad][-20:] + [bad]
     write_state(bad=bads, local=good, pending_health="", bad_boots=0,
@@ -789,7 +792,7 @@ def boot_check(repo: Path | None = None) -> str:
     if boots >= MAX_BAD_BOOTS and st.get("update_from"):
         if is_dirty(repo):
             return ""  # manual changes were made: don't touch
-        ok = rollback(repo, str(st["update_from"]), pending, f"{boots} açılış üst üste çöktü")
+        ok = rollback(repo, str(st["update_from"]), pending, _("{n} starts in a row crashed", n=boots))
         return "rolled" if ok else ""
     write_state(bad_boots=boots + 1)
     return ""
@@ -880,13 +883,14 @@ def startup_update(cfg: Any = None, emit: Callable[[str], None] | None = None,
     prepare(info, cfg)
     if not info.can_auto:
         if info.blocked:
-            say(f"yeni sürüm var ama {info.blocked}; `alice update --force` ile yine de geçebilirsin")
+            say(_("a new version is available, but {reason}; you can still update with `alice update --force`",
+                  reason=info.blocked))
         return info
     ok, msg = apply_update(info, cfg, emit=say)
     say(msg)
     if not ok:
         return info
-    say("en son sürümle yeniden başlatılıyor…")
+    say(_("restarting with the latest version…"))
     args = restart_argv if restart_argv is not None else [sys.executable, "-m", "alice", *sys.argv[1:]]
     # The new process must not check again at startup and loop: the flag is set only in the child's environment.
     restart(args, env={"ALICE_RESTARTED": "1"})

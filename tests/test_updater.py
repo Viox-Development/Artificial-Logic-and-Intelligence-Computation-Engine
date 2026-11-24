@@ -95,7 +95,7 @@ def test_one_gecmis_dalda_guncelleme_yok(repos, monkeypatch, offline):
     git(clone, "commit", "-qm", "yerel commit")
     info = updater.check(make_config({"brain": ["a:m"]}))
     assert info.ahead and not info.available
-    assert updater.apply_update(info) == (False, "zaten en son sürümdesin")
+    assert updater.apply_update(info) == (False, "you're already on the latest version")
 
 
 def test_baska_dalda_otomatik_cekilmez(repos, monkeypatch, offline):
@@ -105,7 +105,7 @@ def test_baska_dalda_otomatik_cekilmez(repos, monkeypatch, offline):
     push(origin, "main'e yeni")
     git(clone, "fetch", "-q")
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert info.available and not info.can_auto and "'ozellik' dalında" in info.blocked
+    assert info.available and not info.can_auto and "'ozellik' branch" in info.blocked
 
 
 def test_kirli_agac_otomatik_guncellenmez(repos, monkeypatch, offline):
@@ -115,9 +115,9 @@ def test_kirli_agac_otomatik_guncellenmez(repos, monkeypatch, offline):
     (clone / "alice" / "__init__.py").write_text("# elle değiştirdim\n", encoding="utf-8")
     info = updater.check(make_config({"brain": ["a:m"]}))
     assert info.available and info.dirty and not info.can_auto
-    assert info.blocked == "depoda kaydedilmemiş değişiklikler var"
+    assert info.blocked == "the repo has uncommitted changes"
     ok, msg = updater.apply_update(info, make_config({"brain": ["a:m"]}))
-    assert not ok and "kaydedilmemiş" in msg
+    assert not ok and "uncommitted" in msg
 
 
 def test_kirmizi_ci_otomatik_guncellenmez(repos, monkeypatch):
@@ -156,7 +156,7 @@ def test_git_deposu_degilse_anlasilir_hata(monkeypatch, tmp_path):
     monkeypatch.setattr(updater, "repo_dir", lambda: None)
     monkeypatch.setattr(updater, "install_root", lambda: None)
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert not info.available and "git deposundan kurulmamış" in info.error
+    assert not info.available and "not installed from a git repository" in info.error
 
 
 def test_mode_off_acilista_hic_bakmaz(repos, monkeypatch):
@@ -256,7 +256,7 @@ def test_ci_surerken_beklenir(repos, monkeypatch):
     state = {"ci": "pending"}
     monkeypatch.setattr(updater, "ci_state", lambda *a, **k: state["ci"])
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert info.blocked == "CI hâlâ sürüyor" and not info.can_auto
+    assert info.blocked == "CI is still running" and not info.can_auto
     state["ci"] = "green"
     info = updater.check(make_config({"brain": ["a:m"]}))
     assert info.can_auto
@@ -301,10 +301,10 @@ def test_broken_update_rolls_back_and_is_skipped(repos, monkeypatch, offline):
     monkeypatch.setattr(updater, "SMOKE_MODULES", ("kirik_mod",))
     cfg = make_config({"brain": ["a:m"]})
     ok, msg = updater.apply_update(updater.check(cfg), cfg)
-    assert not ok and "önceki sürüme dönüldü" in msg
+    assert not ok and "went back to the previous version" in msg
     assert git(clone, "rev-parse", "HEAD") == old
     info = updater.check(cfg)
-    assert info.bad and "geri alındı" in info.blocked and not info.can_auto
+    assert info.bad and "rolled back" in info.blocked and not info.can_auto
     rb = updater.consume_rollback("app")
     assert rb["from"] == bad and rb["to"] == old and updater.consume_rollback("app") is None
 
@@ -351,7 +351,7 @@ def test_forced_update_rollback_keeps_uncommitted_changes(repos, monkeypatch, of
     monkeypatch.setattr(updater, "SMOKE_MODULES", ("kirik_mod",))
     cfg = make_config({"brain": ["a:m"]})
     ok, msg = updater.apply_update(updater.check(cfg), cfg, force=True)
-    assert not ok and "önceki sürüme dönüldü" in msg
+    assert not ok and "went back to the previous version" in msg
     assert git(clone, "rev-parse", "HEAD") == old
     assert (clone / "alice" / "__init__.py").read_text(encoding="utf-8") == "# elle değiştirdim\n"
 
@@ -440,7 +440,7 @@ def test_gecmis_indirilemezse_yarim_depo_kalmaz(repos, monkeypatch, tmp_path):
     monkeypatch.setattr(updater, "install_root", lambda: app)
     monkeypatch.setattr(updater, "repo_dir", lambda: app if (app / ".git").exists() else None)
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert "indirilemedi" in info.error and not (app / ".git").exists()
+    assert "could not download" in info.error and not (app / ".git").exists()
 
 
 def test_git_yoksa_dogru_sebep_soylenir(repos, monkeypatch, tmp_path):
@@ -448,7 +448,7 @@ def test_git_yoksa_dogru_sebep_soylenir(repos, monkeypatch, tmp_path):
     monkeypatch.setattr(updater, "install_root", lambda: clone)
     monkeypatch.setattr(updater, "repo_dir", lambda: None)
     monkeypatch.setattr(updater, "ensure_git", lambda: None)
-    assert "Git bulunamadı" in updater.check(make_config({"brain": ["a:m"]})).error
+    assert "Git was not found" in updater.check(make_config({"brain": ["a:m"]})).error
 
 
 def test_git_kurulumu_acilisi_bekletmez(repos, monkeypatch):
@@ -472,7 +472,7 @@ def test_git_kurulumu_acilisi_bekletmez(repos, monkeypatch):
     monkeypatch.setattr(updater, "repo_dir", lambda: None)
     t0 = _t.monotonic()
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert _t.monotonic() - t0 < 3 and "arka planda kuruluyor" in info.error
+    assert _t.monotonic() - t0 < 3 and "installing in the background" in info.error
     assert updater.ensure_git() is None and len(started) == 1  # a second install is not started
     gate.set()
     updater._git_install.join(5)
@@ -511,7 +511,7 @@ def test_baska_surec_guncellerken_depo_kurulmaz(repos, monkeypatch, tmp_path):
     monkeypatch.setattr(updater, "repo_dir", lambda: app if (app / ".git").exists() else None)
     with updater.update_lock():
         info = updater.check(make_config({"brain": ["a:m"]}))
-    assert "başka bir ALICE süreci" in info.error and not (app / ".git").exists()
+    assert "another ALICE process" in info.error and not (app / ".git").exists()
     assert updater.check(make_config({"brain": ["a:m"]})).error == ""  # kilit bırakılınca kurulur
 
 
@@ -521,7 +521,7 @@ def test_stable_kanal_yalniz_surum_etiketine_gunceller(repos, monkeypatch, offli
     monkeypatch.setenv("ALICE_UPDATE_CHANNEL", "stable")
     push(origin, "yayınlanmamış iş")
     info = updater.check(make_config({"brain": ["a:m"]}))
-    assert not info.available and "sürüm yok" in info.error  # main'e birleşen commit tek başına gelmez
+    assert not info.available and "no release" in info.error  # main'e birleşen commit tek başına gelmez
     v1 = push(origin, "sürüm 1")
     git(origin, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
     git(origin, "tag", "v0.0.9", "HEAD~1")
