@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from alice.i18n import speech_tag
 from alice.tools.base import ToolResult
 from alice.voice.lang import correction, foreign, junk
 from alice.voice.listen import FOLLOW_MAX, ends_with_hush, is_yes
@@ -614,7 +615,8 @@ class LiveSession:
         setup: dict[str, Any] = {
             "model": f"models/{model}",
             "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
-                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.current_voice()}}, "languageCode": "tr-TR"}},
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.current_voice()}},
+                "languageCode": speech_tag(self.cfg.data.get("voice", {}).get("language", "auto"))}},
             "systemInstruction": {"parts": [{"text": system}]},
             "tools": [{"functionDeclarations": declarations(self._specs()) + ([THINK_DECL] if self.think else [])}],
             "inputAudioTranscription": {},

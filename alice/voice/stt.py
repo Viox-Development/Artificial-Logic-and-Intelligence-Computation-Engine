@@ -511,7 +511,9 @@ def make_stt(cfg: Config) -> STTRouter:
     from alice.voice.tts import core_policy
 
     v = cfg.data.get("voice", {})
-    lang = v.get("language", "tr")
+    from alice.i18n import speech_language
+
+    lang = speech_language(v.get("language", "auto"))
     compute = str(v.get("gpu_compute", GPU_COMPUTE) or GPU_COMPUTE)
     engines: list[STT] = []
     eleven = os.environ.get(str(v.get("eleven_api_key_env", "ELEVENLABS_API_KEY")), "")

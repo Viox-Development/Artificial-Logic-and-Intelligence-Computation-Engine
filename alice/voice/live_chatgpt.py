@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from alice.i18n import speech_language
 from alice.tools.base import ToolResult
 from alice.voice.live import AudioOut, LiveError, LiveUI, sanitize_schema
 
@@ -177,7 +178,7 @@ class RealtimeSession:
         self.prefers_audio = not bool(v.get("live_realtime_text_hint", False))
         # ChatGPT's own transcription: heard speech goes to logs and history; "Alice sus" works on voice too.
         self.transcribe = str(v.get("live_realtime_transcribe", "gpt-4o-mini-transcribe") or "")
-        self.language = str(v.get("language", "tr") or "tr")
+        self.language = speech_language(v.get("language", "auto"))
         # After a reply, prepare the next session in the background so connect + setup (≈2 s) doesn't delay speech.
         self.prewarm = bool(v.get("live_realtime_prewarm", True))
         self._think_lock = threading.Lock()

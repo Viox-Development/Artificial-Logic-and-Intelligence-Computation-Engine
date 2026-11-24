@@ -10,6 +10,9 @@ translation is shown in English. Placeholders use `str.format` names, and a tran
 
 The language is `[ui] language` in config.toml ("en" or "tr", default "en"; the setup wizard and Settings write it).
 The ALICE_LANG environment variable overrides it, for scripts and tests.
+
+Speech follows it too: `[voice] language` is the language that is recognised and spoken; "auto" (the default) means
+the interface language, a code like "tr" or "en" pins it (speech_language()).
 """
 
 from __future__ import annotations
@@ -87,6 +90,32 @@ def _(text: str, /, **values: Any) -> str:
         return out.format(**values)
     except (KeyError, IndexError, ValueError):
         return text.format(**values)  # a broken translation falls back to English rather than failing
+
+
+# Speech: BCP-47 tags for the speech services and the free Edge voice used as the last fallback, per language.
+SPEECH_TAGS = {"en": "en-US", "tr": "tr-TR"}
+EDGE_VOICES = {"en": "en-US-AriaNeural", "tr": "tr-TR-EmelNeural"}
+
+
+def speech_language(value: Any = "auto") -> str:
+    """The language for speech recognition and synthesis: `[voice] language` when it names one, otherwise ("auto" or
+    empty) the interface language."""
+    v = str(value or "").strip().lower()
+    return v if v and v != "auto" else language()
+
+
+def speech_tag(value: Any = "auto") -> str:
+    """BCP-47 tag of the speech language ("tr-TR"), for services that want one."""
+    lang = speech_language(value)
+    return SPEECH_TAGS.get(lang, lang)
+
+
+def edge_voice(setting: Any, value: Any = "auto") -> str:
+    """[voice] tts_edge: "auto" picks the Edge voice of the speech language, empty turns it off, a name is used as is."""
+    v = str(setting or "").strip()
+    if v.lower() != "auto":
+        return v
+    return EDGE_VOICES.get(speech_language(value), EDGE_VOICES["en"])
 
 
 def pick(en: str, tr: str) -> str:

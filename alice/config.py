@@ -284,8 +284,9 @@ tts_eleven = ""
 tts_eleven_model = "auto"
 tts_local = ""
 # If the cloud and local voices fail (quota, error, hang), the free, keyless Microsoft Edge voice (edge-tts): ~1 s.
-# Turkish female voice tr-TR-EmelNeural, male tr-TR-AhmetNeural; English e.g. en-US-AriaNeural. Empty = off.
-tts_edge = "tr-TR-EmelNeural"
+# "auto" = the voice of the speech language (Turkish tr-TR-EmelNeural, English en-US-AriaNeural); a voice name
+# such as tr-TR-AhmetNeural pins it. Empty = off.
+tts_edge = "auto"
 # Python and port of the local voice server (`alice voice install-local` fills them in).
 local_python = ""
 local_port = 8771
@@ -309,7 +310,9 @@ stt = ["groq:whisper-large-v3-turbo", "local:large-v3-turbo"]
 stt_cpu_model = "small"
 # With ELEVENLABS_API_KEY, speech is first transcribed with ElevenLabs Scribe (much better at Turkish), then "stt".
 stt_eleven = "scribe_v2"
-language = "tr"
+# Speech language (recognition and speaking): "auto" = the interface language ([ui] language), or a code
+# such as "tr" or "en".
+language = "auto"
 # Volume (0-1): ALICE's speech and the flight/game alerts (War Thunder, DCS) are separate.
 volume = 1.0
 alert_volume = 0.5

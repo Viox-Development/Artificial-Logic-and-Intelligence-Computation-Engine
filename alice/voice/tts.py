@@ -30,6 +30,7 @@ from typing import Any, Callable, Protocol
 import httpx
 
 from alice.config import Config, alice_home
+from alice.i18n import edge_voice, speech_language
 from alice.voice.audio import Audio
 from alice.voice.tone import CHATTERBOX, DIRECTION, EMOTIONS, NAMES_TR
 
@@ -424,8 +425,10 @@ def _device(allow_gpu: bool) -> str:
 class XTTS:
     """Coqui XTTS v2 (pip install coqui-tts). Supports Turkish; clones the voice from a reference recording."""
 
-    def __init__(self, library: EmotionLibrary | None = None, allow_gpu: Callable[[], bool] = lambda: True):
+    def __init__(self, library: EmotionLibrary | None = None, allow_gpu: Callable[[], bool] = lambda: True,
+                 language: str = "tr"):
         self.library = library or EmotionLibrary()
+        self.language = language
         self.allow_gpu = allow_gpu
         self.name = "xtts"
         self._model = None
@@ -450,7 +453,7 @@ class XTTS:
         if ref is None:
             raise TTSError("duygu kütüphanesi yok: alice voice library")
         with self._lock:
-            wav = self._load().tts(text=text, speaker_wav=str(ref), language="tr")
+            wav = self._load().tts(text=text, speaker_wav=str(ref), language=self.language)
         return Audio.from_floats(wav, 24000).polish()
 
     def release_gpu(self) -> None:
@@ -484,8 +487,10 @@ class Chatterbox:
                  allow_gpu: Callable[[], bool] = lambda: True, client: httpx.Client | None = None,
                  start_timeout: float = 600, trim: Callable[[Audio, str], Audio] | None = None,
                  temperature: float = 0.6, verify: bool = True, whisper_model: str = "small",
-                 synth_timeout: float = 30):
+                 synth_timeout: float = 30, language: str = "tr"):
         from alice.voice.trim import by_length
+
+        self.language = language
 
         self.synth_timeout = synth_timeout
         self._warm = False
@@ -554,7 +559,7 @@ class Chatterbox:
         self.ensure_server()
         exaggeration, cfg_weight = CHATTERBOX.get(emotion, CHATTERBOX["calm"])
         ref = self.library.clip(emotion)
-        body = {"text": text, "language": "tr", "ref": str(ref) if ref else "", "exaggeration": exaggeration,
+        body = {"text": text, "language": self.language, "ref": str(ref) if ref else "", "exaggeration": exaggeration,
                 "cfg_weight": cfg_weight, "temperature": self.temperature,
                 "device": "cuda" if self.allow_gpu() else "cpu", "verify": self.verify,
                 "whisper_model": self.whisper_model}
@@ -639,8 +644,10 @@ class ElevenLabsTTS:
     URL = "https://api.elevenlabs.io/v1"
     RATE = 24000
 
-    def __init__(self, api_key: str, voice: str, model: str = "auto", client: httpx.Client | None = None):
+    def __init__(self, api_key: str, voice: str, model: str = "auto", client: httpx.Client | None = None,
+                 language: str = "tr"):
         self.api_key = api_key
+        self.language = language
         self.voice = voice
         self.model = model
         self.name = f"eleven:{voice}"
@@ -672,7 +679,7 @@ class ElevenLabsTTS:
                                 "voice_settings": {"stability": stability, "similarity_boost": 0.8, "style": style,
                                                    "use_speaker_boost": True}}
         if self._lang_ok:
-            body["language_code"] = "tr"
+            body["language_code"] = self.language
         url = f"{self.URL}/text-to-speech/{self.voice}"
         try:
             r = self.client.post(url, params={"output_format": f"pcm_{self.RATE}"}, headers=self._headers(),
@@ -902,8 +909,9 @@ def make_cloud(cfg: Config, voice: str | None = None) -> GeminiTTS | None:
 def make_local(cfg: Config, name: str | None = None) -> TTS | None:
     name = name if name is not None else cfg.data.get("voice", {}).get("tts_local", "")
     allow = lambda: core_policy().get("local_gpu", True) is not False  # noqa: E731
+    lang = speech_language(cfg.data.get("voice", {}).get("language", "auto"))
     if name == "xtts":
-        return XTTS(allow_gpu=allow)
+        return XTTS(allow_gpu=allow, language=lang)
     if name == "chatterbox":
         from alice.voice.stt import make_stt
         from alice.voice.trim import make_trimmer
@@ -913,7 +921,7 @@ def make_local(cfg: Config, name: str | None = None) -> TTS | None:
         return Chatterbox(v.get("local_python", ""), int(v.get("local_port", 8771)), allow_gpu=allow, trim=trim,
                           temperature=float(v.get("local_temperature", 0.6)),
                           verify=bool(v.get("local_verify", True)),
-                          whisper_model=str(v.get("local_whisper_model", "small")))
+                          whisper_model=str(v.get("local_whisper_model", "small")), language=lang)
     return None
 
 
@@ -923,12 +931,13 @@ def make_eleven(cfg: Config) -> ElevenLabsTTS | None:
     key = os.environ.get(str(v.get("eleven_api_key_env", "ELEVENLABS_API_KEY")), "")
     if not voice or not key:
         return None
-    return ElevenLabsTTS(key, voice, str(v.get("tts_eleven_model", "auto") or "auto"))
+    return ElevenLabsTTS(key, voice, str(v.get("tts_eleven_model", "auto") or "auto"),
+                         language=speech_language(v.get("language", "auto")))
 
 
 def make_tts(cfg: Config) -> TTSRouter:
     v = cfg.data.get("voice", {})
-    edge = str(v.get("tts_edge", "tr-TR-EmelNeural") or "")
+    edge = edge_voice(v.get("tts_edge", "auto"), v.get("language", "auto"))
     r = TTSRouter(make_cloud(cfg), make_local(cfg), v.get("prefer", "cloud"), cache=SpeechCache(),
                   backup=EdgeTTS(edge) if edge else None, premium=make_eleven(cfg))
     r.premium_factory = lambda: make_eleven(cfg)

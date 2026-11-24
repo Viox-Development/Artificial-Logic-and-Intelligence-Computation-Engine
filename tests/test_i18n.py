@@ -322,3 +322,14 @@ def test_watchdog_texts_have_turkish_translations():
     tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
     missing = [text for _key, _limit, text in GAME_LIMITS if text not in tr]
     assert not missing, "add these to alice/locales/tr.json:\n" + "\n".join(missing)
+
+
+def test_speech_language_follows_the_interface_unless_pinned(monkeypatch):
+    from alice import i18n
+
+    monkeypatch.setenv("ALICE_LANG", "tr")
+    assert i18n.speech_language("auto") == "tr" and i18n.speech_language("") == "tr" and i18n.speech_language("en") == "en"
+    assert i18n.speech_tag("auto") == "tr-TR" and i18n.edge_voice("auto", "auto") == "tr-TR-EmelNeural"
+    monkeypatch.setenv("ALICE_LANG", "en")
+    assert i18n.edge_voice("auto", "auto") == "en-US-AriaNeural" and i18n.edge_voice("auto", "tr") == "tr-TR-EmelNeural"
+    assert i18n.edge_voice("tr-TR-AhmetNeural") == "tr-TR-AhmetNeural" and i18n.edge_voice("") == ""
