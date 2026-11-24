@@ -23,8 +23,8 @@ jobs:
           days-before-pr-close: 14
           stale-issue-label: stale
           stale-pr-label: stale
-          exempt-issue-labels: "pinned,security,accepted,good first issue,help wanted"
-          exempt-pr-labels: "pinned,security"
+          exempt-issue-labels: "pinned,security,accepted,good first issue,help wanted,tracking,blocked,in-progress,priority: high"
+          exempt-pr-labels: "pinned,security,blocked,in-progress"
           stale-issue-message: >
             This issue has had no activity for 60 days. It will be closed in 14 days unless there is new activity.
           stale-pr-message: >
