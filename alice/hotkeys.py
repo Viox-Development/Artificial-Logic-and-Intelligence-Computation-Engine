@@ -85,7 +85,7 @@ class WinHotkeys:
 
     def _run(self) -> None:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
         self._tid = kernel32.GetCurrentThreadId()

@@ -311,7 +311,7 @@ def hide_from_sandbox(path: Path) -> bool:
     if not IS_WIN:
         return False
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -347,7 +347,7 @@ def lower_integrity() -> None:
     """Set this process's (and the children it starts from now on) integrity level to Low. On Windows a process can
     lower its own level but cannot raise it. On failure, OSError (so the command is not run without the sandbox)."""
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

@@ -298,7 +298,7 @@ class WakeGate:
         if self._failed:
             return False
         try:
-            import faster_whisper  # noqa: F401
+            from faster_whisper import WhisperModel  # noqa: F401
         except ImportError:
             self._failed = True
             return False

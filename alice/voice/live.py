@@ -264,7 +264,7 @@ def screen_frame(max_width: int = 1280) -> str | None:
             mon = sct.monitors[1]
             try:
                 import ctypes
-                from ctypes import wintypes
+                import ctypes.wintypes as wintypes
 
                 r = wintypes.RECT()
                 ctypes.windll.user32.GetWindowRect(ctypes.windll.user32.GetForegroundWindow(), ctypes.byref(r))
@@ -581,7 +581,7 @@ class LiveSession:
         if self._connect is not None:
             return True
         try:
-            import websockets.sync.client  # noqa: F401
+            from websockets.sync.client import connect  # noqa: F401
         except ImportError:
             return False
         return True

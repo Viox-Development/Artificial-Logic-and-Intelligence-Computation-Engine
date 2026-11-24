@@ -175,7 +175,7 @@ def send_unicode(text: str) -> bool:
     if sys.platform != "win32":
         return False
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),

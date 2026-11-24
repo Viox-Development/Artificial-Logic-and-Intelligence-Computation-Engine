@@ -210,7 +210,7 @@ class Screen:
         mon = sct.monitors[1]
         try:
             import ctypes
-            from ctypes import wintypes
+            import ctypes.wintypes as wintypes
 
             r = wintypes.RECT()
             ctypes.windll.user32.GetWindowRect(ctypes.windll.user32.GetForegroundWindow(), ctypes.byref(r))
