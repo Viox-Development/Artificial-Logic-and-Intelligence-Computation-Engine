@@ -26,6 +26,8 @@ Neler yapabiliyor:
 
 ## Mimari
 
+> English: [guide/architecture.md](guide/architecture.md). Reflex artık Jev'e tek birleşik soru yerine her istekte tek soru soruyor (eylem türü, öğe, tuş, bitti mi, listede yok mu) ve her eylemden sonra ekranın değişip değişmediğine bakıyor.
+
 ```
                  ┌──────────────────────── ALICE ────────────────────────┐
   sen ──► CLI ──►│ Agent (System 2)                                       │
@@ -52,6 +54,8 @@ Neler yapabiliyor:
 Bu, Cua'nın `jev-use` tarifiyle aynı mantık: Jev bir ajan değil, bir karar bileşeni.
 
 ## Model seçimi: neden bu sıra
+
+> English: [guide/models.md](guide/models.md)
 
 Ekim 2026 itibarıyla ücretsiz katmanları taradım. Rakamlar sık değişiyor, kaynaklar birbiriyle çelişebiliyor; aşağıdaki tablo kararın gerekçesi, kesin limit için her sağlayıcının kendi panelini kontrol et.
 
