@@ -71,7 +71,8 @@ ALICE ships with about 90 tools. The main groups:
 - Details: [docs/guide/phone.md](docs/guide/phone.md).
 
 **Connections**
-- Gmail, GitHub, Spotify, Steam, Discord, YouTube, Blender, and any HTTP API you describe in TOML.
+- Gmail, GitHub, Spotify, Steam, Discord, YouTube, Blender, and any HTTP API you describe in TOML
+  ([docs/guide/connections.md](docs/guide/connections.md)).
 - Plugins that add their own tools.
 
 **Flight sims**

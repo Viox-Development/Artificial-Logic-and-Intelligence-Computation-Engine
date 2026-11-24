@@ -189,6 +189,8 @@ alice models --write  # canlı ücretsiz katalogdan rol zincirlerini günceller 
 
 ## Bağlantılar: servisleri ALICE'e öğretmek
 
+> English: [guide/connections.md](guide/connections.md). Kutudan çıkanlara `google_workspace` (Drive, Docs, Sheets; Takvim'le aynı Google istemcisi) da eklendi.
+
 Bir siteyi ALICE'e bağlamak için kod yazmak gerekmiyor: bir TOML tanımı yazıyorsun, ALICE onu şemalı bir araca çeviriyor (eylemler, parametreler, kimlik, cevabın okunur hali). Ayrıntı: [docs/CONNECT.md](CONNECT.md).
 
 ```powershell
