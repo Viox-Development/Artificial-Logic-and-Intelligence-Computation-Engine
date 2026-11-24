@@ -211,7 +211,7 @@ class RichUI:
                 return "n"
             if ans in ("a", "always", "hep"):
                 return "a"
-            if ans in ("p", "proje", "kalıcı"):
+            if ans in ("p", "project", "permanent", "proje", "kalıcı"):
                 return "p"
 
     def ask_choice(self, question: str, options: list[str], multi: bool = False) -> str:
@@ -546,9 +546,11 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
 
 
 def rewind_prompt(agent: Agent):
+    from alice import session as sess
+
     turns = [(i, m) for i, m in enumerate(agent.messages)
              if m.get("role") == "user" and not m.get("_image") and not m.get("_nudge") and i > 0
-             and not str(m.get("content", "")).startswith("[Önceki konuşmanın özeti]")][-9:]
+             and not sess.is_summary(str(m.get("content", "")))][-9:]
     if not turns:
         console.print(_("[yellow]No message to rewind to[/]"))
         return None

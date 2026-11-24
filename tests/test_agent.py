@@ -299,8 +299,8 @@ def test_claim_without_evidence_is_sent_back_once(workdir):
     assert out == ("Sonora-Setup.exe indirildi, kurulum hazır.\n\n"
                    "Klasörde Sonora-Setup.exe yok; indirmeyi doğrulayamadım.")
     nudge = [m for m in agent.messages if m.get("_nudge")]
-    assert len(nudge) == 1 and "dayanağı yok" in nudge[0]["content"] and "Sonora-Setup.exe indirildi" in nudge[0]["content"]
-    assert "GÖRMÜYOR" in nudge[0]["content"]  # model hatırlatmaya "Haklısın" diye cevap yazmasın
+    assert len(nudge) == 1 and "have no basis" in nudge[0]["content"] and "Sonora-Setup.exe indirildi" in nudge[0]["content"]
+    assert "does NOT see this note" in nudge[0]["content"]  # model hatırlatmaya "Haklısın" diye cevap yazmasın
 
 
 def test_supported_claim_passes_and_plain_answers_are_not_checked(workdir):
@@ -327,7 +327,7 @@ def test_compacted_messages_are_kept_in_the_session_archive(workdir):
     agent.on_compact = lambda old: sess.archive("s1", old)
     for i in range(6):
         agent.run_turn(f"mesaj {i} " + "y" * 300)
-    assert any(str(m.get("content")).startswith("[Önceki konuşmanın özeti]") for m in agent.messages)
+    assert any(str(m.get("content")).startswith("[Summary of the earlier conversation]") for m in agent.messages)
     live = [h["text"] for h in display_history(agent.messages) if h["type"] == "user"]
     assert not any(t.startswith("mesaj 0") for t in live)  # bağlamdan çıktı
     items = display_history(agent.messages, archive=sess.load_archive("s1"))
@@ -335,7 +335,7 @@ def test_compacted_messages_are_kept_in_the_session_archive(workdir):
     assert [h["text"].split(" y")[0] for h in users] == [f"mesaj {i}" for i in range(6)]  # hepsi, sırayla, bir kez
     # arşivdekiler ajan geçmişinde yok: geri sarma indeksi taşımazlar; canlı olanlar taşır
     assert "mi" not in users[0] and agent.messages[users[-1]["mi"]]["role"] == "user"
-    assert any(h["type"] == "info" and "özetlendi" in h["text"] for h in items)
+    assert any(h["type"] == "info" and "summarized" in h["text"] for h in items)
     assert sess.load_archive("yok") == []
 
 
@@ -344,7 +344,7 @@ def test_cut_off_reply_is_continued_and_joined(workdir):
                                   {"content": "ikinci yarı.", "_finish": "stop"}], workdir)
     assert agent.run_turn("uzun anlat") == "Birinci yarı, ikinci yarı."
     nudges = [m for m in agent.messages if m.get("_nudge")]
-    assert len(nudges) == 1 and "kaldığın yerden" in nudges[0]["content"]
+    assert len(nudges) == 1 and "where you stopped" in nudges[0]["content"]
 
 
 def test_cut_off_continuation_is_bounded(workdir):

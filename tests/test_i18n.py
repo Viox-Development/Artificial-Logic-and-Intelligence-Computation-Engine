@@ -229,3 +229,22 @@ def test_repl_help_is_translated_line_for_line():
     assert cli.HELP in tr, "add cli.HELP to alice/locales/tr.json"
     assert cli.HELP.count("\n") == tr[cli.HELP].count("\n")
     assert [ln.split()[0] for ln in cli.HELP.splitlines()[1:19]] == [ln.split()[0] for ln in tr[cli.HELP].splitlines()[1:19]]
+
+
+def test_old_turkish_conversation_markers_are_still_recognized():
+    """Chats saved before the markers became English hold the Turkish wording; both are recognized."""
+    from alice import session as sess
+    from alice.agent import _is_request, _last_request
+
+    assert sess.is_summary("[Summary of the earlier conversation]\nx") and sess.is_summary("[Önceki konuşmanın özeti]\nx")
+    assert not sess.is_summary("a normal message") and not sess.is_summary(None)
+    assert sess.summary_body("[Önceki konuşmanın özeti] abc") == "abc" and sess.summary_body("[Summary of the earlier conversation] abc") == "abc"
+    assert sess.is_removed_screenshot("[eski ekran görüntüsü yer kazanmak için kaldırıldı]") and sess.is_removed_screenshot(sess.SHOT_REMOVED)
+    old = {"role": "user", "content": "[Önceki konuşmanın özeti]\nx\n\n## Süren iş: kullanıcının son isteği (birebir)\nİndirmeyi bitir"}
+    new = {"role": "user", "content": "[Summary of the earlier conversation]\nx\n\n## Ongoing work: the user's latest request (verbatim)\nFinish the download"}
+    assert _last_request([old]) == "İndirmeyi bitir" and _last_request([new]) == "Finish the download"
+    assert not _is_request(old) and not _is_request(new)
+    first = sess.first_prompt([{"role": "user", "content": "[devam kontrolü] x", "_nudge": True},
+                               {"role": "user", "content": sess.NUDGE_PREFIX + "x", "_nudge": True},
+                               {"role": "user", "content": "gerçek istek"}])
+    assert first == "gerçek istek"

@@ -264,10 +264,10 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
             if m.get("_image") or m.get("_nudge"):
                 continue
             text = _user_text(m)
-            if text.startswith("[Önceki konuşmanın özeti]"):
-                items.append({"type": "info", "text": "buradan öncesi özetlendi: ALICE yukarıdakileri özet olarak "
-                              "hatırlıyor" if items else "önceki konuşma özetlendi"})
-            elif not text.startswith("[eski ekran görüntüsü"):
+            if sess.is_summary(text):
+                items.append({"type": "info", "text": _("summarized up to here: ALICE remembers the above as a summary")
+                              if items else _("the earlier conversation was summarized")})
+            elif not sess.is_removed_screenshot(text):
                 if text.startswith(PLAN_NOTE):
                     text = text[len(PLAN_NOTE):]
                 # A message inserted mid-turn while running has no rewind point: no index is assigned.

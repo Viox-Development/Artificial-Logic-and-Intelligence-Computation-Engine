@@ -135,7 +135,33 @@ def load_archive(session_id: str) -> list[dict[str, Any]]:
     return out
 
 
-_NOT_A_PROMPT = ("[Önceki konuşmanın özeti]", "[devam kontrolü]", "[eski ekran görüntüsü")
+# Marker messages inside a conversation. They are English (the model reads them); chats saved before that hold the
+# Turkish wording, so both are recognized everywhere a marker is looked for.
+SUMMARY_HEAD = "[Summary of the earlier conversation]"
+OLD_SUMMARY_HEAD = "[Önceki konuşmanın özeti]"
+NUDGE_PREFIX = "[continuation check] "
+OLD_NUDGE_PREFIX = "[devam kontrolü] "
+SHOT_REMOVED = "[old screenshot removed to save space]"
+OLD_SHOT_REMOVED = "[eski ekran görüntüsü yer kazanmak için kaldırıldı]"
+_NOT_A_PROMPT = (SUMMARY_HEAD, OLD_SUMMARY_HEAD, NUDGE_PREFIX.strip(), OLD_NUDGE_PREFIX.strip(), "[old screenshot",
+                 "[eski ekran görüntüsü")
+
+
+def is_summary(text: Any) -> bool:
+    """A summary message that replaced the older part of a conversation (new or old wording)."""
+    return isinstance(text, str) and text.startswith((SUMMARY_HEAD, OLD_SUMMARY_HEAD))
+
+
+def summary_body(text: str) -> str:
+    """The summary text without its heading."""
+    for head in (SUMMARY_HEAD, OLD_SUMMARY_HEAD):
+        if text.startswith(head):
+            return text[len(head):].strip()
+    return text
+
+
+def is_removed_screenshot(text: Any) -> bool:
+    return isinstance(text, str) and text.startswith(("[old screenshot", "[eski ekran görüntüsü"))
 
 
 def first_prompt(messages: list[dict[str, Any]]) -> str:
@@ -171,7 +197,7 @@ def _first_archived(session_id: str) -> str:
 
 def session_prompt(session_id: str, messages: list[dict[str, Any]]) -> str:
     """The chat's first request. In a summarized chat the session file's first message is the summary; the real first
-    message is in the archive. Titles used to be cut from the summary ("[Önceki konuşmanın özeti] <tool calls>…")."""
+    message is in the archive. Titles used to be cut from the summary ("[Summary of the earlier conversation] <tool calls>…")."""
     return _first_archived(session_id) or first_prompt(messages)
 
 
