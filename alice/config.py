@@ -937,7 +937,7 @@ def personality_text() -> str:
         try:
             pers.write_text(PERSONALITY_TEMPLATE, encoding="utf-8")
         except OSError:
-            pass
+            pass  # the old personality file is kept as it is
         body = PERSONALITY_TEMPLATE.strip()
     return body
 
@@ -1009,7 +1009,7 @@ def cliproxy_local_key() -> str:
                 if line.startswith("api_key="):
                     key = line.split("=", 1)[1].strip()
         except OSError:
-            pass
+            pass  # unreadable key file: no key
         c.update(path=str(path), mtime=mtime, key=key)
     return c["key"]
 

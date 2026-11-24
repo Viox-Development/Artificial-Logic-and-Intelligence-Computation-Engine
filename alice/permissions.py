@@ -91,7 +91,7 @@ def _path_forms(raw: str, cwd: Path | None) -> list[str]:
             if full != base and _inside(full, base):
                 out.append(str(full.relative_to(base)))
         except (OSError, ValueError, RuntimeError):
-            pass
+            pass  # a path that can't be resolved is skipped
     return out
 
 
@@ -146,7 +146,7 @@ def _trust(path: Path, text: str) -> None:
         tp.parent.mkdir(parents=True, exist_ok=True)
         tp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # trust is asked again next time
 
 
 def project_rules(cwd: Path | None, include_untrusted: bool = False) -> dict[str, list[str]]:

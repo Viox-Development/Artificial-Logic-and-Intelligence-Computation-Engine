@@ -131,7 +131,7 @@ def record_feedback(say: str, reply: str, note: str = "", source: str = "", path
             f.write(json.dumps({"ts": time.time(), "say": say, "reply": reply, "note": note, "source": source},
                                ensure_ascii=False) + "\n")
     except OSError:
-        pass
+        pass  # feedback logging must not break the conversation
     if not say:
         return False
     one_line = lambda s: " ".join(s.split())[:300]  # noqa: E731

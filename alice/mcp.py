@@ -61,7 +61,7 @@ class MCPServer:
                     if tok:
                         self.env["GITHUB_PERSONAL_ACCESS_TOKEN"] = tok
                 except Exception:
-                    pass
+                    pass  # no GitHub token: the server starts without it
         self.timeout = timeout
         self.proc: subprocess.Popen | None = None
         self._id = 0

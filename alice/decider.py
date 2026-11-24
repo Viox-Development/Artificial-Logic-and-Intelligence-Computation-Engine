@@ -350,7 +350,7 @@ def extract_json(text: str) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        pass
+        pass  # not plain JSON: look for an object inside the text below
     m = re.search(r"\{.*\}", text, re.S)
     if m:
         try:

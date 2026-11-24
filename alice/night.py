@@ -351,7 +351,7 @@ def analyze(store: Any, now: float, voice_log: Path | None = None, core_log: Pat
             if w is not None:
                 found.append(w)
     except OSError:
-        pass
+        pass  # no voice log: nothing to check
     found += broken_tools()
     cl = core_log or alice_home() / "core.log"
     try:
@@ -360,7 +360,7 @@ def analyze(store: Any, now: float, voice_log: Path | None = None, core_log: Pat
             text = f.read().decode("utf-8", errors="replace")
             found += thread_deaths(text) + crashes(text)
     except OSError:
-        pass
+        pass  # no core log: nothing to check
     return found
 
 

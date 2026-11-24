@@ -165,7 +165,7 @@ def _git_dirs(cwd: Path) -> list[Path]:
                 cd = Path(common) if Path(common).is_absolute() else gd / common
                 out.append(cd.resolve())
             except OSError:
-                pass
+                pass  # no commondir: a plain .git folder
             return out
     return []
 

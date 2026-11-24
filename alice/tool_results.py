@@ -36,7 +36,7 @@ def _sweep(now: float) -> None:
             if d.is_dir() and now - d.stat().st_mtime > KEEP_DAYS * 86400:
                 shutil.rmtree(d, ignore_errors=True)
     except OSError:
-        pass
+        pass  # cleanup is retried on the next sweep
 
 
 def save(text: str, call_id: str, tool: str) -> Path | None:

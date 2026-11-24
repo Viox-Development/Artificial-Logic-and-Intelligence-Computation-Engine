@@ -142,7 +142,7 @@ def morning_info(cfg, now: datetime) -> dict[str, Any]:
         if pending.get("body"):
             out["health"] = pending["body"]
     except (OSError, ValueError):
-        pass
+        pass  # no health report pending
     return out
 
 
@@ -321,7 +321,7 @@ class Greeter:
             try:
                 self.state_path.write_text(json.dumps({"last_day": self.last_day}), encoding="utf-8")
             except (OSError, AttributeError):
-                pass
+                pass  # the greeting is still counted for this process
             self._after(mem, b, text)
             return text
         finally:

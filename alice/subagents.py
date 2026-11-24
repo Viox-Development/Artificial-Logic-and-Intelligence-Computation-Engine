@@ -290,7 +290,7 @@ def restore(ctx: ToolContext, rows: list[dict[str, Any]]) -> None:
         try:
             top = max(top, int(sub.id.lstrip("a")))
         except ValueError:
-            pass
+            pass  # an id in another format doesn't affect numbering
     if top:
         ctx.state["subagent_ids"] = itertools.count(top + 1)
 

@@ -143,13 +143,13 @@ class SiteStudy(Tool):
             for name, b64 in shots.items():
                 (out_dir / f"{slug}-{name.replace('ü', 'u').replace('ş', 's')}.png").write_bytes(base64.b64decode(b64))
         except OSError:
-            pass
+            pass  # screenshots are extras; the study below still runs
         text = study(ctx.router, shots, info, self.team.goal, focus)
         if text:
             try:
                 (out_dir / f"{slug}.md").write_text(f"# {info}\n\n{text}\n", encoding="utf-8")
             except OSError:
-                pass
+                pass  # the study is still returned in the result
             self.team.mark(self.me, "design", f"site_study {host}: {text.splitlines()[0][:120]}")
         else:
             text = ("(Görsel model çözümleme yapamadı; görüntüler ekte. Görebiliyorsan kendin çözümle, göremiyorsan "
@@ -212,7 +212,7 @@ def _tree(root: Path, limit: int = 80) -> str:
                 rows.append("…")
                 break
     except OSError:
-        pass
+        pass  # unreadable folder: list what was found so far
     return "\n".join(rows) or "(klasör boş)"
 
 

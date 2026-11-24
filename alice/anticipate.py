@@ -86,7 +86,7 @@ def save_state(st: dict[str, Any], path: Path | None = None) -> None:
         try:
             tmp.unlink()
         except OSError:
-            pass
+            pass  # a leftover temp file is harmless
 
 
 @contextmanager
@@ -125,7 +125,7 @@ def steam_manifest(appid: str = WT_APPID, root: Path | None = None) -> dict[str,
         text = (root / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
         libs += [Path(p.replace("\\\\", "\\")) for p in _vdf_values(text, "path")]
     except OSError:
-        pass
+        pass  # no library list: only the main Steam folder is searched
     for lib in libs:
         f = lib / "steamapps" / f"appmanifest_{appid}.acf"
         try:

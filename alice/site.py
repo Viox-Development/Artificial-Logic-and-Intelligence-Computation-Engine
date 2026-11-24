@@ -38,7 +38,7 @@ def find_entry(root: Path) -> str:
                 if f.is_file() and not any(part in SKIP_DIRS or part.startswith(".") for part in f.relative_to(root).parts):
                     return f.relative_to(root).as_posix()
     except OSError:
-        pass
+        pass  # unreadable folder: no entry page found
     return ""
 
 
@@ -272,7 +272,7 @@ def _cli_capture(url: str, timeout: float = 20.0, settle: int = 600,
             try:
                 proc.wait(5)
             except subprocess.TimeoutExpired:
-                pass
+                pass  # killed; the OS reaps it
         _kill_profile_procs(tmp)
     return out
 

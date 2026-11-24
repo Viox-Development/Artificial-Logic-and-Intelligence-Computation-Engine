@@ -82,7 +82,7 @@ def save_state(data: dict[str, Any], path: Path | None = None) -> None:
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            pass  # a leftover temp file is harmless; the error is raised below
         raise
 
 

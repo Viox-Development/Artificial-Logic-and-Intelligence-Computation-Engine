@@ -356,7 +356,7 @@ class LongMemory:
             try:
                 self.db.execute("PRAGMA journal_mode=WAL")  # the core, voice and the app may use the same file
             except sqlite3.DatabaseError:
-                pass
+                pass  # WAL is an optimization; the default journal still works
         self.db.executescript(_SCHEMA)
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(episodes)")}
         if "sid" not in cols:  # which chat a turn belongs to: deleting a chat can also delete its turns from memory

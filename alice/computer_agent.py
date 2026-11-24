@@ -128,7 +128,7 @@ def log_line(text: str) -> None:
         with open(alice_home() / "voice.log", "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} computer_task {text[:400]}\n")
     except OSError:
-        pass
+        pass  # logging must not break the task
 
 
 STABLE_DIFF = 1.5  # 0-255 mean pixel difference (in small grayscale image): below this means "screen settled"
@@ -329,7 +329,7 @@ def save_recipe(goal: str, status: str, summary: str, steps: list[str], title: s
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(rows[-RECIPES_MAX:], ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
-        pass
+        pass  # recipes are a convenience; the task itself is done
 
 
 def similar_recipes(goal: str, min_score: float = 0.5) -> list[dict[str, Any]]:

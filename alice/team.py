@@ -585,7 +585,7 @@ class Team:
                 with excl.open("a", encoding="utf-8") as f:
                     f.write("\n.alice-team/\n")
         except OSError:
-            pass
+            pass  # the exclude entry is a convenience; git may show .alice-team/ as untracked
         rel = base.resolve().relative_to(top.resolve()) if base.resolve() != top.resolve() else Path()
         return path / rel
 
@@ -1093,7 +1093,7 @@ class Team:
                     p.write_text(before, encoding="utf-8")
                 done.append(_rel(p, self.cwd))
             except OSError:
-                pass
+                pass  # that file can't be restored; the others still are
         m.originals.clear()
         m.files.clear()
         with self.cond:
@@ -1292,7 +1292,7 @@ class Team:
                 try:
                     pop.communicate(timeout=5)
                 except subprocess.TimeoutExpired:
-                    pass
+                    pass  # killed; its output is not needed
                 out, code = "zaman aşımı", -1
         except OSError as e:
             out, code = str(e), -1
@@ -1306,7 +1306,7 @@ class Team:
                 if f.is_file():
                     return f.read_text(encoding="utf-8", errors="replace")[:4000]
             except OSError:
-                pass
+                pass  # unreadable rules file: try the next one
         return ""
 
     def learn(self, snap: dict[str, Any]) -> None:

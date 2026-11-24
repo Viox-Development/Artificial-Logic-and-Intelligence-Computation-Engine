@@ -96,7 +96,7 @@ def guess_check(cwd: Path) -> str:
         if (cwd / "go.mod").is_file():
             return "go test ./..."
     except (OSError, ValueError):
-        pass
+        pass  # no test command guessed
     return ""
 
 
