@@ -191,7 +191,7 @@ def test_dead_refresh_token_is_tried_once_then_reported_without_network(monkeypa
     monkeypatch.setattr("httpx.post", post)
     auth = Auth(kind="oauth2", token_url="https://t")
     for _ in range(3):
-        with pytest.raises(oauth.OAuthError, match="yeniden giriş"):
+        with pytest.raises(oauth.OAuthError, match="sign in again"):
             oauth.refresh(auth, "google_calendar", "cid")
     assert len(calls) == 1  # no more requests were sent with the dead token
     assert oauth.needs_sign_in("google_calendar")

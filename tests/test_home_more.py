@@ -138,10 +138,10 @@ def test_wifi_tool_status_scan_saved_disconnect(netsh, tmp_path):
            "show networks": "SSID 1 : EvAgi\n    Authentication : WPA2-Personal\n    Signal : 90%\nSSID 2 : \n",
            "show profiles": "Kullanıcı profilleri\n    Tüm Kullanıcı Profili     : EvAgi\n"})
     ctx = _ctx(tmp_path)
-    assert Wifi().run(ctx, action="status").text.startswith("Bağlı: EvAgi, sinyal %87")
+    assert Wifi().run(ctx, action="status").text.startswith("Connected: EvAgi, signal 87%")
     assert Wifi().run(ctx, action="scan").text == "EvAgi: %90 WPA2-Personal\n(gizli): %0 "
     assert Wifi().run(ctx, action="saved").text == "EvAgi"
-    assert Wifi().run(ctx, action="disconnect").text == "Wi-Fi bağlantısı kesildi"
+    assert Wifi().run(ctx, action="disconnect").text == "Wi-Fi disconnected"
     with pytest.raises(ToolError, match="ssid is required"):
         Wifi().run(ctx, action="connect")
 
@@ -169,14 +169,14 @@ def test_wifi_connect_writes_profile_removes_temp_file_and_hides_password(netsh,
 
 def test_wifi_known_network_connects_without_profile(netsh):
     f = netsh({"show profiles": "    All User Profile     : EvAgi\n"})
-    assert wifi.connect("EvAgi") == "'EvAgi' ağına bağlanılıyor"
+    assert wifi.connect("EvAgi") == "connecting to 'EvAgi'"
     assert [c[2:] for c in f.calls] == [["show", "profiles"], ["connect", "name=EvAgi"]]
 
 
 def test_wifi_netsh_error_without_output_has_default_message(monkeypatch):
     monkeypatch.setattr(wifi.sys, "platform", "win32")
     monkeypatch.setattr(wifi, "run", lambda cmd, timeout=15: _done(cmd, "", "", 1))
-    with pytest.raises(RuntimeError, match="netsh hata verdi"):
+    with pytest.raises(RuntimeError, match="netsh failed"):
         wifi.disconnect()
 
 
@@ -294,7 +294,7 @@ def test_screenshot_timeout_is_explained(monkeypatch):
         raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
 
     monkeypatch.setattr(android.subprocess, "run", slow)
-    with pytest.raises(android.AdbError, match="20 sn içinde cevap vermedi"):
+    with pytest.raises(android.AdbError, match="did not answer within 20 s"):
         android.Device("192.168.1.50", "tv").screenshot()
 
 
@@ -302,7 +302,7 @@ def test_screenshot_failure_and_success(monkeypatch):
     _adb(monkeypatch, lambda cmd, timeout=15: _done(cmd))
     monkeypatch.setattr(android.subprocess, "run",
                         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, b"", b"error: device offline"))
-    with pytest.raises(android.AdbError, match="bağlı değil"):
+    with pytest.raises(android.AdbError, match="is not connected"):
         android.Device("192.168.1.50", "tv").screenshot()
 
     import base64
@@ -326,7 +326,7 @@ def test_android_tool_screenshot_timeout_becomes_tool_error(monkeypatch, tmp_pat
         raise subprocess.TimeoutExpired(cmd, 20)
 
     monkeypatch.setattr(android.subprocess, "run", slow)
-    with pytest.raises(ToolError, match="cevap vermedi"):
+    with pytest.raises(ToolError, match="did not answer"):
         Android().run(_ctx(tmp_path, android={"tv": "192.168.1.50:5555"}), device="tv", action="screenshot")
 
 
@@ -334,13 +334,13 @@ def test_shell_errors_are_explained(monkeypatch):
     d_out = {"cmd": ("", "error: device '192.168.1.50:5555' not found", 1)}
     _adb(monkeypatch, lambda cmd, timeout=15: _done(cmd, *d_out["cmd"]))
     d = android.Device("192.168.1.50", "phone")
-    with pytest.raises(android.AdbError, match="bağlı değil"):
+    with pytest.raises(android.AdbError, match="is not connected"):
         d.shell("echo")
     d_out["cmd"] = ("", "", 1)
-    with pytest.raises(android.AdbError, match="adb hata verdi"):
+    with pytest.raises(android.AdbError, match="adb failed"):
         d.shell("echo")
     d_out["cmd"] = ("", "failed to connect to '192.168.1.50:5555': Connection refused", 1)
-    with pytest.raises(android.AdbError, match="kabul etmedi"):
+    with pytest.raises(android.AdbError, match="refused the connection"):
         d.shell("echo")
 
 
@@ -349,10 +349,10 @@ def test_connect_timeout_and_plain_failure(monkeypatch):
         raise TimeoutError("adb 10 sn içinde cevap vermedi")
 
     _adb(monkeypatch, slow)
-    with pytest.raises(android.AdbError, match="aynı ağda mı"):
+    with pytest.raises(android.AdbError, match="on the same network"):
         android.Device("192.168.1.50", "tv").connect()
     _adb(monkeypatch, lambda cmd, timeout=15: _done(cmd))
-    with pytest.raises(android.AdbError, match="adresine bağlanılamadı"):
+    with pytest.raises(android.AdbError, match="could not connect to"):
         android.Device("192.168.1.50", "tv").connect()
 
 
@@ -375,7 +375,7 @@ def test_phone_battery_notifications_push_and_text(monkeypatch, tmp_path):
     monkeypatch.setattr(android.Device, "_run", lambda self, *a, timeout=15, binary=False:
                         fake([self.adb, "-s", self.serial, *a]))
     ctx = _ctx(tmp_path, android={"phone": "192.168.1.11:41001"})
-    assert Android().run(ctx, device="phone", action="battery").text == "pil %45, şarj oluyor, 31°C"
+    assert Android().run(ctx, device="phone", action="battery").text == "battery 45%, charging, 31°C"
     assert Android().run(ctx, device="phone", action="notifications").text == "no notifications"
     Android().run(ctx, device="phone", action="type", text="merhaba dünya")
     assert calls[-1][-1] == "input text 'merhaba%sdünya'"

@@ -39,7 +39,7 @@ KEYS = {
     "power": "POWER", "on": "WAKEUP", "off": "SLEEP", "input": "TV_INPUT", "menu": "MENU",
 }
 PACKAGE = re.compile(r"^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$")
-ADB_HINT = "adb bulunamadı: `winget install Google.PlatformTools` ile kur ya da config'te [android] adb yolunu ver"
+ADB_HINT = "adb not found: install it with `winget install Google.PlatformTools` or give the adb path in config [android]"
 
 
 class AdbError(RuntimeError):
@@ -111,7 +111,7 @@ def input_text_arg(text: str) -> str:
 class Device:
     def __init__(self, host: str, kind: str = "tv", adb: str = ""):
         if not host:
-            raise AdbError(f"{kind} için adres yok: önce connect (host ile) ya da find")
+            raise AdbError(f"no address for {kind}: first connect (with host) or find")
         self.serial = serial(host)
         self.kind = kind
         self.adb = adb_path(adb)
@@ -123,7 +123,7 @@ class Device:
                 return subprocess.run(cmd, capture_output=True, timeout=timeout,
                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except subprocess.TimeoutExpired as e:
-                raise AdbError(f"{self.kind} ({self.serial}) {timeout:g} sn içinde cevap vermedi") from e
+                raise AdbError(f"{self.kind} ({self.serial}) did not answer within {timeout:g} s") from e
         return run(cmd, timeout=timeout)
 
     def shell(self, command: str, timeout: float = 15) -> str:
@@ -136,14 +136,14 @@ class Device:
     def _explain(self, out: str) -> str:
         low = out.lower()
         if "unauthorized" in low or "authenticate" in low:
-            return (f"{self.kind} bağlantıya izin vermedi: ekranda çıkan 'hata ayıklamaya izin ver' penceresinde "
-                    "'Her zaman izin ver'i işaretleyip onayla, sonra tekrar dene")
+            return (f"{self.kind} didn't allow the connection: in the 'allow USB debugging' prompt on its screen, tick "
+                    "'Always allow' and confirm, then try again")
         if "refused" in low or "cannot connect" in low or "timed out" in low:
-            return (f"{self.serial} bağlantıyı kabul etmedi: cihaz açık ve aynı ağda mı, Geliştirici seçeneklerinde "
-                    "ağ/kablosuz hata ayıklama açık mı? (Telefonda port her açılışta değişir.)")
+            return (f"{self.serial} refused the connection: is the device on and on the same network, and is network/wireless debugging "
+                    "on in Developer options? (On a phone the port changes every time it's turned on.)")
         if "offline" in low or "not found" in low or "no devices" in low:
-            return f"{self.kind} ({self.serial}) bağlı değil: cihaz açık ve aynı ağda mı? Önce connect"
-        return out.strip() or "adb hata verdi"
+            return f"{self.kind} ({self.serial}) is not connected: is the device on and on the same network? connect first"
+        return out.strip() or "adb failed"
 
     # ----- connection -----
     def connect(self) -> str:
@@ -151,11 +151,11 @@ class Device:
         try:
             r = run([self.adb, "connect", self.serial], timeout=10)
         except TimeoutError as e:
-            raise AdbError(f"{self.serial} cevap vermedi: cihaz açık ve aynı ağda mı?") from e
+            raise AdbError(f"{self.serial} did not answer: is the device on and on the same network?") from e
         out = (r.stdout + r.stderr).strip()
         if "connected to" in out.lower() and "cannot" not in out.lower():
-            return f"{self.kind} bağlı ({self.serial})"
-        raise AdbError(self._explain(out) if out else f"{self.serial} adresine bağlanılamadı")
+            return f"{self.kind} connected ({self.serial})"
+        raise AdbError(self._explain(out) if out else f"could not connect to {self.serial}")
 
     def ensure(self) -> None:
         r = run([self.adb, "devices"], timeout=10)
@@ -170,7 +170,7 @@ class Device:
     # ----- shared operations -----
     def keys(self, name: str, times: int = 1) -> str:
         if name not in KEYS:
-            raise AdbError(f"bilinmeyen tuş: {name}. Geçerli: {', '.join(KEYS)}")
+            raise AdbError(f"unknown key: {name}. Valid: {', '.join(KEYS)}")
         n = max(1, min(int(times or 1), 30))
         self.shell("input keyevent " + " ".join([f"KEYCODE_{KEYS[name]}"] * n))
         return f"{self.kind}: {name}" + (f" x{n}" if n > 1 else "")
@@ -203,28 +203,28 @@ class Device:
             return name.strip()
         hits = [p for p in self.packages() if key.replace(" ", "") in p.casefold()]
         if not hits:
-            raise AdbError(f"'{name}' adında uygulama bulunamadı; apps ile listeye bak")
+            raise AdbError(f"no app called '{name}' found; look at the list with apps")
         return min(hits, key=len)
 
     def open_app(self, name: str) -> str:
         pkg = self.resolve_app(name)
         if not PACKAGE.match(pkg):  # intent actions, such as the camera
             self.shell(f"am start -a {shlex.quote(pkg)}")
-            return f"{self.kind}: {name} açıldı"
+            return f"{self.kind}: opened {name}"
         cat = "android.intent.category.LEANBACK_LAUNCHER" if self.kind == "tv" else "android.intent.category.LAUNCHER"
         out = self.shell(f"monkey -p {pkg} -c {cat} 1")
         if "No activities found" in out and self.kind == "tv":
             out = self.shell(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
         if "No activities found" in out:
-            raise AdbError(f"{pkg} başlatılamadı (başlatıcısı yok)")
-        return f"{self.kind}: {name} açıldı"
+            raise AdbError(f"could not start {pkg} (it has no launcher)")
+        return f"{self.kind}: opened {name}"
 
     def open_url(self, url: str, package: str = "") -> str:
         cmd = f"am start -a android.intent.action.VIEW -d {shlex.quote(url)}"
         if package:
             cmd += f" {package}"
         self.shell(cmd)
-        return f"{self.kind}: açıldı {url}"
+        return f"{self.kind}: opened {url}"
 
     def youtube(self, video_id: str) -> str:
         pkg = (TV_APPS if self.kind == "tv" else PHONE_APPS)["youtube"]
@@ -232,13 +232,13 @@ class Device:
 
     def type_text(self, text: str) -> str:
         self.shell(f"input text {input_text_arg(text)}")
-        return f"{self.kind}: yazıldı"
+        return f"{self.kind}: typed"
 
     def screenshot(self, width: int = 1280) -> str:
         """Screenshot as base64 PNG (downscaled for a model that can see images)."""
         r = self._run("exec-out", "screencap", "-p", timeout=20, binary=True)
         if r.returncode != 0 or not r.stdout.startswith(b"\x89PNG"):
-            raise AdbError(self._explain((r.stderr or b"").decode("utf-8", "replace")) or "ekran görüntüsü alınamadı")
+            raise AdbError(self._explain((r.stderr or b"").decode("utf-8", "replace")) or "could not take a screenshot")
         from PIL import Image
 
         img = Image.open(io.BytesIO(r.stdout))
@@ -251,7 +251,7 @@ class Device:
     # ----- phone-only -----
     def battery(self) -> str:
         b = parse_battery(self.shell("dumpsys battery"))
-        return (f"pil %{b['percent']}" + (", şarj oluyor" if b["charging"] else "")
+        return (f"battery {b['percent']}%" + (", charging" if b["charging"] else "")
                 + (f", {b['temp_c']:.0f}°C" if b["temp_c"] is not None else ""))
 
     def notifications(self) -> list[dict]:
@@ -261,7 +261,7 @@ class Device:
         r = self._run("push", local, remote_dir, timeout=300)
         if r.returncode != 0:
             raise AdbError(self._explain(r.stdout + r.stderr))
-        return f"gönderildi: {remote_dir}"
+        return f"sent: {remote_dir}"
 
 
 def check_reachable(host: str) -> None:
@@ -275,15 +275,15 @@ def pair(host_port: str, code: str, adb: str = "") -> str:
     try:
         r = run([adb_path(adb), "pair", host_port, code.strip()], timeout=20)
     except TimeoutError as e:
-        raise AdbError("eşleme cevap vermedi: adres ya da port yanlış, telefon başka ağda, ya da eşleme penceresi "
-                       "kapandı (kapanınca kod geçersiz olur; yeni kodla tekrar dene)") from e
+        raise AdbError("pairing did not answer: the address or port is wrong, the phone is on another network, or the pairing window "
+                       "closed (the code is invalid once it closes; try again with a new code)") from e
     out = (r.stdout + r.stderr).strip()
     if "successfully paired" not in out.lower():
         if "protocol fault" in out.lower() or "wrong password" in out.lower():
-            raise AdbError("eşleme kodu ya da portu artık geçersiz: eşleme penceresi kapandı ya da telefon zaten eşli. "
-                           "Zaten eşliyse tekrar eşlemeye gerek yok, connect yeter; değilse yeni kodla tekrar dene.")
-        raise AdbError(out or "eşleme başarısız")
-    return "eşlendi"
+            raise AdbError("the pairing code or port is no longer valid: the pairing window closed or the phone is already paired. "
+                           "If it's already paired, there is no need to pair again, connect is enough; otherwise try again with a new code.")
+        raise AdbError(out or "pairing failed")
+    return "paired"
 
 
 # The phone's connect port differs from its pairing port and changes on every startup (Linux's random port range).
@@ -318,10 +318,10 @@ def pair_and_connect(host_port: str, code: str, adb: str = "") -> tuple[str, str
     ip, _, port = host_port.partition(":")
     addr = find_connect_address(ip, adb, skip=int(port) if port.isdigit() else None)
     if not addr:
-        return ("eşlendi ama bağlanma portu bulunamadı. Telefonda Kablosuz hata ayıklama ana ekranındaki "
-                "'IP adresi ve bağlantı noktası' satırını ver (eşleme penceresindeki port değil, o farklıdır).", None)
+        return ("paired, but the connection port wasn't found. Give the 'IP address and port' line from the main Wireless "
+                "debugging screen on the phone (not the port in the pairing window, that one is different).", None)
     d = Device(addr, "phone", adb)
-    return f"eşlendi ve {d.connect()}", d.serial
+    return f"paired and {d.connect()}", d.serial
 
 
 def parse_mdns(text: str) -> list[tuple[str, str]]:

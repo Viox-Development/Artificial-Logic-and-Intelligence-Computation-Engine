@@ -62,7 +62,7 @@ def test_split_terse_unescapes_colons_and_backslashes():
 def test_parse_nm_status_uses_in_use_marker():
     s = wifi.parse_nm_status(LIST)
     assert s["connected"] and s["ssid"] == "Ev:Agi 5G" and s["signal"] == 87
-    assert ("Güvenlik", "WPA2 WPA3") in s["fields"] and ("Kanal", "36") in s["fields"]
+    assert ("Security", "WPA2 WPA3") in s["fields"] and ("Channel", "36") in s["fields"]
     assert wifi.parse_nm_status(LIST.replace("*", " ")) == {"connected": False, "ssid": "", "signal": None,
                                                             "fields": []}
 
@@ -86,7 +86,7 @@ def test_parse_nm_profiles_and_devices():
 def test_tool_status_scan_saved_on_linux(nmcli, tmp_path):
     f = nmcli({"device wifi list": LIST, "connection show": PROFILES_ESCAPED})
     ctx = _ctx(tmp_path)
-    assert Wifi().run(ctx, action="status").text.startswith("Bağlı: Ev:Agi 5G, sinyal %87\nSSID: Ev:Agi 5G")
+    assert Wifi().run(ctx, action="status").text.startswith("Connected: Ev:Agi 5G, signal 87%\nSSID: Ev:Agi 5G")
     assert Wifi().run(ctx, action="scan").text.splitlines()[:2] == ["Ev:Agi 5G: %87 WPA2 WPA3", "Komsu_2G: %62 WPA2"]
     assert Wifi().run(ctx, action="saved").text == "Ev:Agi 5G\nOkul"
     assert f.calls[0][-2:] == ["--rescan", "no"] and f.calls[1][-2:] == ["--rescan", "yes"]
@@ -95,7 +95,7 @@ def test_tool_status_scan_saved_on_linux(nmcli, tmp_path):
 
 def test_connect_known_network_brings_profile_up(nmcli):
     f = nmcli({"connection show": PROFILES_ESCAPED})
-    assert wifi.connect("Okul") == "'Okul' ağına bağlanılıyor"
+    assert wifi.connect("Okul") == "connecting to 'Okul'"
     assert f.calls[-1] == ["connection", "up", "id", "Okul"]
 
 
@@ -105,7 +105,7 @@ def test_connect_new_network_with_password_and_open_network(nmcli):
     assert f.calls[-1] == ["device", "wifi", "connect", "Komsu_2G", "password", "s3cret"]
     wifi.connect("Kafe")
     assert f.calls[-1] == ["device", "wifi", "connect", "Kafe"]
-    with pytest.raises(RuntimeError, match="şifreyi de ver"):
+    with pytest.raises(RuntimeError, match="give the password too"):
         wifi.connect("Komsu_2G")
 
 
@@ -119,18 +119,18 @@ def test_connect_error_is_reported_without_password(nmcli, tmp_path):
 def test_disconnect_and_radio(nmcli, tmp_path):
     f = nmcli({"DEVICE,TYPE,CONNECTION": DEVICES})
     ctx = _ctx(tmp_path)
-    assert Wifi().run(ctx, action="disconnect").text == "Wi-Fi bağlantısı kesildi"
+    assert Wifi().run(ctx, action="disconnect").text == "Wi-Fi disconnected"
     assert f.calls[-1] == ["device", "disconnect", "wlp2s0"]
-    assert Wifi().run(ctx, action="radio_off").text == "Wi-Fi kapatıldı"
+    assert Wifi().run(ctx, action="radio_off").text == "Wi-Fi turned off"
     assert f.calls[-1] == ["radio", "wifi", "off"]
-    assert Wifi().run(ctx, action="radio_on").text == "Wi-Fi açıldı"
+    assert Wifi().run(ctx, action="radio_on").text == "Wi-Fi turned on"
     assert Wifi().risk_for({"action": "radio_off"}) == "computer"
 
     f = nmcli({"DEVICE,TYPE,CONNECTION": "wlan0:wifi:--\n"})
-    assert wifi.disconnect() == "Wi-Fi'a zaten bağlı değil."
+    assert wifi.disconnect() == "Already not connected to Wi-Fi."
     assert len(f.calls) == 1
     nmcli({"DEVICE,TYPE,CONNECTION": "eth0:ethernet:Wired\n"})
-    with pytest.raises(RuntimeError, match="aygıtı bulunamadı"):
+    with pytest.raises(RuntimeError, match="device not found"):
         wifi.disconnect()
 
 
@@ -143,11 +143,11 @@ def test_missing_nmcli_gives_a_clear_error(monkeypatch, tmp_path):
 
 def test_other_platforms_fail_clearly(monkeypatch, tmp_path):
     monkeypatch.setattr(wifi.sys, "platform", "darwin")
-    with pytest.raises(ToolError, match="Windows'ta ve Linux'ta"):
+    with pytest.raises(ToolError, match="Windows and Linux"):
         Wifi().run(_ctx(tmp_path), action="scan")
 
 
 def test_radio_is_linux_only(monkeypatch):
     monkeypatch.setattr(wifi.sys, "platform", "win32")
-    with pytest.raises(RuntimeError, match="yalnız Linux"):
+    with pytest.raises(RuntimeError, match="only works on Linux"):
         wifi.radio(False)

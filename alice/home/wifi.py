@@ -32,14 +32,14 @@ def _linux() -> bool:
         return False
     if sys.platform.startswith("linux"):
         return True
-    raise RuntimeError("Wi-Fi kontrolü şimdilik yalnız Windows'ta ve Linux'ta (NetworkManager) çalışıyor")
+    raise RuntimeError("Wi-Fi control only works on Windows and Linux (NetworkManager) for now")
 
 
 def _netsh(*args: str) -> str:
     r = run(["netsh", "wlan", *args])
     out = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0:
-        raise RuntimeError(out.strip() or "netsh hata verdi")
+        raise RuntimeError(out.strip() or "netsh failed")
     return out
 
 
@@ -84,10 +84,10 @@ def parse_profiles(text: str) -> list[str]:
 def _nmcli(*args: str, timeout: float = 15) -> str:
     exe = shutil.which("nmcli")
     if not exe:
-        raise RuntimeError("nmcli bulunamadı: Linux'ta Wi-Fi kontrolü için NetworkManager gerekli")
+        raise RuntimeError("nmcli not found: Wi-Fi control on Linux needs NetworkManager")
     r = run([exe, *args], timeout=timeout)
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout or "").strip() or "nmcli hata verdi")
+        raise RuntimeError((r.stderr or r.stdout or "").strip() or "nmcli failed")
     return r.stdout or ""
 
 
@@ -127,8 +127,8 @@ def parse_nm_status(text: str) -> dict:
     if row is None:
         return {"connected": False, "ssid": "", "signal": None, "fields": []}
     _, ssid, signal, sec, chan, rate = row
-    fields = [(k, v) for k, v in (("SSID", ssid), ("Sinyal", f"%{signal}" if signal else ""),
-                                  ("Güvenlik", sec or "açık"), ("Kanal", chan), ("Hız", rate)) if v]
+    fields = [(k, v) for k, v in (("SSID", ssid), ("Signal", f"{signal}%" if signal else ""),
+                                  ("Security", sec or "open"), ("Channel", chan), ("Rate", rate)) if v]
     return {"connected": True, "ssid": ssid, "signal": _signal(signal) if signal else None, "fields": fields}
 
 
@@ -167,8 +167,8 @@ def _nm_list(rescan: bool) -> str:
 def status() -> str:
     s = parse_nm_status(_nm_list(False)) if _linux() else parse_status(_netsh("show", "interfaces"))
     if not s["connected"]:
-        return "Wi-Fi'a bağlı değil."
-    head = f"Bağlı: {s['ssid']}" + (f", sinyal %{s['signal']}" if s["signal"] is not None else "")
+        return "Not connected to Wi-Fi."
+    head = f"Connected: {s['ssid']}" + (f", signal {s['signal']}%" if s["signal"] is not None else "")
     return head + "\n" + "\n".join(f"{k}: {v}" for k, v in s["fields"])
 
 
@@ -204,10 +204,10 @@ def connect(ssid: str, password: str = "") -> str:
     known = profiles()
     if ssid not in known:
         if not password and any(n["ssid"] == ssid and n["auth"].casefold() not in ("open", "açık") for n in scan()):
-            raise RuntimeError(f"'{ssid}' kayıtlı değil ve şifreli; şifreyi de ver")
+            raise RuntimeError(f"'{ssid}' isn't saved and is encrypted; give the password too")
         if _linux():
             _nmcli("device", "wifi", "connect", ssid, *(("password", password) if password else ()), timeout=45)
-            return f"'{ssid}' ağına bağlanılıyor"
+            return f"connecting to '{ssid}'"
         fd, path = tempfile.mkstemp(suffix=".xml")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -219,25 +219,25 @@ def connect(ssid: str, password: str = "") -> str:
         _nmcli("connection", "up", "id", ssid, timeout=45)
     else:
         _netsh("connect", f"name={ssid}")
-    return f"'{ssid}' ağına bağlanılıyor"
+    return f"connecting to '{ssid}'"
 
 
 def disconnect() -> str:
     if _linux():
         devs = parse_nm_devices(_nmcli("-t", "-f", "DEVICE,TYPE,CONNECTION", "device"))
         if not devs:
-            raise RuntimeError("Wi-Fi aygıtı bulunamadı")
+            raise RuntimeError("Wi-Fi device not found")
         if not devs[0][1]:
-            return "Wi-Fi'a zaten bağlı değil."
+            return "Already not connected to Wi-Fi."
         _nmcli("device", "disconnect", devs[0][0])
     else:
         _netsh("disconnect")
-    return "Wi-Fi bağlantısı kesildi"
+    return "Wi-Fi disconnected"
 
 
 def radio(on: bool) -> str:
     """Turn the Wi-Fi radio on or off (Linux only; Windows has no netsh equivalent)."""
     if not _linux():
-        raise RuntimeError("Wi-Fi'ı açıp kapatmak şimdilik yalnız Linux'ta (nmcli) çalışıyor")
+        raise RuntimeError("turning Wi-Fi on and off only works on Linux (nmcli) for now")
     _nmcli("radio", "wifi", "on" if on else "off")
-    return "Wi-Fi açıldı" if on else "Wi-Fi kapatıldı"
+    return "Wi-Fi turned on" if on else "Wi-Fi turned off"

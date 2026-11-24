@@ -20,6 +20,7 @@ import urllib.parse
 import webbrowser
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.connect import store
 from alice.connect.manifest import Auth
 
@@ -60,13 +61,13 @@ class _Catcher(http.server.BaseHTTPRequestHandler):
         err = (q.get("error") or [""])[0]
         ok = bool(code) and secrets.compare_digest(state, type(self).want_state)
         if "code" in type(self).result:  # same URL opened a second time (refresh): keep initial result
-            title, text = "Bağlandı", "Bu sekmeyi kapatabilirsin, ALICE'e dön."
+            title, text = _("Connected"), _("You can close this tab and go back to ALICE.")
         elif ok:
             type(self).result = {"code": code}
-            title, text = "Bağlandı", "Bu sekmeyi kapatabilirsin, ALICE'e dön."
+            title, text = _("Connected"), _("You can close this tab and go back to ALICE.")
         else:
-            type(self).result = {"error": err or ("state uyuşmadı" if code else "kod gelmedi")}
-            title, text = "Olmadı", type(self).result["error"]
+            type(self).result = {"error": err or (_("the state did not match") if code else "kod gelmedi")}
+            title, text = _("Failed"), type(self).result["error"]
         type(self).done.set()
         body = PAGE.format(title=title, text=text).encode("utf-8")
         self.send_response(200)
@@ -89,8 +90,7 @@ def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", ti
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", auth.redirect_port), _Catcher)
         srv.daemon_threads = True
     except OSError as e:
-        raise OAuthError(f"geri dönüş adresi açılamadı (port {auth.redirect_port}): {e}. "
-                         "O portu kullanan programı kapatıp tekrar dene.") from e
+        raise OAuthError(_("could not open the redirect address (port {port}): {error}. Close the program using that port and try again.", port=auth.redirect_port, error=e)) from e
     port = srv.server_address[1]
     redirect = f"http://127.0.0.1:{port}/callback"
     state = secrets.token_urlsafe(16)
@@ -108,8 +108,8 @@ def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", ti
 
     t = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
     t.start()
-    say(f"geri dönüş adresi: {redirect}  (servisin uygulama ayarında kayıtlı olmalı)")
-    say(f"tarayıcıda izin sayfası açılıyor: {auth.authorize_url}")
+    say(_("redirect address: {url}  (must be registered in the service's app settings)", url=redirect))
+    say(_("opening the permission page in the browser: {url}", url=auth.authorize_url))
     try:
         open_browser(url)
         _Catcher.done.wait(timeout)
@@ -117,9 +117,9 @@ def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", ti
         srv.shutdown()
         srv.server_close()
     if not _Catcher.result:
-        raise OAuthError(f"izin beklenirken süre doldu ({int(timeout)} sn). Adresi elle açabilirsin: {url}")
+        raise OAuthError(_("time ran out waiting for permission ({s} s). You can open the address by hand: {url}", s=int(timeout), url=url))
     if "error" in _Catcher.result:
-        raise OAuthError(f"yetkilendirme başarısız: {_Catcher.result['error']}")
+        raise OAuthError(_("authorization failed: {error}", error=_Catcher.result["error"]))
 
     data = {"grant_type": "authorization_code", "code": _Catcher.result["code"], "redirect_uri": redirect,
             "client_id": client_id}
@@ -130,11 +130,11 @@ def authorize(auth: Auth, name: str, client_id: str, client_secret: str = "", ti
     try:
         r = httpx.post(auth.token_url, data=data, headers={"Accept": "application/json"}, timeout=30)
     except Exception as e:  # noqa: BLE001
-        raise OAuthError(f"token alınamadı: {e}") from e
+        raise OAuthError(_("could not get the token: {error}", error=e)) from e
     if r.status_code >= 400:
-        raise OAuthError(f"token alınamadı (HTTP {r.status_code}): {r.text[:200]}")
+        raise OAuthError(_("could not get the token (HTTP {code}): {text}", code=r.status_code, text=r.text[:200]))
     tok = _save(name, r.json())
-    say("bağlantı tamam")
+    say(_("connection done"))
     return tok
 
 
@@ -145,7 +145,7 @@ def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> d
     row = store.get(name)
     rt = str(row.get("refresh_token") or "")
     if not rt:
-        raise OAuthError(f"{name}: yenileme token'ı yok, tekrar bağlan: alice connect {name}")
+        raise OAuthError(_("{name}: no refresh token; connect again: alice connect {name}", name=name))
     if row.get("refresh_dead") == _fingerprint(rt):
         # Provider already rejected this token: no point in retrying with the same dead token on every background
         # task and health check to produce the same error. When user reconnects, token changes and lock clears.
@@ -161,11 +161,10 @@ def refresh(auth: Auth, name: str, client_id: str, client_secret: str = "") -> d
         # Only invalid_grant indicates token death. Errors like unauthorized_client are client ID/config issues:
         # no permanent lock is placed, the real error is shown each time (resolves once config is fixed).
         if r.status_code in (400, 401) and "invalid_grant" in r.text:
-            why = "süresi dolmuş ya da iptal edilmiş" if "expired or revoked" in r.text else "geçersiz"
+            why = _("expired or revoked") if "expired or revoked" in r.text else _("invalid")
             store.save(name, refresh_dead=_fingerprint(rt), refresh_error=why, refresh_dead_at=time.time())
             raise OAuthError(dead_message(name, why))
-        raise OAuthError(f"token yenilenemedi (HTTP {r.status_code}): {r.text[:200]}. "
-                         f"Tekrar bağlan: alice connect {name}")
+        raise OAuthError(_("could not refresh the token (HTTP {code}): {text}. Connect again: alice connect {name}", code=r.status_code, text=r.text[:200], name=name))
     return _save(name, r.json(), keep_refresh=rt)
 
 
@@ -187,13 +186,13 @@ GOOGLE_CONNECTIONS = ("google_", "gmail:")  # Connections using Google's OAuth c
 
 
 def dead_message(name: str, why: str = "") -> str:
-    text = (f"{name}: giriş geçersiz, yeniden giriş gerekiyor (sağlayıcı yenileme jetonunu kabul etmiyor"
-            + (f": {why}" if why else "") + "). ALICE bunu kendisi yenileyemez. Yeniden bağlan: "
-            + (f"alice connect gmail --account {name[len('gmail:'):]}" if name.startswith("gmail:")
-               else f"alice connect {name}") + ".")
+    cmd = (f"alice connect gmail --account {name[len('gmail:'):]}" if name.startswith("gmail:")
+           else f"alice connect {name}")
+    text = _("{name}: the sign-in is invalid; sign in again (the provider doesn't accept the refresh token{why}). ALICE "
+             "can't renew it itself. Connect again: {cmd}.", name=name, why=f": {why}" if why else "", cmd=cmd)
     if name.startswith(GOOGLE_CONNECTIONS):
-        text += (" Bu her hafta tekrarlıyorsa: Google Cloud'daki OAuth uygulaması 'Testing' durumundayken Google "
-                 "yenileme jetonlarını 7 günde geçersiz kılar; kalıcı çözüm uygulamayı 'In production' durumuna almak.")
+        text += _(" If this happens every week: while the OAuth app in Google Cloud is in 'Testing', Google "
+                  "invalidates refresh tokens after 7 days; the lasting fix is to move the app to 'In production'.")
     return text
 
 
