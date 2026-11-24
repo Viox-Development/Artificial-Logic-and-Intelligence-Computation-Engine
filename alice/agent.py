@@ -20,7 +20,7 @@ from alice.decider import Decider
 from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
 from alice.providers.openai_compat import ChatResult, StreamCancelled
-from alice.providers.router import (AllProvidersFailed, Router, cache_write_tokens, cached_tokens,  # noqa: F401
+from alice.providers.router import (COOLING_RX, AllProvidersFailed, Router, cache_write_tokens, cached_tokens,  # noqa: F401
                                     estimate_tokens, strip_images)
 from alice.tools.base import COMPUTER, DANGER, SEND, Tool, ToolContext, ToolError, ToolResult, check_args, truncate, unknown_params
 
@@ -167,7 +167,7 @@ def fits_after_compact(errors: list[str]) -> int:
     # If a large model is busy only briefly (a few minutes of waiting, rate limit), don't shrink the conversation
     # permanently: waiting is better. An hourly-quota wait, however, is not short.
     for e in errors:
-        w = re.search(r"soğumada \((\d+) sn\)", e)
+        w = COOLING_RX.search(e)
         if (w and int(w.group(1)) < 300) or "rate_limit" in e or "429" in e:
             return 0
     if not limits or max(limits) < 4000 or (big and max(limits) >= max(big)):

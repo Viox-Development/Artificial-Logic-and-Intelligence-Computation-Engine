@@ -1,10 +1,10 @@
 # Discord bot API. Token: https://discord.com/developers/applications → Bot → Token
-# Botu kendi sunucuna davet etmen gerekir; kişisel hesabını otomatikleştirmek Discord kurallarına aykırı.
+# You have to invite the bot to your own server; automating your personal account is against Discord's rules.
 name = "discord"
 title = "Discord"
-description = "Discord sunucularını bot hesabıyla okuma/yazma: kanal listesi, son mesajlar, mesaj gönderme."
+description = "Read/write Discord servers with a bot account: channel list, recent messages, sending messages."
 base_url = "https://discord.com/api/v10"
-keywords = "discord|sunucu|kanal|mesaj at|yaz"
+keywords = "discord|sunucu|kanal|mesaj at|yaz|server|channel|message"
 docs = "https://discord.com/developers/docs/intro"
 
 [auth]
@@ -13,16 +13,16 @@ env = "DISCORD_BOT_TOKEN"
 place = "header"
 name = "Authorization"
 prefix = "Bot "
-help = "discord.com/developers/applications → yeni uygulama → Bot → Reset Token"
+help = "discord.com/developers/applications → new application → Bot → Reset Token"
 
 [actions.guilds]
-summary = "Botun üye olduğu sunucular"
+summary = "Servers the bot is a member of"
 cache_seconds = 120
 path = "/users/@me/guilds"
 fields = ["name", "id"]
 
 [actions.channels]
-summary = "Bir sunucudaki kanallar"
+summary = "Channels in a server"
 cache_seconds = 120
 path = "/guilds/{guild_id}/channels"
 fields = ["name", "id", "type"]
@@ -31,10 +31,10 @@ limit = 50
 type = "string"
 required = true
 into = "path"
-description = "Sunucu id'si (guilds eyleminden)"
+description = "Server id (from the guilds action)"
 
 [actions.messages]
-summary = "Bir kanaldaki son mesajlar"
+summary = "Recent messages in a channel"
 path = "/channels/{channel_id}/messages"
 query = { limit = "15" }
 fields = ["author.username", "content", "timestamp"]
@@ -43,10 +43,10 @@ limit = 15
 type = "string"
 required = true
 into = "path"
-description = "Kanal id'si"
+description = "Channel id"
 
 [actions.send]
-summary = "Kanala mesaj gönder"
+summary = "Send a message to a channel"
 method = "POST"
 path = "/channels/{channel_id}/messages"
 writes = true
@@ -56,9 +56,9 @@ fields = ["id", "content"]
 type = "string"
 required = true
 into = "path"
-description = "Kanal id'si"
+description = "Channel id"
 [actions.send.params.content]
 type = "string"
 required = true
 into = "body"
-description = "Mesaj metni"
+description = "Message text"

@@ -1,13 +1,13 @@
 # Spotify Web API (OAuth2 + PKCE, client secret gerekmez).
 # 1) developer.spotify.com/dashboard → Create app
-# 2) Redirect URI olarak tam şunu ekle:  http://127.0.0.1:8721/callback
-# 3) Client ID'yi ~/.alice/.env içine SPOTIFY_CLIENT_ID=... diye yaz
+# 2) Add exactly this as the Redirect URI:  http://127.0.0.1:8721/callback
+# 3) Write the Client ID into ~/.alice/.env as SPOTIFY_CLIENT_ID=...
 # 4) alice connect spotify
 name = "spotify"
 title = "Spotify"
-description = "Müzik: çalan parçayı öğren, çal/duraklat, sonraki parça, arama, cihaz seçimi, çalma listeleri."
+description = "Music: find out what is playing, play/pause, next track, search, device choice, playlists."
 base_url = "https://api.spotify.com/v1"
-keywords = "spotify|müzik|şarkı|parça|çal|duraklat|playlist"
+keywords = "spotify|müzik|şarkı|parça|çal|duraklat|playlist|music|song|play|pause"
 docs = "https://developer.spotify.com/documentation/web-api"
 
 [auth]
@@ -16,18 +16,18 @@ client_id_env = "SPOTIFY_CLIENT_ID"
 authorize_url = "https://accounts.spotify.com/authorize"
 token_url = "https://accounts.spotify.com/api/token"
 pkce = true
-redirect_port = 8721   # Spotify kayıtlı adres istiyor; rastgele port olmaz
+redirect_port = 8721   # Spotify wants a registered address; a random port won't do
 scopes = ["user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing",
           "playlist-read-private"]
-help = "developer.spotify.com/dashboard → Create app → Client ID'yi ~/.alice/.env içine SPOTIFY_CLIENT_ID olarak yaz"
+help = "developer.spotify.com/dashboard → Create app → write the Client ID into ~/.alice/.env as SPOTIFY_CLIENT_ID"
 
 [actions.now_playing]
-summary = "Şu an çalan parça"
+summary = "The track playing now"
 path = "/me/player/currently-playing"
 fields = ["item.name", "item.artists.0.name", "item.album.name", "is_playing", "progress_ms"]
 
 [actions.search]
-summary = "Parça/sanatçı/albüm ara (uri'si çalmak için gerekir)"
+summary = "Search tracks/artists/albums (the uri is needed to play)"
 cache_seconds = 60
 path = "/search"
 query = { limit = "8" }
@@ -39,19 +39,19 @@ required = true
 description = "Arama ifadesi"
 [actions.search.params.type]
 type = "string"
-description = "track | artist | album | playlist (varsayılan track)"
+description = "track | artist | album | playlist (default: track)"
 enum = ["track", "artist", "album", "playlist"]
 default = "track"
 
 [actions.play]
-summary = "Çal/devam ettir; uris verilirse o parçaları çalar"
+summary = "Play/resume; plays the given tracks when uris is given"
 method = "PUT"
 path = "/me/player/play"
 writes = true
 [actions.play.params.uris]
 type = "array"
 into = "body"
-description = "Çalınacak parça uri'leri, ör. spotify:track:... (search sonucundan)"
+description = "Track uris to play, e.g. spotify:track:... (from a search result)"
 [actions.play.params.device_id]
 type = "string"
 into = "query"
@@ -64,13 +64,13 @@ path = "/me/player/pause"
 writes = true
 
 [actions.next]
-summary = "Sonraki parça"
+summary = "Next track"
 method = "POST"
 path = "/me/player/next"
 writes = true
 
 [actions.previous]
-summary = "Önceki parça"
+summary = "Previous track"
 method = "POST"
 path = "/me/player/previous"
 writes = true
@@ -87,14 +87,14 @@ into = "query"
 description = "0-100"
 
 [actions.devices]
-summary = "Spotify'ın çalabileceği cihazlar (telefon, bilgisayar, hoparlör)"
+summary = "Devices Spotify can play on (phone, computer, speaker)"
 cache_seconds = 60
 path = "/me/player/devices"
 pick = "devices"
 fields = ["name", "type", "is_active", "id"]
 
 [actions.playlists]
-summary = "Çalma listelerin"
+summary = "Your playlists"
 cache_seconds = 60
 path = "/me/playlists"
 query = { limit = "20" }

@@ -241,7 +241,7 @@ def test_start_phone_handles_port_error(monkeypatch, out):
 # ----------------------------------------------------------------- rules_cmd
 def test_rules_list_defaults_and_toggle(out):
     assert core_cli.rules_cmd([]) == 0
-    assert "gpu-hot: pc.gpu.temp > 85 3 dk boyunca (warn)" in out()
+    assert "gpu-hot: pc.gpu.temp > 85 for 3 min (warn)" in out()
     assert core_cli.rules_cmd(["off", "gpu-hot"]) == 0
     from alice.core.rules import RuleSet
 

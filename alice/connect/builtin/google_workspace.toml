@@ -1,13 +1,13 @@
-# Google Drive, Docs ve Sheets (tek Google girişiyle). Google Takvim'le aynı OAuth istemcisi kullanılır.
-# 1) console.cloud.google.com → Takvim için açtığın projede "Google Drive API", "Google Docs API" ve
-#    "Google Sheets API"yi etkinleştir
-# 2) ~/.alice/.env'de GOOGLE_CLIENT_ID ve GOOGLE_CLIENT_SECRET zaten varsa ek bir şey gerekmez
-# 3) alice connect google_workspace   (ya da Sistem → Bağlantılar → Google Workspace → Bağlan)
+# Google Drive, Docs and Sheets (with a single Google sign-in). The same OAuth client as Google Calendar is used.
+# 1) console.cloud.google.com → in the project you opened for Calendar, enable "Google Drive API", "Google Docs API" and
+#    "Google Sheets API"
+# 2) If GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are already in ~/.alice/.env, nothing more is needed
+# 3) alice connect google_workspace   (or System → Connections → Google Workspace → Connect)
 name = "google_workspace"
 title = "Google Drive, Docs ve Sheets"
-description = "Drive'da dosya arama ve okuma (Docs metin, Sheets CSV olarak); Google Docs belgesi oluşturma ve sonuna metin ekleme; Google Sheets tablosu oluşturma, aralık okuma, satır ekleme ve hücre güncelleme."
+description = "Search and read files on Drive (Docs as text, Sheets as CSV); create a Google Docs document and append text to it; create a Google Sheets spreadsheet, read ranges, append rows and update cells."
 base_url = "https://www.googleapis.com"
-keywords = "google drive|drive'da|drive'daki|google docs|google doküman|google belge|dokümanım|google sheets|e-?tablo|spreadsheet|sheets|tablomu|tabloya|google tablo"
+keywords = "google drive|drive'da|drive'daki|google docs|google doküman|google belge|dokümanım|google sheets|e-?tablo|spreadsheet|sheets|tablomu|tabloya|google tablo|document|my doc"
 docs = "https://developers.google.com/workspace"
 
 [auth]
@@ -20,11 +20,11 @@ pkce = true
 scopes = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents",
           "https://www.googleapis.com/auth/spreadsheets"]
 extra_authorize = { access_type = "offline", prompt = "consent" }
-help = "Takvim'le aynı Google OAuth istemcisi; projede Drive, Docs ve Sheets API'lerini etkinleştir"
+help = "The same Google OAuth client as Calendar; enable the Drive, Docs and Sheets APIs in the project"
 
 # ------------------------------------------------------------------------------------------------ Drive
 [actions.drive_search]
-summary = "Drive'da dosya ara. q Drive sorgu dili: ör. name contains 'rapor', mimeType = 'application/vnd.google-apps.document' (Docs), 'application/vnd.google-apps.spreadsheet' (Sheets), modifiedTime > '2026-11-01T00:00:00'"
+summary = "Search files on Drive. q is the Drive query language: e.g. name contains 'report', mimeType = 'application/vnd.google-apps.document' (Docs), 'application/vnd.google-apps.spreadsheet' (Sheets), modifiedTime > '2026-11-01T00:00:00'"
 path = "/drive/v3/files"
 query = { fields = "files(id,name,mimeType,modifiedTime,webViewLink)", orderBy = "modifiedTime desc" }
 pick = "files"
@@ -32,28 +32,28 @@ fields = ["name", "id", "mimeType", "modifiedTime", "webViewLink"]
 limit = 25
 [actions.drive_search.params.q]
 type = "string"
-description = "Drive sorgusu; boş: son değişen dosyalar. Çöptekileri hariç tutmak için: trashed = false"
+description = "Drive query; empty: recently changed files. To leave out trashed ones: trashed = false"
 [actions.drive_search.params.pageSize]
 type = "integer"
 description = "En fazla dosya"
 default = 20
 
 [actions.drive_read]
-summary = "Google Docs/Sheets/Slides dosyasını metin olarak oku (fileId drive_search'ten). Docs: text/plain, Sheets: text/csv (ilk sayfa), Slides: text/plain"
+summary = "Read a Google Docs/Sheets/Slides file as text (fileId from drive_search). Docs: text/plain, Sheets: text/csv (first sheet), Slides: text/plain"
 path = "/drive/v3/files/{fileId}/export"
 [actions.drive_read.params.fileId]
 type = "string"
 required = true
-description = "Dosya kimliği"
+description = "File id"
 [actions.drive_read.params.mimeType]
 type = "string"
-description = "Dışa aktarma biçimi"
+description = "Export format"
 enum = ["text/plain", "text/csv", "text/markdown", "text/html"]
 default = "text/plain"
 
 # ------------------------------------------------------------------------------------------------- Docs
 [actions.docs_create]
-summary = "Yeni Google Docs belgesi oluştur (boş); sonra docs_append ile içerik ekle. Dönen documentId ile adres: https://docs.google.com/document/d/<id>/edit"
+summary = "Create a new Google Docs document (empty); add content afterwards with docs_append. The address with the returned documentId: https://docs.google.com/document/d/<id>/edit"
 method = "POST"
 path = "https://docs.googleapis.com/v1/documents"
 writes = true
@@ -62,11 +62,11 @@ fields = ["documentId", "title"]
 [actions.docs_create.params.title]
 type = "string"
 required = true
-description = "Belge başlığı"
+description = "Document title"
 into = "template"
 
 [actions.docs_append]
-summary = "Google Docs belgesinin sonuna düz metin ekle (satır sonları korunur)"
+summary = "Append plain text to the end of a Google Docs document (line breaks are kept)"
 method = "POST"
 path = "https://docs.googleapis.com/v1/documents/{documentId}:batchUpdate"
 writes = true
@@ -74,17 +74,17 @@ body = { requests = [{ insertText = { endOfSegmentLocation = {}, text = "{text}"
 [actions.docs_append.params.documentId]
 type = "string"
 required = true
-description = "Belge kimliği (drive_search ya da docs_create çıktısı)"
+description = "Document id (from drive_search or docs_create)"
 into = "path"
 [actions.docs_append.params.text]
 type = "string"
 required = true
-description = "Eklenecek metin; başa '\\n' koyarsan yeni paragrafta başlar"
+description = "Text to append; put '\\n' at the start to begin a new paragraph"
 into = "template"
 
 # ------------------------------------------------------------------------------------------------ Sheets
 [actions.sheets_create]
-summary = "Yeni Google Sheets tablosu oluştur. Dönen spreadsheetUrl ile açılır."
+summary = "Create a new Google Sheets spreadsheet. It opens with the returned spreadsheetUrl."
 method = "POST"
 path = "https://sheets.googleapis.com/v4/spreadsheets"
 writes = true
@@ -93,25 +93,25 @@ fields = ["spreadsheetId", "spreadsheetUrl"]
 [actions.sheets_create.params.title]
 type = "string"
 required = true
-description = "Tablo başlığı"
+description = "Spreadsheet title"
 into = "template"
 
 [actions.sheets_read]
-summary = "Tablodan aralık oku, ör. Sayfa1!A1:F50 (yalnız sayfa adı: bütün sayfa)"
+summary = "Read a range from the spreadsheet, e.g. Sheet1!A1:F50 (sheet name only: the whole sheet)"
 path = "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}"
 pick = "values"
 limit = 200
 [actions.sheets_read.params.spreadsheetId]
 type = "string"
 required = true
-description = "Tablo kimliği"
+description = "Spreadsheet id"
 [actions.sheets_read.params.range]
 type = "string"
 required = true
-description = "A1 aralığı, ör. Sayfa1!A1:F50"
+description = "A1 range, e.g. Sheet1!A1:F50"
 
 [actions.sheets_append]
-summary = "Tablonun sonuna satır(lar) ekle; değerler kullanıcı yazmış gibi yorumlanır (sayı, tarih, formül)"
+summary = "Append row(s) to the end of the spreadsheet; values are interpreted as if the user typed them (number, date, formula)"
 method = "POST"
 path = "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:append"
 query = { valueInputOption = "USER_ENTERED", insertDataOption = "INSERT_ROWS" }
@@ -120,19 +120,19 @@ fields = ["updates.updatedRange", "updates.updatedRows"]
 [actions.sheets_append.params.spreadsheetId]
 type = "string"
 required = true
-description = "Tablo kimliği"
+description = "Spreadsheet id"
 [actions.sheets_append.params.range]
 type = "string"
 required = true
-description = "Eklenecek sayfa/aralık, ör. Sayfa1!A1"
+description = "Sheet/range to append to, e.g. Sheet1!A1"
 [actions.sheets_append.params.values]
 type = "array"
 required = true
-description = "Satırlar: her satır bir liste, ör. [[\"Ali\", 12], [\"Ayşe\", 9]]"
+description = "Rows: each row is a list, e.g. [[\"Ann\", 12], [\"Bob\", 9]]"
 into = "body"
 
 [actions.sheets_update]
-summary = "Aralıktaki hücreleri verilen değerlerle değiştir, ör. Sayfa1!B2:C3"
+summary = "Replace the cells in the range with the given values, e.g. Sheet1!B2:C3"
 method = "PUT"
 path = "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}"
 query = { valueInputOption = "USER_ENTERED" }
@@ -141,13 +141,13 @@ fields = ["updatedRange", "updatedCells"]
 [actions.sheets_update.params.spreadsheetId]
 type = "string"
 required = true
-description = "Tablo kimliği"
+description = "Spreadsheet id"
 [actions.sheets_update.params.range]
 type = "string"
 required = true
-description = "Değiştirilecek aralık"
+description = "Range to replace"
 [actions.sheets_update.params.values]
 type = "array"
 required = true
-description = "Satırlar: her satır bir liste"
+description = "Rows: each row is a list"
 into = "body"

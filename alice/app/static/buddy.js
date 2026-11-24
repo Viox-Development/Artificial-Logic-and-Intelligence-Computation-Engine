@@ -74,17 +74,17 @@
       b.addEventListener("click", (e) => { e.stopPropagation(); m.remove(); fn(); });
       m.appendChild(b);
     };
-    item("Besle", () => act("feed"));
+    item(_("Feed"), () => act("feed"));
     item(_("Pet"), () => { hearts(); act("pet"); });
-    item("Oyna", () => { act("play"); });
-    item("Ad koy", () => {
+    item(_("Play"), () => { act("play"); });
+    item(_("Name it"), () => {
       const v = prompt(_("New name:"), (B.data && B.data.name) || "");
       if (v) act("rename", v);
     });
     item(_("Reroll"), () => {
       if (confirm(_("Roll a new species and personality?"))) act("reroll");
     });
-    item("Gizle", () => { setHidden(true); B.box.hidden = true; toast(_("BUDDY hidden; you can bring it back in Settings > Assistant")); });
+    item(_("Hide"), () => { setHidden(true); B.box.hidden = true; toast(_("BUDDY hidden; you can bring it back in Settings > Assistant")); });
     B.box.appendChild(m);
   }
 

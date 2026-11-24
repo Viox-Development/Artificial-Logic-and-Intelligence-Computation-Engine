@@ -1,9 +1,9 @@
-# Steam Web API. Anahtar: https://steamcommunity.com/dev/apikey (ücretsiz, hesap yeterli)
+# Steam Web API. Key: https://steamcommunity.com/dev/apikey (free, an account is enough)
 name = "steam"
 title = "Steam"
-description = "Steam kütüphanesi, oynama süreleri, arkadaş listesi ve oyuncu durumu. Oyun başlatmak için bu değil, windows aracıyla steam://rungameid/<appid> adresini aç."
+description = "Steam library, playtime, friend list and player status. Not for launching games: open steam://rungameid/<appid> with the windows tool."
 base_url = "https://api.steampowered.com"
-keywords = "steam|oyun|kütüphane|arkadaş|oynadım|saat"
+keywords = "steam|oyun|kütüphane|arkadaş|oynadım|saat|game|library|friends|playtime|played"
 docs = "https://steamcommunity.com/dev"
 
 [auth]
@@ -14,7 +14,7 @@ name = "key"
 help = "https://steamcommunity.com/dev/apikey"
 
 [actions.library]
-summary = "Kütüphanedeki oyunlar ve toplam oynama süreleri (playtime dakika)"
+summary = "Games in the library and total playtime (playtime in minutes)"
 cache_seconds = 300
 path = "/IPlayerService/GetOwnedGames/v1/"
 query = { include_appinfo = "1", include_played_free_games = "1", format = "json" }
@@ -24,7 +24,7 @@ limit = 40
 [actions.library.params.steamid]
 type = "string"
 required = true
-description = "SteamID64 (profil numarası). Bilinmiyorsa önce resolve_vanity."
+description = "SteamID64 (profile number). If unknown, use resolve_vanity first."
 
 [actions.recent]
 summary = "Son iki haftada oynanan oyunlar"
@@ -38,17 +38,17 @@ required = true
 description = "SteamID64"
 
 [actions.profile]
-summary = "Oyuncu durumu: çevrimiçi mi, şu an hangi oyunda"
+summary = "Player status: online or not, which game right now"
 path = "/ISteamUser/GetPlayerSummaries/v2/"
 pick = "response.players"
 fields = ["personaname", "personastate", "gameextrainfo", "lastlogoff"]
 [actions.profile.params.steamids]
 type = "string"
 required = true
-description = "SteamID64, virgülle birden fazla olabilir"
+description = "SteamID64, several can be given separated by commas"
 
 [actions.friends]
-summary = "Arkadaş listesi (SteamID64'ler; adları için profile)"
+summary = "Friend list (SteamID64s; use profile for their names)"
 cache_seconds = 300
 path = "/ISteamUser/GetFriendList/v1/"
 query = { relationship = "friend" }
@@ -61,7 +61,7 @@ required = true
 description = "SteamID64"
 
 [actions.resolve_vanity]
-summary = "Profil adından (vanity URL) SteamID64 bul"
+summary = "Find the SteamID64 from a profile name (vanity URL)"
 cache_seconds = 300
 path = "/ISteamUser/ResolveVanityURL/v1/"
 pick = "response"
@@ -72,7 +72,7 @@ required = true
 description = "steamcommunity.com/id/<buradaki ad>"
 
 [actions.news]
-summary = "Bir oyunun haber/yama notları"
+summary = "News/patch notes of a game"
 cache_seconds = 300
 path = "/ISteamNews/GetNewsForApp/v2/"
 query = { count = "5", maxlength = "600" }

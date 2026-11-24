@@ -432,7 +432,7 @@ class ComputerAgent:
                 self.emit(f"görme modeli hatası: {str(e)[:200]}")
                 if model_errors >= 2:
                     low = str(e).lower()
-                    quota = "429" in low or "quota" in low or "soğumada" in low or "rate" in low
+                    quota = "429" in low or "quota" in low or "soğumada" in low or "cooling down" in low or "rate" in low
                     return TaskResult("error", "görme modeli kullanılamıyor" + (
                         " (günlük ücretsiz kota dolmuş)" if quota else f": {str(e)[:120]}"), steps)
                 continue

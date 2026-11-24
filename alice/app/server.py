@@ -31,6 +31,7 @@ from alice import session as sess
 from alice.agent import Agent, parse_args
 from alice.config import Config, alice_home
 from alice.decider import Decider
+from alice.i18n import _
 from alice.i18n import language as ui_language
 from alice.permissions import MODES, Permissions
 from alice.providers.router import Router, parse_ref
@@ -1079,7 +1080,7 @@ class AppState:
 
         ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
                or self.router.first_available("brain") or "")
-        provider, _, model = ref.partition(":")
+        provider, _sep, model = ref.partition(":")
         pc = self.router.providers_cfg.get(provider)
         if pc is not None and getattr(pc, "kind", "") == "anthropic":
             provider = "anthropic"  # same levels as the Claude API (e.g. cliproxy's native Claude endpoint)
@@ -1101,7 +1102,7 @@ class AppState:
         for m in sorted(manifests.values(), key=lambda x: x.name):
             ok, note = ready(m)
             rows.append({"name": m.name, "title": m.label, "kind": m.auth.kind, "ready": ok, "status": note,
-                         "env": m.auth.env or m.auth.client_id_env, "help": m.auth.help, "docs": m.docs,
+                         "env": m.auth.env or m.auth.client_id_env, "help": _(m.auth.help) if m.auth.help else "", "docs": m.docs,
                          "actions": sorted(m.actions), "description": m.description})
         feeds, feed_errors = load_feeds()
         try:
@@ -1497,7 +1498,7 @@ class AppState:
             mem._bump()
             return {"ok": True}
         if action == "restore":
-            b, _ = (mem.notes, None)
+            b, _unused = (mem.notes, None)
             for x in mem.all_books():
                 if str(x.root) == str(d.get("root") or ""):
                     b = x
@@ -1619,7 +1620,7 @@ class AppState:
         """BASE_2, BASE_3...: names of populated additional keys in environment (in order)."""
         rx = re.compile(rf"{re.escape(base)}_(\d+)")
         found = [(int(m.group(1)), k) for k, v in os.environ.items() if (m := rx.fullmatch(k)) and v.strip()]
-        return [k for _, k in sorted(found)]
+        return [k for _order, k in sorted(found)]
 
     def _key_owner(self, key: str) -> tuple[str, str] | None:
         """Is it a writable key name: (base name, provider). Catalog or UI-added provider key
@@ -2129,7 +2130,7 @@ class AppState:
         """Message to chat from background (watch event, detached session result): steered into work if chat is running,
         starts a new turn if idle. Retries a few times if turn finishes at that exact moment. Empty: delivered."""
         err = ""
-        for _ in range(max(1, tries)):
+        for _attempt in range(max(1, tries)):
             ok, err = self.send(text, sid=sid)
             if ok:
                 return ""
@@ -2177,8 +2178,8 @@ class AppState:
                 # jobs queued to it never ran. Pending messages are discarded if user clicked Stop.
                 left = agent.take_inbox()
                 if left and not agent.cancel.is_set() and not chat.abandoned:
-                    joined = "\n\n".join(t for t, _ in left)
-                    self._start_turn(chat, joined, joined, [img for _, imgs in left for img in imgs][:6])
+                    joined = "\n\n".join(t for t, _ts in left)
+                    self._start_turn(chat, joined, joined, [img for _ts, imgs in left for img in imgs][:6])
                 else:
                     self._report_to_parent(chat)
                     self._finished(chat)
@@ -2633,7 +2634,9 @@ def make_handler(state: AppState):
                                    "brain": state.router.chain("brain"),
                                    "pinned": state.router.role_overrides.get("brain", [None])[0]})
             if u.path == "/api/models":
-                return self._json({role: [{"ref": r, "status": st} for r, st in rows]
+                from alice.providers.router import is_ready, reason_text
+
+                return self._json({role: [{"ref": r, "status": reason_text(st), "ok": is_ready(st)} for r, st in rows]
                                    for role, rows in state.router.status().items()})
             return self._send(404, b"not found", "text/plain")
 

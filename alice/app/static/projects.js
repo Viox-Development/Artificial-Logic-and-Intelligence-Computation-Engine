@@ -28,7 +28,7 @@ function renderTeam(t) {
   head.append(open, x);
   box.appendChild(head);
   const q = (t.questions || []).find((q) => !q.answer);
-  const line = q ? "Alice soruyor: " + q.text : t.status === "done" ? (t.summary || "").split("\n")[0] : activeLine(t);
+  const line = q ? _("Alice asks: {text}", { text: q.text }) : t.status === "done" ? (t.summary || "").split("\n")[0] : activeLine(t);
   if (line) box.appendChild(el("div", "team-line" + (q ? " ask" : ""), line));
 }
 function activeLine(t) {
@@ -105,7 +105,7 @@ function onProjectNote(ev) {
     el("span", "", ev.text), el("b", "", _("Open the project →")));
   b.addEventListener("click", () => openProject(ev.id));
   add(b);
-  if (ev.kind === "ask" || ev.kind === "done") toast(ev.kind === "ask" ? "Proje sana soruyor" : "Proje bitti");
+  if (ev.kind === "ask" || ev.kind === "done") toast(ev.kind === "ask" ? _("The project is asking you") : _("The project is done"));
   loadProjects();
 }
 function fmtSecs(n) { return n < 60 ? _("{secs} s", { secs: n }) : n < 3600 ? _("{m} min {s} s", { m: Math.floor(n / 60), s: n % 60 })
@@ -321,17 +321,17 @@ function renderProject() {
     if (d.council && d.members.length)
       menuItem(m, IC.shield, d.council_busy ? _("The council is meeting…") : _("Ask the council"), _("Have the council review the project as it is now"),
         () => { if (!d.council_busy) projectAction("council", ""); });
-    if (d.members.length) menuItem(m, IC.copy, _("Save as a template"), "Hedef, ayarlar ve ajanlar", () => saveTemplateDialog(d));
+    if (d.members.length) menuItem(m, IC.copy, _("Save as a template"), _("Goal, settings and agents"), () => saveTemplateDialog(d));
     m.appendChild(el("div", "menu-sep"));
     m.appendChild(el("div", "menu-title", _("Project")));
     for (const x of [_("Lead: {model}{picked}{thinking}", { model: d.lead.model, picked: d.lead.picked ? " (" + d.lead.picked + ")" : "", thinking: d.lead.thinking !== "default" ? " · " + d.lead.thinking : "" }),
       ...d.members.filter((m) => m.picked).map((m) => `${m.name}: ${m.picked}`),
-      d.council ? _("Council on") : d.review ? _("Review on") : _("Review off"), d.cwd, d.check ? "Kontrol: " + d.check : ""].filter(Boolean))
+      d.council ? _("Council on") : d.review ? _("Review on") : _("Review off"), d.cwd, d.check ? _("Check: {command}", { command: d.check }) : ""].filter(Boolean))
       m.appendChild(el("div", "menu-info", x));
     if (!d.active) {
       m.appendChild(el("div", "menu-sep"));
       menuItem(m, IC.trash, _("Delete the project"), _("The record and conversations are deleted; files stay"), async () => {
-        if (!(await confirmDialog(_("Delete the project?"), _("The project's record and the agents' conversations are deleted. Changes made to files stay."), "Sil"))) return;
+        if (!(await confirmDialog(_("Delete the project?"), _("The project's record and the agents' conversations are deleted. Changes made to files stay."), _("Delete")))) return;
         if (await projectAction("delete", "")) { closeProject(); loadProjects(); }
       });
     }
@@ -390,7 +390,7 @@ function renderProject() {
   const list = el("div", "pv-threads");
   const lh = el("div", "th-head");
   lh.appendChild(el("span", "", _("Team")));
-  const railBtn = el("button", "icon-btn"); railBtn.title = ui.rail ? _("Open the list") : "Listeyi daralt";
+  const railBtn = el("button", "icon-btn"); railBtn.title = ui.rail ? _("Open the list") : _("Collapse the list");
   railBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
   railBtn.addEventListener("click", () => { projUI({ rail: !ui.rail }); renderProject(); });
   lh.appendChild(railBtn);
@@ -409,15 +409,15 @@ function renderProject() {
     for (const it of items) box.appendChild(it);
     list.appendChild(box);
   };
-  section("general", "Genel", [threadItem(lead, true), logItem(d), timelineItem(d),
+  section("general", _("General"), [threadItem(lead, true), logItem(d), timelineItem(d),
     ...((d.councils || []).length || d.council_busy ? [councilItem(d)] : []),
     ...(d.preview ? [navItem("__preview", _("Preview"), d.preview.entry, IC.globe, "")] : [])]);
   const by = (sts) => d.members.filter((m) => sts.includes(m.status)).map((m) => threadItem(m));
-  section("asking", "Soru soruyor", by(["asking"]), "warn");
+  section("asking", _("Asking"), by(["asking"]), "warn");
   section("review", _("Awaiting review"), by(["review"]), "rev");
   section("running", _("Working"), by(["running", "waiting"]));
   section("queued", _("Queued"), by(["queued"]));
-  section("done", "Bitti", by(["done"]), "ok");
+  section("done", _("Done"), by(["done"]), "ok");
   section("failed", "Durdu / hata", by(["stopped", "failed"]), "err");
   const grip = el("div", "pv-grip"); grip.title = _("Drag: list width");
   grip.addEventListener("pointerdown", (e) => {
@@ -503,7 +503,7 @@ function threadItem(m, isLead) {
   if (m.status === "queued" && m.after && m.after.length) line = _("starts when {names} finish", { names: m.after.join(", ") });
   else if (m.status === "asking" && m.question) line = m.question;
   else if (m.council_running) line = m.council && m.council.state === "running" ? councilLine(m.council) : _("The council is meeting");
-  else if (m.status === "review" && m.council && m.council.decision) line = "Kurul: " + (DEC_TR[m.council.decision] || m.council.decision);
+  else if (m.status === "review" && m.council && m.council.decision) line = _("Council: {decision}", { decision: DEC_TR[m.council.decision] || m.council.decision });
   else if (st === "running" && m.last) line = friendlyLast(m.last);
   else line = m.task;
   tx.appendChild(el("div", "th-last", line));
@@ -587,7 +587,7 @@ function renderThread(det, m, d) {
     const rvText = m.council_running ? `${m.council && m.council.state === "running" ? councilLine(m.council) +
       (m.council.phase ? " · " + m.council.phase.toLowerCase() : "") : _("The council met")}. İstersen beklemeden kararı sen ver.`
       : m.council && m.council.decision === "contested" ? _("The council is split; Alice will decide. You can vote in the Council tab or make the call yourself.")
-      : d.review ? _("Awaiting review. Alice is reviewing; you can make the call if you like.") : "Bitti, onay bekliyor.";
+      : d.review ? _("Awaiting review. Alice is reviewing; you can make the call if you like.") : _("Done, awaiting approval.");
     bar.appendChild(el("div", "pd-rv-t", rvText));
     const row = el("div", "pd-ask-row");
     const fb = el("input"); fb.type = "text"; fb.placeholder = _("Feedback for the fix (what's missing, what you expect)…"); fb.dataset.k = "fb" + m.name;
@@ -600,7 +600,7 @@ function renderThread(det, m, d) {
     det.appendChild(bar);
   } else if (m.status === "failed" && !isLead) {
     const bar = el("div", "pd-review err");
-    bar.appendChild(el("div", "pd-rv-t", (m.result || "Hata verdi.").replace(/^hata: /, "Hata: ")));
+    bar.appendChild(el("div", "pd-rv-t", (m.result || _("Failed.")).replace(/^hata: /, _("Error: "))));
     const row = el("div", "pd-ask-row");
     const go = el("button", "btn accent", _("Resume where it left off"));
     go.title = _("Its conversation is kept; if needed it's summarized and continues with another model");
@@ -703,9 +703,9 @@ function councilProgress(c) {
   for (const r of roles) {
     const a = act[r] || { state: "waiting" };
     const row = el("div", "cc-live-row st-" + a.state);
-    const st = a.state === "working" ? (a.last ? friendlyLast(a.last) : "inceliyor…")
+    const st = a.state === "working" ? (a.last ? friendlyLast(a.last) : _("reviewing…"))
       : a.state === "done" ? (a.vote ? VOTE_TR2[a.vote] : "bitirdi")
-      : a.state === "failed" ? "cevap veremedi" : _("waiting for its turn");
+      : a.state === "failed" ? _("couldn't answer") : _("waiting for its turn");
     row.append(el("i", "dot " + (a.state === "working" ? "st-running" : a.state === "done" ? "st-done" : a.state === "failed" ? "st-failed" : "st-idle")),
       el("b", "", ROLE_TR[r] || r), el("span", "v-" + (a.vote || "none"), st));
     box.appendChild(row);
@@ -861,8 +861,8 @@ function councilCard(c, target, latest) {
   }
   if (latest && !running) {
     const row = el("div", "cc-uv");
-    row.appendChild(el("span", "", c.user_vote ? _("Your vote: {vote}. Change it:", { vote: VOTE_TR2[c.user_vote.vote] }) : "Senin oyun:"));
-    for (const [v, l] of [["approve", _("Approve")], ["conditional", _("Conditional")], ["reject", "Ret"]]) {
+    row.appendChild(el("span", "", c.user_vote ? _("Your vote: {vote}. Change it:", { vote: VOTE_TR2[c.user_vote.vote] }) : _("Your vote:")));
+    for (const [v, l] of [["approve", _("Approve")], ["conditional", _("Conditional")], ["reject", _("Reject")]]) {
       const b = el("button", "btn ghost" + (c.user_vote && c.user_vote.vote === v ? " on" : ""), l);
       b.addEventListener("click", () => projectAction("vote", target, v, {}));
       row.appendChild(b);
@@ -887,7 +887,7 @@ function councilCard(c, target, latest) {
   const voteBox = (name, model, v, weight, reason, off) => {
     const box = el("div", "cv v-" + (v || "none") + (off ? " off" : ""));
     const top = el("div", "cv-top");
-    top.append(el("b", "", name), el("span", "vote v-" + (v || "none"), v ? VOTE_TR2[v] : "oy yok"));
+    top.append(el("b", "", name), el("span", "vote v-" + (v || "none"), v ? VOTE_TR2[v] : _("no vote")));
     if (weight > 1) top.appendChild(el("span", "cv-w", `×${weight}`));
     box.appendChild(top);
     if (model) box.title = model;
@@ -916,7 +916,7 @@ function councilCard(c, target, latest) {
   const live = fs.filter((f) => f.status !== "refuted"), dead = fs.filter((f) => f.status === "refuted");
   if (fs.length) {
     const n = (st) => fs.filter((f) => f.status === st).length;
-    card.appendChild(el("div", "cc-sub", ["Bulgular", n("confirmed") ? _("{n} verified", { n: n("confirmed") }) : "", n("unclear") ? `${n("unclear")} belirsiz` : "",
+    card.appendChild(el("div", "cc-sub", [_("Findings"), n("confirmed") ? _("{n} verified", { n: n("confirmed") }) : "", n("unclear") ? `${n("unclear")} belirsiz` : "",
       dead.length ? _("{n} refuted", { n: dead.length }) : ""].filter(Boolean).join(" · ")));
     const box = el("div", "cc-findings");
     for (const f of live) box.appendChild(findingRow(f));
@@ -1281,7 +1281,7 @@ function projectDialog(project) {
     d.appendChild(seg);
     const manual = el("div", "np-manual"); manual.hidden = true;
     const list = el("div", "np-agents");
-    const more = el("button", "btn", "+ Ajan ekle");
+    const more = el("button", "btn", _("+ Add an agent"));
     const renum = () => [...list.children].forEach((c, i) => { c.querySelector(".np-n").textContent = i + 1; });
     more.addEventListener("click", () => { if (list.children.length < 8) { list.appendChild(agentCard({}, list.children.length + 1)); renum(); } });
     manual.append(list, more);
