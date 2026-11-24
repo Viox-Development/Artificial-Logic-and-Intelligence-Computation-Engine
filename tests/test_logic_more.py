@@ -377,7 +377,7 @@ def test_metrics_actions(core_ctx):
     assert "ort" in m.run(core_ctx, action="stats", key="pc.*").text
     with pytest.raises(ToolError, match="key is required"):
         m.run(core_ctx, action="stats")
-    with pytest.raises(ToolError, match="zaman anlaşılamadı"):
+    with pytest.raises(ToolError, match="could not understand the time"):
         m.run(core_ctx, action="keys", since="geçen bayram")
 
 
