@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+from alice.i18n import _
+
 BRIEF_ID, REPORT_ID = "brief", "weekly-report"
 
 
@@ -32,9 +34,9 @@ def _hhmm(value: Any, default: str) -> str:
     try:
         h, m = (int(x) for x in s.split(":"))
     except ValueError as e:
-        raise ValueError(f"saat SS:DD olmalı (verilen: {s})") from e
+        raise ValueError(_("the time must be HH:MM (given: {value})", value=s)) from e
     if not (0 <= h < 24 and 0 <= m < 60):
-        raise ValueError(f"geçersiz saat: {s}")
+        raise ValueError(_("invalid time: {value}", value=s))
     return f"{h:02d}:{m:02d}"
 
 
@@ -63,7 +65,7 @@ class Journal:
             if action == "add":
                 text = str(d.get("text", "")).strip()
                 if not text:
-                    return {"ok": False, "error": "boş not"}
+                    return {"ok": False, "error": _("empty note")}
                 notes.add(text)
                 return {"ok": True}
             if action == "remove":
@@ -95,7 +97,7 @@ class Journal:
                 return {"ok": TaskStore().remove(BRIEF_ID if action == "brief_remove" else REPORT_ID)}
         except (ValueError, TypeError, OSError) as e:
             return {"ok": False, "error": str(e)}
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     # ------------------------------------------------------------------ Logs tab
     def logs_view(self) -> dict[str, Any]:
@@ -113,7 +115,7 @@ class Journal:
 
             last = json.loads(evals.results_path().read_text(encoding="utf-8"))
             if not isinstance(last, dict):  # manually corrupted/partial log: treat as never run, let tab open
-                raise ValueError("sonuç dosyası nesne değil")
+                raise ValueError(_("the result file is not an object"))
             last = {"when": time.strftime("%d.%m %H:%M", time.localtime(float(last.get("ts") or 0))),
                     "passed": last.get("passed"), "total": last.get("total")}
         except (OSError, ValueError, TypeError, OverflowError):
@@ -134,10 +136,10 @@ class Journal:
 
         if action == "eval_run":
             if self._eval_thread is not None and self._eval_thread.is_alive():
-                return {"ok": False, "error": "testler zaten çalışıyor"}
+                return {"ok": False, "error": _("the tests are already running")}
             cases = evals.load_cases()
             if not cases:
-                return {"ok": False, "error": "test seti boş: beğenmediğin bir cevaba 👎 ver ya da vaka ekle"}
+                return {"ok": False, "error": _("the test set is empty: give 👎 to an answer you didn't like, or add a case")}
             self._eval_stop.clear()
             with self._lock:
                 self._eval = {"state": "running", "done": 0, "total": len(cases), "current": cases[0].label,
@@ -152,7 +154,7 @@ class Journal:
         if action == "eval_add":
             text = str(d.get("text", "")).strip()
             if not text:
-                return {"ok": False, "error": "boş"}
+                return {"ok": False, "error": _("empty")}
             return {"ok": True, "added": evals.add_cases([text], note="uygulamadan") > 0}
         if action == "eval_from_log":
             n = evals.add_cases(evals.sayings_from_log(int(d.get("n") or 20)), "voice.log'dan")
@@ -167,9 +169,9 @@ class Journal:
             try:
                 open_file(p)
             except OSError as e:
-                return {"ok": False, "error": f"açılamadı: {e} ({p})"}
+                return {"ok": False, "error": _("could not open it: {error} ({path})", error=e, path=p)}
             return {"ok": True}
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     def _run_evals(self, cases: list[Any]) -> None:
         from alice import evals
@@ -186,15 +188,15 @@ class Journal:
             outcomes = evals.run_all(cases, on_case=on_case, stop=self._eval_stop.is_set, cfg=self.cfg)
             cmp = evals.save_results(outcomes) if outcomes else {}
             passed = sum(o.passed for o in outcomes)
-            summary = f"{passed}/{len(outcomes)} geçti"
+            summary = _("{passed}/{total} passed", passed=passed, total=len(outcomes))
             if cmp.get("before") is not None:
-                summary += f" (önceki: {cmp['before']}/{cmp['before_total']})"
+                summary += _(" (before: {before}/{total})", before=cmp["before"], total=cmp["before_total"])
             if cmp.get("fixed"):
-                summary += " · düzelenler: " + ", ".join(cmp["fixed"])
+                summary += _(" · fixed: ") + ", ".join(cmp["fixed"])
             if cmp.get("broken"):
                 summary += " · bozulanlar: " + ", ".join(cmp["broken"])
             with self._lock:
                 self._eval.update(state="stopped" if self._eval_stop.is_set() else "done", current="", summary=summary)
         except Exception as e:  # noqa: BLE001 - display on screen
             with self._lock:
-                self._eval.update(state="error", current="", summary=f"çalıştırılamadı: {e}")
+                self._eval.update(state="error", current="", summary=_("could not run: {error}", error=e))

@@ -117,7 +117,7 @@ def test_declined_and_missed_calls(setup, monkeypatch):
     ev, seen = wait_for(events, lambda e: e["type"] == "call_end")
     assert ev["reason"] == "missed"
     info, _ = wait_for(events, lambda e: e["type"] == "info")
-    assert "açmadın" in info["text"]
+    assert "didn't pick up" in info["text"]
 
 
 def test_without_speech_engine_text_still_goes_to_phone(setup):

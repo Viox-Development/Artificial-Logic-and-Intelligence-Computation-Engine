@@ -175,5 +175,5 @@ def test_phone_app_routes_need_token_and_actions_are_checked(app, monkeypatch):
     r = client.post("/api/remote/action", json={"action": "lock"}).json()
     assert r == {"ok": True, "text": "bilgisayar kilitlendi"} and done == ["lock"]
     bad = client.post("/api/remote/action", json={"action": "format_c"})
-    assert bad.status_code == 400 and "bilinmeyen" in bad.json()["error"]
+    assert bad.status_code == 400 and "unknown" in bad.json()["error"]
     assert client.post("/api/remote/action", json={"action": "type", "text": ""}).json()["ok"] is False

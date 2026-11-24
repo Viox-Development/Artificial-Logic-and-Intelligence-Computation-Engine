@@ -52,7 +52,7 @@ def test_status_lists_accounts_with_quota_and_cooldown(proxy_home, monkeypatch):
     assert [a["provider"] for a in d["accounts"]] == ["claude", "codex"]
     claude, codex = d["accounts"]
     assert claude["provider_name"] == "Claude (Pro / Max)"
-    assert claude["quota"]["windows"] == [{"label": "5 saat", "percent": 0, "reset": 0, "stale": True}]  # stale
+    assert claude["quota"]["windows"] == [{"label": "5 hours", "percent": 0, "reset": 0, "stale": True}]  # stale
     assert codex["quota"]["percent"] == 46
     assert codex["cooldown"]  # in cooldown
     assert codex["failed"] == 1
@@ -144,7 +144,7 @@ def test_start_noop_when_running(proxy_home, monkeypatch):
 def test_start_skips_when_not_installed(tmp_path, monkeypatch):
     monkeypatch.setattr(cliproxy, "home", lambda: tmp_path / "yok")
     r = cliproxy.ensure_started()
-    assert r["ok"] and r["skipped"] == "kurulu değil"
+    assert r["ok"] and r["skipped"] == "not installed"
 
 
 def test_start_launches_detached_process(proxy_home, monkeypatch):
@@ -263,8 +263,8 @@ def test_quota_shows_fullest_window_and_resets_stale_ones():
         "Anthropic-Ratelimit-Unified-5h-Utilization": "1.0", "Anthropic-Ratelimit-Unified-5h-Reset": str(now - 60),
         "Anthropic-Ratelimit-Unified-7d-Utilization": "0.91", "Anthropic-Ratelimit-Unified-7d-Reset": str(now + 9000)}},
         now=now)
-    assert (q["label"], q["percent"]) == ("7 gün", 91)
-    assert [(w["label"], w["percent"], w["stale"]) for w in q["windows"]] == [("5 saat", 0, True), ("7 gün", 91, False)]
+    assert (q["label"], q["percent"]) == ("7 days", 91)
+    assert [(w["label"], w["percent"], w["stale"]) for w in q["windows"]] == [("5 hours", 0, True), ("7 days", 91, False)]
 
 
 def test_dead_refresh_token_is_not_ready_and_cooldown_has_duration():
@@ -275,7 +275,7 @@ def test_dead_refresh_token_is_not_ready_and_cooldown_has_duration():
     quota = cliproxy._account({"id": "antigravity-c.json", "provider": "antigravity", "quota_blocked": True,
                                "status": "error", "unavailable": True,
                                "cooldowns": [{"reason": "quota", "remaining_seconds": 390092}]})
-    assert quota["cooldown"] == "5 gün" and not quota["needs_sign_in"] and not quota["ready"]
+    assert quota["cooldown"] == "5 days" and not quota["needs_sign_in"] and not quota["ready"]
 
 
 def test_groups_ready_skips_services_without_usable_accounts():
@@ -293,4 +293,4 @@ def test_expired_cooldown_does_not_keep_account_busy():
     assert acc["cooldown"] == "" and acc["ready"]
     unknown = cliproxy._account({"id": "claude-y.json", "provider": "claude", "status": "active",
                                  "cooldowns": [{"reason": "quota"}]})  # no duration: the proxy says it is waiting
-    assert unknown["cooldown"] == "kısa süre" and not unknown["ready"]
+    assert unknown["cooldown"] == "a short while" and not unknown["ready"]

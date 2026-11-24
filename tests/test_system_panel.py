@@ -188,7 +188,7 @@ def test_mic_test_shows_level_and_what_was_heard():
     t = system.MicTest(cfg(), mic=lambda: FakeMic(loud=False), stt=lambda c: stt, seconds=0.1)
     t.start()
     t._thread.join(5)
-    assert "ses gelmiyor" in t.view()["message"] and len(stt.got) == 1  # if silent, it does not bother transcribing
+    assert "no sound" in t.view()["message"] and len(stt.got) == 1  # if silent, it does not bother transcribing
 
 
 def test_app_endpoints(workdir, monkeypatch):

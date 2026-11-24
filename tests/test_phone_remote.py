@@ -50,7 +50,7 @@ def test_focus_action(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(desktop, "focus_window", lambda t: seen.setdefault("t", t) or t)
-    assert remote.action({"action": "focus", "title": "Discord"}) == "Discord öne getirildi"
+    assert remote.action({"action": "focus", "title": "Discord"}) == "Discord brought to the front"
     with pytest.raises(ValueError):
         remote.action({"action": "focus", "title": ""})
 
@@ -113,10 +113,10 @@ def test_typing_says_where_it_went_and_refuses_without_window(monkeypatch):
     monkeypatch.setattr(computer, "type_text", typed.append)
     monkeypatch.setattr(computer, "press_keys", keys.append)
     monkeypatch.setattr(remote, "_foreground_title", lambda: "Discord")
-    assert remote.action({"action": "type", "text": "selam", "enter": True}) == "yazıldı → Discord"
+    assert remote.action({"action": "type", "text": "selam", "enter": True}) == "typed → Discord"
     assert typed == ["selam"] and keys == ["enter"]
     monkeypatch.setattr(remote, "_foreground_title", lambda: "")
-    with pytest.raises(ValueError, match="odakta bir pencere yok"):
+    with pytest.raises(ValueError, match="no window has focus"):
         remote.action({"action": "type", "text": "selam"})
 
 

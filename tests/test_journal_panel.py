@@ -82,7 +82,7 @@ def test_eval_runs_in_background_with_progress(monkeypatch):
     assert p.logs_action("eval_run", {})["ok"]
     p._eval_thread.join(5)
     v = p.eval_view()
-    assert v["state"] == "done" and seen == [1, 2] and v["summary"].startswith("1/2 geçti")
+    assert v["state"] == "done" and seen == [1, 2] and v["summary"].startswith("1/2 passed")
     assert [r["passed"] for r in v["results"]] == [True, False]
     assert p.logs_view()["last_run"]["passed"] == 1
 

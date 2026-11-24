@@ -29,6 +29,8 @@ from urllib.parse import urlparse
 
 from alice.config import alice_home
 
+from alice.i18n import _
+
 CHUNK = 192 * 1024
 PING_EVERY = 25.0
 STREAM_PATHS = ("/api/events",)  # long-running responses: no timeout
@@ -129,12 +131,12 @@ class RelayClient:
             try:
                 ws = self._open()
             except Exception as e:  # noqa: BLE001 - no internet, no server: retry after a bit
-                self.log(f"aktarma bağlanamadı: {e}")
+                self.log(f"relay could not connect: {e}")
                 self._stop.wait(wait)
                 wait = min(wait * 2, 120.0)
                 continue
             self._ws, self.connected, wait = ws, True, 2.0
-            self.log("aktarma sunucusuna bağlandı")
+            self.log("connected to the relay server")
             last_ping = time.monotonic()
             try:
                 while not self._stop.is_set():
@@ -150,7 +152,7 @@ class RelayClient:
                     self._on_message(raw)
             except Exception as e:  # noqa: BLE001 - connection dropped
                 if not self._stop.is_set():
-                    self.log(f"aktarma bağlantısı koptu: {e}")
+                    self.log(f"relay connection dropped: {e}")
             finally:
                 self.connected, self._ws = False, None
                 for r in list(self._reqs.values()):
@@ -255,7 +257,7 @@ def relay_dir() -> Path:
 def _npx() -> str:
     exe = shutil.which("npx") or shutil.which("npx.cmd")
     if not exe:
-        raise SystemExit("Node.js (npx) bulunamadı: https://nodejs.org adresinden kurup tekrar deneyin.")
+        raise SystemExit(_("Node.js (npx) not found: install it from https://nodejs.org and try again."))
     return exe
 
 
@@ -266,32 +268,32 @@ def deploy(out: Callable[[str], None] = print) -> dict[str, str]:
 
     d = relay_dir()
     if not (d / "wrangler.toml").exists():
-        raise SystemExit(f"relay klasörü bulunamadı: {d}")
+        raise SystemExit(_("relay folder not found: {path}", path=d))
     npx = _npx()
     env = {**os.environ, "WRANGLER_SEND_METRICS": "false"}
     who = subprocess.run([npx, "--yes", "wrangler@4", "whoami"], cwd=d, capture_output=True, text=True,
                          encoding="utf-8", errors="replace", env=env)
     if "not authenticated" in (who.stdout + who.stderr).lower() or who.returncode != 0:
-        raise SystemExit("Cloudflare'e giriş yapılmamış. Önce şunu çalıştır ve açılan sayfada izin ver:\n"
+        raise SystemExit(_("Not signed in to Cloudflare. First run this and allow it on the page that opens:\n") +\
                          f"  cd \"{d}\" && npx wrangler login")
-    out("Aktarma sunucusu yükleniyor…")
+    out(_("Deploying the relay server…"))
     dep = subprocess.run([npx, "--yes", "wrangler@4", "deploy"], cwd=d, capture_output=True, text=True,
                          encoding="utf-8", errors="replace", env=env)
     text = dep.stdout + dep.stderr
     if dep.returncode != 0:
-        raise SystemExit("Yükleme başarısız:\n" + text[-2000:])
+        raise SystemExit(_("Deploy failed:\n") + text[-2000:])
     m = re.search(r"https://[\w.-]+\.workers\.dev", text)
     if not m:
-        raise SystemExit("Yüklendi ama adres okunamadı:\n" + text[-1500:])
+        raise SystemExit(_("Deployed, but the address couldn't be read:\n") + text[-1500:])
     url = m.group(0)
     old = settings()
     key = old["key"] if old and old["url"] == url else secrets.token_urlsafe(32)
     sec = subprocess.run([npx, "--yes", "wrangler@4", "secret", "put", "PC_KEY"], cwd=d, input=key + "\n",
                          capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if sec.returncode != 0:
-        raise SystemExit("Anahtar ayarlanamadı:\n" + (sec.stdout + sec.stderr)[-1500:])
+        raise SystemExit(_("Could not set the key:\n") + (sec.stdout + sec.stderr)[-1500:])
     save_settings(url, key)
-    out(f"Hazır: {url}")
+    out(_("Ready: {url}", url=url))
     return {"url": url}
 
 
@@ -300,25 +302,25 @@ def relay_cmd(argv: list[str]) -> int:
     sub = argv[0] if argv else "status"
     if sub == "deploy":
         deploy()
-        print("ALICE'i yeniden başlatınca bilgisayar aktarma sunucusuna bağlanır; telefonda QR'ı yeniden okut.")
+        print(_("After ALICE restarts, the computer connects to the relay server; scan the QR on the phone again."))
         return 0
     if sub == "off":
         try:
             settings_path().unlink()
         except OSError:
             pass  # already off
-        print("Uzaktan erişim kapatıldı (yeniden başlatınca geçerli).")
+        print(_("Remote access turned off (applies after a restart)."))
         return 0
     s = settings()
     if s is None:
-        print("Uzaktan erişim kurulu değil. Kurmak için: alice relay deploy")
+        print(_("Remote access is not set up. To set it up: alice relay deploy"))
         return 1
     import urllib.request
 
     try:
         st = json.loads(urllib.request.urlopen(s["url"] + "/_alice/status", timeout=10).read())
     except Exception as e:  # noqa: BLE001
-        print(f"{s['url']} — ulaşılamadı: {e}")
+        print(_("{url} — unreachable: {error}", url=s["url"], error=e))
         return 1
-    print(f"{s['url']} — bilgisayar {'bağlı' if st.get('pc') else 'bağlı değil'}")
+    print(f"{s['url']} — bilgisayar {_('connected') if st.get('pc') else _('not connected')}")
     return 0
