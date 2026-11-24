@@ -277,7 +277,7 @@ def test_update_apply_waits_for_agent(app, monkeypatch):
     state, _srv, client, _ = app
     monkeypatch.setattr(state.agent, "busy", True, raising=False)
     r = client.post("/api/update/apply", json={})
-    assert r.status_code == 409 and "durdur" in r.json()["error"]
+    assert r.status_code == 409 and "stop" in r.json()["error"]
 
 
 def test_update_mode_persists(app):
@@ -315,7 +315,7 @@ def test_connect_auth_needs_client_id_then_starts_browser_flow(app, monkeypatch)
     monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
     r = client.post("/api/connect/auth", json={"name": "spotify"})
     assert r.status_code == 400 and "SPOTIFY_CLIENT_ID" in r.json()["error"]
-    assert client.post("/api/connect/auth", json={"name": "steam"}).json()["error"].startswith("Steam anahtarla")
+    assert client.post("/api/connect/auth", json={"name": "steam"}).json()["error"].startswith("Steam works with a key")
     assert client.post("/api/connect/auth", json={"name": "yok"}).status_code == 400
 
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "cid")
@@ -349,7 +349,7 @@ def test_bayat_uygulama_cekmeden_yeniden_baslar(app, monkeypatch):
     restarted = threading.Event()
     monkeypatch.setattr(state, "_restart_soon", lambda: restarted.set())
     r = client.post("/api/update/apply", json={}).json()
-    assert r["ok"] and r["restarting"] and "zaten indirilmiş" in r["note"]
+    assert r["ok"] and r["restarting"] and "already downloaded" in r["note"]
     assert restarted.wait(2)
 
 
@@ -452,7 +452,7 @@ def test_background_limit(app, monkeypatch):
     client.post("/api/send", json={"text": "2"})
     assert _wait(lambda: state.agent.busy)
     r = client.post("/api/new", json={})
-    assert r.status_code == 409 and "arkada" in r.json()["error"]
+    assert r.status_code == 409 and "background chats" in r.json()["error"]
     release.set()
     assert _wait(lambda: not state.running() and not state.agent.busy)
 
@@ -546,7 +546,7 @@ def test_btw_side_question_does_not_touch_history(app):
 
     def answer(model, messages, tools, **kw):  # other calls in the background (e.g. title) must not break the order
         last = messages[-1].get("content")
-        return "Yan cevap: 42." if isinstance(last, str) and "Yan soru" in last else "cevap 1"
+        return "Yan cevap: 42." if isinstance(last, str) and "Side question" in last else "cevap 1"
 
     prov.script = answer
     events, t = collect(state, lambda e: e["type"] == "status")
@@ -561,7 +561,7 @@ def test_btw_side_question_does_not_touch_history(app):
     assert state.chat.agent.messages == before  # not written to the chat
     # Find the side-question call by its text: a background call (title, next-message suggestion) can land after it.
     side = [c for c in prov.calls if isinstance(c["messages"][-1].get("content"), str)
-            and "Yan soru" in c["messages"][-1]["content"]]
+            and "Side question" in c["messages"][-1]["content"]]
     assert side and not side[-1].get("tools")
     assert client.post("/api/send", json={"text": "/btw"}).json()["ok"] is False
 

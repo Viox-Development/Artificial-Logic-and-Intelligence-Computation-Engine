@@ -400,7 +400,7 @@ def test_add_extra_keys_and_see_pool(state):
     assert state.set_key("GROQ_API_KEY", "gsk-first-0001")["ok"]
     r = state.add_key("GROQ_API_KEY", "gsk-second-0002")
     assert r["ok"] and r["key"] == "GROQ_API_KEY_2"
-    assert state.add_key("GROQ_API_KEY", "gsk-second-0002")["error"] == "bu anahtar zaten ekli"
+    assert state.add_key("GROQ_API_KEY", "gsk-second-0002")["error"] == "this key is already added"
     assert state.add_key("GROQ_API_KEY", "gsk-third-0003")["key"] == "GROQ_API_KEY_3"
     assert state.router.providers_cfg["groq"].api_keys == ["gsk-first-0001", "gsk-second-0002", "gsk-third-0003"]
     row = next(x for x in state.keys()["keys"] if x["key"] == "GROQ_API_KEY")

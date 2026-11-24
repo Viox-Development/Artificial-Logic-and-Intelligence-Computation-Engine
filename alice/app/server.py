@@ -89,11 +89,11 @@ def int_field(d: dict[str, Any], key: str, default: int = 0) -> int:
     if v is None or v == "":
         return default
     if isinstance(v, bool):
-        raise BadRequest(400, f"{key} tamsayı olmalı")
+        raise BadRequest(400, _("{key} must be an integer", key=key))
     try:
         return int(v)
     except (TypeError, ValueError, OverflowError):
-        raise BadRequest(400, f"{key} tamsayı olmalı") from None
+        raise BadRequest(400, _("{key} must be an integer", key=key)) from None
 
 
 # ----------------------------------------------------------------------- events
@@ -299,12 +299,12 @@ def file_preview(path: str, allowed: set[str]) -> dict[str, Any]:
 
     p = Path(path)
     if path not in allowed or not p.is_file():
-        return {"ok": False, "error": "dosya bulunamadı"}
+        return {"ok": False, "error": _("file not found")}
     ext = p.suffix.lower()
     size = p.stat().st_size
     if ext in PREVIEW_IMAGE or ext == ".pdf":
         if size > 15_000_000:
-            return {"ok": False, "error": "dosya önizleme için çok büyük"}
+            return {"ok": False, "error": _("file is too large to preview")}
         return {"ok": True, "kind": "pdf" if ext == ".pdf" else "image", "name": p.name,
                 "mime": "application/pdf" if ext == ".pdf" else PREVIEW_IMAGE[ext],
                 "b64": base64.b64encode(p.read_bytes()).decode()}
@@ -313,7 +313,7 @@ def file_preview(path: str, allowed: set[str]) -> dict[str, Any]:
         with open(p, "rb") as f:
             head = f.read(4096)
         if b"\0" in head:
-            return {"ok": False, "error": "bu dosya türü önizlenemiyor; Aç ile aç"}
+            return {"ok": False, "error": _("this file type can't be previewed; use Open")}
         kind = "text"
     with open(p, "rb") as f:
         data = f.read(PREVIEW_MAX)
@@ -579,7 +579,7 @@ class SessionsAPI:
         app, parent = self.app, self.chat
         with app._chats_lock:
             if len(app.running()) >= app.MAX_BACKGROUND:
-                return "", f"arkada zaten {app.MAX_BACKGROUND} sohbet çalışıyor; biri bitince tekrar dene"
+                return "", f"the limit of {app.MAX_BACKGROUND} background chats is reached; try again when one finishes"
             sid = sess.new_session_id()
             msgs = fork_messages(parent.agent.messages) if fork else None
             chat = Chat(app, parent.ctx.cwd, parent.agent.permissions.mode, sid=sid, messages=msgs)
@@ -593,7 +593,7 @@ class SessionsAPI:
         parent.ctx.state.setdefault("linked_sessions", []).append(sid)
         ok, err = app.send(prompt, sid=sid)
         if not ok:
-            return "", err or "oturum başlatılamadı"
+            return "", err or "could not start the session"
         app.bus.publish({"type": "sessions"})
         return sid, ""
 
@@ -602,15 +602,15 @@ class SessionsAPI:
         rows = []
         for sid in self.chat.ctx.state.get("linked_sessions", []):
             live = self.app.find_chat(sid)
-            state = "çalışıyor" if live is not None and live.busy else "bitti/boşta"
+            state = "running" if live is not None and live.busy else "finished/idle"
             rows.append({"id": sid, "title": str((meta.get(sid) or {}).get("title") or ""), "state": state})
         return rows
 
     def message(self, sid: str, text: str) -> str:
         if sid not in self.chat.ctx.state.get("linked_sessions", []):
-            return "bu sohbetten başlatılmış böyle bir oturum yok"
+            return "no such session was started from this chat"
         ok, err = self.app.send(text, sid=sid)
-        return "" if ok else (err or "gönderilemedi")
+        return "" if ok else (err or "could not send")
 
 
 class AppState:
@@ -777,7 +777,8 @@ class AppState:
         if not self.chat.busy:
             return None
         if len(self.running()) >= self.MAX_BACKGROUND:
-            return f"arkada zaten {self.MAX_BACKGROUND} sohbet çalışıyor; birini bitmeden yenisine geçilemez"
+            return _("the limit of {n} background chats is reached; you can't switch to a new one until one finishes",
+                     n=self.MAX_BACKGROUND)
         self.background[self.chat.sid] = self.chat
         try:
             self.chat.save()  # show in sidebar even if its first step has not finished
@@ -924,7 +925,7 @@ class AppState:
             self.background.pop(chat.sid, None)
             if chat is self.chat:
                 self.chat = Chat(self, chat.ctx.cwd, chat.agent.permissions.mode, sid=chat.sid, messages=msgs)
-        self.bus.publish({"type": "info", "text": "bir araç durdurulamadı; sohbet kaydedildi ve kaldığı yerden açıldı",
+        self.bus.publish({"type": "info", "text": _("a tool could not be stopped; the chat was saved and reopened where it left off"),
                           "sid": chat.sid})
         self.bus.publish({"type": "busy", "value": False, "sid": chat.sid})
         self.bus.publish({"type": "status", **self.status()})
@@ -1015,12 +1016,12 @@ class AppState:
             if path == "/api/subagents/stop":
                 sub = subagents.registry(self.ctx).get(str(d.get("id", "")))
                 if sub is None:
-                    return {"ok": False, "error": "böyle bir alt ajan yok"}, 404
+                    return {"ok": False, "error": _("no such subagent")}, 404
                 return {"ok": subagents.stop(sub)}, 200
             if path == "/api/subagents/send":
                 text = str(d.get("text", "")).strip()
                 if not text:
-                    return {"ok": False, "error": "mesaj boş"}, 400
+                    return {"ok": False, "error": _("message is empty")}, 400
                 sub = subagents.resume(self.ctx, str(d.get("id", "")), text, background=True)
                 return {"ok": True, "note": f"{sub.id} devam ediyor; bitince sonucu sohbete gelecek"}, 200
             if path == "/api/agents/save":
@@ -1030,10 +1031,10 @@ class AppState:
                 return {"ok": True, "note": f"{a.name} kaydedildi"}, 200
             if path == "/api/agents/delete":
                 skills.delete_agent(str(d.get("name", "")), self.ctx.cwd)
-                return {"ok": True, "note": "silindi"}, 200
+                return {"ok": True, "note": _("deleted")}, 200
         except (ToolError, ValueError, OSError) as e:
             return {"ok": False, "error": str(e)[:300]}, 400
-        return {"ok": False, "error": "bilinmeyen işlem"}, 404
+        return {"ok": False, "error": _("unknown action")}, 404
 
     def pr_panel(self, force: bool = False) -> dict[str, Any]:
         """PR panel: watched PRs (with live status) and unwatched open PR of the current branch (to start watching)."""
@@ -1125,12 +1126,12 @@ class AppState:
 
         m = discover(self.cfg)[0].get(name)
         if m is None:
-            return {"ok": False, "error": f"bağlantı yok: {name}"}
+            return {"ok": False, "error": _("no such connection: {name}", name=name)}
         if m.auth.kind != "oauth2":
-            return {"ok": False, "error": f"{m.label} anahtarla çalışıyor: Bağlantılar → Anahtarlar'dan {m.auth.env} gir"}
+            return {"ok": False, "error": _("{label} works with a key: enter {env} under Connections → Keys", label=m.label, env=m.auth.env)}
         cid = os.environ.get(m.auth.client_id_env, "").strip()
         if not cid:
-            return {"ok": False, "error": f"{m.auth.client_id_env} yok; Bağlantılar → Anahtarlar'dan gir"}
+            return {"ok": False, "error": _("{env} is missing; enter it under Connections → Keys", env=m.auth.client_id_env)}
         secret = os.environ.get(m.auth.client_secret_env, "").strip() if m.auth.client_secret_env else ""
 
         def run() -> None:
@@ -1140,11 +1141,11 @@ class AppState:
             except oauth.OAuthError as e:
                 say(str(e))
                 return
-            say("bağlandı")
+            say(_("connection complete"))
             self.bus.publish({"type": "connect", "name": m.name, "ready": True})
 
         threading.Thread(target=run, daemon=True, name=f"alice-oauth-{name}").start()
-        return {"ok": True, "note": f"{m.label} için tarayıcıda izin sayfası açılıyor"}
+        return {"ok": True, "note": _("opening the permission page for {label} in the browser", label=m.label)}
 
     def connect_logout(self, name: str) -> dict[str, Any]:
         from alice.connect import store
@@ -1213,7 +1214,7 @@ class AppState:
         from alice import buddy
 
         if action not in ("pet", "feed", "rename", "play", "reroll"):
-            return {"ok": False, "error": "bilinmeyen işlem"}
+            return {"ok": False, "error": _("unknown action")}
         return {"ok": True, "text": buddy.act(action, value), "buddy": buddy.view(self.cfg)}
 
     def kairos_view(self) -> dict[str, Any]:
@@ -1230,7 +1231,7 @@ class AppState:
             kairos.set_enabled(self.cfg, action == "on")
             self.cfg.data.setdefault("kairos", {})["enabled"] = action == "on"
         else:
-            return {"ok": False, "error": "bilinmeyen işlem"}
+            return {"ok": False, "error": _("unknown action")}
         return {"ok": True, **self.kairos_view()}
 
     def assistant_set(self, section: str, key: str, value: Any) -> bool:
@@ -1260,20 +1261,20 @@ class AppState:
         if action == "gmail_connect":
             acc = str(d.get("account", "")).strip().lower()
             if not re.fullmatch(r"[a-z0-9_-]{1,30}", acc):
-                return {"ok": False, "error": "ad sadece harf, rakam, - ve _ olsun (ör. okul)"}
+                return {"ok": False, "error": _("the name may only use letters, digits, - and _ (e.g. school)")}
             if not os.environ.get("GOOGLE_CLIENT_ID", "").strip():
-                return {"ok": False, "error": "önce Google kurulumu: Sistem → Kurulum → Google"}
+                return {"ok": False, "error": _("set up Google first: System → Setup → Google")}
 
             def run() -> None:
                 try:
                     email = gmail.connect(acc, emit=lambda s: None)
-                    self.ui.info(f"Gmail bağlandı: {acc}" + (f" ({email})" if email else ""))
+                    self.ui.info(_("Gmail connected: {account}", account=acc) + (f" ({email})" if email else ""))
                 except Exception as e:  # noqa: BLE001
-                    self.ui.info(f"Gmail bağlanamadı ({acc}): {e}")
+                    self.ui.info(_("Gmail could not connect ({account}): {error}", account=acc, error=e))
 
             threading.Thread(target=run, daemon=True, name="alice-gmail-connect").start()
             return {"ok": True, "started": True}
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     # ------------------------------------------------------------------ Voice tab
     PREVIEW_TEXT = "Selam, ben Alice. Bugün ne yapıyoruz? İstersen önce şu indirmeleri bir toparlayayım."
@@ -1294,16 +1295,16 @@ class AppState:
         from alice.voice.tts import ALL_GEMINI_VOICES, TTSError, make_cloud
 
         if name not in ALL_GEMINI_VOICES:
-            return {"ok": False, "error": f"bilinmeyen ses: {name}"}
+            return {"ok": False, "error": _("unknown voice: {name}", name=name)}
         path = alice_home() / "voice" / "previews" / f"{name}.wav"
         if not path.is_file():
             tts = make_cloud(self.cfg, f"gemini:{name}")
             if tts is None:
-                return {"ok": False, "error": "örnek için Gemini anahtarı gerekli (Bağlantılar → Anahtarlar)"}
+                return {"ok": False, "error": _("a Gemini key is needed for the sample (Connections → Keys)")}
             try:
                 audio = tts.synth(self.PREVIEW_TEXT, "happy")
             except TTSError as e:
-                return {"ok": False, "error": f"örnek üretilemedi: {e}"}
+                return {"ok": False, "error": _("could not make the sample: {error}", error=e)}
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(audio.to_wav())
         return {"ok": True, "audio": base64.b64encode(path.read_bytes()).decode()}
@@ -1314,7 +1315,7 @@ class AppState:
         from alice.voice.tts import ALL_GEMINI_VOICES
 
         if name not in ALL_GEMINI_VOICES:
-            return {"ok": False, "error": f"bilinmeyen ses: {name}"}
+            return {"ok": False, "error": _("unknown voice: {name}", name=name)}
         v = self.cfg.data.setdefault("voice", {})
         v["live_voice"], v["tts_cloud"] = name, f"gemini:{name}"
         set_config_value("voice", "live_voice", name)
@@ -1409,7 +1410,7 @@ class AppState:
         fn = {"start": self.enroll.start, "test": self.enroll.test, "install": self.enroll.install,
               "cancel": self.enroll.cancel, "remove": self.enroll.remove, "done": self.enroll.done,
               "skip": self.enroll.skip}.get(action)
-        return fn() if fn else {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return fn() if fn else {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     # ------------------------------------------------------------------ Memory tab
     def memory_view(self) -> dict[str, Any]:
@@ -1458,7 +1459,7 @@ class AppState:
     def memory_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         mem = self.agent.memory
         if mem is None:
-            return {"ok": False, "error": "hafıza kapalı"}
+            return {"ok": False, "error": _("memory is off")}
         cwd = getattr(self.agent.ctx, "cwd", None)
         if action in ("tidy", "dream", "forget", "save", "restore", "forget_summary", "forget_episode",
                       "forget_history", "purge_old_role", "chat_history"):
@@ -1467,7 +1468,7 @@ class AppState:
             try:
                 done = mem.dream(force=True, cwd=cwd)
             except Exception as e:  # noqa: BLE001 - no model / quota error
-                return {"ok": False, "error": f"toparlanamadı: {e}"}
+                return {"ok": False, "error": _("could not tidy up: {error}", error=e)}
             return {"ok": True, "done": done}
         if action == "save_instructions":
             from alice.config import alice_home
@@ -1484,7 +1485,7 @@ class AppState:
             key = str(d.get("key") or "")
             b, n = mem.find_note(key, cwd) if key else (None, None)
             if n is None:
-                return {"ok": False, "error": "not bulunamadı"}
+                return {"ok": False, "error": _("note not found")}
             # Only sent fields are modified: body-less save (e.g. description only) should not erase note body.
             body = str(d.get("body") or "") if "body" in d else n.body
             try:
@@ -1528,7 +1529,7 @@ class AppState:
             return {"ok": True, "on": mem.chat_history}
         if action == "purge_old_role":
             return {"ok": True, "removed": mem.purge_old_role()}
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     @property
     def calls(self) -> Any:
@@ -1559,13 +1560,13 @@ class AppState:
                 try:
                     pcm = base64.b64decode(str(d.get("pcm", "")), validate=True)
                 except ValueError:
-                    return {"ok": False, "error": "bozuk ses"}
+                    return {"ok": False, "error": _("corrupt audio")}
                 return mgr.mic(cid, pcm)
             if action == "interrupt":
                 return mgr.interrupt(cid)
         except KeyError as e:
-            return {"ok": False, "error": str(e.args[0]) if e.args else "görüşme yok"}
-        return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+            return {"ok": False, "error": str(e.args[0]) if e.args else _("no call")}
+        return {"ok": False, "error": _("unknown action: {action}", action=action)}
 
     def all_uis(self) -> list[Any]:
         """UIs of all live chats: foreground, background workers, and phone call. Permission and choice responses
@@ -1640,7 +1641,7 @@ class AppState:
 
         owner = self._key_owner(key)
         if owner is None:
-            return {"ok": False, "error": f"bilinmeyen anahtar: {key}"}
+            return {"ok": False, "error": _("unknown key: {key}", key=key)}
         try:
             set_env_value(key, value)
         except (ValueError, OSError) as e:
@@ -1660,13 +1661,13 @@ class AppState:
         """Add another key to provider (pool): into the first vacant slot. Duplicate key is not added."""
         owner = self._key_owner(base)
         if owner is None or owner[0] != base or not owner[1]:
-            return {"ok": False, "error": f"bu anahtara ek anahtar eklenemez: {base}"}
+            return {"ok": False, "error": _("extra keys can't be added to this key: {base}", base=base)}
         value = value.strip()
         if not value:
-            return {"ok": False, "error": "anahtar boş"}
+            return {"ok": False, "error": _("key is empty")}
         pc = self.router.providers_cfg[owner[1]]
         if value in pc.api_keys:
-            return {"ok": False, "error": "bu anahtar zaten ekli"}
+            return {"ok": False, "error": _("this key is already added")}
         if not os.environ.get(base, "").strip():
             return self.set_key(base, value)
         n = 2
@@ -1678,7 +1679,7 @@ class AppState:
         from alice.config import set_config_value
 
         if strategy not in ("round-robin", "fill-first"):
-            return {"ok": False, "error": "round-robin ya da fill-first"}
+            return {"ok": False, "error": _("round-robin or fill-first")}
         self.cfg.data.setdefault("agent", {})["key_strategy"] = strategy
         set_config_value("agent", "key_strategy", strategy)
         for pool in [c for c in self.router._clients.values() if hasattr(c, "strategy")]:
@@ -1696,11 +1697,11 @@ class AppState:
         key = str(d.get("key", "")).strip()
         models = [m.strip() for m in str(d.get("models", "")).replace("\n", ",").split(",") if m.strip()]
         if not re.fullmatch(r"[a-z][a-z0-9_-]{1,23}", name):
-            return {"ok": False, "error": "ad küçük harf, rakam, - ya da _ olmalı (ör. lmstudio)"}
+            return {"ok": False, "error": _("the name must use lowercase letters, digits, - or _ (e.g. lmstudio)")}
         if name in self.router.providers_cfg and not self.router.providers_cfg[name].custom:
-            return {"ok": False, "error": f"{name} zaten hazır bir sağlayıcı"}
+            return {"ok": False, "error": _("{name} is already a built-in provider", name=name)}
         if not re.fullmatch(r"https?://[^\s\"']+", base_url):
-            return {"ok": False, "error": "adres http:// ya da https:// ile başlamalı (ör. http://localhost:1234/v1)"}
+            return {"ok": False, "error": _("the address must start with http:// or https:// (e.g. http://localhost:1234/v1)")}
         env = re.sub(r"[^A-Z0-9]", "_", name.upper()) + "_API_KEY"
         found: list[str] = []
         try:
@@ -1711,7 +1712,7 @@ class AppState:
                 client.close()
         except ProviderError as e:
             if not d.get("force"):
-                return {"ok": False, "error": f"sunucu cevap vermedi: {e}", "can_force": True}
+                return {"ok": False, "error": _("the server did not answer: {error}", error=e), "can_force": True}
         sec = f"providers.{name}"
         set_config_value(sec, "base_url", base_url)
         set_config_value(sec, "api_key_env", env if key else "")
@@ -1737,7 +1738,7 @@ class AppState:
 
         pc = self.router.providers_cfg.get(name)
         if pc is None or not pc.custom:
-            return {"ok": False, "error": "sadece arayüzden eklenen sunucular silinebilir"}
+            return {"ok": False, "error": _("only servers added from the interface can be removed")}
         remove_config_section(f"providers.{name}")
         for k in [pc.api_key_env, *self._extra_keys(pc.api_key_env)] if pc.api_key_env else []:
             set_env_value(k, "")
@@ -1776,18 +1777,18 @@ class AppState:
         from alice import updater
 
         if self.agent.busy or self._queued:
-            return {"ok": False, "error": "önce mevcut işi durdur"}
+            return {"ok": False, "error": _("stop the current job first")}
         with self._update_lock:
             info = self.update if self._update_shown() else updater.check(self.cfg)
             if info.stale and not info.available:
                 # Code is already downloaded (core or manual git pull): nothing to pull, restarting is sufficient.
-                ok, msg = True, f"yeni sürüm zaten indirilmiş ({info.local[:7]})"
+                ok, msg = True, _("the new version is already downloaded ({sha})", sha=info.local[:7])
             else:
                 ok, msg = updater.apply_update(info, self.cfg, force=force,
-                                               emit=lambda s: self.bus.publish({"type": "info", "text": "güncelleme: " + s}))
+                                               emit=lambda s: self.bus.publish({"type": "info", "text": _("update: {text}", text=s)}))
         if ok:
             self.update = None
-            self.bus.publish({"type": "info", "text": msg + " — ALICE yeniden başlatılıyor"})
+            self.bus.publish({"type": "info", "text": _("{message} — restarting ALICE", message=msg)})
             threading.Thread(target=self._restart_soon, daemon=True, name="alice-restart").start()
         return {"ok": ok, "note": msg, "restarting": ok}
 
@@ -1863,7 +1864,7 @@ class AppState:
         try:
             team = Team.load(pid, self.ctx, int(self.cfg.agent.get("team_max_parallel", 5)), self.bus.publish)
         except (OSError, ValueError, KeyError) as e:
-            raise ToolError(f"proje bulunamadı: {pid}") from e
+            raise ToolError(_("project not found: {pid}", pid=pid)) from e
         teams[team.id] = team
         return team
 
@@ -1924,12 +1925,12 @@ class AppState:
         goal = str(d.get("goal") or "").strip()
         specs = [a for a in d.get("agents") or [] if isinstance(a, dict)]
         if not goal:
-            raise ToolError("hedef boş")
+            raise ToolError(_("the goal is empty"))
         if len(specs) > 8:
-            raise ToolError("en çok 8 ajan")
+            raise ToolError(_("at most 8 agents"))
         cwd = self.ctx.resolve(str(d["cwd"])) if d.get("cwd") else self.ctx.cwd
         if not cwd.is_dir():
-            raise ToolError(f"klasör yok: {cwd}")
+            raise ToolError(_("folder not found: {path}", path=cwd))
         lead_model = str(d.get("lead_model") or "auto").strip()
         lead_thinking = str(d.get("lead_thinking") or "default")
         team = Team(self.ctx, goal, int(self.cfg.agent.get("team_max_parallel", 5)), self.bus.publish, origin="user",
@@ -1952,40 +1953,40 @@ class AppState:
         team = self.get_team(pid)
         if action == "stop":
             if name and name not in team.members:
-                raise ToolError(f"projede '{name}' yok")
+                raise ToolError(_("there is no '{name}' in the project", name=name))
             team.stop(name or None)
-            return "durduruldu"
+            return _("stopped")
         if action == "resume":
             team.resume()
-            return "sürdürülüyor"
+            return _("resuming")
         if action == "send":
             return team.send(USER, name or "all", text)
         if action == "answer":
             team.answer(name, text)  # name: question ID
-            return "cevap iletildi"
+            return _("answer sent")
         if action in ("approve", "revise"):
             return team.review_member(name, action == "approve", text, by=USER)
         if action == "save_template":
             tpl = team.save_template(text or team.title)
-            return f"şablon kaydedildi: {tpl['name']}"
+            return _("template saved: {name}", name=tpl["name"])
         if action == "vote":
             dec = team.user_vote(name, text, str((agent or {}).get("note") or ""))
-            return f"oyun sayıldı; kurul kararı: {dec}"
+            return _("vote counted; council decision: {decision}", decision=dec)
         if action == "council":
             team.ask_council(name)
-            return "kurul toplanıyor"
+            return _("the council is meeting")
         if action == "restart":
             team.restart(name)
-            return f"{name} baştan başladı"
+            return _("{name} started over", name=name)
         if action == "revert":
             files = team.revert(name)
-            return f"{len(files)} dosya geri alındı"
+            return _("{n} files reverted", n=len(files))
         if action == "add":
             m = team.add_member(agent or {})
-            return f"{m.name} eklendi"
+            return _("{name} added", name=m.name)
         if action == "delete":
             if team.active():
-                raise ToolError("önce projeyi durdur")
+                raise ToolError(_("stop the project first"))
             # Flag and deletion under save lock: an agent thread in the process of shutting down might be inside save()
             # (having passed the flag check); deleting without lock rewrote the file, reopening the deleted project
             # (observed in Windows CI).
@@ -1996,8 +1997,8 @@ class AppState:
             self._teams().pop(team.id, None)
             if self.ctx.state.get("team") is team:
                 self.ctx.state.pop("team", None)
-            return "silindi"
-        raise ToolError(f"bilinmeyen işlem: {action}")
+            return _("deleted")
+        raise ToolError(_("unknown action: {action}", action=action))
 
     def _ctx_window(self) -> int:
         """Context window of the current brain model (limit displayed in the UI)."""
@@ -2010,12 +2011,13 @@ class AppState:
     def send(self, text: str, images: list[str] | None = None, sid: str = "") -> tuple[bool, str | None]:
         chat = self.chat if not sid or sid == self.chat.sid else self.chat_for(sid)
         if chat is None:
-            return False, f"arkada zaten {self.MAX_BACKGROUND} sohbet çalışıyor; biri bitince tekrar dene"
+            return False, _("the limit of {n} background chats is reached; try again when one finishes",
+                            n=self.MAX_BACKGROUND)
         if text.split(" ", 1)[0].lower() == "/btw":
             question = text[4:].strip()
             if not question:
                 self._drop_if_idle(chat)
-                return False, "kullanım: /btw <soru>"
+                return False, _("usage: /btw <question>")
             threading.Thread(target=self._side_question, args=(chat, question), daemon=True, name="alice-btw").start()
             return True, None
         if chat.busy:
@@ -2031,7 +2033,7 @@ class AppState:
                 chat.ui.publish({"type": "user", "text": text, "mi": None, "images": (images or [])[:6],
                                  "steer": True})
                 return True, None
-            return False, "ALICE şu an çalışıyor"
+            return False, _("ALICE is running right now")
         prompt = text
         if text.startswith("/"):
             from alice.commands import builtin_prompt, expand_custom
@@ -2041,7 +2043,7 @@ class AppState:
                 prompt = builtin_prompt(text)
                 if prompt is None:
                     self._drop_if_idle(chat)
-                    return False, f"bilinmeyen komut: {text.split()[0]}"
+                    return False, _("unknown command: {command}", command=text.split()[0])
         self._start_turn(chat, text, prompt, images or [])
         return True, None
 
@@ -2061,11 +2063,12 @@ class AppState:
                 and isinstance(m.get("content"), str) and m["content"].strip() and not m.get("_nudge")]
         if len(msgs) < 2 or msgs[-1].get("role") != "assistant":
             return []
-        lines = [f"{'Kullanıcı' if m['role'] == 'user' else 'ALICE'}: {' '.join(m['content'].split())[:600]}"
+        lines = [f"{'User' if m['role'] == 'user' else 'ALICE'}: {' '.join(m['content'].split())[:600]}"
                  for m in msgs[-8:]]
-        prompt = ("Aşağıdaki konuşmada kullanıcının büyük ihtimalle yazacağı bir sonraki mesajı tahmin et. En fazla 2 "
-                  "öneri; her biri kullanıcının ağzından, en çok 8 kelime, Türkçe. ALICE bir soru sorduysa olası cevaplar; "
-                  "iş bittiyse mantıklı sonraki adım. Emin değilsen boş liste. Yalnız JSON: {\"items\": [\"...\"]}\n\n"
+        prompt = ("Guess the user's most likely next message in the conversation below. At most 2 suggestions; each "
+                  "in the user's own voice, at most 8 words, in the language of the conversation. If ALICE asked a "
+                  "question, likely answers; if the work is done, the sensible next step. If unsure, an empty list. "
+                  "JSON only: {\"items\": [\"...\"]}\n\n"
                   + "\n".join(lines))
         try:
             res = chat.agent.router.chat("fast", [{"role": "user", "content": prompt}], max_tokens=120,
@@ -2093,10 +2096,11 @@ class AppState:
             return {"text": cached[1]}
         lines = []
         for m in msgs[-30:]:
-            who = {"user": "Kullanıcı", "assistant": "ALICE", "tool": "araç"}[m["role"]]
+            who = {"user": "User", "assistant": "ALICE", "tool": "tool"}[m["role"]]
             lines.append(f"{who}: {' '.join(m['content'].split())[:400]}")
-        prompt = ("Kullanıcı bir süredir uzaktaydı ve sohbete dönüyor. Aşağıdaki konuşmanın nerede kaldığını Türkçe, "
-                  "en fazla 3 kısa cümleyle özetle: ne yapılıyordu, ne bitti, ne bekliyor. Selamlama yok.\n\n"
+        prompt = ("The user was away for a while and is coming back to the chat. Summarise where the conversation "
+                  "below left off in at most 3 short sentences, in the language of the conversation: what was being "
+                  "done, what finished, what is waiting. No greeting.\n\n"
                   + "\n".join(lines))
         try:
             res = chat.agent.router.chat("fast", [{"role": "user", "content": prompt}], max_tokens=220)
@@ -2114,12 +2118,12 @@ class AppState:
         try:
             msgs = [m for m in list(chat.agent.messages) if not m.get("_image")]
             msgs.append({"role": "user", "content": (
-                "[Yan soru: kullanıcı süren işi bölmeden bunu soruyor. Araç kullanmadan, bildiklerinle kısa cevap ver; "
-                "işe devam etme, plan değiştirme.]\n" + question)})
+                "[Side question: the user asks this without interrupting the ongoing work. Answer briefly from what you "
+                "know, without tools, in the user's language; don't continue the work or change the plan.]\n" + question)})
             res = chat.agent.router.chat(chat.agent.role, msgs, max_tokens=800)
-            answer = (res.text or "").strip() or "(cevap yok)"
+            answer = (res.text or "").strip() or _("(no answer)")
         except Exception as e:  # noqa: BLE001 - failure of side question should not affect ongoing work
-            answer = f"cevaplanamadı: {str(e)[:300]}"
+            answer = _("could not answer: {error}", error=str(e)[:300])
         pub({"type": "btw", "q": question, "a": answer, "pending": False})
         self._drop_if_idle(chat)
 
@@ -2131,10 +2135,10 @@ class AppState:
             ok, err = self.send(text, sid=sid)
             if ok:
                 return ""
-            if "çalışıyor" not in (err or ""):
+            if not any(w in (err or "") for w in ("çalışıyor", "running")):
                 break
             time.sleep(1.0)
-        return err or "iletilemedi"
+        return err or _("could not deliver")
 
     def _report_to_parent(self, chat: Chat) -> None:
         """If detached session finished its turn, report result to parent chat (do not report if user stopped)."""
@@ -2163,7 +2167,7 @@ class AppState:
                             m["_display"] = text
                             break
             except Exception as e:  # noqa: BLE001 - errors within thread should not crash the app
-                chat.ui.publish({"type": "info", "text": f"beklenmeyen hata: {e}"})
+                chat.ui.publish({"type": "info", "text": _("unexpected error: {error}", error=e)})
                 log_error()
             finally:
                 try:
@@ -2306,15 +2310,15 @@ def make_handler(state: AppState):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except ValueError:
-                raise BadRequest(400, "geçersiz Content-Length") from None
+                raise BadRequest(400, _("invalid Content-Length")) from None
             if n <= 0:
                 return {}
             if n > MAX_BODY:  # silently proceeding with empty body caused attached images to be lost
-                raise BadRequest(413, "istek çok büyük")
+                raise BadRequest(413, _("request too large"))
             try:
                 data = json.loads(self.rfile.read(n))
             except ValueError:  # JSONDecodeError and non-UTF-8 body (UnicodeDecodeError)
-                raise BadRequest(400, "geçersiz JSON") from None
+                raise BadRequest(400, _("invalid JSON")) from None
             return data if isinstance(data, dict) else {}
 
         def _deny(self) -> None:
@@ -2369,7 +2373,7 @@ def make_handler(state: AppState):
             """Unexpected error: details logged to app.log, client receives a short message instead of traceback."""
             log_error()
             try:
-                self._json({"ok": False, "error": "sunucu hatası (ayrıntı app.log'da)"}, 500)
+                self._json({"ok": False, "error": _("server error (details in app.log)")}, 500)
             except OSError:
                 pass  # the client is gone; nothing to answer
 
@@ -2539,7 +2543,7 @@ def make_handler(state: AppState):
 
                 bb = state.builtin_browser()
                 if not bb.running():
-                    return self._json({"ok": False, "idle": True, "error": "yerleşik tarayıcı kapalı"})
+                    return self._json({"ok": False, "idle": True, "error": _("the built-in browser is off")})
                 try:
                     if u.path == "/api/browser/tabs":
                         return self._json({"ok": True, "tabs": [{k: t[k] for k in ("id", "title", "url")}
@@ -2674,8 +2678,8 @@ def make_handler(state: AppState):
                     text = str(d.get("text", "")).strip()
                     images = [str(i) for i in (d.get("images") or [])][:6]
                     if not text and not images:
-                        return self._json({"ok": False, "error": "boş mesaj"}, 400)
-                    ok, err = state.send(text or "Bu görsele bak.", images, str(d.get("sid") or ""))
+                        return self._json({"ok": False, "error": _("empty message")}, 400)
+                    ok, err = state.send(text or _("Look at this image."), images, str(d.get("sid") or ""))
                     return self._json({"ok": ok, "error": err}, 200 if ok else 409)
                 if p == "/api/remote/action":
                     from alice.app import remote
@@ -2698,7 +2702,7 @@ def make_handler(state: AppState):
                     return self._json({"ok": True})
                 if p == "/api/watch":
                     if state.watch_store is None:
-                        return self._json({"ok": False, "error": "saat verisi bu sunucuda kapalı"}, 404)
+                        return self._json({"ok": False, "error": _("watch data is off on this server")}, 404)
                     from alice.health.watch import ingest
 
                     return self._json({"ok": True, "added": ingest(state.watch_store, d)})
@@ -2825,7 +2829,7 @@ def make_handler(state: AppState):
 
                     path = str(d.get("path", ""))
                     if path not in SENT_FILES or not Path(path).exists():
-                        return self._json({"ok": False, "error": "dosya bulunamadı"}, 404)
+                        return self._json({"ok": False, "error": _("file not found")}, 404)
                     try:
                         if d.get("folder"):
                             if sys.platform == "win32":
@@ -2889,15 +2893,15 @@ def make_handler(state: AppState):
                 if p == "/api/resume":
                     sid = str(d.get("id") or "").strip()
                     if not sid:  # empty ID opened the latest chat (sess.load("")): not the requested chat
-                        return self._json({"ok": False, "error": "sohbet kimliği gerekli"}, 400)
+                        return self._json({"ok": False, "error": _("a chat ID is required")}, 400)
                     if d.get("detached"):  # phone: open chat without switching the PC's foreground chat
                         hist = state.history_for(sid)
                         found = bool(hist) or state.find_chat(sid) is not None
                         return self._json({"ok": found, "sid": sid, "history": hist,
-                                           "error": None if found else "sohbet bulunamadı", **state.status()})
+                                           "error": None if found else _("chat not found"), **state.status()})
                     ok = state.resume(sid)
-                    return self._json({"ok": ok, "error": None if ok else "sohbet açılamadı (arkada çok fazla iş var "
-                                       "ya da sohbet bulunamadı)",
+                    return self._json({"ok": ok, "error": None if ok else _("could not open the chat (too much work in the "
+                                       "background, or the chat was not found)"),
                                        "history": state.history_for(),
                                        **state.status()})
                 if p == "/api/dirs/mkdir":
@@ -2907,11 +2911,11 @@ def make_handler(state: AppState):
                     return self._json(out, 200 if out["ok"] else 400)
                 if state.chat.busy and p in ("/api/cwd", "/api/compact", "/api/rewind", "/api/changes/revert",
                                              "/api/github/open"):
-                    return self._json({"ok": False, "error": "önce mevcut işi durdur"}, 409)
+                    return self._json({"ok": False, "error": _("stop the current job first")}, 409)
                 if p == "/api/cwd":
                     path = state.ctx.resolve(str(d.get("path", "")))
                     if not path.is_dir():
-                        return self._json({"ok": False, "error": f"klasör yok: {path}"}, 400)
+                        return self._json({"ok": False, "error": _("folder not found: {path}", path=path)}, 400)
                     state.set_cwd(path)
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/github/open":
@@ -2942,7 +2946,7 @@ def make_handler(state: AppState):
 
                     repo, number = str(d.get("repo", "")), int_field(d, "number")
                     if not repo or not number:
-                        return self._json({"ok": False, "error": "repo ve number gerekli"}, 400)
+                        return self._json({"ok": False, "error": _("repo and number are required")}, 400)
                     try:
                         if p == "/api/prs/watch":
                             local = ""
@@ -2958,9 +2962,9 @@ def make_handler(state: AppState):
                             note = prwatch.unwatch(repo, number)
                         elif p == "/api/prs/flag":
                             if str(d.get("flag")) == "auto_merge" and d.get("value") and not d.get("confirmed"):
-                                return self._json({"ok": False, "error": "otomatik birleştirme onay ister"}, 400)
+                                return self._json({"ok": False, "error": _("auto-merge needs confirmation")}, 400)
                             if not prwatch.set_flag(repo, number, str(d.get("flag", "")), bool(d.get("value"))):
-                                return self._json({"ok": False, "error": "izlenmiyor ya da bilinmeyen ayar"}, 404)
+                                return self._json({"ok": False, "error": _("not watched, or unknown setting")}, 404)
                             note = "kaydedildi"
                         elif p == "/api/prs/rerun":
                             from alice.tools.github import GitHubAPI, github_token, rerun_failed
@@ -2968,9 +2972,9 @@ def make_handler(state: AppState):
                             api = GitHubAPI(github_token(state.cfg))
                             sha = api.get(f"/repos/{repo}/pulls/{number}")["head"]["sha"]
                             done = rerun_failed(api, repo, sha)
-                            note = ("yeniden başlatıldı: " + ", ".join(done)) if done else "başarısız iş yok"
+                            note = _("restarted: {jobs}", jobs=", ".join(done)) if done else _("no failed jobs")
                         else:
-                            return self._json({"ok": False, "error": "bilinmeyen işlem"}, 404)
+                            return self._json({"ok": False, "error": _("unknown action")}, 404)
                     except ToolError as e:
                         return self._json({"ok": False, "error": str(e)[:200]})
                     prwatch._live_cache.pop(f"{repo}#{number}", None)
@@ -3003,7 +3007,7 @@ def make_handler(state: AppState):
                         elif kind == "close_tab":
                             bb.close_tab(str(d.get("id", "")))
                         else:
-                            return self._json({"ok": False, "error": "bilinmeyen işlem"}, 400)
+                            return self._json({"ok": False, "error": _("unknown action")}, 400)
                     except (BrowserError, OSError, KeyError, ValueError) as e:
                         return self._json({"ok": False, "error": str(e)[:200]})
                     return self._json({"ok": True})
@@ -3017,8 +3021,8 @@ def make_handler(state: AppState):
                                 state.ctx.cwd, fetch=True, token=github_token(state.cfg))[:60]})
                         if state.chat.busy or state.running():
                             # Background chats might read/write the same repo: don't switch branch under them.
-                            return self._json({"ok": False, "error": "ALICE çalışırken dal değiştirilmez; arkadakiler "
-                                               "dahil işler bitsin ya da durdur"}, 409)
+                            return self._json({"ok": False, "error": _("the branch can't be switched while ALICE is working; "
+                                                 "let jobs finish, background ones included, or stop them")}, 409)
                         note = switch_branch(state.ctx.cwd, str(d.get("branch", "")), bool(d.get("create")),
                                              github_token(state.cfg))
                     except ToolError as e:
@@ -3030,13 +3034,13 @@ def make_handler(state: AppState):
                     live = state.find_chat(sid)
                     # Running chat (background or foreground: deletable from phone) would re-save itself on finish.
                     if live is not None and live.busy:
-                        return self._json({"ok": False, "error": "bu sohbet arkada çalışıyor; önce bitsin"}, 409)
+                        return self._json({"ok": False, "error": _("this chat is running in the background; let it finish first")}, 409)
                     return self._json(state.delete_session(sid))
                 if p in ("/api/session/rename", "/api/session/pin"):
                     sid = str(d.get("id", ""))
                     f = sess.sessions_dir() / f"{sid}.json"
                     if not sid or f.parent != sess.sessions_dir() or not f.exists():
-                        return self._json({"ok": False, "error": "sohbet yok"}, 404)
+                        return self._json({"ok": False, "error": _("no such chat")}, 404)
                     if p == "/api/session/rename":
                         row = sess.set_meta(sid, title=str(d.get("title", "")).strip()[:120])
                     else:
@@ -3053,7 +3057,7 @@ def make_handler(state: AppState):
 
                     level = str(d.get("level", ""))
                     if level not in LEVELS:
-                        return self._json({"ok": False, "error": f"seviye: {' | '.join(LEVELS)}"}, 400)
+                        return self._json({"ok": False, "error": _("level: {levels}", levels=" | ".join(LEVELS))}, 400)
                     state.router.thinking_overrides["brain"] = level
                     set_config_value("thinking", "brain", level)  # persist across restarts
                     return self._json({"ok": True, **state.status()})
@@ -3062,7 +3066,7 @@ def make_handler(state: AppState):
 
                     name, hide = str(d.get("name", "")).strip(), bool(d.get("hidden", True))
                     if not name or name.partition(":")[0] not in state.router.providers_cfg:
-                        return self._json({"ok": False, "error": "bilinmeyen model ya da sağlayıcı"}, 400)
+                        return self._json({"ok": False, "error": _("unknown model or provider")}, 400)
                     set_config_value("agent", "hidden_models", state.router.set_hidden(name, hide))
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/model":
