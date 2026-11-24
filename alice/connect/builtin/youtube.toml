@@ -1,9 +1,9 @@
-# YouTube Data API v3. Anahtar: https://console.cloud.google.com → YouTube Data API v3 → API key (ücretsiz kota)
+# YouTube Data API v3. Key: https://console.cloud.google.com → YouTube Data API v3 → API key (free quota)
 name = "youtube_api"
 title = "YouTube"
-description = "YouTube'da video/kanal arama ve video bilgisi (izlenme, süre). Video açmak/oynatmak için youtube ya da browser aracını kullan; burası veri tarafı."
+description = "Search YouTube videos/channels and get video info (views, duration). To open/play a video use the youtube or browser tool; this is the data side."
 base_url = "https://www.googleapis.com/youtube/v3"
-keywords = "youtube|video|kanal|izlenme|abone"
+keywords = "youtube|video|kanal|izlenme|abone|channel|views|subscribers"
 docs = "https://developers.google.com/youtube/v3/getting-started"
 
 [auth]
@@ -11,7 +11,7 @@ kind = "api_key"
 env = "YOUTUBE_API_KEY"
 place = "query"
 name = "key"
-help = "console.cloud.google.com → YouTube Data API v3 → Kimlik bilgileri → API anahtarı"
+help = "console.cloud.google.com → YouTube Data API v3 → Credentials → API key"
 
 [actions.search]
 summary = "Video, kanal ya da oynatma listesi ara"
@@ -26,14 +26,14 @@ required = true
 description = "Arama ifadesi"
 [actions.search.params.type]
 type = "string"
-description = "video | channel | playlist (varsayılan hepsi)"
+description = "video | channel | playlist (default: all)"
 enum = ["video", "channel", "playlist"]
 [actions.search.params.maxResults]
 type = "integer"
-description = "Kaç sonuç (1-25)"
+description = "How many results (1-25)"
 
 [actions.video]
-summary = "Video ayrıntısı: başlık, kanal, izlenme, beğeni, süre"
+summary = "Video details: title, channel, views, likes, duration"
 cache_seconds = 300
 path = "/videos"
 query = { part = "snippet,statistics,contentDetails" }
@@ -42,10 +42,10 @@ fields = ["snippet.title", "snippet.channelTitle", "statistics.viewCount", "stat
 [actions.video.params.id]
 type = "string"
 required = true
-description = "Video id'si (watch?v= sonrası), virgülle birden fazla"
+description = "Video id (after watch?v=), several can be given separated by commas"
 
 [actions.channel]
-summary = "Kanal bilgisi: abone, video sayısı, toplam izlenme"
+summary = "Channel info: subscribers, video count, total views"
 cache_seconds = 300
 path = "/channels"
 query = { part = "snippet,statistics" }
@@ -56,10 +56,10 @@ type = "string"
 description = "@kullaniciadi"
 [actions.channel.params.id]
 type = "string"
-description = "Kanal id'si (UC... ile başlar)"
+description = "Channel id (starts with UC...)"
 
 [actions.comments]
-summary = "Bir videonun en çok beğenilen yorumları"
+summary = "The most liked comments of a video"
 cache_seconds = 300
 path = "/commentThreads"
 query = { part = "snippet", order = "relevance", maxResults = "10" }

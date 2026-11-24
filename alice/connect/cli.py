@@ -123,7 +123,7 @@ def connect_cmd(argv: list[str]) -> int:
     console.print(f"[bold]{m.label}[/] · {why}")
     if not ok:
         console.print(_("[dim]Write {env} in ~/.alice/.env.[/]", env=m.auth.env)
-                      + (_("\n[dim]Key: {help}[/]", help=m.auth.help) if m.auth.help else ""))
+                      + (_("\n[dim]Key: {help}[/]", help=_(m.auth.help)) if m.auth.help else ""))
         return 1
     console.print(_("[dim]Actions: {actions}[/]", actions=", ".join(sorted(m.actions))))
     return 0
@@ -149,7 +149,7 @@ def _oauth(m) -> int:
     cid = os.environ.get(m.auth.client_id_env, "").strip()
     if not cid:
         console.print(_("[yellow]no {env}.[/] Add it to ~/.alice/.env.", env=m.auth.client_id_env)
-                      + (f"\n[dim]{m.auth.help}[/]" if m.auth.help else ""))
+                      + ("\n[dim]" + _(m.auth.help) + "[/]" if m.auth.help else ""))
         return 1
     secret = os.environ.get(m.auth.client_secret_env, "").strip() if m.auth.client_secret_env else ""
     console.print(_("Asking for permission for [bold]{label}[/] in the browser…", label=m.label))

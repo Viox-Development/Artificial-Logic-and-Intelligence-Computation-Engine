@@ -249,7 +249,7 @@ def test_anahtarsiz_arac_calismaz_ama_listede_durur(m, workdir, monkeypatch):
     monkeypatch.delenv("DENEME_KEY", raising=False)
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     tool = ConnectTool(m)
-    assert "kullanılamaz" in tool.description
+    assert "not available right now" in tool.description
     with pytest.raises(ToolError, match="DENEME_KEY"):
         tool.run(ctx, action="liste", owner="x")
 

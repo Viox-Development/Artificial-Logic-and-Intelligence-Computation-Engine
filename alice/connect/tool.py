@@ -25,10 +25,10 @@ class ConnectTool(Tool):
         acts = m.actions
         lines = [f"- {a.name}: {a.summary or a.path}" for a in acts.values()]
         hazır, sebep = ready(m)
-        self.description = (f"{m.description or m.label}\nEylemler:\n" + "\n".join(lines)
-                            + ("" if hazır else f"\n(şu an kullanılamaz: {sebep})"))
+        self.description = (f"{m.description or m.label}\nActions:\n" + "\n".join(lines)
+                            + ("" if hazır else f"\n(not available right now: {sebep})"))
         props: dict[str, Any] = {"action": {"type": "string", "enum": sorted(acts),
-                                            "description": "Yapılacak iş."}}
+                                            "description": "The action to run."}}
         for a in acts.values():
             for p in a.params.values():
                 prev = props.get(p.name)
