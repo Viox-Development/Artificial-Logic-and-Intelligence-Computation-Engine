@@ -2027,9 +2027,10 @@ class MemberUI:
         self._live(force=True)
 
     def info(self, msg: str) -> None:
-        if "adım limiti" in msg:
+        # The notices follow the interface language (router/agent _()), so both languages are recognised.
+        if any(w in msg for w in ("adım limiti", "Adım sınırına", "step limit")):
             self.member.limit_hit = True
-        elif "hiçbir model cevap veremedi" in msg:
+        elif "hiçbir model cevap veremedi" in msg or msg.startswith("No model for the"):
             reasons = [x.strip() for x in msg.splitlines()[1:] if x.strip()]  # first line holds the internal role name
             self.member.provider_failed = human_failure(reasons)
 
