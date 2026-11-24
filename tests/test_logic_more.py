@@ -581,7 +581,7 @@ def test_team_tool_start_and_validation(team_ctx):
     assert "The lead will look at the code" in out and team.calls == [("start", True)]
     assert team.kw == {"goal": "büyük iş", "max_parallel": 5, "review": False, "council": False}
     out = t.run(team_ctx, action="start", goal="iki", agents=[{"name": "ui", "task": "t"}, "atla"]).text
-    assert "Ajanlar:\nbackend: çalışıyor" in out and _Team.made[1].specs == [{"name": "ui", "task": "t"}]
+    assert "Agents:\nbackend: çalışıyor" in out and _Team.made[1].specs == [{"name": "ui", "task": "t"}]
     assert team_ctx.state["team"] is _Team.made[1] and set(team_ctx.state["teams"]) == {"p1", "p2"}
 
 
