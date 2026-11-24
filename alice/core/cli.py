@@ -199,12 +199,12 @@ def _start_app(cfg, core):
         If the chat is currently busy with another task it is not interrupted ("meşgul"): watcher retries next tick."""
         st = host.state
         if st is None:
-            return "uygulama hazır değil"
+            return _("the app isn't ready")
         chat = st.find_chat(sid)
         if chat is not None and chat.busy:
             return "meşgul"
         ok, err = st.send(text, sid=sid)
-        return "" if ok else (err or "gönderilemedi")
+        return "" if ok else (err or _("could not send"))
 
     core.chat_delivery = deliver
     core.project_starter = lambda d: host.state.create_project(d) if host.state is not None else None
@@ -271,7 +271,7 @@ def _start_timeline(cfg, core):
     try:
         return Recorder(Timeline(), cfg.data.get("timeline", {}) or {}, mode=lambda: core.modes.current).start()
     except Exception as e:  # noqa: BLE001 - let core run even if recording fails to start
-        core.store.add_event("error", "Zaman çizgisi başlamadı", str(e)[:200], "warn", "core")
+        core.store.add_event("error", "Timeline did not start", str(e)[:200], "warn", "core")
         return None
 
 
@@ -315,9 +315,9 @@ def _raise_priority(v: dict, log) -> None:
         import psutil
 
         psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
-        log("işlem önceliği: normalin üstü (uyandırma kontrolü oyunda beklemesin)")
+        log("process priority: above normal (so the wake check doesn't wait during games)")
     except Exception as e:  # noqa: BLE001 - continue with normal priority if lacking permission
-        log(f"işlem önceliği değiştirilemedi: {e}")
+        log(f"could not change the process priority: {e}")
 
 
 def _start_voice(cfg, core):
@@ -382,23 +382,23 @@ def _start_voice(cfg, core):
             speaker.alerts_muted = not speaker.alerts_muted
             if speaker.alerts_muted:
                 speaker.stop_alerts()
-            state = "kapalı" if speaker.alerts_muted else "açık"
-            voice_log(f"oyun uyarı sesi {state} ({alert_mute_key})")
+            state = "off" if speaker.alerts_muted else "on"
+            voice_log(f"game alert sound {state} ({alert_mute_key})")
             console.print(_("[dim]game alert sound {state}[/]", state=state))
             try:
                 from alice.config import set_config_value
 
                 set_config_value("voice", "game_alerts", not speaker.alerts_muted)
             except Exception as e:  # noqa: BLE001
-                voice_log(f"oyun uyarı ayarı kaydedilemedi: {e}")
+                voice_log(f"could not save the game alert setting: {e}")
             threading.Thread(target=beep, args=(speaker.alerts_muted,), daemon=True).start()
 
         alert_hotkey = WinHotkeys({alert_mute_key: toggle_alerts})
         alert_hotkey.start()
         if alert_hotkey.failed:
-            voice_log(f"uyarı susturma kısayolu kaydedilemedi (başka program tutuyor olabilir): {alert_hotkey.failed}")
+            voice_log(f"could not register the alert mute shortcut (another program may hold it): {alert_hotkey.failed}")
         else:
-            voice_log(f"uyarı susturma kısayolu hazır: {alert_mute_key}")
+            voice_log(f"alert mute shortcut ready: {alert_mute_key}")
     if v.get("prewarm_callouts", True):
         # Prewarm flight alert audio to disk: flight audio comes from cloud, cached ones play instantly.
         from alice.sims.flight import callouts
@@ -426,39 +426,39 @@ def _start_voice(cfg, core):
 
         corpus.attach(va, log=voice_log)
     threading.Thread(target=va.run, daemon=True, name="alice-voice").start()
-    voice_log(f"ses modülü başladı: {time.monotonic() - t0:.1f} sn")
+    voice_log(f"voice module started: {time.monotonic() - t0:.1f} s")
     return va
 
 
-FEED_TEMPLATE = """# ALICE akışları: bağlı servislerde yeni bir şey olunca haber verir.
-# Çekirdek çalışırken (alice core run) yoklanır. Ayrıntı: docs/CONNECT.md
+FEED_TEMPLATE = """# ALICE feeds: they tell you when something new happens in connected services.
+# Polled while the core runs (alice core run). Details: docs/CONNECT.md
 
 [[feed]]
-name = "ornek"
-connector = "discord"      # alice connect ile listelenen bağlantı
-action = "messages"        # o bağlantının bir eylemi
-args = { channel_id = "KANAL_ID" }
+name = "example"
+connector = "discord"      # a connection listed by alice connect
+action = "messages"        # one of that connection's actions
+args = { channel_id = "CHANNEL_ID" }
 every_minutes = 5
-id_field = "id"            # yeni öğeyi ayırt eden alan
+id_field = "id"            # the field that tells a new item apart
 title = "Discord · {author.username}"
 body = "{content}"
 topic = "discord"
-# agent = "Bu mesajlara bakip bana ozetle"   # dolu olursa ALICE uyanir ve bu isi yapar
-# quiet = "23:00-08:00"      # bu saatlerde biriktir, sabah ozet olarak gelsin
-# digest_minutes = 60        # tek tek degil, saatte bir ozet
-# cooldown_minutes = 10      # bir bildirimden sonra gelenleri topla
+# agent = "Look at these messages and summarise them for me"   # if set, ALICE wakes up and does this job
+# quiet = "23:00-08:00"      # collect during these hours and send a summary in the morning
+# digest_minutes = 60        # a summary every hour instead of one by one
+# cooldown_minutes = 10      # after a notification, collect what comes next
 
-[feed.when]                  # hangi mesaj bildirime degsin (bos: hepsi)
-any = ["alice", "@everyone"] # en az biri gecsin
-none = ["bot"]               # bunlar gecmesin
-# ask = "Bu mesaj bana bir sey soruyor ya da acil mi?"   # anlamina gore: hizli model karar verir
+[feed.when]                  # which messages are worth a notification (empty: all)
+any = ["alice", "@everyone"] # at least one must appear
+none = ["bot"]               # these must not appear
+# ask = "Is this message asking me something, or is it urgent?"   # by meaning: the fast model decides
 
-[feed.escalate]              # bu tutarsa onem kritik olur, sessiz saatte de soylenir
-regex = '\\b(acil|hemen)\\b'   # tek tırnak: TOML kaçış yapmaz
+[feed.escalate]              # if this matches, it becomes critical and is said even in quiet hours
+regex = '\\b(urgent|acil|hemen)\\b'   # single quotes: TOML does no escaping
 
-# Arkadas oyuna girince haber ver (Steam):
+# Tell me when a friend starts a game (Steam):
 # [[feed]]
-# name = "arkadaslar"
+# name = "friends"
 # connector = "steam"
 # action = "profile"
 # args = { steamids = "STEAMID1,STEAMID2" }
@@ -466,7 +466,7 @@ regex = '\\b(acil|hemen)\\b'   # tek tırnak: TOML kaçış yapmaz
 # watch = ["gameextrainfo"]
 # id_field = "steamid"
 # every_minutes = 3
-# title = "{personaname} oyuna girdi"
+# title = "{personaname} started a game"
 # body = "{gameextrainfo}"
 # [feed.when]
 # fields = { gameextrainfo = "*" }
@@ -481,8 +481,8 @@ def announce_update(core, updater) -> None:
 
     rb = updater.consume_rollback("core")
     if rb:
-        core.notifier.send(Notification("ALICE güncellemesi geri alındı",
-                                        f"Yeni sürüm açılamadı, önceki sürüme dönüldü ({rb.get('reason')}).",
+        core.notifier.send(Notification(_("ALICE update rolled back"),
+                                        _("The new version could not start; went back to the previous version ({reason}).", reason=rb.get("reason")),
                                         "warn", "core", kind="info"))
     ann = updater.consume_announcement("core")
     if not ann:
@@ -490,8 +490,8 @@ def announce_update(core, updater) -> None:
     from alice.core.notify import Notification
 
     changes = ann.get("changes") or []
-    body = "; ".join(changes[:3]) + (f" ve {len(changes) - 3} değişiklik daha" if len(changes) > 3 else "")
-    core.notifier.send(Notification("ALICE güncellendi", body or f"{ann.get('to', '')[:7]} sürümüne geçildi",
+    body = "; ".join(changes[:3]) + (_(" and {n} more changes", n=len(changes) - 3) if len(changes) > 3 else "")
+    core.notifier.send(Notification(_("ALICE updated"), body or _("moved to version {sha}", sha=ann.get("to", "")[:7]),
                                     "info", "core", kind="info"))
 
 

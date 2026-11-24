@@ -60,6 +60,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib  # pyright: ignore[reportMissingImports] - only installed on 3.10
 
+from alice.i18n import _
 from alice.config import alice_home
 from alice.core.conditions import Condition, check, haystack, parse_condition
 from alice.core.notify import Notification
@@ -104,21 +105,21 @@ class Feed:
         return max(60.0, float(self.every_minutes) * 60)
 
     def describe(self) -> str:
-        bits = [f"{self.connector}.{self.action}", f"{self.every_minutes:g} dk"]
+        bits = [f"{self.connector}.{self.action}", _("{n} min", n=f"{self.every_minutes:g}")]
         if self.mode == "change":
-            bits.append("değişince: " + ", ".join(self.watch))
+            bits.append(_("on change: ") + ", ".join(self.watch))
         if not self.when.empty():
-            bits.append("koşul: " + self.when.summary())
+            bits.append(_("condition: ") + self.when.summary())
         if not self.escalate.empty():
             bits.append("acil: " + self.escalate.summary())
         if self.digest_minutes:
-            bits.append(f"{self.digest_minutes:g} dk'da bir özet")
+            bits.append(_("a summary every {n} min", n=f"{self.digest_minutes:g}"))
         if self.quiet:
-            bits.append(f"sessiz {self.quiet}")
+            bits.append(_("quiet {hours}", hours=self.quiet))
         if self.cooldown_minutes:
-            bits.append(f"bekleme {self.cooldown_minutes:g} dk")
+            bits.append(_("cooldown {n} min", n=f"{self.cooldown_minutes:g}"))
         if self.agent:
-            bits.append("ALICE'i uyandırır")
+            bits.append(_("wakes ALICE"))
         return " · ".join(bits)
 
 
@@ -136,10 +137,10 @@ def _parse_quiet(s: str) -> tuple[int, int] | None:
         return None
     m = QUIET_RX.match(s)
     if not m:
-        raise ValueError(f"quiet 'SS:DD-SS:DD' biçiminde olmalı: {s!r}")
+        raise ValueError(_("quiet must look like 'HH:MM-HH:MM': {value}", value=repr(s)))
     h1, m1, h2, m2 = (int(x) for x in m.groups())
     if not (h1 < 24 and h2 < 24 and m1 < 60 and m2 < 60):
-        raise ValueError(f"quiet saatleri geçersiz: {s!r}")
+        raise ValueError(_("invalid quiet hours: {value}", value=repr(s)))
     return h1 * 60 + m1, h2 * 60 + m2
 
 
@@ -156,13 +157,13 @@ def in_quiet(feed: Feed, now: float) -> bool:
 def parse_feed(raw: dict[str, Any]) -> Feed:
     name = str(raw.get("name", "")).strip()
     if not name or not raw.get("connector") or not raw.get("action"):
-        raise ValueError(f"akış atlandı: name, connector ve action zorunlu ({raw.get('name') or raw})")
+        raise ValueError(_("feed skipped: name, connector and action are required ({feed})", feed=raw.get("name") or raw))
     mode = str(raw.get("mode", "new"))
     if mode not in MODES:
-        raise ValueError(f"{name}: mode new ya da change olmalı")
+        raise ValueError(_("{name}: mode must be new or change", name=name))
     watch = [str(x) for x in raw.get("watch", [])]
     if mode == "change" and not watch:
-        raise ValueError(f"{name}: mode = \"change\" için watch = [\"alan\", ...] gerekir")
+        raise ValueError(_("{name}: mode = \"change\" needs watch = [\"field\", ...]", name=name))
     quiet = str(raw.get("quiet", ""))
     _parse_quiet(quiet)  # if malformed, say so here, not at 3 a.m.
     esc = raw.get("escalate") or {}
@@ -188,7 +189,7 @@ def load_feeds(path: Path | None = None) -> tuple[list[Feed], list[str]]:
     except OSError:
         return [], []
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        return [], [f"{p.name}: okunamadı: {e}"]
+        return [], [_("{name}: could not read it: {error}", name=p.name, error=e)]
     out: list[Feed] = []
     errors: list[str] = []
     for raw in data.get("feed") or []:
@@ -198,13 +199,13 @@ def load_feeds(path: Path | None = None) -> tuple[list[Feed], list[str]]:
         if blank:
             # Unfilled template value such as "KANAL_ID": the feed was never set up, so it counts as disabled
             # (listed and shown in the panel, but not polled). It used to fail every 5 min ("ornek" feed).
-            errors.append(f"akış kapalı: {raw.get('name', '?')}: {', '.join(blank)} doldurulmamış")
+            errors.append(_("feed off: {name}: {fields} not filled in", name=raw.get("name", "?"), fields=", ".join(blank)))
             raw = {**raw, "enabled": False}
         try:
             out.append(parse_feed(dict(raw)))
         except ValueError as e:
             msg = str(e)
-            errors.append(msg if msg.startswith("akış atlandı") else f"akış atlandı: {msg}")
+            errors.append(msg if msg.startswith(_("feed skipped")) else _("feed skipped: {reason}", reason=msg))
     return out, errors
 
 
@@ -305,10 +306,10 @@ class FeedMonitor:
         from alice.connect.manifest import discover
         from alice.connect.runner import ConnectError, call, pick, ready
 
-        manifests, _ = discover(self.cfg)
+        manifests, _errors = discover(self.cfg)
         m = manifests.get(feed.connector)
         if m is None:
-            raise ConnectError(f"bağlantı yok: {feed.connector}")
+            raise ConnectError(_("no such connection: {name}", name=feed.connector))
         act = m.actions.get(feed.action)
         if act is None:
             raise ConnectError(f"{feed.connector}: eylem yok: {feed.action}")
@@ -351,7 +352,7 @@ class FeedMonitor:
         if ok and not feed.escalate.empty():
             hot, _why = check(feed.escalate, item, text, self._ask(feed))
             if hot:
-                severity, reason = feed.escalate_severity, "geçti (acil)"
+                severity, reason = feed.escalate_severity, "passed (urgent)"
         return Verdict(item, title, body, ok, reason, severity)
 
     # ------------------------------------------------------------------ round
@@ -376,7 +377,7 @@ class FeedMonitor:
                 except Exception as e:  # noqa: BLE001 - if one feed fails, the others keep going
                     # don't repeat the same error each round (an unset example feed logged "token yok" 74x in 2 days)
                     if row.get("error") != str(e)[:200]:
-                        self.emit(f"akış {feed.name}: {e}")
+                        self.emit(f"feed {feed.name}: {e}")
                     row["error"] = str(e)[:200]
                     items = None
                 if items is not None:
@@ -407,7 +408,7 @@ class FeedMonitor:
         new = [it for i, it in zip(ids, items) if i not in known]
         row["seen"] = (seen + [i for i in ids if i not in known])[-MAX_SEEN:]
         if first_run:
-            self.emit(f"akış {feed.name}: {len(items)} öğe görüldü (ilk tur, bildirim yok)")
+            self.emit(f"feed {feed.name}: {len(items)} items seen (first round, no notification)")
             return None
         return new
 
@@ -431,7 +432,7 @@ class FeedMonitor:
             snap = dict(list(snap.items())[-MAX_SEEN:])
         row["snap"] = snap
         if first_run:
-            self.emit(f"akış {feed.name}: {len(items)} öğe izlenmeye başladı (ilk tur, bildirim yok)")
+            self.emit(f"feed {feed.name}: started watching {len(items)} items (first round, no notification)")
             return None
         return out
 
@@ -485,7 +486,7 @@ class FeedMonitor:
                 self.notify(Notification(title=n.title, body=n.body, severity=n.severity,
                                          topic=feed.topic or feed.connector, kind="info"))
             if len(notes) > len(shown):
-                self.notify(Notification(title=f"{feed.name}: {len(notes) - len(shown)} yeni öğe daha",
+                self.notify(Notification(title=_("{name}: {n} more new items", name=feed.name, n=len(notes) - len(shown)),
                                          severity="info", topic=feed.topic or feed.connector, kind="info"))
         self._wake_agent(feed, shown)
 
@@ -496,7 +497,7 @@ class FeedMonitor:
         try:
             self.run_agent(f"{feed.agent}\n\nYeni gelenler:\n{özet}")
         except Exception as e:  # noqa: BLE001 - if the agent fails, the feed must not die
-            self.emit(f"akış {feed.name}: ajan çalıştırılamadı: {e}")
+            self.emit(f"feed {feed.name}: could not run the agent: {e}")
 
     # ------------------------------------------------------------------ test command
     def explain(self, feed: Feed) -> list[Verdict]:

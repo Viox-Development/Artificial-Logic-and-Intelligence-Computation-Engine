@@ -70,7 +70,7 @@ def test_feeds_open_creates_template_and_test_reports(monkeypatch):
     assert r["ok"] and r["created"] and opened and a.view()["feeds_file"]
     assert a.action("feed_open", {})["created"] is False
     names = [f["name"] for f in a.view()["feeds"]]
-    assert names == ["ornek"]
+    assert names == ["example"]
 
     def explain(self, feed):
         return [feeds_mod.Verdict(item={}, title="hayat: selam", body="", ok=True, reason="'hayat' geçiyor",
@@ -78,7 +78,7 @@ def test_feeds_open_creates_template_and_test_reports(monkeypatch):
                 feeds_mod.Verdict(item={}, title="bot", body="", ok=False, reason="'bot' geçiyor", severity="info")]
 
     monkeypatch.setattr(feeds_mod.FeedMonitor, "explain", explain)
-    r = a.action("feed_test", {"name": "ornek"})
+    r = a.action("feed_test", {"name": "example"})
     assert r["ok"] and r["total"] == 2 and r["passed"] == 1 and r["items"][0]["reason"] == "'hayat' geçiyor"
     assert not a.action("feed_test", {"name": "yok"})["ok"]
 

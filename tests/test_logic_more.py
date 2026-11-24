@@ -398,9 +398,9 @@ def test_rules_tool_validation_and_toggles(core_ctx):
     assert r.risk_for({"action": "list"}) == "read" and r.risk_for({"action": "add"}) == "write"
     with pytest.raises(ToolError, match="add needs threshold"):
         r.run(core_ctx, action="add", metric="pc.gpu.temp", op=">", message="x")
-    with pytest.raises(ToolError, match="geçersiz operatör"):
+    with pytest.raises(ToolError, match="invalid operator"):
         r.run(core_ctx, action="add", metric="pc.gpu.temp", op="=>", threshold=1, message="x")
-    with pytest.raises(ToolError, match="prompt gerekli"):
+    with pytest.raises(ToolError, match="needs prompt"):
         r.run(core_ctx, action="add", metric="pc.gpu.temp", op=">", threshold=1, message="x", rule_action="agent")
     out = r.run(core_ctx, action="add", metric="pc.gpu.temp", op=">=", threshold=90, message="sıcak",
                 modes=["flight"], severity=None).text

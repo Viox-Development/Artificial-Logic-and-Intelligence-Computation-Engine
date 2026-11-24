@@ -29,7 +29,7 @@ from alice.core.modes import ModeManager, Policy
 from alice.core.monitors import Monitor, PCMonitor
 from alice.core.notify import Notification, Notifier
 from alice.core.rules import RuleEngine, RuleSet
-from alice.core.schedule import ScheduledTask, TaskStore
+from alice.core.schedule import ScheduledTask, TaskStore, is_project_failure
 from alice.core.store import MODE_KEY, Store
 from alice.i18n import _, pick
 
@@ -672,7 +672,7 @@ class Core:
                     result = start_project(task, self.project_starter)
                 else:
                     result = self.run_agent(task.prompt)  # type: ignore[misc]
-                sev = "warn" if result.startswith("proje başlatılamadı") else "info"
+                sev = "warn" if is_project_failure(result) else "info"
             except Exception as e:
                 result, sev = _("task failed: {error}", error=e), "warn"
             with self._lock:

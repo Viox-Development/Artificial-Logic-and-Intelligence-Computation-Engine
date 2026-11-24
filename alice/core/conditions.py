@@ -58,11 +58,11 @@ class Condition:
     def summary(self) -> str:
         parts = []
         if self.any:
-            parts.append("biri: " + ", ".join(self.any))
+            parts.append("any of: " + ", ".join(self.any))
         if self.all:
-            parts.append("hepsi: " + ", ".join(self.all))
+            parts.append("all of: " + ", ".join(self.all))
         if self.none:
-            parts.append("hiçbiri: " + ", ".join(self.none))
+            parts.append("none of: " + ", ".join(self.none))
         if self.regex:
             parts.append(f"regex: {self.regex}")
         for k, v in self.fields.items():
@@ -73,7 +73,7 @@ class Condition:
             parts.append(f"{k} ≤ {v:g}")
         if self.ask:
             parts.append(f"soru: {self.ask}")
-        return "; ".join(parts) or "koşul yok"
+        return "; ".join(parts) or "no condition"
 
 
 def parse_condition(raw: Any, where: str = "when") -> Condition:
@@ -81,7 +81,7 @@ def parse_condition(raw: Any, where: str = "when") -> Condition:
     if raw in (None, {}):
         return Condition()
     if not isinstance(raw, dict):
-        raise ValueError(f"{where}: tablo olmalı")
+        raise ValueError(f"{where}: must be a table")
     known = {"any", "all", "none", "regex", "fields", "min", "max", "ask"}
     extra = set(raw) - known
     if extra:
@@ -91,20 +91,20 @@ def parse_condition(raw: Any, where: str = "when") -> Condition:
         try:
             re.compile(regex)
         except re.error as e:
-            raise ValueError(f"{where}.regex geçersiz: {e}") from e
+            raise ValueError(f"{where}.regex is invalid: {e}") from e
 
     def nums(name: str) -> dict[str, float]:
         tab = raw.get(name) or {}
         if not isinstance(tab, dict):
-            raise ValueError(f"{where}.{name}: tablo olmalı, ör. {{ \"alan\" = 10 }}")
+            raise ValueError(f"{where}.{name}: must be a table, e.g. {{ \"field\" = 10 }}")
         try:
             return {str(k): float(v) for k, v in tab.items()}
         except (TypeError, ValueError) as e:
-            raise ValueError(f"{where}.{name}: değerler sayı olmalı") from e
+            raise ValueError(f"{where}.{name}: the values must be numbers") from e
 
     fields_raw = raw.get("fields") or {}
     if not isinstance(fields_raw, dict):
-        raise ValueError(f"{where}.fields: tablo olmalı")
+        raise ValueError(f"{where}.fields: must be a table")
     return Condition(any=_list(raw.get("any")), all=_list(raw.get("all")), none=_list(raw.get("none")),
                      regex=regex, fields={str(k): _list(v) for k, v in fields_raw.items()},
                      min=nums("min"), max=nums("max"), ask=str(raw.get("ask", "")))
@@ -143,23 +143,23 @@ def check(cond: Condition, item: Any, text: str, ask: Any = None) -> tuple[bool,
 
     if cond.any:
         if not any(tr_lower(w) in text for w in cond.any):
-            return False, "hiçbiri geçmiyor: " + ", ".join(cond.any)
+            return False, "none of these match: " + ", ".join(cond.any)
     for w in cond.all:
         if tr_lower(w) not in text:
-            return False, f"geçmiyor: {w}"
+            return False, f"doesn't match: {w}"
     for w in cond.none:
         if tr_lower(w) in text:
             return False, f"istenmeyen kelime: {w}"
     if cond.regex and not re.search(cond.regex, text, re.I):
-        return False, f"regex tutmadı: {cond.regex}"
+        return False, f"regex didn't match: {cond.regex}"
     for key, wanted in cond.fields.items():
         v = pick(item, key) if isinstance(item, (dict, list)) else None
         sv = "" if v is None else str(v)
         if wanted == ["*"]:
             if not sv.strip():
-                return False, f"{key} boş"
+                return False, f"{key} is empty"
         elif tr_lower(sv) not in {tr_lower(w) for w in wanted}:
-            return False, f"{key} = {sv or '(boş)'} (istenen: {' | '.join(wanted)})"
+            return False, f"{key} = {sv or '(empty)'} (istenen: {' | '.join(wanted)})"
     for key, lo in cond.min.items():
         n = _num(pick(item, key) if isinstance(item, (dict, list)) else None)
         if n is None or n < lo:
@@ -170,11 +170,11 @@ def check(cond: Condition, item: Any, text: str, ask: Any = None) -> tuple[bool,
             return False, f"{key} = {n if n is not None else '?'} > {hi:g}"
     if cond.ask:
         if ask is None:
-            return True, "soru soruldu sayılmadı (karar motoru yok)"
+            return True, "the question was not counted (no decision engine)"
         try:
             ok = bool(ask(cond.ask, text))
         except Exception:  # noqa: BLE001 - if the decider is broken, don't miss the item
-            return True, "karar motoru cevap vermedi, geçirildi"
+            return True, "the decision engine didn't answer; let through"
         if not ok:
-            return False, f"soru 'hayır' dedi: {cond.ask}"
-    return True, "geçti"
+            return False, f"the question said 'no': {cond.ask}"
+    return True, "passed"

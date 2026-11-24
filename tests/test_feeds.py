@@ -59,7 +59,7 @@ def test_tanim_okunur_ve_bozuk_olan_atlanir(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "feeds_path", lambda: p)
     fs, errors = F.load_feeds()
     assert [f.name for f in fs] == ["discord_genel", "kapali"]
-    assert errors and "zorunlu" in errors[0]
+    assert errors and "required" in errors[0]
     assert fs[0].interval == 300 and fs[1].enabled is False
 
 
@@ -72,7 +72,7 @@ def test_doldurulmamis_sablon_akisi_calismaz(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "feeds_path", lambda: p)
     fs, errors = F.load_feeds()
     assert [(f.name, f.enabled) for f in fs] == [("ornek", False), ("bolge", True)]  # visible but not polled
-    assert any("doldurulmamış" in e for e in errors)
+    assert any("not filled in" in e for e in errors)
 
 
 def test_dosya_yoksa_sorun_degil(tmp_path, monkeypatch):
@@ -130,7 +130,7 @@ def test_cok_yeni_oge_varsa_bildirim_toplanir(feeds_file):
     m.state["discord_genel"]["last"] = 0
     m.collect()
     assert len(sent) == F.MAX_PER_TICK + 1            # last line: "N yeni öğe daha" (N more new items)
-    assert "yeni öğe daha" in sent[-1].title
+    assert "more new items" in sent[-1].title
 
 
 def test_hata_akisi_oldurmez_ve_kaydedilir(feeds_file):
@@ -171,7 +171,7 @@ def test_ajan_patlarsa_akis_surer(feeds_file, tmp_path, monkeypatch):
     m.collect()
     m.state["discord_genel"]["last"] = 0
     m.collect()
-    assert any("ajan çalıştırılamadı" in n for n in notes)
+    assert any("could not run the agent" in n for n in notes)
 
 
 def test_durum_diske_yazilir_ve_okunur(feeds_file):

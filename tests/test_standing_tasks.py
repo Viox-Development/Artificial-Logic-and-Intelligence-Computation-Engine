@@ -113,7 +113,7 @@ def test_schedule_trigger(book):
     tr = Triggers(book)
     assert tr.check(t, datetime(2026, 1, 1, 8, 30).timestamp()) is None
     fire = tr.check(t, datetime(2026, 1, 1, 9, 0, 30).timestamp())
-    assert fire and "zamanı geldi" in fire.reason
+    assert fire and "it's time" in fire.reason
     book.set_state(t.id, last_fire=datetime(2026, 1, 1, 9, 0, 30).timestamp())
     assert tr.check(t, datetime(2026, 1, 1, 12, 0).timestamp()) is None
 
@@ -182,10 +182,10 @@ def test_run_creates_approval_and_notifies(book):
     assert r.tick() == [t.id]
     call = agent.calls[0]
     assert (call["mode"], call["approve"]) == LEVELS["read"] == ("ask", "n")
-    assert "taslak yaz" in call["prompt"] and "elle çalıştırıldı" in call["prompt"]
+    assert "taslak yaz" in call["prompt"] and "run by hand" in call["prompt"]
     [a] = book.approvals()
     assert a.title == "Yorum yazılsın mı?" and a.action.startswith("issue #7")
-    assert ("Onay bekliyor · Issue", "Yorum yazılsın mı?", "warn", "approval") in sent
+    assert ("Waiting for approval · Issue", "Yorum yazılsın mı?", "warn", "approval") in sent
     assert book.state(t.id)["memory"][-1]["text"] == "#7 işlendi"
     assert [e["kind"] for e in book.entries(t.id)][:2] == ["result", "approval"]
 
@@ -255,7 +255,7 @@ def test_failed_run_and_trigger_error_are_logged(book):
     book.set_state(t.id, run_now=True)
     r.tick()
     assert "model yok" in book.state(t.id)["last_result"] and book.state(t.id)["last_ok"] is False
-    assert any(s[2] == "warn" and "hata" in s[0] for s in sent)
+    assert any(s[2] == "warn" and "failed" in s[0] for s in sent)
     assert book.entries(g.id)[0]["kind"] == "error"
 
 

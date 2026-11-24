@@ -54,11 +54,11 @@ class Rule:
 
     def __post_init__(self) -> None:
         if self.op not in OPS:
-            raise ValueError(f"geçersiz operatör: {self.op}")
+            raise ValueError(_("invalid operator: {op}", op=self.op))
         if self.action not in ("notify", "agent"):
-            raise ValueError(f"geçersiz aksiyon: {self.action}")
+            raise ValueError(_("invalid action: {action}", action=self.action))
         if self.action == "agent" and not self.prompt:
-            raise ValueError("action=agent için prompt gerekli")
+            raise ValueError(_("action=agent needs prompt"))
         self.threshold = float(self.threshold)
         self.duration = float(self.duration)
         self.cooldown = float(self.cooldown)
@@ -273,7 +273,7 @@ class RuleEngine:
                     self._act(fired[-1])
                 except Exception as e:  # noqa: BLE001 - one broken rule must not stop the core turn or the other rules
                     self.last_fired[(rule.id, key)] = now  # don't repeat the same error every turn
-                    print(f"kural hatası ({rule.id}, {key}): {e!r}")
+                    print(f"rule error ({rule.id}, {key}): {e!r}")
         return fired
 
     @staticmethod
@@ -308,11 +308,11 @@ class RuleEngine:
         if r.action == "agent" and run_agent is not None:
             # An agent turn can take minutes: don't make the core turn (monitoring, tasks, status file) wait.
             def work() -> None:
-                prompt = f"{r.prompt}\n\n(Bu görevi şu uyarı tetikledi: {f.text})"
+                prompt = f"{r.prompt}\n\n(This job was triggered by this alert: {f.text})"
                 try:
                     body = run_agent(prompt)
                 except Exception as e:  # noqa: BLE001 - even if the agent crashes, the alert must not be lost
-                    body = f"{f.text}\n(araştırma başarısız: {e})"
+                    body = _("{text}\n(research failed: {error})", text=f.text, error=e)
                 try:
                     self.notifier.send(Notification("ALICE", (body or f.text)[:500], r.severity, r.topic))
                 except Exception:  # noqa: BLE001
@@ -347,12 +347,12 @@ User request: {text}"""
 def parse_rule(text: str, router, store: Store | None = None) -> Rule:
     from alice.decider import extract_json
 
-    keys = ", ".join(store.keys(since=time.time() - 86400)[:80]) if store else "(henüz veri yok)"
-    msgs = [{"role": "user", "content": PARSE_PROMPT.format(keys=keys or "(henüz veri yok)", text=text)}]
+    keys = ", ".join(store.keys(since=time.time() - 86400)[:80]) if store else "(no data yet)"
+    msgs = [{"role": "user", "content": PARSE_PROMPT.format(keys=keys or "(no data yet)", text=text)}]
     res = router.chat("fast", msgs, temperature=0, max_tokens=800)
     data = extract_json(res.text)
     if not isinstance(data, dict):
-        raise ValueError(f"model kural döndürmedi: {res.text[:200]}")
+        raise ValueError(_("the model returned no rule: {text}", text=res.text[:200]))
     data["description"] = text
     data.pop("id", None)
     return Rule.from_dict(data)

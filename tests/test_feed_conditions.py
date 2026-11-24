@@ -28,7 +28,7 @@ def test_any_all_none():
     assert ok({"any": ["hayat", "@everyone"]}, item)[0]
     assert not ok({"any": ["ahmet"]}, item)[0]
     assert ok({"all": ["dcs", "güncelleme"]}, item)[0]
-    assert ok({"all": ["dcs", "yama"]}, item) == (False, "geçmiyor: yama")
+    assert ok({"all": ["dcs", "yama"]}, item) == (False, "doesn't match: yama")
     assert ok({"none": ["bot"]}, item) == (False, "istenmeyen kelime: bot")   # nested fields are searched too
 
 
@@ -36,7 +36,7 @@ def test_regex_buyuk_kucuk_duyarsiz():
     assert ok({"regex": r"\b(acil|hemen)\b"}, {"c": "ACİL bak"})[0]   # Turkish uppercase: 'İ' -> 'i'
     assert ok({"regex": r"\bacil\b"}, {"c": "bu acil"})[0]
     assert not ok({"regex": r"\bacil\b"}, {"c": "acilen değil, aciliyet"})[0]
-    with pytest.raises(ValueError, match="regex geçersiz"):
+    with pytest.raises(ValueError, match="regex is invalid"):
         parse_condition({"regex": "(("})
 
 
@@ -45,7 +45,7 @@ def test_fields_esitlik_liste_ve_bos_degil():
     assert ok({"fields": {"personaname": ["ahmet", "ayşe"]}}, p)[0]
     assert not ok({"fields": {"personaname": "mehmet"}}, p)[0]
     assert ok({"fields": {"gameextrainfo": "*"}}, p)[0]
-    assert ok({"fields": {"gameextrainfo": "*"}}, {"personaname": "x"}) == (False, "gameextrainfo boş")
+    assert ok({"fields": {"gameextrainfo": "*"}}, {"personaname": "x"}) == (False, "gameextrainfo is empty")
 
 
 def test_min_max_sayisal():
@@ -54,7 +54,7 @@ def test_min_max_sayisal():
     assert not ok({"min": {"statistics.viewCount": 50000}}, v)[0]
     assert not ok({"max": {"statistics.viewCount": 10}}, v)[0]
     assert not ok({"min": {"yok": 1}}, v)[0]                   # missing field: does not pass
-    with pytest.raises(ValueError, match="sayı olmalı"):
+    with pytest.raises(ValueError, match="must be numbers"):
         parse_condition({"min": {"a": "çok"}})
 
 
@@ -73,7 +73,7 @@ def test_ask_en_son_sorulur_ve_hata_gecirir():
     def bozuk(q, text):
         raise RuntimeError("model yok")
 
-    assert ok({"ask": "acil mi?"}, {"c": "naber"}, ask=bozuk) == (True, "karar motoru cevap vermedi, geçirildi")
+    assert ok({"ask": "acil mi?"}, {"c": "naber"}, ask=bozuk) == (True, "the decision engine didn't answer; let through")
     assert ok({"ask": "acil mi?"}, {"c": "naber"})[0]        # also passes when there is no decision engine at all
 
 
@@ -280,7 +280,7 @@ def test_explain_neden_gecmedigini_soyler(tmp_path, monkeypatch):
     m = F.FeedMonitor(fetch=lambda f: [msg(1, text="hayat acil"), msg(2, text="hayat"), msg(3, text="naber")])
     v = m.explain(m.feeds[0])
     assert [(x.ok, x.severity) for x in v] == [(True, "critical"), (True, "info"), (False, "info")]
-    assert v[2].reason.startswith("hiçbiri geçmiyor")
+    assert v[2].reason.startswith("none of these match")
     assert m.state == {} or "d" not in m.state or "seen" not in m.state["d"]   # the test command does not change state
 
 
@@ -296,7 +296,7 @@ def test_metrik_kosulu_gecen_sayiyi_yazar(tmp_path, monkeypatch):
 def test_describe_okunur_ozet(tmp_path, monkeypatch):
     write(tmp_path, monkeypatch, BASE + 'quiet = "23:00-08:00"\ndigest_minutes = 60\n[feed.when]\nany = ["hayat"]\n')
     d = F.load_feeds()[0][0].describe()
-    assert "discord.messages" in d and "biri: hayat" in d and "sessiz 23:00-08:00" in d and "60 dk'da bir özet" in d
+    assert "discord.messages" in d and "any of: hayat" in d and "quiet 23:00-08:00" in d and "a summary every 60 min" in d
 
 
 def test_ornek_sablon_gecerli_ve_regex_kelime_siniri():
@@ -310,6 +310,6 @@ def test_ornek_sablon_gecerli_ve_regex_kelime_siniri():
     from alice.core.cli import FEED_TEMPLATE
 
     feed = F.parse_feed(tomllib.loads(FEED_TEMPLATE)["feed"][0])
-    assert feed.escalate.regex == r"\b(acil|hemen)\b"
+    assert feed.escalate.regex == r"\b(urgent|acil|hemen)\b"
     assert check(feed.escalate, {"c": "ACİL"}, haystack({"c": "ACİL"}))[0]
     assert not check(feed.escalate, {"c": "aciliyet"}, haystack({"c": "aciliyet"}))[0]
