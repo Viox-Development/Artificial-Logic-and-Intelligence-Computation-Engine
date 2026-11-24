@@ -239,17 +239,17 @@ def test_memory_tool_save_read_search_delete(workdir):
     tool = Memory()
     out = tool.run(ctx, "save", name="user-takim", type="user", description="Tuttuğu takım: Galatasaray",
                    content="Kullanıcı Galatasaray tutar.").text
-    assert out.startswith("kaydedildi: genel:user-takim") and ctx.state["memory_wrote"]
+    assert out.startswith("saved: genel:user-takim") and ctx.state["memory_wrote"]
     assert "Galatasaray" in tool.run(ctx, "read", name="user-takim").text
     assert "user-takim" in tool.run(ctx, "search", query="galatasaray").text
     assert "user-takim" in tool.run(ctx, "list").text
     assert tool.risk_for({"action": "delete"}) == "write" and tool.risk_for({"action": "save"}) == "read"
-    assert tool.run(ctx, "delete", name="user-takim").text.startswith("silindi")
+    assert tool.run(ctx, "delete", name="user-takim").text.startswith("deleted")
     assert agent.memory.notes.scan() == [] and "user-takim" not in agent.memory.notes.index_raw()
     assert any((agent.memory.notes.root / ".trash").glob("*user-takim.md"))  # in the trash, can be restored
     # old names still work
-    assert "kaydedildi" in tool.run(ctx, "add", note="Kullanıcı Galatasaray tutar.", kind="preference").text
-    assert tool.run(ctx, "forget", query="Galatasaray").text.startswith("silindi")
+    assert "saved" in tool.run(ctx, "add", note="Kullanıcı Galatasaray tutar.", kind="preference").text
+    assert tool.run(ctx, "forget", query="Galatasaray").text.startswith("deleted")
 
 
 def _chat(m, ts, user, reply=""):

@@ -62,7 +62,7 @@ def test_background_subagent_reports_back_and_can_be_continued(workdir):
     agent.ctx.state["deliver"] = got.append
     agent.run_turn("arka planda tara")
     tool_out = next(m["content"] for m in agent.messages if m["role"] == "tool")
-    assert "a1" in tool_out and "arka planda" in tool_out
+    assert "a1" in tool_out and "in the background" in tool_out
     sub = subagents.registry(agent.ctx)["a1"]
     sub.thread.join(5)
     assert sub.status == "done" and got and got[0].startswith("[Alt ajan a1 · tarama bitti]") and "ilk bulgu" in got[0]

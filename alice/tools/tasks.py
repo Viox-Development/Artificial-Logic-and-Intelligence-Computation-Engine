@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alice.i18n import _
 from alice.tools.base import COMPUTER, READ, Tool, ToolContext, ToolError, ToolResult, obj
 
 
@@ -31,9 +32,9 @@ class RunPlan(Tool):
         from alice.multistep import TaskRunner, task_log
 
         if not (goal or "").strip():
-            raise ToolError("goal boş")
+            raise ToolError("goal is empty")
         if ctx.state.get("active_task") is not None:
-            return ToolResult("zaten bir görev sürüyor; bitmesini bekle ya da task_control action=stop ile durdur.",
+            return ToolResult("a task is already running; wait for it to finish or stop it with task_control action=stop.",
                               is_error=True)
         a = ctx.config.agent
         hooks = ctx.state.get("task_hooks") or {}
@@ -41,7 +42,7 @@ class RunPlan(Tool):
 
         def both(s: str) -> None:
             task_log(s)
-            log(f"görev: {s}")
+            log(f"task: {s}")
 
         runner = TaskRunner(ctx, goal.strip(), max_steps=int(a.get("plan_max_steps", 8)),
                             step_tool_calls=int(a.get("plan_step_tool_calls", 14)),
@@ -51,7 +52,7 @@ class RunPlan(Tool):
             text = runner.run()
         finally:
             ctx.state.pop("active_task", None)
-        both(f"bitti: {text.splitlines()[0] if text else ''}")
+        both(f"finished: {text.splitlines()[0] if text else ''}")
         return ToolResult(text, is_error=text.startswith("error:"))
 
 
@@ -72,34 +73,34 @@ class TaskControl(Tool):
     def run(self, ctx: ToolContext, action: str) -> ToolResult:
         runner = ctx.state.get("active_task")
         if runner is None:
-            return ToolResult("şu an süren bir görev yok")
+            return ToolResult("no task is running right now")
         if action == "status":
             return ToolResult(runner.status_text())
         if action == "stop":
             runner.stop()
-            return ToolResult("görev durduruluyor; o anki adım biter bitmez duracak")
+            return ToolResult("stopping the task; it stops as soon as the current step finishes")
         if action in ("approve", "reject"):
             if not runner.answer(action == "approve"):
-                return ToolResult("görev şu an onay beklemiyor", is_error=True)
-            return ToolResult("onaylandı, devam ediyor" if action == "approve" else "reddedildi, o adım yapılmayacak")
+                return ToolResult("the task isn't waiting for approval right now", is_error=True)
+            return ToolResult("approved, continuing" if action == "approve" else "rejected, that step won't be done")
         raise ToolError(f"bilinmeyen action: {action}")
 
 
 AGENT_SPEC = obj({
-    "name": {"type": "string", "description": "Kısa ad, ör. 'backend', 'tests', 'ui'."},
-    "task": {"type": "string", "description": "Yapacağı iş, konuşmayı görmeyen biri anlayacak kadar ayrıntılı: hangi "
-             "dosyalar, ne değişecek, nasıl doğrulayacak, ne raporlayacak."},
-    "constraints": {"type": "string", "description": "Sınırlar: dokunmayacağı yerler, uyacağı kurallar."},
+    "name": {"type": "string", "description": "A short name, e.g. 'backend', 'tests', 'ui'."},
+    "task": {"type": "string", "description": "The job, in enough detail for someone who hasn't seen the conversation: which "
+             "files, what changes, how to verify it, what to report."},
+    "constraints": {"type": "string", "description": "Limits: places it must not touch, rules it must follow."},
     "scope": {"type": "array", "items": {"type": "string"},
-              "description": "Yazabileceği dosya/klasörler (çalışma klasörüne göre). Boş: her yer. Çakışmasın."},
-    "model": {"type": "string", "description": "brain (güçlü), fast (hızlı/ucuz) ya da sağlayıcı:model."},
+              "description": "Files/folders it may write (relative to the working folder). Empty: anywhere. Keep them from overlapping."},
+    "model": {"type": "string", "description": "brain (strong), fast (quick/cheap) or provider:model."},
     "thinking": {"type": "string", "enum": ["off", "low", "medium", "high", "default"],
-                 "description": "Düşünme seviyesi: zor tasarım/hata ayıklama high, rutin iş low/off."},
+                 "description": "Thinking level: high for hard design/debugging, low/off for routine work."},
     "isolation": {"type": "string", "enum": ["shared", "worktree", "readonly"],
-                  "description": "shared: aynı klasör | worktree: kendi git dalı (onayda birleştirilir) | readonly: "
-                  "sadece inceleme/araştırma."},
-    "after": {"type": "array", "items": {"type": "string"}, "description": "Bu ajanlar onaylanınca başlasın."},
-    "max_steps": {"type": "integer", "description": "En çok araç adımı. Varsayılan 60."},
+                  "description": "shared: the same folder | worktree: its own git branch (merged on approval) | readonly: "
+                  "review/research only."},
+    "after": {"type": "array", "items": {"type": "string"}, "description": "Start after these agents are approved."},
+    "max_steps": {"type": "integer", "description": "Maximum tool steps. Default 60."},
 }, ["name", "task"])
 
 
@@ -148,7 +149,7 @@ class TeamTool(Tool):
         a = args.get("action")
         if a == "start":
             names = ", ".join(str(x.get("name")) for x in args.get("agents") or [] if isinstance(x, dict))
-            return "proje: " + (names or "yönetici planlayacak") + " · " + str(args.get("goal", ""))[:80]
+            return "proje: " + (names or "the lead will plan") + " · " + str(args.get("goal", ""))[:80]
         if a == "send":
             return f"{args.get('to')}: {str(args.get('text', ''))[:120]}"
         return str(a)
@@ -161,10 +162,10 @@ class TeamTool(Tool):
         teams = ctx.state.setdefault("teams", {})
         if action == "start":
             if not (goal or "").strip():
-                raise ToolError("start için goal gerekli")
+                raise ToolError("start needs goal")
             specs = [a for a in agents or [] if isinstance(a, dict)]
             if len(specs) > 8:
-                raise ToolError("en çok 8 ajan")
+                raise ToolError("at most 8 agents")
             a = ctx.config.agent
             team = Team(ctx, goal.strip(), max_parallel=int(a.get("team_max_parallel", 5)),
                         publish=ctx.state.get("publish"), review=review is not False, council=council is not False,
@@ -174,40 +175,40 @@ class TeamTool(Tool):
             ctx.state["team"] = team
             teams[team.id] = team
             team.start(plan=not specs)
-            return ToolResult(f"proje başladı (kimlik {team.id}). "
-                              + ("Yönetici kodu inceleyip ajanları kuracak. " if not specs else
+            return ToolResult(f"project started (id {team.id}). "
+                              + ("The lead will look at the code and set up the agents. " if not specs else
                                  "Ajanlar:\n" + team.status_text() + "\n")
-                              + "Kullanıcı Projeler sayfasından izleyebilir. Sonucu burada istiyorsa action=wait.")
+                              + "The user can follow it on the Projects page. If they want the result here, action=wait.")
         team = teams.get(project) if project else ctx.state.get("team")
         if team is None:
-            return ToolResult("böyle bir proje yok; önce action=start", is_error=True)
+            return ToolResult("no such project; action=start first", is_error=True)
         if action == "status":
             return ToolResult(f"proje {team.id}: {team.status()}\n{team.status_text()}"
-                              + (f"\n\nÖzet:\n{team.summary}" if team.summary else ""))
+                              + (f"\n\nSummary:\n{team.summary}" if team.summary else ""))
         if action == "send":
             target = (to or LEAD).strip().lower()
             return ToolResult(team.send("kullanıcı", target, text))  # the ALICE in the chat, writing on the user's behalf
         if action == "stop":
             target = (name or "").strip().lower() or None
             if target and target not in team.members:
-                raise ToolError(f"projede '{target}' yok")
+                raise ToolError(f"there is no '{target}' in the project")
             team.stop(target)
             return ToolResult(f"durduruldu: {target or 'proje'}")
         if action == "resume":
             team.resume()
-            return ToolResult("proje sürdürülüyor")
+            return ToolResult("project resumed")
         if action == "wait":
             limit = max(5, min(int(timeout or 600), 1800))
             team.wait_until(lambda: team.status() in ("done", "stopped", "needs_you"), limit, ctx.cancelled)
             st = team.status()
             if st == "done":
-                return ToolResult("Proje bitti. Yöneticinin özeti:\n" + (team.summary or "(özet yok)"))
+                return ToolResult("Project finished. The lead's summary:\n" + (team.summary or "(no summary)"))
             if st == "needs_you":
                 qs = [q["text"] for q in team.questions if not q.get("answer")]
-                return ToolResult("Proje kullanıcıya soruyor:\n" + "\n".join(f"- {q}" for q in qs) +
-                                  "\nKullanıcıya sor; cevabını action=send to=alice ile ilet.")
+                return ToolResult("The project is asking the user:\n" + "\n".join(f"- {q}" for q in qs) +
+                                  "\nAsk the user; pass their answer on with action=send to=alice.")
             return ToolResult(f"Proje durumu: {st}\n{team.status_text()}\n"
-                              + ("Süre doldu; proje arka planda sürüyor." if st != "stopped" else ""))
+                              + ("Time ran out; the project keeps running in the background." if st != "stopped" else ""))
         raise ToolError(f"bilinmeyen action: {action}")
 
 
@@ -239,17 +240,17 @@ class CouncilTool(Tool):
     def run(self, ctx: ToolContext, subject: str, paths: list[str] | None = None, critical: bool = False,
             depth: str = "auto") -> ToolResult:
         if not (subject or "").strip():
-            raise ToolError("subject boş")
+            raise ToolError("subject is empty")
         context = ""
         for p in (paths or [])[:8]:
             f = ctx.resolve(p)
             try:
                 context += f"\n## {p}\n```\n{f.read_text(encoding='utf-8', errors='replace')[:8000]}\n```\n"
             except OSError:
-                context += f"\n## {p}: okunamadı\n"
+                context += f"\n## {p}: could not read it\n"
         from alice.council import Council, report
 
-        ctx.emit("kurul toplanıyor…")
+        ctx.emit(_("the council is meeting…"))
         rules = ""
         for f in (ctx.cwd / "REVIEW.md", ctx.cwd / ".alice" / "REVIEW.md"):
             if f.is_file():
@@ -258,7 +259,7 @@ class CouncilTool(Tool):
         c = Council(ctx, "adhoc", subject, context, critical=bool(critical), depth=depth if depth != "auto" else "auto",
                     rules=rules)
         snap = c.run()
-        ctx.emit("kurul kararını verdi")
+        ctx.emit(_("the council reached its decision"))
         return ToolResult(report(snap))
 
 

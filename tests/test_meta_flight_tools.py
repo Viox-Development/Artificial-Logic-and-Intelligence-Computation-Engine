@@ -33,10 +33,10 @@ def test_todo_write_renders_marks_and_stores_state(ctx):
 
 def test_todo_write_empty_and_summary(ctx):
     t = meta.TodoWrite()
-    assert t.run(ctx, todos=[]).text == "liste boş"
-    assert t.summary({"todos": [{"status": "done"}, {"status": "pending"}, {"status": "done"}]}) == "3 görev, 2 tamam"
-    assert t.summary({}) == "0 görev, 0 tamam"
-    assert t.summary({"todos": None}) == "0 görev, 0 tamam"
+    assert t.run(ctx, todos=[]).text == "the list is empty"
+    assert t.summary({"todos": [{"status": "done"}, {"status": "pending"}, {"status": "done"}]}) == "3 tasks, 2 done"
+    assert t.summary({}) == "0 tasks, 0 done"
+    assert t.summary({"todos": None}) == "0 tasks, 0 done"
 
 
 # ================================================================== meta: Memory
@@ -47,7 +47,7 @@ def test_memory_read_empty_then_add_and_read(ctx):
     assert m.risk_for({"action": "add"}) == READ  # memory writes need no approval
     assert m.risk_for({"action": "forget"}) == WRITE
     assert m.run(ctx, action="read").text == "(memory is empty)"
-    assert m.run(ctx, action="add", note="  kullanıcı Türkçe konuşur \n").text.startswith("kaydedildi: ")
+    assert m.run(ctx, action="add", note="  kullanıcı Türkçe konuşur \n").text.startswith("saved: ")
     m.run(ctx, action="add", note="en sevdiği uçak F-16")
     text = m.run(ctx, action="read").text
     assert text.startswith("# Notes") and "kullanıcı Türkçe konuşur" in text and "F-16" in text
@@ -99,7 +99,7 @@ def fake_child(monkeypatch):
 
 
 def test_task_requires_parent_agent(ctx):
-    with pytest.raises(ToolError, match="alt ajan"):
+    with pytest.raises(ToolError, match="subagent"):
         meta.Task().run(ctx, prompt="x")
 
 
@@ -107,7 +107,7 @@ def test_task_runs_child_and_reports(ctx, fake_child):
     parent = FakeParent("sonuç")
     ctx.state["agent"] = parent
     r = meta.Task().run(ctx, prompt="ara", max_steps=7)
-    assert r.text.startswith("[alt ajan a1") and "sonuç" in r.text and "task id=a1" in r.text
+    assert r.text.startswith("[subagent a1") and "sonuç" in r.text and "task id=a1" in r.text
     assert parent.child.calls == [("ara", 7)]
 
 
@@ -144,7 +144,7 @@ def fake_reflex(monkeypatch):
 
 
 def test_reflex_requires_decider_and_router(ctx, fake_reflex):
-    with pytest.raises(ToolError, match="karar motoru"):
+    with pytest.raises(ToolError, match="decision engine"):
         meta.Reflex().run(ctx, goal="g", target="browser")
     ctx.decider = object()
     with pytest.raises(ToolError):

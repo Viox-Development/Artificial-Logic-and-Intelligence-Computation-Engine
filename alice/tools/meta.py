@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alice.i18n import _
 from alice.tools.base import COMPUTER, READ, WRITE, Tool, ToolContext, ToolError, ToolResult, obj
 
 
@@ -26,13 +27,13 @@ class TodoWrite(Tool):
     def summary(self, args: dict[str, Any]) -> str:
         todos = args.get("todos") or []
         done = sum(1 for t in todos if t.get("status") == "done")
-        return f"{len(todos)} görev, {done} tamam"
+        return f"{len(todos)} tasks, {done} done"
 
     def run(self, ctx: ToolContext, todos: list[dict[str, Any]]) -> ToolResult:
         ctx.state["todos"] = todos
         mark = {"pending": "[ ]", "in_progress": "[~]", "done": "[x]"}
         text = "\n".join(f"{mark.get(t.get('status'), '[ ]')} {t.get('content')}" for t in todos)
-        return ToolResult(text or "liste boş")
+        return ToolResult(text or "the list is empty")
 
 
 class Memory(Tool):
@@ -114,7 +115,7 @@ class Memory(Tool):
 
         mem = ctx.state.get("memory") or shared_memory(ctx.config, ctx.router)
         if mem is None:
-            raise ToolError("hafıza kapalı (config.toml [memory] enabled = false)")
+            raise ToolError("memory is off (config.toml [memory] enabled = false)")
         note = note or text
         cwd = ctx.cwd
         if action in ("save", "add", "update"):
@@ -122,7 +123,7 @@ class Memory(Tool):
             try:
                 if action == "save" or content:
                     if not (content or description):
-                        raise ToolError("save için content (ve description) gerekli")
+                        raise ToolError("save needs content (and description)")
                     cat = category or {"user": "", "feedback": "you", "project": "areas",
                                        "reference": "topics"}.get(type or "", "")
                     if (name or "").strip().lower() in ("profile", "preferences"):
@@ -133,13 +134,13 @@ class Memory(Tool):
                                              content or description or "", title=title or "", source="araç",
                                              scope=scope or "genel", cwd=cwd, category=cat, aliases=al)
                     where = rec.rel if hasattr(rec, "rel") else rec.path
-                    return ToolResult(f"{'kaydedildi' if new else 'güncellendi'}: {rec.key} ({where})")
+                    return ToolResult(f"{'saved' if new else 'updated'}: {rec.key} ({where})")
                 if action == "update" and (name or id is not None):
-                    return ToolResult("güncellendi" if mem.update(str(name or id), note or "", cwd) else "not yok")
+                    return ToolResult("updated" if mem.update(str(name or id), note or "", cwd) else "no such note")
                 if not note:
-                    raise ToolError("add için note gerekli")
+                    raise ToolError("add needs note")
                 key, new = mem.remember(note, kind or "fact", source="araç", cwd=cwd, scope=scope or "genel")
-                return ToolResult(f"kaydedildi: {key}" if new else f"benzer not güncellendi: {key}")
+                return ToolResult(f"saved: {key}" if new else f"similar note updated: {key}")
             except MemoryFull as e:
                 raise ToolError(str(e)) from None
             except ValueError as e:
@@ -148,81 +149,81 @@ class Memory(Tool):
             ctx.state["memory_wrote"] = True
             if name or (id is not None and not str(id).isdigit()):
                 gone = mem.delete_note(str(name or id), cwd)
-                return ToolResult(f"silindi (çöpe): {gone.key}" if gone else f"not yok: {name or id}")
+                return ToolResult(f"deleted (to the trash): {gone.key}" if gone else f"no such note: {name or id}")
             if not (query or note):
-                raise ToolError("delete için name ya da query gerekli")
+                raise ToolError("delete needs name or query")
             gone, hits = mem.forget_matching(query or note or "", cwd)
             if gone:
-                return ToolResult(f"silindi (çöpe): {gone[0].key}")
-            return ToolResult("emin olamadım, hiçbirini silmedim. Adaylar (name ile sil):\n"
-                              + "\n".join(h.manifest_line() for h in hits) if hits else "eşleşen not yok")
+                return ToolResult(f"deleted (to the trash): {gone[0].key}")
+            return ToolResult("not sure which one, deleted none. Candidates (delete by name):\n"
+                              + "\n".join(h.manifest_line() for h in hits) if hits else "no matching note")
         if action == "read":
             if name:
-                _, rec = mem.find_note(name, cwd)
+                _book, rec = mem.find_note(name, cwd)
                 if rec is None:
                     for b in mem.books(cwd):  # a nickname ("gravity") reads the person's note
                         rec = b.resolve_alias(name)
                         if rec is not None:
                             break
                 if rec is None:
-                    raise ToolError(f"not yok: {name} (memory action=list ile bak)")
+                    raise ToolError(f"no such note: {name} (look with memory action=list)")
                 links = ", ".join(f"[[{x}]]" for x in rec.links)
-                return ToolResult(f"{rec.render(limit=8000)}\n\n(dosya: {rec.path}"
-                                  + (f"; bağlı notlar: {links}" if links else "") + ")")
+                return ToolResult(f"{rec.render(limit=8000)}\n\n(file: {rec.path}"
+                                  + (f"; linked notes: {links}" if links else "") + ")")
             return ToolResult(mem.export_markdown(cwd))
         if action == "list":
             lines = []
             for b in mem.books(cwd):
                 notes = b.scan()
-                lines.append(f"## {b.scope} ({b.root}) — {len(notes)} not")
-                lines += [x.manifest_line() for x in notes] or ["(boş)"]
+                lines.append(f"## {b.scope} ({b.root}) — {len(notes)} notes")
+                lines += [x.manifest_line() for x in notes] or ["(empty)"]
             return ToolResult("\n".join(lines))
         if action == "search":
             if not (query or note):
-                raise ToolError("search için query gerekli")
+                raise ToolError("search needs query")
             hits = mem.search_notes(query or note or "", cwd)
-            return ToolResult("\n".join(h.manifest_line() for h in hits) or "notlarda ilgili bir şey yok "
-                              "(geçmiş konuşmalar için search_chats)")
+            return ToolResult("\n".join(h.manifest_line() for h in hits) or "nothing related in the notes "
+                              "(search_chats for past conversations)")
         if action == "log":
             if not note:
-                raise ToolError("log için note gerekli")
+                raise ToolError("log needs note")
             p = mem.book(scope or "genel", cwd).append_log(note)
-            return ToolResult(f"günlüğe eklendi: {p}")
+            return ToolResult(f"added to the daily log: {p}")
         if action == "dream":
             done = mem.dream(force=True, cwd=cwd)
             ctx.state["memory_wrote"] = True
-            return ToolResult("Dream bitti:\n" + ("\n".join(f"- {x}" for x in done) or "- değişiklik yok"))
+            return ToolResult("Dream bitti:\n" + ("\n".join(f"- {x}" for x in done) or "- no changes"))
         if action == "restore":
             b = mem.book(scope or "genel", cwd)
             if not backup:
-                return ToolResult("yedekler (yeniden eskiye): " + (", ".join(b.backups()) or "yok"))
+                return ToolResult("backups (newest first): " + (", ".join(b.backups()) or "none"))
             try:
                 count = b.restore(backup)
             except ValueError as e:
                 raise ToolError(str(e)) from None
             mem._bump()
-            return ToolResult(f"{backup} yedeğine dönüldü ({count} not); dönmeden önceki hâl de yedeklendi")
+            return ToolResult(f"restored backup {backup} ({count} notes); the state before restoring was backed up too")
         if action == "search_chats":
             if not (query or note):
-                raise ToolError("search_chats için query gerekli")
+                raise ToolError("search_chats needs query")
             return ToolResult(mem.search_chats(query or note or "", after=_day_start(after), before=_day_start(before)))
         if action == "recent_chats":
             return ToolResult(mem.recent_chats(n or 5, after=_day_start(after), before=_day_start(before)))
         if action == "followup":
             if not note:
-                raise ToolError("followup için note gerekli")
+                raise ToolError("followup needs note")
             fk = followup_kind or ("open" if not due else "ask")
             day = _parse_day(due)
             if fk != "open" and day is None:
-                raise ToolError("followup için due (YYYY-MM-DD) gerekli; yarım kalan iş ise followup_kind=open")
+                raise ToolError("followup needs due (YYYY-MM-DD); for unfinished work use followup_kind=open")
             return ToolResult(f"takip eklendi #{mem.add_followup(note, day, fk)}")
         if action == "followups":
-            return ToolResult("\n".join(f.line() for f in mem.followups()) or "açık takip yok")
+            return ToolResult("\n".join(f.line() for f in mem.followups()) or "no open follow-ups")
         if action == "done":
             if id is None:
-                raise ToolError("done için id gerekli")
+                raise ToolError("done needs id")
             f = mem.done_followup(int(id))
-            return ToolResult(f"kapatıldı: {f.text}" if f else f"#{id} bulunamadı")
+            return ToolResult(f"closed: {f.text}" if f else f"#{id} not found")
         raise ToolError(f"bilinmeyen action: {action}")
 
 
@@ -266,19 +267,19 @@ class Task(Tool):
 
         parent = ctx.state.get("agent")
         if parent is None:
-            raise ToolError("alt ajan bu bağlamda kullanılamıyor")
+            raise ToolError("subagents can't be used in this context")
         if id:
             sub = subagents.resume(ctx, id, prompt, background=bool(background))
         else:
             sub = subagents.start(parent, ctx, prompt, kind=agent, label=name, background=bool(background),
                                   max_steps=max_steps)
         if sub.background:
-            return ToolResult(f"alt ajan {sub.id} ({sub.label}) arka planda çalışıyor. Bitince sonucu bu sohbete "
-                              "mesaj olarak gelecek; o zamana kadar ne bulacağını tahmin etme. Kullanıcı ilerlemeyi "
-                              "yan paneldeki Ajanlar sekmesinde görür.")
+            return ToolResult(f"subagent {sub.id} ({sub.label}) is running in the background. Its result will come to this chat as a "
+                              "message when it finishes; don't guess what it will find until then. The user sees the "
+                              "progress in the Agents tab of the side panel.")
         subagents.wait(sub, ctx.cancelled)
-        head = f"[alt ajan {sub.id} · {sub.label}, {sub.steps} adım{'' if sub.status == 'done' else ', ' + sub.status}]"
-        return ToolResult(f"{head}\n{sub.result}\n\n(Aynı alt ajana ek soru: task id={sub.id})",
+        head = f"[subagent {sub.id} · {sub.label}, {sub.steps} steps{'' if sub.status == 'done' else ', ' + sub.status}]"
+        return ToolResult(f"{head}\n{sub.result}\n\n(A follow-up question to the same subagent: task id={sub.id})",
                           is_error=sub.status == "failed")
 
 
@@ -318,15 +319,15 @@ class AgentDefs(Tool):
         try:
             if action == "save":
                 a = skills.save_agent(name, description, prompt, tools, model, max_steps, where, ctx.cwd)
-                return ToolResult(f"kaydedildi: {a.path}. Artık task agent={a.name} ile çağrılabilir.")
+                return ToolResult(f"saved: {a.path}. It can now be called with task agent={a.name}.")
             if action == "delete":
-                return ToolResult(f"silindi: {skills.delete_agent(name, ctx.cwd)}")
+                return ToolResult(f"deleted: {skills.delete_agent(name, ctx.cwd)}")
         except ValueError as e:
             raise ToolError(str(e)) from e
         defs = skills.load_agents(ctx.cwd)
         return ToolResult("\n".join(
-            f"{a.name}: {a.description} [araçlar: {', '.join(a.tools) or 'hepsi'}; model: {a.model or 'ana ajan'}; "
-            f"{a.max_steps} adım] ({a.path})" for a in defs.values()) or "tanımlı özel alt ajan yok")
+            f"{a.name}: {a.description} [tools: {', '.join(a.tools) or 'all'}; model: {a.model or 'main agent'}; "
+            f"{a.max_steps} steps] ({a.path})" for a in defs.values()) or "no custom subagents defined")
 
 
 class SubagentsTool(Tool):
@@ -347,12 +348,12 @@ class SubagentsTool(Tool):
         if action == "stop":
             sub = subs.get(id.strip())
             if sub is None:
-                raise ToolError(f"böyle bir alt ajan yok: {id}")
-            return ToolResult(f"{sub.id} durduruluyor" if subagents.stop(sub) else f"{sub.id} zaten çalışmıyor")
-        rows = [f"{s.id} [{s.status}] {s.label} · {s.steps} adım"
+                raise ToolError(f"no such subagent: {id}")
+            return ToolResult(f"{sub.id} is stopping" if subagents.stop(sub) else f"{sub.id} is not running")
+        rows = [f"{s.id} [{s.status}] {s.label} · {s.steps} steps"
                 + (f" · son: {s.last}" if s.status == "running" and s.last else "")
-                + (f"\n   sonuç: {s.result[:200]}" if s.result else "") for s in subs.values()]
-        return ToolResult("\n".join(rows) or "bu sohbette alt ajan yok")
+                + (f"\n   result: {s.result[:200]}" if s.result else "") for s in subs.values()]
+        return ToolResult("\n".join(rows) or "no subagents in this chat")
 
 
 class Reflex(Tool):
@@ -410,7 +411,7 @@ class Reflex(Tool):
         from alice.reflex.observers import BrowserObserver, DesktopObserver
 
         if ctx.decider is None or ctx.router is None:
-            raise ToolError("karar motoru yapılandırılmamış")
+            raise ToolError("the decision engine is not configured")
         if target == "browser":
             observer = BrowserObserver(ctx, url)
         else:
@@ -429,34 +430,34 @@ class Reflex(Tool):
         verdict = reflex_verdict(status)
         if status in ("max_steps", "needs_help") and multi_part_goal(goal) and "planın" not in getattr(res, "reason", ""):
             # A long goal was tried as one piece and did not finish: the main model must not resend the same long goal.
-            verdict += ("\nBu hedef birkaç iş içeriyordu. Aynısını tekrar yollama: yukarıdaki adımlara bakıp nerede "
-                        "kaldığını bul ve kalanını tek işlik kısa hedeflerle (her çağrıda bir menü, bir alan, bir tuş) "
-                        "sırayla çağır.")
+            verdict += ("\nThis goal had several jobs in it. Don't send the same one again: look at the steps above, find where "
+                        "it stopped and call the rest one by one with short single-job goals (one menu, one field, one "
+                        "key per call).")
         return ToolResult(res.report() + ("\n" + verdict if verdict else ""), is_error=status == "error")
 
 
 def reflex_verdict(status: str) -> str:
     """State the status plainly: models confused "Jev cevap verdi" (Jev replied) with "hedef yapıldı" (goal done)
     and told the user "çalışıyor, başardı" (it's working, it succeeded), even on a needs_help result."""
-    return {"done": "SONUÇ: hedef yapıldı.",
-            "clicked": "SONUÇ: hedef sanılan yere tıklandı ama sonucu doğrulanmadı. Bir ekran görüntüsüyle doğru "
-                       "şeyin açıldığına bak; doğruysa bitti, değilse kendin düzelt.",
-            "likely_done": "SONUÇ: son eylem ekranı değiştirdi ve karar motoru hedefin büyük ihtimalle yapıldığını "
-                           "düşünüyor ama emin değil. Bir ekran görüntüsüyle (ya da dosyaya bakarak) doğrula, sonra "
-                           "kullanıcıya söyle.",
-            "steps_done": "SONUÇ: hedef adımlara bölündü ve adımlar sırayla yapıldı; hedefin bütününün gerçekleştiği "
-                          "ayrıca doğrulanmadı. Sonuca kendin bak (dosya oluştu mu, pencere ne gösteriyor), sonra "
-                          "kullanıcıya söyle; doğrulamadan 'yaptım' deme.",
-            "needs_help": "SONUÇ: hedef YAPILAMADI (karar motoru cevap verdi ama yol bulamadı). Kullanıcıya başardı "
-                          "deme; kalanını kendin yap ya da nedenini söyle.",
-            "acted": "SONUÇ: bir eylem yapıldı ve ekran değişti; istenenin olup olmadığı ayrıca doğrulanmalı.",
-            "needs_confirmation": "SONUÇ: DURDU, geri alınamaz olabilecek bir düğme (gönder/öde/sil/onayla). Kullanıcı "
-                                  "bunu açıkça istemediyse ona sor; istediyse allow_irreversible=true ile tekrar çağır.",
-            "needs_login": "SONUÇ: DURDU, giriş/oturum ekranı çıktı (hedef YAPILAMADI). Kullanıcı adına giriş yapma, "
-                           "numara/şifre yazma. Uygulamanın masaüstü sürümü kuruluysa onu dene (app open/flow kuruluysa "
-                           "kendisi seçer); yoksa kullanıcıya giriş yapması gerektiğini söyle.",
-            "max_steps": "SONUÇ: adım sınırı doldu, hedef YAPILAMADI.",
-            "error": "SONUÇ: hata, hedef YAPILAMADI."}.get(status, "")
+    return {"done": "RESULT: goal done.",
+            "clicked": "RESULT: clicked where the goal seemed to be, but the result was not verified. Check with a screenshot "
+                       "that the right thing opened; if so it's done, if not fix it yourself.",
+            "likely_done": "RESULT: the last action changed the screen and the decision engine thinks the goal was most likely "
+                           "done, but it isn't sure. Verify with a screenshot (or by looking at the file), then tell "
+                           "the user.",
+            "steps_done": "RESULT: the goal was split into steps and they were done in order; the goal as a whole was not "
+                          "verified separately. Check the result yourself (was the file created, what does the window "
+                          "show), then tell the user; don't say 'done' without verifying.",
+            "needs_help": "RESULT: the goal was NOT done (the decision engine answered but found no way). Don't tell the user "
+                          "it worked; do the rest yourself or say why.",
+            "acted": "RESULT: an action was taken and the screen changed; whether what was asked happened must be verified separately.",
+            "needs_confirmation": "RESULT: STOPPED at a button that may be irreversible (send/pay/delete/confirm). If the user "
+                                  "didn't ask for this explicitly, ask them; if they did, call again with allow_irreversible=true.",
+            "needs_login": "RESULT: STOPPED, a sign-in/session screen appeared (the goal was NOT done). Don't sign in for the user "
+                           "or type numbers/passwords. If the app's desktop version is installed try it (app open/flow "
+                           "picks it when installed); otherwise tell the user they need to sign in.",
+            "max_steps": "RESULT: the step limit ran out; the goal was NOT done.",
+            "error": "RESULT: error; the goal was NOT done."}.get(status, "")
 
 
 def _last_user_text(ctx: ToolContext) -> tuple[str, ...]:
@@ -495,14 +496,14 @@ class AskUser(Tool):
         ask = getattr(ui, "ask_choice", None) if callable(getattr(type(ui), "ask_choice", None)) else None
         opts = [str(o).strip() for o in options or [] if str(o).strip()][:6]
         if len(opts) < 2:
-            raise ToolError("en az iki seçenek gerekli")
+            raise ToolError("at least two options are needed")
         if not callable(ask):
-            return ToolResult("Bu arayüzde seçenekli soru gösterilemiyor (sesli konuşma ya da gözetimsiz çalışma). "
-                              "Soruyu ve seçenekleri cevabında kısaca sor, sonra dur ve kullanıcının cevabını bekle.")
+            return ToolResult("Choice questions can't be shown in this interface (voice conversation or unattended run). "
+                              "Ask the question and the options briefly in your answer, then stop and wait for the user's answer.")
         answer = (ask(question, opts, bool(multi)) or "").strip()
         if not answer:
-            return ToolResult("Kullanıcı cevap vermedi ya da soruyu kapattı. Varsayımda bulunma; kısaca sor ya da dur.")
-        return ToolResult(f"Kullanıcının cevabı: {answer}")
+            return ToolResult("The user didn't answer or closed the question. Don't assume; ask briefly or stop.")
+        return ToolResult(f"The user's answer: {answer}")
 
 
 class SkillTool(Tool):
@@ -523,10 +524,10 @@ class SkillTool(Tool):
         skills = load_skills(ctx.cwd)
         sk = skills.get(name.strip().lower())
         if sk is None:
-            raise ToolError(f"'{name}' adında skill yok. Olanlar: {', '.join(skills) or '(yok)'}")
+            raise ToolError(f"there is no skill called '{name}'. Available: {', '.join(skills) or '(none)'}")
         files = sk.files()
-        listing = ("\nKlasördeki dosyalar (yollar bu klasöre göre):\n" + "\n".join(f"- {f}" for f in files)) if files else ""
-        return ToolResult(f"# Skill: {sk.name}\nKlasör: {sk.path.parent}\n\n{sk.body()}{listing}")
+        listing = ("\nFiles in the folder (paths are relative to this folder):\n" + "\n".join(f"- {f}" for f in files)) if files else ""
+        return ToolResult(f"# Skill: {sk.name}\nFolder: {sk.path.parent}\n\n{sk.body()}{listing}")
 
 
 class Projects(Tool):
@@ -552,17 +553,17 @@ class Projects(Tool):
             return ToolResult(f"{len(found)} proje bulundu:\n" + "\n".join(f"- {p.line()}" for p in found[:15]))
         found = pj.get(ctx.config, background=False)
         if not found:
-            return ToolResult("proje bulunamadı. Proje klasörünü config.toml [projects] paths'e ekleyip rescan yap.")
+            return ToolResult("no projects found. Add the project folder to config.toml [projects] paths and rescan.")
         if action == "list":
             return ToolResult("\n".join(f"- {p.line()}" for p in found[:25]))
         if not query:
-            raise ToolError(f"{action} için query gerekli")
+            raise ToolError(f"{action} needs query")
         hits = pj.find(query, found)
         if not hits:
-            return ToolResult(f"'{query}' ile eşleşen proje yok. En son çalışılanlar:\n"
+            return ToolResult(f"no project matches '{query}'. Most recently worked on:\n"
                               + "\n".join(f"- {p.line()}" for p in found[:8]))
         if action == "info":
-            return ToolResult(pj.info(hits[0]) + ("\nDiğer adaylar: " + ", ".join(p.name for p in hits[1:5])
+            return ToolResult(pj.info(hits[0]) + ("\nOther candidates: " + ", ".join(p.name for p in hits[1:5])
                                                  if len(hits) > 1 else ""))
         return ToolResult("\n".join(f"- {p.line()}" for p in hits[:10]))
 
@@ -585,7 +586,7 @@ class Feedback(Tool):
         from alice.evals import record_feedback
 
         new = record_feedback(say, reply, note, source="sohbet")
-        return ToolResult("kaydedildi" + (", test setine eklendi" if new else ""))
+        return ToolResult("saved" + (", added to the test set" if new else ""))
 
 
 # Files shown with send_file: the "Aç / Klasörde göster" (Open / Show in folder) buttons in the UI can only open these.
@@ -634,10 +635,10 @@ class SendFile(Tool):
                 except Exception:  # noqa: BLE001 - the card is shown even without a preview
                     pass
         if not files:
-            raise ToolError("gösterilecek dosya yok: " + ", ".join(missing))
-        text = (f"{caption}\n" if caption else "") + "Kullanıcıya gösterildi: " + ", ".join(f["name"] for f in files)
+            raise ToolError("no files to show: " + ", ".join(missing))
+        text = (f"{caption}\n" if caption else "") + "Shown to the user: " + ", ".join(f["name"] for f in files)
         if missing:
-            text += "\nBulunamadı: " + ", ".join(missing)
+            text += "\nNot found: " + ", ".join(missing)
         return ToolResult(text, images=images, files=files)
 
 
@@ -667,7 +668,7 @@ class NextStep(Tool):
         recap = " ".join(str(recap).split())[:400]
         question = " ".join(str(question or "").split())[:140]
         opts = [" ".join(str(o).split())[:40] for o in (options or []) if str(o).strip()][:3] if question else []
-        return ToolResult("Özet kutusu gösterildi. Son cevabında özeti tekrarlama; soruyu tekrar sorma.",
+        return ToolResult("The summary box was shown. Don't repeat the summary in your last answer; don't ask the question again.",
                           card={"kind": "next_step", "recap": recap, "question": question, "options": opts})
 
 
@@ -696,22 +697,22 @@ class ExitPlanMode(Tool):
         agent = ctx.state.get("agent")
         perms = getattr(agent, "permissions", None)
         if perms is None or getattr(perms, "mode", "") != "plan":
-            raise ToolError("plan modunda değilsin; işe doğrudan devam et")
+            raise ToolError("you are not in plan mode; continue the work directly")
         ui = getattr(agent, "ui", None)
         ask = getattr(ui, "ask_choice", None) if callable(getattr(type(ui), "ask_choice", None)) else None
         if not callable(ask):
-            return ToolResult("Bu arayüzde onay kartı gösterilemiyor. Planı cevabında yaz ve kullanıcının onayını "
-                              "bekle; onay gelmeden dosya değiştirme.")
-        approve, change = "Onayla, uygula", "Değiştir"
-        answer = (ask("Plan onaylansın mı?\n\n" + plan.strip()[:6000], [approve, change], False) or "").strip()
+            return ToolResult("An approval card can't be shown in this interface. Write the plan in your answer and wait for the "
+                              "user's approval; don't change files before it comes.")
+        approve, change = _("Approve and apply"), _("Change")
+        answer = (ask(_("Approve the plan?\n\n") + plan.strip()[:6000], [approve, change], False) or "").strip()
         if answer == approve:
             back = getattr(perms, "before_plan", None) or str(ctx.config.agent.get("permission_mode", "auto"))
             perms.mode = back if back != "plan" else "auto"
-            return ToolResult(f"Kullanıcı planı onayladı; plan modu kapandı ({perms.mode}). Plana göre uygula.")
+            return ToolResult(f"The user approved the plan; plan mode is off ({perms.mode}). Carry out the plan.")
         if not answer:
-            return ToolResult("Kullanıcı cevap vermedi. Plan modunda kal; dosya değiştirme.")
-        return ToolResult(f"Kullanıcı planı onaylamadı: {answer}. Plan modunda kal, notuna göre planı düzelt ve "
-                          "tekrar sun.")
+            return ToolResult("The user didn't answer. Stay in plan mode; don't change files.")
+        return ToolResult(f"The user didn't approve the plan: {answer}. Stay in plan mode, fix the plan according to their note and "
+                          "present it again.")
 
 
 TOOLS = [TodoWrite(), Memory(), Task(), SubagentsTool(), AgentDefs(), Reflex(), Projects(), SkillTool(), AskUser(),

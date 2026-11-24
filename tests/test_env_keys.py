@@ -126,7 +126,7 @@ def test_feedback_tool_records(workdir):
 
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     out = Feedback().run(ctx, note="çok uzun konuştu", say="saat kaç", reply="Saat beş, ve bu arada...")
-    assert "test setine eklendi" in out.text and any(c.say == "saat kaç" for c in evals.load_cases())
+    assert "added to the test set" in out.text and any(c.say == "saat kaç" for c in evals.load_cases())
 
 
 def test_voice_tab_lists_previews_and_sets_voice(app, monkeypatch):

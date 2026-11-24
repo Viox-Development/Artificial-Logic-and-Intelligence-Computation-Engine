@@ -486,12 +486,12 @@ def test_run_plan(monkeypatch, tmp_path):
     assert res.text == "Bitti.\nayrıntı" and not res.is_error
     assert _Runner.last.args == ("faturayı indir", 5, 3, 9.0)
     assert "active_task" not in ctx.state
-    assert ("ui", "görev: adım 1") in logs and ("file", "bitti: Bitti.") in logs
+    assert ("ui", "task: adım 1") in logs and ("file", "finished: Bitti.") in logs
     _Runner.result = "error: adım başarısız"
     assert tool.run(ctx, goal="x").is_error
     ctx.state["active_task"] = object()
     res = tool.run(ctx, goal="ikinci")
-    assert res.is_error and "zaten bir görev" in res.text
+    assert res.is_error and "already running" in res.text
 
 
 def test_task_control(tmp_path):
@@ -499,17 +499,17 @@ def test_task_control(tmp_path):
 
     ctx = ToolContext(cwd=tmp_path, config=Config(default_config_dict()))
     tc = TaskControl()
-    assert tc.run(ctx, action="status").text == "şu an süren bir görev yok"
+    assert tc.run(ctx, action="status").text == "no task is running right now"
     runner = _Runner(ctx, "g", 1, 1, 1, lambda s: None)
     ctx.state["active_task"] = runner
     assert tc.run(ctx, action="status").text == "adım 1/3"
-    assert tc.run(ctx, action="approve").text == "onaylandı, devam ediyor"
-    assert tc.run(ctx, action="reject").text.startswith("reddedildi")
+    assert tc.run(ctx, action="approve").text == "approved, continuing"
+    assert tc.run(ctx, action="reject").text.startswith("rejected")
     assert runner.answers == [True, False]
     runner.waiting = False
     res = tc.run(ctx, action="approve")
-    assert res.is_error and "onay beklemiyor" in res.text
-    assert "durduruluyor" in tc.run(ctx, action="stop").text and runner.stopped
+    assert res.is_error and "isn't waiting for approval" in res.text
+    assert "stopping" in tc.run(ctx, action="stop").text and runner.stopped
     with pytest.raises(ToolError):
         tc.run(ctx, action="patla")
 
@@ -566,19 +566,19 @@ def test_team_tool_start_and_validation(team_ctx):
 
     t = TeamTool()
     assert t.summary({"action": "start", "goal": "site", "agents": [{"name": "ui"}, "bozuk"]}) == "proje: ui · site"
-    assert t.summary({"action": "start"}).startswith("proje: yönetici planlayacak")
+    assert t.summary({"action": "start"}).startswith("proje: the lead will plan")
     assert t.summary({"action": "send", "to": "ui", "text": "selam"}) == "ui: selam"
     assert t.summary({"action": "status"}) == "status"
-    with pytest.raises(ToolError, match="goal gerekli"):
+    with pytest.raises(ToolError, match="start needs goal"):
         t.run(team_ctx, action="start", goal=" ")
-    with pytest.raises(ToolError, match="en çok 8"):
+    with pytest.raises(ToolError, match="at most 8"):
         t.run(team_ctx, action="start", goal="x", agents=[{"name": str(i)} for i in range(9)])
     res = t.run(team_ctx, action="status")
-    assert res.is_error and "böyle bir proje yok" in res.text
+    assert res.is_error and "no such project" in res.text
 
     out = t.run(team_ctx, action="start", goal=" büyük iş ", review=False, council=False).text
     team = _Team.made[0]
-    assert "Yönetici kodu inceleyip" in out and team.calls == [("start", True)]
+    assert "The lead will look at the code" in out and team.calls == [("start", True)]
     assert team.kw == {"goal": "büyük iş", "max_parallel": 5, "review": False, "council": False}
     out = t.run(team_ctx, action="start", goal="iki", agents=[{"name": "ui", "task": "t"}, "atla"]).text
     assert "Ajanlar:\nbackend: çalışıyor" in out and _Team.made[1].specs == [{"name": "ui", "task": "t"}]
@@ -596,16 +596,16 @@ def test_team_tool_actions(team_ctx):
     assert second.calls[-1] == ("send", "kullanıcı", "alice", "durum?")
     t.run(team_ctx, action="send", to=" Backend ", text="x", project="p1")
     assert first.calls[-1] == ("send", "kullanıcı", "backend", "x")
-    with pytest.raises(ToolError, match="'yok' yok"):
+    with pytest.raises(ToolError, match="no 'yok' in the project"):
         t.run(team_ctx, action="stop", name="yok")
     assert t.run(team_ctx, action="stop", name="Backend").text == "durduruldu: backend"
     assert t.run(team_ctx, action="stop").text == "durduruldu: proje"
-    assert t.run(team_ctx, action="resume").text == "proje sürdürülüyor"
+    assert t.run(team_ctx, action="resume").text == "project resumed"
     second.summary = "özet metni"
-    assert t.run(team_ctx, action="status").text == "proje p2: running\nbackend: çalışıyor\n\nÖzet:\nözet metni"
+    assert t.run(team_ctx, action="status").text == "proje p2: running\nbackend: çalışıyor\n\nSummary:\nözet metni"
 
     out = t.run(team_ctx, action="wait", timeout=1).text
-    assert second.calls[-1] == ("wait", 5, False) and "Süre doldu" in out
+    assert second.calls[-1] == ("wait", 5, False) and "Time ran out" in out
     out = t.run(team_ctx, action="wait", timeout=99999).text
     assert second.calls[-1][1] == 1800
     second.state = "done"
@@ -647,9 +647,9 @@ def test_council_tool_reads_paths_and_review_rules(monkeypatch, tmp_path):
         tool.run(ctx, subject=" ")
     res = tool.run(ctx, subject="mimari", paths=["a.py", "yok.py"], critical=1, depth="2")
     assert res.text == "rapor: kabul"
-    assert "## a.py\n```\nprint('a')" in seen["context"] and "## yok.py: okunamadı" in seen["context"]
+    assert "## a.py\n```\nprint('a')" in seen["context"] and "## yok.py: could not read it" in seen["context"]
     assert seen["rules"] == "Kural: test şart" and seen["critical"] is True and seen["depth"] == "2"
-    assert seen["kind"] == "adhoc" and emitted == ["kurul toplanıyor…", "kurul kararını verdi"]
+    assert seen["kind"] == "adhoc" and emitted == ["the council is meeting…", "the council reached its decision"]
     (tmp_path / "REVIEW.md").write_text("kök kuralı", encoding="utf-8")
     tool.run(ctx, subject="x")
     assert seen["rules"] == "kök kuralı" and seen["depth"] == "auto" and seen["context"] == ""

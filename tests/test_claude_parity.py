@@ -269,10 +269,10 @@ def test_ask_user_uses_ui_or_falls_back(workdir):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     tool = AskUser()
     ctx.state["agent"] = SimpleNamespace(ui=ChoiceUI())
-    assert tool.run(ctx, "Hangisi?", ["A — önerilen", "B"]).text == "Kullanıcının cevabı: B"
+    assert tool.run(ctx, "Hangisi?", ["A — önerilen", "B"]).text == "The user's answer: B"
     for ui in (Passthrough(), SimpleNamespace()):
         ctx.state["agent"] = SimpleNamespace(ui=ui)
-        assert "gösterilemiyor" in tool.run(ctx, "Hangisi?", ["A", "B"]).text
+        assert "can't be shown" in tool.run(ctx, "Hangisi?", ["A", "B"]).text
     with pytest.raises(ToolError):
         tool.run(ctx, "?", ["tek"])
 

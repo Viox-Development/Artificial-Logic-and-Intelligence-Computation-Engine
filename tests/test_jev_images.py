@@ -313,7 +313,7 @@ def test_reflex_tool_states_failure_plainly(monkeypatch):
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda r: None)
     ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
     out = Reflex().run(ctx, goal="Ayarlar'ı aç", target="desktop")
-    assert "YAPILAMADI" in out.text and "başardı deme" in out.text
+    assert "NOT done" in out.text and "it worked" in out.text
 
 
 def test_single_click_goal_finishes_after_the_click():
@@ -359,4 +359,4 @@ def test_reflex_tool_says_click_is_unverified(monkeypatch):
     monkeypatch.setattr(loop_mod, "make_text_writer", lambda r: None)
     ctx = SimpleNamespace(decider=object(), router=object(), config=SimpleNamespace(decider={}), emit=lambda s: None)
     out = Reflex().run(ctx, goal="ilk projeye tıkla", target="desktop").text
-    assert "doğrulanmadı" in out and "ekran görüntüsüyle" in out
+    assert "not verified" in out and "screenshot" in out

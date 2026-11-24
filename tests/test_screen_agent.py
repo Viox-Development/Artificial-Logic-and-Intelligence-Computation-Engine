@@ -981,7 +981,7 @@ def test_planner_reads_steps_from_the_model_and_verdict_asks_to_verify():
         text='Tabii: {"steps": ["Dosya menüsünü aç", "Farklı kaydet düğmesine tıkla"]}'))
     assert make_planner(router)("x") == ["Dosya menüsünü aç", "Farklı kaydet düğmesine tıkla"]
     assert make_planner(SimpleNamespace(chat=lambda *a, **k: SimpleNamespace(text="bilmiyorum")))("x") == []
-    assert "doğrulanmadı" in reflex_verdict("steps_done")
+    assert "not verified" in reflex_verdict("steps_done")
 
 
 def test_read_only_goal_also_blocks_key_presses():
