@@ -57,7 +57,7 @@ def test_old_outputs_are_trimmed_once_the_cache_is_cold(workdir):
     assert all(len(m["content"]) == 5000 for m in agent.messages[1:])
     agent._last_call_at = time.monotonic() - 3600 * 2
     agent._shrink_old_outputs()
-    assert sum("kısaltıldı" in m["content"] for m in agent.messages[1:]) == 4  # all but the last six, in one go
+    assert sum("shortened" in m["content"] for m in agent.messages[1:]) == 4  # all but the last six, in one go
 
 
 # ------------------------------------------------------------------------------- 1b. compact threshold
@@ -182,7 +182,7 @@ def test_provider_error_is_shown_but_not_sent_or_remembered(workdir):
     agent.memory = Mem()
     agent.refresh_memory = lambda force=False: None
     out = agent.run_turn("bir şey yap")
-    assert "iş yarıda kaldı" in out  # the user sees it
+    assert "half done" in out  # the user sees it
     err = agent.messages[-1]
     assert err["role"] == "assistant" and err.get("_error") and err.get("_notice")
     assert recorded == [("bir şey yap", "")]  # memory: not saved as ALICE's answer
@@ -190,7 +190,7 @@ def test_provider_error_is_shown_but_not_sent_or_remembered(workdir):
     agent.router.cooldown_until.clear()
     agent.router.strikes.clear()
     agent.run_turn("devam et")
-    assert not any("iş yarıda kaldı" in str(m.get("content")) for m in seen[0])
+    assert not any("half done" in str(m.get("content")) for m in seen[0])
     roles = [m["role"] for m in seen[0][1:]]
     assert roles == ["user", "user"]  # the two user messages, with no fake assistant turn in between
 

@@ -134,4 +134,4 @@ def test_stop_does_not_wait_for_parallel_tools(workdir):
     t = time.monotonic()
     res = agent._execute_calls([call("c1", "slow", "a"), call("c2", "slow", "b")])
     assert time.monotonic() - t < 3
-    assert all(r.is_error and "durduruldu" in r.text for r in res)
+    assert all(r.is_error and "stopped" in r.text for r in res)

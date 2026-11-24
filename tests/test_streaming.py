@@ -141,8 +141,8 @@ def test_agent_streams_and_stop_from_other_thread(workdir):
     t.join(5)
     assert not agent.busy
     assert ("delta", "başlıyorum") in ui.events
-    assert agent.messages[-1]["content"].endswith("[durduruldu]")
-    assert ("info", "durduruldu") in ui.events
+    assert agent.messages[-1]["content"].endswith("[stopped]")
+    assert ("info", "stopped") in ui.events
 
 
 def test_agent_stream_full_turn(workdir):
