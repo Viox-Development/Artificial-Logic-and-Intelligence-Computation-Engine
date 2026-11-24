@@ -1032,6 +1032,8 @@ Varsayılanı `auto` yaptım çünkü tam erişim istedin ama bir free modelin y
 
 ## Config
 
+> English, and up to date: [guide/config.md](guide/config.md) (bu bölüm, görsel desteği, bilinen sınırlar ve geliştirme). Otomatik özetleme artık bağlam penceresinin %60'ında; `memory` notları `~/.alice/memory/` klasöründe; Linux'ta UI öğeleri AT-SPI ile okunuyor.
+
 `~/.alice/config.toml` (Windows'ta `%USERPROFILE%\.alice\config.toml`). Bütün ALICE dosyaları (config, `.env`, oturumlar, hafıza, projeler) bu klasörde; başka bir yer istersen `ALICE_HOME` ortam değişkenini ayarla. `alice init --force` dosyaları varsayılanla yeniden yazar. Önemli kısımlar:
 
 ```toml

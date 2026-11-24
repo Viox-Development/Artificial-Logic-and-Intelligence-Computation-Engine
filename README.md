@@ -311,7 +311,8 @@ vision = ["auto", "gemini:gemini-flash-lite-latest"]
 default = "low"   # off | low | medium | high
 ```
 
-More: [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md), [tool style](docs/TOOL-STYLE.md), and the
+More: [configuration](docs/guide/config.md), [connections](docs/CONNECT.md), [plugins](docs/PLUGINS.md),
+[tool style](docs/TOOL-STYLE.md), and the
 [full guide (Turkish)](docs/README.tr.md), with its translated sections in [docs/guide/](docs/guide/).
 
 ## Platform support
