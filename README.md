@@ -260,6 +260,9 @@ Other commands: `alice voice`, `alice phone`, `alice watch`, `alice connect`, `a
 In the REPL: `/help`, `/plan`, `/mode plan|ask|auto|yolo` (or Shift+Tab), `/model`, `/think`, `/memory`, `/mcp`,
 `/tools`, `/usage`, `/sessions`, `/resume`, `/rewind`, `/compact`, `/update`.
 
+The desktop app (`alice app`): windows, shortcuts, rewinding and the side panel are described in
+[docs/guide/desktop-app.md](docs/guide/desktop-app.md).
+
 ## Safety
 
 - **Permission modes:** `plan` only reads; `ask` confirms everything except reading; `auto` (default) allows edits,

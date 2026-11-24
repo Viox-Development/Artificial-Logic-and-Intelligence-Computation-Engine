@@ -335,6 +335,8 @@ Tek seferlik kapatmak için `ALICE_UPDATE_MODE=off` ya da `ALICE_NO_UPDATE=1` or
 
 ## Masaüstü uygulaması
 
+> English: [guide/desktop-app.md](guide/desktop-app.md). Sol şeritte artık **Görevler** bölümü de var (arka planda yürüttüğü sorumluluklar ve onay kutusu).
+
 `install.ps1` masaüstüne ve Başlat menüsüne **ALICE** kısayolu koyuyor (Windows tuşuna basıp "ALICE" yazarak da bulunur), çift tıklayınca konsol penceresi olmadan uygulama açılıyor. Elle açmak için `alice app`, kısayolu yeniden oluşturmak için `alice shortcut`. `alice app --cwd <klasör>` başlangıç klasörünü, `--mode` izin modunu, `--window none` pencere açmadan sadece adresi yazmayı seçer. Klasör verilmezse sırayla `config.toml` `[app] workspace`, son kullanılan klasör ya da `Belgeler\ALICE` açılır.
 
 ![Başlangıç](app-baslangic.png)
