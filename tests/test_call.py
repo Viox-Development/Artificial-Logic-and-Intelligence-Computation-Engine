@@ -67,7 +67,7 @@ def test_user_calls_alice_and_gets_spoken_answer_sentence_by_sentence(setup):
     assert spoken == ["Saat beşi on geçiyor.", "Bir de yağmur başlamış, şemsiye al."] and not done["end"]
     # The call has its own chat, with the spoken-conversation instruction and the time.
     sent = prov.calls[-1]["messages"]
-    assert "Telefon görüşmesi" in sent[0]["content"] and "saat kaç" in sent[-1]["content"]
+    assert "Phone call" in sent[0]["content"] and "saat kaç" in sent[-1]["content"]
     assert [x["who"] for x in state.calls.view()["lines"]] == ["alice", "user", "alice"]
 
 
@@ -103,7 +103,7 @@ def test_alice_rings_user_who_answers(setup):
     spoken, _ = wait_for(events, lambda e: e["type"] == "call_audio")
     assert spoken["text"] == "Selam, ilacını içme vakti."
     ctx_msgs = state.calls.call.chat.agent.messages
-    assert "Kullanıcıyı telefondan aradın (Hatırlatma: ilaç)" in ctx_msgs[-2]["content"]
+    assert "You called the user's phone (Hatırlatma: ilaç)" in ctx_msgs[-2]["content"]
 
 
 def test_declined_and_missed_calls(setup, monkeypatch):
@@ -223,7 +223,7 @@ def test_live_call_streams_mic_and_voice_like_the_pc(setup):
     assert base64.b64decode(pcm["pcm"]) == b"\x01\x00" * 480
     assert any(e["type"] == "call_text" and e["who"] == "alice" and e["text"] == "Efendim?" for e in seen)
     rt = made[0]
-    assert "selam" in rt.firsts[0] and "canlı sesle" in rt.agent.messages[0]["content"]
+    assert "greeting" in rt.firsts[0] and "live voice" in rt.agent.messages[0]["content"]
     assert state.call_action("mic", {"id": r["id"], "pcm": base64.b64encode(b"\x02\x00" * 960).decode()})["ok"]
     end = time.time() + 5
     while len(rt.frames) < 2 and time.time() < end:

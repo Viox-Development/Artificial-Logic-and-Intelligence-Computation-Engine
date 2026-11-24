@@ -30,18 +30,20 @@ from typing import Any, Callable
 RING_SECONDS = 45.0
 END_MARK = "[kapat]"
 GREETINGS = ("Efendim?", "Alo, söyle.", "Söyle bakalım, dinliyorum.")
-CALL_PROMPT = """# Telefon görüşmesi
-Şu an kullanıcıyla ALICE uygulaması üzerinden telefonda konuşuyorsun; söylediklerin sesli okunuyor.
-- Kısa ve doğal konuş: genelde 1-2 cümle. Liste, kod, bağlantı, tablo, emoji yok.
-- Bir iş istenirse ilgili aracı hemen çağır. Sürecek bir işse önce tek kısa cümleyle ne yaptığını söyle.
-- Kullanıcı görüşmeyi bitirmek isterse ("kapat", "görüşürüz", "hoşça kal", "tamam bu kadar") kısaca vedalaş ve
-  cevabının en sonuna [kapat] yaz.
-- Sen aradıysan neden aradığını ilk cümlende söyledin; kullanıcının cevabına göre devam et."""
-LIVE_CALL_PROMPT = """# Telefon görüşmesi
-Şu an kullanıcıyla ALICE uygulaması üzerinden telefonda, canlı sesle konuşuyorsun.
-- Kısa ve doğal konuş: genelde 1-2 cümle. Liste, kod, bağlantı okuma.
-- Bir iş istenirse ilgili aracı hemen çağır; sürecekse önce tek kısa cümleyle ne yaptığını söyle.
-- Kullanıcı görüşmeyi bitirmek isterse kısaca vedalaş; görüşmeyi uygulama kapatır."""
+CALL_PROMPT = """# Phone call
+You are now talking with the user on the phone through the ALICE app; what you say is read aloud. Speak Turkish.
+- Speak short and natural: usually 1-2 sentences. No lists, code, links, tables or emoji.
+- If a job is asked for, call the relevant tool right away. If it will take a while, first say what you are doing in
+  one short sentence.
+- If the user wants to end the call ("kapat", "görüşürüz", "hoşça kal", "tamam bu kadar"), say a short goodbye and
+  write [kapat] at the very end of your answer.
+- If you made the call, you said why in your first sentence; carry on according to the user's answer."""
+LIVE_CALL_PROMPT = """# Phone call
+You are now talking with the user on the phone through the ALICE app, by live voice. Speak Turkish.
+- Speak short and natural: usually 1-2 sentences. Don't read out lists, code or links.
+- If a job is asked for, call the relevant tool right away; if it will take a while, first say what you are doing in
+  one short sentence.
+- If the user wants to end the call, say a short goodbye; the app hangs up."""
 PCM_FRAME = 960  # 16 kHz PCM16, 30 ms: same as the voice assistant's microphone frame
 _BYE = re.compile(r"^\s*(kapat(ıyorum|abilirsin)?|görüşürüz|hoşça ?kal|bay ?bay|güle ?güle|tamam,? (bu kadar|kapat))\W*$",
                   re.I)
@@ -219,13 +221,13 @@ class CallManager:
             self.call = c
         c.live = self._live_ok()
         if c.live:
-            self._new_chat(c, "[Kullanıcı seni ALICE uygulamasından aradı, telefonu açtın.]")
+            self._new_chat(c, "[The user called you from the ALICE app and you picked up.]")
             self._state(c)
-            self._run_live(c, "[Kullanıcı seni ALICE uygulamasından aradı, telefonu açtın. Kısa ve doğal bir selam ver: "
-                              "\"Efendim?\" ya da \"Alo, söyle\" gibi.]")
+            self._run_live(c, "[The user called you from the ALICE app and you picked up. Give a short, natural greeting "
+                              "in Turkish, such as \"Efendim?\" or \"Alo, söyle\".]")
             return {"ok": True, **c.view()}
         greet = random.choice(GREETINGS)
-        self._new_chat(c, "[Kullanıcı seni ALICE uygulamasından aradı, telefonu açtın.]")
+        self._new_chat(c, "[The user called you from the ALICE app and you picked up.]")
         c.chat.agent.messages.append({"role": "assistant", "content": greet})
         c.lines.append({"who": "alice", "text": greet})
         self._state(c)
@@ -238,12 +240,12 @@ class CallManager:
             return {"ok": c.state == "active", **c.view()}
         c.state, c.answered = "active", time.time()
         c.live = self._live_ok()
-        note = f"[Kullanıcıyı telefondan aradın ({c.reason or 'neden belirtilmedi'}). Kullanıcı açtı.]"
+        note = f"[You called the user's phone ({c.reason or 'no reason given'}). The user picked up.]"
         if c.live:
             self._new_chat(c, note)
             c.lines.append({"who": "alice", "text": c.opening})
             self._state(c)
-            self._run_live(c, f"{note} İlk cümlen tam olarak şu olsun, sonra kullanıcıyı dinle: {c.opening}")
+            self._run_live(c, f"{note} Make your first sentence exactly this, then listen to the user: {c.opening}")
             return {"ok": True, **c.view()}
         self._new_chat(c, note)
         c.chat.agent.messages.append({"role": "assistant", "content": c.opening})
