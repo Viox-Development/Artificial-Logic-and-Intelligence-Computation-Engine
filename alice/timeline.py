@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 DEFAULTS: dict[str, Any] = {"enabled": False, "every": 30, "keep_days": 30, "exclude": []}
 EXCLUDE_APPS = {"keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "lastpass.exe", "dashlane.exe",
@@ -56,7 +57,7 @@ def _fernet():
         from cryptography.fernet import Fernet
         from keyring.errors import KeyringError
     except ImportError:
-        raise RuntimeError("zaman çizgisi şifrelemesi için paketler eksik: pip install 'alice-harness[timeline]' "
+        raise RuntimeError("packages for timeline encryption are missing: pip install 'alice-harness[timeline]' "
                            "(keyring, cryptography)") from None
     try:
         key = keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
@@ -64,10 +65,10 @@ def _fernet():
             keyring.set_password(KEYRING_SERVICE, KEYRING_USER, Fernet.generate_key().decode("ascii"))
             key = keyring.get_password(KEYRING_SERVICE, KEYRING_USER)  # read back: the backend really stored it
         if not key:
-            raise RuntimeError("anahtar deposuna yazılan anahtar geri okunamadı")
+            raise RuntimeError("the key written to the keyring could not be read back")
     except KeyringError as e:
-        raise RuntimeError("zaman çizgisi için anahtar deposu kullanılamıyor (Linux'ta Secret Service: "
-                           f"gnome-keyring ya da KWallet çalışmalı): {e}") from e
+        raise RuntimeError("the keyring is not available for the timeline (on Linux the Secret Service must run: "
+                           f"gnome-keyring or KWallet): {e}") from e
     _FERNET.append(Fernet(key.encode("ascii")))
     return _FERNET[0]
 
@@ -94,7 +95,7 @@ def protect(data: bytes) -> bytes:
     buf = ctypes.create_string_buffer(data, len(data))
     src, dst = blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), blob()
     if not ctypes.windll.crypt32.CryptProtectData(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(dst)):
-        raise OSError("CryptProtectData başarısız")
+        raise OSError("CryptProtectData failed")
     try:
         return ctypes.string_at(dst.pbData, dst.cbData)
     finally:
@@ -109,8 +110,8 @@ def unprotect(data: bytes) -> bytes:
         try:
             return f.decrypt(data)
         except InvalidToken:
-            raise OSError("kayıt bu anahtarla çözülemedi (başka bir hesapta ya da anahtar değişmeden önce "
-                          "yazılmış)") from None
+            raise OSError("the record could not be decrypted with this key (written on another account or before the "
+                          "key changed)") from None
     import ctypes
 
     blob = _blob_cls()
@@ -118,7 +119,7 @@ def unprotect(data: bytes) -> bytes:
     src, dst = blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), blob()
     if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(src), None, None, None, None, 0x1,
                                                     ctypes.byref(dst)):
-        raise OSError("CryptUnprotectData başarısız")
+        raise OSError("CryptUnprotectData failed")
     try:
         return ctypes.string_at(dst.pbData, dst.cbData)
     finally:
@@ -299,7 +300,7 @@ class Recorder:
             from alice.reflex.perceive import ocr_image
 
             lines = ocr_image(img)
-        text = "\n".join(t for t, _ in lines).strip()
+        text = "\n".join(t for t, _box in lines).strip()
         if not text or text == self._last_text:
             return False
         self._last_text = text
@@ -334,7 +335,7 @@ class Recorder:
 
 def fmt(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "Zaman çizgisinde bulunamadı."
+        return "Nothing found in the timeline."
     return "\n".join(f"- {datetime.fromtimestamp(r['ts']):%d.%m %H:%M} · {r['app']} · {r['title'][:60]}\n  {r['snippet']}"
                      for r in rows)
 
@@ -347,14 +348,15 @@ def timeline_cmd(argv: list[str]) -> int:
             print(fmt(tl.search(" ".join(argv[1:]))))
             return 0
         if sub == "wipe":
-            print(f"{tl.wipe()} kayıt silindi.")
+            print(_("{n} records deleted.", n=tl.wipe()))
             return 0
         if sub == "status":
             from alice.config import load_config
 
             on = bool((load_config().data.get("timeline") or {}).get("enabled"))
             size = db_path().stat().st_size / 1e6 if db_path().exists() else 0
-            print(f"zaman çizgisi: {'açık' if on else 'kapalı'}, {tl.count()} kayıt, {size:.1f} MB ({db_path()})")
+            print(_("timeline: {state}, {n} records, {size} MB ({path})", state=_("on") if on else _("off"), n=tl.count(),
+                    size=f"{size:.1f}", path=db_path()))
             return 0
     finally:
         tl.close()

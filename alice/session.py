@@ -88,7 +88,7 @@ def archive(session_id: str, messages: list[dict[str, Any]]) -> None:
     for m in strip_images(messages):
         m = {k: v for k, v in m.items() if k != "reasoning_content"}
         if m.get("role") == "tool" and isinstance(m.get("content"), str) and len(m["content"]) > ARCHIVE_TOOL_CHARS:
-            m["content"] = m["content"][:ARCHIVE_TOOL_CHARS] + "\n…(kısaltıldı)"
+            m["content"] = m["content"][:ARCHIVE_TOOL_CHARS] + "\n…(shortened)"
         lines.append(json.dumps(m, ensure_ascii=False))
     path = archive_path(session_id)
     block = ("\n".join(lines) + "\n").encode("utf-8")
@@ -373,8 +373,9 @@ def set_meta(session_id: str, **fields: Any) -> dict[str, Any]:
 
 
 TITLE_PROMPT = (
-    "Aşağıdaki mesaj bir sohbetin ilk isteği. Sohbet listesinde görünecek kısa bir başlık yaz: isteğin konusunu "
-    "anlatan 3-6 kelime, mesajın dilinde, baş harfi büyük. Tırnak, nokta, emoji ve açıklama yok; yalnız başlık.")
+    "The message below is the first request of a chat. Write a short title to show in the chat list: 3-6 words "
+    "about what the request is, in the language of the message, starting with a capital letter. No quotes, full "
+    "stop, emoji or explanation; only the title.")
 
 
 def make_title(router: Any, prompt: str) -> str:

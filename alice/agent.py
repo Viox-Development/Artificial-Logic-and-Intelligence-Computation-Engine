@@ -187,7 +187,7 @@ def parse_args(raw: str | dict | None) -> dict[str, Any]:
         return raw
     if raw is not None and not isinstance(raw, str):
         # Some providers send the arguments as a list/number: don't crash, return it to the model as an error.
-        raise json.JSONDecodeError("argümanlar obje değil", str(raw), 0)
+        raise json.JSONDecodeError("arguments are not an object", str(raw), 0)
     if not raw or not raw.strip():
         return {}
     try:
@@ -200,7 +200,7 @@ def parse_args(raw: str | dict | None) -> dict[str, Any]:
             raise
         val = json.loads(m.group(0))
     if not isinstance(val, dict):
-        raise json.JSONDecodeError("argümanlar obje değil", str(raw), 0)
+        raise json.JSONDecodeError("arguments are not an object", str(raw), 0)
     return val
 
 
@@ -597,11 +597,11 @@ class Agent:
                                        if b)
                 new = with_memory(self.messages[0]["content"], profile)
                 if new != self.messages[0]["content"]:
-                    self.cache_breaks.expect("hafıza bölümü yenilendi")
+                    self.cache_breaks.expect("memory section refreshed")
                 self.messages[0]["content"] = new
                 self._memory_version = version
         except Exception:  # noqa: BLE001 - a memory error must not stop the conversation
-            log.debug("hafıza profili yenilenemedi", exc_info=True)
+            log.debug("could not refresh the memory profile", exc_info=True)
 
     def _recall(self, user_text: str) -> str:
         if self.memory is None or self.is_child:
@@ -612,7 +612,7 @@ class Agent:
                                       use_model=False if voice or self.role == "voice" else None,
                                       context=self._recent_chat_text())
         except Exception:  # noqa: BLE001
-            log.debug("hafızadan hatırlama başarısız", exc_info=True)
+            log.debug("recall from memory failed", exc_info=True)
             return ""
 
     def _recent_chat_text(self, turns: int = 3, chars: int = 1500) -> str:
@@ -626,7 +626,7 @@ class Agent:
             role, content = m.get("role"), m.get("content")
             if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
                 continue
-            out.append(f"{'Kullanıcı' if role == 'user' else 'ALICE'}: {' '.join(content.split())[:500]}")
+            out.append(f"{'User' if role == 'user' else 'ALICE'}: {' '.join(content.split())[:500]}")
             if role == "user":
                 users += 1
                 if users >= turns:
@@ -642,7 +642,7 @@ class Agent:
                                sid=str(self.ctx.state.get("session_id") or ""))
             self.memory.learn(user_text, reply, cwd=self.ctx.cwd, wrote=wrote)
         except Exception:  # noqa: BLE001
-            log.debug("tur hafızaya yazılamadı", exc_info=True)
+            log.debug("could not write the turn to memory", exc_info=True)
         self._feed_buddy(user_text, reply)
         self._update_magic_docs()
 
@@ -672,7 +672,7 @@ class Agent:
             try:
                 buddy.on_turn(self.config, self.router, user_text, reply)
             except Exception:  # noqa: BLE001
-                log.debug("buddy güncellenemedi", exc_info=True)
+                log.debug("could not update buddy", exc_info=True)
 
         threading.Thread(target=work, daemon=True, name="alice-buddy").start()
 
@@ -1137,7 +1137,7 @@ class Agent:
             if self.on_step is not None:
                 self.on_step()
         except Exception:  # noqa: BLE001 - failing to write the notice must not fail the turn
-            log.debug("durma bildirimi yazılamadı", exc_info=True)
+            log.debug("could not write the stop notice", exc_info=True)
         return text
 
     def _unfinished(self, text: str) -> str:
@@ -1234,7 +1234,7 @@ class Agent:
         if "res" not in box:
             give_up.set()
             if worker.is_alive():
-                log.debug("iddia kontrolü süre sınırını aştı; istek iptal edildi, cevap olduğu gibi bırakıldı")
+                log.debug("claim check ran out of time; request cancelled, answer left as it was")
             return ""
         try:
             res = box["res"]
@@ -1465,7 +1465,7 @@ class Agent:
             fut = pool.submit(self._run_tool, tool, args)
             self.__dict__.setdefault("_early", {})[call["id"]] = (args, tool, summary, fut)
         except Exception:  # noqa: BLE001 - early start only speeds things up; if it fails, the normal path runs
-            log.debug("araç erken başlatılamadı", exc_info=True)
+            log.debug("could not start the tool early", exc_info=True)
 
     def _early_clear(self) -> None:
         self.__dict__["_early"] = {}
@@ -1577,7 +1577,7 @@ class Agent:
 
                 record_answer(tool, args, self.ctx.cwd, risk, ans)
             except Exception:  # noqa: BLE001 - failing to write the log must not stop the work
-                log.debug("izin cevabı kaydedilemedi", exc_info=True)
+                log.debug("could not save the permission answer", exc_info=True)
             if ans == "a":
                 self.permissions.always_allow.add(name)
             elif ans == "p" and risk in (DANGER, SEND):
@@ -1865,7 +1865,7 @@ class Agent:
             settings = {"s": self.router.last_settings.get(self.role), "ttl": self._cache_ttl_latched}
             self.cache_breaks.before(self.messages, self._specs() if specs is None else specs, ref, settings)
         except Exception:  # noqa: BLE001 - diagnostics must never break a turn
-            log.debug("cache snapshot alınamadı", exc_info=True)
+            log.debug("could not take a cache snapshot", exc_info=True)
 
     def _cache_after(self, res: ChatResult) -> None:
         try:
@@ -1879,7 +1879,7 @@ class Agent:
                                                            "ttl": self._cache_ttl_latched})
             cleared = int((res.usage or {}).get("context_cleared_tokens") or 0)
             if cleared:
-                self.cache_breaks.expect(f"sunucu eski araç sonuçlarını temizledi ({cleared:,} token)")
+                self.cache_breaks.expect(f"the server cleared old tool results ({cleared:,} tokens)")
                 self.stats["context_cleared"] = self.stats.get("context_cleared", 0) + cleared
             brk = self.cache_breaks.after(cached_tokens(res.usage or {}), ref, self._cache_ttl(ref))
             if brk is not None and not brk.expected:
@@ -1887,13 +1887,13 @@ class Agent:
                 if self.config.agent.get("cache_break_notice", False):
                     self.ui.info(brk.text())
         except Exception:  # noqa: BLE001
-            log.debug("cache karşılaştırması yapılamadı", exc_info=True)
+            log.debug("could not compare the cache", exc_info=True)
 
     def _prune_images(self) -> None:
         idx = [i for i, m in enumerate(self.messages) if m.get("_image")]
         if len(idx) <= self.keep_images + IMAGE_SLACK and not (self._cache_cold() and len(idx) > self.keep_images):
             return  # pruning on every new screenshot broke the cache at every step: prune in a batch
-        self.cache_breaks.expect("eski ekran görüntüleri budandı")
+        self.cache_breaks.expect("old screenshots pruned")
         for i in idx[:-self.keep_images] if self.keep_images else idx:
             self.messages[i] = {"role": "user", "content": SHOT_REMOVED, "_image": False}
 
@@ -1910,7 +1910,7 @@ class Agent:
             return
         if self.config.agent.get("context_editing", False) and self._on_claude_api():
             return  # the Claude API server clears old tool results itself (context editing): history stays intact
-        self.cache_breaks.expect("eski araç çıktıları kısaltıldı")
+        self.cache_breaks.expect("old tool outputs shortened")
         for i in todo:
             c = self.messages[i]["content"]
             if len(c) > OLD_OUTPUT_CHARS * 1.5:
@@ -2032,7 +2032,7 @@ class Agent:
                 self.ui.info(_("summarizing failed: {error}", error=e))
                 return False
             summary = (res.text or "").strip()
-        self.cache_breaks.expect("konuşma özetlendi")
+        self.cache_breaks.expect("conversation summarised")
         self._reset_effort_latch()  # the prefix is rewritten anyway: the current level can take over
         if not _valid_summary(summary):
             # The model returned tool-call text or a copy of the transcript instead of a summary (11 November: "<tool
@@ -2091,7 +2091,7 @@ class Agent:
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001 - falls back to the transcript summary
-            log.debug("önbellekli özetleme başarısız: %s", e)
+            log.debug("cached summarisation failed: %s", e)
             return ""
         finally:
             self.router.last_settings.clear()
