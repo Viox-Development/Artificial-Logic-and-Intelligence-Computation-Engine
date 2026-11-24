@@ -21,7 +21,7 @@ def run(cmd: list[str], timeout: float = 15, encoding: str | None = None) -> sub
                               creationflags=flags)
     except subprocess.TimeoutExpired as e:
         # The tools catch OSError, but a raw TimeoutExpired used to reach the user as a long command line.
-        raise TimeoutError(f"{Path(cmd[0]).stem} {timeout:g} sn içinde cevap vermedi") from e
+        raise TimeoutError(f"{Path(cmd[0]).stem} did not answer within {timeout:g} s") from e
 
 
 def local_ip() -> str:
@@ -143,7 +143,7 @@ def devices(sweep: bool = True) -> list[dict[str, str]]:
 def magic_packet(mac: str) -> bytes:
     hexs = re.sub(r"[^0-9a-fA-F]", "", mac)
     if len(hexs) != 12:
-        raise ValueError(f"geçersiz MAC adresi: {mac}")
+        raise ValueError(f"invalid MAC address: {mac}")
     return b"\xff" * 6 + bytes.fromhex(hexs) * 16
 
 

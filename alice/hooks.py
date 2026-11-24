@@ -157,14 +157,14 @@ def _save(hooks: list[Hook]) -> None:
 
 def add_hook(event: str, command: str, matcher: str = "", timeout: float = 30.0, on_failure: str = "ignore") -> Hook:
     if event not in EVENTS:
-        raise ValueError(f"bilinmeyen olay: {event} (olaylar: {', '.join(EVENTS)})")
+        raise ValueError(f"unknown event: {event} (events: {', '.join(EVENTS)})")
     if not command.strip():
-        raise ValueError("komut boş")
+        raise ValueError("the command is empty")
     if matcher:
         try:
             re.compile(matcher)
         except re.error as e:
-            raise ValueError(f"matcher geçerli bir regex değil: {e}") from e
+            raise ValueError(f"matcher is not a valid regex: {e}") from e
     h = Hook(event, command.strip(), matcher.strip(), max(1.0, min(float(timeout), 600.0)),
              "block" if on_failure == "block" else "ignore")
     _save(file_hooks() + [h])
@@ -174,7 +174,7 @@ def add_hook(event: str, command: str, matcher: str = "", timeout: float = 30.0,
 def remove_hook(index: int) -> Hook:
     rows = file_hooks()
     if not 0 <= index < len(rows):
-        raise ValueError(f"böyle bir hook yok: {index}")
+        raise ValueError(f"no such hook: {index}")
     gone = rows.pop(index)
     _save(rows)
     return gone

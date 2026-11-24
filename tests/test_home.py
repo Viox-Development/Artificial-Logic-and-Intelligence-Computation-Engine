@@ -557,7 +557,7 @@ def test_pair_timeout_is_explained(monkeypatch):
 def test_run_timeout_becomes_short_timeout_error():
     import sys
 
-    with pytest.raises(TimeoutError, match="cevap vermedi"):
+    with pytest.raises(TimeoutError, match="did not answer"):
         net.run([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.5)
 
 

@@ -304,7 +304,7 @@ class CallManager:
                 reply = chat.agent.run_turn(with_clock(text)) or ""
             except Exception as e:  # noqa: BLE001 - keep call from dropping
                 reply = ""
-                self._say(c, "Bir sorun çıktı, tekrar söyler misin?", turn)
+                self._say(c, _("Something went wrong, could you say that again?"), turn)
                 self.publish({"type": "info", "text": f"arama: {e}"})
             finally:
                 chat.queued = False
@@ -476,7 +476,7 @@ class CallManager:
         msg = c.chat.agent.messages[0]
         msg["content"] = str(msg["content"]).replace(LIVE_CALL_PROMPT, CALL_PROMPT)
         self._state(c)
-        self._say(c, "Canlı bağlantı koptu, normal görüşmeye geçtim. Söyle.")
+        self._say(c, _("The live connection dropped, I switched to a normal call. Go ahead."))
         self.publish({"type": "call_turn_done", "id": c.id, "turn": c.turn, "end": False})
 
     def mic(self, cid: str, pcm: bytes) -> dict[str, Any]:

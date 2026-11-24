@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from alice.config import alice_home
+from alice.i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class CDPPage:
 
     def send(self, method: str, params: dict[str, Any] | None = None, timeout: float = 15.0) -> dict[str, Any]:
         if self.closed:
-            raise BrowserError("sekme bağlantısı kapandı")
+            raise BrowserError(_("the tab connection closed"))
         mid = next(self._ids)
         ev, box = threading.Event(), {}
         self._waiting[mid] = (ev, box)
@@ -254,7 +255,7 @@ class BuiltinBrowser:
                 return
             exe = find_chromium()
             if not exe:
-                raise BrowserError("Chromium tabanlı tarayıcı bulunamadı (Edge, Chrome). ALICE_CHROMIUM ile yol ver.")
+                raise BrowserError(_("No Chromium-based browser found (Edge, Chrome). Give the path with ALICE_CHROMIUM."))
             self.profile.mkdir(parents=True, exist_ok=True)
             if not self._adopt_orphan():
                 self._launch(exe)
@@ -266,7 +267,7 @@ class BuiltinBrowser:
                     self._launch(exe)
                 if not self._renders():
                     self._kill()
-                    raise BrowserError("yerleşik tarayıcı açıldı ama sayfa çizemiyor")
+                    raise BrowserError(_("the built-in browser opened but can't draw the page"))
 
     def _adopt_orphan(self) -> bool:
         """A headless browser left over from an earlier run (the app restarted while it was open) still holds this
@@ -303,7 +304,7 @@ class BuiltinBrowser:
             except OSError:
                 time.sleep(0.2)
         self._kill()
-        raise BrowserError("yerleşik tarayıcı açılmadı")
+        raise BrowserError(_("the built-in browser did not open"))
 
     def _renders(self) -> bool:
         """Is the page really working: can a small expression be evaluated on a blank page within 5 s."""
@@ -433,7 +434,7 @@ class BuiltinBrowser:
     def screenshot_png(self) -> str:
         """Full-page-free PNG for the agent's own vision. The panel's viewport emulation is dropped first so the agent
         sees the real window, not the panel's crop."""
-        conn, _ = self.page()
+        conn, _page = self.page()
         if self._vp is not None:
             try:
                 conn.send("Emulation.clearDeviceMetricsOverride", timeout=5)
@@ -445,25 +446,25 @@ class BuiltinBrowser:
         return conn.send("Page.captureScreenshot", {"format": "png"}, timeout=15).get("data", "")
 
     def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
-        conn, _ = self.page()
+        conn, _page = self.page()
         base = {"x": x, "y": y, "button": button, "clickCount": count}
         conn.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
         conn.send("Input.dispatchMouseEvent", {"type": "mousePressed", **base})
         conn.send("Input.dispatchMouseEvent", {"type": "mouseReleased", **base})
 
     def scroll(self, x: float, y: float, dy: float) -> None:
-        conn, _ = self.page()
+        conn, _page = self.page()
         conn.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy})
 
     def type_text(self, text: str) -> None:
-        conn, _ = self.page()
+        conn, _page = self.page()
         conn.send("Input.insertText", {"text": text})
 
     def key(self, name: str, modifiers: int = 0) -> None:
-        conn, _ = self.page()
+        conn, _page = self.page()
         code = KEYS.get(name)
         if code is None:
-            raise BrowserError(f"bilinmeyen tuş: {name}")
+            raise BrowserError(_("unknown key: {name}", name=name))
         down = {"type": "rawKeyDown", "key": name, "code": name, "windowsVirtualKeyCode": code, "modifiers": modifiers}
         if name == "Enter":
             down = {**down, "type": "keyDown", "text": "\r"}
@@ -472,20 +473,20 @@ class BuiltinBrowser:
                                              "windowsVirtualKeyCode": code, "modifiers": modifiers})
 
     def navigate(self, url: str) -> str:
-        conn, _ = self.page()
+        conn, _page = self.page()
         url = _normalize(url)
         conn.send("Page.navigate", {"url": url}, timeout=30)
         return url
 
     def history(self, step: str) -> None:
-        conn, _ = self.page()
+        conn, _page = self.page()
         if step == "reload":
             conn.send("Page.reload")
         else:
             conn.send("Runtime.evaluate", {"expression": "history.back()" if step == "back" else "history.forward()"})
 
     def wait_load(self, timeout: float = 15.0) -> bool:
-        conn, _ = self.page()
+        conn, _page = self.page()
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             try:
@@ -498,7 +499,7 @@ class BuiltinBrowser:
         return False
 
     def logs(self, since: float = 0.0, errors_only: bool = True) -> list[dict[str, Any]]:
-        conn, _ = self.page()
+        conn, _page = self.page()
         return [r for r in list(conn.logs) if r["t"] >= since and (not errors_only or r["level"] in ("error", "warning"))]
 
 

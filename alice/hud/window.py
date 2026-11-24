@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from alice.hud import PORT, style
 from alice.hud.model import HudModel, parse
+from alice.i18n import _
 
 IS_WIN = sys.platform == "win32"
 
@@ -79,7 +80,7 @@ class Receiver:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                raw, _ = self.sock.recvfrom(65535)
+                raw, _addr = self.sock.recvfrom(65535)
             except socket.timeout:
                 continue
             except OSError:
@@ -579,6 +580,6 @@ def _demo(port: int, hud: dict[str, Any]) -> int:
         client.configure(port)
         for m in seed:
             client.send(m)
-        print("HUD zaten açık; deneme ona gönderildi.")
+        print(_("The HUD is already open; the test was sent to it."))
         return 0
     return code

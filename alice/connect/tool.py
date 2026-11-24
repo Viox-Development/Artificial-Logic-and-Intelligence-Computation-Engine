@@ -60,10 +60,10 @@ class ConnectTool(Tool):
     def run(self, ctx: ToolContext, action: str = "", **args: Any) -> ToolResult:
         act = self.m.actions.get(action)
         if act is None:
-            raise ToolError(f"{self.name}: bilinmeyen eylem {action!r}. Geçerli: {', '.join(sorted(self.m.actions))}")
+            raise ToolError(f"{self.name}: unknown action {action!r}. Valid: {', '.join(sorted(self.m.actions))}")
         hazır, sebep = ready(self.m)
         if not hazır:
-            raise ToolError(f"{self.m.label} hazır değil: {sebep}")
+            raise ToolError(f"{self.m.label} is not ready: {sebep}")
         limit = int(ctx.config.agent.get("tool_output_chars", 12000)) if ctx.config else 12000
         try:
             data = call(self.m, act, args)

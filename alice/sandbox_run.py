@@ -22,7 +22,7 @@ def main(argv: list[str]) -> int:
 
         lower_integrity()
     except Exception as e:  # noqa: BLE001
-        print(f"sandbox kurulamadı, komut çalıştırılmadı: {e}", file=sys.stderr)
+        print(f"could not set up the sandbox, the command was not run: {e}", file=sys.stderr)
         return 126
     # Output is passed through explicitly: a child started with subprocess.call and no console (CREATE_NO_WINDOW)
     # did not inherit our pipe ends; the output of every command in the test sandbox (including the tests of tools

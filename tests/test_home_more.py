@@ -85,7 +85,7 @@ def test_devices_keeps_only_own_subnet_and_names(monkeypatch):
 
 
 def test_magic_packet_rejects_bad_mac():
-    with pytest.raises(ValueError, match="geçersiz MAC"):
+    with pytest.raises(ValueError, match="invalid MAC"):
         net.magic_packet("aa:bb:cc")
 
 
@@ -96,7 +96,7 @@ def test_wifi_tool_wake_sends_to_subnet_broadcast_and_explains_bad_mac(monkeypat
     assert "sent" in out and sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
     monkeypatch.undo()
     monkeypatch.setattr(net, "local_ip", lambda: "192.168.1.34")
-    with pytest.raises(ToolError, match="geçersiz MAC"):
+    with pytest.raises(ToolError, match="invalid MAC"):
         Wifi().run(_ctx(tmp_path), action="wake", mac="zz")
 
 
@@ -499,7 +499,7 @@ def test_samsung_power_with_bad_saved_mac_is_tool_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(samsung, "info", down)
     ctx = _ctx(tmp_path, samsung_tv={"host": "192.168.1.60", "mac": "bozuk"})
-    with pytest.raises(ToolError, match="geçersiz MAC"):
+    with pytest.raises(ToolError, match="invalid MAC"):
         SamsungTV().run(ctx, action="power", state="on")
 
 

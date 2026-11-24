@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from alice.config import alice_home
+from alice.i18n import _
 
 MAX_LISTED = 40
 
@@ -146,13 +147,13 @@ def save_agent(name: str, description: str, prompt: str, tools: list[str] | None
     where=project: <proje>/.alice/agents (only in that project; can be shared through the repo)."""
     name = (name or "").strip().lower().replace(" ", "-")
     if not _AGENT_NAME.match(name):
-        raise ValueError("ad küçük harf, rakam, - ve _ olmalı (en çok 40), ör. 'test-yazici'")
+        raise ValueError(_("the name must be lowercase letters, digits, - and _ (at most 40), e.g. 'test-writer'"))
     if not (description or "").strip() or not (prompt or "").strip():
-        raise ValueError("açıklama ve talimat (prompt) gerekli")
+        raise ValueError(_("a description and instructions (prompt) are needed"))
     existing = load_agents(cwd).get(name)
     if where == "project":
         if cwd is None:
-            raise ValueError("proje klasörü yok")
+            raise ValueError(_("no project folder"))
         folder = Path(cwd) / ".alice" / "agents"
     else:
         folder = alice_home() / "agents"
@@ -175,7 +176,7 @@ def save_agent(name: str, description: str, prompt: str, tools: list[str] | None
 def delete_agent(name: str, cwd: Path | None = None) -> Path:
     adef = load_agents(cwd).get((name or "").strip().lower())
     if adef is None or adef.path is None:
-        raise ValueError(f"böyle bir alt ajan yok: {name}")
+        raise ValueError(_("no such subagent: {name}", name=name))
     adef.path.unlink()
     return adef.path
 

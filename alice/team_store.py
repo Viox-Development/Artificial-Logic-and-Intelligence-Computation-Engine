@@ -112,7 +112,7 @@ def _tpl_file(name: str) -> Path:
     slug = re.sub(r"[^a-z0-9_-]+", "-", name.strip().lower().replace("ı", "i").replace("ş", "s").replace("ğ", "g")
                   .replace("ü", "u").replace("ö", "o").replace("ç", "c")).strip("-")[:40]
     if not slug:
-        raise ToolError("şablon adı boş")
+        raise ToolError("the template name is empty")
     return templates_dir() / f"{slug}.json"
 
 

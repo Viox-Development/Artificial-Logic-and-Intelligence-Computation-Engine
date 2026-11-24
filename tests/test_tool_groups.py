@@ -141,7 +141,7 @@ def test_load_tools_by_tool_name_and_all(project):
     # "all" is refused (it bloated every request and rewrote the cache): the tool list stays as it was.
     assert seen[2] == seen[1] and not seen[2] >= {t.name for t in builtin_tools()}
     res = [m for m in agent.messages if m["role"] == "tool"][-1]["content"]
-    assert "'all' kabul edilmiyor" in res
+    assert "'all' is not accepted" in res
 
 
 def test_calling_an_unloaded_tool_still_runs_and_loads_its_group(project):

@@ -81,7 +81,7 @@ def test_eksik_alan_ve_olmayan_akis():
     wa = apps.find("whatsapp")
     with pytest.raises(ValueError, match="eksik alan: mesaj"):
         wa.goal("send", {"kime": "Ahmet"})
-    with pytest.raises(ValueError, match="diye bir akış yok"):
+    with pytest.raises(ValueError, match="there is no flow called"):
         wa.goal("ucus", {})
 
 
