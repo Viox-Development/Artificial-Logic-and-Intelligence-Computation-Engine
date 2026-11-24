@@ -111,7 +111,7 @@ def _ctx(workdir: Path) -> ToolContext:
 def test_python_runs_without_shell_quoting(workdir):
     code = 'import json\nprint(json.dumps({"q": "it\'s \\"fine\\" $HOME \\\\ ok"}))'
     out = shell.RunCommand().run(_ctx(workdir), python=code).text
-    assert out.startswith("çıkış kodu 0") and '"it\'s \\"fine\\" $HOME \\\\ ok"' in out
+    assert out.startswith("exit code 0") and '"it\'s \\"fine\\" $HOME \\\\ ok"' in out
 
 
 def test_python_reports_its_error(workdir):

@@ -42,7 +42,7 @@ def test_hooks_tool_asks_before_adding_and_runs_test(home, workdir):
     out = t.run(ctx, "add", event="PostToolUse", command="echo tamam", matcher="edit_file")
     assert "eklendi" in out.text
     assert "0. PostToolUse [edit_file] echo tamam" in t.run(ctx, "list").text
-    assert "çıkış kodu 0" in t.run(ctx, "test", index=0).text and "tamam" in t.run(ctx, "test", index=0).text
+    assert "exit code 0" in t.run(ctx, "test", index=0).text and "tamam" in t.run(ctx, "test", index=0).text
     with pytest.raises(ToolError):
         t.run(ctx, "remove", index=5)
 

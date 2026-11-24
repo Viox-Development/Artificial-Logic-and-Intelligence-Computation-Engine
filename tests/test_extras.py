@@ -202,7 +202,7 @@ def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeyp
         time.sleep(0.3)
         with lock:
             seen["active"] -= 1
-        return ToolResult(f"çıkış kodu 0 {command}")
+        return ToolResult(f"exit code 0 {command}")
 
     monkeypatch.setattr(shell.RunCommand, "run", fake_run)
     calls = {"content": "", "tool_calls": [_cmd("a", "python a.py"), _cmd("b", "python b.py"), _cmd("c", "node c.js")]}
@@ -213,7 +213,7 @@ def test_independent_commands_in_one_reply_run_at_the_same_time(workdir, monkeyp
     assert seen["max"] == 3
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_msgs] == ["a", "b", "c"]  # results come back in the requested order
-    assert [m["content"] for m in tool_msgs] == [f"çıkış kodu 0 {c}" for c in ("python a.py", "python b.py", "node c.js")]
+    assert [m["content"] for m in tool_msgs] == [f"exit code 0 {c}" for c in ("python a.py", "python b.py", "node c.js")]
 
     # Two git commands on the same repo, and two installs, never run side by side (index.lock, half-finished install)
     seen.update(active=0, max=0, order=[])
