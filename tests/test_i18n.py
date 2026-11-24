@@ -297,3 +297,19 @@ def test_catalogue_keys_are_sorted():
     # so they don't conflict with each other.
     keys = list(json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8")))
     assert keys == sorted(keys), "sort alice/locales/tr.json: json.dumps(..., indent=1, sort_keys=True)"
+
+
+def test_key_catalogue_descriptions_have_turkish_translations():
+    # env_catalog() passes the English descriptions of ENV_TEMPLATE through _(), which the literal scan can't see.
+    from alice import config
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    raw = config._ if hasattr(config, "_") else None
+    assert raw is not None
+    config._ = lambda text, **kw: text  # read the English catalogue
+    try:
+        cat = config.env_catalog()
+    finally:
+        config._ = raw
+    missing = sorted({e["help"] for e in cat if e["help"] and e["help"] not in tr} | {e["field"] for e in cat if e["field"] not in tr})
+    assert not missing, "add these to alice/locales/tr.json:\n" + "\n".join(missing)

@@ -297,7 +297,7 @@ def test_broken_config_falls_back_to_defaults(tmp_path, monkeypatch, capsys):
     p.write_text("[agent\nbozuk = ", encoding="utf-8")
     monkeypatch.setenv("ALICE_HOME", str(tmp_path))
     cfg = load_config(path=p)
-    assert cfg.data and "okunamadı" in capsys.readouterr().err
+    assert cfg.data and "could not read" in capsys.readouterr().err
 
 
 def test_config_with_bom_loads(tmp_path, monkeypatch):
