@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alice.i18n import _
 from alice.core.tasks import (PERMISSIONS, ROLES, TRIGGERS, Task, TaskBook, approval_view, describe_trigger,
                               inbox, task_view, template, template_list)
 
@@ -55,7 +56,7 @@ class TasksPanel:
     def log(self, task_id: str) -> dict[str, Any]:
         t = self.book.get(task_id)
         if t is None:
-            return {"ok": False, "error": "görev yok"}
+            return {"ok": False, "error": _("no such task")}
         return {"ok": True, "task": task_view(self.book, t), "log": self.book.entries(task_id, 100),
                 "approvals": [approval_view(self.book, a, {t.id: t.name})
                               for a in self.book.approvals(None, task_id, 30)]}
@@ -66,7 +67,7 @@ class TasksPanel:
     def action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self, f"_{action}", None)
         if fn is None or action.startswith("_"):
-            return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
+            return {"ok": False, "error": _("unknown action: {action}", action=action)}
         try:
             return fn(d)
         except (ValueError, KeyError, TypeError) as e:
@@ -81,28 +82,28 @@ class TasksPanel:
     def _create(self, d: dict[str, Any]) -> dict[str, Any]:
         base = template(str(d["template"])) if d.get("template") else {}
         if d.get("template") and base is None:
-            raise ValueError("böyle bir şablon yok")
+            raise ValueError(_("no such template"))
         t = self.book.save(Task.from_dict({**(base or {}), **self._fields(d)}))
-        self.book.log(t.id, "info", "görev oluşturuldu: " + describe_trigger(t.trigger))
+        self.book.log(t.id, "info", _("task created: ") + describe_trigger(t.trigger))
         return {"ok": True, "task": task_view(self.book, t)}
 
     def _update(self, d: dict[str, Any]) -> dict[str, Any]:
         t = self.book.get(str(d["id"]))
         if t is None:
-            raise ValueError("görev yok")
+            raise ValueError(_("no such task"))
         from dataclasses import asdict
 
         new = Task.from_dict({**asdict(t), **self._fields(d)})
         if new.trigger != t.trigger:  # a new source starts clean: its first look only records what is there
             self.book.set_state(t.id, seen=None, gh_last=None, event_since=None, armed=None, polled=0)
         self.book.save(new)
-        self.book.log(t.id, "info", "görev düzenlendi")
+        self.book.log(t.id, "info", _("task edited"))
         return {"ok": True, "task": task_view(self.book, new)}
 
     def _enable(self, d: dict[str, Any]) -> dict[str, Any]:
         on = bool(d.get("enabled", True))
         r = self._update({"id": d["id"], "enabled": on})
-        self.book.log(str(d["id"]), "info", "devam ettirildi" if on else "duraklatıldı")
+        self.book.log(str(d["id"]), "info", "devam ettirildi" if on else _("paused"))
         return r
 
     def _remove(self, d: dict[str, Any]) -> dict[str, Any]:
@@ -111,14 +112,14 @@ class TasksPanel:
     def _run(self, d: dict[str, Any]) -> dict[str, Any]:
         tid = str(d["id"])
         if self.book.get(tid) is None:
-            raise ValueError("görev yok")
+            raise ValueError(_("no such task"))
         self.book.set_state(tid, run_now=True, last_fire=0)
-        self.book.log(tid, "info", "şimdi çalıştır istendi")
+        self.book.log(tid, "info", _("run now requested"))
         return {"ok": True}
 
     def _forget(self, d: dict[str, Any]) -> dict[str, Any]:
         self.book.forget(str(d["id"]))
-        self.book.log(str(d["id"]), "info", "hafıza silindi")
+        self.book.log(str(d["id"]), "info", _("memory cleared"))
         return {"ok": True}
 
     def _parse(self, d: dict[str, Any]) -> dict[str, Any]:
@@ -128,14 +129,14 @@ class TasksPanel:
 
         text = str(d.get("text") or "").strip()
         if not text:
-            raise ValueError("ne yapmasını istediğini yaz")
+            raise ValueError(_("write what you want it to do"))
         if self.router is None:
             raise ValueError("model yok")
         msgs = [{"role": "user", "content": PARSE_PROMPT.format(groups=", ".join(sorted(groups.GROUPS)), text=text)}]
         res = self.router.chat("fast", msgs, temperature=0, max_tokens=700)
         data = extract_json(res.text)
         if not isinstance(data, dict):
-            raise ValueError("model görev döndürmedi")
+            raise ValueError(_("the model did not return a task"))
         draft = {"name": data.get("name") or text[:40], "responsibility": data.get("responsibility") or text,
                  "trigger": data.get("trigger") if isinstance(data.get("trigger"), dict) else {"type": "manual"},
                  "tools": [g for g in (data.get("tools") or []) if g in groups.GROUPS],

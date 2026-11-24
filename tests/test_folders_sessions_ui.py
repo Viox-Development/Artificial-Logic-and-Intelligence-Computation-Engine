@@ -61,7 +61,7 @@ def test_dirs_api_and_cwd_remembered(client):
     c, workdir = client
     (workdir / "alt").mkdir()
     d = c.get("/api/dirs", params={"path": str(workdir)}).json()
-    assert d["ok"] and [x["name"] for x in d["dirs"]] == ["alt"] and d["places"][0]["label"] == "Ev"
+    assert d["ok"] and [x["name"] for x in d["dirs"]] == ["alt"] and d["places"][0]["label"] == "Home"
     assert c.post("/api/dirs/mkdir", json={"parent": str(workdir), "name": "proje"}).json()["ok"]
     assert c.post("/api/cwd", json={"path": str(workdir / "proje")}).json()["ok"]
     assert c.get("/api/dirs", params={"path": str(workdir)}).json()["recent"][0] == str(workdir / "proje")

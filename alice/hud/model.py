@@ -11,12 +11,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from alice.i18n import _
+
 KINDS = ("arrow", "edge", "label", "card", "box", "progress", "cursor")
 CONTROL = ("clear", "toggle", "mode", "context", "history")
 # Density: auto is "game" in a game and "all" on the desktop. game: only threats, warnings and game-related;
 # quiet: only critical. A user setting like in game HUDs (reduce, not remove).
 MODES = ("auto", "all", "game", "quiet")
-MODE_NAMES = {"auto": "otomatik", "all": "hepsi", "game": "oyun", "quiet": "sessiz"}
+MODE_NAMES = {"auto": "automatic", "all": "all", "game": "game", "quiet": "quiet"}  # shown via _()
 GAME_KEEP = ("kill", "voice", "__mode__")  # still shown in game mode even at info level (id prefixes)
 HISTORY_MAX, HISTORY_SHOW = 8, 3
 MAX_ITEMS = 6          # at most this many items at once: the HUD informs, it does not cover the screen
@@ -106,7 +108,7 @@ class HudModel:
             value = str(msg.get("value") or "")
             self.mode = value if value in MODES else MODES[(MODES.index(self.mode) + 1) % len(MODES)]
             self.version += 1
-            self._put("label", {"text": f"HUD · {MODE_NAMES[self.mode]}", "icon": "sparkle"}, now, 2.0, "__mode__")
+            self._put("label", {"text": f"HUD · {_(MODE_NAMES[self.mode])}", "icon": "sparkle"}, now, 2.0, "__mode__")
             return True
         if kind == "context":
             game = bool(msg.get("game"))
@@ -152,7 +154,7 @@ class HudModel:
         """Recently missed notifications on one card (Ada is not clicked: it is opened with a shortcut)."""
         last = list(self.history)[-HISTORY_SHOW:][::-1]
         body = " · ".join(f"{t} {title}: {text[:60]}" if text else f"{t} {title}" for t, title, text in last)
-        self._put("card", {"title": "Son bildirimler", "text": body or "Henüz bildirim yok.", "icon": "clock"},
+        self._put("card", {"title": _("Recent notifications"), "text": body or _("No notifications yet."), "icon": "clock"},
                   now, 10.0, "__history__")
         return True
 

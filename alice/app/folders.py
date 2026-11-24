@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from alice.config import alice_home
+from alice.i18n import _
 
 RECENT_MAX = 8
 LIST_MAX = 400
@@ -53,10 +54,10 @@ def _first_dir(*names: str) -> Path | None:
 
 def places(clone_root: Path | None = None) -> list[dict[str, str]]:
     """Quick places: home, desktop, documents, downloads, GitHub, and (on Windows) drives if present."""
-    out: list[dict[str, str]] = [{"label": "Ev", "path": str(Path.home()), "icon": "home"}]
-    for label, icon, names in (("Masaüstü", "screen", ("Desktop", "Masaüstü")),
-                               ("Belgeler", "file", ("Documents", "Belgeler")),
-                               ("İndirilenler", "down", ("Downloads", "İndirilenler"))):
+    out: list[dict[str, str]] = [{"label": _("Home"), "path": str(Path.home()), "icon": "home"}]
+    for label, icon, names in ((_("Desktop"), "screen", ("Desktop", "Masaüstü")),
+                               (_("Documents"), "file", ("Documents", "Belgeler")),
+                               (_("Downloads"), "down", ("Downloads", "İndirilenler"))):
         p = _first_dir(*names)
         if p:
             out.append({"label": label, "path": str(p), "icon": icon})
@@ -68,7 +69,7 @@ def places(clone_root: Path | None = None) -> list[dict[str, str]]:
             if root.exists():
                 out.append({"label": f"{letter}:", "path": str(root), "icon": "disk"})
     else:
-        out.append({"label": "Kök", "path": "/", "icon": "disk"})
+        out.append({"label": _("Root"), "path": "/", "icon": "disk"})
     return out
 
 
@@ -80,12 +81,12 @@ def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
     except OSError:
         pass  # keep the unresolved path
     if not p.is_dir():
-        return {"ok": False, "error": f"klasör yok: {p}"}
+        return {"ok": False, "error": _("no such folder: {path}", path=p)}
     dirs: list[dict[str, Any]] = []
     try:
         entries = sorted(os.scandir(p), key=lambda e: e.name.casefold())
     except OSError as e:
-        return {"ok": False, "error": f"açılamadı: {e.strerror or e}"}
+        return {"ok": False, "error": _("could not open: {error}", error=e.strerror or e)}
     for e in entries:
         if not show_hidden and (e.name.startswith(".") or e.name.startswith("$")):
             continue
@@ -108,15 +109,15 @@ def listing(path: str, show_hidden: bool = False) -> dict[str, Any]:
 def make_dir(parent: str, name: str) -> dict[str, Any]:
     name = name.strip()
     if not name or name in (".", "..") or any(c in name for c in '/\\:*?"<>|'):
-        return {"ok": False, "error": "geçersiz klasör adı"}
+        return {"ok": False, "error": _("invalid folder name")}
     base = Path(parent).expanduser()
     if not base.is_dir():
-        return {"ok": False, "error": f"klasör yok: {base}"}
+        return {"ok": False, "error": _("no such folder: {path}", path=base)}
     target = base / name
     if target.exists():
-        return {"ok": False, "error": "bu adla bir şey zaten var"}
+        return {"ok": False, "error": _("something with this name already exists")}
     try:
         target.mkdir()
     except OSError as e:
-        return {"ok": False, "error": f"oluşturulamadı: {e.strerror or e}"}
+        return {"ok": False, "error": _("could not create: {error}", error=e.strerror or e)}
     return {"ok": True, "path": str(target)}

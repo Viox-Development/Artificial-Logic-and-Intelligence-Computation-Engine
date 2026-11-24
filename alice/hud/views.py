@@ -11,6 +11,7 @@ import re
 import time
 
 from alice.hud import client
+from alice.i18n import _
 
 CARD_TTL = {"critical": 12.0, "warn": 9.0, "info": 7.0}
 CLICK_PREVIEW = 0.4  # sec: ALICE's cursor slides and settles on the target, then actual click (preview action)
@@ -58,8 +59,8 @@ def click_target(x: float, y: float, action: str = "click", wait: bool = True) -
     """During computer use, ALICE's cursor slides to the click target, ring spreads on click (physical pixel)."""
     if not client.active:
         return False
-    label = {"double_click": "çift tıklıyorum", "right_click": "sağ tıklıyorum", "drag": "sürüklüyorum",
-             "move": "buraya gidiyorum", "scroll": "kaydırıyorum", "type": "yazıyorum"}.get(action, "tıklıyorum")
+    label = {"double_click": _("double-clicking"), "right_click": _("right-clicking"), "drag": _("dragging"),
+             "move": _("moving here"), "scroll": _("scrolling"), "type": _("typing")}.get(action) or _("clicking")
     ok = client.show("cursor", x=round(x), y=round(y), action=action, text=label, severity="info", ttl=1.5,
                      id="computer")
     if ok and wait:
@@ -74,7 +75,7 @@ def task_step(step: int) -> bool:
     """Status in Island while screen task is running: model thinks 5-15s between steps, don't leave HUD empty."""
     if not client.active:
         return False
-    text = f"Ekran görevi · {step}. adım" if step else "Ekran görevi · başlıyor"
+    text = _("Screen task · step {n}", n=step) if step else _("Screen task · starting")
     return client.show("label", text=text, icon="cursor", severity="info", ttl=TASK_TTL, id="task")
 
 
@@ -82,8 +83,9 @@ def task_end() -> bool:
     return client.clear("task") if client.active else False
 
 
-VOICE = {"listen": ("Dinliyorum", "wave"), "think": ("Düşünüyorum", "sparkle"), "speak": ("Konuşuyorum", "wave"),
-         "work": ("Çalışıyorum", "sparkle")}
+# Labels are English keys, shown in the interface language.
+VOICE = {"listen": ("I'm listening", "wave"), "think": ("I'm thinking", "sparkle"), "speak": ("I'm speaking", "wave"),
+         "work": ("I'm working", "sparkle")}
 VOICE_TTL, VOICE_REFRESH = 30.0, 20.0  # fades out automatically if stuck; refreshed on long listening
 _voice: dict = {"state": None, "detail": "", "at": 0.0}
 
@@ -100,6 +102,7 @@ def voice_state(state: str | None, detail: str = "") -> bool:
     if state not in VOICE:
         return client.clear("voice")
     text, icon = VOICE[state]
+    text = _(text)
     return client.show("label", text=f"{text} · {detail}" if detail else text, icon=icon, severity="info",
                        ttl=VOICE_TTL, id="voice")
 

@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from alice.config import Config, alice_home
+from alice.i18n import _
 
 
 def lan_ip() -> str:
@@ -241,15 +242,16 @@ def phone_cmd(argv: list[str]) -> int:
     console = Console(highlight=False)
     cfg = load_config()
     ps = PhoneServer(cfg, new_token="--new-token" in argv)
-    console.print(f"[bold magenta]ALICE telefon köprüsü[/] açık.\n"
-                  f"QR'yi telefonun kamerasıyla okut (aynı Wi-Fi): [bold]{ps.url}[/]\n"
-                  f"Uygulama kuruluysa \"ALICE ile aç\"ı seç; değilse sayfa tarayıcıda açılır, oradan kur.\n"
-                  f"Android uygulaması (doğrudan): {ps.app_url}\n"
-                  f"Projeler (izle, cevapla, onayla): {ps.projects_url}\n"
-                  f"Canlı saat verisi: POST {ps.watch_url}  başlık X-Alice-Token: {ps.state.token}  "
-                  'gövde {"hr": 88}')
+    console.print(_("[bold magenta]ALICE phone bridge[/] is on.\n"
+                    "Scan the QR with the phone's camera (same Wi-Fi): [bold]{url}[/]\n"
+                    "If the app is installed, choose \"Open with ALICE\"; otherwise the page opens in the browser, install it from there.\n"
+                    "Android app (direct): {app_url}\n"
+                    "Projects (watch, reply, approve): {projects_url}\n"
+                    "Live watch data: POST {watch_url}  header X-Alice-Token: {token}  ",
+                    url=ps.url, app_url=ps.app_url, projects_url=ps.projects_url, watch_url=ps.watch_url,
+                    token=ps.state.token) + 'body {"hr": 88}')
     print_qr(console, ps.url)
-    console.print("[dim]Windows güvenlik duvarı ilk açılışta izin isteyebilir (özel ağ). Ctrl+C çık[/]")
+    console.print("[dim]" + _("The Windows firewall may ask for permission on first start (private network).") + " " + _("Ctrl+C to quit") + "[/]")
     try:
         while True:
             time.sleep(3600)
@@ -272,7 +274,7 @@ def watch_cmd(argv: list[str]) -> int:
     with Store() as st:
         if sub == "import" and len(argv) > 1:
             added = import_gadgetbridge(Path(argv[1]).expanduser(), st)
-            console.print("[green]içe alındı:[/] " + (", ".join(f"{k} {v}" for k, v in added.items()) or "yeni veri yok"))
+            console.print("[green]" + _("imported:") + "[/] " + (", ".join(f"{k} {v}" for k, v in added.items()) or "yeni veri yok"))
             sub = "status"
         if sub == "status":
             for key in ("watch.hr", "watch.steps", "watch.stress", "watch.spo2"):
@@ -280,16 +282,15 @@ def watch_cmd(argv: list[str]) -> int:
                 if not c["count"] and c["last_age_s"] is None:
                     continue
                 age = c["last_age_s"]
-                age_s = "hiç" if age is None else (f"{age:.0f} sn önce" if age < 120 else f"{age / 60:.0f} dk önce"
-                                                   if age < 7200 else f"{age / 3600:.1f} sa önce")
+                age_s = _("never") if age is None else (_("{n} s ago", n=f"{age:.0f}") if age < 120 else _("{n} min ago", n=f"{age / 60:.0f}")
+                                                   if age < 7200 else _("{n} h ago", n=f"{age / 3600:.1f}"))
                 gap = c.get("median_gap_s")
-                gap_s = f", tipik aralık {gap:.0f} sn" if gap is not None else ""
-                console.print(f"[bold]{key}[/]: son 24 saatte {c['count']} örnek, son örnek {age_s}{gap_s}\n"
-                              f"  → {c['verdict']}")
+                gap_s = _(", typical gap {n} s", n=f"{gap:.0f}") if gap is not None else ""
+                console.print((f"[bold]{key}[/]: " + _("{count} samples in the last 24 hours, last sample {age}", count=c['count'], age=age_s)
+                              + f"{gap_s}\n  → {c['verdict']}"))
             if not st.keys("watch.*"):
-                console.print("[yellow]henüz saat verisi yok.[/] Gadgetbridge'de otomatik dışa aktarmayı aç, dosyayı "
-                              "bilgisayara senkronla ve config'te \\[watch] export_path'i ayarla; ya da "
-                              "alice watch import <Gadgetbridge.db>")
+                console.print("[yellow]" + _("no watch data yet.") + "[/] " + _("Turn on automatic export in Gadgetbridge, sync the file to the "
+                              "computer and set \\[watch] export_path in the config; or run alice watch import <Gadgetbridge.db>"))
             return 0
         console.print(watch_cmd.__doc__, markup=False)
         return 2
