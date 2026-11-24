@@ -49,8 +49,8 @@ def test_plan_mode_blocks_writes(workdir):
     agent, prov, _ = make_agent(script, workdir, mode="plan")
     agent.run_turn("x.txt oluştur")
     assert not (workdir / "x.txt").exists()
-    assert "Plan modundasın" in [m for m in agent.messages if m["role"] == "tool"][0]["content"]
-    assert "[PLAN MODU" in prov.calls[0]["messages"][1]["content"]
+    assert "plan mode" in [m for m in agent.messages if m["role"] == "tool"][0]["content"]
+    assert "[PLAN MODE" in prov.calls[0]["messages"][1]["content"]
     assert agent.messages[1]["_display"] == "x.txt oluştur"
 
 

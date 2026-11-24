@@ -248,3 +248,21 @@ def test_old_turkish_conversation_markers_are_still_recognized():
                                {"role": "user", "content": sess.NUDGE_PREFIX + "x", "_nudge": True},
                                {"role": "user", "content": "gerçek istek"}])
     assert first == "gerçek istek"
+
+
+def test_agent_notices_are_translated_and_old_wordings_are_still_read():
+    """DENIAL_HALT and BUDGET_HALT go through _(variable), which the scanner can't see: check them here. The markers and
+    error texts that other code matches are read in both their English and their old Turkish form."""
+    from alice import agent as ag
+    from alice import session as sess
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    for text in (ag.DENIAL_HALT, ag.BUDGET_HALT):
+        assert text in tr and _fields(text) == _fields(tr[text]), text[:40]
+    i18n.set_language("tr")
+    assert "durdum" in i18n._(ag.BUDGET_HALT, used=30, budget=20) and "30" in i18n._(ag.BUDGET_HALT, used=30, budget=20)
+    new, old = ag._TOO_BIG.search("g:m: request ~9000 tokens, model limit 4000"), ag._TOO_BIG.search("g:m: istek ~9000 token, model sınırı 4000")
+    assert new.group(3) == old.group(3) == "4000" and (new.group(1) or new.group(2)) == (old.group(1) or old.group(2)) == "9000"
+    assert sess.is_stopped(sess.STOPPED) and sess.is_stopped(sess.OLD_STOPPED) and not sess.is_stopped("done")
+    assert sess.strip_plan_note(sess.PLAN_NOTE + "x") == "x" and sess.strip_plan_note(sess.OLD_PLAN_NOTE + "y") == "y"
+    assert ag._CATALOG_RX.search("a\n\n# Loadable tools\nx") and ag._CATALOG_RX.search("a\n\n# Yüklenebilir araçlar\nx")

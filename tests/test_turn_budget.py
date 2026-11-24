@@ -14,7 +14,7 @@ def test_turn_halts_when_budget_spent(workdir):
     # FakeProvider spends 10 input + 5 output = 15 tokens per call: the 20-token budget runs out at the second step.
     agent, provs, _ = make_agent(_script(5), workdir, turn_token_budget=20)
     out = agent.run_turn("klasöre bak")
-    assert "token bütçesini" in out and "devam et" in out
+    assert "token budget" in out and "continue" in out
     assert sum(1 for m in agent.messages if m["role"] == "tool") == 2
     assert agent.messages[-1].get("_notice")  # also in the chat record, so the next turn knows the work is unfinished
 

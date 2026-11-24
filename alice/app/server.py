@@ -245,8 +245,6 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
 
     archive: old messages evicted from context by summarization (see session.archive). Prepended to the front;
     they have no index because they are not in agent history (cannot be rewound)."""
-    from alice.agent import PLAN_NOTE
-
     items: list[dict[str, Any]] = []
     if archive:
         items = [{k: v for k, v in it.items() if k != "mi"} for it in display_history([{"role": "system"}, *archive], tools)]
@@ -268,13 +266,12 @@ def display_history(messages: list[dict[str, Any]], tools: dict[str, Any] | None
                 items.append({"type": "info", "text": _("summarized up to here: ALICE remembers the above as a summary")
                               if items else _("the earlier conversation was summarized")})
             elif not sess.is_removed_screenshot(text):
-                if text.startswith(PLAN_NOTE):
-                    text = text[len(PLAN_NOTE):]
+                text = sess.strip_plan_note(text)
                 # A message inserted mid-turn while running has no rewind point: no index is assigned.
                 items.append({"type": "user", "text": text, "mi": None if m.get("_steer") else i,
                               "n_images": m.get("_user_images", 0)})
         elif role == "assistant":
-            if content and content != "Özeti aldım, kaldığım yerden devam ediyorum.":
+            if content and content not in (sess.ACK_SUMMARY, sess.OLD_ACK_SUMMARY):
                 items.append({"type": "assistant", "text": content})
             for tc in m.get("tool_calls") or []:
                 res = results.get(tc["id"], "")

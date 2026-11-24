@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.session import is_stopped
 
 NIGHT_HOURS = (3, 7)        # between these hours, once per night
 MORNING_HOUR = 8            # from this hour on, announced at the first suitable moment
@@ -254,7 +255,7 @@ def struggles(sessions: Path | None, since: float) -> list[Finding]:
                                            f"İstek: \"{ask[:100]}\"", n,
                                            "Ekranda beklenmedik bir pencere ya da hata olabilir; ekran işinin bu "
                                            "durumda durup ne gördüğünü söylemesini sağlayayım."))
-                if "durduruldu (kullanıcı kesti)" in text:
+                if is_stopped(text):
                     out.append(Finding("stuck", "Kullanıcı işi yarıda kesti", f"İstek: \"{ask[:120]}\"", 1,
                                        "Kesilmeden önceki adımlara bakıp neyin yanlış gittiğini bulayım."))
     # merge the same finding if it was found more than once

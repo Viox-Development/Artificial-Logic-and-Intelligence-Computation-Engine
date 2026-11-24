@@ -884,10 +884,10 @@ class Router:
                 pc = self.providers_cfg[p]
                 limit = self.context_limit(ref)
                 if est > limit:
-                    errors.append(f"{ref}: istek ~{est} token, model sınırı {limit}")
+                    errors.append(f"{ref}: request ~{est} tokens, model limit {limit}")
                     continue
                 if tools and ref in self.no_tools:
-                    errors.append(f"{ref}: tool desteklemiyor")
+                    errors.append(f"{ref}: does not support tools")
                     continue
                 if est > self.size_limit.get(ref, 10**9):
                     errors.append(f"{ref}: istek ~{est} token, bu model daha önce ~{self.size_limit[ref]} üstünü reddetti")

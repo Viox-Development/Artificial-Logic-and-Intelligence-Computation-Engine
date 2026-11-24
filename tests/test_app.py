@@ -204,7 +204,7 @@ def test_plan_mode_via_api(app, workdir):
     client.post("/api/send", json={"text": "bir şey yap"})
     t.join()
     end = next(e for e in events if e["type"] == "tool_end")
-    assert end["is_error"] and "Plan modundasın" in end["text"]
+    assert end["is_error"] and "plan mode" in end["text"]
 
 
 def test_changes_panel_lists_and_reverts_session_edits(app, workdir):

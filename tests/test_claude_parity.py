@@ -116,7 +116,7 @@ def test_agent_explains_rule_denial(workdir):
     agent.config.data["permissions"] = {"deny": ["run_command(*rm -rf*)"]}
     agent.run_turn("build klasörünü sil")
     tool_msg = next(m for m in agent.messages if m["role"] == "tool")
-    assert "izin kuralı" in tool_msg["content"] and "rm -rf" in tool_msg["content"]
+    assert "permission rule" in tool_msg["content"] and "rm -rf" in tool_msg["content"]
 
 
 # ----------------------------------------------------------------------------------------- hooks
@@ -136,10 +136,10 @@ def test_hooks_block_feedback_context_and_stop(workdir):
     ], workdir)
     assert agent.run_turn("dosya yaz") == "Şimdi gerçekten bitti."
     first = provs["a"].calls[0]["messages"][-1]["content"]
-    assert "[hook bağlamı]" in first and "kullanıcı Hayat" in first
+    assert "[hook context]" in first and "kullanıcı Hayat" in first
     tools = [m for m in agent.messages if m["role"] == "tool"]
     assert "[hook geri bildirimi]" in tools[0]["content"] and "lint: write_file" in tools[0]["content"]
-    assert "hook'u bu çağrıyı engelledi" in tools[1]["content"] and "komut yasak" in tools[1]["content"]
+    assert "hook blocked this call" in tools[1]["content"] and "komut yasak" in tools[1]["content"]
     assert any(m.get("_nudge") and "testler kırık" in m["content"] for m in agent.messages)
 
 
@@ -428,7 +428,7 @@ def test_project_allow_persists_across_sessions(workdir):
     agent, _, _ = make_agent(script, workdir, mode="ask")
     agent.ui = ui = Ask("p")
     agent.run_turn("çalıştır")
-    assert ui.asked == 1 and any("kalıcı izin eklendi: run_command(echo selam*)" in n for n in ui.notes)
+    assert ui.asked == 1 and any("permanent permission added: run_command(echo selam*)" in n for n in ui.notes)
     assert "run_command(echo selam*)" in (workdir / ".alice" / "permissions.toml").read_text(encoding="utf-8")
     # New session (new agent): the same kind of command is no longer asked about.
     agent2, _, _ = make_agent([tool_call("run_command", {"command": "echo selam dünya"}), "tamam"], workdir, mode="ask")
@@ -440,4 +440,4 @@ def test_project_allow_persists_across_sessions(workdir):
     agent3.ui = ui3 = Ask("p")
     agent3.run_turn("sil")
     assert "rm -rf" not in (workdir / ".alice" / "permissions.toml").read_text(encoding="utf-8")
-    assert any("kalıcı izin verilmez" in n for n in ui3.notes)
+    assert any("permanent permission is not given" in n for n in ui3.notes)
