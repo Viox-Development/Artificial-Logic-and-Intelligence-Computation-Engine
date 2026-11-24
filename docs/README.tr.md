@@ -906,6 +906,8 @@ Hangi programdayken olursan ol:
 
 ## DCS ve War Thunder
 
+> English: [guide/sims.md](guide/sims.md)
+
 ALICE oyuna hiçbir şey göndermez, sadece okur ve konuşur. F-16'nın kendi sesli uyarılarını tekrarlamaz, bir uçuş arkadaşı gibi davranır.
 
 ```powershell
@@ -987,6 +989,8 @@ ALICE bilgisayarın dışındaki şeyleri de yönetiyor. Hepsi sohbetle ya da se
 **Modem (`wifi modem`):** Modelini bilmesen de olur. Modem UPnP ile kendini tanıtıyor (çoğu ev modeminde varsayılan olarak açık), ALICE de marka ve modeli, dış IP'yi, bağlantı durumunu, modemin ne kadardır açık olduğunu, hat hızını ve trafiği okuyor. UPnP kapalıysa yönetim sayfasının başlığından tahmin ediyor. **ZTE modemler (ZXHN H3600, H1600):** Superonline'ın verdiği ZTE modemlerde ALICE yönetim arayüzüne de girebiliyor. Modemin bildiği bağlı cihazları kablo/Wi-Fi ayrımı ve adlarıyla listeliyor ("modemde kimler bağlı") ve modemi yeniden başlatıyor (onay istiyor). Bunun için `~/.alice/.env` dosyasına `MODEM_PASSWORD=...` satırını ekle (şifre genelde modemin altındaki etikette yazıyor). Kullanıcı adı `admin` değilse `[modem] user` ile değiştir. Şifre config'e yazılmıyor, yapay zekâ modeline de hiç gönderilmiyor.
 
 ## Küçük eklemeler
+
+> English: [guide/extras.md](guide/extras.md)
 
 ```powershell
 alice notes add "Unity'de zıplama hatasına bak"     # ya da: "Alice, not al…"
