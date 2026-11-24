@@ -327,7 +327,7 @@ def test_chat_team_tool_waits_for_summary(workdir):
     agent, _, ctx = make(script, workdir)
     assert agent.run_turn("büyük iş") == "bitti"
     tool_texts = "\n".join(str(m.get("content")) for m in agent.messages if m["role"] == "tool")
-    assert "proje başladı" in tool_texts and "özet burada" in tool_texts
+    assert "project started" in tool_texts and "özet burada" in tool_texts
 
 
 def test_scope_helpers(tmp_path):

@@ -81,7 +81,7 @@ def test_process_wait_reports_exit(ctx):
 def test_send_file_shows_cards(ctx, workdir):
     (workdir / "rapor.txt").write_text("sonuç", encoding="utf-8")
     r = SendFile().run(ctx, paths=["rapor.txt", "yok.txt"], caption="Rapor hazır")
-    assert r.files[0]["name"] == "rapor.txt" and r.files[0]["size"] == len("sonuç".encode()) and "Bulunamadı" in r.text
+    assert r.files[0]["name"] == "rapor.txt" and r.files[0]["size"] == len("sonuç".encode()) and "Not found" in r.text
     assert str(workdir / "rapor.txt") in SENT_FILES or str((workdir / "rapor.txt").resolve()) in SENT_FILES
     with pytest.raises(ToolError):
         SendFile().run(ctx, paths=["yok.txt"])
@@ -99,10 +99,10 @@ class ChoiceUI:
 def test_exit_plan_mode_restores_previous_mode_on_approval(ctx):
     perms = Permissions("ask")
     perms.mode = "plan"
-    ui = ChoiceUI("Onayla, uygula")
+    ui = ChoiceUI("Approve and apply")
     ctx.state["agent"] = NS(permissions=perms, ui=ui)
     r = ExitPlanMode().run(ctx, plan="1. a.txt'yi düzenle\n2. testleri çalıştır")
-    assert perms.mode == "ask" and "onayladı" in r.text and "a.txt" in ui.asked[0][0]
+    assert perms.mode == "ask" and "approved" in r.text and "a.txt" in ui.asked[0][0]
 
 
 def test_exit_plan_mode_rejected_keeps_plan(ctx):
@@ -112,5 +112,5 @@ def test_exit_plan_mode_rejected_keeps_plan(ctx):
     r = ExitPlanMode().run(ctx, plan="plan")
     assert perms.mode == "plan" and "Önce testleri yaz" in r.text
     perms.mode = "auto"
-    with pytest.raises(ToolError, match="plan modunda değilsin"):
+    with pytest.raises(ToolError, match="not in plan mode"):
         ExitPlanMode().run(ctx, plan="plan")

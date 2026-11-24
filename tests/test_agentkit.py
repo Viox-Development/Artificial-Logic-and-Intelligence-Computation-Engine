@@ -40,18 +40,18 @@ def test_notify_goes_through_the_core_notifier_and_respects_muting(ctx, monkeypa
 
     hub = Hub()
     monkeypatch.setattr(nt, "ACTIVE", hub)
-    assert Notify().run(ctx, "Testler bitti", "142 test geçti").text == "bildirim gönderildi"
+    assert Notify().run(ctx, "Testler bitti", "142 test geçti").text == "notification sent"
     assert sent[0].title == "Testler bitti" and sent[0].kind == "task"
     hub.allow = False
-    assert "susturdu" in Notify().run(ctx, "x").text
+    assert "muted" in Notify().run(ctx, "x").text
 
 
 def test_enter_plan_mode_switches_and_exit_can_return(ctx):
     perms = SimpleNamespace(mode="auto")
     ctx.state["agent"] = SimpleNamespace(permissions=perms, is_child=False)
-    assert "Plan moduna geçildi" in EnterPlanMode().run(ctx, "üç modül değişecek").text
+    assert "Switched to plan mode" in EnterPlanMode().run(ctx, "üç modül değişecek").text
     assert perms.mode == "plan"
-    assert "zaten plan" in EnterPlanMode().run(ctx).text
+    assert "already in plan mode" in EnterPlanMode().run(ctx).text
     ctx.state["agent"] = SimpleNamespace(permissions=perms, is_child=True)
     with pytest.raises(ToolError):
         EnterPlanMode().run(ctx)
@@ -68,7 +68,7 @@ def test_mcp_resources_list_and_read(ctx):
             return {"contents": [{"uri": uri, "text": "# A\nmerhaba"}]}
 
     tool = McpResources()
-    with pytest.raises(ToolError, match="MCP sunucusu yok"):
+    with pytest.raises(ToolError, match="no MCP servers"):
         tool.run(ctx, "list")
     ctx.state["mcp_servers"] = [Srv()]
     assert "file:///a.md — A [text/markdown]: ilk belge" in tool.run(ctx, "list").text
@@ -101,9 +101,9 @@ def test_code_intel_diagnostics_reports_syntax_and_data_errors(ctx, workdir):
     (workdir / "ok.json").write_text('{"a": 1}', encoding="utf-8")
     (workdir / "bad.json").write_text('{"a": 1,}', encoding="utf-8")
     out = CodeIntel().run(ctx, "diagnostics", paths=["bad.py", "ok.json", "bad.json", "yok.py"]).text
-    assert "bad.py:1" in out and "sözdizimi" in out
-    assert "## ok.json (json)\nsorun yok" in out and "## bad.json (json)\nbad.json:" in out
-    assert "dosya yok" in out
+    assert "bad.py:1" in out and "syntax" in out
+    assert "## ok.json (json)\nno problems" in out and "## bad.json (json)\nbad.json:" in out
+    assert "file not found" in out
 
 
 def test_advisor_sees_conversation_and_uses_configured_model(tmp_path):
@@ -124,11 +124,11 @@ def test_advisor_sees_conversation_and_uses_configured_model(tmp_path):
     cfg = make_config({"brain": ["a:m"]})
     ctx = ToolContext(cwd=tmp_path, config=cfg, router=R())
     ctx.state["agent"] = agent
-    with pytest.raises(ToolError, match="ayarlı değil"):
+    with pytest.raises(ToolError, match="no advisor model is set"):
         Advisor().run(ctx, "hangisi?")
     cfg.data["agent"]["advisor"] = "a:big"
     out = Advisor().run(ctx, "hangisi?").text
     assert "B seçeneği" in out and calls[-1][0] == "a:big"
     sent = calls[-1][1]
     assert sent[1]["content"] == "A mı B mi?" and not sent[-2].get("tool_calls")  # half-finished call step is not sent
-    assert "Soru: hangisi?" in sent[-1]["content"]
+    assert "Question: hangisi?" in sent[-1]["content"]

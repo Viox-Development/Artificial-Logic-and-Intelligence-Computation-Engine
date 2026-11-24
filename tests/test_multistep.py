@@ -122,7 +122,7 @@ def test_voice_confirmation_goes_through_task_control(workdir):
         time.sleep(0.02)
     assert "Gönderilsin mi?" in said[-1] and "task_control" in said[-1]
     assert "onay bekliyor" in TaskControl().run(agent.ctx, action="status").text
-    assert TaskControl().run(agent.ctx, action="approve").text.startswith("onaylandı")
+    assert TaskControl().run(agent.ctx, action="approve").text.startswith("approved")
     t.join(2)
     assert box["ok"] is True
     assert TaskControl().run(agent.ctx, action="approve").is_error  # no longer waiting

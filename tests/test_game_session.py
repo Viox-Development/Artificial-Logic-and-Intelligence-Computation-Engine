@@ -608,7 +608,7 @@ def test_play_adds_rules_from_the_plan_and_trusts_the_board(monkeypatch, tmp_pat
     tool.run(ctx, "start", game="Kart")
     first = tool.run(ctx, "play").text
     assert made[0].stop_after_change and made[0].track_changes  # move: stop at the first change
-    assert "SONUÇ: hedef yapıldı." in first
+    assert "RESULT: goal done." in first
     second = tool.run(ctx, "play").text
     assert "OLMADI (tahtaya göre)" in second
     rows = GameSession.open(tmp_path, "Kart")

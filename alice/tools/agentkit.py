@@ -30,9 +30,9 @@ def _run(argv: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         r = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=timeout, creationflags=_FLAGS)
     except FileNotFoundError:
-        return 127, f"{argv[0]} bulunamadı"
+        return 127, f"{argv[0]} not found"
     except subprocess.TimeoutExpired:
-        return 124, f"{argv[0]} {timeout} sn içinde bitmedi"
+        return 124, f"{argv[0]} did not finish within {timeout} s"
     return r.returncode, (r.stdout + ("\n" + r.stderr if r.stderr.strip() else "")).strip()
 
 
@@ -66,11 +66,11 @@ class Notify(Tool):
         hub = nt.ACTIVE
         if hub is not None:
             ok = hub.send(n)
-            return ToolResult("bildirim gönderildi" if ok else "şu anki mod bildirimi susturdu (kaydedildi; kullanıcı "
-                              "sonra 'ben yokken ne oldu' diye görebilir)")
+            return ToolResult("notification sent" if ok else "the current mode muted the notification (it was recorded; the user can see it later by asking "
+                              "'what happened while I was away')")
         if nt.desktop_notify(n):
-            return ToolResult("bildirim gönderildi (masaüstü)")
-        raise ToolError("bildirim gönderilemedi: çekirdek çalışmıyor ve masaüstü bildirimi başarısız")
+            return ToolResult("notification sent (desktop)")
+        raise ToolError("could not send the notification: the core is not running and the desktop notification failed")
 
 
 # ---------------------------------------------------------------------------------------------------- plan mode
@@ -88,13 +88,13 @@ class EnterPlanMode(Tool):
         agent = ctx.state.get("agent")
         perms = getattr(agent, "permissions", None)
         if perms is None or getattr(agent, "is_child", False):
-            raise ToolError("plan modu bu bağlamda kullanılamıyor")
+            raise ToolError("plan mode can't be used in this context")
         if getattr(perms, "mode", "") == "plan":
-            return ToolResult("zaten plan modundasın: incele, sonra exit_plan_mode ile planı sun")
+            return ToolResult("already in plan mode: investigate, then present the plan with exit_plan_mode")
         perms.mode = "plan"
-        return ToolResult("Plan moduna geçildi. Şimdi yalnız oku ve araştır (dosya yazma/komut kapalı). Plan hazır "
-                          "olunca exit_plan_mode ile sun; değişen dosyaları, sırayı ve nasıl doğrulayacağını yaz."
-                          + (f" Gerekçe: {reason}" if reason else ""))
+        return ToolResult("Switched to plan mode. Now only read and research (writing files/commands are off). When the plan is "
+                          "ready present it with exit_plan_mode; list the files that change, the order and how you'll verify it."
+                          + (f" Reason: {reason}" if reason else ""))
 
 
 # ---------------------------------------------------------------------------------------------------- MCP resources
@@ -118,7 +118,7 @@ class McpResources(Tool):
 
         servers = [s for s in ctx.state.get("mcp_servers") or [] if not server or s.name == server]
         if not servers:
-            raise ToolError("bağlı MCP sunucusu yok" + (f": {server}" if server else ""))
+            raise ToolError("no MCP servers connected" + (f": {server}" if server else ""))
         if action == "list":
             out = []
             for s in servers:
@@ -134,7 +134,7 @@ class McpResources(Tool):
             return ToolResult("\n".join(out))
         if action == "read":
             if not uri:
-                raise ToolError("read için uri gerekli")
+                raise ToolError("read needs uri")
             errors = []
             for s in servers:
                 try:
@@ -149,12 +149,12 @@ class McpResources(Tool):
                     elif c.get("blob") and str(c.get("mimeType", "")).startswith("image/"):
                         images.append(c["blob"])
                     elif c.get("blob"):
-                        texts.append(f"[ikili içerik: {c.get('mimeType', '?')}, {len(c['blob'])} bayt base64]")
+                        texts.append(f"[binary content: {c.get('mimeType', '?')}, {len(c['blob'])} bytes base64]")
                 body = "\n".join(texts)
                 if len(body) > 60000:
-                    body = body[:60000] + "\n… (kısaltıldı)"
-                return ToolResult(body or "(boş kaynak)", images=images)
-            raise ToolError("kaynak okunamadı: " + "; ".join(errors)[:500])
+                    body = body[:60000] + "\n… (shortened)"
+                return ToolResult(body or "(empty resource)", images=images)
+            raise ToolError("could not read the resource: " + "; ".join(errors)[:500])
         raise ToolError(f"bilinmeyen action: {action}")
 
 
@@ -262,7 +262,7 @@ def _diagnose(path: Path, root: Path) -> tuple[str, list[str]]:
         try:
             compile(path.read_text(encoding="utf-8", errors="replace"), str(path), "exec")
         except SyntaxError as e:
-            return "python", [f"{path.name}:{e.lineno}:{e.offset}: sözdizimi hatası: {e.msg}"]
+            return "python", [f"{path.name}:{e.lineno}:{e.offset}: syntax error: {e.msg}"]
         used.append("python")
         code, out = _run([sys.executable, "-m", "ruff", "check", "--output-format=concise", "--no-cache", str(path)],
                          root)
@@ -353,28 +353,28 @@ class CodeIntel(Tool):
         if action in ("diagnostics", "symbols"):
             files = [ctx.resolve(str(p)) for p in (paths or [])[:10]]
             if not files:
-                raise ToolError(f"{action} için paths gerekli")
+                raise ToolError(f"{action} needs paths")
             out = []
             for p in files:
                 if not p.is_file():
-                    out.append(f"## {p}\ndosya yok")
+                    out.append(f"## {p}\nfile not found")
                     continue
                 if action == "symbols":
                     try:
                         syms = _py_symbols(p) if p.suffix in (".py", ".pyi") else _regex_symbols(p)
                     except SyntaxError as e:
-                        syms = [f"(ayrıştırılamadı: {e.msg}, satır {e.lineno}) "] + _regex_symbols(p)
-                    out.append(f"## {p.name} ({len(syms)})\n" + ("\n".join(syms[:400]) or "(sembol yok)"))
+                        syms = [f"(could not parse: {e.msg}, line {e.lineno}) "] + _regex_symbols(p)
+                    out.append(f"## {p.name} ({len(syms)})\n" + ("\n".join(syms[:400]) or "(no symbols)"))
                 else:
                     used, found = _diagnose(p, ctx.cwd)
                     if not used:
-                        out.append(f"## {p.name}\nbu dosya türü için denetçi yok ya da kurulu değil")
+                        out.append(f"## {p.name}\nno checker for this file type, or it isn't installed")
                     else:
-                        out.append(f"## {p.name} ({used})\n" + ("\n".join(found[:150]) if found else "sorun yok"))
+                        out.append(f"## {p.name} ({used})\n" + ("\n".join(found[:150]) if found else "no problems"))
             return ToolResult("\n\n".join(out))
         if action in ("definition", "references"):
             if not re.fullmatch(r"[A-Za-z_$][\w$]*", symbol or ""):
-                raise ToolError("geçerli bir sembol adı ver (ör. MyClass, load_config)")
+                raise ToolError("give a valid symbol name (e.g. MyClass, load_config)")
             base = ctx.resolve(root) if root else ctx.cwd
             if action == "definition":
                 rx = "|".join(p.replace("{n}", re.escape(symbol)) for p in _DEF_PATTERNS)
@@ -383,7 +383,7 @@ class CodeIntel(Tool):
             else:
                 hits = _search(base, "", word=symbol, limit=150)
             if not hits:
-                return ToolResult(f"'{symbol}' için {'tanım' if action == 'definition' else 'kullanım'} bulunamadı "
+                return ToolResult(f"no {'definition' if action == 'definition' else 'usages'} found for '{symbol}' "
                                   f"({base})")
             lines = []
             for p, ln, text in hits:
@@ -392,7 +392,7 @@ class CodeIntel(Tool):
                 except ValueError:
                     rel = p
                 lines.append(f"{rel}:{ln}: {text[:200]}")
-            return ToolResult(f"{len(hits)} sonuç{' (ilk 150)' if len(hits) >= 150 else ''}:\n" + "\n".join(lines))
+            return ToolResult(f"{len(hits)} results{' (first 150)' if len(hits) >= 150 else ''}:\n" + "\n".join(lines))
         raise ToolError(f"bilinmeyen action: {action}")
 
 
@@ -415,22 +415,22 @@ class Advisor(Tool):
     def run(self, ctx: ToolContext, question: str) -> ToolResult:
         ref = str((ctx.config.agent or {}).get("advisor") or "").strip()
         if not ref:
-            raise ToolError("danışman modeli ayarlı değil: config.toml'da [agent] advisor = \"sağlayıcı:model\" "
-                            "(ör. cliproxy:claude-opus-5-5)")
+            raise ToolError("no advisor model is set: in config.toml [agent] advisor = \"provider:model\" "
+                            "(e.g. cliproxy:claude-opus-5-5)")
         router = ctx.router
         agent = ctx.state.get("agent")
         if router is None or agent is None:
-            raise ToolError("danışman bu ortamda kullanılamıyor")
+            raise ToolError("the advisor can't be used here")
         msgs = [m for m in list(agent.messages) if not m.get("_image")]
         # The last assistant message is the call to this tool: no result yet, and the provider would reject it.
         while msgs and msgs[-1].get("role") == "assistant" and msgs[-1].get("tool_calls"):
             msgs.pop()
         msgs.append({"role": "user", "content": (
-            "[Danışman olarak çağrıldın. Yukarıdaki konuşmada çalışan asistan sana danışıyor. Araç kullanma; kısa, "
-            "somut, uygulanabilir tavsiye ver: ne yanlış gidiyor olabilir, hangi seçenek neden daha iyi, neye dikkat "
-            "etmeli. Gerekiyorsa açıkça 'bu yanlış' de.]\nSoru: " + question)})
+            "[You are called as an advisor. The assistant working in the conversation above is consulting you. Don't use "
+            "tools; give short, concrete, actionable advice: what may be going wrong, which option is better and why, what "
+            "to watch out for. Say 'this is wrong' plainly if needed. Answer in the language of the question.]\nQuestion: " + question)})
         res = router.chat(ref, msgs, max_tokens=1500)
-        return ToolResult(f"[danışman: {ref}]\n{(res.text or '(cevap yok)').strip()}")
+        return ToolResult(f"[advisor: {ref}]\n{(res.text or '(no answer)').strip()}")
 
 
 TOOLS.append(Advisor())

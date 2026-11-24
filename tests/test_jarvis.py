@@ -215,7 +215,7 @@ def test_memory_tool_followups(workdir):
     assert out.text.startswith("takip eklendi #")
     fid = int(out.text.rsplit("#", 1)[1])
     assert "Mülakat" in tool.run(agent.ctx, "followups").text
-    assert "kapatıldı" in tool.run(agent.ctx, "done", id=fid).text
+    assert "closed" in tool.run(agent.ctx, "done", id=fid).text
     with pytest.raises(ToolError):
         tool.run(agent.ctx, "followup", note="Sınavı sor.", followup_kind="ask")  # an "ask" without a date is not allowed
 
@@ -272,7 +272,7 @@ def test_projects_cache_brief_and_tool(tmp_path, monkeypatch, workdir):
     agent, _, _ = make_agent([], workdir)
     tool = Projects()
     assert "unity" in tool.run(agent.ctx, "info", query="skyfighter").text.lower()
-    assert "eşleşen proje yok" in tool.run(agent.ctx, "find", query="zzzz").text
+    assert "no project matches" in tool.run(agent.ctx, "find", query="zzzz").text
 
 
 # ----------------------------------------------------------------------------------------- agent

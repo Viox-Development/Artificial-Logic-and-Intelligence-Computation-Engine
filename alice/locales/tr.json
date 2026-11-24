@@ -2640,5 +2640,9 @@
  "no changes": "değişiklik yok",
  "index reorganised": "dizin yeniden düzenlendi",
  "the new index did not fit ({error})": "yeni dizin sığmadı ({error})",
- "index repaired": "dizin onarıldı"
+ "index repaired": "dizin onarıldı",
+ "Approve the plan?\n\n": "Plan onaylansın mı?\n\n",
+ "Approve and apply": "Onayla, uygula",
+ "the council is meeting…": "kurul toplanıyor…",
+ "the council reached its decision": "kurul kararını verdi"
 }
