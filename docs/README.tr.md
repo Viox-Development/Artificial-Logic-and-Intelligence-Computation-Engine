@@ -723,6 +723,8 @@ ALICE cümleyi zamanlamaya çevirip gösterir, onaylarsan kurar. Bilgisayar kapa
 
 ## Ses
 
+> English: [guide/voice.md](guide/voice.md). `[voice] social_mode` artık `"wake"` (varsayılan), `"ptt"` (Discord'da/oyunda mikrofon ALICE'e kapalı, sadece bas-konuş) ya da `false` alıyor.
+
 ALICE'in sesi ve kulağı. Önce paketleri kur:
 
 ```powershell

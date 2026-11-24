@@ -44,6 +44,7 @@ ALICE ships with about 90 tools. The main groups:
   ChatGPT realtime, with a classic speech-to-text → model → text-to-speech fallback.
 - Barge-in, and "stop" or "I wasn't talking to you" silences it immediately.
 - Local Whisper and local text-to-speech options, so not every sentence goes to the cloud.
+- Details: [docs/guide/voice.md](docs/guide/voice.md).
 
 **Always on: the background core**
 - Watches CPU, GPU, RAM, disks, and running apps, and warns about overheating, full disks, or memory leaks.
