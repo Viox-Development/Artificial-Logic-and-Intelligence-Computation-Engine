@@ -579,7 +579,7 @@ def test_spotify_play_calismazsa_uygulamada_acar(monkeypatch):
     m = mf.load_file(SPOTIFY)
     st = _spotify_fake(monkeypatch, playing_after_open=True)
     note = verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
-    assert st["opened"] == ["spotify:track:abc"] and "çalıyor" in note
+    assert st["opened"] == ["spotify:track:abc"] and "playing" in note
 
 
 def test_spotify_play_calisiyorsa_dokunmaz(monkeypatch):
@@ -587,7 +587,7 @@ def test_spotify_play_calisiyorsa_dokunmaz(monkeypatch):
 
     m = mf.load_file(SPOTIFY)
     st = _spotify_fake(monkeypatch, playing_after_open=True, playing_now=True)
-    assert verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {}) == "doğrulandı: çalıyor"
+    assert verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {}) == "verified: playing"
     assert st["opened"] == []
 
 
@@ -596,7 +596,7 @@ def test_spotify_hic_calmazsa_uyari_verir(monkeypatch):
 
     m = mf.load_file(SPOTIFY)
     _spotify_fake(monkeypatch, playing_after_open=False)
-    assert "UYARI" in verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
+    assert "WARNING" in verify.after(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, {})
     assert verify.after(m, m.actions["pause"], {}, {}) == ""
 
 
@@ -618,10 +618,10 @@ def test_spotify_etkin_cihaz_yoksa_hata_degil_uygulamada_acar(monkeypatch, workd
     monkeypatch.setattr("alice.connect.tool.ready", lambda m: (True, "bağlı"))
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     r = ConnectTool(m).run(ctx, action="play", uris=["spotify:track:abc"])
-    assert not r.is_error and "çalıyor" in r.text and st["opened"] == ["spotify:track:abc"]
+    assert not r.is_error and "playing" in r.text and st["opened"] == ["spotify:track:abc"]
 
     st = _spotify_fake(monkeypatch, playing_after_open=False)  # opened but did not play
     monkeypatch.setattr(runner, "call", no_device)
-    assert "UYARI" in verify.recover(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, err)
+    assert "WARNING" in verify.recover(m, m.actions["play"], {"uris": ["spotify:track:abc"]}, err)
     # other errors are left as they are
     assert verify.recover(m, m.actions["play"], {}, runner.ConnectError("HTTP 403 PREMIUM_REQUIRED")) == ""

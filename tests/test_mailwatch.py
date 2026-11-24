@@ -41,7 +41,7 @@ def test_bills_and_dates_become_reminders_once(tmp_path):
     fups = {f.text: f.due for f in mem.followups()}
     assert datetime.fromtimestamp(fups[added[0]]) == datetime(2026, 11, 8, 10)  # 2 days before, in the morning
     assert datetime.fromtimestamp(fups[added[1]]) == datetime(2026, 11, 2, 14, 5)  # time already passed: immediately
-    assert "Takvime de eklememi istersen söyle." in sent[0]
+    assert "Tell me if you want it on the calendar too." in sent[0]
     calls = router.calls
     assert mailwatch.scan(None, router, mem, lambda t, b: True, now=now.timestamp() + 600, **kw) == []  # 2 hours
     assert mailwatch.scan(None, router, mem, lambda t, b: True, now=now.timestamp() + 8000, **kw) == []

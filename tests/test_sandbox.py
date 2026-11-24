@@ -225,7 +225,7 @@ def test_git_snapshot_sees_planted_hooks_and_config(tmp_path):
         f.write("[core]\n\tfsmonitor = kotu\n")
     changed = gitsafe.changes(before, gitsafe.snapshot(sub))
     assert [Path(c).name for c in changed] == ["config", "pre-commit"]
-    assert "GÜVENLİK" in gitsafe.warning(changed)
+    assert "SECURITY WARNING" in gitsafe.warning(changed)
     assert gitsafe.snapshot(tmp_path) == {}  # not a repo
 
 
@@ -239,9 +239,9 @@ def test_windows_sandbox_hook_write_is_reported(tmp_path):
     subprocess.run(["git", "init", "-q", str(proj)], check=True, capture_output=True)
     c = ToolContext(cwd=proj, config=make_config({"brain": ["a:m"]}, sandbox="on"))
     res = TOOLS["run_command"].run(c, "Write-Output temiz")
-    assert "GÜVENLİK" not in res.text
+    assert "SECURITY WARNING" not in res.text
     res = TOOLS["run_command"].run(c, "Set-Content -Path .git/hooks/pre-commit -Value 'echo kotu'")
-    assert "GÜVENLİK UYARISI" in res.text and "pre-commit" in res.text, res.text
+    assert "SECURITY WARNING" in res.text and "pre-commit" in res.text, res.text
 
 
 def test_personal_folders_are_never_sandbox_areas(workdir):
