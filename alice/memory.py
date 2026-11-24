@@ -299,8 +299,8 @@ class Hit:
         return self.item.line()
 
 
-HISTORY_OFF = ("geçmiş sohbet araması kapalı (kullanıcı Ayarlar > Hafıza'dan kapattı); eski konuşmaları bilmiyorsun, "
-               "uydurma: gerekirse kullanıcıya sor")
+HISTORY_OFF = ("past chat search is off (the user turned it off in Settings > Memory); you don't know earlier "
+               "conversations, don't make them up: ask the user if needed")
 
 
 class LongMemory:
@@ -943,7 +943,7 @@ class LongMemory:
             return HISTORY_OFF
         groups = self.sessions(after, before)[-max(1, min(int(n), 20)):]
         now = time.time()
-        return "\n\n".join(self._session_text(g, now=now) for g in reversed(groups)) or "bu aralıkta konuşma yok"
+        return "\n\n".join(self._session_text(g, now=now) for g in reversed(groups)) or "no conversations in this range"
 
     def search_chats(self, query: str, limit: int = 5, after: float | None = None,
                      before: float | None = None) -> str:
@@ -958,7 +958,7 @@ class LongMemory:
                 continue
             picked.append((h.score, ts))
         if not picked:
-            return f"geçmiş konuşmalarda '{query}' ile ilgili bir şey bulunamadı"
+            return f"nothing about '{query}' found in past conversations"
         out, seen, now = [], set(), time.time()
         for _, ts in sorted(picked, reverse=True):
             group = next((g for g in self.sessions(ts - 6 * 3600, ts + 6 * 3600)
@@ -1009,10 +1009,10 @@ class LongMemory:
         now = time.time()
         parts = [n.render(now, RECALL_ITEM_CHARS) for n in picked]
         if sums:
-            parts.append("Geçmiş konuşmalardan:\n" + "\n".join(f"- {h.item.line(now)}" for h in sums))
+            parts.append("From past conversations:\n" + "\n".join(f"- {h.item.line(now)}" for h in sums))
         body = _clip("\n\n".join(parts), RECALL_TOTAL_CHARS)
-        return ("[hafızadan — bu mesajla ilgili olabilecek notların; işine yararsa kullan, hafızadan okuduğunu "
-                f"söyleme:\n{body}]")
+        return ("[hafızadan (from memory) — your notes that may relate to this message; use them if they help, don't "
+                f"say you read them from memory:\n{body}]")
 
     # ------------------------------------------------------------------ summaries and follow-ups
     def summaries(self, n: int = 5, within_days: float | None = None) -> list[Summary]:
@@ -1207,20 +1207,20 @@ class LongMemory:
     def profile(self, chars: int | None = None, recent: int = 3, cwd: Path | str | None = None) -> str:
         """Block for the system prompt: memory rules, MEMORY.md index(es), always-valid rules (feedback notes),
         notes introducing the user, a summary of recent days, follow-ups due today, and recent conversations."""
-        from alice.memdir import MEMORY_RULES, TYPE_TR
+        from alice.memdir import MEMORY_RULES
 
         chars = chars or self.profile_chars
         books = self.books(cwd)
         parts = ["# Long-term memory", MEMORY_RULES]
         for b in books:
             b.ensure()
-            where = "Genel hafıza" if b.scope == "genel" else f"Bu projenin hafızası ({project_label(cwd)})"
+            where = "General memory" if b.scope == "genel" else f"This project's memory ({project_label(cwd)})"
             idx = b.index_for_prompt()
             parts.append(f"## {where}: MEMORY.md (`{b.root}`)\n"
-                         + (idx or "(boş: kaydettiğin notlar burada listelenir)"))
+                         + (idx or "(empty: the notes you save are listed here)"))
             if b.near_limit():
-                parts.append(f"(Not: {b.scope} dizini sınıra yaklaştı; benzer notları birleştir ya da memory "
-                             "action=dream ile toparla.)")
+                parts.append(f"(Note: the {b.scope} index is near its limit; merge similar notes or tidy up with "
+                             "memory action=dream.)")
         # Behavior rules and notes that introduce the user are short and needed in every conversation, so they
         # go into the prompt in full. Other notes are read from the index, or added to the message automatically
         # when relevant.
@@ -1242,7 +1242,7 @@ class LongMemory:
                 shown.add(f"{n.key}@{int(n.modified)}")
         self._in_profile[str(cwd or "")] = shown
         if always:
-            parts.append(f"## Notların tamamı: {TYPE_TR['feedback']} ve {TYPE_TR['user']} (her konuşmada geçerli)\n"
+            parts.append("## Full notes: feedback and user (valid in every conversation)\n"
                          + "\n\n".join(always))
         # Recent turns are included only if they are recent: yesterday's last sentences were slipping into a new
         # chat as "kaldığımız yer" (where we left off), and ALICE took the user's new, unrelated message for a
