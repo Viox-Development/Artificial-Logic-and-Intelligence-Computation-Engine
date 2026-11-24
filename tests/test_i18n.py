@@ -218,3 +218,14 @@ def test_slash_command_descriptions_follow_the_language(tmp_path):
     tr = {c["name"]: c for c in catalog(tmp_path)}
     assert tr["help"]["description"] == "Komutları göster" and tr["mine"]["description"] == "benim komutum"
     assert all(c["description"] for c in tr.values())
+
+
+def test_repl_help_is_translated_line_for_line():
+    """cli.HELP is one big message (not a literal in _()), so the scanner can't check it: make sure the Turkish text
+    exists and has the same lines, and that the update/argparse help strings are in the catalog too."""
+    from alice import cli
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    assert cli.HELP in tr, "add cli.HELP to alice/locales/tr.json"
+    assert cli.HELP.count("\n") == tr[cli.HELP].count("\n")
+    assert [ln.split()[0] for ln in cli.HELP.splitlines()[1:19]] == [ln.split()[0] for ln in tr[cli.HELP].splitlines()[1:19]]

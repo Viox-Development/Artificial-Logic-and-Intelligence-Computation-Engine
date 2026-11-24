@@ -379,7 +379,7 @@ def test_default_workspace_without_documents(isolated_home, tmp_path, monkeypatc
 def test_main_init(out, isolated_home):
     assert cli.main(["init"]) == 0
     assert (alice_home() / "config.toml").is_file()
-    assert "oluşturuldu" in out()
+    assert "created:" in out()
 
 
 @pytest.mark.parametrize("cmd,mod,attr", [
@@ -697,7 +697,7 @@ def test_app_cmd_opens_window_and_stops_server(monkeypatch, workdir, out):
     assert cli.app_cmd(["--cwd", str(workdir), "--port", "8123", "--mode", "ask", "--window", "browser"]) == 0
     assert seen["cwd"] == workdir.resolve() and seen["mode"] == "ask" and seen["port"] == 8123
     assert seen["window"] == ("http://127.0.0.1:1/", "browser") and seen["stopped"]
-    assert any("Kullanılabilir model yok" in s for s in seen["infos"])
+    assert any("No model is available" in s for s in seen["infos"])
     assert "http://127.0.0.1:1/" in out()
 
 
@@ -710,7 +710,7 @@ def test_app_cmd_starts_core_when_voice_enabled(monkeypatch, workdir):
     set_config_value("voice", "enabled", True)
     monkeypatch.setattr(service, "start_detached", lambda: True)
     assert cli.app_cmd(["--cwd", str(workdir), "--window", "app"]) == 0
-    assert any("çekirdeği başlatıldı" in s for s in seen["infos"])
+    assert any("core was started" in s for s in seen["infos"])
     assert seen["mode"] == "auto"
 
 
