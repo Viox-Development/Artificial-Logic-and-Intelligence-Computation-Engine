@@ -60,7 +60,7 @@ def test_dangerous_command_asks_and_denial_is_reported(workdir):
     assert ("ask", "run_command") in ui.events
     assert (workdir / "keep").exists()
     denied = [m for m in agent.messages if m["role"] == "tool"][0]["content"]
-    assert "reddetti" in denied
+    assert "denied" in denied
 
 
 def test_yolo_never_asks(workdir):
@@ -79,7 +79,7 @@ def test_bad_json_and_unknown_tool_are_returned_to_model(workdir):
     agent, _, _ = make_agent([bad, "ok"], workdir)
     agent.run_turn("dene")
     res = [m["content"] for m in agent.messages if m["role"] == "tool"]
-    assert "JSON" in res[0] and "bilinmeyen araç" in res[1]
+    assert "JSON" in res[0] and "unknown tool" in res[1]
 
 
 def test_images_described_when_brain_lacks_vision(workdir):
@@ -144,7 +144,7 @@ def test_interrupt_repairs_history(workdir):
     agent.tools["boom"] = Boom()
     agent.run_turn("patlat")
     last = agent.messages[-1]
-    assert last["role"] == "tool" and "durduruldu" in last["content"]
+    assert last["role"] == "tool" and "stopped" in last["content"]
 
 
 def test_subagent_task(workdir):
@@ -182,7 +182,7 @@ def test_stop_returns_quickly_during_slow_model_call(workdir):
     t0 = time.monotonic()
     agent.run_turn("merhaba")
     assert time.monotonic() - t0 < 3
-    assert ("info", "durduruldu") in ui.events
+    assert ("info", "stopped") in ui.events
     release.set()
 
 
@@ -196,7 +196,7 @@ def test_stop_kills_running_command(workdir):
     t0 = time.monotonic()
     agent.run_turn("bekle")
     assert time.monotonic() - t0 < 5
-    assert "durduruldu" in agent.messages[-1]["content"] or "HATA" in agent.messages[-1]["content"]
+    assert "stopped" in agent.messages[-1]["content"] or "HATA" in agent.messages[-1]["content"]
 
 
 def test_repeated_failing_call_gets_a_nudge(workdir):
@@ -205,8 +205,8 @@ def test_repeated_failing_call_gets_a_nudge(workdir):
     agent, _, _ = make_agent(script, workdir)
     agent.run_turn("oku")
     tool_msgs = [m["content"] for m in agent.messages if m["role"] == "tool"]
-    assert "ALICE notu" not in tool_msgs[0]
-    assert "2. kez başarısız" in tool_msgs[1]
+    assert "ALICE note" not in tool_msgs[0]
+    assert "failed 2 times" in tool_msgs[1]
 
 
 def test_tool_groups_keep_requests_small(workdir):
@@ -381,7 +381,7 @@ def test_repeated_denials_stop_the_turn(workdir):
     calls = [tool_call("write_file", {"path": f"x{i}.txt", "content": "a"}, f"w{i}") for i in range(6)] + ["bitti"]
     agent, provs, _ = make_agent(calls, workdir, mode="plan")
     out = agent.run_turn("dosya yaz")
-    assert "art arda" in out and len(provs["a"].calls) == 3  # üçüncü retten sonra durdu
+    assert "kept trying" in out and len(provs["a"].calls) == 3  # üçüncü retten sonra durdu
     assert not any((workdir / f"x{i}.txt").exists() for i in range(6))
 
 
@@ -433,7 +433,7 @@ def test_stop_during_turn_setup_is_not_lost(workdir):
     agent._recall = recall
     agent.run_turn("merhaba")
     assert calls == []
-    assert ("info", "durduruldu") in ui.events
+    assert ("info", "stopped") in ui.events
     agent._recall = lambda text: ""
     assert agent.run_turn("tekrar") == "cevap"  # sonraki tur temiz başlar
 

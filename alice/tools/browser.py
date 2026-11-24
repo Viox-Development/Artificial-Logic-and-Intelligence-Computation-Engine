@@ -560,7 +560,7 @@ ROOT_AGAIN = 60.0  # s: if the same site's home page is requested again within t
 ACTION_BUDGET = {"goto": 120.0, "back": 60.0, "screenshot": 40.0, "download": 270.0}
 DEFAULT_BUDGET = 45.0
 CONNECT_BUDGET = 70.0  # new connection: the browser may ask the user for permission (connect_over_cdp waits 60 s)
-STOPPED = "durduruldu (kullanıcı kesti)"
+from alice.session import STOPPED  # noqa: E402  (re-exported: the tools raise it)
 
 
 def abort_browser(ctx: ToolContext, reason: str = "stop") -> None:

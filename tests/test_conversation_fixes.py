@@ -65,7 +65,7 @@ def test_turn_that_runs_out_of_models_says_so_in_the_chat(workdir):
     agent, _, _ = make_agent(script, workdir, finish_nudges=0)
     agent.router.max_wait = 0
     out = agent.run_turn("bir şey yap")
-    assert "iş yarıda kaldı" in out and "devam et" in out
+    assert "half done" in out and "continue" in out
     last = agent.messages[-1]
     assert last["role"] == "assistant" and last.get("_notice") and "503" in last["content"]
 

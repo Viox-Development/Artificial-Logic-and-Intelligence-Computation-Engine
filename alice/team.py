@@ -204,7 +204,7 @@ def human_failure(reasons: list[str]) -> str:
             secs = int(m.group(1))
             when = f"~{secs // 3600} sa" if secs >= 3600 else f"~{max(1, secs // 60)} dk"
             text = f"{name} beklemede ({when} sonra açılır)"
-        elif "model sınırı" in low or "too_large" in low or "context" in low:
+        elif "model sınırı" in low or "model limit" in low or "too_large" in low or "context" in low:
             text = f"{name} için konuşma çok uzun"
         elif any(w in low for w in ("quota", "kota", "429", "rate")):
             text = f"{name} kotası dolu"

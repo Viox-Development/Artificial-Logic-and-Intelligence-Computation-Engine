@@ -30,7 +30,7 @@ def test_external_content_is_fenced_and_taints_turn(workdir, monkeypatch):
     agent.run_turn("dcs haberlerine bak")
     search = next(m for m in agent.messages if m["role"] == "tool")
     assert "<untrusted_content" in search["content"] and "UYARI" in search["content"]
-    assert asked and asked[0].startswith("[dış içerik okunduktan sonra: web_search]")  # asked even in auto mode
+    assert asked and asked[0].startswith("[after reading outside content: web_search]")  # asked even in auto mode
     # A new user message clears the taint: the command runs without asking.
     agent2_script = [tool_call("run_command", {"command": "echo selam"}), "bitti"]
     provs["a"].script.extend(agent2_script)

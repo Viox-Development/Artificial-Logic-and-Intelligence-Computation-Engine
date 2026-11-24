@@ -332,9 +332,9 @@ def catalog(tools: dict[str, Tool]) -> str:
         lines.append(f"- {g} ({', '.join(shown)}): {_clip(desc, 90)}" if desc else f"- {g} ({', '.join(shown)})")
     if not lines:
         return ""
-    return ("# Yüklenebilir araçlar\nBunların tanımı her istekte gönderilmiyor ama adıyla doğrudan çağırabilirsin: "
-            "çalışır ve tanımı sonraki isteklerden itibaren eklenir. Parametrelerini önce görmek istersen load_tools "
-            "(grup ya da araç adı):\n"
+    return ("# Loadable tools\nTheir definitions aren't sent with every request, but you can call them directly by "
+            "name: it runs and the definition is added from the next requests on. If you want to see their parameters "
+            "first, use load_tools (a group or tool name):\n"
             + "\n".join(lines))
 
 
@@ -352,7 +352,7 @@ class LoadTools(Tool):
     name = "load_tools"
     parallel_safe = True
 
-    description = ("Opens tools whose definitions are not loaded yet (the 'Yüklenebilir araçlar' (loadable tools) "
+    description = ("Opens tools whose definitions are not loaded yet (the 'Loadable tools' "
                    "list in the system instructions); they can be used from the next step on. Call this before saying "
                    "'I can't' when a needed tool is not loaded. Pass a group name or a tool name; for MCP "
                    "'mcp:<server>'. Ask only for the groups you need ('all' is not accepted).")

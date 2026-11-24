@@ -143,6 +143,29 @@ NUDGE_PREFIX = "[continuation check] "
 OLD_NUDGE_PREFIX = "[devam kontrolü] "
 SHOT_REMOVED = "[old screenshot removed to save space]"
 OLD_SHOT_REMOVED = "[eski ekran görüntüsü yer kazanmak için kaldırıldı]"
+PLAN_NOTE = ("[PLAN MODE: Right now you can only read and research; tools that change files, run commands or touch the "
+             "screen will be refused. Study the task, then write a clear step-by-step plan and wait for the user's "
+             "approval.]\n\n")
+OLD_PLAN_NOTE = ("[PLAN MODU: Şu an sadece okuyup araştırabilirsin; dosya değiştiren, komut çalıştıran ya da ekrana "
+                 "dokunan araçlar reddedilecek. İşi incele, sonra adım adım net bir uygulama planı yaz ve kullanıcının "
+                 "onayını bekle.]\n\n")
+STOPPED = "stopped (the user interrupted)"
+OLD_STOPPED = "durduruldu (kullanıcı kesti)"
+ACK_SUMMARY = "Got the summary, carrying on from where I was."
+OLD_ACK_SUMMARY = "Özeti aldım, kaldığım yerden devam ediyorum."
+
+
+def strip_plan_note(text: str) -> str:
+    """The user's own text without the plan-mode note put in front of it (new or old wording)."""
+    for note in (PLAN_NOTE, OLD_PLAN_NOTE):
+        if text.startswith(note):
+            return text[len(note):]
+    return text
+
+
+def is_stopped(text: Any) -> bool:
+    """A tool result that says the user interrupted it (new or old wording)."""
+    return isinstance(text, str) and (STOPPED in text or OLD_STOPPED in text)
 _NOT_A_PROMPT = (SUMMARY_HEAD, OLD_SUMMARY_HEAD, NUDGE_PREFIX.strip(), OLD_NUDGE_PREFIX.strip(), "[old screenshot",
                  "[eski ekran görüntüsü")
 

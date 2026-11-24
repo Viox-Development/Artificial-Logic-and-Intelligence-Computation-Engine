@@ -712,7 +712,7 @@ def test_stop_cuts_hung_call_without_retry(ctx, monkeypatch):
     ctx.state["browser"] = old
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("durdurulunca yeniden denenmemeli"))
     threading.Timer(0.1, browser.abort_browser, args=(ctx, "stop")).start()
-    with pytest.raises(ToolError, match="durduruldu"):
+    with pytest.raises(ToolError, match="stopped"):
         browser.Browser().run(ctx, "snapshot")
     assert "browser" not in ctx.state
 

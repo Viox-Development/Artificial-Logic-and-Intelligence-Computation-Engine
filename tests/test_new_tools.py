@@ -295,9 +295,9 @@ def test_requests_are_small_and_tools_load_on_demand(tmp_path):
     assert "youtube" not in {s["function"]["name"] for s in specs}
     assert estimate_tokens([], specs) < 6000  # previously ~9.200
     system = agent.messages[0]["content"]
-    assert "# Yüklenebilir araçlar" in system and "youtube" in system and "file_ops" in system
+    assert "# Loadable tools" in system and "youtube" in system and "file_ops" in system
     agent.sync_catalog()
-    assert agent.messages[0]["content"].count("# Yüklenebilir araçlar") == 1  # not added again
+    assert agent.messages[0]["content"].count("# Loadable tools") == 1  # not added again
     agent._enable_groups_for("YouTube'da lofi aç")
     assert "youtube" in {s["function"]["name"] for s in agent.tool_specs()}
 
@@ -320,7 +320,7 @@ def test_old_tool_outputs_are_shortened(tmp_path):
     agent._last_call_at = time.monotonic() - 400  # cache has already gone cold: shortening now costs nothing
     agent._shrink_old_outputs()
     tools = [m for m in agent.messages if m["role"] == "tool"]
-    assert all(len(m["content"]) < 1500 and "kısaltıldı" in m["content"] for m in tools[:2])
+    assert all(len(m["content"]) < 1500 and "shortened" in m["content"] for m in tools[:2])
     assert all(len(m["content"]) == 5000 for m in tools[2:])  # the last six are left as they are
     assert tools[0]["tool_call_id"] == "0"  # the link to the tool call is preserved
     agent._shrink_old_outputs()
