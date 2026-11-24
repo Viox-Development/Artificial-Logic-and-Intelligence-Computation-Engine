@@ -978,6 +978,8 @@ Android bir uygulamayı ancak aynı anahtarla imzalanmış sürümle günceller.
 
 ## Ev: bilgisayar, Wi-Fi, TV ve telefon
 
+> English: [guide/home.md](guide/home.md) (Linux desteğiyle birlikte)
+
 ALICE bilgisayarın dışındaki şeyleri de yönetiyor. Hepsi sohbetle ya da sesle: "ekranı kapat", "performans moduna geç", "parlaklığı yüzde 40 yap", "ağda kimler var", "televizyonda Netflix'i aç", "telefonumun şarjı kaç".
 
 **Bilgisayar (`pc`):** kilitleme, ekranı kapatma, uyku, hazırda bekletme, yeniden başlatma, güç planı (dengeli, yüksek performans, tasarruf) ve monitör parlaklığı. Harici monitörde parlaklık DDC/CI ile ayarlanıyor, monitörün kendi menüsünde DDC/CI açık olmalı. Dizüstü ekranında WMI kullanılıyor. Uyku, hazırda bekletme ve yeniden başlatma onay istiyor.
