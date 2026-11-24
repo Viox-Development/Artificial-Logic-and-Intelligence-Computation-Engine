@@ -206,7 +206,7 @@ class SetupPanel:
             except Exception:  # noqa: BLE001 - dummy router (tests) or old cache
                 chains[role] = list((cache.get("chains") or {}).get(role) or [])
         cache = {**cache, "chains": chains}
-        return {"metrics": ranking.METRICS, "weights": weights, "defaults": ranking.DEFAULT_WEIGHTS,
+        return {"metrics": {k: _(v) for k, v in ranking.METRICS.items()}, "weights": weights, "defaults": ranking.DEFAULT_WEIGHTS,
                 "rows": ranking.score_table(cache, weights, self.router.providers_cfg), "chains": chains,
                 "probed_at": cache.get("probed_at", ""), "state": self.models.view()["state"]}
 

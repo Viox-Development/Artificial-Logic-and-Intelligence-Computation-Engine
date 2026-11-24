@@ -88,7 +88,7 @@ def test_html_error_page_is_summarized():
     assert e.kind == "server"
     assert "502 Bad Gateway" in msg and "cloudflare" in msg
     assert "<" not in msg and "font-family" not in msg and "var x" not in msg
-    assert summarize_body("") == "(boş gövde)"
+    assert summarize_body("") == "(empty body)"
     assert summarize_body("  plain\n\n text ") == "plain text"
 
 
@@ -196,7 +196,7 @@ def test_list_models_accepts_bare_list_and_rejects_junk():
     (httpx.ReadTimeout(""), "network", "ReadTimeout"),
     (httpx.ConnectTimeout(""), "network", "ConnectTimeout"),
     (httpx.ConnectError("Name or service not known"), "unreachable", "Name or service"),
-    (httpx.RemoteProtocolError("peer closed connection"), "network", "yarıda"),
+    (httpx.RemoteProtocolError("peer closed connection"), "network", "cut the connection off"),
 ])
 def test_transport_errors_have_readable_messages(exc, kind, needle):
     def handler(r):

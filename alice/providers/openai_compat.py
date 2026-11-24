@@ -52,7 +52,7 @@ def redact_binary(content: Any) -> str:
             return [scrub(x) for x in v]
         if isinstance(v, str) and (v.startswith("data:") and ";base64," in v[:100]
                                    or len(v) > 512 and re.fullmatch(r"[A-Za-z0-9+/=\r\n]+", v)):
-            return "[ikili veri atlandı]"
+            return "[binary data skipped]"
         return v
 
     return "" if content is None else json.dumps(scrub(content), ensure_ascii=False)
@@ -156,11 +156,11 @@ def summarize_body(body: str, limit: int = 400) -> str:
         if head and text.startswith(head):
             text = text[len(head):].strip()
         if head:
-            out = f"HTML hata sayfası: {head}" + (f" - {text}" if text else "")
+            out = f"HTML error page: {head}" + (f" - {text}" if text else "")
         else:
-            out = f"HTML hata sayfası: {text}"
+            out = f"HTML error page: {text}"
         return out[:limit]
-    return " ".join(body.split())[:limit] if body.strip() else "(boş gövde)"
+    return " ".join(body.split())[:limit] if body.strip() else "(empty body)"
 
 
 def classify_error(status: int, body: str, headers: dict[str, str] | None = None) -> ProviderError:
@@ -231,15 +231,15 @@ def _transport_error(e: Exception) -> ProviderError:
     detail = str(e).strip()
     label = type(e).__name__ + (f": {detail}" if detail else "")
     if isinstance(e, httpx.ConnectTimeout):
-        return ProviderError("network", f"bağlantı zaman aşımı ({label})")
+        return ProviderError("network", f"connection timed out ({label})")
     if isinstance(e, httpx.TimeoutException):
-        return ProviderError("network", f"zaman aşımı ({label})")
+        return ProviderError("network", f"timed out ({label})")
     if isinstance(e, httpx.ConnectError):
-        return ProviderError("unreachable", f"bağlanılamadı ({label})")
+        return ProviderError("unreachable", f"could not connect ({label})")
     if isinstance(e, httpx.RemoteProtocolError):
-        return ProviderError("network", f"sunucu bağlantıyı yarıda kesti ({label})")
+        return ProviderError("network", f"the server cut the connection off ({label})")
     if isinstance(e, httpx.InvalidURL):
-        return ProviderError("unreachable", f"geçersiz sağlayıcı adresi ({label})")
+        return ProviderError("unreachable", f"invalid provider address ({label})")
     return ProviderError("network", label)
 
 
@@ -346,23 +346,23 @@ class OpenAICompatProvider:
         try:
             data = r.json()
         except ValueError as e:  # JSONDecodeError or broken encoding
-            raise ProviderError("server", f"geçersiz JSON: {summarize_body(r.text, 200)}", 200) from e
+            raise ProviderError("server", f"invalid JSON: {summarize_body(r.text, 200)}", 200) from e
 
         # Some providers (OpenRouter) return errors inside a 200 response.
         if isinstance(data, dict) and data.get("error") and not data.get("choices"):
             raise _inline_error(data["error"])
         if not isinstance(data, dict):
-            raise ProviderError("server", f"beklenmeyen cevap biçimi: {str(data)[:200]}", 200)
+            raise ProviderError("server", f"unexpected response format: {str(data)[:200]}", 200)
 
         choices = data.get("choices") or []
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise ProviderError("server", f"boş cevap: {str(data)[:200]}", 200)
+            raise ProviderError("server", f"empty response: {str(data)[:200]}", 200)
         msg = choices[0].get("message") or {}
         if not isinstance(msg, dict):
-            raise ProviderError("server", f"beklenmeyen mesaj biçimi: {str(msg)[:200]}", 200)
+            raise ProviderError("server", f"unexpected message format: {str(msg)[:200]}", 200)
         if not msg.get("content") and not msg.get("tool_calls"):
             if choices[0].get("finish_reason") == "length":
-                raise ProviderError("too_large", "cevap max_tokens'a takıldı, içerik yok")
+                raise ProviderError("too_large", "the answer hit max_tokens, no content")
         return ChatResult(
             message=normalize_message(msg),
             provider=self.name,
@@ -441,10 +441,9 @@ class OpenAICompatProvider:
                     if cancel and cancel():
                         raise StreamCancelled()
                     if not got_data and time.monotonic() - t0 > first_limit:
-                        raise ProviderError("network", f"zaman aşımı: model {int(first_limit)} sn'dir ilk "
-                                                       "cevabı vermedi")
+                        raise ProviderError("network", f"timed out: the model hasn't given its first answer for {int(first_limit)} s")
                     if time.monotonic() - last_data > self.STREAM_IDLE:
-                        raise ProviderError("network", f"akış {int(self.STREAM_IDLE)} sn'dir veri göndermiyor")
+                        raise ProviderError("network", f"the stream hasn't sent data for {int(self.STREAM_IDLE)} s")
                     if not line or not line.startswith("data:"):
                         continue
                     payload = line[5:].strip()
@@ -511,14 +510,14 @@ class OpenAICompatProvider:
         if not chunks and not done:
             # A 200 arrived but not a single SSE chunk (HTML interstitial page, empty body, or the stream closed
             # right after opening). Previously an empty reply was counted as success and nothing was shown.
-            raise ProviderError("server", "akış veri göndermeden kapandı (geçerli SSE parçası yok)", 200)
+            raise ProviderError("server", "the stream closed without sending data (no valid SSE chunk)", 200)
 
         text = "".join(text_parts)
         msg: dict[str, Any] = {"content": text}
         if calls:
             msg["tool_calls"] = [calls[i] for i in sorted(calls)]
         if not text and not calls and finish == "length":
-            raise ProviderError("too_large", "cevap max_tokens'a takıldı, içerik yok")
+            raise ProviderError("too_large", "the answer hit max_tokens, no content")
         return ChatResult(normalize_message(msg), self.name, served_model, usage, time.monotonic() - t0,
                           finish=str(finish or ""))
 
@@ -533,7 +532,7 @@ class OpenAICompatProvider:
             try:
                 data = r.json()
             except ValueError as e:
-                raise ProviderError("server", f"geçersiz JSON: {summarize_body(r.text, 200)}", 200) from e
+                raise ProviderError("server", f"invalid JSON: {summarize_body(r.text, 200)}", 200) from e
         except ProviderError as e:
             raise self._scrub(e) from e.__cause__
         # Some providers return the list directly: previously list.get raised AttributeError.

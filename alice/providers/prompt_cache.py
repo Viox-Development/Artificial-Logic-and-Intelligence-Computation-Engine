@@ -91,8 +91,8 @@ class CacheBreak:
 
     def text(self) -> str:
         kind = "beklenen" if self.expected else "BEKLENMEYEN"
-        return (f"{kind} önbellek kırılması ({self.ref}): okunan {self.before:,} -> {self.after:,} token; "
-                f"neden: {'; '.join(self.reasons)}" + (f" (fark: {self.diff_path})" if self.diff_path else ""))
+        return (f"{kind} cache break ({self.ref}): read {self.before:,} -> {self.after:,} tokens; "
+                f"why: {'; '.join(self.reasons)}" + (f" (fark: {self.diff_path})" if self.diff_path else ""))
 
 
 @dataclass
@@ -166,7 +166,7 @@ class CacheBreakDetector:
             diff_path = self._write_diff(prev.system, cur.system)
         # A model switch is a routing decision (already weighed against the cache by _sticky_role): reported, but not
         # counted as unexpected. Same for drops ALICE announced with expect().
-        switched = bool(reasons) and all(r.startswith("model değişti") for r in reasons)
+        switched = bool(reasons) and all(r.startswith("model changed") for r in reasons)
         brk = CacheBreak(time.time(), cur.ref, prev_cached, cached, expected + reasons or ["bilinmiyor"],
                          expected=bool(expected) or switched, diff_path=diff_path)
         if not brk.expected:
@@ -179,28 +179,28 @@ class CacheBreakDetector:
     def _reasons(prev: Snapshot, cur: Snapshot, ttl_s: float) -> list[str]:
         out: list[str] = []
         if prev.ref != cur.ref:
-            out.append(f"model değişti: {prev.ref} -> {cur.ref}")
+            out.append(f"model changed: {prev.ref} -> {cur.ref}")
         if prev.system_hash != cur.system_hash:
-            out.append(f"system prompt değişti ({len(cur.system) - len(prev.system):+d} karakter)")
+            out.append(f"system prompt changed ({len(cur.system) - len(prev.system):+d} characters)")
         added = [n for n in cur.tools if n not in prev.tools]
         removed = [n for n in prev.tools if n not in cur.tools]
         changed = [n for n in cur.tools if n in prev.tools and cur.tools[n] != prev.tools[n]]
         if added:
-            out.append("araç eklendi: " + ", ".join(added[:6]))
+            out.append("tool added: " + ", ".join(added[:6]))
         if removed:
-            out.append("araç çıkarıldı: " + ", ".join(removed[:6]))
+            out.append("tool removed: " + ", ".join(removed[:6]))
         if changed:
-            out.append("araç şeması değişti: " + ", ".join(changed[:6]))
+            out.append("tool schema changed: " + ", ".join(changed[:6]))
         if not added and not removed and list(prev.tools) != [n for n in cur.tools if n in prev.tools]:
-            out.append("araç sırası değişti")
+            out.append("tool order changed")
         if prev.settings != cur.settings:
-            out.append("istek ayarları değişti (effort/thinking/beta)")
+            out.append("request settings changed (effort/thinking/beta)")
         n = min(len(prev.messages), len(cur.messages))
         first = next((i for i in range(n) if prev.messages[i] != cur.messages[i]), None)
         if first is not None:
-            out.append(f"geçmiş {first + 1}. mesajdan itibaren değişti")
+            out.append(f"the history changed from message {first + 1} on")
         elif len(cur.messages) < len(prev.messages):
-            out.append("geçmiş kısaldı")
+            out.append("the history got shorter")
         if not out and cur.at - prev.at > ttl_s:
             out.append(f"TTL doldu ({(cur.at - prev.at) / 60:.0f} dk ara)")
         return out

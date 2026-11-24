@@ -218,7 +218,8 @@ def human_failure(reasons: list[str]) -> str:
             text = _("{name}'s quota is used up", name=name)
         elif any(w in low for w in ("auth", "401", "403", "anahtar", " yok")):
             text = _("{name} has no API key, or it is invalid", name=name)
-        elif any(w in low for w in ("timeout", "network", "unreachable", "bağlan", "veri göndermiyor")):
+        elif any(w in low for w in ("timeout", "timed out", "network", "unreachable", "connect", "bağlan", "veri göndermiyor",
+                                   "hasn't sent data")):
             text = _("{name} connection problem", name=name)
         else:
             text = f"{name}: {why[:80]}"

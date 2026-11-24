@@ -85,14 +85,14 @@ def decide_tier(code: float, thinking: float, steps: float, chat: float) -> Rout
     signals = {"code": round(code, 2), "thinking": round(thinking, 2), "steps": round(steps, 2),
                "chat": round(chat, 2)}
     if code >= YES:
-        return Route("strong", "kod işi", signals)
+        return Route("strong", "code job", signals)
     if thinking >= STRONG_THINKING:
-        return Route("strong", "derin düşünme", signals)
+        return Route("strong", "deep thinking", signals)
     if steps >= STRONG_STEPS:
-        return Route("strong", "çok adımlı iş", signals)
+        return Route("strong", "multi-step job", signals)
     if code <= NO and steps <= LIGHT_STEPS and (chat >= YES or thinking <= LIGHT_THINKING):
-        return Route("light", "sohbet" if chat >= YES else "kısa soru", signals)
-    return Route("normal", "orta", signals)
+        return Route("light", "chat" if chat >= YES else "short question", signals)
+    return Route("normal", "medium", signals)
 
 
 def _signals(d: Decision) -> tuple[float, float, float, float]:
@@ -123,12 +123,12 @@ def route(config, request: str, previous_reply: str = "", engine: Any = None,
     """The message's tier. If Jev is missing or fails, "normal" (today's brain chain)."""
     global _broken_until
     if not request.strip():
-        return Route("normal", "boş mesaj")
+        return Route("normal", "empty message")
     eng = engine or _get_engine(config)
     if eng is None:
-        return Route("normal", "TypeSafe anahtarı yok")
+        return Route("normal", "no TypeSafe key")
     if engine is None and time.monotonic() < _broken_until:
-        return Route("normal", "jev geçici olarak kapalı")
+        return Route("normal", "jev temporarily off")
     t0 = time.monotonic()
     try:
         d = eng.decide(build_state(request, previous_reply), QUESTIONS)
@@ -136,8 +136,8 @@ def route(config, request: str, previous_reply: str = "", engine: Any = None,
     except Exception as e:  # noqa: BLE001 - an error is not an answer: fall back to today's behavior and leave a trace
         if engine is None:
             _broken_until = time.monotonic() + float(getattr(e, "cooldown", 60.0) or 60.0)
-        log(f"yönlendirme: jev başarısız ({str(e)[:160]}), normal zincir")
-        return Route("normal", "jev hatası")
+        log(f"routing: jev failed ({str(e)[:160]}), normal chain")
+        return Route("normal", "jev error")
     r.latency = time.monotonic() - t0
     return r
 
@@ -157,7 +157,7 @@ def voice_chain(router, config, request: str, fast: list[str],
     `fast` order. If routing is off or Jev cannot be reached, `fast` is returned as is."""
     rc = config.data.get("routing", {}) or {}
     if not rc.get("enabled") or not rc.get("voice", True):
-        return fast, Route("normal", "yönlendirme kapalı")
+        return fast, Route("normal", "routing off")
     r = route(config, request, log=log)
     if r.tier != "strong":
         return fast, r

@@ -117,7 +117,7 @@ def test_discover_collects_sorts_and_records_errors():
     # First by preference score; on a tie, larger context first
     assert refs == ["openrouter:q/qwen3-coder:free", "groq:openai/gpt-oss-20b", "groq:plain-big",
                     "openrouter:z/plain:free"]
-    assert errors["nvidia"] == "NVIDIA_KEY tanımlı değil"
+    assert errors["nvidia"] == "NVIDIA_KEY is not set"
     assert errors["broken"].startswith("[auth] 401 unauthorized") and len(errors["broken"]) == 160
     assert errors["crash"] == "boom"
     assert "nvidia" not in router.calls  # disabled provider is not queried

@@ -344,8 +344,8 @@ def test_score_table_says_why_a_model_is_not_in_the_chain():
         "b:yeni": {"ok": True, "quality": 45, "latency": 1}}}
     rows = {r["ref"]: r for r in ranking.score_table(cache, None, pcs)}
     assert "brain" not in rows["a:glm-5"]["why"]
-    assert "bağlamı küçük (8K)" in rows["b:qwen3.8-27b"]["why"]["brain"]
-    assert rows["b:yeni"]["why"]["brain"] == "zekâ puanı bilinmiyor"
+    assert "small context (8K)" in rows["b:qwen3.8-27b"]["why"]["brain"]
+    assert rows["b:yeni"]["why"]["brain"] == "intelligence score unknown"
 
 
 def test_context_counts_in_score():

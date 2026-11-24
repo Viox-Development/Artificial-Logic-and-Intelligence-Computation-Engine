@@ -143,8 +143,8 @@ def test_detector_names_changed_tool_and_history(tmp_path):
     msgs[2]["content"] = "değişti"
     d.before(msgs, tools2, "a:m")
     brk = d.after(500, "a:m", 300)
-    assert any("araç şeması değişti: read_file" in r for r in brk.reasons)
-    assert any("2. mesajdan" in r for r in brk.reasons)
+    assert any("tool schema changed: read_file" in r for r in brk.reasons)
+    assert any("from message 2" in r for r in brk.reasons)
 
 
 def test_detector_expected_and_ttl_and_small_drops(tmp_path):
@@ -173,7 +173,7 @@ def test_detector_model_switch_is_reported_but_expected(tmp_path):
     d.after(40000, "a:m", 300)
     d.before(_msgs(), TOOLS, "b:x")
     brk = d.after(0, "b:x", 300)
-    assert brk.expected and brk.reasons == ["model değişti: a:m -> b:x"]
+    assert brk.expected and brk.reasons == ["model changed: a:m -> b:x"]
 
 
 # ------------------------------------------------------------------------------------------------ sticky effort
@@ -308,7 +308,7 @@ def test_cache_after_refreshes_settings_and_counts_cleared(workdir):
     agent.router.last_settings[agent.role] = {"reasoning_effort": "high"}  # what this call really sent
     agent._cache_after(NS(provider="a", model="m", usage={"cached_tokens": 0}))
     assert agent.stats["cache_breaks"] == 1
-    assert any("istek ayarları" in r for r in agent.cache_breaks.breaks[-1].reasons)
+    assert any("request settings" in r for r in agent.cache_breaks.breaks[-1].reasons)
 
 
 def test_cache_ttl_for_claude_api(workdir):

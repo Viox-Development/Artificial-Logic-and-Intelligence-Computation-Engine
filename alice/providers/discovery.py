@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from alice.i18n import _
 from alice.providers.openai_compat import ProviderError
 from alice.providers.router import Router
 
@@ -78,7 +79,7 @@ def discover(router: Router) -> tuple[list[FoundModel], dict[str, str]]:
     errors: dict[str, str] = {}
     for name, pc in router.providers_cfg.items():
         if not pc.enabled:
-            errors[name] = f"{pc.api_key_env} tanımlı değil"
+            errors[name] = _("{env} is not set", env=pc.api_key_env)
             continue
         if not getattr(pc, "auto", True):
             continue

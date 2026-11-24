@@ -743,7 +743,7 @@ class Agent:
                 break
         r = jev_route.route(self.config, user_text, prev, log=log)
         try:
-            log(_("routing: {tier} ({reason}) {signals} {secs} s", tier=r.tier, reason=r.reason, signals=r.signals, secs=f"{r.latency:.2f}"))
+            log(_("routing: {tier} ({reason}) {signals} {secs} s", tier=r.tier, reason=_(r.reason), signals=r.signals, secs=f"{r.latency:.2f}"))
         except Exception:  # noqa: BLE001
             pass
         if r.tier == "light" and sticky is not None:

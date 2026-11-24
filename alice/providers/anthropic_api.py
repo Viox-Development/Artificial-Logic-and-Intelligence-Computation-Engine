@@ -39,7 +39,7 @@ def _sdk() -> Any:
     try:
         import anthropic
     except ImportError as e:
-        raise ProviderError("auth", "Claude API için anthropic paketi gerekli: pip install anthropic") from e
+        raise ProviderError("auth", "the Claude API needs the anthropic package: pip install anthropic") from e
     return anthropic
 
 
@@ -308,7 +308,7 @@ class AnthropicProvider:
             if schema:
                 out_cfg["format"] = {"type": "json_schema", "schema": schema}
         elif response_format and response_format.get("type") == "json_object":
-            system = (system + "\n\n" if system else "") + "Cevabı yalnızca geçerli bir JSON nesnesi olarak ver."
+            system = (system + "\n\n" if system else "") + "Give the answer only as a valid JSON object."
         if system:
             kw["system"] = system
         t = to_tools(tools)
@@ -348,9 +348,9 @@ class AnthropicProvider:
     def _error(self, e: Exception) -> ProviderError:
         sdk = _sdk()
         if isinstance(e, sdk.APITimeoutError):
-            err = ProviderError("network", "zaman aşımı: Claude API cevap vermedi")
+            err = ProviderError("network", "timed out: the Claude API did not answer")
         elif isinstance(e, sdk.APIConnectionError):
-            err = ProviderError("network", f"Claude API'ye bağlanılamadı: {e}")
+            err = ProviderError("network", f"could not connect to the Claude API: {e}")
         elif isinstance(e, sdk.APIStatusError):
             body = ""
             try:
@@ -379,10 +379,10 @@ class AnthropicProvider:
         if msg.stop_reason == "refusal":
             det = getattr(msg, "stop_details", None)
             cat = getattr(det, "category", None) if det else None
-            raise ProviderError("bad_request", "Claude isteği geri çevirdi" + (f" ({cat})" if cat else ""))
+            raise ProviderError("bad_request", "Claude refused the request" + (f" ({cat})" if cat else ""))
         if msg.stop_reason == "max_tokens" and not any(b.type in ("text", "tool_use") and
                                                        (b.type == "tool_use" or b.text) for b in msg.content):
-            raise ProviderError("too_large", "cevap max_tokens'a takıldı, içerik yok")
+            raise ProviderError("too_large", "the answer hit max_tokens, no content")
 
     # ---------------------------------------------------------------------------------------- calls
     def chat(self, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
