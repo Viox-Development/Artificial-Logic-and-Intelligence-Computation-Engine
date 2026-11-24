@@ -100,7 +100,7 @@ def test_images_stripped_for_non_vision_and_private_keys_removed():
         {"type": "text", "text": "bak"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}]}]
     r.chat("brain", msgs)
     sent = a.calls[0]["messages"][0]
-    assert isinstance(sent["content"], str) and "atlandı" in sent["content"]
+    assert isinstance(sent["content"], str) and "skipped" in sent["content"]
     assert "_image" not in sent
 
 
@@ -526,7 +526,7 @@ def test_pinned_model_does_not_fall_back_to_the_role_chain():
     assert r.chain("brain") == ["a:m1"]
     with pytest.raises(AllProvidersFailed) as e:
         r.chat("brain", [{"role": "user", "content": "hi"}])
-    assert e.value.pinned and "Seçtiğin model" in str(e.value)
+    assert e.value.pinned and "The model you chose" in str(e.value)
     assert not b.calls
 
 
@@ -584,7 +584,7 @@ def test_retry_on_same_model_is_not_reported_as_a_switch():
     r = router_with(cfg, {"a": a}, on_event=events.append)
     r.sleep = lambda s: r.cooldown_until.clear()  # wait is over: the cooldown has expired
     assert r.chat("brain", [{"role": "user", "content": "hi"}]).text == "ok"
-    assert not any("modeline geçildi" in e for e in events)
+    assert not any("switched to" in e for e in events)
 
 
 def test_subscription_order_claude_then_chatgpt_then_antigravity(monkeypatch):
