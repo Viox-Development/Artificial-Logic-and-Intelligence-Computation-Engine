@@ -496,11 +496,12 @@ class Triggers:
 
 class TaskAsk(Tool):
     name = "task_ask"
-    description = ("Arka plan görevi: kullanıcının kararı gereken bir şey için onay iste (kullanıcıya bildirim gider, "
-                   "telefondan ya da masaüstünden onaylar/reddeder/cevap yazar). Geri alınamayan ya da dışarıya giden "
-                   "her iş (yorum yazmak, mesaj göndermek, dosya silmek, satın almak) için kendin yapmak yerine bunu "
-                   "kullan. title: kısa soru. body: kullanıcının karar vermek için görmesi gereken her şey (taslak "
-                   "metin dahil). action: onaylanırsa tam olarak ne yapılacağı (kendin için talimat, ayrıntılı).")
+    description = ("Background task: ask the user to approve something that needs their decision (they get a "
+                   "notification and approve, reject or reply from the phone or the desktop). Use this instead "
+                   "of doing it yourself for every irreversible or outgoing step (writing a comment, sending a "
+                   "message, deleting a file, buying something). title: a short question. body: everything the "
+                   "user needs to see to decide (draft text included). action: exactly what to do if approved "
+                   "(an instruction to yourself, detailed). Write title and body in Turkish.")
     parameters = obj({"title": {"type": "string"}, "body": {"type": "string"}, "action": {"type": "string"}},
                      ["title", "action"])
     risk = READ
@@ -508,69 +509,72 @@ class TaskAsk(Tool):
     def run(self, ctx: ToolContext, title: str, action: str, body: str = "") -> ToolResult:
         asks = ctx.state.setdefault("task_asks", [])
         if len(asks) >= 5:
-            return ToolResult("Bu çalıştırmada yeterince onay istendi; gerisini sonraki çalıştırmaya bırak.",
+            return ToolResult("Enough approvals were asked for in this run; leave the rest for the next run.",
                               is_error=True)
         asks.append({"title": title, "body": body, "action": action})
-        return ToolResult("Onay isteği kullanıcıya gitti. Cevabını bekleme; bu işi yapmadan devam et.")
+        return ToolResult("The approval request went to the user. Don't wait for the answer; carry on without doing "
+                          "this job.")
 
 
 class TaskNote(Tool):
     name = "task_note"
-    description = ("Arka plan görevi: bu görevin hafızasına not yaz; bir sonraki çalıştırmada önüne gelir (ne "
-                   "yapıldı, kullanıcı neyi sevdi/sevmedi, neye dikkat etmeli). Kısa ve kalıcı bilgi yaz.")
+    description = ("Background task: write a note to this task's memory; it is shown to you on the next run "
+                   "(what was done, what the user liked/disliked, what to watch for). Write short, lasting "
+                   "information.")
     parameters = obj({"text": {"type": "string"}}, ["text"])
     risk = READ
 
     def run(self, ctx: ToolContext, text: str) -> ToolResult:
         ctx.state.setdefault("task_notes", []).append(str(text))
-        return ToolResult("Not kaydedildi.")
+        return ToolResult("Note saved.")
 
 
 # --------------------------------------------------------------------------- runner
-PROMPT = """Arka planda sana verilmiş kalıcı bir görevi yürütüyorsun. Kullanıcı başında değil. Saat: {now}.
+PROMPT = """You are carrying out a standing task you were given, in the background. The user is not at the \
+computer. Time: {now}.
 
-# Görev: {name}
-Sorumluluk: {responsibility}
+# Task: {name}
+Responsibility: {responsibility}
 
-# Neden şimdi
+# Why now
 {reason}
 {items}
-# Görevin hafızası (önceki çalıştırmalarda kendine bıraktığın notlar)
+# The task's memory (notes you left yourself in earlier runs)
 {memory}
 
-# Son olanlar
+# Recent events
 {recent}
 
-# Kurallar
+# Rules
 - {permission}
-- Kullanıcının kararı gereken, geri alınamayan ya da dışarıya giden bir şey için `task_ask` ile onay iste
-  (title, ayrıntılı body, onaylanırsa yapılacak action). Taslak hazırlamak serbest; göndermek onaya bağlı.
-- Sonraki çalıştırmada bilmen gerekeni `task_note` ile kaydet (aynı şeyi iki kez yapmamak için).
-- Yapacak bir şey yoksa hiçbir şey yapma. Bitince sonucu 1-3 kısa cümleyle Türkçe yaz; hiçbir şey yapmadıysan
-  yalnız "sessiz" yaz."""
+- For anything that needs the user's decision, is irreversible or goes outside, ask for approval with `task_ask`
+  (title, a detailed body, the action to take if approved). Preparing a draft is fine; sending it needs approval.
+- Save what you need to know on the next run with `task_note` (so you don't do the same thing twice).
+- If there is nothing to do, do nothing. When done, write the result in 1-3 short sentences in Turkish; if you did
+  nothing, write only "sessiz"."""
 
-FOLLOWUP = """Arka plan görevi "{name}" için kullanıcıdan cevap geldi. Saat: {now}.
-Sorumluluk: {responsibility}
+FOLLOWUP = """The user answered for the background task "{name}". Time: {now}.
+Responsibility: {responsibility}
 
-Sorduğun: {title}
+You asked: {title}
 {body}
-Önerdiğin iş: {action}
+The job you proposed: {action}
 
-Kullanıcının cevabı: {answer}
+The user's answer: {answer}
 
 {todo}
-Bitince ne yaptığını 1-3 kısa cümleyle Türkçe yaz.
+When done, write what you did in 1-3 short sentences in Turkish.
 
-# Görevin hafızası
+# The task's memory
 {memory}"""
 
 PERMISSION_TEXT = {
-    "read": "Bu görev yalnız okuyabilir: dosya değiştiren, komut çalıştıran ya da dışarıya giden her adım reddedilir; "
-            "bunlar için `task_ask` kullan.",
-    "act": "Bu görev dosya düzenleyebilir ve komut çalıştırabilir; dışarıya giden ya da tehlikeli adımlar reddedilir, "
-           "onlar için `task_ask` kullan.",
-    "full": "Kullanıcı bu göreve tam yetki verdi: gereken işi onay sormadan yapabilirsin. Yine de emin olmadığın bir "
-            "karar için `task_ask` kullan.",
+    "read": "This task can only read: every step that changes files, runs commands or goes outside is refused; "
+            "use `task_ask` for those.",
+    "act": "This task can edit files and run commands; outgoing or dangerous steps are refused, use `task_ask` "
+           "for those.",
+    "full": "The user gave this task full permission: you may do what is needed without asking. Still use "
+            "`task_ask` for a decision you are unsure of.",
 }
 
 # permission level -> (agent permission mode, answer to steps that still ask)
@@ -691,14 +695,14 @@ class TaskRunner:
     # ---- runs
     def _context(self, task: Task) -> tuple[str, str]:
         st = self.book.state(task.id)
-        mem = "\n".join(f"- {_fmt(m['ts'])}: {m['text']}" for m in (st.get("memory") or [])[-15:]) or "(boş)"
+        mem = "\n".join(f"- {_fmt(m['ts'])}: {m['text']}" for m in (st.get("memory") or [])[-15:]) or "(empty)"
         recent = "\n".join(f"- {_fmt(e['ts'])} [{e['kind']}] {e['text'][:200]}"
-                           for e in reversed(self.book.entries(task.id, 8))) or "(ilk çalıştırma)"
+                           for e in reversed(self.book.entries(task.id, 8))) or "(first run)"
         return mem, recent
 
     def _run(self, task: Task, fire: Fire) -> None:
         mem, recent = self._context(task)
-        items = ("\nYeni öğeler:\n" + "\n\n".join(f"* {i}" for i in fire.items[:15]) + "\n") if fire.items else ""
+        items = ("\nNew items:\n" + "\n\n".join(f"* {i}" for i in fire.items[:15]) + "\n") if fire.items else ""
         prompt = PROMPT.format(now=datetime.now().strftime("%A %d.%m.%Y %H:%M"), name=task.name,
                                responsibility=task.responsibility, reason=fire.reason, items=items, memory=mem,
                                recent=recent, permission=PERMISSION_TEXT[task.permission])
@@ -743,13 +747,13 @@ class TaskRunner:
             return
         mem, _ = self._context(task)
         if a.status == "approved":
-            answer = "ONAYLADI." + (f" Notu: {a.reply}" if a.reply else "")
-            todo = "Şimdi önerdiğin işi yap; yalnız onu, fazlasını değil. Kullanıcı bu iş için izin verdi."
+            answer = "APPROVED." + (f" Their note: {a.reply}" if a.reply else "")
+            todo = "Do the job you proposed now; only that, nothing more. The user gave permission for this job."
             mode, approve = "auto", "y"
         else:
             answer = a.reply
-            todo = ("Cevaba göre devam et. Yeni bir karar ya da geri alınamayan bir iş gerekiyorsa yine `task_ask` "
-                    "ile sor.")
+            todo = ("Carry on according to the answer. If a new decision or an irreversible step is needed, ask with "
+                    "`task_ask` again.")
             mode, approve = LEVELS[task.permission]
         prompt = FOLLOWUP.format(name=task.name, now=datetime.now().strftime("%A %d.%m.%Y %H:%M"),
                                  responsibility=task.responsibility, title=a.title, body=a.body, action=a.action,
