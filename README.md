@@ -58,7 +58,8 @@ ALICE ships with about 90 tools. The main groups:
 - Details: [docs/guide/core.md](docs/guide/core.md).
 
 **Memory and awareness**
-- Notes, past conversations, and follow-ups across sessions, with a page to review, edit, or delete what it knows.
+- Notes, past conversations, and follow-ups across sessions, with a page to review, edit, or delete what it knows
+  ([docs/guide/memory.md](docs/guide/memory.md)).
 - **Time machine** (off by default): text seen on screen goes into a local, encrypted, searchable timeline
   ("find the link someone shared on Discord last week").
 - An on-screen HUD that draws arrows, cards, and highlights over games, the desktop, and the browser.
