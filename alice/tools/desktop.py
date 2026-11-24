@@ -38,14 +38,14 @@ def pick_window(wins: list[Any], title: str, text_of=lambda w: w.title or "", st
     error and lists the candidates, so the wrong one is not closed."""
     want = fold(title.strip())
     if not want:
-        raise ToolError("pencere başlığı boş olamaz")
+        raise ToolError("the window title can't be empty")
     hits = [w for w in wins if want in fold(text_of(w))]
     if not hits:
         # Also list the open windows: the model kept guessing the title ("Setup - Sonora", "Setup - Sonora version 0.47.0")
         # and repeating the same error; seeing the real title, it picks the right one in a single step.
         names = list(dict.fromkeys(t.strip() for t in (text_of(w) for w in wins) if t and t.strip()))
         seen = "; ".join(n[:60] for n in names[:12])
-        raise ToolError(f"'{title}' başlıklı pencere yok" + (f". Açık pencereler: {seen}" if seen else ""))
+        raise ToolError(f"no window titled '{title}'" + (f". Open windows: {seen}" if seen else ""))
     for test in (lambda t: t == want, lambda t: t.startswith(want)):
         best = [w for w in hits if test(fold(text_of(w)).strip())]
         if best:
@@ -53,8 +53,8 @@ def pick_window(wins: list[Any], title: str, text_of=lambda w: w.title or "", st
             break
     names = list(dict.fromkeys(text_of(w) for w in hits))
     if strict and len(names) > 1:
-        raise ToolError(f"'{title}' birden çok pencereyle eşleşiyor: " + " | ".join(names[:8])
-                        + ". Hangisi olduğunu tam başlıkla belirt.")
+        raise ToolError(f"'{title}' matches more than one window: " + " | ".join(names[:8])
+                        + ". Say which one with the full title.")
     return hits[0]
 
 
@@ -63,12 +63,12 @@ def list_windows() -> list[str]:
         try:
             import pygetwindow as gw
         except ImportError as e:
-            raise ToolError("pygetwindow kurulu değil: pip install 'alice-harness[computer]'") from e
+            raise ToolError("pygetwindow is not installed: pip install 'alice-harness[computer]'") from e
         return [t for t in gw.getAllTitles() if t.strip()]
     if shutil.which("wmctrl"):
         out = subprocess.run(["wmctrl", "-l"], capture_output=True, text=True).stdout
         return [line.split(None, 3)[-1] for line in out.splitlines() if len(line.split(None, 3)) == 4]
-    raise ToolError("Linux'ta pencere listesi için wmctrl gerekli (sudo apt install wmctrl)")
+    raise ToolError("the window list on Linux needs wmctrl (sudo apt install wmctrl)")
 
 
 def focus_window(title: str) -> str:
@@ -84,10 +84,10 @@ def focus_window(title: str) -> str:
             if not IS_WIN:
                 raise
         if IS_WIN and not force_foreground(getattr(w, "_hWnd", 0)):
-            raise ToolError(f"'{w.title}' öne alınamadı (Windows izin vermedi; tam ekran oyun açık olabilir)")
+            raise ToolError(f"could not bring '{w.title}' to the front (Windows didn't allow it; a fullscreen game may be open)")
         return w.title
     if not title.strip():
-        raise ToolError("pencere başlığı boş olamaz")
+        raise ToolError("the window title can't be empty")
     _wmctrl(["-a", title], title)
     return title
 
@@ -96,11 +96,11 @@ def _wmctrl(args: list[str], title: str) -> None:
     try:
         r = subprocess.run(["wmctrl", *args], check=False, capture_output=True, timeout=10)
     except FileNotFoundError as e:
-        raise ToolError("Linux'ta pencere işlemleri için wmctrl gerekli (sudo apt install wmctrl)") from e
+        raise ToolError("window actions on Linux need wmctrl (sudo apt install wmctrl)") from e
     except subprocess.TimeoutExpired as e:
-        raise ToolError("wmctrl 10 sn içinde cevap vermedi") from e
+        raise ToolError("wmctrl did not answer within 10 s") from e
     if r.returncode != 0:  # no matching window: must not silently report "brought to front"
-        raise ToolError(f"'{title}' başlıklı pencere yok")
+        raise ToolError(f"no window titled '{title}'")
 
 
 def force_foreground(hwnd: int) -> bool:
@@ -137,9 +137,9 @@ def force_foreground(hwnd: int) -> bool:
 def window_op(title: str, op: str) -> str:
     ops = ("minimize", "maximize", "restore", "close")
     if op not in ops:
-        raise ToolError(f"bilinmeyen pencere işlemi: {op}. Geçerli: {', '.join(ops)}")
+        raise ToolError(f"unknown window action: {op}. Valid: {', '.join(ops)}")
     if not title.strip():
-        raise ToolError("pencere başlığı boş olamaz")
+        raise ToolError("the window title can't be empty")
     if not (IS_WIN or IS_MAC):
         if op == "close":
             _wmctrl(["-c", title], title)
@@ -170,15 +170,15 @@ FILE_PATH_RX = re.compile(r"^([a-z]:[\\/]|\\\\|~[\\/]|%\w+%[\\/]|/)", re.I)
 
 def missing_file(p: Path) -> str:
     """Missing file message + the newest similar files in the same folder (maybe downloaded under another name)."""
-    msg = f"dosya yok: {p}"
+    msg = f"file not found: {p}"
     try:
         same = sorted((f for f in p.parent.iterdir() if f.is_file() and f.suffix.lower() == p.suffix.lower()),
                       key=lambda f: f.stat().st_mtime, reverse=True)[:5]
     except OSError:
         same = []
     if same:
-        msg += ". Aynı klasörde en yeni " + p.suffix + " dosyaları: " + ", ".join(f.name for f in same) + \
-            " (dosya başka adla inmiş olabilir; emin değilsen browser action=download ile yeniden indir)"
+        msg += ". Newest " + p.suffix + " files in the same folder: " + ", ".join(f.name for f in same) + \
+            " (the file may have downloaded under another name; if unsure, download it again with browser action=download)"
     return msg
 
 
@@ -347,7 +347,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
         add("PATH", w)
     for n, app_id in start_apps():
         if needle in _norm(n) and len(out) < limit:
-            out.append(f"Başlat uygulaması ({n}): shell:AppsFolder\\{app_id}")
+            out.append(f"Start app ({n}): shell:AppsFolder\\{app_id}")
 
     # Start menu / desktop shortcuts (together with their target exes)
     lnks = [p for p in _shortcut_files() if needle in _norm(p.stem)]
@@ -355,8 +355,8 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
     for lnk in lnks[:20]:
         t = targets.get(lnk, "")
         if t.lower().endswith(".exe"):
-            add("kısayol hedefi", t)
-        add("kısayol", str(lnk))
+            add("shortcut target", t)
+        add("shortcut", str(lnk))
 
     # Registry
     try:
@@ -384,10 +384,10 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
                     except OSError:
                         continue
                     if v.lower().endswith(".exe"):
-                        add(f"kayıt ({disp})", v)
+                        add(f"registry ({disp})", v)
                     elif v and Path(v).is_dir():
                         for exe in _exes_in(Path(v), needle, depth=2)[:3]:
-                            add(f"kayıt ({disp})", str(exe))
+                            add(f"registry ({disp})", str(exe))
         for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
             try:
                 root = winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths")
@@ -426,7 +426,7 @@ def find_installed_apps(name: str, limit: int = 15) -> list[str]:
                     cands = []
             for c in cands:
                 for exe in _exes_in(c, needle)[:3]:
-                    add("klasör", str(exe))
+                    add("folder", str(exe))
         if len(out) >= limit:
             break
     return out[:limit]
@@ -451,7 +451,7 @@ def open_app(target: str) -> str:
     """Open an app name, exe path, file or URL."""
     target = (target or "").strip()
     if not target:  # On Windows Path("") becomes "."; an empty target was opening the working folder
-        raise ToolError("açılacak hedef boş")
+        raise ToolError("the target to open is empty")
     if re.match(r"https?://", target, re.I) and DOWNLOAD_RX.search(target.split("?", 1)[0]):
         # Installer/archive link: in the browser, Opera showed a "Farklı Kaydet" (Save As) window and waited there.
         # ALICE tried to run the installer before the file arrived. Download straight into İndirilenler (Downloads).
@@ -467,40 +467,40 @@ def open_app(target: str) -> str:
         if URI_RX.match(target):
             # ms-settings:nightlight, mailto:, steam:// ...: open directly; via search, Settings took 42 sec to open.
             os.startfile(target)  # type: ignore[attr-defined]
-            return f"açıldı: {target}"
+            return f"opened: {target}"
         p = Path(os.path.expandvars(target)).expanduser()
         if p.exists() or "://" in target or shutil.which(target):
             os.startfile(str(p) if p.exists() else (shutil.which(target) or target))  # type: ignore[attr-defined]
-            return f"açıldı: {target}"
+            return f"opened: {target}"
         if target.lower().startswith("shell:appsfolder"):
             subprocess.Popen(["explorer.exe", target])
-            return f"açıldı: {target}"
+            return f"opened: {target}"
         lnk = _start_menu_lookup(target)
         if lnk:
             os.startfile(str(lnk))  # type: ignore[attr-defined]
-            return f"açıldı: {lnk.stem} ({lnk})"
+            return f"opened: {lnk.stem} ({lnk})"
         app = match_start_app(target)
         if app:  # every Start menu app, including Store apps (WhatsApp etc.)
             subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"])
-            return f"açıldı: {app[0]}"
+            return f"opened: {app[0]}"
         for line in find_installed_apps(target):
             path = line.split(": ", 1)[1]
             if path.lower().endswith(".exe"):
                 os.startfile(path)  # type: ignore[attr-defined]
-                return f"açıldı: {path}"
+                return f"opened: {path}"
         # Last resort: the shell's own resolution (including App Paths entries). cmd.exe treats & | ^ as command
         # separators: "x&calc" must not run a second command (the target may have come from a web page).
         if CMD_META & set(target):
-            raise ToolError(f"'{target}' bulunamadı (geçersiz karakter içeriyor)")
+            raise ToolError(f"'{target}' not found (it contains an invalid character)")
         subprocess.Popen(["cmd", "/c", "start", "", target], creationflags=0x08000000)
-        return (f"'{target}' kurulu programlarda bulunamadı; başlatma komutu yine de gönderildi. "
-                "Pencere açılmadıysa program kurulu değildir ya da adı farklıdır.")
+        return (f"'{target}' was not found among installed programs; the start command was sent anyway. "
+                "If no window opened, the program isn't installed or has a different name.")
     if IS_MAC:
         if Path(target).expanduser().exists() or "://" in target:
             subprocess.Popen(["open", target])
         else:
             subprocess.Popen(["open", "-a", target])
-        return f"açıldı: {target}"
+        return f"opened: {target}"
     exe = shutil.which(target)
     if exe:
         subprocess.Popen([exe], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -508,7 +508,7 @@ def open_app(target: str) -> str:
         subprocess.Popen(["gtk-launch", target], start_new_session=True)
     else:
         subprocess.Popen(["xdg-open", target], start_new_session=True)
-    return f"açıldı: {target}"
+    return f"opened: {target}"
 
 
 BROWSER_TITLES = {"opera": "Opera", "chrome": "Chrome", "msedge": "Edge", "brave": "Brave", "firefox": "Firefox",
@@ -568,7 +568,7 @@ def switch_tab(want: str, title: str | None = None, max_tabs: int = 40) -> str |
 
     want = fold(want.strip())
     if not want:
-        raise ToolError("sekme başlığı boş olamaz")
+        raise ToolError("the tab title can't be empty")
     focus_window(title or browser_window_title())
     time.sleep(0.2)
     start = active_title()
@@ -592,7 +592,7 @@ def current_tab_url(title: str | None = None) -> str:
     try:
         import pyperclip
     except ImportError as e:
-        raise ToolError("pyperclip kurulu değil") from e
+        raise ToolError("pyperclip is not installed") from e
     focus_window(title or browser_window_title())
     time.sleep(0.2)
     old = None
@@ -625,15 +625,15 @@ def navigate_tab(target: str, title: str | None = None, new_tab: bool | None = N
         focus_window(name)
     except ToolError:
         open_app(target if "://" in target or site_key(target) else f"https://www.google.com/search?q={target}")
-        return f"{name} açık değildi; varsayılan tarayıcıda açıldı: {target}"
+        return f"{name} wasn't open; opened in the default browser: {target}"
     where = None
     key = site_key(target)
     if new_tab is None and key:
         found = switch_tab(key, name)
         if found and is_site_root(target):  # just opening the site: switching to the open tab is enough, don't disturb what is in it
-            return f"zaten açık sekmeye geçildi: {found}"
+            return f"switched to the already open tab: {found}"
         if found:
-            new_tab, where = False, f"açık '{found}' sekmesinde"
+            new_tab, where = False, f"in the open '{found}' tab"
     if new_tab is None:
         cur = active_title().lower()
         new_tab = not any(b in cur for b in BLANK_TABS)
@@ -642,7 +642,7 @@ def navigate_tab(target: str, title: str | None = None, new_tab: bool | None = N
     time.sleep(0.15)
     type_text(target)
     press_keys("enter")
-    return f"{where or ('yeni sekmede' if new_tab else 'öndeki sekmede')} açıldı: {target}"
+    return f"opened {where or ('in a new tab' if new_tab else 'in the front tab')}: {target}"
 
 
 # ------------------------------------------------------------------- UIA tree
@@ -650,7 +650,7 @@ def _foreground_uia(title: str | None):
     try:
         from pywinauto import Desktop
     except ImportError as e:
-        raise ToolError("pywinauto kurulu değil: pip install 'alice-harness[computer]'") from e
+        raise ToolError("pywinauto is not installed: pip install 'alice-harness[computer]'") from e
     desk = Desktop(backend="uia")
     if title and title.strip():
         return pick_window(desk.windows(), title, text_of=lambda w: w.window_text() or "")
@@ -676,8 +676,8 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
         ctx.state["ui_items"] = {i["id"]: i for i in items}
         return title_text, items
     if not IS_WIN:
-        raise ToolError("ui_elements şimdilik Windows'ta (UI Automation) ve Linux'ta (AT-SPI). macOS'ta computer "
-                        "aracını kullan.")
+        raise ToolError("ui_elements works on Windows (UI Automation) and Linux (AT-SPI) for now. On macOS use the computer "
+                        "tool.")
     if hwnd:
         from pywinauto import Desktop
 
@@ -735,13 +735,13 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
 
 
 def format_ui(title: str, items: list[dict[str, Any]]) -> str:
-    rows = [f"pencere: {title}"]
+    rows = [f"window: {title}"]
     for i in items:
         bits = [f"[{i['id']}] {i['role']}"]
         if i["name"]:
             bits.append(f"'{i['name']}'")
         if i["value"]:
-            bits.append(f"değer='{i['value']}'")
+            bits.append(f"value='{i['value']}'")
         if not i["enabled"]:
             bits.append("(pasif)")
         rows.append(" ".join(bits))
@@ -768,7 +768,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
     wrappers = ctx.state.get("ui_elems") or {}
     el = wrappers.get(element_id)
     if el is None:
-        raise ToolError("öğe bulunamadı; önce ui_elements çağır (liste her çağrıda yenilenir)")
+        raise ToolError("element not found; call ui_elements first (the list is refreshed on every call)")
     if action == "click":
         try:
             el.invoke()
@@ -782,7 +782,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
         el.set_focus()
     elif action == "set_text":
         if text is None:
-            raise ToolError("set_text için text gerekli")
+            raise ToolError("set_text needs text")
         try:
             el.set_edit_text(text)
             # Some fields revert the value: Explorer's address bar (Gezgin), outside edit mode, went back to the old
@@ -861,34 +861,34 @@ class Windows(Tool):
         target = str(target).strip() if target is not None else None
         new_tab = None if new_tab is None else as_bool(new_tab, "new_tab")
         if action == "list":
-            return ToolResult("\n".join(list_windows()) or "pencere yok")
+            return ToolResult("\n".join(list_windows()) or "no windows")
         if action == "find":
             if not target:
-                raise ToolError("find için target gerekli")
+                raise ToolError("find needs target")
             hits = find_installed_apps(target)
-            return ToolResult("\n".join(hits) if hits else f"'{target}' kurulu programlarda bulunamadı "
-                              "(Başlat menüsü, kayıt defteri, Program Files, Steam tarandı).")
+            return ToolResult("\n".join(hits) if hits else f"'{target}' was not found among installed programs "
+                              "(searched the Start menu, the registry, Program Files, Steam).")
         if action == "open":
             if not target:
-                raise ToolError("open için target gerekli")
+                raise ToolError("open needs target")
             msg = open_app(target)
             if "://" not in target:  # wait for the app window to appear; opening a site is not worth waiting for
                 time.sleep(1.5)
             return ToolResult(msg)
         if action == "navigate":
             if not target:
-                raise ToolError("navigate için target gerekli")
+                raise ToolError("navigate needs target")
             return ToolResult(navigate_tab(target, title, new_tab))
         if action == "switch_tab":
             if not target:
-                raise ToolError("switch_tab için target (sekme başlığından bir parça) gerekli")
+                raise ToolError("switch_tab needs target (part of the tab title)")
             found = switch_tab(target, title)
-            return ToolResult(f"sekmeye geçildi: {found}" if found else
-                              f"başlığında '{target}' geçen açık sekme yok; navigate ile açabilirsin")
+            return ToolResult(f"switched to tab: {found}" if found else
+                              f"no open tab has '{target}' in its title; you can open it with navigate")
         if not title:
-            raise ToolError(f"{action} için title gerekli")
+            raise ToolError(f"{action} needs title")
         if action == "focus":
-            return ToolResult(f"öne alındı: {focus_window(title)}")
+            return ToolResult(f"brought to the front: {focus_window(title)}")
         return ToolResult(f"{action}: {window_op(title, action)}")
 
 
@@ -968,19 +968,19 @@ class Clipboard(Tool):
 
             items = clipwatch.load()[::-1]
             return ToolResult("\n".join(f"{datetime.fromtimestamp(i['ts']):%H:%M} | {i['text'][:300]}" for i in items)
-                              or "pano geçmişi boş (çekirdek çalışırken tutulur; şifreye benzeyenler kaydedilmez)")
+                              or "the clipboard history is empty (it is kept while the core runs; things that look like passwords aren't saved)")
         try:
             import pyperclip
         except ImportError as e:
-            raise ToolError("pyperclip kurulu değil") from e
+            raise ToolError("pyperclip is not installed") from e
         if action == "get":
-            return ToolResult(pyperclip.paste() or "(pano boş)")
+            return ToolResult(pyperclip.paste() or "(clipboard is empty)")
         if action != "set":
-            raise ToolError(f"bilinmeyen action: {action}. Geçerli: get, set, history")
+            raise ToolError(f"unknown action: {action}. Valid: get, set, history")
         if text is None:  # a missing text used to silently empty the clipboard (the user's copied content was lost)
-            raise ToolError("set için text gerekli")
+            raise ToolError("set needs text")
         pyperclip.copy(str(text))
-        return ToolResult("panoya kopyalandı")
+        return ToolResult("copied to the clipboard")
 
 
 TOOLS = [Windows(), UIElements(), UIAct(), Clipboard()]

@@ -75,7 +75,7 @@ def test_pick_window_turkish_and_preference(gw):
 
 
 def test_pick_window_strict_refuses_ambiguous(gw):
-    with pytest.raises(ToolError, match="birden çok pencere"):
+    with pytest.raises(ToolError, match="more than one window"):
         desktop.pick_window(gw, "dosya gezgini", strict=True)
     # a full title matches exactly one window
     assert desktop.pick_window(gw, "Not Defteri", strict=True).title == "Not Defteri"
@@ -83,14 +83,14 @@ def test_pick_window_strict_refuses_ambiguous(gw):
 
 @pytest.mark.parametrize("title", ["", "   "])
 def test_pick_window_empty_title(gw, title):
-    with pytest.raises(ToolError, match="boş"):
+    with pytest.raises(ToolError, match="empty"):
         desktop.pick_window(gw, title)
 
 
 def test_pick_window_missing(gw):
-    with pytest.raises(ToolError, match="pencere yok") as ei:
+    with pytest.raises(ToolError, match="no window") as ei:
         desktop.pick_window(gw, "Discord")
-    assert "Açık pencereler:" in str(ei.value) and "Not Defteri" in str(ei.value)  # so the model does not have to guess the title
+    assert "Open windows:" in str(ei.value) and "Not Defteri" in str(ei.value)  # so the model does not have to guess the title
 
 
 # --------------------------------------------------------------- window operations
@@ -127,7 +127,7 @@ def test_focus_window_mac_restores_minimized(gw):
 
 
 def test_window_op_close_ambiguous_does_not_close_anything(gw):
-    with pytest.raises(ToolError, match="birden çok"):
+    with pytest.raises(ToolError, match="more than one"):
         desktop.window_op("Dosya Gezgini", "close")
     assert not any(w.calls for w in gw)
 
@@ -138,9 +138,9 @@ def test_window_op_minimize_picks_best_match(gw):
 
 
 def test_window_op_rejects_unknown_op_and_blank_title(gw):
-    with pytest.raises(ToolError, match="bilinmeyen pencere işlemi"):
+    with pytest.raises(ToolError, match="unknown window action"):
         desktop.window_op("Not Defteri", "kill")
-    with pytest.raises(ToolError, match="boş"):
+    with pytest.raises(ToolError, match="empty"):
         desktop.window_op("  ", "close")
 
 
@@ -166,19 +166,19 @@ def test_focus_window_linux_reports_missing_window(linux):
     assert desktop.focus_window("Firefox") == "Firefox"
     assert calls[-1] == ["wmctrl", "-a", "Firefox"]
     state["rc"] = 1  # it used to silently say "öne alındı" (brought to front)
-    with pytest.raises(ToolError, match="pencere yok"):
+    with pytest.raises(ToolError, match="no window"):
         desktop.focus_window("Yok")
-    with pytest.raises(ToolError, match="boş"):
+    with pytest.raises(ToolError, match="empty"):
         desktop.focus_window(" ")
 
 
 def test_wmctrl_missing_or_hung(linux):
     _, state = linux
     state["exc"] = FileNotFoundError("wmctrl")
-    with pytest.raises(ToolError, match="wmctrl gerekli"):
+    with pytest.raises(ToolError, match="need[s]? wmctrl"):
         desktop.window_op("x", "close")
     state["exc"] = subprocess.TimeoutExpired("wmctrl", 10)
-    with pytest.raises(ToolError, match="cevap vermedi"):
+    with pytest.raises(ToolError, match="did not answer"):
         desktop.focus_window("x")
 
 
@@ -227,7 +227,7 @@ def test_windows_risk_levels():
 @pytest.mark.parametrize("target", ["", "   ", None])
 def test_open_app_rejects_empty_target(target, monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", True)  # on Windows Path("") is "." and opened the working folder
-    with pytest.raises(ToolError, match="boş"):
+    with pytest.raises(ToolError, match="empty"):
         desktop.open_app(target)
 
 
@@ -237,7 +237,7 @@ def test_open_app_linux_and_mac(monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", False)
     monkeypatch.setattr(desktop, "IS_MAC", False)
     monkeypatch.setattr(desktop.shutil, "which", lambda n: "/usr/bin/gedit" if n == "gedit" else None)
-    assert desktop.open_app(" gedit ") == "açıldı: gedit"
+    assert desktop.open_app(" gedit ") == "opened: gedit"
     desktop.open_app("https://example.com")
     assert launched == [["/usr/bin/gedit"], ["xdg-open", "https://example.com"]]
     launched.clear()
@@ -255,7 +255,7 @@ def test_open_app_windows_rejects_cmd_metacharacters(monkeypatch):
     monkeypatch.setattr(desktop, "find_installed_apps", lambda n: [])
     popen: list = []
     monkeypatch.setattr(desktop.subprocess, "Popen", lambda *a, **k: popen.append(a))
-    with pytest.raises(ToolError, match="geçersiz karakter"):
+    with pytest.raises(ToolError, match="invalid character"):
         desktop.open_app("yokprogram&calc")
     assert popen == []
 
@@ -269,7 +269,7 @@ def test_windows_run_validates_arguments(ctx):
         with pytest.raises(ToolError, match="target"):
             t.run(ctx, action, target="   ")
     for action in ("focus", "close", "minimize"):
-        with pytest.raises(ToolError, match="title gerekli"):
+        with pytest.raises(ToolError, match="needs title"):
             t.run(ctx, action, title="  ")  # a blank title used to close the first window
 
 
@@ -287,17 +287,17 @@ def test_windows_run_coerces_new_tab_string(ctx, monkeypatch):
 
 def test_windows_run_dispatch(ctx, monkeypatch, no_sleep):
     monkeypatch.setattr(desktop, "list_windows", lambda: [])
-    assert desktop.Windows().run(ctx, "list").text == "pencere yok"
+    assert desktop.Windows().run(ctx, "list").text == "no windows"
     monkeypatch.setattr(desktop, "find_installed_apps", lambda t: [])
-    assert "bulunamadı" in desktop.Windows().run(ctx, "find", target="photoshop").text
+    assert "was not found" in desktop.Windows().run(ctx, "find", target="photoshop").text
     monkeypatch.setattr(desktop, "find_installed_apps", lambda t: ["PATH: /usr/bin/x"])
     assert desktop.Windows().run(ctx, "find", target="x").text == "PATH: /usr/bin/x"
     monkeypatch.setattr(desktop, "open_app", lambda t: f"açıldı: {t}")
     assert desktop.Windows().run(ctx, "open", target=" notepad ").text == "açıldı: notepad"
     monkeypatch.setattr(desktop, "switch_tab", lambda t, title: None)
-    assert "açık sekme yok" in desktop.Windows().run(ctx, "switch_tab", target="Gmail").text
+    assert "no open tab" in desktop.Windows().run(ctx, "switch_tab", target="Gmail").text
     monkeypatch.setattr(desktop, "focus_window", lambda t: t.upper())
-    assert desktop.Windows().run(ctx, "focus", title="discord").text == "öne alındı: DISCORD"
+    assert desktop.Windows().run(ctx, "focus", title="discord").text == "brought to the front: DISCORD"
     monkeypatch.setattr(desktop, "window_op", lambda t, op: t)
     assert desktop.Windows().run(ctx, "close", title=" Discord ").text == "close: Discord"
 
@@ -311,7 +311,7 @@ def test_switch_tab_matches_turkish_titles(monkeypatch, no_sleep):
                         SimpleNamespace(press_keys=keys.append, type_text=lambda t: None))
     assert desktop.switch_tab("indirilenler", "Opera") == "İNDİRİLENLER - Opera"
     assert keys == ["ctrl+tab"]
-    with pytest.raises(ToolError, match="boş"):
+    with pytest.raises(ToolError, match="empty"):
         desktop.switch_tab("  ", "Opera")
 
 
@@ -354,7 +354,7 @@ def test_navigate_tab_opens_default_browser_when_not_running(monkeypatch):
     opened: list[str] = []
     monkeypatch.setattr(desktop, "focus_window", nope)
     monkeypatch.setattr(desktop, "open_app", opened.append)
-    assert "açık değildi" in desktop.navigate_tab("kedi videoları", "Opera")
+    assert "wasn't open" in desktop.navigate_tab("kedi videoları", "Opera")
     assert opened == ["https://www.google.com/search?q=kedi videoları"]
 
 
@@ -507,7 +507,7 @@ def test_collect_ui_elements_filters_and_numbers(ctx, monkeypatch):
     _, items = desktop.collect_ui_elements(ctx, limit=1)
     assert len(items) == 1
     text = desktop.format_ui(title, items)
-    assert text.splitlines() == ["pencere: Hesap Makinesi", "[1] Button 'Bir'"]
+    assert text.splitlines() == ["window: Hesap Makinesi", "[1] Button 'Bir'"]
 
 
 def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
@@ -525,7 +525,7 @@ def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
 def test_collect_ui_elements_on_macos_says_to_use_computer(ctx, monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", False)
     monkeypatch.setattr(desktop.sys, "platform", "darwin")
-    with pytest.raises(ToolError, match="macOS'ta computer"):
+    with pytest.raises(ToolError, match="On macOS use the computer"):
         desktop.collect_ui_elements(ctx)
 
 
@@ -535,7 +535,7 @@ def test_foreground_uia_turkish_title(monkeypatch):
     mod.Desktop = lambda backend: SimpleNamespace(windows=lambda: wins)
     monkeypatch.setitem(sys.modules, "pywinauto", mod)
     assert desktop._foreground_uia("indirilenler") is wins[1]
-    with pytest.raises(ToolError, match="pencere yok"):
+    with pytest.raises(ToolError, match="no window"):
         desktop._foreground_uia("Discord")
     monkeypatch.setitem(sys.modules, "pywinauto", None)
     with pytest.raises(ToolError, match="pywinauto"):
@@ -551,7 +551,7 @@ def test_ui_elements_limit_coercion(ctx, monkeypatch):
     tool.run(ctx, limit=99999)
     tool.run(ctx, limit=None)
     assert seen == [20, 1, 500, 150]
-    with pytest.raises(ToolError, match="limit sayı olmalı"):
+    with pytest.raises(ToolError, match="limit must be a number"):
         tool.run(ctx, limit="çok")
 
 
@@ -563,11 +563,11 @@ def test_ui_act_coerces_id_and_validates(ctx, monkeypatch, no_sleep):
     assert act.run(ctx, element_id="3", action="click").text == "click -> [3] Button 'Tamam'"
     assert act.run(ctx, element_id=3.0, action="toggle").text.startswith("toggle")
     assert el.calls == [("invoke",), ("toggle",)]
-    with pytest.raises(ToolError, match="element_id sayı olmalı"):
+    with pytest.raises(ToolError, match="element_id must be a number"):
         act.run(ctx, element_id="üç", action="click")
-    with pytest.raises(ToolError, match="öğe bulunamadı"):
+    with pytest.raises(ToolError, match="element not found"):
         act.run(ctx, element_id=9, action="click")
-    with pytest.raises(ToolError, match="text gerekli"):
+    with pytest.raises(ToolError, match="needs text"):
         act.run(ctx, element_id=3, action="set_text")
     with pytest.raises(ToolError, match="bilinmeyen aksiyon"):
         act.run(ctx, element_id=3, action="sil")
@@ -596,14 +596,14 @@ def test_clipboard_set_requires_text(ctx, monkeypatch):
     copies: list[str] = []
     monkeypatch.setitem(sys.modules, "pyperclip", SimpleNamespace(paste=lambda: "", copy=copies.append))
     c = desktop.Clipboard()
-    with pytest.raises(ToolError, match="text gerekli"):
+    with pytest.raises(ToolError, match="needs text"):
         c.run(ctx, action="set")  # it used to silently empty the clipboard
     assert copies == []
-    assert c.run(ctx, action="set", text=42).text == "panoya kopyalandı"
+    assert c.run(ctx, action="set", text=42).text == "copied to the clipboard"
     assert copies == ["42"]
-    assert c.run(ctx, action="set", text="").text == "panoya kopyalandı"
-    assert c.run(ctx, action="get").text == "(pano boş)"
-    with pytest.raises(ToolError, match="bilinmeyen action"):
+    assert c.run(ctx, action="set", text="").text == "copied to the clipboard"
+    assert c.run(ctx, action="get").text == "(clipboard is empty)"
+    with pytest.raises(ToolError, match="unknown action"):
         c.run(ctx, action="sil")
 
 
@@ -620,7 +620,7 @@ def test_uri_opens_directly_without_searching(monkeypatch):
     opened = []
     monkeypatch.setattr(desktop.os, "startfile", lambda t: opened.append(t), raising=False)
     monkeypatch.setattr(desktop, "_start_menu_lookup", lambda n: (_ for _ in ()).throw(AssertionError("arandı")))
-    assert desktop.open_app("ms-settings:nightlight") == "açıldı: ms-settings:nightlight"
+    assert desktop.open_app("ms-settings:nightlight") == "opened: ms-settings:nightlight"
     assert opened == ["ms-settings:nightlight"]
     assert not desktop.URI_RX.match(r"C:\Windows") and not desktop.URI_RX.match("Not Defteri")
 

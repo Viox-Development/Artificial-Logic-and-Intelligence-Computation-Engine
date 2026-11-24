@@ -171,18 +171,18 @@ def test_type_non_string_text(ctx, session):
 
 def test_element_id_required_and_coerced(ctx, session):
     for action in ("click", "type", "select"):
-        with pytest.raises(ToolError, match="element_id gerekli"):
+        with pytest.raises(ToolError, match="needs element_id"):
             browser.Browser().run(ctx, action)
-    with pytest.raises(ToolError, match="element_id sayı olmalı"):
+    with pytest.raises(ToolError, match="element_id must be a number"):
         browser.Browser().run(ctx, "click", element_id="üç")
-    with pytest.raises(ToolError, match="öğe bulunamadı"):
+    with pytest.raises(ToolError, match="element not found"):
         browser.Browser().run(ctx, "click", element_id=7)
     r = browser.Browser().run(ctx, "click", element_id="3")
-    assert r.text.startswith("tıklandı: [3]")
+    assert r.text.startswith("clicked: [3]")
 
 
 def test_select_requires_text(ctx, session):
-    with pytest.raises(ToolError, match="select için text"):
+    with pytest.raises(ToolError, match="select needs text"):
         browser.Browser().run(ctx, "select", element_id=3)
     browser.Browser().run(ctx, "select", element_id=3, text="Türkiye")
     assert any(c[0] == "select_option" and c[3]["label"] == "Türkiye" for c in session.page.calls)
@@ -192,7 +192,7 @@ def test_scroll_amount_string(ctx, session):
     browser.Browser().run(ctx, "scroll", amount="-300")
     browser.Browser().run(ctx, "scroll", amount=None)
     assert [c for c in session.page.calls if c[0] == "wheel"] == [("wheel", 0, -300), ("wheel", 0, 600)]
-    with pytest.raises(ToolError, match="amount sayı olmalı"):
+    with pytest.raises(ToolError, match="amount must be a number"):
         browser.Browser().run(ctx, "scroll", amount="çok")
 
 
@@ -200,17 +200,17 @@ def test_switch_tab_index_string(ctx, session):
     second = FakePage("https://github.com/", "GitHub")
     session.ctx.pages.append(second)
     r = browser.Browser().run(ctx, "switch_tab", index="1")  # previously "<=" raised TypeError
-    assert session.page is second and r.text.startswith("sekme 1")
-    with pytest.raises(ToolError, match="geçersiz sekme index: 5"):
+    assert session.page is second and r.text.startswith("tab 1")
+    with pytest.raises(ToolError, match="invalid tab index: 5"):
         browser.Browser().run(ctx, "switch_tab", index=5)
-    with pytest.raises(ToolError, match="geçersiz sekme index: None"):
+    with pytest.raises(ToolError, match="invalid tab index: None"):
         browser.Browser().run(ctx, "switch_tab")
 
 
 def test_press_eval_text_tabs_back(ctx, session):
     page = session.page
-    assert browser.Browser().run(ctx, "press").text.startswith("tuş: Enter")
-    with pytest.raises(ToolError, match="js gerekli"):
+    assert browser.Browser().run(ctx, "press").text.startswith("key: Enter")
+    with pytest.raises(ToolError, match="eval needs js"):
         browser.Browser().run(ctx, "eval")
     page.eval_result = lambda *a, **k: {"ok": 1}
     assert browser.Browser().run(ctx, "eval", js="return 1;").text == "{'ok': 1}"
@@ -220,7 +220,7 @@ def test_press_eval_text_tabs_back(ctx, session):
     page.eval_result = lambda *a, **k: []
     browser.Browser().run(ctx, "back")
     assert ("go_back", (), {"wait_until": "domcontentloaded", "timeout": 30000}) in page.calls
-    with pytest.raises(ToolError, match="bilinmeyen action"):
+    with pytest.raises(ToolError, match="unknown action"):
         browser.Browser().run(ctx, "dans")
 
 
@@ -315,7 +315,7 @@ def test_connection_lost_on_click_resets_without_repeating(ctx, monkeypatch):
 
     old.locator = dead
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("tıklama tekrar edilmemeli"))
-    with pytest.raises(ToolError, match="bağlantısı koptu"):
+    with pytest.raises(ToolError, match="connection dropped"):
         browser.Browser().run(ctx, "click", element_id=3)
     assert clicks == [3] and "browser" not in ctx.state  # the next call sets up a new connection
 
@@ -331,7 +331,7 @@ def test_reconnect_failure_is_explained(ctx, monkeypatch):
     again = make_session(attached=True)
     again.snapshot = dead
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: again)
-    with pytest.raises(ToolError, match="yeniden bağlanılamadı"):
+    with pytest.raises(ToolError, match="could not reconnect"):
         browser.Browser().run(ctx, "snapshot")
     assert "browser" not in ctx.state
 
@@ -358,10 +358,10 @@ def test_alive_handles_errors():
 
 def test_close_action(ctx, session):
     r = browser.Browser().run(ctx, "close")
-    assert r.text == "tarayıcı kapatıldı" and session.ctx.closed and "browser" not in ctx.state
+    assert r.text == "browser closed" and session.ctx.closed and "browser" not in ctx.state
     att = make_session(attached=True)
     ctx.state["browser"] = att
-    assert "açık bırakıldı" in browser.Browser().run(ctx, "close").text
+    assert "was left open" in browser.Browser().run(ctx, "close").text
     assert ctx.state["browser"] is att and not att.ctx.closed
 
 
@@ -384,12 +384,12 @@ def test_goto_adds_scheme_and_retries_aborted(ctx, session):
     page = session.page
     page.goto_errors = [RuntimeError("net::ERR_ABORTED")]
     r = browser.Browser().run(ctx, "goto", url="example.com")
-    assert r.text.startswith("açıldı: https://example.com")
+    assert r.text.startswith("opened: https://example.com")
     assert [c[1] for c in page.calls if c[0] == "goto"] == ["https://example.com", "https://example.com"]
     page.goto_errors = [RuntimeError("net::ERR_NAME_NOT_RESOLVED")]
     with pytest.raises(RuntimeError, match="NAME_NOT_RESOLVED"):
         browser.Browser().run(ctx, "goto", url="yok.invalid")
-    with pytest.raises(ToolError, match="url gerekli"):
+    with pytest.raises(ToolError, match="needs url"):
         browser.Browser().run(ctx, "goto")
 
 
@@ -399,7 +399,7 @@ def test_goto_attached_reuses_open_site_tab(ctx, monkeypatch):
     ctx.state["browser"] = s
     monkeypatch.setattr(browser.BrowserSession, "_visible_page", lambda self: None)
     r = browser.Browser().run(ctx, "goto", url="https://www.mail.google.com")
-    assert r.text.startswith("zaten açık sekmeye geçildi: Gelen Kutusu")
+    assert r.text.startswith("switched to the already open tab: Gelen Kutusu")
     assert s.page is gmail and not any(c[0] == "goto" for c in gmail.calls)
 
 
@@ -410,7 +410,7 @@ def test_goto_root_again_goes_home_in_open_tab(ctx, monkeypatch):
     ctx.state["browser"] = s
     monkeypatch.setattr(browser.BrowserSession, "_visible_page", lambda self: None)
     r = browser.Browser().run(ctx, "goto", url="youtube.com")
-    assert "zaten açık sekmeye geçildi" in r.text and "bir kez daha" in r.text
+    assert "switched to the already open tab" in r.text and "once more" in r.text
     assert not any(c[0] == "goto" for c in video.calls)  # does not touch the playing video on the first request
     browser.Browser().run(ctx, "goto", url="youtube.com")
     assert any(c[0] == "goto" for c in video.calls)  # the same request again goes to the home page
@@ -447,7 +447,7 @@ def test_evaluate_wraps_expression_and_times_out(session):
         raise TimeoutError_("waiting")
 
     page.eval_result = hang
-    with pytest.raises(ToolError, match="10 sn içinde cevap vermedi"):
+    with pytest.raises(ToolError, match="did not answer within 10 s"):
         session.evaluate("document.title")
 
     def other(*a, **k):
@@ -578,7 +578,7 @@ def test_session_start_failure_stops_driver(fake_pw, monkeypatch):
 def test_session_without_playwright(monkeypatch):
     monkeypatch.setattr(browser, "user_browser_endpoint", lambda cdp, port: None)
     monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
-    with pytest.raises(ToolError, match="playwright kurulu değil"):
+    with pytest.raises(ToolError, match="playwright is not installed"):
         browser.BrowserSession()
 
 
@@ -629,7 +629,7 @@ def test_format_snapshot():
              {"id": 2, "tag": "a", "role": "", "type": "", "text": "", "placeholder": "", "value": "",
               "href": "/x", "inView": False}]
     out = browser.format_snapshot("Başlık", "https://a.com", items).splitlines()
-    assert out[2] == "[1] input[search] 'Ara' değer='kedi'" and out[3] == "[2] a '/x' (aşağıda)"
+    assert out[2] == "[1] input[search] 'Ara' value='kedi'" and out[3] == "[2] a '/x' (below)"
 
 
 def test_kill_playwright_drivers_only_kills_drivers():
@@ -699,7 +699,7 @@ def test_hung_click_is_cut_and_not_repeated(ctx, monkeypatch):
     monkeypatch.setattr(browser, "DEFAULT_BUDGET", 0.1)
     monkeypatch.setattr(browser, "CONNECT_BUDGET", 0.0)
     monkeypatch.setattr(browser, "BrowserSession", lambda **kw: pytest.fail("tıklama tekrar edilmemeli"))
-    with pytest.raises(ToolError, match="cevap vermedi"):
+    with pytest.raises(ToolError, match="did not answer"):
         browser.Browser().run(ctx, "click", element_id=3)
     assert "browser" not in ctx.state
 

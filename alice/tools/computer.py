@@ -20,7 +20,7 @@ _TRUE = {"true", "1", "yes", "on", "evet", "e"}
 _FALSE = {"false", "0", "no", "off", "hayır", "hayir", "h", "", "none", "null"}
 
 
-def as_bool(value: Any, name: str = "değer") -> bool:
+def as_bool(value: Any, name: str = "value") -> bool:
     """Convert a flag sent by the model to bool: the text "false" must not count as True (bool("false") is True)."""
     if value is None or isinstance(value, bool):
         return bool(value)
@@ -32,19 +32,19 @@ def as_bool(value: Any, name: str = "değer") -> bool:
             return True
         if low in _FALSE:
             return False
-    raise ToolError(f"{name} true ya da false olmalı, '{value}' geldi")
+    raise ToolError(f"{name} must be true or false, got '{value}'")
 
 
 def as_number(value: Any, name: str, kind: type = float) -> Any:
     """"120", 120.0 and similar values to a number; if that fails, raise a ToolError the model can fix."""
     if isinstance(value, bool):
-        raise ToolError(f"{name} sayı olmalı, {value} geldi")
+        raise ToolError(f"{name} must be a number, got {value}")
     try:
         num = float(str(value).strip()) if isinstance(value, str) else float(value)
     except (TypeError, ValueError):
-        raise ToolError(f"{name} sayı olmalı, '{value}' geldi") from None
+        raise ToolError(f"{name} must be a number, got '{value}'") from None
     if num != num or num in (float("inf"), float("-inf")):
-        raise ToolError(f"{name} sonlu bir sayı olmalı, '{value}' geldi")
+        raise ToolError(f"{name} must be a finite number, got '{value}'")
     return int(num) if kind is int else num
 
 
@@ -70,7 +70,7 @@ def _pyautogui():
     try:
         import pyautogui
     except ImportError as e:
-        raise ToolError("pyautogui kurulu değil: pip install 'alice-harness[computer]'") from e
+        raise ToolError("pyautogui is not installed: pip install 'alice-harness[computer]'") from e
     pyautogui.FAILSAFE = True
     pyautogui.PAUSE = 0.05
     corners = _desktop_corners()
@@ -123,7 +123,7 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
     try:
         import mss  # noqa: F401  (only checks that it is installed; screen_capture() opens it)
     except ImportError as e:
-        raise ToolError("mss kurulu değil: pip install 'alice-harness[computer]'") from e
+        raise ToolError("mss is not installed: pip install 'alice-harness[computer]'") from e
     from PIL import Image, ImageDraw
 
     from alice.tools.imaging import image_to_png_b64, screen_capture
@@ -131,7 +131,7 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
     with screen_capture() as sct:
         mons = sct.monitors
         if monitor >= len(mons):
-            raise ToolError(f"monitör {monitor} yok, {len(mons) - 1} monitör var")
+            raise ToolError(f"there is no monitor {monitor}; there are {len(mons) - 1} monitors")
         mon = mons[monitor]
         shot = sct.grab(mon)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
@@ -155,13 +155,13 @@ def grab_screen(ctx: ToolContext, grid: bool = False, monitor: int = 1) -> tuple
     ctx.state["screen"] = {"scale": scale, "left": mon["left"], "top": mon["top"],
                            "w": round(img.width / scale), "h": round(img.height / scale)}
     s = ctx.state["screen"]
-    return b64, f"ekran görüntüsü {s['w']}x{s['h']} (gerçek {img.width}x{img.height}, monitör {monitor})"
+    return b64, f"screenshot {s['w']}x{s['h']} (actual {img.width}x{img.height}, monitor {monitor})"
 
 
 def to_real(ctx: ToolContext, x: float, y: float) -> tuple[int, int]:
     s = ctx.state.get("screen")
     if not s:
-        raise ToolError("önce action=screenshot al; koordinatlar ekran görüntüsüne göre verilir")
+        raise ToolError("take action=screenshot first; coordinates are given relative to the screenshot")
     return int(s["left"] + x * s["scale"]), int(s["top"] + y * s["scale"])
 
 
@@ -211,7 +211,7 @@ def type_text(text: str) -> None:
     try:
         import pyperclip
     except ImportError as e:
-        raise ToolError("ASCII olmayan metin için pyperclip gerekli") from e
+        raise ToolError("non-ASCII text needs pyperclip") from e
     old = None
     try:
         old = pyperclip.paste()
@@ -294,7 +294,7 @@ class Computer(Tool):
             monitor: int = 1, screenshot_after: bool = False) -> ToolResult:
         monitor = as_number(1 if monitor is None else monitor, "monitor", int)
         if monitor < 0:
-            raise ToolError(f"monitor 0 ya da pozitif olmalı, {monitor} geldi")
+            raise ToolError(f"monitor must be 0 or positive, got {monitor}")
         screenshot_after = as_bool(screenshot_after, "screenshot_after")
         x, y, to_x, to_y = (None if v is None else as_number(v, n) for v, n in
                             ((x, "x"), (y, "y"), (to_x, "to_x"), (to_y, "to_y")))
@@ -309,23 +309,23 @@ class Computer(Tool):
             pg = _pyautogui()
             px, py = pg.position()
             s = ctx.state.get("screen") or {"scale": 1.0, "left": 0, "top": 0}
-            return ToolResult(f"imleç: ({(px - s['left']) / s['scale']:.0f}, {(py - s['top']) / s['scale']:.0f}) ekran görüntüsü uzayında")
+            return ToolResult(f"cursor: ({(px - s['left']) / s['scale']:.0f}, {(py - s['top']) / s['scale']:.0f}) in screenshot space")
         elif action == "type":
             if text is None:
-                raise ToolError("type için text gerekli")
+                raise ToolError("type needs text")
             text = str(text)
             type_text(text)
-            msg = f"{len(text)} karakter yazıldı"
+            msg = f"typed {len(text)} characters"
         elif action == "key":
             if not keys:
-                raise ToolError("key için keys gerekli")
+                raise ToolError("key needs keys")
             keys = str(keys)
             press_keys(keys)
-            msg = f"tuş: {keys}"
+            msg = f"key: {keys}"
         else:
             pg = _pyautogui()
             if x is None or y is None:
-                raise ToolError(f"{action} için x ve y gerekli")
+                raise ToolError(f"{action} needs x and y")
             rx, ry = to_real(ctx, x, y)
             from alice.hud import views
 
@@ -337,7 +337,7 @@ class Computer(Tool):
                 pg.moveTo(rx, ry, duration=0.1)
             elif action == "drag":
                 if to_x is None or to_y is None:
-                    raise ToolError("drag için to_x ve to_y gerekli")
+                    raise ToolError("drag needs to_x and to_y")
                 tx, ty = to_real(ctx, to_x, to_y)
                 pg.moveTo(rx, ry)
                 pg.dragTo(tx, ty, duration=0.4, button="left")
@@ -376,15 +376,15 @@ class ComputerTask(Tool):
         from alice.computer_agent import ComputerAgent, Screen, router_asker
 
         if ctx.router is None:
-            raise ToolError("model yönlendirici yok")
+            raise ToolError("no model router")
         from alice.computer_agent import _RUNNING, log_line
 
         from alice.hud import views
 
         if not _RUNNING.acquire(blocking=False):
-            return ToolResult("zaten bir ekran görevi sürüyor; bitmesini bekle, aynı işi tekrar başlatma.", is_error=True)
+            return ToolResult("a screen task is already running; wait for it to finish, don't start the same job again.", is_error=True)
         try:
-            log_line(f"başladı: {goal}")
+            log_line(f"started: {goal}")
             views.task_step(1)
 
             def emit(s: str) -> None:

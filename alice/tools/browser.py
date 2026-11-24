@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from typing import Any
 
 from alice.config import alice_home
+from alice.i18n import _
 from alice.tools.base import COMPUTER, NETWORK, READ, Tool, ToolContext, ToolError, ToolResult, obj, truncate
 
 SNAPSHOT_JS = r"""
@@ -258,10 +259,10 @@ def host_of(url: str) -> str:
     return h[4:] if h.startswith("www.") else h
 
 
-NO_SEPARATE = ("Kullanıcının açık tarayıcısına bağlanılamıyor ve ayrı pencere açılmıyor (kullanıcı istemiyor). "
-               "Bunun yerine kullanıcının kendi tarayıcısında çalış: windows action=switch_tab (açık sekmeye geç), "
-               "windows action=navigate (sekmede adres/arama), ui_elements + ui_act (sayfada tıklama/yazma). "
-               "Ayrı pencereyi sadece kullanıcı açıkça isterse separate=true ile aç.")
+NO_SEPARATE = ("Can't connect to the user's open browser, and a separate window isn't opened (the user doesn't want one). "
+               "Work in the user's own browser instead: windows action=switch_tab (switch to an open tab), "
+               "windows action=navigate (address/search in the tab), ui_elements + ui_act (click/type on the page). "
+               "Open a separate window with separate=true only if the user asks for it explicitly.")
 
 
 class BrowserSession:
@@ -276,7 +277,7 @@ class BrowserSession:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as e:
-            raise ToolError("playwright kurulu değil: pip install 'alice-harness[browser]' && playwright install chromium") from e
+            raise ToolError("playwright is not installed: pip install 'alice-harness[browser]' && playwright install chromium") from e
         self._pw = sync_playwright().start()
         _register_exit_cleanup()
         self.driver_pid = _driver_pid(self._pw)
@@ -445,7 +446,7 @@ class BrowserSession:
             return page.locator("html").evaluate(f"(_el, arg) => ({fn})(arg)", arg, timeout=timeout)
         except Exception as e:  # noqa: BLE001
             if "Timeout" in type(e).__name__ or "timeout" in str(e).lower():
-                raise ToolError(f"sayfa {timeout / 1000:.0f} sn içinde cevap vermedi (sekme donmuş/uyutulmuş olabilir)") from e
+                raise ToolError(f"the page did not answer within {timeout / 1000:.0f} s (the tab may be frozen/asleep)") from e
             raise
 
     def tab_for(self, url: str):
@@ -469,7 +470,7 @@ class BrowserSession:
 
         loc = self.page.locator(f'[data-alice-id="{as_number(element_id, "element_id", int)}"]')
         if loc.count() == 0:
-            raise ToolError("öğe bulunamadı; sayfa değişmiş olabilir, browser action=snapshot ile yenile")
+            raise ToolError("element not found; the page may have changed, refresh with browser action=snapshot")
         return loc.first
 
     def close(self) -> None:
@@ -545,8 +546,8 @@ _CONNECTION_LOST = ("has been closed", "target closed", "browser closed", "conne
                     "disconnected", "websocket error", "socket closed", "connection refused", "econnrefused")
 # Actions that can be retried once on a new connection when it drops: repeating them does not do anything twice.
 RETRY_SAFE = ("goto", "snapshot", "text", "screenshot", "tabs", "highlight")
-RECONNECT_HINT = ("tarayıcı bağlantısı koptu (Opera kapandı, yeniden başladı ya da cevap vermiyor); bağlantı "
-                  "sıfırlandı. İşlem yapılmış olabilir: browser action=snapshot ile sayfaya bak, sonra gerekiyorsa tekrar dene.")
+RECONNECT_HINT = ("the browser connection dropped (Opera closed, restarted or isn't answering); the connection "
+                  "was reset. The action may have happened: look at the page with browser action=snapshot, then try again if needed.")
 
 
 def connection_lost(e: BaseException) -> bool:
@@ -598,8 +599,8 @@ def _aborted(ctx: ToolContext) -> str:
 
 
 def _timeout_hint(action: str) -> str:
-    return (f"tarayıcı '{action}' için cevap vermedi (bağlantı takıldı); bağlantı kesildi ve sıfırlandı. İşlem yapılmış "
-            "olabilir: browser action=snapshot ile sayfaya bak.")
+    return (f"the browser did not answer for '{action}' (the connection hung); it was cut and reset. The action may "
+            "have happened: look at the page with browser action=snapshot.")
 
 
 def drop_browser(ctx: ToolContext) -> None:
@@ -650,14 +651,14 @@ def get_browser(ctx: ToolContext, separate: bool = False) -> BrowserSession:
 
 
 def format_snapshot(page_title: str, url: str, items: list[dict[str, Any]]) -> str:
-    rows = [f"sayfa: {page_title}", f"url: {url}"]
+    rows = [f"page: {page_title}", f"url: {url}"]
     for i in items:
         label = i["text"] or i["placeholder"] or i["href"]
         kind = i["role"] or i["tag"]
         if i["tag"] == "input" and i["type"]:
             kind = f"input[{i['type']}]"
-        extra = f" değer='{i['value']}'" if i["value"] else ""
-        off = "" if i["inView"] else " (aşağıda)"
+        extra = f" value='{i['value']}'" if i["value"] else ""
+        off = "" if i["inView"] else " (below)"
         rows.append(f"[{i['id']}] {kind} '{label}'{extra}{off}")
     return "\n".join(rows)
 
@@ -741,10 +742,10 @@ class Browser(Tool):
             if reason == "stop":
                 raise ToolError(STOPPED) from e
             if reason == "timeout":
-                raise ToolError(_timeout_hint(action) + " Yeni bağlantıyla da olmadı: tarayıcıyı kapatıp aç ya da "
-                                "windows/ui_act ile kullanıcının sekmelerinde çalış.") from e
-            raise ToolError("tarayıcıya yeniden bağlanılamadı: Opera açık mı, opera://inspect'te 'Allow remote "
-                            "debugging' açık mı? İzin penceresi çıktıysa onayla.") from e
+                raise ToolError(_timeout_hint(action) + " It failed with a new connection too: close and reopen the browser, or "
+                                "work in the user's tabs with windows/ui_act.") from e
+            raise ToolError("could not reconnect to the browser: is Opera open, and is 'Allow remote "
+                            "debugging' on in opera://inspect? If a permission prompt appeared, approve it.") from e
 
     def _guarded(self, ctx: ToolContext, action: str, kw: dict[str, Any]) -> ToolResult:
         ctx.state["browser_busy"] = True
@@ -764,16 +765,16 @@ class Browser(Tool):
         amount = as_number(600 if amount is None else amount, "amount", int)
         index = None if index is None else as_number(index, "index", int)
         if element_id is None and action in ("click", "type", "select", "highlight"):
-            raise ToolError(f"{action} için element_id gerekli (snapshot çıktısındaki [ID])")
+            raise ToolError(f"{action} needs element_id (the [ID] in the snapshot output)")
         if action == "close":
             b = ctx.state.get("browser")
             if b is not None and b.attached:
                 # The user's own browser: keep the connection open, since reconnecting makes Opera ask for permission again.
-                return ToolResult("kullanıcının tarayıcısı açık bırakıldı (ALICE'in ayrı penceresi yok)")
+                return ToolResult("the user's browser was left open (ALICE has no separate window)")
             ctx.state.pop("browser", None)
             if b:
                 b.close()
-            return ToolResult("tarayıcı kapatıldı")
+            return ToolResult("browser closed")
         b = get_browser(ctx, separate)
         if b.attached and action in ("snapshot", "text", "screenshot"):
             # The user may have switched to another tab in the meantime: look at whatever is "on screen".
@@ -793,7 +794,7 @@ class Browser(Tool):
 
         if action == "goto":
             if not url:
-                raise ToolError("goto için url gerekli")
+                raise ToolError("goto needs url")
             if "://" not in url:
                 url = "https://" + url
             if b.attached:  # the user's own browser: use the open site tab, do not open a new one every time
@@ -807,8 +808,8 @@ class Browser(Tool):
                     ctx.state["browser_root_switch"] = (host_of(url), time.monotonic())
                     if not (last and last[0] == host_of(url) and time.monotonic() - last[1] < ROOT_AGAIN):
                         at = "" if urlparse(page.url).path.strip("/") == "" else (
-                            " (sekme sitenin içinde; ana sayfası isteniyorsa aynı goto'yu bir kez daha çağır)")
-                        return snap(f"zaten açık sekmeye geçildi: {b.title_of(page)}{at}")
+                            " (the tab is inside the site; if the home page is wanted, call the same goto once more)")
+                        return snap(f"switched to the already open tab: {b.title_of(page)}{at}")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)
             except Exception as e:  # noqa: BLE001
@@ -819,16 +820,16 @@ class Browser(Tool):
                 page.wait_for_timeout(1000)
                 page = b.page
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            return snap(f"açıldı: {url}")
+            return snap(f"opened: {url}")
         if action == "snapshot":
             return snap("snapshot")
         if action == "click":
             loc = b.locator(element_id)
             loc.scroll_into_view_if_needed(timeout=5000)
-            mark_on_hud(b, loc, "tıklıyorum", wait=True)  # if the HUD is on, show where it will click first
+            mark_on_hud(b, loc, _("clicking"), wait=True)  # if the HUD is on, show where it will click first
             loc.click(timeout=8000)
             page.wait_for_timeout(600)
-            return snap(f"tıklandı: [{element_id}]")
+            return snap(f"clicked: [{element_id}]")
         if action == "highlight":
             from alice.hud import views
 
@@ -836,35 +837,35 @@ class Browser(Tool):
             loc.scroll_into_view_if_needed(timeout=5000)
             label = str(text or "burada").strip()[:40] or "burada"
             if mark_on_hud(b, loc, label, ttl=views.SHOW_TTL):
-                return ToolResult(f"gösterildi: [{element_id}] ekranda çerçevelendi")
+                return ToolResult(f"shown: [{element_id}] framed on screen")
             if getattr(b, "headless", False):
-                return ToolResult("tarayıcı görünmez (headless) çalışıyor; kullanıcıya gösterilemez")
+                return ToolResult("the browser runs invisibly (headless); it can't be shown to the user")
             loc.evaluate(OUTLINE_JS, timeout=2000)  # no HUD: briefly frame it inside the page
-            return ToolResult(f"gösterildi: [{element_id}] sayfada çerçevelendi")
+            return ToolResult(f"shown: [{element_id}] framed on the page")
         if action == "type":
             loc = b.locator(element_id)
-            mark_on_hud(b, loc, "yazıyorum")
+            mark_on_hud(b, loc, _("typing"))
             loc.fill("" if text is None else str(text), timeout=8000)
             if submit:
                 loc.press("Enter")
                 page.wait_for_timeout(1000)
-            return snap(f"yazıldı: [{element_id}]")
+            return snap(f"typed: [{element_id}]")
         if action == "select":
             if text is None or not str(text).strip():
-                raise ToolError("select için text (seçeneğin görünen adı) gerekli")
+                raise ToolError("select needs text (the option's visible name)")
             loc = b.locator(element_id)
-            mark_on_hud(b, loc, "seçiyorum")
+            mark_on_hud(b, loc, _("selecting"))
             loc.select_option(label=str(text), timeout=8000)
-            return snap(f"seçildi: {text}")
+            return snap(f"selected: {text}")
         if action == "press":
             keys = str(keys or "Enter")
             page.keyboard.press(keys)
             page.wait_for_timeout(500)
-            return snap(f"tuş: {keys}")
+            return snap(f"key: {keys}")
         if action == "scroll":
             page.mouse.wheel(0, amount)
             page.wait_for_timeout(400)
-            return snap(f"kaydırıldı: {amount}")
+            return snap(f"scrolled: {amount}")
         if action == "back":
             page.go_back(wait_until="domcontentloaded", timeout=30000)
             return snap("geri")
@@ -878,18 +879,18 @@ class Browser(Tool):
 
             from alice.tools.imaging import image_to_png_b64
 
-            b64, _ = image_to_png_b64(Image.open(BytesIO(png)), int(ctx.config.agent.get("screenshot_max_width", 1366)))
-            return ToolResult(f"tarayıcı görüntüsü: {page.url}", images=[b64])
+            b64, _size = image_to_png_b64(Image.open(BytesIO(png)), int(ctx.config.agent.get("screenshot_max_width", 1366)))
+            return ToolResult(f"browser screenshot: {page.url}", images=[b64])
         if action == "eval":
             if not js:
-                raise ToolError("eval için js gerekli")
+                raise ToolError("eval needs js")
             return ToolResult(truncate(repr(b.evaluate(js)), limit))
         if action == "tabs":
             rows = [f"{i}: {b.title_of(p)} - {p.url}{'  <- aktif' if p is b.page else ''}" for i, p in enumerate(b.ctx.pages)]
             return ToolResult("\n".join(rows))
         if action == "download":
             if not url:
-                raise ToolError("download için url gerekli (dosyanın bağlantısı)")
+                raise ToolError("download needs url (the file's link)")
             from alice.tools import fetch_file
 
             return ToolResult(fetch_file.describe(fetch_file.download(url)))
@@ -902,23 +903,23 @@ class Browser(Tool):
                 src = fetch_file.source_name(str(d.get("url") or ""))
                 name = str(d.get("file") or "").replace("\\", "/").rsplit("/", 1)[-1]
                 if name and src and "." in src and name.lower() != src.lower():
-                    row += f" | DİKKAT: bağlantıdaki ad {src}, dosya {name} adıyla kaydedilmiş"
+                    row += f" | NOTE: the name in the link is {src}; the file was saved as {name}"
                 if not d.get("file") and d.get("state") == "in_progress":
-                    row += " | kaydetme penceresi bekliyor olabilir (download action'ı bu pencereyi açmaz)"
+                    row += " | a save dialog may be waiting (the download action doesn't open this dialog)"
                 if d.get("error"):
-                    row += f" | hata: {d['error']}"
+                    row += f" | error: {d['error']}"
                 elif d.get("state") != "complete" and d.get("total"):
                     row += f" | %{100 * int(d.get('bytes') or 0) // int(d['total'])}"
                 rows.append(row)
-            return ToolResult("\n".join(rows) or "indirme yok")
+            return ToolResult("\n".join(rows) or "no downloads")
         if action == "switch_tab":
             pages = b.ctx.pages
             if index is None or not 0 <= index < len(pages):
-                raise ToolError(f"geçersiz sekme index: {index}; 0 ile {len(pages) - 1} arası olmalı (action=tabs ile bak)")
+                raise ToolError(f"invalid tab index: {index}; it must be between 0 and {len(pages) - 1} (look with action=tabs)")
             b.page = pages[index]
             b.page.bring_to_front()
-            return snap(f"sekme {index}")
-        raise ToolError(f"bilinmeyen action: {action}. Geçerli: {', '.join(self.parameters['properties']['action']['enum'])}")
+            return snap(f"tab {index}")
+        raise ToolError(f"unknown action: {action}. Valid: {', '.join(self.parameters['properties']['action']['enum'])}")
 
 
 def cleanup(ctx: ToolContext) -> None:
