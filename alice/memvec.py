@@ -98,7 +98,7 @@ class Embedder:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not self.available:
-            raise RuntimeError("embedding geçici olarak kapalı")
+            raise RuntimeError("embedding is temporarily off")
         out: list[list[float]] = []
         try:
             for i in range(0, len(texts), BATCH):
@@ -135,5 +135,5 @@ class Embedder:
             raise RuntimeError(f"embedding HTTP {r.status_code}: {r.text[:200]}")
         data = sorted(r.json().get("data") or [], key=lambda d: d.get("index", 0))
         if len(data) != len(batch):
-            raise RuntimeError("embedding cevabı eksik")
+            raise RuntimeError("the embedding answer is incomplete")
         return [normalize([float(x) for x in d["embedding"]]) for d in data]

@@ -102,7 +102,7 @@ class MCPServer:
     # --------------------------------------------------------- JSON-RPC
     def _write(self, msg: dict[str, Any]) -> None:
         if not self.proc or self.proc.poll() is not None:
-            raise MCPError(f"{self.name} sunucusu çalışmıyor")
+            raise MCPError(f"the {self.name} server is not running")
         data = (json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8")
         with self._lock:
             self.proc.stdin.write(data)  # type: ignore[union-attr]
@@ -131,7 +131,7 @@ class MCPServer:
                         pending[1].update(msg)
                         pending[0].set()
                 except Exception:  # noqa: BLE001 - one bad message must not kill the reader
-                    log.debug("MCP mesajı işlenemedi", exc_info=True)
+                    log.debug("could not handle an MCP message", exc_info=True)
                     continue
         finally:
             self.proc.stdout.close()  # process ended: don't leak the pipe handle
@@ -149,7 +149,7 @@ class MCPServer:
         try:
             self._write({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
             if not ev.wait(self.timeout):
-                raise MCPError(f"{self.name}: {method} zaman aşımı")
+                raise MCPError(f"{self.name}: {method} timed out")
         finally:
             self._pending.pop(rid, None)
         if "error" in box:
@@ -235,7 +235,7 @@ class MCPTool(Tool):
                 texts.append(r.get("text") or f"[kaynak: {r.get('uri', '')}]")
         if res.get("structuredContent") and not texts:
             texts.append(json.dumps(res["structuredContent"], ensure_ascii=False, indent=1))
-        return ToolResult("\n".join(texts) or "(boş sonuç)", images=images, is_error=bool(res.get("isError")))
+        return ToolResult("\n".join(texts) or "(empty result)", images=images, is_error=bool(res.get("isError")))
 
 
 def load_mcp(config: Config, emit: Callable[[str], None] = lambda s: None) -> tuple[list[MCPServer], list[Tool]]:

@@ -79,7 +79,7 @@ class App:
         """Fill in the placeholders of the recipe. Raises ValueError if a field is missing."""
         tpl = self.flows.get(flow)
         if tpl is None:
-            raise ValueError(f"{self.name}: '{flow}' diye bir akış yok. Olanlar: {', '.join(sorted(self.flows)) or '—'}")
+            raise ValueError(f"{self.name}: there is no flow called '{flow}'. Available: {', '.join(sorted(self.flows)) or '—'}")
         missing = [f for f in self.fields(flow) if not str(args.get(f, "")).strip()]
         if missing:
             raise ValueError(f"{self.name}.{flow}: eksik alan: {', '.join(missing)}")
@@ -89,9 +89,9 @@ class App:
 def _parse(name: str, raw: dict[str, Any]) -> App:
     kind = str(raw.get("kind", "web"))
     if kind not in KINDS:
-        raise ValueError(f"{name}: kind {' | '.join(KINDS)} olmalı")
+        raise ValueError(f"{name}: kind must be {' | '.join(KINDS)}")
     if str(raw.get("target", "")) not in ("", "browser", "desktop"):
-        raise ValueError(f"{name}: target browser ya da desktop olmalı")
+        raise ValueError(f"{name}: target must be browser or desktop")
     return App(name=name, title=str(raw.get("title", "")), kind=kind, url=str(raw.get("url", "")),
                exe=str(raw.get("exe", "")), keywords=str(raw.get("keywords", "")), note=str(raw.get("note", "")),
                api=str(raw.get("api", "")), flows={str(k): str(v) for k, v in (raw.get("flows") or {}).items()},

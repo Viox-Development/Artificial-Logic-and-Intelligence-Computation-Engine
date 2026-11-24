@@ -17,6 +17,7 @@ from pathlib import Path, PurePath
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 
 def _browser_candidates() -> list[str]:
@@ -211,7 +212,7 @@ def create_shortcut() -> list[Path]:
     if sys.platform.startswith("linux"):
         return _create_linux_shortcut()
     if sys.platform != "win32":
-        raise RuntimeError("kısayol oluşturma şimdilik Windows ve Linux'ta")
+        raise RuntimeError(_("creating a shortcut works on Windows and Linux for now"))
     pyw = Path(sys.executable).with_name("pythonw.exe")
     target = pyw if pyw.exists() else Path(sys.executable)
     icon = Path(__file__).parent / "static" / "alice.ico"

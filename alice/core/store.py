@@ -98,7 +98,7 @@ def parse_time(value: str | float | None, now: float | None = None) -> float | N
     try:
         return datetime.fromisoformat(value.strip()).timestamp()
     except ValueError as e:
-        raise ValueError(f"zaman anlaşılamadı: {value!r} (ör. 2h, 3d, dün, 2026-10-08T20:00)") from e
+        raise ValueError(f"could not understand the time: {value!r} (e.g. 2h, 3d, yesterday, 2026-10-08T20:00)") from e
 
 
 class Store:

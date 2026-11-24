@@ -90,8 +90,8 @@ class MakeTool(Tool):
                 for t in tools:
                     agent.tools[t.name] = t
             names = ", ".join(t.name for t in tools)
-            return ToolResult(f"Eklendi: {path.name}. Araçlar: {names}. Şimdi kullanabilirsin.")
-        raise ToolError("action test, install, list ya da remove olmalı")
+            return ToolResult(f"Added: {path.name}. Tools: {names}. You can use them now.")
+        raise ToolError("action must be test, install, list or remove")
 
 
 TOOLS = [MakeTool()]

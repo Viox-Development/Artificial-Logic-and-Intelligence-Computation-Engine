@@ -122,7 +122,7 @@ class KeyPoller:
     def __init__(self, key: str, on_press: Callable[[], None], on_release: Callable[[], None], every: float = 0.025):
         vk = key_vk(key)
         if vk is None:
-            raise ValueError(f"tuş anlaşılmadı: {key}")
+            raise ValueError(f"could not understand the key: {key}")
         self.vk, self.on_press, self.on_release, self.every = vk, on_press, on_release, every
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="alice-ptt")

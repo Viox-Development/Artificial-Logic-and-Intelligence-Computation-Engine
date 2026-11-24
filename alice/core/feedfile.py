@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from alice.core.feeds import feeds_path, parse_feed
+from alice.i18n import _
 
 HEAD_RX = re.compile(r"(?m)^\[\[feed\]\]\s*$")
 NAME_RX = re.compile(r'(?m)^name\s*=\s*"([^"]*)"')
@@ -38,7 +39,7 @@ def toml_value(v: Any) -> str:
         return "[" + ", ".join(toml_value(x) for x in v) + "]"
     if isinstance(v, dict):
         return "{ " + ", ".join(f"{_key(str(k))} = {toml_value(x)}" for k, x in v.items()) + " }"
-    raise ValueError(f"TOML'a çevrilemeyen değer: {v!r}")
+    raise ValueError(_("a value that can't be written as TOML: {value}", value=repr(v)))
 
 
 def render_block(feed: dict[str, Any]) -> str:
@@ -83,7 +84,7 @@ def add_feed(feed: dict[str, Any], path: Path | None = None) -> str:
     p = path or feeds_path()
     name = str(feed["name"])
     if name in names(p):
-        raise ValueError(f"'{name}' adında bir akış zaten var; başka ad seç ya da önce sil")
+        raise ValueError(_("a feed named '{name}' already exists; pick another name or delete it first", name=name))
     try:
         text = p.read_text(encoding="utf-8-sig")
     except OSError:

@@ -23,15 +23,17 @@ import time
 from typing import Callable
 
 from alice.core.notify import Notification
+from alice.i18n import _
 
 # (key, limit, text) — text takes the value via {v}
 GAME_LIMITS = (
-    ("pc.gpu.temp", 93.0, "Ekran kartı {v:.0f} derece, kritik: kart kendini yavaşlatmaya başlar."),
-    ("pc.cpu.temp", 95.0, "İşlemci {v:.0f} derece, kritik: oyun takılabilir."),
-    ("pc.gpu.mem_percent", 98.0, "Ekran kartı belleği yüzde {v:.0f} dolu, takılma başlayabilir."),
-    ("pc.mem.percent", 95.0, "RAM yüzde {v:.0f} dolu, oyun takılabilir."),
+    ("pc.gpu.temp", 93.0, "Graphics card at {v} degrees, critical: the card starts slowing itself down."),
+    ("pc.cpu.temp", 95.0, "Processor at {v} degrees, critical: the game may stutter."),
+    ("pc.gpu.mem_percent", 98.0, "Graphics memory is {v}% full, stuttering may start."),
+    ("pc.mem.percent", 95.0, "RAM is {v}% full, the game may stutter."),
 )
 GAME_HOLD = 120.0
+OUTAGE, OLD_OUTAGE = "Internet outage", "İnternet kesintisi"  # event title; older records hold the Turkish one
 GAME_REPEAT = 1800.0
 GAME_PROCS = ("aces", "dcs", "robloxplayerbeta")  # don't name the game itself in the RAM suggestion
 # HUD bar: (key, name, unit, value where it appears). The limit comes from GAME_LIMITS; temperatures start at 90%
@@ -74,12 +76,12 @@ class GameHealth:
             if now - start < GAME_HOLD or since_said < GAME_REPEAT / 3 or (
                     not self.armed.get(key, True) and since_said < GAME_REPEAT):
                 continue
-            msg = text.format(v=v)
+            msg = _(text, v=f"{v:.0f}")  # GAME_LIMITS texts are English keys
             if key == "pc.mem.percent":
                 hog = self.top_process(now)
                 if hog:
-                    msg += f" En çok {hog[0]} kullanıyor ({hog[1] / 1024:.1f} GB), kapatabilirsin."
-            if self.notify(Notification("Bilgisayar zorlanıyor", msg, "warn", "flight", kind="flight",
+                    msg += _(" {name} uses the most ({gb} GB), you could close it.", name=hog[0], gb=f"{hog[1] / 1024:.1f}")
+            if self.notify(Notification(_("The computer is struggling"), msg, "warn", "flight", kind="flight",
                                         emotion="serious")):
                 self.said[key] = now
                 self.armed[key] = False
@@ -107,7 +109,7 @@ class SystemGauges:
         self.store = store
         self.ttl = max(5.0, 1.5 * interval + 5)
         self.clock = clock
-        self.limits = {key: limit for key, limit, _ in GAME_LIMITS}
+        self.limits = {key: limit for key, limit, _text in GAME_LIMITS}
 
     def __call__(self, policy=None) -> list[str]:
         from alice.hud import client, views
@@ -184,15 +186,15 @@ class NetWatch:
                 self.down_since = now
             if not self.announced and now - self.down_since >= self.DOWN_AFTER:
                 self.announced = True
-                self.notify(Notification("İnternet koptu", "İnternet bağlantısı yok, bilgisayar dışarıya ulaşamıyor.",
+                self.notify(Notification(_("Internet down"), _("There is no internet connection, the computer can't reach the outside."),
                                          "warn", "net", kind="alert"))
             return
         if self.down_since is not None:
             mins = (now - self.down_since) / 60
             if self.announced:
-                self.notify(Notification("İnternet geri geldi", f"Bağlantı geri geldi, yaklaşık {max(1, round(mins))} "
-                                         "dakika kesikti.", "info", "net", kind="alert"))
-                self.store.add_event("net", "İnternet kesintisi", f"{mins:.1f} dk", "info", "net",
+                self.notify(Notification(_("Internet is back"), _("The connection is back, it was down for about {n} minutes.",
+                                                                 n=max(1, round(mins))), "info", "net", kind="alert"))
+                self.store.add_event("net", OUTAGE, f"{mins:.1f} min", "info", "net",
                                      ts=self.down_since)
             self.down_since = None
             self.announced = False
@@ -200,7 +202,7 @@ class NetWatch:
 
 def outages(store, since: float) -> tuple[int, float]:
     """Outage count and total minutes (for the weekly summary)."""
-    evs = [e for e in store.events(since=since, kind="net", limit=500) if e.title == "İnternet kesintisi"]
+    evs = [e for e in store.events(since=since, kind="net", limit=500) if e.title in (OUTAGE, OLD_OUTAGE)]
     total = 0.0
     for e in evs:
         try:

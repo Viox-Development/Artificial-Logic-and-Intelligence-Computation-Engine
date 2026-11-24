@@ -98,7 +98,7 @@ class Automations:
         rows = hk.file_hooks()
         i = int(d.get("index", -1))
         if not 0 <= i < len(rows):
-            raise ValueError("böyle bir hook yok")
+            raise ValueError(_("no such hook"))
         h = rows[i]
         r = hk.Hooks([h])._run_one(h, {"args": {"path": "ornek.py"}, "result": "", "prompt": "deneme"}, "edit_file")
         return {"ok": True, "code": r.code, "stdout": r.stdout, "stderr": r.stderr}

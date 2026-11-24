@@ -351,7 +351,7 @@ def remove_project_rule(cwd: Path, kind: str, rule: str) -> bool:
 class Permissions:
     def __init__(self, mode: str = "auto", rules: dict[str, list[str]] | None = None):
         if mode not in MODES:
-            raise ValueError(f"geçersiz izin modu: {mode}")
+            raise ValueError(f"invalid permission mode: {mode}")
         self.before_plan: str | None = None  # the mode before plan mode: exit_plan_mode returns to it after approval
         self._mode = mode
         self.always_allow: set[str] = set()

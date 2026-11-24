@@ -313,3 +313,12 @@ def test_key_catalogue_descriptions_have_turkish_translations():
         config._ = raw
     missing = sorted({e["help"] for e in cat if e["help"] and e["help"] not in tr} | {e["field"] for e in cat if e["field"] not in tr})
     assert not missing, "add these to alice/locales/tr.json:\n" + "\n".join(missing)
+
+
+def test_watchdog_texts_have_turkish_translations():
+    # GAME_LIMITS texts go through _() as variables, which the literal scan can't see.
+    from alice.core.watchdogs import GAME_LIMITS
+
+    tr = json.loads((ROOT / "locales" / "tr.json").read_text(encoding="utf-8"))
+    missing = [text for _key, _limit, text in GAME_LIMITS if text not in tr]
+    assert not missing, "add these to alice/locales/tr.json:\n" + "\n".join(missing)

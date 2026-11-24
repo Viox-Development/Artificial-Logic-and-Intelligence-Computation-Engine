@@ -118,7 +118,7 @@ def test_load_tools_all_is_refused(workdir):
     agent._enable_groups_for("")
     with pytest.raises(ToolError) as e:
         agent.tools["load_tools"].run(agent.ctx, groups=["all"])
-    assert "'all' kabul edilmiyor" in str(e.value) and "browser" in str(e.value)
+    assert "'all' is not accepted" in str(e.value) and "browser" in str(e.value)
     assert "browser" not in agent.ctx.state.get("tool_groups", set())
 
 

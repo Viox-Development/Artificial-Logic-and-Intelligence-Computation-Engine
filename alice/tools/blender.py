@@ -71,7 +71,7 @@ if ok:
                 cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
                 scene.camera = cam
         if scene.camera is None:
-            print(MARK + "NOT sahnede görünür nesne yok, önizleme alınmadı")
+            print(MARK + "NOT no visible object in the scene, no preview taken")
         else:
             scene.render.engine = "BLENDER_WORKBENCH"
             scene.render.resolution_x, scene.render.resolution_y = 640, 400

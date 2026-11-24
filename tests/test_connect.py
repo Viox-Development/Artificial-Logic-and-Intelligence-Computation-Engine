@@ -241,7 +241,7 @@ def test_arac_semasi_ve_calismasi(m, workdir, monkeypatch):
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))
     monkeypatch.setattr("alice.connect.tool.call", lambda *a, **k: {"response": {"items": [{"name": "x", "count": 1}]}})
     assert tool.run(ctx, action="liste", owner="hayat").text == "1. name=x  count=1"
-    with pytest.raises(ToolError, match="bilinmeyen eylem"):
+    with pytest.raises(ToolError, match="unknown action"):
         tool.run(ctx, action="yok")
 
 

@@ -371,10 +371,10 @@ class LoadTools(Tool):
         groups = [group_of(g) or g if g not in known else g for g in groups]
         groups = ["mcp:" + g if g in servers else g for g in groups]
         if any(str(g).strip().lower() in ("all", "*", "hepsi") for g in groups):
-            # Bütün grupları açmak araç listesini birkaç kat büyütüyor, istemi şişiriyor ve önbelleği baştan
-            # yazdırıyordu. Gereken grubu seçsin.
-            raise ToolError("'all' kabul edilmiyor: bütün araçları açmak her isteği şişirir. İşin için gereken "
-                            f"grupları tek tek iste. Gruplar: {', '.join(groups_)}"
+            # Opening every group made the tool list several times bigger, bloated the prompt and rewrote the cache
+            # from scratch. Let it pick the group it needs.
+            raise ToolError("'all' is not accepted: opening every tool bloats each request. Ask for the groups "
+                            f"the job needs one by one. Groups: {', '.join(groups_)}"
                             + (f"; MCP: {', '.join('mcp:' + s for s in servers)}" if servers else ""))
         wanted = set(groups)
         unknown = wanted - known

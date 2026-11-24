@@ -64,7 +64,7 @@ def test_ekle_yorumlari_korur_ve_gecerli_toml_uretir(ffile):
 
 def test_ayni_ad_ve_gecersiz_akis_reddedilir(ffile):
     ffile.write_text(USER_FILE, encoding="utf-8")
-    with pytest.raises(ValueError, match="zaten var"):
+    with pytest.raises(ValueError, match="already exists"):
         feedfile.add_feed({"name": "elle", "connector": "discord", "action": "messages"})
     with pytest.raises(ValueError, match="watch"):
         feedfile.add_feed({"name": "x", "connector": "steam", "action": "profile", "mode": "change"})
