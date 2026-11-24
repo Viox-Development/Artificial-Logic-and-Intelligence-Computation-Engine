@@ -467,7 +467,7 @@ def test_only_quick_tools_go_to_realtime_and_transcription_is_on():
     s.agent.tools = {"youtube": spec("youtube"), "github": spec("github"), "blender": spec("blender")}
     session = s._session_config()["session"]
     assert [t["name"] for t in session["tools"]] == ["think", "youtube"]
-    assert session["audio"]["input"]["transcription"] == {"model": "gpt-4o-mini-transcribe", "language": "en"}  # [voice] language = "auto": the interface language
+    assert session["audio"]["input"]["transcription"] == {"model": "gpt-4o-mini-transcribe", "language": "tr"}  # "auto": the speech language (tests: Turkish)
     assert make_session(live_realtime_tools="*")._tool_specs is not None
     s2 = make_session(live_realtime_tools="*")
     s2.agent.tools = s.agent.tools

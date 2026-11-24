@@ -115,7 +115,7 @@ def test_foreign_request_does_not_run_action_tools(monkeypatch):
     s.converse("Abre la canción Capiaça", queue.Queue(), threading.Event())
     assert ran == []
     reply = next(m for m in ws.sent if "toolResponse" in m)
-    assert "YAPILMADI" in json.dumps(reply, ensure_ascii=False)
+    assert "NOT DONE" in json.dumps(reply, ensure_ascii=False)
 
 
 def test_foreign_or_junk_answer_is_muted(monkeypatch):
@@ -140,7 +140,7 @@ def test_claim_without_tool_result_gets_corrected(monkeypatch):
     s.names = lambda: []
     s.ANSWER_WAIT = 0.5  # the fake connection may answer before the tool result: avoids a 20 s wait
     s.converse("temayı yeşil yap", queue.Queue(), threading.Event())
-    notes = [m for m in ws.sent if "clientContent" in m and "sistem notu" in json.dumps(m, ensure_ascii=False)]
+    notes = [m for m in ws.sent if "clientContent" in m and "system note" in json.dumps(m, ensure_ascii=False)]
     assert len(notes) == 1  # once: the correction itself is not corrected again
     assert any("doğrulanmamış iddia" in line for line in logs)
 
@@ -163,7 +163,7 @@ def test_claim_backed_by_tool_result_is_left_alone(monkeypatch):
     s.names = lambda: []
     s.ANSWER_WAIT = 0.5  # the fake connection may answer before the tool result: avoids a 20 s wait
     s.converse("videoyu aç", queue.Queue(), threading.Event())
-    assert not [m for m in ws.sent if "clientContent" in m and "sistem notu" in json.dumps(m, ensure_ascii=False)]
+    assert not [m for m in ws.sent if "clientContent" in m and "system note" in json.dumps(m, ensure_ascii=False)]
 
 
 def test_repeated_failures_steer_model_elsewhere(monkeypatch):
@@ -176,7 +176,7 @@ def test_repeated_failures_steer_model_elsewhere(monkeypatch):
     s.ANSWER_WAIT = 0.5  # the fake connection may answer before the tool result: avoids a 20 s wait
     s.converse("tarayıcıya geç", queue.Queue(), threading.Event())
     replies = [json.dumps(m, ensure_ascii=False) for m in ws.sent if "toolResponse" in m]
-    assert "üst üste" not in replies[0] and "üst üste" in replies[1]
+    assert "in a row" not in replies[0] and "in a row" in replies[1]
 
 
 def test_permission_comes_from_words_after_the_question():
@@ -209,11 +209,11 @@ def test_background_result_reaches_user_after_session_closed():
     s._ws, got = None, []
     s.announce = got.append
     s._deliver("computer_task", "Masaüstü simgeleri açıldı. Ayrıntı: ...")
-    assert got == ["Ekran görevi bitti: Masaüstü simgeleri açıldı."]
+    assert got == ["Screen task finished: Masaüstü simgeleri açıldı."]
     sent = []
     s._ws = SimpleNamespace(send=sent.append)
     s._deliver("computer_task", "tamamlandı")
-    assert sent and got == ["Ekran görevi bitti: Masaüstü simgeleri açıldı."]  # open session: deliver there
+    assert sent and got == ["Screen task finished: Masaüstü simgeleri açıldı."]  # open session: deliver there
 
 
 def test_background_task_does_not_keep_session_open():

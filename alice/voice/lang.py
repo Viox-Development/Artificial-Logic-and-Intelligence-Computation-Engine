@@ -35,14 +35,34 @@ _TURKISH_WORDS = {"bir", "bu", "şu", "ve", "ne", "mi", "mı", "mu", "mü", "ben
 _JUNK = re.compile(r"^[\W_]*$|no speech|speech detected|<\s*noise\s*>|^\(.*\)$", re.I)
 
 
-def foreign(text: str) -> bool:
-    """Is this utterance most likely not Turkish? False for short or uncertain text (to avoid accidentally muting)."""
+# Common English words: in English speech mode they count for the user's language.
+_ENGLISH_WORDS = {"the", "and", "you", "what", "this", "that", "with", "have", "are", "it's", "i'm", "please", "is",
+                  "to", "a", "can", "open", "play", "turn", "on", "off", "yes", "no", "it", "my", "me", "for", "of",
+                  "in", "how", "do", "set", "check", "show", "tell", "okay", "ok"}
+
+
+def foreign(text: str, language: str | None = None) -> bool:
+    """Is this utterance most likely not in the speech language (Turkish, or English when [voice] language / the
+    interface is English)? False for short or uncertain text (to avoid accidentally muting)."""
+    if language is None:
+        from alice.i18n import speech_language
+
+        language = speech_language()
     t = (text or "").strip()
     letters = [c for c in t if c.isalpha()]
     if len(letters) < 6:
         return False
     if sum(1 for c in letters if _NON_LATIN.match(c)) / len(letters) > 0.3:
         return True
+    if language == "en":
+        words = [w.lower() for w in re.findall(r"[\w']+", t)]
+        alien = (sum(w in _FOREIGN_WORDS and w not in _ENGLISH_WORDS for w in words)
+                 + 2 * len(_FOREIGN_LETTERS.findall(t)) + len(_TURKISH_LETTERS.findall(t))
+                 + sum(w in _TURKISH_WORDS and w not in _ENGLISH_WORDS for w in words))
+        native = sum(w in _ENGLISH_WORDS for w in words)
+        return alien >= 2 and alien > native
+    if language != "tr":
+        return False  # no word lists for other languages: only the writing system is checked
     if _TURKISH_LETTERS.search(t) and not _FOREIGN_LETTERS.search(t):
         return False
     words = [w.lower() for w in re.findall(r"[\w']+", t)]

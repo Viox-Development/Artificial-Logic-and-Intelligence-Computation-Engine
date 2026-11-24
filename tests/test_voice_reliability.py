@@ -307,7 +307,7 @@ def test_background_counter_returns_to_zero(monkeypatch):
     s._run_call(ws, {"id": "b1", "name": "computer_task", "args": {"goal": "x"}})
     assert s._tasks == 1 and s._bg == 0  # the screen task counts, but does not keep the session open
     s._run_call(ws, {"id": "b2", "name": "computer_task", "args": {"goal": "y"}})  # the second one is rejected
-    assert "zaten" in json.dumps(sent[-1], ensure_ascii=False)
+    assert "already running" in json.dumps(sent[-1], ensure_ascii=False)
     done.set()
     assert wait_for(lambda: s._tasks == 0)
 
@@ -502,7 +502,7 @@ def test_assistant_retries_mic_open_and_reports_clearly(monkeypatch):
     t.start()
     t.join(5)
     assert not t.is_alive() and tries[0] == 3 and mic.exited
-    assert sum("mikrofon açılamadı" in e for e in emitted) == 1  # announced once, retried silently
+    assert sum("could not open the microphone" in e for e in emitted) == 1  # announced once, retried silently
     assert any("mikrofon açıldı" in m for m in logs)
 
 
@@ -521,7 +521,7 @@ def test_assistant_reports_missing_sounddevice(monkeypatch):
     t.start()
     t.join(3)
     assert not t.is_alive()
-    assert any("sounddevice kurulu değil" in e for e in emitted)
+    assert any("sounddevice is not installed" in e for e in emitted)
 
 
 def test_push_to_talk_mic_error_does_not_kill_listening(monkeypatch):

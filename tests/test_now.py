@@ -108,7 +108,7 @@ def test_with_clock_adds_state(monkeypatch):
     from alice.voice import assistant
 
     monkeypatch.setattr(nowmod, "voice_line", lambda: "mod uçuş, War Thunder'da")
-    assert assistant.with_clock("nasılım").endswith("; durum: mod uçuş, War Thunder'da]")
+    assert assistant.with_clock("nasılım").endswith("; status: mod uçuş, War Thunder'da]")
     monkeypatch.setattr(nowmod, "voice_line", lambda: "")
     assert "durum:" not in assistant.with_clock("nasılım")
 

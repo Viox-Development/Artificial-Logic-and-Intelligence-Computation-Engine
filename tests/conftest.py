@@ -40,6 +40,8 @@ def isolated_home(tmp_path, monkeypatch):
 
     # Interface language: English unless a test sets it; a test that switches it (the "lang" action) must not leak.
     monkeypatch.delenv("ALICE_LANG", raising=False)
+    # Speech: the voice tests are written with Turkish speech; a test about another speech language sets it itself.
+    monkeypatch.setenv("ALICE_SPEECH_LANG", "tr")
     i18n.set_language(None)
     from alice import anticipate
 

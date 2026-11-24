@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from alice.i18n import speech_tag
+from alice.i18n import _, speech_language, speech_language_name, speech_tag
 from alice.tools.base import ToolResult
 from alice.voice.lang import correction, foreign, junk
 from alice.voice.listen import FOLLOW_MAX, ends_with_hush, is_yes
@@ -51,7 +51,7 @@ SCREEN_WORDS = re.compile(
 SCHEMA_KEYS = {"type", "description", "enum", "properties", "required", "items", "nullable", "format"}
 
 LIVE_PROMPT = """# Live voice conversation
-You are talking with the user live, by voice. ALWAYS SPEAK TURKISH: natural, warm and short (usually 1-2 sentences).
+You are talking with the user live, by voice. ALWAYS SPEAK {language}: natural, warm and short (usually 1-2 sentences).
 Don't read out lists, code, paths or long numbers; if needed, say you put it on the screen.
 When a job is asked for, call the relevant tool right away.
 If you call a tool without saying anything, the user hears a short sentence in your voice such as "Bir saniye.",
@@ -81,11 +81,11 @@ says "needs_help", or for interfaces with no readable elements/text on screen (g
 it runs in the background and writes the result to you when it is done. Don't click blind with the computer tool
 (guessing coordinates).
 The microphone also hears game/engine sound, videos, and the user talking with others on Discord or in the room. If a
-sentence you hear makes no sense, isn't Turkish, or doesn't seem to be said to you, DON'T answer at all, stay silent;
+sentence you hear makes no sense, isn't in {language}, or doesn't seem to be said to you, DON'T answer at all, stay silent;
 this is normal. While staying silent, don't say or write anything such as "I won't answer", "---" or "no speech
-detected", and don't speak English. Say "Anlayamadım, tekrar eder misin" (I didn't get that, can you repeat) at most
+detected", and don't switch to another language. Say "Anlayamadım, tekrar eder misin" (I didn't get that, can you repeat) at most
 once per conversation, and only for a sentence you are sure was said to you.
-Always speak Turkish. If you hear something in another language (Portuguese, German, Japanese...), it is most likely a
+Always speak {language}. If you hear something in another language (Portuguese, German, Japanese...), it is most likely a
 game, a video or someone else: don't answer in that language; don't answer.
 For every flight question (speed, altitude, stall, fuel, heading, weapons), call flight action=status first; don't
 state flight data from a screenshot or from memory.
@@ -94,7 +94,7 @@ see on screen), and don't guess them from general knowledge; if you don't know, 
 For irreversible jobs such as writing/sending a message, the target must be the app and chat the user named; if you
 didn't fully understand what they said, ask first. Before sending, say in one short sentence what you are sending
 where ("WhatsApp'ta Ahmet'e 'geliyorum' yazıyorum"). Say you did a job only if the tool result says "done". Messages
-starting with "[sistem notu" (system note) are not the user's words; they are for correcting what you said.
+starting with "[system note" are not the user's words; they are for correcting what you said.
 If a tool fails, don't keep repeating the same call; try another way. Asking the user to change a setting is the last
 resort.
 Take a multi-step job (download, install, set up) to the end: after each step, check the state with a tool (what the
@@ -109,7 +109,7 @@ For folder and file questions use list_dir (pass names like "İndirilenler", "Ma
 (the last thing I downloaded) sort=newest), not a folder search with PowerShell.
 If there is a tool made for a job (e.g. blender for 3D/Blender), use it instead of run_command or write_file; when the
 job is done, open the result on the user's screen (such as blender action=open), because the user wants to see it.
-If a tool says approval is needed ("onay gerekli"), ask the user briefly; if they say yes ("evet"), repeat the same
+If a tool says approval is needed ("approval needed"), ask the user briefly; if they say yes ("evet"), repeat the same
 call.
 If the user asks for several connected jobs in one request (e.g. "son faturayı indir ve Ahmet'e gönder", "hava
 durumuna bak, yağmur varsa hatırlatma kur"), give it to run_plan: it plans, does it step by step and checks; it runs in
@@ -117,8 +117,8 @@ the background.
 If the task writes "[task waiting for approval]", ask the user the question and call task_control action=approve/reject
 based on the answer; never approve unless the user clearly says yes. If they say stop/cancel ("dur", "vazgeç"),
 task_control action=stop.
-Never say your internal thoughts, your plan, tool errors or corrections out loud; only speak Turkish to the user.
-Speech recognition can garble app/site names inside a Turkish sentence. Names on the user's computer and ones they use
+Never say your internal thoughts, your plan, tool errors or corrections out loud; only speak {language} to the user.
+Speech recognition can garble app/site names inside a sentence. Names on the user's computer and ones they use
 often: {names}. If a word you hear makes no sense or sounds like one of these names, they mean that name. If you
 aren't sure which name it is, confirm with one short question before starting.
 If the conversation's first message comes as text, it is a local transcript of the user's voice; it may end with a
@@ -227,7 +227,7 @@ def monitor_layout() -> str:
     except Exception:  # noqa: BLE001
         return "bilinmiyor"
     if len(mons) <= 1:
-        return "tek monitör (1)"
+        return "one monitor (1)"
     xs = sorted(m["left"] for m in mons)
     out = []
     for i, m in enumerate(mons, 1):
@@ -495,6 +495,7 @@ class LiveSession:
                  connect: Callable[..., Any] | None = None, out_factory: Callable[[], Any] = AudioOut):
         v = cfg.data.get("voice", {})
         self.cfg = cfg
+        self.speech_lang = speech_language(v.get("language", "auto"))
         self.agent = agent
         self.log = log
         self.key = os.environ.get(cfg.data.get("providers", {}).get("gemini", {}).get("api_key_env", "GEMINI_API_KEY"),
@@ -604,8 +605,9 @@ class LiveSession:
 
         state = voice_line()  # mode, game, today's flights, heart rate
         system = self.agent.messages[0]["content"] + "\n\n" + LIVE_PROMPT.format(
-            now=f"{now:%d.%m.%Y %H:%M} ({spoken_time(now.hour, now.minute)})" + (f"; durum: {state}" if state else ""),
+            now=f"{now:%d.%m.%Y %H:%M} ({spoken_time(now.hour, now.minute)})" + (f"; status: {state}" if state else ""),
             names=", ".join(self.names()),
+            language=speech_language_name(self.cfg.data.get("voice", {}).get("language", "auto")),
             monitors=monitor_layout(),
             history=("\n# Recent conversation (the same chat, continued)\n" + history) if history else "")
         enabled = self.agent.ctx.state.setdefault("tool_groups", set())
@@ -684,7 +686,7 @@ class LiveSession:
 
         lines = []
         for ts, user, reply in items:
-            line = f"- {datetime.fromtimestamp(ts):%H:%M} Kullanıcı: {user[:300]}"
+            line = f"- {datetime.fromtimestamp(ts):%H:%M} User: {user[:300]}"
             # Canned replies ("Buradayım efendim, nasıl yardımcı olabilirim?" = I'm here, how can I help?) are not put
             # into the history: seeing its own old sentence, the model built the same one over and over.
             if reply and not canned_reply(reply):
@@ -780,7 +782,7 @@ class LiveSession:
             return
 
         def close() -> None:
-            ws, _ = self._settle(pre)
+            ws, _rest = self._settle(pre)
             if ws is not None:
                 _close(ws)
 
@@ -950,7 +952,7 @@ class LiveSession:
                             state["answered"] = True
                             said = "".join(state["said"]).strip()
                             why = ("iç not" if looks_internal(said) else "boş çıktı" if len(said) >= 3 and junk(said)
-                                   else "Türkçe değil" if len(said) >= 12 and foreign(said) else "")
+                                   else "Türkçe değil" if len(said) >= 12 and foreign(said, getattr(self, "speech_lang", None)) else "")
                             if not state["mute"] and why:
                                 state["mute"] = True  # don't play the rest of this turn
                                 out.clear()
@@ -1135,14 +1137,14 @@ class LiveSession:
         state["claim_fixed"] = state.get("asked")
         state["unverified"] = True
         errors = turn.get("errors") or []
-        why = (f"araçlar hata verdi ({'; '.join(errors)[:300]})" if errors else "hiçbir araç çağrılmadı"
-               if not turn.get("calls") else "işi yapan araç başarılı sonuç dönmedi")
+        why = (f"tools failed ({'; '.join(errors)[:300]})" if errors else "no tool was called"
+               if not turn.get("calls") else "the tool doing the job did not return success")
         self.log(f"live doğrulanmamış iddia ({why}): {said[-160:]}")
         if not send:
             return
-        note = (f"[sistem notu, kullanıcının sözü değil] Az önce '{m.group(0)}' dedin ama bu istekte {why}. "
-                "Kullanıcıya tek kısa cümleyle bunun yapılmadığını ya da doğrulanamadığını söyle; özür dilemeyi "
-                "uzatma, yapıldı deme. İstersen doğru araçla yeniden dene.")
+        note = ((f"[system note, not the user's words] You just said '{m.group(0)}' but in this request {why}. "
+                "Tell the user in one short sentence that it wasn't done or couldn't be verified; don't drag out "
+                "an apology and don't say it was done. You may try again with the right tool."))
         state["pending"], state["asked"] = True, time.monotonic()  # keep session open until correction is spoken
         state["claim_fixed"] = state["asked"]
         try:
@@ -1186,8 +1188,8 @@ class LiveSession:
             return None
         if not title or any(n.lower() in title.lower() for n in names):
             return None
-        return (f"YAZILMADI: öndeki pencere '{title[:80]}', kullanıcı ise {', '.join(names)} dedi. Önce doğru "
-                "pencereye geç (windows action=switch_tab/focus), sonra tekrar dene; emin değilsen kullanıcıya sor.")
+        return ((f"NOT TYPED: the window in front is '{title[:80]}', but the user said {', '.join(names)}. Switch to "
+                "the right window first (windows action=switch_tab/focus), then try again; if unsure, ask the user."))
 
     TOOL_TIMEOUT = 25.0  # sec: if a tool hangs, return an error to the model so the conversation doesn't freeze
     BACKGROUND = {"computer_task", "run_plan"}  # can take minutes: runs in background, result goes to chat when done
@@ -1229,7 +1231,7 @@ class LiveSession:
                                                   "turnComplete": False}}))
         except Exception:  # noqa: BLE001
             return
-        state["said"] = [(heard + " …(sözü kesildi)").strip()]  # the heard part also goes into the record
+        state["said"] = [(heard + " …(interrupted)").strip()]  # the heard part also goes into the record
         self.log(f"live söz kesildi: cevabın {len(heard)}/{len(said)} karakteri duyuldu")
 
     def fillers(self):
@@ -1279,8 +1281,8 @@ class LiveSession:
         if getattr(self, "_tasks", 0):  # mouse/keyboard are shared: a second screen task would break the first
             try:
                 ws.send(json.dumps({"toolResponse": {"functionResponses": [{"id": fc.get("id"), "name": name,
-                    "response": {"result": "zaten bir ekran görevi sürüyor; aynı işi tekrar başlatma, bitince "
-                                           "sonucu sana yazacağım."}}]}}))
+                    "response": {"result": ("a screen task is already running; don't start the same job again, I'll write you "
+                                           "the result when it is done.")}}]}}))
             except Exception:  # noqa: BLE001
                 pass
             return
@@ -1288,8 +1290,8 @@ class LiveSession:
                 "function": {"name": name, "arguments": json.dumps(args)}}
         try:
             ws.send(json.dumps({"toolResponse": {"functionResponses": [{"id": fc.get("id"), "name": name, "response": {
-                "result": "başladı, arka planda yapılıyor; bitince sonucu sana yazacağım. Kullanıcıya kısaca "
-                          "başladığını söyle, sonucu uydurma."}}]}}))
+                "result": ("started, it runs in the background; I'll write you the result when it is done. Tell the user "
+                          "briefly that it started, and don't make up the result.")}}]}}))
         except Exception:  # noqa: BLE001
             return
         with self._bg_lock:
@@ -1333,15 +1335,15 @@ class LiveSession:
                 turn["ok"] = turn.get("ok", 0) + 1
             try:
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
-                    f"[{name} bitti, sonucu kullanıcıya kısaca söyle] {text}")}]}], "turnComplete": True}}))
+                    f"[{name} finished, tell the user the result briefly] {text}")}]}], "turnComplete": True}}))
                 return
             except Exception:  # noqa: BLE001 - closed at that very moment
                 pass
         announce = getattr(self, "announce", None)
         if announce is not None:
             first = re.split(r"(?<=[.!?])\s|\n", text.strip(), maxsplit=1)[0][:160]
-            label = "Ekran görevi" if name == "computer_task" else "Görev"
-            announce(f"{label} olmadı: {first}" if text.startswith(("ERROR", "HATA")) else f"{label} bitti: {first}")
+            label = _("Screen task") if name == "computer_task" else _("Task")
+            announce(_("{label} failed: {first}", label=label, first=first) if text.startswith(("ERROR", "HATA")) else _("{label} finished: {first}", label=label, first=first))
 
     def _run_think(self, ws, fc: dict[str, Any]) -> None:
         """Have the brain model think about it in the background; when the answer arrives, return it to Live as a
@@ -1366,8 +1368,8 @@ class LiveSession:
             respond("ERROR: question is empty. Put the user's question in question.")
             return
         if getattr(self, "_thinking", 0):
-            respond("Önceki soru hâlâ düşünülüyor; yeni think çağırma. Bu soruya kısaca kendin cevap ver ya da "
-                    "kullanıcıya biraz beklemesini söyle.")
+            respond(("The previous question is still being thought about; don't call think again. Answer this question "
+                    "briefly yourself or tell the user to wait a little."))
             self.log(f"live think atlandı (önceki sürüyor): {question[:120]}")
             return
         self._thinking = getattr(self, "_thinking", 0) + 1
@@ -1389,8 +1391,8 @@ class LiveSession:
             self._thinking = max(0, getattr(self, "_thinking", 1) - 1)
 
         def too_slow() -> None:
-            respond("Düşünmek uzun sürüyor; kullanıcıya biraz daha süreceğini kısaca söyle. Cevap gelince sana ayrıca "
-                    "yazacağım, o zaman söyle.")
+            respond(("Thinking is taking long; tell the user briefly that it will take a bit longer. I'll write you the "
+                    "answer separately when it comes; say it then."))
             self.log("live think zaman aşımı: cevap gelince konuşmaya yazılacak")
             release()
 
@@ -1408,7 +1410,7 @@ class LiveSession:
             try:
                 answer = self.think_answer(question, context)
                 self.log(f"live think cevabı ({time.monotonic() - t0:.1f} sn): {answer[:200]}")
-                text = "Cevap (kendi sesinle, anlamını bozmadan söyle; kısaltabilirsin ama bilgi ekleme): " + answer
+                text = "Answer (say it in your own voice without changing its meaning; you may shorten it but don't add anything): " + answer
             except Exception as e:  # noqa: BLE001
                 self.log(f"live think hata: {e}")
                 text = f"ERROR: could not think it through ({type(e).__name__}). Give your short answer yourself and say if you're unsure."
@@ -1424,7 +1426,7 @@ class LiveSession:
                 return
             try:  # the timeout answer had already gone out: send the result as a new message
                 ws.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": (
-                    f"[think bitti, cevabı kullanıcıya söyle] {text}")}]}], "turnComplete": True}}))
+                    f"[think finished, tell the user the answer] {text}")}]}], "turnComplete": True}}))
             except Exception:  # noqa: BLE001
                 pass
         finally:
@@ -1449,7 +1451,7 @@ class LiveSession:
         prompt = THINK_PROMPT.format(history=("\nRecent conversation:\n" + history + "\n") if history else "",
                                      question=question, context=f"\nExtra context: {context}" if context else "")
         answer = (child.run_turn(prompt, max_steps=self.think_steps) or "").strip()
-        return answer or "bir cevap bulamadım"
+        return answer or "I couldn't find an answer"
 
     THINK_ROLE = "live-think"
 
@@ -1505,7 +1507,7 @@ class LiveSession:
         job: dict[str, Any] = {"fn": fn, "done": threading.Event()}
         q.put(job)
         if not job["done"].wait(timeout):
-            return ToolResult(f"araç {timeout:.0f} sn içinde bitmedi", is_error=True)
+            return ToolResult(f"the tool did not finish within {timeout:.0f} s", is_error=True)
         return job["res"]
 
     def _tool_worker(self, q: "queue.Queue[dict[str, Any]]") -> None:
@@ -1548,23 +1550,23 @@ class LiveSession:
         repeatable = any(w in str(args.get("action", "")) for w in ("scroll", "key", "wait", "press", "screenshot"))
         if last and last[0] == key and time.monotonic() - last[1] < 5 and not repeatable:
             self.log(f"live aynı araç çağrısı tekrarlandı, çalıştırılmadı: {name}")
-            return ("Bu çağrıyı az önce aynen yaptın, tekrar çalıştırılmadı. Önceki sonuç: " + last[2][:1500]
-                    + "\nAynı aracı tekrar çağırma; bu sonuca göre kullanıcıya cevap ver.")
+            return ("You made exactly this call a moment ago; it was not run again. The previous result: " + last[2][:1500]
+                    + "\nDon't call the same tool again; answer the user based on this result.")
         # Even with other calls in between, the same read must not run twice in one request (voice.log:
         # Get-Volume, Downloads listing 5-6 times a minute). State-changing actions (click, type) skip this check.
         seen = turn.setdefault("seen", {})
         if key in seen and not repeatable and read_only(name, args):
             self.log(f"live aynı okuma bu istekte tekrarlandı, çalıştırılmadı: {name}")
-            return ("Bu okumayı bu istekte zaten yaptın, sonuç değişmedi: " + seen[key][:1500]
-                    + "\nBaşka bir yol dene ya da bulduğunu kullanıcıya söyle.")
+            return ("You already did this read in this request; the result hasn't changed: " + seen[key][:1500]
+                    + "\nTry another way or tell the user what you found.")
         turn["n"] += 1
         budget = int(getattr(self, "tool_budget", 10))
         if turn["n"] > budget:
             if turn["n"] == budget + 1:
                 self.log(f"live araç sınırı: bu istekte {budget} araç çağrıldı, model kullanıcıya dönmeye zorlandı")
-            return (f"DUR: bu istek için {budget} araç çağrısı sınırına geldin, araç ÇALIŞTIRILMADI. Daha fazla araç "
-                    "çağırma. Kullanıcıya şimdi tek iki cümleyle neyi bulduğunu, neyin olmadığını söyle ve devam "
-                    "etmemi ister misin diye sor.")
+            return ((f"STOP: you reached the limit of {budget} tool calls for this request; the tool was NOT RUN. Don't call "
+                    "more tools. Now tell the user in one or two sentences what you found and what didn't work, and ask "
+                    "whether to continue."))
         return None
 
     def _remember(self, fc: dict[str, Any], text: str) -> None:
@@ -1589,12 +1591,12 @@ class LiveSession:
             turn = self._turn = {"n": 0, "last": None}
         turn["calls"] = turn.get("calls", 0) + 1
         user = str(turn.get("user") or "")
-        if not self._is_read(fc) and foreign(user):
+        if not self._is_read(fc) and foreign(user, getattr(self, "speech_lang", None)):
             # A misheard sentence (game, video, another language) must not turn into an action: starting Unciv,
             # opening a song, pressing Install all used to happen this way. Reads are allowed.
             self.log(f"live dil kapısı: Türkçe olmayan istekle {fc.get('name')} çalıştırılmadı: {user[:120]}")
-            self._reply(ws, fc, "YAPILMADI: duyulan söz Türkçe değil ya da anlaşılmadı, büyük ihtimalle sana "
-                                "söylenmedi (oyun/video/başkası). Hiçbir şey söyleme, sessiz kal.")
+            self._reply(ws, fc, ("NOT DONE: the speech heard isn't in the user's language or wasn't understood; most likely it wasn't "
+                                "said to you (game/video/someone else). Say nothing, stay silent."))
             return
         wrong = self._wrong_target(fc)
         if wrong:
@@ -1660,15 +1662,15 @@ class LiveSession:
                  f"{text[:200].replace(chr(10), ' | ')}")
         fails = turn.setdefault("fails", {})
         if res.is_error and "reddetti" in text:
-            text = "onay gerekli: kullanıcıya kısaca sor, 'evet' derse aynı çağrıyı tekrarla."
+            text = "approval needed: ask the user briefly; if they say yes, repeat the same call."
         elif res.is_error:
             turn.setdefault("errors", []).append(f"{name}: {text[:120]}")
             fails[name] = fails.get(name, 0) + 1
             text = "ERROR: " + text
             if fails[name] >= 2:
                 # The model kept repeating the same tool, then asked the user to "tarayıcı ayarlarını kontrol et".
-                text += ("\nBu araç bu istekte üst üste başarısız oldu: aynısını tekrar deneme. Başka bir araçla dene "
-                         "ya da kullanıcıya olmadığını kısaca söyle. Kullanıcıdan ayar değiştirmesini isteme.")
+                text += (("\nThis tool failed several times in a row in this request: don't try the same again. Try another tool "
+                         "or briefly tell the user it didn't work. Don't ask the user to change a setting."))
         else:
             fails[name] = 0
             turn["ok"] = turn.get("ok", 0) + 1
@@ -1679,7 +1681,7 @@ class LiveSession:
             if frame:
                 try:
                     ws.send(json.dumps({"realtimeInput": {"video": {"data": frame, "mimeType": "image/jpeg"}}}))
-                    text += "\n(görüntü sana ayrıca gönderildi)"
+                    text += "\n(the image was sent to you separately)"
                 except Exception:  # noqa: BLE001
                     pass
         respond(text)
@@ -1731,9 +1733,9 @@ class LiveSession:
         if state.pop("unverified", False) and said:
             # "yaptım" (done) without a tool result: memory/summary must not record it as a fact
             # ("kullanıcı onayladı" = "user confirmed").
-            said = "[doğrulanmadı] " + said
+            said = "[unverified] " + said
         if heard or said or ui.tools:
-            tools = f" araçlar: {', '.join(ui.tools)}" if ui.tools else ""
+            tools = f" tools: {', '.join(ui.tools)}" if ui.tools else ""
             self.log(f"live [{self.model}] duyulan: {heard} | cevap: {said}{tools}")
         if state.pop("cut", False) and not heard:
             self.log("live boş kesme: söz kesildi ama kullanıcıdan söz duyulmadı (yankı ya da gürültü)")

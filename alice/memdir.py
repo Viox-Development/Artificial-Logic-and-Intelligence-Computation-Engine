@@ -968,7 +968,7 @@ Answer ONLY with JSON:
 - scope "proje" only for things that matter solely inside the current repository{repo}.
 - Write notes in the user's language (keep technical terms in English). At most 3 saves. Usually nothing qualifies: then \
 {{"save": [], "delete": []}}.
-- An ALICE reply starting with [doğrulanmadı] is a claim no tool confirmed: never record it as done.
+- An ALICE reply starting with [unverified] (older: [doğrulanmadı]) is a claim no tool confirmed: never record it as done.
 
 Conversation (oldest first):
 {transcript}"""

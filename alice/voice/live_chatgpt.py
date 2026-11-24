@@ -24,11 +24,8 @@ from alice.tools.base import ToolResult
 from alice.voice.live import AudioOut, LiveError, LiveUI, sanitize_schema
 
 REALTIME_PROMPT = """# Live voice conversation
-You are talking with the user live, by voice. ALWAYS SPEAK TURKISH: natural, warm and short (usually 1-2 sentences).
-Pronunciation: speak like a young woman whose native language is Turkish and who lives in Istanbul; no foreign accent.
-Say the Turkish vowels (ı, ö, ü) and the r like a Turk, put the stress near the end of the word as in Turkish, and end
-the sentence in a flat, relaxed tone at a natural pace.
-Don't read out lists, code, long paths or numbers; if needed, say you put it on the screen.
+You are talking with the user live, by voice. ALWAYS SPEAK {language}: natural, warm and short (usually 1-2 sentences).
+{pronunciation}Don't read out lists, code, long paths or numbers; if needed, say you put it on the screen.
 Do one-step jobs (play music/video, open something on YouTube, open an app or a site, volume, reminder, timer) right
 away with the relevant tool; don't call `think` for these, it is far too slow.
 When information, an explanation, a plan, code, a calculation, something current or a multi-step job is asked for,
@@ -45,18 +42,32 @@ If you call a tool without saying anything, the user hears a short "Bir saniye."
 result, say the result directly.
 Never make up numbers or states the tools didn't give; if you don't know, say so.
 The microphone also hears games, videos and other people talking; don't answer sentences that weren't said to you,
-that are meaningless or that aren't Turkish: stay silent. The user also talks with friends on Discord or in a game: if
+that are meaningless or that aren't in {language}: stay silent. The user also talks with friends on Discord or in a game: if
 the sentence is addressed to someone else (a name, "gel buraya", "bak şimdi") or is a remark about the game said to
 themself, make no sound at all. If it continues the conversation (the answer to the question just asked, "evet",
 "aç onu"), answer. If the user says "sus", "yeter", "sana demedim" or "sana demiyorum", say nothing: not even "tamam".
-Always speak Turkish."""
+Always speak {language}."""
+
+# Added to the realtime prompt when the speech language is Turkish.
+PRONUNCIATION_TR = """Pronunciation: speak like a young woman whose native language is Turkish and who lives in Istanbul; no
+foreign accent. Say the Turkish vowels (ı, ö, ü) and the r like a Turk, put the stress near the end of the word as in
+Turkish, and end the sentence in a flat, relaxed tone at a natural pace.
+"""
+
+
+def realtime_prompt(language: str) -> str:
+    """REALTIME_PROMPT for a speech language code."""
+    from alice.i18n import LANGUAGE_NAMES
+
+    return (REALTIME_PROMPT.replace("{pronunciation}", PRONUNCIATION_TR if language == "tr" else "")
+            .replace("{language}", LANGUAGE_NAMES.get(language, language)))
 
 THINK_TOOL = {
     "type": "function",
     "name": "think",
     "description": ("Hand information, explanations, plans, code, calculations, current information or jobs done with "
-                    "ALICE's tools to the strong model. Tell the user the result in short Turkish sentences; if a "
-                    "question comes back, pass it to the user."),
+                    "ALICE's tools to the strong model. Tell the user the result in short sentences in their language; if "
+                    "a question comes back, pass it to the user."),
     "parameters": {"type": "object", "properties": {
         "request": {"type": "string", "description": "The user's request; complete, as said"}},
         "required": ["request"]},
@@ -273,8 +284,9 @@ class RealtimeSession:
         except Exception:  # noqa: BLE001
             pass
         # Don't let trimming cut the history and live-conversation rules: trim the base system instructions instead.
-        room = 12000 - len(REALTIME_PROMPT) - len(tail) - 2
-        return base[:max(0, room)] + "\n\n" + REALTIME_PROMPT + tail
+        prompt = realtime_prompt(self.language)
+        room = 12000 - len(prompt) - len(tail) - 2
+        return base[:max(0, room)] + "\n\n" + prompt + tail
 
     def history_text(self, limit: int = 8) -> str:
         from datetime import datetime
@@ -282,7 +294,7 @@ class RealtimeSession:
         cutoff = time.time() - self.history_minutes * 60
         lines = []
         for ts, user, reply in [h for h in self._history if h[0] >= cutoff][-limit:]:
-            line = f"- {datetime.fromtimestamp(ts):%H:%M} Kullanıcı: {user[:300]}"
+            line = f"- {datetime.fromtimestamp(ts):%H:%M} User: {user[:300]}"
             if reply:
                 line += f" / Sen: {reply[:300]}"
             lines.append(line)
@@ -291,7 +303,7 @@ class RealtimeSession:
     def _remember(self, heard: str, said: str, tools: list[str]) -> None:
         heard, said = heard.strip(), said.strip()
         if heard or said or tools:
-            extra = f" araçlar: {', '.join(tools)}" if tools else ""
+            extra = f" tools: {', '.join(tools)}" if tools else ""
             self.log(f"realtime duyulan: {heard[:300]} | cevap: {said[:400]}{extra}")
         if heard:
             self._history = (self._history + [(time.time(), heard, said)])[-20:]
@@ -348,7 +360,7 @@ class RealtimeSession:
 
     def _secret(self) -> str:
         if not self._proxy:
-            raise LiveError("yerel Claude Code proxy'si (CLIProxyAPI) ayarlı değil")
+            raise LiveError("the local Claude Code proxy (CLIProxyAPI) is not set up")
         # CLIProxyAPI's /v1/realtime/client_secrets endpoint accepts a 64 KiB body; when ALICE's instructions and
         # tool schemas exceed it, it returns 413 and the live session never opened (the long, robotic fallback path).
         # Instead, connect with the proxy API key and update the session over the WebSocket: same session,
@@ -823,7 +835,7 @@ class RealtimeSession:
         self._tools_q.put(job)
         if not job["done"].wait(self.TOOL_TIMEOUT):
             self.log(f"realtime araç takıldı: {call['function']['name']}")
-            return ToolResult(f"{call['function']['name']} {self.TOOL_TIMEOUT:.0f} sn içinde bitmedi", is_error=True)
+            return ToolResult(f"{call['function']['name']} did not finish within {self.TOOL_TIMEOUT:.0f} s", is_error=True)
         return job["res"]
 
     def _think(self, raw: str) -> ToolResult:
@@ -835,11 +847,11 @@ class RealtimeSession:
             args = json.loads(raw or "{}")
             request = str(args.get("request") or "").strip()
         except (TypeError, ValueError):
-            return ToolResult("think: argüman geçerli JSON değil", is_error=True)
+            return ToolResult("think: the argument is not valid JSON", is_error=True)
         if not request:
-            return ToolResult("think: istek boş", is_error=True)
+            return ToolResult("think: the request is empty", is_error=True)
         if not self._think_lock.acquire(timeout=2):
-            return ToolResult("think: önceki istek hâlâ çalışıyor, bitince tekrar sor", is_error=True)
+            return ToolResult("think: the previous request is still running; ask again when it is done", is_error=True)
         try:
             text = request
             try:
@@ -856,12 +868,12 @@ class RealtimeSession:
                     self.agent.role = role
                 reply = str(self.agent.run_turn(text) or "").strip()
             except Exception as e:  # noqa: BLE001 - don't let the live conversation crash
-                return ToolResult(f"think hatası: {type(e).__name__}: {e}", is_error=True)
+                return ToolResult(f"think error: {type(e).__name__}: {e}", is_error=True)
             finally:
                 if role:
                     self.agent.role = old_role
                 self.log(f"realtime think {time.monotonic() - t0:.1f} sn [{role or old_role}]")
-            return ToolResult(reply or "Güçlü model boş cevap döndürdü.", is_error=not reply)
+            return ToolResult(reply or "The strong model returned an empty answer.", is_error=not reply)
         finally:
             self._think_lock.release()
 

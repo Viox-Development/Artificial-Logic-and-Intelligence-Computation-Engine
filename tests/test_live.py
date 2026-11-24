@@ -326,7 +326,7 @@ def test_live_tool_budget_stops_runaway_loop():
         s._run_call(ws, {"id": str(i), "name": "run_command", "args": {"command": f"komut {i}"}})
     r = results()
     assert r[:3] == [f'sonuç {{"command": "komut {i}"}}' for i in range(3)]
-    assert all("DUR" in x and "ÇALIŞTIRILMADI" in x for x in r[3:])
+    assert all("STOP" in x and "NOT RUN" in x for x in r[3:])
     s._new_turn()  # the user spoke again: the counter is reset
     s._run_call(ws, {"id": "9", "name": "run_command", "args": {"command": "yeni"}})
     assert results()[-1].startswith("sonuç")
@@ -338,7 +338,7 @@ def test_live_consecutive_duplicate_call_not_rerun():
     s.agent._execute_calls = lambda c: calls.append(c) or [ToolResult("adım 3")]
     s._run_call(ws, {"id": "1", "name": "flight", "args": {"action": "checklist_next"}})
     s._run_call(ws, {"id": "2", "name": "flight", "args": {"action": "checklist_next"}})
-    assert len(calls) == 1 and "tekrar çalıştırılmadı" in results()[1] and "adım 3" in results()[1]
+    assert len(calls) == 1 and "not run again" in results()[1] and "adım 3" in results()[1]
     s._run_call(ws, {"id": "3", "name": "computer", "args": {"action": "scroll"}})
     s._run_call(ws, {"id": "4", "name": "computer", "args": {"action": "scroll"}})
     assert len(calls) == 3  # repeatable actions such as scrolling are not blocked
@@ -442,7 +442,7 @@ def test_live_same_read_is_not_rerun_even_with_calls_between():
     s._run_call(ws, vol)
     s._run_call(ws, {"id": "2", "name": "list_dir", "args": {"path": "İndirilenler"}})
     s._run_call(ws, dict(vol, id="3"))
-    assert len(calls) == 2 and "zaten yaptın" in results()[2] and "C: D:" in results()[2]
+    assert len(calls) == 2 and "already did this read" in results()[2] and "C: D:" in results()[2]
     # running a command again is fine (like re-running tests after fixing them)
     build = {"id": "4", "name": "run_command", "args": {"command": "npm test"}}
     s._run_call(ws, build)
@@ -493,7 +493,7 @@ def test_think_runs_one_at_a_time_and_drops_stale_answers(monkeypatch):
     s.think_timeout = 60
     s._run_think(ws, {"id": "1", "name": "think", "args": {"question": "D&D nedir"}})
     s._run_think(ws, {"id": "2", "name": "think", "args": {"question": "başka soru"}})
-    assert "hâlâ düşünülüyor" in results()[0]  # the second think did not run; the model answers on its own
+    assert "still being thought about" in results()[0]  # the second think did not run; the model answers on its own
     gate.set()
     deadline = time.monotonic() + 3
     while len(results()) < 2 and time.monotonic() < deadline:
@@ -528,7 +528,7 @@ def test_slow_think_does_not_keep_the_session_open(monkeypatch):
     while s._bg and time.monotonic() < deadline:
         time.sleep(0.01)
     assert s._bg == 0 and s._thinking == 0  # freed on timeout: session can close, new question can be asked
-    assert "uzun sürüyor" in results()[0]
+    assert "taking long" in results()[0]
     gate.set()
     time.sleep(0.2)
     assert s._bg == 0 and s._thinking == 0  # not decremented a second time when it finished
