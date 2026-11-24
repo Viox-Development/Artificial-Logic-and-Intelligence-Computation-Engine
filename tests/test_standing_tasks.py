@@ -201,7 +201,7 @@ def test_approve_runs_followup_with_permission(book):
     r.tick()
     [call] = agent.calls
     assert (call["mode"], call["approve"]) == ("auto", "y")
-    assert "ONAYLADI" in call["prompt"] and "issue #7'ye yorum yaz" in call["prompt"]
+    assert "APPROVED" in call["prompt"] and "issue #7'ye yorum yaz" in call["prompt"]
     assert book.approval(a.id).status == "done" and book.approval(a.id).result == "yorum yazıldı"
     r.tick()
     assert len(agent.calls) == 1  # acted on once
