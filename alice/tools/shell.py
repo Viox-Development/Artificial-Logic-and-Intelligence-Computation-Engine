@@ -266,8 +266,8 @@ class RunCommand(Tool):
             procs[pop.pid] = BgProc(pop.pid, command, pop, log, time.time())
             time.sleep(1.5)
             head = log.read_bytes().decode("utf-8", errors="replace")[-2000:]
-            state = "çalışıyor" if pop.poll() is None else f"bitti (kod {pop.returncode})"
-            return ToolResult(f"arka planda başlatıldı pid={pop.pid}, durum: {state}\nlog: {log}\n{head}")
+            state = "running" if pop.poll() is None else f"finished (code {pop.returncode})"
+            return ToolResult(f"started in the background pid={pop.pid}, state: {state}\nlog: {log}\n{head}")
         timeout = max(1, min(int(timeout), 1800))
         # Output goes to a temp file instead of a pipe: if a windowed program the command started (e.g. Blender)
         # inherits the pipes, subprocess.run kept waiting forever even after the timeout.
@@ -325,8 +325,8 @@ class RunCommand(Tool):
             except OSError:
                 pass  # no file: the truncated output is returned as is
         if IS_WIN and "is not a valid statement separator" in err:
-            body += ("\n[ipucu] Bu Windows PowerShell 5.1: '&&' ve '||' yok. Komutları ';' ile ayır, "
-                     "koşul için 'if ($?) { ... }' ya da 'if (-not $?) { ... }' kullan.")
+            body += ("\n[hint] This is Windows PowerShell 5.1: there is no '&&' or '||'. Separate commands with ';', "
+                     "and use 'if ($?) { ... }' or 'if (-not $?) { ... }' for conditions.")
         body += _ps_hint(command, err) if IS_WIN else ""
         # Only on a real access error, or when a command that tries to write fails (a write blocked at low integrity
         # sometimes gives no output at all). An error from a read-only command ("dosya yok") is not from the sandbox.
@@ -334,11 +334,11 @@ class RunCommand(Tool):
             # Only when there really is an access error: once this was added to every failing command,
             # the model also took "dosya yok" as "access
             # blocked" (a Get-Item looking for the nonexistent Sonora-Setup.exe, 2026-11-02).
-            body += (f"\n[sandbox: komut sadece {wd} ve geçici klasöre yazabildi. Bu erişim hatası bu yüzdense ve proje "
-                     "dışına yazmak gerçekten gerekiyorsa unsandboxed=true ile tekrar dene.]")
+            body += (f"\n[sandbox: the command could write only to {wd} and the temp folder. If this access error is "
+                     "why, and writing outside the project is really needed, try again with unsandboxed=true.]")
         if git_before is not None:
             body += gitsafe.warning(gitsafe.changes(git_before, gitsafe.snapshot(wd)))
-        return ToolResult(f"çıkış kodu {returncode}\n{body}", is_error=returncode != 0)
+        return ToolResult(f"exit code {returncode}\n{body}", is_error=returncode != 0)
 
 
 _INLINE_CODE_RX = re.compile(r"(python(\.exe)?\"?|py|node(\.exe)?)\s+-[ce]\s", re.I)

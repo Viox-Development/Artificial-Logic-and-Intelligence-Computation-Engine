@@ -127,7 +127,7 @@ def test_preview_reports_server_that_dies(monkeypatch, workdir):
                                  stderr=subprocess.STDOUT)
         p.wait()
         ctx.state.setdefault("bg_procs", {})[p.pid] = BgProc(p.pid, command, p, log, time.time())
-        return type("R", (), {"text": f"arka planda başlatıldı pid={p.pid}"})()
+        return type("R", (), {"text": f"started in the background pid={p.pid}"})()
 
     monkeypatch.setattr("alice.tools.shell.RunCommand.run", fake_run)
     ctx = ToolContext(cwd=workdir, config=make_config({"brain": ["a:m"]}))

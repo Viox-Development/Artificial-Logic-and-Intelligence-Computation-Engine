@@ -651,9 +651,12 @@ function renderTodo(text, big) {
   return box;
 }
 
-// Komut çıktısı terminal görünümünde: komut, çıkış kodu, çıktı.
+// Command output in a terminal view: command, exit code, output. The tool writes "exit code N"; chats saved
+// before that was English say "çıkış kodu N", so both are recognized (same for background starts).
+const EXIT_RX = /^(?:exit code|çıkış kodu) (-?\d+)\n?/;
+const BACKGROUND_RX = /^(?:started in the background|arka planda)/;
 function renderTerm(cmd, text, isErr) {
-  const m = (text || "").match(/^çıkış kodu (-?\d+)\n?/);
+  const m = (text || "").match(EXIT_RX);
   const code = m ? +m[1] : null;
   const out = m ? text.slice(m[0].length) : text || "";
   const box = el("div", "term");
@@ -670,7 +673,7 @@ function renderTerm(cmd, text, isErr) {
 
 function peekText(t, ev) {
   let txt = ev.text || "";
-  if (t._name === "run_command") txt = txt.replace(/^çıkış kodu -?\d+\n?/, "");
+  if (t._name === "run_command") txt = txt.replace(EXIT_RX, "");
   const lines = txt.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
   if (!lines.length) return "";
   const shown = lines.slice(0, 2).map((l) => (l.length > 140 ? l.slice(0, 137) + "…" : l));
@@ -718,7 +721,7 @@ function finishTool(t, ev, live) {
       S.turn.files.set(file, f);
       refreshChanges();
     }
-  } else if (t._name === "run_command" && !/^arka planda/.test(ev.text || "")) {
+  } else if (t._name === "run_command" && !BACKGROUND_RX.test(ev.text || "")) {
     const { box, code } = renderTerm(t._summary, ev.text, ev.is_error);
     body.appendChild(box);
     if (code !== null) t._meta.appendChild(el("span", "exit " + (code === 0 ? "ok" : "bad"), _("exit {code}", { code })));

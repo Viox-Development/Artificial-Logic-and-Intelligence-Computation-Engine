@@ -68,7 +68,7 @@ class HooksTool(Tool):
                 h = rows[int(index)]
                 r = hk.Hooks([h], ctx.cwd)._run_one(h, {"args": {"path": "ornek.py"}, "result": "", "prompt": "deneme"},
                                                     "edit_file")
-                return ToolResult(f"çıkış kodu {r.code}" + (" (engeller/geri bildirim verir)" if r.blocked else "")
+                return ToolResult(f"exit code {r.code}" + (" (blocks / gives feedback)" if r.blocked else "")
                                   + (f"\nstdout: {r.stdout}" if r.stdout else "") + (f"\nstderr: {r.stderr}" if r.stderr
                                                                                      else ""))
         except ValueError as e:

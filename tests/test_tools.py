@@ -57,7 +57,7 @@ def test_run_command_and_errors(ctx):
     r = RunCommand().run(ctx, command="echo merhaba")
     assert "merhaba" in r.text and not r.is_error
     r = RunCommand().run(ctx, command="exit 3")
-    assert r.is_error and "çıkış kodu 3" in r.text
+    assert r.is_error and "exit code 3" in r.text
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="posix sleep")
