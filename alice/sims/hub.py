@@ -13,6 +13,7 @@ from typing import Any
 
 from alice.core.notify import Notification, Notifier
 from alice.core.store import Store
+from alice.i18n import _, spoken
 from alice.sims.flight import Debrief, FlightCompanion, TouchdownTracker, save_debrief
 
 ACTIVE: "SimHub | None" = None
@@ -43,11 +44,11 @@ class SimHub:
 
         if exclusive_fullscreen():
             self._fullscreen_said = True
-            self._say(f"{game} özel tam ekranda, HUD oyunun üstüne çizemiyor. Görüntü ayarlarından kenarlıksız "
-                      "pencereye geçersen tehdit oklarını da görürsün.", "info", "calm")
+            self._say(spoken("{game} is in exclusive fullscreen, the HUD can't draw over the game. If you switch to a borderless "
+                             "window in the display settings, you'll see the threat arrows too.", game=game), "info", "calm")
 
     def _say(self, text: str, severity: str, emotion: str) -> None:
-        self.notifier.send(Notification("Uçuş", text, severity, "flight", kind="flight", emotion=emotion))
+        self.notifier.send(Notification(spoken("Flight"), text, severity, "flight", kind="flight", emotion=emotion))
 
     def _hr_stats(self, a: float, b: float) -> dict | None:
         s = self.store.stats("watch.hr", a, b)
@@ -60,7 +61,7 @@ class SimHub:
     def _debrief(self, d: Debrief) -> None:
         page = save_debrief(d, self.store.series("watch.hr", d.start_wall, d.end_wall))
         self.last_debrief = (d, str(page))
-        self.store.add_event("flight", f"Uçuş değerlendirmesi: {d.aircraft}", f"{d.summary()} ({page})", "info", "flight")
+        self.store.add_event("flight", spoken("Flight debrief: {aircraft}", aircraft=d.aircraft), f"{d.summary()} ({page})", "info", "flight")
         try:  # So the next flight's bingo also uses this flight's cruise fuel
             from alice.sims.flight import learn_cruise
 
@@ -84,10 +85,10 @@ class SimHub:
                 wport, wnames = wingmen_settings(self.cfg)
                 for d in ensure_installed(port=int(self.cfg.get("dcs_port", PORT)), wingmen_port=wport,
                                           wingmen=wnames):
-                    self.store.add_event("info", "DCS veri betiği kuruldu", f"{d} (DCS'i yeniden başlat)", "info",
+                    self.store.add_event("info", _("DCS data script installed"), _("{path} (restart DCS)", path=d), "info",
                                          "flight")
             except OSError as e:
-                self.store.add_event("error", "DCS veri betiği kurulamadı", str(e), "warn", "flight")
+                self.store.add_event("error", _("Could not install the DCS data script"), str(e), "warn", "flight")
 
             comp = self.companion("dcs")
             tracker = TouchdownTracker(comp)
@@ -104,7 +105,7 @@ class SimHub:
                                                lambda rows: self.store.add_many(rows),
                                                port=int(self.cfg.get("dcs_port", PORT))).start())
             except OSError as e:
-                self.store.add_event("error", "DCS dinleyicisi başlamadı", str(e), "warn", "flight")
+                self.store.add_event("error", _("The DCS listener did not start"), str(e), "warn", "flight")
         if self.cfg.get("warthunder", True):
             from alice.sims.warthunder import WarThunderPoller
 
@@ -156,7 +157,7 @@ class SimHub:
         comp.calm = m.level == "tilt"
         if m.level == "tilt" and now - self._break_last >= self.BREAK_GAP:
             self._break_last = now
-            self._say("Üst üste düştün. Bir maç ara vermek iyi gelebilir.", "info", "calm")
+            self._say(spoken("You went down several times in a row. Sitting out a match might help."), "info", "calm")
             return
         today = date.fromtimestamp(now).isoformat()
         for key, text in found.items():
@@ -208,7 +209,7 @@ class SimHub:
             self._briefed = key
             info = read_mission(path)
         except (OSError, ValueError, KeyError) as e:
-            self.store.add_event("info", "DCS görevi okunamadı", str(e)[:200], "info", "flight")
+            self.store.add_event("info", _("Could not read the DCS mission"), str(e)[:200], "info", "flight")
             return ""
         text = briefing_text(info)
         self._say(text, "info", "calm")
@@ -228,31 +229,31 @@ class SimHub:
         c = self.companions.get("dcs")
         s = c.last_state if c is not None else None
         if s is None or time.time() - s.wall > 5:
-            return "yapılamadı: DCS'ten canlı veri gelmiyor (sesli kokpit komutları sadece DCS'te)"
+            return "not done: no live data from DCS (voice cockpit commands work only in DCS)"
         if command == "radio":
             if not mhz:
-                return "yapılamadı: frekans (MHz) gerekli"
+                return "not done: a frequency (MHz) is needed"
             seq = send_command("freq", f"{float(mhz):.3f}")
         else:
             name = command.removesuffix("_up").removesuffix("_down")
             if name not in COMMANDS:
-                return f"yapılamadı: bilinmeyen komut {command}"
+                return f"not done: unknown command {command}"
             if name == "gear":
                 down = (s.gear or 0) > 0.5
                 if command == "gear_up" and c.phase != "air":
-                    return "yapmadım: yerdeyken teker kaldırılmaz"
+                    return "not done: the gear isn't raised on the ground"
                 if (command == "gear_down") == down:
-                    return f"gerek yok: teker zaten {'aşağıda' if down else 'yukarıda'}"
+                    return f"not needed: the gear is already {'down' if down else 'up'}"
             seq = send_command("cmd", name)
         end = time.monotonic() + wait
         while time.monotonic() < end:
             ack = str((c.last_state.extra or {}).get("ack") or "")
             if ack.startswith(f"{seq}|"):
-                _, status, *rest = ack.split("|")
-                return ("yapıldı: " if status == "ok" else "yapılamadı: ") + "|".join(rest)
+                _seq, status, *rest = ack.split("|")
+                return ("done: " if status == "ok" else "not done: ") + "|".join(rest)
             time.sleep(0.1)
-        return ("gönderildi ama DCS onay vermedi: veri betiği eski olabilir (DCS'i yeniden başlat) ya da bu modül "
-                "komutu desteklemiyor")
+        return (("sent but DCS did not confirm: the data script may be old (restart DCS) or this module doesn't "
+                "support the command"))
 
     def alert_home(self, nm: float) -> str:
         """Set an alert on the airborne flight: 'üsse nm mil kalınca söyle' (tell me when nm miles from home)."""
@@ -260,10 +261,10 @@ class SimHub:
         for c in self.companions.values():
             if c.last_state is not None and c.phase == "air":
                 if c.home is None:
-                    return "kurulamadı: üssün konumu bilinmiyor (kalkış kaydedilmedi)"
+                    return "not set: the base position is unknown (takeoff was not recorded)"
                 c.home_alert_nm = float(nm)
-                return f"kuruldu: üsse {nm:.0f} mil kalınca sesli söylenecek"
-        return "kurulamadı: şu an uçuşta değilsin"
+                return f"set: will be said aloud at {nm:.0f} miles from base"
+        return "not set: you are not flying right now"
 
     def _flying(self):
         return next((c for c in self.companions.values() if c.last_state is not None and c.phase == "air"), None)
@@ -273,29 +274,29 @@ class SimHub:
         ft = float(ft)
         c = self._flying()
         if c is None:
-            return "kurulamadı: şu an uçuşta değilsin"
+            return "not set: you are not flying right now"
         c.alt_alert_ft, c.alt_alert_above = float(ft), None
-        return f"kuruldu: {ft:,.0f} feet'e gelince sesli söylenecek".replace(",", ".")
+        return f"set: will be said aloud at {ft:,.0f} feet"
 
     def alert_fuel(self, kg: float) -> str:
         kg = float(kg)
         c = self._flying()
         if c is None:
-            return "kurulamadı: şu an uçuşta değilsin"
+            return "not set: you are not flying right now"
         s = c.last_state
         if s.fuel_kg is None:
-            return "kurulamadı: oyun yakıt miktarını vermiyor"
+            return "not set: the game doesn't give the fuel amount"
         if s.fuel_kg <= kg:
-            return f"kurulmadı: yakıt zaten {s.fuel_kg:.0f} kg, {kg:.0f} kg'nin altında"
+            return f"not set: fuel is already {s.fuel_kg:.0f} kg, below {kg:.0f} kg"
         c.fuel_alert_kg = float(kg)
-        return f"kuruldu: yakıt {kg:.0f} kg'ye inince sesli söylenecek"
+        return f"set: will be said aloud when fuel drops to {kg:.0f} kg"
 
     def clear_alerts(self) -> str:
         n = 0
         for c in self.companions.values():
             n += sum(v is not None for v in (c.home_alert_nm, c.alt_alert_ft, c.fuel_alert_kg))
             c.home_alert_nm = c.alt_alert_ft = c.alt_alert_above = c.fuel_alert_kg = None
-        return f"{n} uyarı kaldırıldı" if n else "kurulu uyarı yoktu"
+        return f"{n} alerts removed" if n else "there were no alerts set"
 
     def status(self) -> str:
         lines = []
@@ -304,56 +305,56 @@ class SimHub:
             if s is None:
                 continue
             if c.phase != "air":
-                lines.append(f"{src}: {c.profile.name}, yerde")
+                lines.append(f"{src}: {c.profile.name}, on the ground")
                 continue
             lines.append(f"{src}: {c.profile.name}, {(s.alt or 0) / 0.3048:,.0f} ft, {(s.ias or 0) / 0.514444:.0f} kt, "
                          f"{s.g or 0:.1f} G")
             fs = c.fuel_status(s)
             if fs:
-                extra = (f", üs {fs['home_nm']:.0f} nm, bingo {fs['bingo_kg']:.0f} kg "
-                         f"({fs['margin_kg']:+.0f} kg pay)" if "bingo_kg" in fs else "")
-                lines.append(f"  yakıt {s.fuel_kg:.0f} kg, tüketim {fs['burn_kgs'] * 3600:.0f} kg/sa, "
-                             f"{fs['left_min']:.0f} dk kaldı{extra}")
+                extra = ((f", base {fs['home_nm']:.0f} nm, bingo {fs['bingo_kg']:.0f} kg "
+                         f"({fs['margin_kg']:+.0f} kg margin)") if "bingo_kg" in fs else "")
+                lines.append((f"  fuel {s.fuel_kg:.0f} kg, burn {fs['burn_kgs'] * 3600:.0f} kg/h, "
+                             f"{fs['left_min']:.0f} min left{extra}"))
             nav = c.home_nav(s)
             if nav:
                 turn = ""
                 if "turn" in nav:
                     t = nav["turn"]
-                    turn = (" (burnun zaten üsse dönük)" if abs(t) < 10 else
-                            f", şu an burnun {s.heading:03.0f}°: {abs(t):.0f}° {'sağa' if t > 0 else 'sola'} dön")
-                lines.append(f"  üs (kalkış noktası): {nav['bearing']:03.0f}° yönünde (gerçek kuzey), "
-                             f"{nav['nm']:.0f} nm{turn}")
+                    turn = (" (your nose already points at the base)" if abs(t) < 10 else
+                            f", your nose is now {s.heading:03.0f}°: turn {abs(t):.0f}° {'right' if t > 0 else 'left'}")
+                lines.append((f"  base (takeoff point): bearing {nav['bearing']:03.0f}° (true north), "
+                             f"{nav['nm']:.0f} nm{turn}"))
             elif s.source == "dcs":
-                lines.append("  üsse yön bilinmiyor (kalkış noktası kaydedilmedi)")
+                lines.append("  direction to base unknown (takeoff point not recorded)")
             from alice.sims.flight import describe_extra
 
             lines += describe_extra(s)
             if "weapons" not in s.extra:
-                lines.append("  silah/mühimmat: " + ("War Thunder bu bilgiyi yayınlamıyor, BİLİNMİYOR" if src == "warthunder"
-                                                     else "oyun bu uçak için vermedi, BİLİNMİYOR"))
+                lines.append("  weapons/ammunition: " + ("War Thunder doesn't publish this, UNKNOWN" if src == "warthunder"
+                                                     else "the game didn't give it for this aircraft, UNKNOWN"))
             if c.home_alert_nm is not None:
-                lines.append(f"  kurulu uyarı: üsse {c.home_alert_nm:.0f} mil kalınca söylenecek")
+                lines.append(f"  alert set: will be said at {c.home_alert_nm:.0f} miles from base")
             if c.alt_alert_ft is not None:
-                lines.append(f"  kurulu uyarı: {c.alt_alert_ft:.0f} ft'e gelince söylenecek")
+                lines.append(f"  alert set: will be said at {c.alt_alert_ft:.0f} ft")
             if c.fuel_alert_kg is not None:
-                lines.append(f"  kurulu uyarı: yakıt {c.fuel_alert_kg:.0f} kg'ye inince söylenecek")
+                lines.append(f"  alert set: will be said when fuel drops to {c.fuel_alert_kg:.0f} kg")
             if s.chaff is not None:
                 lines.append(f"  chaff {s.chaff}, flare {s.flare}")
             cs = s.extra.get("contacts")
             if isinstance(cs, list):
-                planes = [f"saat {c['clock']} {c['dist_m'] / 1000:.1f} km" for c in cs if c.get("kind") == "aircraft"]
-                radars = [f"{c['name']} saat {c['clock']}" + (" (FÜZE)" if c.get("missile") else " (kilit)"
+                planes = [f"{c['clock']} o'clock {c['dist_m'] / 1000:.1f} km" for c in cs if c.get("kind") == "aircraft"]
+                radars = [f"{c['name']} {c['clock']} o'clock" + (" (MISSILE)" if c.get("missile") else " (lock)"
                                                                if c.get("lock") else "")
                           for c in cs if c.get("kind") == "radar"]
                 if planes:
-                    lines.append("  en yakın düşmanlar (mini haritada, irtifa bilinmiyor): " + ", ".join(planes[:4]))
+                    lines.append("  nearest enemies (on the mini-map, altitude unknown): " + ", ".join(planes[:4]))
                 if radars:
                     lines.append("  RWR: " + ", ".join(radars[:6]))
                 if not planes and not radars:
-                    lines.append("  görünen düşman/radar yok")
+                    lines.append("  no enemy/radar in sight")
         if lines:
             return "\n".join(lines)
         if self.cfg.get("dcs", True) and "dcs" in self.companions and self.companions["dcs"].last_state is None:
-            return ("DCS'ten bu oturumda hiç veri gelmedi. DCS açıksa görevi yeniden başlatmak gerekir (veri betiği "
-                    "görev açılırken yüklenir); olmazsa `alice dcs status` ile kontrol et.")
-        return "şu an uçuşta değilsin"
+            return (("No data came from DCS in this session. If DCS is open, the mission needs to be restarted (the data "
+                    "script loads when the mission opens); otherwise check with `alice dcs status`."))
+        return "you are not flying right now"

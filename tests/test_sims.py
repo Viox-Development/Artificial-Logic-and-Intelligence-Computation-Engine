@@ -491,13 +491,13 @@ def test_hub_alert_setup_and_clear():
     from alice.sims.hub import SimHub
 
     hub = SimHub({}, None, None)
-    assert "uçuşta değilsin" in hub.alert_altitude(5000)
+    assert "not flying" in hub.alert_altitude(5000)
     c = hub.companion("dcs")
     c.phase, c.last_state = "air", st(1, fuel_kg=2000)
-    assert hub.alert_altitude(5000).startswith("kuruldu: 5.000")
-    assert "zaten" in hub.alert_fuel(2500)
-    assert hub.alert_fuel(1000).startswith("kuruldu")
-    assert hub.clear_alerts() == "2 uyarı kaldırıldı"
+    assert hub.alert_altitude(5000).startswith("set: will be said aloud at 5,000")
+    assert "already" in hub.alert_fuel(2500)
+    assert hub.alert_fuel(1000).startswith("set:")
+    assert hub.clear_alerts() == "2 alerts removed"
     assert c.alt_alert_ft is None and c.fuel_alert_kg is None
 
 
@@ -576,9 +576,9 @@ def test_flight_tool_alert_actions(monkeypatch):
     c.phase, c.last_state = "air", st(1)
     monkeypatch.setattr(hubmod, "ACTIVE", h)
     tool = Flight()
-    assert tool.run(None, "alert_alt", ft=20000).text.startswith("kuruldu")
+    assert tool.run(None, "alert_alt", ft=20000).text.startswith("set:")
     assert c.alt_alert_ft == 20000
-    assert tool.run(None, "alerts_clear").text == "1 uyarı kaldırıldı"
+    assert tool.run(None, "alerts_clear").text == "1 alerts removed"
 
 
 def test_afterburner_does_not_trigger_fuel_calls():
