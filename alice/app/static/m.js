@@ -38,7 +38,7 @@ async function api(path, body) {
     return await r.json();
   } catch (e) {
     setOnline(false);
-    return { ok: false, error: "bilgisayara ulaşılamadı" };
+    return { ok: false, error: _("could not reach the computer") };
   }
 }
 function el(tag, cls, text) {
@@ -102,14 +102,14 @@ function toast(text) {
 }
 function rel(ts) {
   const s = Math.max(0, Date.now() / 1000 - ts);
-  if (s < 45) return "şimdi";
-  if (s < 3600) return Math.round(s / 60) + " dk";
-  if (s < 86400) return Math.round(s / 3600) + " sa";
-  return new Date(ts * 1000).toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  if (s < 45) return _("now");
+  if (s < 3600) return _("{n} min", { n: Math.round(s / 60) });
+  if (s < 86400) return _("{n} h", { n: Math.round(s / 3600) });
+  return new Date(ts * 1000).toLocaleDateString(ALICE_LOCALE, { day: "numeric", month: "short" });
 }
-const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString(ALICE_LOCALE, { hour: "2-digit", minute: "2-digit" });
 const md = (t) => DOMPurify.sanitize(marked.parse(t || ""));
-const shortModel = (ref) => (ref ? ref.split(":").slice(1).join(":") || ref : "model yok");
+const shortModel = (ref) => (ref ? ref.split(":").slice(1).join(":") || ref : _("no model"));
 const COLORS = ["#2f6bff", "#c2410c", "#15803d", "#7c3aed", "#a16207", "#be123c", "#0e7490", "#4d7c0f"];
 const colorOf = (name) => COLORS[[...String(name)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length];
 function setOnline(v) {
@@ -143,7 +143,7 @@ function confirmSheet(title, text, okLabel, danger) {
     c.append(el("h3", "", title));
     if (text) c.appendChild(el("p", "sub", text));
     const row = el("div", "btns");
-    row.append(btn("btn", "Vazgeç", () => closeSheet(false)), btn("btn " + (danger ? "d" : "p"), okLabel || "Evet", () => closeSheet(true)));
+    row.append(btn("btn", _("Cancel"), () => closeSheet(false)), btn("btn " + (danger ? "d" : "p"), okLabel || _("Yes"), () => closeSheet(true)));
     c.appendChild(row);
   });
 }
@@ -182,7 +182,7 @@ function push(tab, title, build, backLabel) {
   const pg = el("div", "page push");
   const hd = el("div", "hd");
   const back = el("button", "back");
-  back.append(svg("back"), document.createTextNode(backLabel || "Geri"));
+  back.append(svg("back"), document.createTextNode(backLabel || _("Back")));
   back.addEventListener("click", () => { haptic(); pop(tab); });
   hd.append(back, el("span", "grow"));
   const h = el("div", "hd");
@@ -214,7 +214,7 @@ window.addEventListener("popstate", () => {
 // Android uygulaması geri tuşunu buraya yollar: true dönerse uygulama kapanmaz.
 window.aliceBack = () => {
   if (CALL) {  // görüşmede geri tuşu görüşmeden çıkmasın
-    if (!$("#sheet").hidden) closeSheet(null); else toast("Görüşmeyi bitirmek için Kapat'a bas");
+    if (!$("#sheet").hidden) closeSheet(null); else toast(_("Press Hang up to end the call"));
     return true;
   }
   if (!$("#sheet").hidden) { closeSheet(null); return true; }
@@ -265,7 +265,7 @@ const handlers = {
   call_end: (ev) => callEnded(ev),
   call_pcm: (ev) => callPcm(ev),
   call_pcm_clear: (ev) => { if (CALL && ev.id === CALL.id) liveClear(CALL); },
-  call_mic_missing: (ev) => { if (CALL && ev.id === CALL.id) liveNativeMic(CALL, "Mikrofon sesi bilgisayara gitmiyor; telefonun konuşma tanımasıyla devam"); },
+  call_mic_missing: (ev) => { if (CALL && ev.id === CALL.id) liveNativeMic(CALL, _("The microphone audio isn't reaching the computer; going on with the phone's speech recognition")); },
   call_text: (ev) => callText(ev),
 };
 const CHAT_EVENTS = new Set(["user", "busy", "stream_start", "delta", "stream_reset", "stream_end", "tool_start", "tool_end"]);
@@ -308,19 +308,19 @@ function applyStatus(st) {
 
 /* ================================================================== SOHBET */
 const VERBS = {
-  read_file: "Okudu", write_file: "Yazdı", edit_file: "Düzenledi", multi_edit: "Düzenledi", apply_patch: "Yama",
-  list_dir: "Klasör", glob: "Dosya aradı", grep: "Aradı", run_command: "Komut", web_fetch: "Sayfa okudu",
-  web_search: "Web'de aradı", browser: "Tarayıcı", computer: "Ekran", windows: "Pencere", ui_elements: "Arayüz",
-  ui_act: "Arayüz", clipboard: "Pano", system_info: "Sistem", process_list: "Süreçler", todo_write: "Plan",
-  memory: "Hafıza", task: "Alt ajan", reflex: "Reflex", git: "Git", http_request: "İstek", file_ops: "Dosya",
+  read_file: _("Read"), write_file: _("Wrote"), edit_file: _("Edited"), multi_edit: _("Edited"), apply_patch: _("Patch"),
+  list_dir: _("Folder"), glob: _("Searched files"), grep: _("Searched"), run_command: _("Command"), web_fetch: _("Read a page"),
+  web_search: _("Searched the web"), browser: _("Browser"), computer: _("Screen"), windows: _("Window"), ui_elements: _("UI"),
+  ui_act: _("UI"), clipboard: _("Clipboard"), system_info: _("System"), process_list: _("Processes"), todo_write: "Plan",
+  memory: _("Memory"), task: _("Subagent"), reflex: "Reflex", git: "Git", http_request: _("Request"), file_ops: _("File"),
 };
 const verb = (name) => VERBS[name] || name.replace(/^mcp__/, "").replace(/__/g, " · ");
-const MODES = { plan: ["Plan", "Sadece okur, plan yazar"], ask: ["Sor", "Her işlemde izin ister"],
-  auto: ["Otomatik", "Sadece tehlikeli işlemde sorar"], yolo: ["Tam erişim", "Hiçbir şey sormaz"] };
-const THINK = { off: ["düşünmez", "En hızlı"], low: ["az düşünür", "Önerilen"], medium: ["orta düşünür", ""],
-  high: ["çok düşünür", "Zor işler için"], xhigh: ["daha da çok", "Çok zor işler"], max: ["en çok", "En zor işler"],
-  default: ["model karar verir", ""] };
-const THINK_BINARY = { off: ["düşünmez", "Hemen cevap verir"], high: ["düşünür", "Önce düşünür"], default: ["model karar verir", ""] };
+const MODES = { plan: ["Plan", _("Only reads, writes a plan")], ask: [_("Ask"), _("Asks before every action")],
+  auto: [_("Automatic"), _("Asks only for dangerous actions")], yolo: [_("Full access"), _("Never asks")] };
+const THINK = { off: [_("doesn't think"), _("Fastest")], low: [_("thinks a little"), _("Recommended")], medium: [_("thinks more"), ""],
+  high: [_("thinks a lot"), _("For hard tasks")], xhigh: [_("even more"), _("Very hard tasks")], max: [_("the most"), _("The hardest tasks")],
+  default: [_("the model decides"), ""] };
+const THINK_BINARY = { off: [_("doesn't think"), _("Answers right away")], high: [_("thinks"), _("Thinks first")], default: [_("the model decides"), ""] };
 // Seçili modelin desteklediği seviyeler (sunucu modele göre verir).
 function thinkOpts() {
   const table = S.status.thinking_kind === "binary" ? THINK_BINARY : THINK;
@@ -328,8 +328,8 @@ function thinkOpts() {
 }
 function thinkText() {
   const table = S.status.thinking_kind === "binary" ? THINK_BINARY : THINK;
-  if (S.status.thinking_kind === "none") return "düşünme yok";
-  return ((table[S.status.thinking_effective || S.status.thinking] || ["düşünme"])[0]);
+  if (S.status.thinking_kind === "none") return _("no thinking");
+  return ((table[S.status.thinking_effective || S.status.thinking] || [_("thinking")])[0]);
 }
 
 function buildChat() {
@@ -349,7 +349,7 @@ function buildChat() {
   comp.autocomplete = "off";
   const plus = el("button", "plus");
   plus.type = "button";
-  plus.setAttribute("aria-label", "Görsel ekle");
+  plus.setAttribute("aria-label", _("Add an image"));
   plus.appendChild(svg("plus"));
   plus.addEventListener("click", () => { haptic(); $("#imgPick").click(); });
   const box = el("div", "in");
@@ -359,7 +359,7 @@ function buildChat() {
   const ta = el("textarea");
   ta.id = "q";
   ta.rows = 1;
-  ta.placeholder = "ALICE'e yaz…";
+  ta.placeholder = _("Write to ALICE…");
   ta.setAttribute("enterkeyhint", "send");
   box.append(att, ta);
   const go = el("button", "round");
@@ -392,9 +392,9 @@ function updateComposer() {
   const has = !!(ta.value.trim() || S.images.length);
   go.replaceChildren();
   go.classList.toggle("stop", S.busy && !has);
-  if (S.busy && !has) { go.appendChild(svg("stop")); go.setAttribute("aria-label", "Durdur"); }
-  else if (has) { go.appendChild(svg("up")); go.setAttribute("aria-label", "Gönder"); }
-  else { go.appendChild(svg("mic")); go.setAttribute("aria-label", "Sesle yaz"); }
+  if (S.busy && !has) { go.appendChild(svg("stop")); go.setAttribute("aria-label", _("Stop")); }
+  else if (has) { go.appendChild(svg("up")); go.setAttribute("aria-label", _("Send")); }
+  else { go.appendChild(svg("mic")); go.setAttribute("aria-label", _("Dictate")); }
 }
 function drawChatHead() {
   const hd = $("#chatHd");
@@ -402,13 +402,13 @@ function drawChatHead() {
   hd.replaceChildren();
   const s = S.sessions.find((x) => x.id === S.sid);
   const t = el("button", "t");
-  t.append(el("b", "", s ? s.title || "(boş)" : "Yeni sohbet"));
-  const conn = el("small", S.online ? "" : "off", (S.remote && S.remote.host ? S.remote.host : "Bilgisayar") + (S.online ? " · bağlı" : " · bağlantı yok"));
+  t.append(el("b", "", s ? s.title || _("(empty)") : _("New chat")));
+  const conn = el("small", S.online ? "" : "off", (S.remote && S.remote.host ? S.remote.host : _("Computer")) + (S.online ? _(" · connected") : _(" · not connected")));
   t.appendChild(conn);
   if (s) t.addEventListener("click", () => renameSession(s));
-  hd.append(iconBtn("hist", "Geçmiş sohbetler", historySheet), t,
-    iconBtn("phone", "ALICE'i ara", () => startCall()),
-    iconBtn("plus", "Yeni sohbet", newChat));
+  hd.append(iconBtn("hist", _("Past chats"), historySheet), t,
+    iconBtn("phone", _("Call ALICE"), () => startCall()),
+    iconBtn("plus", _("New chat"), newChat));
 }
 function drawChips() {
   const c = $("#chips");
@@ -421,18 +421,18 @@ function drawChips() {
   c.append(mode, model, think);
 }
 async function modeSheet() {
-  const v = await pickSheet("İzin modu", "ALICE bilgisayarda bir şey yapmadan önce ne zaman sorsun?",
+  const v = await pickSheet(_("Permission mode"), _("When should ALICE ask before doing something on the computer?"),
     Object.entries(MODES).map(([k, [l, h]]) => [k, l, h]), S.status.mode);
   if (v) applyStatus(await api("/api/mode", { mode: v }));
 }
 async function thinkSheet() {
-  const note = S.status.thinking_kind === "none" ? "Bu model düşünme ayarı desteklemiyor." : "";
-  const v = await pickSheet("Düşünme", note, thinkOpts(), S.status.thinking_effective || S.status.thinking);
+  const note = S.status.thinking_kind === "none" ? _("This model has no thinking setting.") : "";
+  const v = await pickSheet(_("Thinking level"), note, thinkOpts(), S.status.thinking_effective || S.status.thinking);
   if (v) applyStatus(await api("/api/thinking", { level: v }));
 }
 async function modelSheet() {
   const all = await api("/api/models/all");
-  const opts = [["reset", "Otomatik", "İlk uygun model; limit dolunca sıradaki"]];
+  const opts = [["reset", _("Automatic"), _("The first suitable model; the next one at the limit")]];
   for (const p of (all && all.providers) || []) {
     if (!p.enabled || p.hidden) continue;
     for (const m of p.models || []) if (!m.hidden) opts.push([m.ref, m.model, p.name + " · " + m.status, m.status !== "hazır"]);
@@ -441,13 +441,13 @@ async function modelSheet() {
   if (!v) return;
   await api("/api/model", { role: "brain", ref: v });
   applyStatus(await api("/api/state"));
-  toast(v === "reset" ? "Otomatik seçim" : "Model: " + shortModel(v));
+  toast(v === "reset" ? _("Automatic choice") : _("Model: {name}", { name: shortModel(v) }));
 }
 async function newChat() {
   const r = await api("/api/new", { detached: true });
   if (!r || r.ok === false || !r.sid) {
     reportError("yeni sohbet: " + JSON.stringify(r).slice(0, 300));
-    return toast((r && r.error) || "Yeni sohbet açılamadı");
+    return toast((r && r.error) || _("Could not open a new chat"));
   }
   setSid(r.sid);
   applyStatus(r);
@@ -461,7 +461,7 @@ function emptyChat() {
   const img = el("img");
   img.src = "/static/alice.png";
   img.alt = "";
-  e.append(img, el("div", "", S.status.user ? "Merhaba " + S.status.user + ". Ne yapalım?" : "Ne yapalım?"));
+  e.append(img, el("div", "", S.status.user ? _("Hi {name}. What shall we do?", { name: S.status.user }) : _("What shall we do?")));
   $("#msgs").appendChild(e);
 }
 function addNode(n) {
@@ -499,7 +499,7 @@ function makeSteps() {
   const h = el("button", "steps-h");
   const ic = el("span", "st-ic");
   ic.appendChild(svg("check"));
-  const t = el("b", "", "Çalışıyor");
+  const t = el("b", "", _("Working"));
   const meta = el("span", "", "");
   h.append(ic, t, meta, el("span", "grow"), svg("chev", "chev"));
   h.addEventListener("click", () => box.classList.toggle("open"));
@@ -514,7 +514,7 @@ function updateSteps(box) {
   const err = rows.filter((r) => r.classList.contains("err")).length;
   box.classList.toggle("run", run > 0);
   box.classList.toggle("err", err > 0);
-  box._t.textContent = run ? `Çalışıyor · ${rows.length} adım` : `${rows.length} adım`;
+  box._t.textContent = run ? _("Working · {n} steps", { n: rows.length }) : _("{n} steps", { n: rows.length });
   const secs = ((box._t1 || Date.now()) - box._t0) / 1000;
   box._meta.textContent = [err ? `${err} hata` : "", !run && box._t1 && secs >= 0.1 ? `· ${secs.toFixed(1).replace(".", ",")} sn` : ""].filter(Boolean).join(" ");
 }
@@ -549,7 +549,7 @@ function renderHistoryBatch(items) {
   if (!items.length) { emptyChat(); return; }
   
   if (items.length > historyRenderCount) {
-    const moreBtn = el("button", "pill-btn", `Önceki mesajları yükle (${items.length - historyRenderCount})`);
+    const moreBtn = el("button", "pill-btn", _("Load earlier messages ({n})", { n: items.length - historyRenderCount }));
     moreBtn.style.margin = "8px auto 16px auto";
     moreBtn.style.display = "block";
     moreBtn.addEventListener("click", () => {
@@ -586,11 +586,11 @@ async function send() {
   const ta = $("#q");
   const text = ta.value.trim();
   if (!text && !S.images.length) return;
-  if (S.busy && text.startsWith("/")) return toast("Komut yeni iş başlatır; ALICE bitince gönder ya da durdur");
+  if (S.busy && text.startsWith("/")) return toast(_("A command starts new work; send it when ALICE finishes, or stop it"));
   const images = S.images.slice();
   // Çalışırken gönderilen mesaj işe iletilir (ALICE bir sonraki adımda görür), bitmesi beklenmez.
   const r = await api("/api/send", { text, images, sid: S.sid });
-  if (!r.ok) { toast(r.error || "gönderilemedi"); return; }
+  if (!r.ok) { toast(r.error || _("could not send")); return; }
   ta.value = "";
   autosize(ta);
   S.images = [];
@@ -642,23 +642,23 @@ async function loadSessions() {
 }
 function historySheet() {
   openSheet((c) => {
-    c.append(el("h3", "", "Sohbetler"));
+    c.append(el("h3", "", _("Chats")));
     const nw = el("button", "opt new");
-    nw.append(svg("plus", "ic"), el("span", "l", "Yeni sohbet"));
+    nw.append(svg("plus", "ic"), el("span", "l", _("New chat")));
     nw.addEventListener("click", () => { closeSheet(); newChat(); });
     c.appendChild(nw);
     const rows = [...S.sessions.filter((s) => s.pinned), ...S.sessions.filter((s) => !s.pinned)];
-    if (!rows.length) c.appendChild(el("p", "sub", "Henüz sohbet yok."));
+    if (!rows.length) c.appendChild(el("p", "sub", _("No chats yet.")));
     for (const s of rows) {
       const o = el("button", "opt");
       const l = el("span", "l");
-      l.append(el("b", "", (s.pinned ? "• " : "") + (s.title || "(boş)")), el("small", "", rel(s.updated) + " · " + (s.cwd || "").split(/[\\/]/).pop()));
+      l.append(el("b", "", (s.pinned ? "• " : "") + (s.title || _("(empty)"))), el("small", "", rel(s.updated) + " · " + (s.cwd || "").split(/[\\/]/).pop()));
       o.appendChild(l);
       if (s.id === S.sid) o.appendChild(svg("check", "ck"));
       o.addEventListener("click", async () => {
         closeSheet();
         const r = await api("/api/resume", { id: s.id, detached: true });
-        if (!r.ok) return toast(r.error || "açılamadı");
+        if (!r.ok) return toast(r.error || _("could not open"));
         setSid(r.sid);
         applyStatus(r);
         loadHistory();
@@ -670,14 +670,14 @@ function historySheet() {
       o.addEventListener("contextmenu", (e) => { e.preventDefault(); closeSheet(); sessionMenu(s); });
       c.appendChild(o);
     }
-    c.appendChild(el("p", "sub", "Uzun bas: yeniden adlandır, sabitle ya da sil."));
+    c.appendChild(el("p", "sub", _("Long-press: rename, pin or delete.")));
   });
 }
 async function sessionMenu(s) {
-  const v = await pickSheet(s.title || "(boş)", "", [["rename", "Yeniden adlandır"], ["pin", s.pinned ? "Sabitlemeyi kaldır" : "Sabitle"], ["del", "Sil"]]);
+  const v = await pickSheet(s.title || _("(empty)"), "", [["rename", _("Rename")], ["pin", s.pinned ? _("Unpin") : _("Pin")], ["del", _("Delete")]]);
   if (v === "rename") renameSession(s);
   if (v === "pin") { await api("/api/session/pin", { id: s.id, pinned: !s.pinned }); loadSessions(); }
-  if (v === "del" && await confirmSheet("Sohbet silinsin mi?", `"${s.title || "(boş)"}" geçmişten kalıcı olarak silinecek.`, "Sil", true)) {
+  if (v === "del" && await confirmSheet(_("Delete the chat?"), _("\"{title}\" will be deleted from history permanently.", { title: s.title || _("(empty)") }), _("Delete"), true)) {
     const r = await api("/api/session/delete", { id: s.id });
     if (r.ok === false) return toast(r.error || "silinemedi");
     if (s.id === S.sid) newChat(); else loadSessions();
@@ -686,10 +686,10 @@ async function sessionMenu(s) {
 function renameSession(s) {
   let inp;
   openSheet((c) => {
-    c.append(el("h3", "", "Sohbetin adı"));
+    c.append(el("h3", "", _("The chat's name")));
     inp = el("input", "field");
     inp.value = s.title || "";
-    inp.placeholder = s.auto_title || "Sohbet adı";
+    inp.placeholder = s.auto_title || _("Chat name");
     const row = el("div", "btns");
     const save = async () => {
       closeSheet();
@@ -697,7 +697,7 @@ function renameSession(s) {
       loadSessions();
     };
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
-    row.append(btn("btn", "Vazgeç", () => closeSheet()), btn("btn p", "Kaydet", save));
+    row.append(btn("btn", _("Cancel"), () => closeSheet()), btn("btn p", _("Save"), save));
     c.append(inp, row);
     setTimeout(() => inp.focus(), 50);
   });
@@ -714,16 +714,16 @@ function voiceSheet() {
   openSheet((c) => {
     root = el("div", "voice");
     const top = el("div", "row");
-    info = el("span", "", "Dinliyorum · 0:00");
-    top.append(info, el("span", "", "Susunca gönderir"));
+    info = el("span", "", _("Listening · 0:00"));
+    top.append(info, el("span", "", _("Sends when you stop talking")));
     wave = el("div", "wave");
     for (let i = 0; i < 18; i++) wave.appendChild(el("i"));
     heard = el("div", "heard", "");
     const bottom = el("div", "row");
-    const cancel = iconBtn("x", "Vazgeç", () => { stopVoice(false); closeSheet(); });
+    const cancel = iconBtn("x", _("Cancel"), () => { stopVoice(false); closeSheet(); });
     const mic = el("div", "bigmic");
     mic.appendChild(svg("mic"));
-    const ok = iconBtn("up", "Gönder", () => stopVoice(true));
+    const ok = iconBtn("up", _("Send"), () => stopVoice(true));
     bottom.append(cancel, mic, ok);
     root.append(el("div", "grow"), top, wave, heard, el("div", "grow"), bottom);
     root.firstChild.style.display = "none";
@@ -732,7 +732,7 @@ function voiceSheet() {
   onSheetClosed = () => { if (voice) stopVoice(false); onSheetClosed = null; };
   voice.render = () => {
     const s = Math.round((Date.now() - voice.t0) / 1000);
-    info.textContent = (voice.done ? "Yazıya çevriliyor" : "Dinliyorum") + ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    info.textContent = (voice.done ? _("Transcribing") : _("Listening")) + ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
     heard.replaceChildren(document.createTextNode(voice.text ? "“" + voice.text : (voice.partial ? "“" : "")));
     if (voice.partial) heard.appendChild(el("span", "", (voice.text ? " " : "") + voice.partial));
     if (voice.text || voice.partial) heard.appendChild(document.createTextNode("”"));
@@ -742,7 +742,7 @@ function voiceSheet() {
     bars.forEach((b, i) => { b.style.height = Math.max(6, Math.min(66, lv * 70 * (0.5 + Math.abs(Math.sin(Date.now() / 160 + i))))) + "px"; });
   };
   voice.timer = setInterval(() => voice && voice.render(), 250);
-  if (NATIVE && NATIVE.listen) { NATIVE.listen("tr-TR"); return; }
+  if (NATIVE && NATIVE.listen) { NATIVE.listen(ALICE_LOCALE); return; }
   navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
     voice.stream = stream;
     const rec = new MediaRecorder(stream);
@@ -764,7 +764,7 @@ function voiceSheet() {
       };
       tick();
     } catch (e) { /* görselleştirme yok */ }
-  }).catch(() => { stopVoice(false); closeSheet(); toast("Mikrofon izni verilmedi"); });
+  }).catch(() => { stopVoice(false); closeSheet(); toast(_("Microphone permission wasn't given")); });
 }
 // Android uygulaması konuşma tanıma olaylarını buraya yollar.
 window.aliceVoice = (ev) => {
@@ -773,7 +773,7 @@ window.aliceVoice = (ev) => {
   if (ev.type === "partial") voice.partial = ev.text || "";
   else if (ev.type === "final") { voice.text = ((voice.text ? voice.text + " " : "") + (ev.text || "")).trim(); voice.partial = ""; }
   else if (ev.type === "level") voice.level(Math.max(0, Math.min(1, ev.level || 0)));
-  else if (ev.type === "error") { toast(ev.text || "Ses anlaşılamadı"); if (!voice.text) { stopVoice(false); closeSheet(); return; } }
+  else if (ev.type === "error") { toast(ev.text || _("Couldn't make out the audio")); if (!voice.text) { stopVoice(false); closeSheet(); return; } }
   else if (ev.type === "end") { if (voice.text) { stopVoice(true); return; } }
   voice.render();
 };
@@ -805,10 +805,10 @@ $("#audioPick").addEventListener("change", (e) => {
   if (f) transcribeAndSend(f);
 });
 async function transcribeAndSend(blob) {
-  toast("Yazıya çevriliyor…");
+  toast(_("Transcribing…"));
   const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.readAsDataURL(blob); });
   const r = await api("/api/transcribe", { audio: b64, mime: blob.type || "audio/webm" });
-  if (!r.ok || !r.text) return toast(r.error || "Ses anlaşılamadı");
+  if (!r.ok || !r.text) return toast(r.error || _("Couldn't make out the audio"));
   putAndSend(r.text);
 }
 function putAndSend(text) {
@@ -821,9 +821,9 @@ function putAndSend(text) {
 }
 
 /* ================================================================== PROJELER */
-const PST = { planning: "planlanıyor", running: "çalışıyor", review: "incelemede", needs_you: "seni bekliyor", done: "bitti", stopped: "durdu", failed: "olmadı" };
-const MST = { running: "çalışıyor", planning: "planlıyor", review: "inceleme bekliyor", asking: "soruyor", waiting: "bekliyor", done: "onaylandı",
-  failed: "olmadı", stopped: "durdu", idle: "beklemede" };
+const PST = { planning: _("planning"), running: _("working"), review: _("in review"), needs_you: _("waiting for you"), done: _("done"), stopped: _("stopped"), failed: _("failed") };
+const MST = { running: _("working"), planning: _("planning"), review: _("awaiting review"), asking: _("asking"), waiting: _("waiting"), done: _("approved"),
+  failed: _("failed"), stopped: _("stopped"), idle: _("idle") };
 async function loadProjects() {
   const rows = await api("/api/projects");
   S.projects = Array.isArray(rows) ? rows : [];
@@ -841,10 +841,10 @@ function renderProjects() {
   if (STACK.proj.length) return;
   v.replaceChildren();
   const hd = el("div", "hd");
-  hd.appendChild(el("h1", "", "Projeler"));
+  hd.appendChild(el("h1", "", _("Projects")));
   const body = el("div", "scroll");
   body.id = "projList";
-  const fab = btn("fab", "Yeni proje", newProject, "plus");
+  const fab = btn("fab", _("New project"), newProject, "plus");
   v.append(hd, body, fab);
   drawProjects();
   loadProjects();
@@ -854,7 +854,7 @@ async function drawProjects() {
   if (!body) return;
   body.replaceChildren();
   if (!S.projects.length) {
-    body.appendChild(el("div", "empty", "Henüz proje yok. Büyük bir işi ALICE'in yönettiği bir ajan takımına ver: işi böler, biten işi inceler, sonunda sana özet yazar."));
+    body.appendChild(el("div", "empty", _("No projects yet. Give a big job to an agent team led by ALICE: it splits the work, reviews what's finished and writes you a summary at the end.")));
     return;
   }
   // Soru soran projelerin sorusu kartta görünsün diye ayrıntısı çekilir.
@@ -866,7 +866,7 @@ async function drawProjects() {
     card.setAttribute("role", "button");
     const h = el("div", "h");
     const st = p.questions ? "needs_you" : p.status;
-    h.append(el("b", "", p.title || "(adsız)"), el("span", "st st-" + st, PST[st] || st));
+    h.append(el("b", "", p.title || _("(untitled)")), el("span", "st st-" + st, PST[st] || st));
     card.appendChild(h);
     const d = details[p.id];
     for (const q of ((d && d.questions) || []).filter((x) => !x.answer).slice(0, 1)) card.appendChild(askBox(p.id, q));
@@ -876,7 +876,7 @@ async function drawProjects() {
     const meta = el("div", "meta");
     const avs = el("span", "avs");
     for (const m of mem.slice(0, 5)) { const a = el("i", "", m.name[0].toUpperCase()); a.style.background = colorOf(m.name); avs.appendChild(a); }
-    meta.append(avs, el("span", "", mem.length ? `${done}/${mem.length} iş onaylandı` : "ajan yok"), el("span", "", "· " + rel(p.updated || p.created)));
+    meta.append(avs, el("span", "", mem.length ? _("{done}/{total} jobs approved", { done: done, total: mem.length }) : _("no agents")), el("span", "", "· " + rel(p.updated || p.created)));
     card.appendChild(meta);
     card.addEventListener("click", (e) => { if (!e.target.closest(".ask")) { haptic(); openProject(p); } });
     body.appendChild(card);
@@ -888,14 +888,14 @@ function askBox(pid, q) {
   p.append(el("b", "", (q.member || "Alice") + " soruyor: "), document.createTextNode(q.text));
   const row = el("div", "ans");
   const inp = el("input");
-  inp.placeholder = "Cevabın…";
-  const go = el("button", "", "Gönder");
+  inp.placeholder = _("Your answer…");
+  const go = el("button", "", _("Send"));
   const sendIt = async () => {
     const t = inp.value.trim();
     if (!t) return;
     const r = await api("/api/project/action", { id: pid, action: "answer", name: q.id, text: t });
-    if (!r.ok) return toast(r.error || "olmadı");
-    toast("Cevap gönderildi");
+    if (!r.ok) return toast(r.error || _("failed"));
+    toast(_("Answer sent"));
     loadProjects();
   };
   go.addEventListener("click", sendIt);
@@ -907,46 +907,46 @@ function askBox(pid, q) {
 function newProject() {
   let ta;
   openSheet((c) => {
-    c.append(el("h3", "", "Yeni proje"), el("p", "sub", "Ne yapılacak? Bitti sayılma ölçütünü de yaz. ALICE işi ajanlara böler ve takip eder."));
+    c.append(el("h3", "", _("New project")), el("p", "sub", _("What needs doing? Also write what counts as done. ALICE splits the work between agents and follows it.")));
     ta = el("textarea", "field");
-    ta.placeholder = "ör. Kayıt sayfası yap: e-posta ile kayıt, doğrulama maili. Testler geçmeli.";
+    ta.placeholder = _("e.g. Build a sign-up page: sign up by email, a verification mail. Tests must pass.");
     const row = el("div", "btns");
-    const go = btn("btn acc", "Başlat", async () => {
+    const go = btn("btn acc", _("Start"), async () => {
       const goal = ta.value.trim();
       if (!goal) return ta.focus();
       go.disabled = true;
       const r = await api("/api/project/create", { goal, review: true });
       closeSheet();
-      if (!r.ok) return toast(r.error || "başlatılamadı");
-      toast("Proje başladı");
+      if (!r.ok) return toast(r.error || _("could not start"));
+      toast(_("Project started"));
       await loadProjects();
       const p = S.projects.find((x) => x.id === r.id);
       if (p) openProject(p);
     });
-    row.append(btn("btn", "Vazgeç", () => closeSheet()), go);
+    row.append(btn("btn", _("Cancel"), () => closeSheet()), go);
     c.append(ta, row);
     setTimeout(() => ta.focus(), 60);
   });
 }
 function openProject(p) {
-  push("proj", p.title || "Proje", (body, entry) => {
+  push("proj", p.title || _("Project"), (body, entry) => {
     const draw = async () => {
       const d = await api("/api/project?id=" + encodeURIComponent(p.id));
-      if (!d || !d.id) { body.replaceChildren(el("div", "empty", (d && d.error) || "Proje açılamadı")); return; }
+      if (!d || !d.id) { body.replaceChildren(el("div", "empty", (d && d.error) || _("Could not open the project"))); return; }
       body.replaceChildren();
       const head = el("div", "meta");
       head.style.marginTop = "0";
       const [done, total] = d.progress || [0, 0];
-      head.append(el("span", "st st-" + d.status, PST[d.status] || d.status), el("span", "", total ? `${done}/${total} iş onaylandı` : ""));
+      head.append(el("span", "st st-" + d.status, PST[d.status] || d.status), el("span", "", total ? _("{done}/{total} jobs approved", { done: done, total: total }) : ""));
       body.appendChild(head);
       if (d.goal && !d.goal.startsWith((d.title || "").replace(/[….]+$/, ""))) body.appendChild(el("p", "goal", d.goal));
       for (const q of (d.questions || []).filter((x) => !x.answer)) body.appendChild(askBox(p.id, q));
-      body.appendChild(el("div", "lbl", "Ekip"));
+      body.appendChild(el("div", "lbl", _("Team")));
       const lead = el("button", "mem");
       const la = el("span", "av"); la.style.background = colorOf("Alice"); la.textContent = "A";
-      const ll = el("span", "l"); ll.append(el("b", "", "Alice"), el("small", "", "Planlıyor, yönetiyor, inceliyor"));
+      const ll = el("span", "l"); ll.append(el("b", "", "Alice"), el("small", "", _("Plans, leads, reviews")));
       lead.append(la, ll);
-      lead.addEventListener("click", () => openMember(p, { name: "alice", status: d.lead && d.lead.status, task: "Yönetici" }));
+      lead.addEventListener("click", () => openMember(p, { name: "alice", status: d.lead && d.lead.status, task: _("Lead") }));
       body.appendChild(lead);
       for (const m of d.members || []) {
         const r = el("button", "mem");
@@ -960,19 +960,19 @@ function openProject(p) {
         body.appendChild(r);
       }
       const acts = el("div", "btns");
-      if (d.active) acts.appendChild(btn("btn d", "Durdur", async () => { if (await confirmSheet("Proje durdurulsun mu?", "Çalışan ajanlar durur; sonra devam ettirebilirsin.", "Durdur", true)) projAct(p.id, "stop", ""); }));
-      else if (d.status !== "done") acts.appendChild(btn("btn", "Devam ettir", () => projAct(p.id, "resume", "")));
+      if (d.active) acts.appendChild(btn("btn d", _("Stop"), async () => { if (await confirmSheet(_("Stop the project?"), _("The running agents stop; you can resume them later."), _("Stop"), true)) projAct(p.id, "stop", ""); }));
+      else if (d.status !== "done") acts.appendChild(btn("btn", _("Resume"), () => projAct(p.id, "resume", "")));
       body.appendChild(acts);
     };
     entry.refresh = draw;
     draw();
     const t = setInterval(() => { if (STACK.proj[STACK.proj.length - 1] === entry && !document.hidden) draw(); }, 6000);
     entry.onClose = () => clearInterval(t);
-  }, "Projeler");
+  }, _("Projects"));
 }
 async function projAct(id, action, name, text) {
   const r = await api("/api/project/action", { id, action, name, text: text || "" });
-  if (!r.ok) { toast(r.error || "olmadı"); return false; }
+  if (!r.ok) { toast(r.error || _("failed")); return false; }
   if (r.note && !["send", "answer"].includes(action)) toast(r.note);
   const top = STACK.proj[STACK.proj.length - 1];
   if (top && top.refresh) top.refresh();
@@ -984,7 +984,7 @@ function openMember(p, m) {
     entry.pg.appendChild((() => {
       const say = el("div", "say");
       const inp = el("input");
-      inp.placeholder = m.name === "alice" ? "Alice'e yaz…" : m.name + "'e yaz: kaldığı yerden devam eder…";
+      inp.placeholder = m.name === "alice" ? _("Write to Alice…") : _("Write to {name}: it continues where it left off…", { name: m.name });
       const go = btn("round", null, async () => {
         const t = inp.value.trim();
         if (!t) return;
@@ -1003,22 +1003,22 @@ function openMember(p, m) {
       if (mem.task) body.appendChild(el("p", "goal", mem.task));
       if (mem.status === "review") {
         const rv = el("div", "review");
-        rv.appendChild(el("p", "", "İş bitti, inceleme bekliyor. Alice de inceliyor; istersen kararı sen ver."));
+        rv.appendChild(el("p", "", _("The work is done and awaiting review. Alice is reviewing too; you can make the call if you like.")));
         const fb = el("textarea");
-        fb.placeholder = "Düzeltme istiyorsan ne eksik?";
+        fb.placeholder = _("If you want changes, what's missing?");
         const row = el("div", "btns");
-        row.append(btn("btn", "Düzeltme iste", async () => { const t = fb.value.trim(); if (!t) { fb.focus(); return toast("Önce ne eksik yaz"); } projAct(p.id, "revise", m.name, t); }),
-          btn("btn acc", "Onayla", () => projAct(p.id, "approve", m.name)));
+        row.append(btn("btn", _("Request changes"), async () => { const t = fb.value.trim(); if (!t) { fb.focus(); return toast(_("Write what's missing first")); } projAct(p.id, "revise", m.name, t); }),
+          btn("btn acc", _("Approve"), () => projAct(p.id, "approve", m.name)));
         rv.append(fb, row);
         body.appendChild(rv);
       }
       const hist = (mem.history || d.history || []).slice(-40);
-      if (!hist.length) body.appendChild(el("div", "empty", "Henüz mesaj yok"));
+      if (!hist.length) body.appendChild(el("div", "empty", _("No messages yet")));
       for (const it of hist) {
         const f = el("div", "feed-item");
         if (it.type === "tool") { f.append(el("div", "who", verb(it.name)), el("div", "tx mono", (it.summary || "").slice(0, 200))); f.querySelector(".tx").style.fontSize = "12.5px"; }
         else {
-          f.appendChild(el("div", "who", it.type === "user" ? (it.from || "görev") : (m.name === "alice" ? "Alice" : m.name)));
+          f.appendChild(el("div", "who", it.type === "user" ? (it.from || _("task")) : (m.name === "alice" ? "Alice" : m.name)));
           const tx = el("div", "tx");
           tx.innerHTML = md(it.text || "");
           f.appendChild(tx);
@@ -1031,7 +1031,7 @@ function openMember(p, m) {
     draw();
     const t = setInterval(() => { if (STACK.proj[STACK.proj.length - 1] === entry && !document.hidden) draw(); }, 5000);
     entry.onClose = () => clearInterval(t);
-  }, p.title && p.title.length < 18 ? p.title : "Proje");
+  }, p.title && p.title.length < 18 ? p.title : _("Project"));
 }
 
 /* ================================================================== BİLGİSAYAR */
@@ -1041,23 +1041,23 @@ function renderPc() {
   if (STACK.pc.length) return;
   v.replaceChildren();
   const hd = el("div", "hd");
-  const h1 = el("h1", "", (S.remote && S.remote.host) || "Bilgisayar");
+  const h1 = el("h1", "", (S.remote && S.remote.host) || _("Computer"));
   h1.id = "pcName";
-  const mode = btn("pill-btn", "Otomatik", pcModeSheet, "bolt");
+  const mode = btn("pill-btn", _("Automatic"), pcModeSheet, "bolt");
   mode.id = "pcMode";
   hd.append(h1, mode);
   const body = el("div", "scroll");
   body.id = "pcBody";
   const hero = el("button", "hero");
   hero.id = "hero";
-  hero.setAttribute("aria-label", "Ekranı tam boy aç");
+  hero.setAttribute("aria-label", _("Open the screen full size"));
   const img = el("img");
   img.alt = "";
   img.hidden = true;
-  const none = el("div", "none", "Ekran yükleniyor…");
+  const none = el("div", "none", _("Loading the screen…"));
   const ov = el("div", "ov");
   const g = el("div", "grow");
-  g.append(el("b", "", ""), el("small", "stale", "bağlanıyor"));
+  g.append(el("b", "", ""), el("small", "stale", _("connecting")));
   const ex = el("span", "ex");
   ex.appendChild(svg("expand"));
   ov.append(g, ex);
@@ -1065,7 +1065,7 @@ function renderPc() {
   hero.addEventListener("click", () => { haptic(); openViewer(); });
   const tele = el("div", "tele");
   tele.id = "tele";
-  for (const [k, label] of [["cpu", "CPU"], ["ram", "RAM"], ["gpu", "GPU"], ["gpu_temp", "Sıcaklık"]]) {
+  for (const [k, label] of [["cpu", "CPU"], ["ram", "RAM"], ["gpu", "GPU"], ["gpu_temp", _("Temperature")]]) {
     const c = el("div");
     c.dataset.k = k;
     c.append(el("span", "", label), document.createElementNS("http://www.w3.org/2000/svg", "svg"), el("b", "", "–"));
@@ -1081,7 +1081,7 @@ function renderPc() {
   const cmd = el("div", "cmd");
   const inp = el("input");
   inp.id = "cmdIn";
-  inp.placeholder = "Bilgisayarda yaz, aç ya da kopyala";
+  inp.placeholder = _("Type, open or copy on the computer");
   inp.setAttribute("enterkeyhint", "go");
   cmd.append(svg("type"), inp);
   const cacts = el("div", "cmd-acts");
@@ -1089,20 +1089,20 @@ function renderPc() {
   inp.addEventListener("input", drawCmdActs);
   inp.addEventListener("focus", () => { document.body.classList.add("kb"); if (!apps) api("/api/remote/apps").then((r) => { apps = r.apps || []; drawCmdActs(); }); });
   inp.addEventListener("blur", () => setTimeout(() => document.body.classList.remove("kb"), 150));
-  // Enter her zaman "Bilgisayarda yaz" (eskiden ilk düğmeye basıyordu: kelime bir uygulama adına benzeyince yazmak yerine
+  // Enter her zaman _("Type on the computer") (eskiden ilk düğmeye basıyordu: kelime bir uygulama adına benzeyince yazmak yerine
   // "Aç: …" çalışıyordu).
   inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const f = $("#cmdType"); if (f) f.click(); } });
   const banner = el("div", "banner");
   banner.id = "shutBanner";
   banner.hidden = true;
-  banner.append(el("span", "", "Bilgisayar 60 saniye içinde kapanacak."), btn("", "İptal et", async () => { if (await remote("cancel_shutdown")) banner.hidden = true; }));
+  banner.append(el("span", "", _("The computer shuts down in 60 seconds.")), btn("", _("Cancel it"), async () => { if (await remote("cancel_shutdown")) banner.hidden = true; }));
   const power = el("div", "power");
   power.append(
-    btn("", "Kilitle", () => remote("lock")),
-    btn("", "Uyku", async () => { if (await confirmSheet("Uyku moduna geçsin mi?", "Bilgisayar uyur; ALICE de uyur.", "Uyut")) remote("sleep"); }),
+    btn("", _("Lock"), () => remote("lock")),
+    btn("", _("Sleep"), async () => { if (await confirmSheet(_("Put it to sleep?"), _("The computer sleeps, and so does ALICE."), _("Sleep"))) remote("sleep"); }),
     btn("", "HUD", () => remote("hud")),
-    btn("d", "Kapat", async () => {
-      if (await confirmSheet("Bilgisayar kapansın mı?", "60 saniye sonra kapanır; bu sürede iptal edebilirsin.", "Kapat", true) && await remote("shutdown")) banner.hidden = false;
+    btn("d", _("Close"), async () => {
+      if (await confirmSheet(_("Shut down the computer?"), _("It shuts down after 60 seconds; you can cancel in that time."), _("Close"), true) && await remote("shutdown")) banner.hidden = false;
     }),
   );
   body.append(hero, tele, np, wins, cmd, cacts, banner, power);
@@ -1114,17 +1114,17 @@ function renderPc() {
 }
 async function remote(action, extra) {
   const r = await api("/api/remote/action", Object.assign({ action }, extra || {}));
-  if (!r.ok) { toast(r.error || "olmadı"); return false; }
+  if (!r.ok) { toast(r.error || _("failed")); return false; }
   if (r.text && r.text !== "tamam") toast(r.text);
   return true;
 }
 async function pcModeSheet() {
   const cur = (S.remote && S.remote.forced) || "auto";
-  const v = await pickSheet("Mod", "Otomatik: oyun, uçuş ya da kod açıkken kendisi değiştirir.",
-    [["auto", "Otomatik"], ["normal", "Normal"], ["dev", "Geliştirme"], ["flight", "Uçuş", "Sadece uçuşla ilgili konuşur"], ["quiet", "Sessiz", "Bildirimler sessize alınır"]], cur);
+  const v = await pickSheet(_("Mode"), _("Automatic: it switches by itself while a game, flight or code is open."),
+    [["auto", _("Automatic")], ["normal", "Normal"], ["dev", _("Development")], ["flight", _("Flight"), _("Talks only about the flight")], ["quiet", _("Quiet"), _("Notifications are muted")]], cur);
   if (!v) return;
   const r = await api("/api/system/action", { action: "mode", mode: v });
-  if (r.ok === false) toast(r.error || "mod değişmedi");
+  if (r.ok === false) toast(r.error || _("the mode didn't change"));
   setTimeout(refreshPc, 500);
 }
 function spark(svgEl, vals, cls) {
@@ -1143,10 +1143,10 @@ async function refreshPc() {
   if (s.ok === false) return;
   S.remote = s;
   const name = $("#pcName");
-  if (name) name.textContent = s.host || "Bilgisayar";
-  const MN = { auto: "Otomatik", normal: "Normal", dev: "Geliştirme", flight: "Uçuş", quiet: "Sessiz" };
+  if (name) name.textContent = s.host || _("Computer");
+  const MN = { auto: _("Automatic"), normal: "Normal", dev: _("Development"), flight: _("Flight"), quiet: _("Quiet") };
   const pm = $("#pcMode");
-  if (pm) { pm.replaceChildren(svg("bolt"), document.createTextNode(MN[s.forced || "auto"] || "Otomatik")); }
+  if (pm) { pm.replaceChildren(svg("bolt"), document.createTextNode(MN[s.forced || "auto"] || _("Automatic"))); }
   for (const c of $$("#tele > div")) {
     const k = c.dataset.k, v = s[k];
     const temp = k === "gpu_temp";
@@ -1167,10 +1167,10 @@ async function refreshPc() {
       const eq = el("span", "eq");
       eq.append(el("i"), el("i"), el("i"));
       const l = el("span", "l");
-      l.append(el("b", "", pl.title || pl.artist || "Çalıyor"), el("small", "", pl.title ? pl.artist || pl.app || "" : pl.app || ""));
+      l.append(el("b", "", pl.title || pl.artist || _("Playing")), el("small", "", pl.title ? pl.artist || pl.app || "" : pl.app || ""));
       const c = el("span", "c");
       const pp = btn("pp", null, () => remote("play_pause").then(() => setTimeout(refreshPc, 600)), pl.status === "playing" ? "pause" : "play");
-      c.append(iconBtn("skipb", "Önceki", () => remote("previous")), pp, iconBtn("skipf", "Sonraki", () => remote("next").then(() => setTimeout(refreshPc, 900))));
+      c.append(iconBtn("skipb", _("Previous"), () => remote("previous")), pp, iconBtn("skipf", _("Next"), () => remote("next").then(() => setTimeout(refreshPc, 900))));
       np.append(eq, l, c);
     }
   }
@@ -1187,15 +1187,15 @@ async function loadWindows() {
   const rows = (r && r.windows) || [];
   w.replaceChildren();
   if (!rows.length) return;
-  w.appendChild(el("div", "lbl", "")).append(el("span", "", "Açık pencereler"), el("span", "", "dokun: öne getir"));
+  w.appendChild(el("div", "lbl", "")).append(el("span", "", _("Open windows")), el("span", "", _("tap: bring to front")));
   for (const x of rows.slice(0, 6)) {
     const b = el("button", "win");
     const ap = el("span", "ap", (x.app || "?")[0].toUpperCase());
     ap.style.background = colorOf(x.app);
     const l = el("span", "l");
-    l.append(el("b", "", x.app), el("small", "", x.title === x.app ? (x.minimized ? "simge durumunda" : "") : x.title));
+    l.append(el("b", "", x.app), el("small", "", x.title === x.app ? (x.minimized ? _("minimized") : "") : x.title));
     b.append(ap, l);
-    if (x.active) b.appendChild(el("span", "fg", "önde"));
+    if (x.active) b.appendChild(el("span", "fg", _("in front")));
     b.addEventListener("click", async () => { haptic(); if (await remote("focus", { title: x.title })) setTimeout(() => { loadWindows(); grabShot(); }, 600); });
     w.appendChild(b);
   }
@@ -1206,16 +1206,16 @@ function drawCmdActs() {
   box.replaceChildren();
   const text = t.trim();
   if (!text) return;
-  const low = text.toLocaleLowerCase("tr");
+  const low = text.toLocaleLowerCase(ALICE_LOCALE);
   const looksUrl = /\.[a-z]{2,}(\/|$)/i.test(text) || /^https?:/i.test(text);
-  const hit = looksUrl ? text : (apps || []).find((a) => a.toLocaleLowerCase("tr").startsWith(low)) || (apps || []).find((a) => a.toLocaleLowerCase("tr").includes(low));
+  const hit = looksUrl ? text : (apps || []).find((a) => a.toLocaleLowerCase(ALICE_LOCALE).startsWith(low)) || (apps || []).find((a) => a.toLocaleLowerCase(ALICE_LOCALE).includes(low));
   const clear = () => { $("#cmdIn").value = ""; drawCmdActs(); };
-  if (hit) box.appendChild(btn("p", "Aç: " + hit, async () => { if (await remote("open", { target: hit })) clear(); }));
-  const typeBtn = btn(hit ? "" : "p", "Bilgisayarda yaz", async () => { if (await remote("type", { text })) clear(); });
+  if (hit) box.appendChild(btn("p", _("Open: ") + hit, async () => { if (await remote("open", { target: hit })) clear(); }));
+  const typeBtn = btn(hit ? "" : "p", _("Type on the computer"), async () => { if (await remote("type", { text })) clear(); });
   typeBtn.id = "cmdType";
   box.appendChild(typeBtn);
-  box.appendChild(btn("", "Yaz + Enter", async () => { if (await remote("type", { text, enter: true })) clear(); }));
-  box.appendChild(btn("", "Panoya kopyala", async () => { if (await remote("clipboard", { text })) clear(); }));
+  box.appendChild(btn("", _("Type + Enter"), async () => { if (await remote("type", { text, enter: true })) clear(); }));
+  box.appendChild(btn("", _("Copy to the clipboard"), async () => { if (await remote("clipboard", { text })) clear(); }));
 }
 async function grabShot(target) {
   try {
@@ -1229,15 +1229,15 @@ async function grabShot(target) {
     const none = $("#hero .none");
     if (none) none.hidden = true;
     const sm = $("#hero small");
-    if (sm) { sm.className = ""; sm.textContent = "canlı · " + new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+    if (sm) { sm.className = ""; sm.textContent = _("live · ") + new Date().toLocaleTimeString(ALICE_LOCALE, { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
     return true;
   } catch (e) {
     const none = $("#hero .none");
-    if (none) { none.hidden = false; none.textContent = "Ekran alınamadı. Bilgisayar kilitli ya da uyuyor olabilir."; }
+    if (none) { none.hidden = false; none.textContent = _("Could not get the screen. The computer may be locked or asleep."); }
     const hi = $("#hero img");
     if (hi && !hi.getAttribute("src")) hi.hidden = true;
     const sm = $("#hero small");
-    if (sm) { sm.className = "stale"; sm.textContent = "ekran yok"; }
+    if (sm) { sm.className = "stale"; sm.textContent = _("no screen"); }
     return false;
   }
 }
@@ -1246,7 +1246,7 @@ function openViewer() {
   v.hidden = false;
   history.pushState({ viewer: 1 }, "");
   const img = $("img", v);
-  const tick = async () => { if (!v.hidden && !document.hidden) { if (await grabShot(img)) $("#viewerInfo").textContent = "Canlı · " + new Date().toLocaleTimeString("tr-TR") + " · dokun: tıkla, basılı tut: sağ tık, iki parmak: kaydır"; } };
+  const tick = async () => { if (!v.hidden && !document.hidden) { if (await grabShot(img)) $("#viewerInfo").textContent = _("Live · ") + new Date().toLocaleTimeString(ALICE_LOCALE) + _(" · tap: click, hold: right-click, two fingers: scroll"); } };
   tick();
   clearInterval(viewerTimer);
   viewerTimer = setInterval(tick, 1000);
@@ -1310,10 +1310,10 @@ $("#viewerClose").addEventListener("click", () => { closeViewer(); });
 /* ================================================================== BİLDİRİM */
 // Onay bekleyenler: ALICE'in izin istediği işlemler, seçenekli soruları ve projelerin soruları. Sekme rozeti toplam.
 const PERM_TEXT = {
-  run_command: "Şu komutu çalıştırmak istiyorum:", write_file: "Bir dosyaya yazmak istiyorum:", edit_file: "Bir dosyayı düzenlemek istiyorum:",
-  multi_edit: "Bir dosyayı düzenlemek istiyorum:", file_ops: "Dosyalarla şunu yapmak istiyorum:", apply_patch: "Dosyalara yama uygulamak istiyorum:",
-  process_kill: "Bir programı kapatmak istiyorum:", computer: "Ekranda şunu yapmak istiyorum:", ui_act: "Bir pencerede şunu yapmak istiyorum:",
-  browser: "Tarayıcıda şunu yapmak istiyorum:", http_request: "Şu isteği göndermek istiyorum:",
+  run_command: _("I want to run this command:"), write_file: _("I want to write to a file:"), edit_file: _("I want to edit a file:"),
+  multi_edit: _("I want to edit a file:"), file_ops: _("I want to do this with files:"), apply_patch: _("I want to apply a patch to files:"),
+  process_kill: _("I want to close a program:"), computer: _("I want to do this on the screen:"), ui_act: _("I want to do this in a window:"),
+  browser: _("I want to do this in the browser:"), http_request: _("I want to send this request:"),
 };
 function addPending(ev, kind) {
   if (!ev || !ev.id || S.pending.has(ev.id)) return;
@@ -1322,7 +1322,7 @@ function addPending(ev, kind) {
   if (CALL && ev.sid && ev.sid === CALL.sid) { haptic(60); drawCall(); }
   if (S.tab === "bell") renderBell();
   if (document.hidden && NATIVE && NATIVE.notify) {
-    try { NATIVE.notify("ALICE onay istiyor", kind === "choice" ? ev.question : (PERM_TEXT[ev.name] || "İzin istiyor") + " " + (ev.summary || ""), "perm-" + ev.id); } catch (e) { /* yok */ }
+    try { NATIVE.notify(_("ALICE asks for approval"), kind === "choice" ? ev.question : (PERM_TEXT[ev.name] || _("Asks for permission")) + " " + (ev.summary || ""), "perm-" + ev.id); } catch (e) { /* yok */ }
   }
 }
 function dropPending(id) {
@@ -1340,7 +1340,7 @@ async function loadTaskAsks() {
   S.taskAsks = r.approvals;
   const fresh = S.taskAsks.filter((a) => !known.has(a.id));
   if (fresh.length && known.size && document.hidden && NATIVE && NATIVE.notify) {
-    try { NATIVE.notify("Onay bekliyor · " + (fresh[0].task || "Görev"), fresh[0].title, "task-" + fresh[0].id); } catch (e) { /* yok */ }
+    try { NATIVE.notify(_("Waiting for approval · {task}", { task: fresh[0].task || _("Task") }), fresh[0].title, "task-" + fresh[0].id); } catch (e) { /* yok */ }
   }
   updateBellBadge();
   if (S.tab === "bell" && S.notifTab === "pending" && !STACK.bell.length && (fresh.length || known.size !== S.taskAsks.length)) renderBell();
@@ -1348,29 +1348,29 @@ async function loadTaskAsks() {
 function drawTaskAsks(body) {
   for (const a of S.taskAsks) {
     const box = el("div", "ask2 task");
-    box.append(who("Görev · " + (a.task || ""), a.ts), el("p", "", a.title));
+    box.append(who(_("Task · ") + (a.task || ""), a.ts), el("p", "", a.title));
     if (a.body) box.appendChild(el("code", "", a.body));
     if (a.action) {
       const det = el("details", "ta-act");
-      det.append(el("summary", "", "Onaylarsan yapılacak"), el("code", "", a.action));
+      det.append(el("summary", "", _("Done if you approve")), el("code", "", a.action));
       box.appendChild(det);
     }
     const answer = async (decision, reply) => {
       box.classList.add("done");
       const r = await api("/api/tasks/action", { action: "answer", id: a.id, decision, reply: reply || "" });
-      if (!r || r.ok === false) { box.classList.remove("done"); return toast((r && r.error) || "olmadı"); }
+      if (!r || r.ok === false) { box.classList.remove("done"); return toast((r && r.error) || _("failed")); }
       haptic(15);
-      toast(decision === "approve" ? "Onaylandı, ALICE yapıyor" : decision === "reject" ? "Reddedildi" : "Cevap gitti");
+      toast(decision === "approve" ? _("Approved, ALICE is doing it") : decision === "reject" ? _("Denied") : _("Answer sent"));
       S.taskAsks = S.taskAsks.filter((x) => x.id !== a.id);
       updateBellBadge();
       renderBell();
     };
     const acts = el("div", "acts");
-    acts.append(btn("go", "Onayla", () => answer("approve")), btn("no", "Reddet", () => answer("reject")));
+    acts.append(btn("go", _("Approve"), () => answer("approve")), btn("no", _("Deny"), () => answer("reject")));
     const ans = el("div", "ans");
     const inp = el("input");
-    inp.placeholder = "Cevap ya da düzeltme yaz";
-    const go = btn("", "Gönder", () => { const t = inp.value.trim(); if (t) answer("reply", t); });
+    inp.placeholder = _("Write an answer or a change");
+    const go = btn("", _("Send"), () => { const t = inp.value.trim(); if (t) answer("reply", t); });
     ans.append(inp, go);
     box.append(acts, ans);
     body.appendChild(box);
@@ -1388,10 +1388,10 @@ function renderBell() {
   if (STACK.bell.length) return;
   v.replaceChildren();
   const hd = el("div", "hd");
-  hd.appendChild(el("h1", "", "Bildirim"));
+  hd.appendChild(el("h1", "", _("Notifications")));
   const seg = el("div", "seg2");
   const n = S.pending.size + S.taskAsks.length + S.projects.filter((p) => p.questions).length;
-  for (const [k, label] of [["pending", "Bekleyen"], ["all", "Hepsi"], ["warn", "Uyarılar"]]) {
+  for (const [k, label] of [["pending", _("Waiting")], ["all", _("All")], ["warn", _("Warnings")]]) {
     const b = btn(S.notifTab === k ? "on" : "", label, () => { S.notifTab = k; renderBell(); });
     if (k === "pending" && n) b.appendChild(el("i", "", String(n)));
     seg.appendChild(b);
@@ -1416,7 +1416,7 @@ async function drawPending(body) {
   for (const p of items) {
     const box = el("div", "ask2");
     if (p.kind === "choice") {
-      box.append(who("ALICE soruyor", p.at), el("p", "", p.question));
+      box.append(who(_("ALICE asks"), p.at), el("p", "", p.question));
       const opts = el("div", "opts");
       for (const o of p.options || []) {
         const label = String(o).split(" — ")[0];
@@ -1424,20 +1424,20 @@ async function drawPending(body) {
       }
       const ans = el("div", "ans");
       const inp = el("input");
-      inp.placeholder = "Başka bir cevap yaz";
-      const go = btn("", "Gönder", async () => { const t = inp.value.trim(); if (!t) return; await api("/api/choice", { id: p.id, answer: t }); dropPending(p.id); });
+      inp.placeholder = _("Write another answer");
+      const go = btn("", _("Send"), async () => { const t = inp.value.trim(); if (!t) return; await api("/api/choice", { id: p.id, answer: t }); dropPending(p.id); });
       ans.append(inp, go);
       box.append(opts, ans);
     } else {
       const send = p.risk === "send";
-      box.appendChild(who("ALICE · " + (send ? "dışarıya gönderecek" : verb(p.name)), p.at));
+      box.appendChild(who("ALICE · " + (send ? _("will send it out") : verb(p.name)), p.at));
       const txt = el("p");
-      txt.textContent = send ? "Şunu göndereceğim:" : (PERM_TEXT[p.name] || "Bunu yapmak istiyorum:");
+      txt.textContent = send ? _("I'll send this:") : (PERM_TEXT[p.name] || _("I want to do this:"));
       box.append(txt, el("code", "", p.summary || p.name));
       const acts = el("div", "acts");
-      const answer = async (a) => { box.classList.add("done"); const r = await api("/api/permission", { id: p.id, answer: a }); if (r.ok === false) toast(r.error || "olmadı"); dropPending(p.id); };
-      acts.append(btn("go", send ? "Gönder" : "İzin ver", () => answer("y")), btn("no", "Reddet", () => answer("n")));
-      if (!send && p.risk !== "danger") acts.appendChild(btn("more", "Bu oturumda hep ›", () => answer("a")));
+      const answer = async (a) => { box.classList.add("done"); const r = await api("/api/permission", { id: p.id, answer: a }); if (r.ok === false) toast(r.error || _("failed")); dropPending(p.id); };
+      acts.append(btn("go", send ? _("Send") : _("Allow"), () => answer("y")), btn("no", _("Deny"), () => answer("n")));
+      if (!send && p.risk !== "danger") acts.appendChild(btn("more", _("Always in this session ›"), () => answer("a")));
       box.appendChild(acts);
     }
     body.appendChild(box);
@@ -1447,15 +1447,15 @@ async function drawPending(body) {
     const d = await api("/api/project?id=" + encodeURIComponent(p.id));
     for (const q of ((d && d.questions) || []).filter((x) => !x.answer)) {
       const box = el("div", "ask2");
-      box.append(who("Proje · " + (p.title || ""), p.updated), el("p", "", (q.member ? q.member + " soruyor: " : "") + q.text));
+      box.append(who(_("Project · {title}", { title: p.title || "" }), p.updated), el("p", "", (q.member ? _("{name} asks: ", { name: q.member }) : "") + q.text));
       const ans = el("div", "ans");
       const inp = el("input");
-      inp.placeholder = "Cevabın…";
-      const go = btn("", "Gönder", async () => {
+      inp.placeholder = _("Your answer…");
+      const go = btn("", _("Send"), async () => {
         const t = inp.value.trim();
         if (!t) return;
         const r = await api("/api/project/action", { id: p.id, action: "answer", name: q.id, text: t });
-        if (!r.ok) return toast(r.error || "olmadı");
+        if (!r.ok) return toast(r.error || _("failed"));
         box.classList.add("done");
         loadProjects();
       });
@@ -1464,7 +1464,7 @@ async function drawPending(body) {
       body.appendChild(box);
     }
   }
-  if (!body.children.length) body.appendChild(el("div", "empty", "Bekleyen bir şey yok. ALICE izin ya da cevap beklediğinde burada görünür" + (NATIVE ? " ve telefonuna bildirim gelir." : ".")));
+  if (!body.children.length) body.appendChild(el("div", "empty", _("Nothing waiting. It shows here when ALICE waits for permission or an answer") + (NATIVE ? _(" and you get a notification on your phone.") : ".")));
 }
 async function drawEvents(body, warnOnly) {
   const s = await api("/api/remote/status");
@@ -1472,13 +1472,13 @@ async function drawEvents(body, warnOnly) {
   S.remote = s;
   const evs = (s.events || []).filter((e) => !warnOnly || e.severity === "warn" || e.severity === "critical");
   body.replaceChildren();
-  if (!evs.length) { body.appendChild(el("div", "empty", warnOnly ? "Uyarı yok." : "Henüz bir olay yok. Çekirdek çalışırken bilgisayardaki önemli şeyler burada birikir.")); return; }
+  if (!evs.length) { body.appendChild(el("div", "empty", warnOnly ? _("No warnings.") : _("No events yet. Important things on the computer pile up here while the core runs."))); return; }
   let day = null, tl = null;
   for (const e of evs) {
     const d = new Date(e.ts * 1000);
     const today = new Date();
-    const label = d.toDateString() === today.toDateString() ? "Bugün" : d.toDateString() === new Date(today - 86400000).toDateString() ? "Dün"
-      : d.toLocaleDateString("tr-TR", { day: "numeric", month: "long" });
+    const label = d.toDateString() === today.toDateString() ? _("Today") : d.toDateString() === new Date(today - 86400000).toDateString() ? _("Yesterday")
+      : d.toLocaleDateString(ALICE_LOCALE, { day: "numeric", month: "long" });
     if (label !== day) { day = label; body.appendChild(el("div", "day", label)); tl = el("div", "tl"); body.appendChild(tl); }
     const it = el("div", "tli " + (e.severity || ""));
     it.append(el("time", "", hhmm(e.ts)), el("b", "", e.title));
@@ -1494,7 +1494,7 @@ function renderMore() {
   if (STACK.more.length) return;
   v.replaceChildren();
   const hd = el("div", "hd");
-  hd.appendChild(el("h1", "", "Daha fazla"));
+  hd.appendChild(el("h1", "", _("More")));
   const body = el("div", "scroll");
   body.id = "moreBody";
   v.append(hd, body);
@@ -1518,12 +1518,12 @@ function drawMoreTop() {
   img.src = "/static/alice.png";
   img.alt = "";
   const l = el("div");
-  l.append(el("b", "", "ALICE"), el("small", S.online ? "" : "off", [(r.host || "Bilgisayar"), S.online ? (NATIVE && NATIVE.network ? NATIVE.network() : "bağlı") : "bağlantı yok", rtt != null ? rtt + " ms" : ""].filter(Boolean).join(" · ")));
+  l.append(el("b", "", "ALICE"), el("small", S.online ? "" : "off", [(r.host || _("Computer")), S.online ? (NATIVE && NATIVE.network ? NATIVE.network() : _("connected")) : _("not connected"), rtt != null ? rtt + " ms" : ""].filter(Boolean).join(" · ")));
   me.append(img, l);
   body.appendChild(me);
   const today = el("div", "today");
   const running = S.projects.filter((p) => p.active).length;
-  for (const [n, label] of [[S.status.today_requests ?? "–", "bugün istek"], [running, "proje çalışıyor"], [(r.today && r.today.warnings) ?? 0, "uyarı"]]) {
+  for (const [n, label] of [[S.status.today_requests ?? "–", _("requests today")], [running, _("projects running")], [(r.today && r.today.warnings) ?? 0, _("warnings")]]) {
     const d = el("div");
     d.append(el("b", "", String(n)), el("small", "", label));
     today.appendChild(d);
@@ -1531,35 +1531,35 @@ function drawMoreTop() {
   body.appendChild(today);
   // Hızlı anahtarlar
   const quiet = (r.forced || "") === "quiet";
-  body.appendChild(toggleRow("moon", "Rahatsız etme", quiet, async (on) => {
+  body.appendChild(toggleRow("moon", _("Do not disturb"), quiet, async (on) => {
     const res = await api("/api/system/action", { action: "mode", mode: on ? "quiet" : "auto" });
-    if (res.ok === false) return toast(res.error || "olmadı");
-    toast(on ? "Bildirimler sessizde" : "Rahatsız etme kapalı");
+    if (res.ok === false) return toast(res.error || _("failed"));
+    toast(on ? _("Notifications muted") : _("Do not disturb off"));
     refreshPc();
   }));
   const voiceOn = !!(S.sys && S.sys.voice && S.sys.voice.enabled);
   body.appendChild(toggleRow("mic", "“Hey Alice”", voiceOn, async (on) => {
     const res = await api("/api/system/action", { action: "voice", on });
-    if (res.ok === false) return toast(res.error || "olmadı");
-    toast(on ? "Sesli asistan açılıyor" : "Sesli asistan kapandı");
+    if (res.ok === false) return toast(res.error || _("failed"));
+    toast(on ? _("Voice assistant starting") : _("Voice assistant off"));
     if (S.sys && S.sys.voice) S.sys.voice.enabled = on;
   }, !S.sys));
   body.appendChild(el("div", "gh", "ALICE"));
   const au = S.auto || {};
   const rules = (au.rules || []).filter((x) => x.enabled).length, tasks = (au.tasks || []).length;
-  body.appendChild(navRow("bolt", "Otomasyonlar", au.rules ? `${rules} kural · ${tasks} görev` : "", openAutomations));
-  body.appendChild(navRow("note", "Notlar", "", openNotes));
+  body.appendChild(navRow("bolt", _("Automations"), au.rules ? _("{rules} rules · {tasks} tasks", { rules: rules, tasks: tasks }) : "", openAutomations));
+  body.appendChild(navRow("note", _("Notes"), "", openNotes));
   const checks = (S.assist && S.assist.checks) || [];
   const bad = checks.filter((c) => c.status === "fail" || c.status === "warn").length;
-  body.appendChild(navRow("heart", "Sağlık", checks.length ? (bad ? bad + " uyarı" : "sorun yok") : "", openHealth, bad ? "w" : ""));
-  body.appendChild(navRow("hist", "Sohbet geçmişi", String(S.sessions.length || ""), () => { show("chat"); historySheet(); }));
-  body.appendChild(el("div", "gh", "Ayarlar"));
+  body.appendChild(navRow("heart", _("Health"), checks.length ? (bad ? _("{n} warnings", { n: bad }) : _("no problems")) : "", openHealth, bad ? "w" : ""));
+  body.appendChild(navRow("hist", _("Chat history"), String(S.sessions.length || ""), () => { show("chat"); historySheet(); }));
+  body.appendChild(el("div", "gh", _("Settings")));
   body.appendChild(navRow("key", "Model", shortModel(S.status.model), modelSheet));
-  body.appendChild(navRow("gear", "Görünüm", { system: "sistem", light: "açık", dark: "koyu" }[theme()] || "sistem", themeSheet));
-  if (NATIVE && NATIVE.reconfigure) body.appendChild(navRow("wifi", "Bağlantı", location.host, () => NATIVE.reconfigure()));
-  else body.appendChild(navRow("wifi", "Bağlantı", location.host, () => toast("Adres: " + location.host)));
+  body.appendChild(navRow("gear", _("Appearance"), { system: _("system"), light: _("light"), dark: _("dark") }[theme()] || _("system"), themeSheet));
+  if (NATIVE && NATIVE.reconfigure) body.appendChild(navRow("wifi", _("Connection"), location.host, () => NATIVE.reconfigure()));
+  else body.appendChild(navRow("wifi", _("Connection"), location.host, () => toast(_("Address: {host}", { host: location.host }))));
   appRow(body);
-  body.appendChild(el("div", "foot2", "ALICE " + (S.status.version || "") + (NATIVE && NATIVE.version ? " · uygulama " + NATIVE.version() : "")));
+  body.appendChild(el("div", "foot2", "ALICE " + (S.status.version || "") + (NATIVE && NATIVE.version ? _(" · app {version}", { version: NATIVE.version() }) : "")));
 }
 /* Android uygulaması: uygulamanın içindeyken sürüm ve güncelleme, telefonun tarayıcısındayken kurulum. */
 function appRow(body) {
@@ -1567,15 +1567,15 @@ function appRow(body) {
   if (NATIVE && NATIVE.versionCode) {
     const mine = NATIVE.versionCode();
     const newer = app.available && app.version_code > mine;
-    body.appendChild(navRow("dl", "Uygulama", newer ? "güncelleme var: " + app.version_name : NATIVE.version() + " · güncel", () => {
-      if (!newer) return toast("Uygulama güncel. Yeni sürüm çıkınca kendini günceller.");
+    body.appendChild(navRow("dl", _("App"), newer ? _("update available: ") + app.version_name : NATIVE.version() + _(" · up to date"), () => {
+      if (!newer) return toast(_("The app is up to date. It updates itself when a new version comes out."));
       NATIVE.checkUpdate();
-      toast("Güncelleme indiriliyor…");
+      toast(_("Downloading the update…"));
     }, newer ? "w" : ""));
   } else if (/Android/i.test(navigator.userAgent) && app.available) {
-    body.appendChild(navRow("dl", "Android uygulamasını kur", app.version_name, () => {
+    body.appendChild(navRow("dl", _("Install the Android app"), app.version_name, () => {
       location.href = "/api/phone/app.apk";  // çerezle doğrulanır: anahtar indirme geçmişine düşmez
-      toast("İnince aç ve kur. Sonra uygulamada QR'yi yeniden okut.");
+      toast(_("When it downloads, open and install it. Then scan the QR code again in the app."));
     }));
   }
 }
@@ -1606,50 +1606,50 @@ function applyTheme() {
   try { if (NATIVE && NATIVE.setTheme) NATIVE.setTheme(t); } catch (e) { /* yok */ }
 }
 async function themeSheet() {
-  const v = await pickSheet("Görünüm", "", [["system", "Sistem", "Telefonun ayarını izler"], ["light", "Açık"], ["dark", "Koyu"]], theme());
+  const v = await pickSheet(_("Appearance"), "", [["system", _("System"), _("Follows the phone's setting")], ["light", _("Light")], ["dark", _("Dark")]], theme());
   if (!v) return;
   try { localStorage.setItem("alice-theme", v); } catch (e) { /* yok */ }
   applyTheme();
   drawMoreTop();
 }
 function openAutomations() {
-  push("more", "Otomasyonlar", (body, entry) => {
+  push("more", _("Automations"), (body, entry) => {
     const call = (action, extra) => api("/api/automations/action", Object.assign({ action }, extra || {}));
     const draw = async () => {
       const d = await api("/api/automations");
       body.replaceChildren();
       if (!d.core_running) {
         const w = el("div", "ask");
-        w.append(el("b", "", "Çekirdek çalışmıyor. "), document.createTextNode("Kurallar ve görevler çekirdek açıkken çalışır."));
-        const go = btn("", "Çekirdeği başlat", async () => { await api("/api/system/action", { action: "start" }); toast("Başlatılıyor"); setTimeout(draw, 3000); });
+        w.append(el("b", "", _("The core isn't running. ")), document.createTextNode(_("Rules and tasks run while the core runs.")));
+        const go = btn("", _("Start the core"), async () => { await api("/api/system/action", { action: "start" }); toast(_("Starting")); setTimeout(draw, 3000); });
         go.style.cssText = "margin-top:8px;padding:8px 14px;border-radius:10px;background:var(--text);color:var(--bg);font-weight:600";
         w.appendChild(el("div")).appendChild(go);
         body.appendChild(w);
       }
       const add = el("div", "cmd");
       const inp = el("input");
-      inp.placeholder = "Ne olunca haber vereyim? ya da: her sabah 9'da…";
+      inp.placeholder = _("What should I tell you about? Or: every morning at 9…");
       add.append(svg("bolt"), inp);
       inp.addEventListener("keydown", async (e) => {
         if (e.key !== "Enter" || !inp.value.trim()) return;
         const text = inp.value.trim();
         const isTask = /\b(her|saat|sabah|akşam|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar|\d{1,2}[:.]\d{2})\b/i.test(text);
         const r = await call(isTask ? "task_parse" : "rule_parse", { text });
-        if (!r || !r.ok) return toast((r && r.error) || "anlayamadım");
+        if (!r || !r.ok) return toast((r && r.error) || _("I didn't understand"));
         const v = r.rule || r.task || {};
-        const lines = isTask ? [["Ne zaman", v.when], ["Ne yapılacak", v.prompt]] : [["Koşul", v.condition], ["Mesaj", v.message]];
+        const lines = isTask ? [[_("When"), v.when], [_("What to do"), v.prompt]] : [[_("Condition"), v.condition], [_("Message"), v.message]];
         const ok = await openSheet((c) => {
-          c.append(el("h3", "", "Anladığım"));
+          c.append(el("h3", "", _("What I understood")));
           for (const [k, val] of lines) if (val) { const o = el("div", "opt"); const l = el("span", "l"); l.append(el("small", "", k), el("b", "", String(val))); o.appendChild(l); c.appendChild(o); }
           const row = el("div", "btns");
-          row.append(btn("btn", "Vazgeç", () => closeSheet(false)), btn("btn acc", "Kaydet", () => closeSheet(true)));
+          row.append(btn("btn", _("Cancel"), () => closeSheet(false)), btn("btn acc", _("Save"), () => closeSheet(true)));
           c.appendChild(row);
         });
         if (!ok) return;
         const s = await call(isTask ? "task_add" : "rule_add", isTask ? { task: r.task } : { rule: r.rule });
         if (!s || !s.ok) return toast((s && s.error) || "kaydedilemedi");
         inp.value = "";
-        toast("Kaydedildi");
+        toast(_("Saved"));
         draw();
       });
       body.appendChild(add);
@@ -1659,37 +1659,37 @@ function openAutomations() {
         const l = el("div", "l");
         l.append(el("b", "", r.text), el("small", "", r.condition));
         const t = el("button", "tg" + (r.enabled ? " on" : ""));
-        t.setAttribute("aria-label", r.enabled ? "Kapat" : "Aç");
+        t.setAttribute("aria-label", r.enabled ? _("Close") : _("Open"));
         t.addEventListener("click", async () => { haptic(); await call("rule_enable", { id: r.id, on: !r.enabled }); draw(); });
         row.append(l, t);
-        row.addEventListener("contextmenu", async (e) => { e.preventDefault(); if (await confirmSheet("Kural silinsin mi?", r.text, "Sil", true)) { await call("rule_rm", { id: r.id }); draw(); } });
+        row.addEventListener("contextmenu", async (e) => { e.preventDefault(); if (await confirmSheet(_("Delete the rule?"), r.text, _("Delete"), true)) { await call("rule_rm", { id: r.id }); draw(); } });
         body.appendChild(row);
       }
-      body.appendChild(el("div", "lbl", `Zamanlanmış görevler · ${(d.tasks || []).length}`));
-      if (!(d.tasks || []).length) body.appendChild(el("p", "goal", "Yok. Yukarıya “her sabah 9'da Discord'u özetle” gibi yaz."));
+      body.appendChild(el("div", "lbl", _("Scheduled tasks · {n}", { n: (d.tasks || []).length })));
+      if (!(d.tasks || []).length) body.appendChild(el("p", "goal", _("None. Write something like “summarize Discord every morning at 9” above.")));
       for (const t of d.tasks || []) {
         const row = el("div", "rule" + (t.enabled ? "" : " off"));
         const l = el("div", "l");
-        l.append(el("b", "", t.text), el("small", "", t.when + (t.enabled && t.next ? " · sonraki " + t.next : "")));
+        l.append(el("b", "", t.text), el("small", "", t.when + (t.enabled && t.next ? _(" · next {when}", { when: t.next }) : "")));
         const tg = el("button", "tg" + (t.enabled ? " on" : ""));
         tg.addEventListener("click", async () => { haptic(); await call("task_enable", { id: t.id, on: !t.enabled }); draw(); });
         row.append(l, tg);
         body.appendChild(row);
       }
-      body.appendChild(el("p", "foot2", "Silmek için kurala uzun bas."));
+      body.appendChild(el("p", "foot2", _("Long-press a rule to delete it.")));
     };
     entry.refresh = draw;
     draw();
-  }, "Daha fazla");
+  }, _("More"));
 }
 function openNotes() {
-  push("more", "Notlar", (body, entry) => {
+  push("more", _("Notes"), (body, entry) => {
     const draw = async () => {
       const d = await api("/api/notes");
       body.replaceChildren();
       const add = el("div", "cmd");
       const inp = el("input");
-      inp.placeholder = "Yeni not";
+      inp.placeholder = _("New note");
       add.append(svg("note"), inp);
       inp.addEventListener("keydown", async (e) => {
         if (e.key !== "Enter" || !inp.value.trim()) return;
@@ -1699,22 +1699,22 @@ function openNotes() {
         draw();
       });
       body.appendChild(add);
-      if (d.brief) { body.appendChild(el("div", "lbl", "Sabah özeti")); const b = el("div", "a"); b.innerHTML = md(typeof d.brief === "string" ? d.brief : d.brief.text || ""); body.appendChild(b); }
+      if (d.brief) { body.appendChild(el("div", "lbl", _("Morning summary"))); const b = el("div", "a"); b.innerHTML = md(typeof d.brief === "string" ? d.brief : d.brief.text || ""); body.appendChild(b); }
       body.appendChild(el("div", "lbl", `Notlar · ${d.total || 0}`));
-      if (!(d.notes || []).length) body.appendChild(el("p", "goal", "Henüz not yok. Sesle “not al: …” de ya da buraya yaz."));
+      if (!(d.notes || []).length) body.appendChild(el("p", "goal", _("No notes yet. Say “take a note: …” or write here.")));
       for (const n of d.notes || []) {
         const r = el("div", "notep");
         r.append(el("time", "", rel(n.ts)), el("div", "", n.text));
-        r.addEventListener("contextmenu", async (e) => { e.preventDefault(); if (await confirmSheet("Not silinsin mi?", n.text.slice(0, 120), "Sil", true)) { await api("/api/notes/action", { action: "remove", ts: n.ts }); draw(); } });
+        r.addEventListener("contextmenu", async (e) => { e.preventDefault(); if (await confirmSheet(_("Delete the note?"), n.text.slice(0, 120), _("Delete"), true)) { await api("/api/notes/action", { action: "remove", ts: n.ts }); draw(); } });
         body.appendChild(r);
       }
     };
     entry.refresh = draw;
     draw();
-  }, "Daha fazla");
+  }, _("More"));
 }
 function openHealth() {
-  push("more", "Sağlık", async (body) => {
+  push("more", _("Health"), async (body) => {
     const d = await api("/api/assistant");
     const checks = (d && d.checks) || [];
     const order = { fail: 0, warn: 1, ok: 2, off: 3 };
@@ -1727,8 +1727,8 @@ function openHealth() {
       r.append(el("i", "", mark[c.status] || "?"), l);
       body.appendChild(r);
     }
-    if (!checks.length) body.appendChild(el("div", "empty", "Durum alınamadı."));
-  }, "Daha fazla");
+    if (!checks.length) body.appendChild(el("div", "empty", _("Could not get the status.")));
+  }, _("More"));
 }
 
 /* ================================================================== ARAMA */
@@ -1736,7 +1736,7 @@ function openHealth() {
    gider; ALICE'in cevabı bilgisayarda cümle cümle sese çevrilip burada çalınır (ses yoksa telefon kendi sesiyle okur).
    ALICE konuşurken ortadaki yuvarlağa dokunmak onu susturur ve dinlemeye geçer. */
 let CALL = null;
-const CALL_END_TEXT = { missed: "Cevapsız arama", declined: "Arama reddedildi", hangup: "Görüşme bitti", silence: "Sessiz kaldın, görüşme bitti" };
+const CALL_END_TEXT = { missed: _("Missed call"), declined: _("Call declined"), hangup: _("Call ended"), silence: _("You were silent; the call ended") };
 function callUI() {
   let root = $("#call");
   if (!root) {
@@ -1756,19 +1756,19 @@ function drawCall() {
   root.replaceChildren();
   root.className = "call " + c.state + (c.outbound ? " outbound" : "") + (c.mode ? " m-" + c.mode : "");
   const top = el("div", "c-top");
-  const title = c.state === "ringing" ? (c.outbound ? "ALICE arıyor" : "Aranıyor…") : "ALICE";
-  const sub = c.state === "ringing" ? (c.reason || "Sesli arama") : fmtDur((Date.now() - c.t0) / 1000);
+  const title = c.state === "ringing" ? (c.outbound ? _("ALICE is calling") : _("Calling…")) : "ALICE";
+  const sub = c.state === "ringing" ? (c.reason || _("Voice call")) : fmtDur((Date.now() - c.t0) / 1000);
   top.append(el("b", "", title), el("small", "c-time", sub));
   const orb = el("button", "c-orb");
-  orb.setAttribute("aria-label", c.mode === "speaking" ? "Sustur ve konuş" : "Konuş");
+  orb.setAttribute("aria-label", c.mode === "speaking" ? _("Interrupt and talk") : _("Talk"));
   const img = el("img");
   img.src = "/static/alice.png";
   img.alt = "";
   orb.append(el("i", "r1"), el("i", "r2"), img);
   orb.addEventListener("click", () => { if (c.state === "active") { haptic(14); bargeIn(); } });
   const perm = [...S.pending.values()].find((p) => p.sid && p.sid === c.sid);
-  const mode = el("div", "c-mode", c.state === "ringing" ? "" : perm ? "Onayını bekliyor" : { listening: c.muted ? "Mikrofon kapalı" : "Dinliyorum", thinking: "Düşünüyor…",
-    speaking: "Konuşuyor · dokun, araya gir", idle: "" }[c.mode || "idle"] || "");
+  const mode = el("div", "c-mode", c.state === "ringing" ? "" : perm ? _("Waiting for your approval") : { listening: c.muted ? _("Microphone off") : "Dinliyorum", thinking: _("Thinking…"),
+    speaking: _("Speaking · tap to interrupt"), idle: "" }[c.mode || "idle"] || "");
   const said = el("div", "c-said", c.caption || "");
   const heard = el("div", "c-heard", c.heard ? "“" + c.heard + "”" : "");
   const mid = el("div", "c-mid");
@@ -1776,12 +1776,12 @@ function drawCall() {
   if (perm) mid.appendChild(callPermission(perm));
   const bar = el("div", "c-bar");
   if (c.state === "ringing" && c.outbound) {
-    bar.append(callBtn("x", "Reddet", "red", () => { api("/api/call/decline", { id: c.id }); endCall("declined"); }),
-      callBtn("phone", "Aç", "green", () => answerCall()));
+    bar.append(callBtn("x", _("Deny"), "red", () => { api("/api/call/decline", { id: c.id }); endCall("declined"); }),
+      callBtn("phone", _("Open"), "green", () => answerCall()));
   } else {
-    bar.append(callBtn("mic", c.muted ? "Sesi aç" : "Sessiz", c.muted ? "on" : "", () => toggleMute()),
-      callBtn("phone", "Kapat", "red hang", () => hangup()),
-      callBtn("type", "Yaz", "", () => typeInCall()));
+    bar.append(callBtn("mic", c.muted ? _("Unmute") : _("Quiet"), c.muted ? "on" : "", () => toggleMute()),
+      callBtn("phone", _("Close"), "red hang", () => hangup()),
+      callBtn("type", _("Type"), "", () => typeInCall()));
   }
   root.append(top, mid, bar);
 }
@@ -1796,10 +1796,10 @@ function callBtn(icon, label, cls, fn) {
 }
 function callPermission(p) {
   const box = el("div", "c-perm");
-  box.append(el("small", "", PERM_TEXT[p.name] || "İzin istiyor"), el("code", "", p.summary || p.question || ""));
+  box.append(el("small", "", PERM_TEXT[p.name] || _("Asks for permission")), el("code", "", p.summary || p.question || ""));
   const row = el("div", "btns");
-  row.append(btn("btn", "Reddet", () => api("/api/permission", { id: p.id, answer: "n" }).then(() => dropPending(p.id))),
-    btn("btn p", "İzin ver", () => api("/api/permission", { id: p.id, answer: "y" }).then(() => dropPending(p.id))));
+  row.append(btn("btn", _("Deny"), () => api("/api/permission", { id: p.id, answer: "n" }).then(() => dropPending(p.id))),
+    btn("btn p", _("Allow"), () => api("/api/permission", { id: p.id, answer: "y" }).then(() => dropPending(p.id))));
   box.appendChild(row);
   return box;
 }
@@ -1815,11 +1815,11 @@ function newCall(id, opts) {
 async function startCall() {
   if (CALL) return drawCall();
   const canLive = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  if (!canLive && (!NATIVE || !NATIVE.listen)) return toast("Sesli arama için mikrofon izni gerekli");
+  if (!canLive && (!NATIVE || !NATIVE.listen)) return toast(_("A voice call needs microphone permission"));
   newCall("", { state: "ringing", outbound: false });
   liveAudio(CALL);  // ses çalıcı dokunuşla açılsın (tarayıcı sonradan açılan sesi engelliyor)
   const r = await api("/api/call/start", {});
-  if (!r || !r.ok) { endCall(); return toast((r && r.error) || "Aranamadı"); }
+  if (!r || !r.ok) { endCall(); return toast((r && r.error) || _("Could not call")); }
   CALL.id = r.id;
   CALL.state = "active";
   CALL.outbound = !!r.outbound;
@@ -1848,11 +1848,11 @@ async function answerCall() {
   try { if (NATIVE && NATIVE.ring) NATIVE.ring(false); } catch (e) { /* yok */ }
   liveAudio(c);
   const r = await api("/api/call/answer", { id: c.id });
-  if (!r || r.ok === false) { endCall(); return toast((r && r.error) || "Görüşme açılamadı"); }
+  if (!r || r.ok === false) { endCall(); return toast((r && r.error) || _("Could not open the call")); }
   c.state = "active";
   c.t0 = Date.now();
   if (r.live) { c.live = true; c.mode = "thinking"; startLiveMic(c); return drawCall(); }
-  if (!NATIVE || !NATIVE.listen) toast("Dinlemek için Android uygulaması gerekli; ALICE'i yine de duyarsın");
+  if (!NATIVE || !NATIVE.listen) toast(_("Listening needs the Android app; you'll still hear ALICE"));
   // İlk cümle bu cevaptan önce gelip çalmaya başlamış (hatta bitmiş) olabilir.
   if (c.mode === "speaking") return drawCall();
   if (c.queue.length) return playNext();
@@ -1941,7 +1941,7 @@ function startCallListening() {
   drawCall();
   if (c.muted || !NATIVE || !NATIVE.listen) return;
   c.listening = true;
-  try { NATIVE.listen("tr-TR"); } catch (e) { c.listening = false; }
+  try { NATIVE.listen(ALICE_LOCALE); } catch (e) { c.listening = false; }
 }
 function stopCallListening() {
   const c = CALL;
@@ -1981,7 +1981,7 @@ async function sayInCall(text) {
     c.mode = "thinking";
     drawCall();
     const r = await api("/api/call/say", { id: c.id, text });
-    if (CALL === c && (!r || !r.ok)) { toast((r && r.error) || "Gönderilemedi"); liveMode(c); }
+    if (CALL === c && (!r || !r.ok)) { toast((r && r.error) || _("Could not send")); liveMode(c); }
     return;
   }
   c.mode = "thinking";
@@ -1991,7 +1991,7 @@ async function sayInCall(text) {
   drawCall();
   const r = await api("/api/call/say", { id: c.id, text });
   if (CALL !== c) return;
-  if (!r || !r.ok) { toast((r && r.error) || "Gönderilemedi"); return startCallListening(); }
+  if (!r || !r.ok) { toast((r && r.error) || _("Could not send")); return startCallListening(); }
   c.turn = r.turn;
 }
 function bargeIn() {
@@ -2022,13 +2022,13 @@ function toggleMute() {
 function typeInCall() {
   let inp;
   openSheet((box) => {
-    box.append(el("h3", "", "ALICE'e yaz"));
+    box.append(el("h3", "", _("Write to ALICE")));
     inp = el("input", "field");
-    inp.placeholder = "Söylemek istediğin…";
+    inp.placeholder = _("What you want to say…");
     const go = () => { const t = inp.value.trim(); closeSheet(); if (t) { stopCallListening(); sayInCall(t); } };
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
     const row = el("div", "btns");
-    row.append(btn("btn", "Vazgeç", () => closeSheet()), btn("btn p", "Gönder", go));
+    row.append(btn("btn", _("Cancel"), () => closeSheet()), btn("btn p", _("Send"), go));
     box.append(inp, row);
     setTimeout(() => inp.focus(), 50);
   });
@@ -2041,7 +2041,7 @@ function hangup() {
 }
 function callEnded(ev) {
   if (CALL && ev.id === CALL.id) endCall(ev.reason);
-  else if (!CALL && ev.reason === "missed") toast("Cevapsız arama: " + (ev.text || "ALICE"));
+  else if (!CALL && ev.reason === "missed") toast(_("Missed call: ") + (ev.text || "ALICE"));
 }
 function endCall(reason) {
   const c = CALL;
@@ -2055,14 +2055,14 @@ function endCall(reason) {
   try { if (NATIVE) { NATIVE.ring && NATIVE.ring(false); NATIVE.stopSpeaking && NATIVE.stopSpeaking(); NATIVE.keepScreen && NATIVE.keepScreen(false); } } catch (e) { /* yok */ }
   if (c.listening) { try { NATIVE.cancelListening(); } catch (e) { /* yok */ } }
   drawCall();
-  if (reason && reason !== "hangup") toast(CALL_END_TEXT[reason] || "Görüşme bitti");
-  else if (c.state === "active") toast("Görüşme bitti · " + fmtDur((Date.now() - c.t0) / 1000));
+  if (reason && reason !== "hangup") toast(CALL_END_TEXT[reason] || _("Call ended"));
+  else if (c.state === "active") toast(_("Call ended · ") + fmtDur((Date.now() - c.t0) / 1000));
   loadSessions();
 }
-// Android uygulaması bildirimden "Aç" ya da "Reddet" ile açılınca buraya yollar.
+// Android uygulaması bildirimden _("Open") ya da _("Deny") ile açılınca buraya yollar.
 window.aliceCallIntent = async (it) => {
   const cur = await api("/api/call");
-  if (!cur || !cur.id || (it.id && cur.id !== it.id) || cur.state === "ended") return toast("Arama artık yok");
+  if (!cur || !cur.id || (it.id && cur.id !== it.id) || cur.state === "ended") return toast(_("The call is gone"));
   if (it.action === "decline") { api("/api/call/decline", { id: cur.id }); if (CALL) endCall("declined"); return; }
   if (cur.state === "ringing") {
     if (!CALL) incomingCall({ id: cur.id, reason: cur.reason, text: (cur.lines || [])[0] ? cur.lines[0].text : "" });
@@ -2148,7 +2148,7 @@ function liveMode(c) {
 function liveNativeMic(c, msg) {
   if (!c || c.nativeMic || CALL !== c) return;
   stopLiveMic(c);
-  if (!NATIVE || !NATIVE.listen) { toast("Mikrofon sesi alınamıyor"); return; }
+  if (!NATIVE || !NATIVE.listen) { toast(_("Can't get the microphone audio")); return; }
   c.nativeMic = true;
   toast(msg);
   if (!(c.srcs && c.srcs.length)) startCallListening();
@@ -2191,20 +2191,20 @@ function startNativeMic(c) {
 }
 async function startLiveMic(c) {
   if (startNativeMic(c)) {
-    setTimeout(() => { if (CALL === c && c.mic && !c.micFrames) liveNativeMic(c, "Mikrofon sesi alınamadı; telefonun konuşma tanımasıyla devam"); }, 4000);
+    setTimeout(() => { if (CALL === c && c.mic && !c.micFrames) liveNativeMic(c, _("Couldn't get the microphone audio; going on with the phone's speech recognition")); }, 4000);
     return;
   }
   if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
     // Eski uygulama + ev ağı (http): canlı mikrofon yok. İzin bekleniyorsa (micStart false) bir şey yapma.
     if (NATIVE && NATIVE.micStart) return;
-    return liveNativeMic(c, "Canlı mikrofon için telefon uygulamasını güncelle; şimdilik konuşma tanımasıyla");
+    return liveNativeMic(c, _("Update the phone app for the live microphone; using speech recognition for now"));
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
   } catch (e) {
     if (CALL !== c) return;
-    toast("Mikrofon açılamadı; telefonun konuşma tanımasıyla devam");
+    toast(_("Couldn't open the microphone; going on with the phone's speech recognition"));
     c.mode = "listening";
     drawCall();
     return startCallListening();  // söylenen yazıya döner, yine canlı oturuma gider
@@ -2250,7 +2250,7 @@ async function startLiveMic(c) {
   src.connect(proc);
   proc.connect(ctx.destination);  // ScriptProcessor bağlı değilse çalışmıyor; çıkışı sessiz
   c.mic = { stream, ctx, proc };
-  setTimeout(() => { if (CALL === c && c.mic && !c.micFrames) liveNativeMic(c, "Mikrofon sesi alınamadı; telefonun konuşma tanımasıyla devam"); }, 4000);
+  setTimeout(() => { if (CALL === c && c.mic && !c.micFrames) liveNativeMic(c, _("Couldn't get the microphone audio; going on with the phone's speech recognition")); }, 4000);
   if (c.mode === "thinking" && !c.played) drawCall();
 }
 function stopLiveMic(c) {

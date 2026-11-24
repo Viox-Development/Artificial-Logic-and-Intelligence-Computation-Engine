@@ -22,9 +22,9 @@
 <script src="/static/m.js" defer></script>
 </head>
 <body>
-<!-- ALICE telefon uygulaması. Beş sekme; her sekmenin ekranı m.js'te çizilir. Android uygulaması aynı sayfayı açar
-     ve window.AliceNative ile mikrofon, bildirim ve titreşim sağlar. -->
-<div id="offline" hidden role="status">Bilgisayara ulaşılamıyor, yeniden deneniyor…</div>
+<!-- ALICE phone app. Five tabs; m.js draws each tab's screen. The Android app opens the same page
+     and provides the microphone, notifications and vibration through window.AliceNative. -->
+<div id="offline" hidden role="status" data-i18n>Can't reach the computer, retrying…</div>
 
 <main id="views">
   <section class="view" id="v-chat" data-tab="chat"></section>
@@ -34,33 +34,33 @@
   <section class="view" id="v-more" data-tab="more" hidden></section>
 </main>
 
-<nav id="tabs" aria-label="Sekmeler">
+<nav id="tabs" aria-label="Tabs" data-i18n-attr="aria-label">
   <button data-tab="chat" class="on">
     <svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4 3v-3a2 2 0 0 1-2-2z"/></svg>
-    <span>Sohbet</span>
+    <span data-i18n>Chat</span>
   </button>
   <button data-tab="proj">
     <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="7" height="7" rx="1.5"/><rect x="13.5" y="4" width="7" height="7" rx="1.5"/><rect x="3.5" y="14" width="7" height="6" rx="1.5"/><rect x="13.5" y="14" width="7" height="6" rx="1.5"/></svg>
-    <span>Projeler</span><i class="badge" id="projBadge" hidden></i>
+    <span data-i18n>Projects</span><i class="badge" id="projBadge" hidden></i>
   </button>
   <button data-tab="pc">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-    <span>Bilgisayar</span>
+    <span data-i18n>Computer</span>
   </button>
   <button data-tab="bell">
     <svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
-    <span>Bildirim</span><i class="badge" id="bellBadge" hidden></i>
+    <span data-i18n>Notifications</span><i class="badge" id="bellBadge" hidden></i>
   </button>
   <button data-tab="more">
     <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>
-    <span>Daha fazla</span>
+    <span data-i18n>More</span>
   </button>
 </nav>
 
-<!-- Uygulama içi arama: ALICE arar ya da kullanıcı arar. İçeriği m.js çizer. -->
+<!-- In-app call: ALICE calls or the user calls. m.js draws its content. -->
 
 <div id="sheet" class="sheet" hidden><div class="sheet-card" role="dialog" aria-modal="true"></div></div>
-<div id="viewer" hidden><img alt="Bilgisayarın ekranı"><div class="viewer-bar"><span id="viewerInfo"></span><button id="viewerClose" class="ib dark" aria-label="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>
+<div id="viewer" hidden><img alt="The computer's screen" data-i18n-attr="alt"><div class="viewer-bar"><span id="viewerInfo"></span><button id="viewerClose" class="ib dark" aria-label="Close" data-i18n-attr="aria-label"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>
 <input type="file" id="imgPick" accept="image/*" hidden>
 <input type="file" id="audioPick" accept="audio/*" capture hidden>
 <div id="toast" class="toast" hidden></div>
