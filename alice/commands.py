@@ -10,7 +10,7 @@ the project folder's .alice/commands/ (.claude/commands/ is also read, for Claud
       Review the recent changes in this project and list the bugs. Focus: $ARGUMENTS
 
 Typing `/review performans` sends the file body to ALICE as a normal message, with $ARGUMENTS replaced by
-"performans" (Turkish for "performance").
+"performans" (Turkish for "performance"); the words after the name can be in any language.
 """
 
 from __future__ import annotations
@@ -19,52 +19,57 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from alice.config import alice_home
+from alice.i18n import _
 
+# English; catalog() shows them in the interface language.
 BUILTINS: dict[str, str] = {
-    "help": "Komutları göster",
-    "clear": "Konuşmayı sıfırla (yeni sohbet)",
-    "compact": "Context'i şimdi özetle",
-    "btw": "İş sürerken yan soru sor: işi bölmez, konuşmaya yazılmaz (/btw <soru>)",
-    "mode": "İzin modu: plan | ask | auto | yolo",
-    "plan": "Plan moduna geç (sadece okur, plan yazar)",
-    "model": "Rol zincirleri / modeli sabitle",
-    "think": "Düşünme seviyesi: off | low | medium | high | default (rol verilebilir: /think brain off)",
-    "rewind": "Bir önceki mesaja geri sar (dosyalar dahil)",
-    "usage": "Bugünkü istek ve token kullanımı",
-    "cwd": "Çalışma klasörünü göster/değiştir",
-    "tools": "Araç listesi",
-    "mcp": "Bağlı MCP sunucuları ve araçları",
-    "init": "Bu proje için ALICE.md talimat dosyası oluştur",
-    "memory": "Kalıcı hafızayı göster",
-    "kurul": "Bir konuyu inceleme kuruluna sor: eleştirmen, savunucu, kontrolcü ve uzmanlar tartışıp oylar",
-    "review": "Değişiklikleri (git diff ya da verilen PR/dal) hata ve risk açısından incele; /review derin: ayrı "
-              "inceleyici ajanlar (performans, test, doküman da olur)",
-    "security-review": "Değişikliklerde güvenlik açığı ara (sır sızıntısı, enjeksiyon, yetki, güvensiz komut)",
+    "help": "Show the commands",
+    "clear": "Reset the conversation (new chat)",
+    "compact": "Summarize the context now",
+    "btw": "Ask a side question while a job runs: it doesn't interrupt the job and isn't written into the conversation (/btw <question>)",
+    "mode": "Permission mode: plan | ask | auto | yolo",
+    "plan": "Switch to plan mode (only reads, writes a plan)",
+    "model": "Role chains / pin the model",
+    "think": "Thinking level: off | low | medium | high | default (a role can be given: /think brain off)",
+    "rewind": "Rewind to the previous message (files included)",
+    "usage": "Today's requests and token usage",
+    "cwd": "Show/change the working folder",
+    "tools": "List of tools",
+    "mcp": "Connected MCP servers and their tools",
+    "init": "Create an ALICE.md instruction file for this project",
+    "memory": "Show the lasting memory",
+    "kurul": "Ask the review council about something: the critic, advocate, checker and experts debate and vote",
+    "review": "Review the changes (git diff, or a given PR/branch) for bugs and risks; /review deep: separate reviewer "
+              "agents (performance, tests and docs are possible too)",
+    "security-review": "Look for security holes in the changes (leaked secrets, injection, authorization, unsafe commands)",
 }
 
 # If the user has a custom command with the same name, theirs wins (old ~/.alice/commands/review.md files keep working).
 OVERRIDABLE = {"review", "security-review"}
 
 REVIEW_PROMPT = (
-    "Kod incelemesi yap. Kapsam: {target}. Önce değişikliği bul: git aracıyla status ve diff'e bak (kapsam bir PR ya da "
-    "dalsa ona göre); değişen dosyaların ilgili kısımlarını oku. Sadece GERÇEK sorunları raporla: hatalı mantık, kenar "
-    "durumlar, yarış durumları, kırılan çağrılar, eksik hata yönetimi, testin kaçırdığı davranış. Her bulgu için: "
-    "dosya:satır, ne yanlış, hangi girdiyle bozulur, önerilen düzeltme. Önem sırasına diz (kritik, önemli, küçük). Stil "
-    "zevklerini ve emin olmadığın tahminleri ayrı bir 'belki' başlığına koy. Değişiklik YAPMA; sadece raporla."
+    "Do a code review. Scope: {target}. First find the change: look at status and diff with the git tool (if the scope "
+    "is a PR or a branch, follow that); read the relevant parts of the changed files. Report only REAL problems: wrong "
+    "logic, edge cases, race conditions, broken calls, missing error handling, behavior the tests miss. For each "
+    "finding: file:line, what is wrong, which input breaks it, the suggested fix. Order by severity (critical, major, "
+    "minor). Put style tastes and guesses you're unsure of under a separate 'maybe' heading. Do NOT change anything; "
+    "only report. Write the report in the user's language."
 )
 # /review deep|derin|performans|test ...: run the code_review tool with that focus, using independent agent(s).
 DEEP_WORDS = {"deep": "deep", "derin": "deep", "performance": "performance", "performans": "performance",
               "tests": "tests", "test": "tests", "docs": "docs", "doküman": "docs", "dokuman": "docs"}
 TOOL_REVIEW_PROMPT = (
-    "code_review aracını focus={focus} ile çalıştır. Kapsam: {target} (bir PR numarası geçiyorsa target=pr ve number "
-    "ver). Bulguları önem sırasıyla bana göster; değişiklik YAPMA, düzeltmeyi ben isteyince yap."
+    "Run the code_review tool with focus={focus}. Scope: {target} (if a PR number is given, pass target=pr and "
+    "number). Show me the findings in order of severity; do NOT change anything, fix things when I ask. Answer in "
+    "the user's language."
 )
 SECURITY_PROMPT = (
-    "Güvenlik incelemesi yap. Kapsam: {target}. git aracıyla değişikliği bul ve değişen kodu oku. Ara: koda/commit'e "
-    "girmiş anahtar ve şifreler, komut/SQL/yol enjeksiyonu, güvenilmeyen girdinin shell'e ya da eval'e gitmesi, yetki "
-    "kontrolü eksikliği, güvensiz deserializasyon, TLS doğrulamasını kapatma, hassas verinin loglanması, dışarıdan "
-    "gelen içeriğin talimat gibi işlenmesi. Her bulgu için: dosya:satır, saldırı senaryosu (kim, hangi girdiyle, ne "
-    "elde eder), önem (kritik/yüksek/orta/düşük), düzeltme. Bulgu yoksa açıkça 'bulgu yok' de. Değişiklik YAPMA."
+    "Do a security review. Scope: {target}. Find the change with the git tool and read the changed code. Look for: "
+    "keys and passwords that got into the code/commit, command/SQL/path injection, untrusted input reaching a shell or "
+    "eval, missing authorization checks, unsafe deserialization, turning off TLS verification, logging sensitive "
+    "data, content from outside being treated as instructions. For each finding: file:line, the attack scenario "
+    "(who, with what input, what they get), severity (critical/high/medium/low), the fix. If there are no findings, say "
+    "'no findings' plainly. Do NOT change anything. Write the report in the user's language."
 )
 
 
@@ -81,25 +86,26 @@ def builtin_prompt(text: str) -> str | None:
         focus = next((DEEP_WORDS[w.lower()] for w in words if w.lower() in DEEP_WORDS), "")
         if focus:
             rest = " ".join(w for w in words if w.lower() not in DEEP_WORDS)
-            return TOOL_REVIEW_PROMPT.format(focus=focus, target=rest or "yerel değişiklikler (target=local)")
+            return TOOL_REVIEW_PROMPT.format(focus=focus, target=rest or "local changes (target=local)")
     if name in ("review", "security-review"):
-        target = args or "çalışma klasöründeki commit'lenmemiş değişiklikler, yoksa son commit"
+        target = args or "the uncommitted changes in the working folder, or the last commit if there are none"
         return (REVIEW_PROMPT if name == "review" else SECURITY_PROMPT).format(target=target)
     return None
 
 INIT_PROMPT = (
-    "Bu klasördeki projeyi incele (yapı, diller, build/test komutları, önemli dosyalar, kod stili) ve proje kökünde "
-    "ALICE.md adında kısa ve yoğun bir talimat dosyası oluştur. Gelecekte bu projede çalışacak bir ajana lazım olacak "
-    "her şeyi yaz: nasıl çalıştırılır, nasıl test edilir, klasör yapısı, dikkat edilecek kurallar. Varsa README'yi ve "
-    "mevcut ALICE.md/CLAUDE.md/AGENTS.md dosyalarını temel al, tekrar etme."
+    "Study the project in this folder (structure, languages, build/test commands, important files, code style) and "
+    "create a short, dense instruction file named ALICE.md at the project root. Write everything an agent that works "
+    "on this project in the future will need: how to run it, how to test it, the folder structure, rules to watch. "
+    "Build on the README and on existing ALICE.md/CLAUDE.md/AGENTS.md files if there are any; don't repeat them."
 )
 
 
 def council_prompt(args: str) -> str:
     """/kurul <topic>: the message that asks the review council about the topic."""
-    topic = args.strip() or "Bu konuşmada en son konuştuğumuz konu ya da değişiklik"
-    return (f"Şunu inceleme kuruluna sor (council aracı; konu kritikse critical=true): {topic}\n\nKurulun kararını, "
-            "doğrulanmış bulguları ve kimin neyi neden savunduğunu bana kısaca özetle.")
+    topic = args.strip() or "the topic or change we last talked about in this conversation"
+    return (f"Ask the review council about this (council tool; critical=true if the topic is critical): {topic}\n\n"
+            "Summarize briefly for me the council's decision, the verified findings and who defended what and why. "
+            "Answer in the user's language.")
 
 
 @dataclass
@@ -122,7 +128,7 @@ def _parse(path: Path) -> CustomCommand:
         end = text.find("\n---", 3)
         if end != -1:
             for line in text[3:end].splitlines():
-                k, _, v = line.partition(":")
+                k, _sep, v = line.partition(":")
                 if k.strip() == "description":
                     desc = v.strip()
             text = text[end + 4:]
@@ -150,7 +156,7 @@ def load_custom(cwd: Path) -> dict[str, CustomCommand]:
 
 def catalog(cwd: Path) -> list[dict[str, str]]:
     custom = load_custom(cwd)
-    items = [{"name": n, "description": d, "kind": "builtin"} for n, d in BUILTINS.items() if n not in custom]
+    items = [{"name": n, "description": _(d), "kind": "builtin"} for n, d in BUILTINS.items() if n not in custom]
     items += [{"name": c.name, "description": c.description, "kind": "custom"} for c in custom.values()]
     return items
 

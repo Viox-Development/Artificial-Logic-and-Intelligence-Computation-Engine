@@ -135,7 +135,7 @@ def test_chat_council_tool_and_slash_command(workdir):
     assert agent.run_turn(council_prompt("README")) == "Kurul onayladı."
     tool_text = next(m["content"] for m in agent.messages if m["role"] == "tool")
     assert "Kurula sor: ONAY" in tool_text and "eleştirmen" in tool_text
-    assert "council aracı" in council_prompt("x")
+    assert "council tool" in council_prompt("x")
 
 
 def project_script(state):

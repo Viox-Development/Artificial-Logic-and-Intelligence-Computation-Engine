@@ -203,3 +203,18 @@ def test_old_turkish_default_rules_follow_the_language(tmp_path):
     i18n.set_language("tr")
     assert rule_view(gpu)["text"] == "GPU uzun süre çok ısınırsa söyle" and rule_view(mine)["text"] == "kendi kuralım"
     assert RuleEngine._format(gpu, "pc.gpu.temp", 91) == "Ekran kartı 91°C, birkaç dakikadır çok sıcak."
+
+
+def test_slash_command_descriptions_follow_the_language(tmp_path):
+    """The built-in command descriptions are English in the code and translated when the catalog is built; a
+    command the user wrote keeps its own text."""
+    from alice.commands import catalog
+
+    (tmp_path / ".alice" / "commands").mkdir(parents=True)
+    (tmp_path / ".alice" / "commands" / "mine.md").write_text("---\ndescription: benim komutum\n---\nyap", encoding="utf-8")
+    en = {c["name"]: c for c in catalog(tmp_path)}
+    assert en["help"]["description"] == "Show the commands" and en["mine"]["description"] == "benim komutum"
+    i18n.set_language("tr")
+    tr = {c["name"]: c for c in catalog(tmp_path)}
+    assert tr["help"]["description"] == "Komutları göster" and tr["mine"]["description"] == "benim komutum"
+    assert all(c["description"] for c in tr.values())
