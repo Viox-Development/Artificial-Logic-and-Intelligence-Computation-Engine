@@ -124,8 +124,9 @@ class Tool:
         s = json.dumps(args, ensure_ascii=False)
         return s if len(s) < 160 else s[:157] + "..."
 
-    def run(self, ctx: ToolContext, **args: Any) -> ToolResult:
-        raise NotImplementedError
+    # Every tool defines run(self, ctx, <its schema arguments>) -> ToolResult. It is only declared here as a type: a
+    # base method taking **args would make each tool's own argument list an incompatible override.
+    run: Callable[..., ToolResult]
 
     def spec(self) -> dict[str, Any]:
         return {"type": "function", "function": {
