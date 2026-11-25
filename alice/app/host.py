@@ -202,7 +202,11 @@ class AppHost:
     def busy(self) -> bool:
         """Whether a chat is currently running in the app (core should not restart for update during this)."""
         st = self.state
-        return bool(st is not None and (st.agent.busy or st._queued or st.running()))
+        if st is None:
+            return False
+        from alice.tools import workflow
+
+        return bool(st.agent.busy or st._queued or st.chat.working or st.running() or workflow.any_running())
 
     def stop(self) -> None:
         with self._lock:

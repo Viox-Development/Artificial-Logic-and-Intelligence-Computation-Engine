@@ -31,7 +31,7 @@ from alice import session as sess
 from alice.agent import Agent, parse_args
 from alice.config import Config, alice_home
 from alice.decider import Decider
-from alice.i18n import _
+from alice.i18n import _, pick
 from alice.i18n import language as ui_language
 from alice.permissions import MODES, Permissions
 from alice.providers.router import Router, parse_ref
@@ -470,9 +470,10 @@ class Chat:
     def save(self) -> None:
         if not self.abandoned and self.sid not in getattr(self.app, "deleted_sids", ()):
             from alice import subagents
+            from alice.tools import workflow
 
             extra = {**self.agent.export_stats(), "started": self.started,
-                     "subagents": subagents.export(self.ctx)}
+                     "subagents": subagents.export(self.ctx), "workflows": workflow.export(self.ctx)}
             sess.save(self.sid, self.agent.messages, self.ctx.cwd, extra)
             cps = self.agent.checkpoints
             sig = (len(cps), sum(len(v) for v in cps.values()))
@@ -486,12 +487,12 @@ class Chat:
 
     def switch_to(self, sid: str, messages: list[dict[str, Any]] | None = None) -> None:
         """Switch to another chat with the same agent (new or saved): do not carry over previous chat's statistics,
-        usage breakdown, rewind checkpoints, or subagents to the new one."""
+        usage breakdown, rewind checkpoints, subagents or workflows to the new one."""
         self.agent.reset()
         self.agent.stats = {k: 0 for k in self.agent.stats}
         self.agent.usage_models, self.agent.usage_tools = {}, {}
         self.agent.checkpoints = {}
-        for k in ("subagents", "subagent_ids"):
+        for k in ("subagents", "subagent_ids", "workflows", "workflow_budget"):
             self.ctx.state.pop(k, None)
         self.set_sid(sid)
         getattr(self.app, "deleted_sids", set()).discard(sid)
@@ -502,14 +503,16 @@ class Chat:
             self._restore_extra()
 
     def _restore_extra(self) -> None:
-        """When opening a saved chat: statistics, usage breakdown, subagents, rewind checkpoints, and start time."""
+        """When opening a saved chat: statistics, usage breakdown, subagents, workflows, rewind checkpoints, and start time."""
         from alice import subagents
+        from alice.tools import workflow
 
         try:
             extra = sess.load_extra(self.sid)
             self.agent.import_stats(extra)
             self.started = float(extra.get("started") or self.started)
             subagents.restore(self.ctx, extra.get("subagents") or [])
+            workflow.restore(self.ctx, extra.get("workflows") or [])
             cps = sess.load_checkpoints(self.sid)
             if cps:
                 self.agent.checkpoints.update(cps)
@@ -551,6 +554,15 @@ class Chat:
         self._jobs.put((fn, done))
         if wait is not None:
             done.wait(wait)
+
+    @property
+    def working(self) -> bool:
+        """Agents of this chat still work although its turn is over (a workflow, background subagents). Their permission
+        questions are shown in it and their results come to it, so it is neither closed nor reused for another chat."""
+        from alice import subagents
+        from alice.tools import workflow
+
+        return workflow.active(self.ctx) or any(s.status == "running" for s in list(subagents.registry(self.ctx).values()))
 
     def close(self, wait: float | None = None) -> None:
         """Clean up tool resources (browser connections, background commands) in its own thread, terminate thread."""
@@ -727,7 +739,7 @@ class AppState:
     def running(self) -> list[str]:
         """Chats still running in the background (marked in the sidebar)."""
         with self._chats_lock:
-            return [sid for sid, c in self.background.items() if c.busy]
+            return [sid for sid, c in self.background.items() if c.busy or c.working]
 
     # ------------------------------------------------------------------ chat by device
     # Desktop, quick bar, and phone share the same app state, but each can display its own chat. Previously
@@ -777,7 +789,7 @@ class AppState:
     # ------------------------------------------------------------------ chat switching
     def _make_room(self) -> str | None:
         """Move foreground chat to background if running. Returns error string if no room."""
-        if not self.chat.busy:
+        if not self.chat.busy and not self.chat.working:
             return None
         if len(self.running()) >= self.MAX_BACKGROUND:
             return _("the limit of {n} background chats is reached; you can't switch to a new one until one finishes",
@@ -822,6 +834,9 @@ class AppState:
                 start = end - 7 * 86400
         except (OSError, ValueError, TypeError, AttributeError):
             pass  # unreadable file: keep the defaults
+        from alice.tools import workflow
+
+        workflow.stop_session(sid)
         self.deleted_sids.add(sid)
         f.unlink(missing_ok=True)
         sess.archive_path(sid).unlink(missing_ok=True)
@@ -857,7 +872,7 @@ class AppState:
                 return True
             if sid in self.background:  # return to chat running in background: from live instance, not disk
                 target = self.background.pop(sid)
-                busy = self.chat.busy
+                busy = self.chat.busy or self.chat.working
                 if busy and self._make_room():
                     self.background[sid] = target
                     return False
@@ -882,7 +897,7 @@ class AppState:
         with self._chats_lock:
             chat.queued = False
             # A command still running for this chat: closing would kill it, its end comes as a new turn.
-            if chat is self.chat or shell.pending(chat.ctx):
+            if chat is self.chat or shell.pending(chat.ctx) or chat.working:
                 return
             self.background.pop(chat.sid, None)
         chat.close()
@@ -1018,6 +1033,7 @@ class AppState:
             "brain_chain": self.router.chain("brain"),
             "brain_pinned": "brain" in self.router.role_overrides,
             "thinking": self.router.thinking_level("brain"),
+            "ultracode": bool(self.router.ultracode),
             **self._thinking_options(),
             "stats": self.agent.stats_view(),
             "user": _user_name(),
@@ -1065,6 +1081,51 @@ class AppState:
                 skills.delete_agent(str(d.get("name", "")), self.ctx.cwd)
                 return {"ok": True, "note": _("deleted")}, 200
         except (ToolError, ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)[:300]}, 400
+        return {"ok": False, "error": _("unknown action")}, 404
+
+    def set_ultracode(self, on: bool) -> None:
+        """The switch next to the effort: any effort works with it. Not saved, so it is off after a restart."""
+        self.router.ultracode = on
+        ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain") or "")
+        if on and ":" in ref and getattr(self.router, "_real_clients", False):
+            # The agent names the provider's other models to the model: have the list ready.
+            threading.Thread(target=self.router._catalog_refs, args=([ref.partition(":")[0]],), daemon=True,
+                             name="alice-catalog").start()
+
+    def workflows_view(self, sid: str = "") -> dict[str, Any]:
+        """Workflow runs of the foreground chat (or of sid), newest first."""
+        from alice.tools import workflow
+
+        chat = self.find_chat(sid) if sid else self.chat
+        if chat is not None:
+            return {"runs": workflow.snapshots(chat.ctx)}
+        if not self._SID_RX.fullmatch(sid):
+            return {"runs": []}
+        return {"runs": workflow.revived(sess.load_extra(sid).get("workflows") or [])[::-1]}  # a chat that isn't open
+
+    def workflows_action(self, path: str, d: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        from alice.tools import workflow
+        from alice.tools.base import ToolError
+
+        sid, run_id = str(d.get("sid") or ""), str(d.get("id") or "")
+        chat = self.chat if not sid else self.find_chat(sid)
+        entry = workflow.registry(chat.ctx).get(run_id) if chat is not None else workflow.live(run_id, sid)
+        try:
+            if path == "/api/workflows/stop":
+                if entry is None:
+                    return {"ok": False, "error": pick("no such workflow run", "böyle bir iş akışı çalışması yok")}, 404
+                if workflow.stop(entry):
+                    return {"ok": True}, 200
+                return {"ok": False, "error": pick("it is not running any more", "artık çalışmıyor")}, 200
+            if path == "/api/workflows/resume":
+                if chat is None:
+                    return {"ok": False, "error": pick("open the chat first", "önce sohbeti aç")}, 400
+                if entry is None:
+                    return {"ok": False, "error": pick("no such workflow run", "böyle bir iş akışı çalışması yok")}, 404
+                new = workflow.start(chat.ctx, workflow.source_of(chat.ctx, resume_from=run_id), resume_from=run_id)
+                return {"ok": True, "id": new.run.id}, 200
+        except (ToolError, OSError) as e:
             return {"ok": False, "error": str(e)[:300]}, 400
         return {"ok": False, "error": _("unknown action")}, 404
 
@@ -1808,7 +1869,7 @@ class AppState:
         """Pull the update. On success, application restarts (a new window opens)."""
         from alice import updater
 
-        if self.agent.busy or self._queued:
+        if self.agent.busy or self._queued or self.chat.working or self.running():
             return {"ok": False, "error": _("stop the current job first")}
         with self._update_lock:
             info = self.update if self._update_shown() else updater.check(self.cfg)
@@ -2040,7 +2101,9 @@ class AppState:
             ref = None
         return self.router.context_limit(ref) if ref else 0
 
-    def send(self, text: str, images: list[str] | None = None, sid: str = "") -> tuple[bool, str | None]:
+    def send(self, text: str, images: list[str] | None = None, sid: str = "",
+             background: bool = False) -> tuple[bool, str | None]:
+        """background: a result of ALICE's own background work, not something the user typed."""
         chat = self.chat if not sid or sid == self.chat.sid else self.chat_for(sid)
         if chat is None:
             return False, _("the limit of {n} background chats is reached; try again when one finishes",
@@ -2056,7 +2119,8 @@ class AppState:
             # If ALICE is waiting for an answer on a question card, the sent message is the answer to that question.
             # Previously message went to inbox; since agent waited in question tool, inbox unread, message was "lost".
             choice = next((p for p in list(chat.ui.pending.values()) if p.get("type") == "ask_choice"), None)
-            if choice and not text.startswith("/") and chat.ui.answer_choice(choice["id"], text):
+            # Not a background result: it can be outside content, and it would close the question as "the user's answer".
+            if choice and not background and not text.startswith("/") and chat.ui.answer_choice(choice["id"], text):
                 chat.ui.publish({"type": "user", "text": text, "mi": None, "images": [], "steer": True})
                 return True, None
             if not text.startswith("/") and chat.agent.steer(text, images):
@@ -2084,7 +2148,7 @@ class AppState:
         Background chats only closed on turn finish: if turn never started, thread and agent stayed forever."""
         with self._chats_lock:
             if (chat is self.chat or chat.busy or self.background.get(chat.sid) is not chat
-                    or shell.pending(chat.ctx)):
+                    or shell.pending(chat.ctx) or chat.working):
                 return
             self.background.pop(chat.sid, None)
         chat.close()
@@ -2164,11 +2228,13 @@ class AppState:
         """Message to chat from background (watch event, detached session result): steered into work if chat is running,
         starts a new turn if idle. Retries a few times if turn finishes at that exact moment. Empty: delivered."""
         err = ""
-        for _attempt in range(max(1, tries)):
-            ok, err = self.send(text, sid=sid)
+        full = _("the limit of {n} background chats is reached; try again when one finishes", n=self.MAX_BACKGROUND)
+        for attempt in range(max(1, tries, 600)):
+            ok, err = self.send(text, sid=sid, background=True)
             if ok:
                 return ""
-            if not any(w in (err or "") for w in ("çalışıyor", "running")):
+            # No room for the chat right now: wait for it longer (10 min), the result would be lost otherwise.
+            if err != full and (attempt >= tries or not any(w in (err or "") for w in ("çalışıyor", "running"))):
                 break
             time.sleep(1.0)
         return err or _("could not deliver")
@@ -2574,6 +2640,8 @@ def make_handler(state: AppState):
                 return self._json(state.procs_view((q.get("sid") or [""])[0]))
             if u.path == "/api/subagents":
                 return self._json(state.subagents_view())
+            if u.path == "/api/workflows":
+                return self._json(state.workflows_view((q.get("sid") or [""])[0]))
             if u.path in ("/api/browser/frame", "/api/browser/tabs"):
                 from alice.app.builtin_browser import BrowserError
 
@@ -2976,6 +3044,8 @@ def make_handler(state: AppState):
                     ok = revert_change(state.agent.checkpoints, str(d.get("path", "")))
                     return self._json({"ok": ok, "changes": session_changes(state.agent.checkpoints, state.ctx.cwd)},
                                       200 if ok else 404)
+                if p.startswith("/api/workflows/"):
+                    return self._json(*state.workflows_action(p, d))
                 if p.startswith(("/api/subagents/", "/api/agents/")):
                     return self._json(*state.subagents_action(p, d))
                 if p.startswith("/api/prs/"):
@@ -3092,16 +3162,21 @@ def make_handler(state: AppState):
                     if ok:
                         state.chat.save()  # prevent archived messages in session file from appearing twice
                     return self._json({"ok": ok, **state.status()})
+                if p == "/api/ultracode":
+                    state.set_ultracode(bool(d.get("on")))
+                    return self._json({"ok": True, **state.status()})
                 if p == "/api/thinking":
                     from alice.config import set_config_value
                     from alice.providers.thinking import LEVELS
 
                     level = str(d.get("level", ""))
+                    if level == "ultracode":  # an interface that was loaded before it became a switch
+                        state.set_ultracode(True)
+                        return self._json({"ok": True, **state.status()})
                     if level not in LEVELS:
                         return self._json({"ok": False, "error": _("level: {levels}", levels=" | ".join(LEVELS))}, 400)
                     state.router.thinking_overrides["brain"] = level
-                    if level != "ultracode":  # lasts for the session: after a restart the last normal level is back
-                        set_config_value("thinking", "brain", level)  # persist across restarts
+                    set_config_value("thinking", "brain", level)  # persist across restarts
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/models/hide":
                     from alice.config import set_config_value

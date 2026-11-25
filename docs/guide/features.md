@@ -31,6 +31,7 @@ the current token order and undercover mode; this page describes both.
 | Permission rules | `[permissions] allow / ask / deny` patterns (`run_command(git status*)`), `.alice/permissions.toml` in the project; deny applies in every mode |
 | Skills | `~/.alice/skills/<name>/SKILL.md` (and `.alice/skills`, `.claude/skills` in the project): only the description is in the prompt; the whole skill and its files are read with the `skill` tool when needed |
 | Custom subagents | `~/.alice/agents/<name>.md` (and in the project): their own prompt, tool list, model and step limit; `agent=<name>` in the `task` tool |
+| Workflows, ultracode | `workflow`: ALICE writes a script that runs many subagents, has them verify each other and returns data; see below |
 | Multiple-choice questions | `ask_user`: a clickable card in the app (keys 1-6), a numbered list in the terminal, buttons in the quick bar; a plain question in voice |
 | Headless | `alice -p "..."` (also reads stdin), `--output-format json` or `stream-json` |
 | Notebook editing | `notebook_edit`: replace, insert or delete a cell in an .ipynb (other cells and outputs are untouched) |
@@ -100,6 +101,45 @@ max_steps: 30
 ---
 You are a meticulous code reviewer. Report only real bugs...
 ```
+
+## Workflows and ultracode
+
+For work that one agent can't hold at once (a review of a whole project, a migration over 200 files, research that has
+to be checked), ALICE writes a **workflow**: a short Python script that fans the work out to subagents, waits where it
+must, has other agents try to refute what was found, and returns the result. It runs when you ask for a workflow or for
+many agents, and by itself with the **ultracode** switch in the effort menu or when the word *ultracode* is in your message
+(only for that message). It costs tokens: a `+500k` or `+2m` in the message is a ceiling for the workflows of that turn.
+
+```python
+META = {"name": "review", "description": "Review the changed files and verify each finding",
+        "phases": [{"title": "Review"}, {"title": "Verify"}]}
+
+BUGS = {"type": "object", "required": ["bugs"], "properties": {"bugs": {"type": "array", "items": {"type": "string"}}}}
+VERDICT = {"type": "object", "required": ["real"], "properties": {"real": {"type": "boolean"}}}
+
+async def review(path):
+    return await agent(f"Review {path} for bugs.", label=path, phase="Review", schema=BUGS)
+
+async def verify(found, path):
+    votes = await parallel([lambda b=b: agent(f"Try to refute this bug in {path}: {b}", phase="Verify", schema=VERDICT)
+                            for b in found["bugs"]])
+    return [b for b, v in zip(found["bugs"], votes) if v and v["real"]]
+
+return await pipeline(args["files"], review, verify)
+```
+
+- The script runs in its own process without files, network, clock or randomness; only its agents touch anything, and
+  their tool calls ask for permission like always, under the name of the run. Starting a workflow is asked about like a
+  command (in plan mode it does not run). Agents can't start other agents or workflows.
+- The run goes on in the background: its phases and agents are in the Agents tab, and the result comes back to the chat.
+  Stop in the chat stops its workflows too.
+- Every run is kept in `~/.alice/workflows/<id>/` (script, journal of finished agents, result). Resume replays the agents
+  that are already done and runs the rest.
+- An agent can have its own model (`fast`, `provider:model`), effort, custom definition, or git worktree
+  (`isolation="worktree"`: removed if nothing changed, kept with its branch otherwise).
+- Workflows worth keeping go to `<project>/.alice/workflows/*.py` or `~/.alice/workflows/saved/*.py`; ALICE starts them by
+  the name in `META`.
+- Limits: `[agent] workflow_max_agents` (200) and `workflow_concurrency` (0 = 2-6, depending on the computer).
 
 ## Eval
 

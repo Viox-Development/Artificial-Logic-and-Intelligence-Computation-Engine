@@ -365,7 +365,7 @@ class Agent:
     ):
         self.config = config
         self.router = router
-        self.tools = {t.name: t for t in tools if not (is_child and t.name in ("task", "subagents"))}
+        self.tools = {t.name: t for t in tools if not (is_child and t.name in ("task", "subagents", "workflow"))}
         self.ctx = ctx
         self.permissions = permissions
         self.ui = ui or NullUI()
@@ -411,6 +411,8 @@ class Agent:
         # That way a Stop that lands between the check and the start of the turn is not lost.
         self.stop_check: Any = None
         self.busy = False
+        self.end_turn = False  # a tool that delivered the turn's result sets it: no further model call is made
+        self.halted = False  # the turn was cut short (step limit, token budget, refused calls, no model)
         # User messages that arrive while working (steer): they enter the conversation before the next model step.
         self._inbox: list[tuple[str, list[str]]] = []
         self._inbox_lock = threading.Lock()
@@ -447,6 +449,8 @@ class Agent:
         from alice.tools.groups import visible_tools
 
         tools = visible_tools(self.tools, self.ctx.state.setdefault("tool_groups", set()))
+        if self.role == "voice":  # a spoken conversation has no use for a script, and its definition is a long one
+            tools = [t for t in tools if t.name != "workflow"]
         # The order is fixed: tools sent earlier stay in place, tools of a newly opened group are appended at the end.
         # The tool list is at the start of the request; when a tool entered the middle, the prompt cache was wasted
         # for everything after that point in the list.
@@ -829,11 +833,21 @@ class Agent:
             from alice import guard
 
             guard.clear(self.ctx)  # the user's new message: external content read in the previous turn does not restrict this turn
+            self._mark_background(user_text)
+            if not thinking.from_background(user_text):  # a result that arrives belongs to the request that started it
+                self.ctx.state["workflow_budget"] = thinking.token_target(user_text)
+                self.ctx.state["workflow_budget_runs"] = []
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
         guess_text = strip_plan_note(content_text)
         if not self.is_child and self.role == "brain" and self._ultracode(user_text):
-            content_text += thinking.ULTRACODE_NOTE
+            content_text += thinking.ULTRACODE_NOTE.format(models=self._worker_note())
+            # Its definition is long, so it is not in every request: here it is needed for sure.
+            self.ctx.state.setdefault("tool_groups", set()).add("workflow")
+            target = thinking.token_target(user_text)
+            if target:
+                content_text += (f"\n[token target: {target:,} tokens. Workflows started for this request get it as their "
+                                 "budget (a hard ceiling); scale the work to it.]")
         notes = [] if self.is_child else self.ctx.state.pop("bg_notes", [])
         if notes:
             content_text += "\n\n[" + "; ".join(notes) + "]"
@@ -867,6 +881,7 @@ class Agent:
         self._error_streak = 0
         sink = _Sink(self.ui, self.cancel)
         sink.early, sink.early_reset = self._early_start, self._early_clear
+        self.end_turn = self.halted = False
         self._turn_tools: set[str] = set()
         nudges = 0
         verified = False
@@ -967,6 +982,8 @@ class Agent:
                 t_tools = time.monotonic()
                 self._run_tools(msg["tool_calls"])
                 self.stats["tool_s"] += time.monotonic() - t_tools
+                if self.end_turn:
+                    return final
                 if self._denials[0] >= DENIAL_LIMITS[0] or self._denials[1] >= DENIAL_LIMITS[1]:
                     return self._halt(_(DENIAL_HALT)) or final
                 budget = self._turn_budget()
@@ -1117,6 +1134,7 @@ class Agent:
         with self._inbox_lock:
             items, self._inbox = self._inbox, []
         for text, images in items:
+            self._mark_background(text)
             body = f"[The user wrote this while you were working; take it into account and carry on]\n{text}"
             content: Any = body
             if images:
@@ -1134,6 +1152,7 @@ class Agent:
         it shows on screen and in the log, and in the next turn the model knows the work was left unfinished. Only an
         info line for subagents and voice. error=True: a provider error; shown on screen but not sent to the model
         (_error, see router.clean_messages)."""
+        self.halted = True
         if self.is_child or self.role == "voice":
             self.ui.info(text)
             return ""
@@ -1273,6 +1292,10 @@ class Agent:
 
         moved = background_foreground(self.ctx, "stop")  # before cancel: the waiting command must see it first
         self.cancel.set()
+        if not self.is_child:  # the agents of this chat's workflows stop with it
+            from alice.tools.workflow import stop_runs
+
+            stop_runs(self.ctx)
         kill_foreground(self.ctx, skip=moved)
         abort_browser(self.ctx, "stop")  # a stuck browser call (only if one is running)
 
@@ -1553,7 +1576,8 @@ class Agent:
             if d.get("additionalContext"):
                 self.__dict__.setdefault("_hook_notes", {})[call["id"]] = d["additionalContext"]
         try:
-            summary = tool.summary(args)
+            summary_for = getattr(tool, "summary_for", None)  # tools whose summary depends on the working folder
+            summary = summary_for(self.ctx, args) if callable(summary_for) else tool.summary(args)
             if quiet:
                 return tool, args, summary
             verdict = self.permissions.decide(tool, args, self.ctx)
@@ -1798,9 +1822,24 @@ class Agent:
 
     def _ultracode(self, text: str) -> bool:
         # Ultracode is on for the session (effort menu), or the user wrote the word in this message.
-        level = getattr(self.router, "thinking_level", None)
-        return (level is not None and level(self.role) == thinking.ULTRACODE) or bool(
-            re.search(r"\bultracode\b", text or "", re.I))
+        return bool(getattr(self.router, "ultracode", False)) or thinking.wants_ultracode(text)
+
+    def _worker_note(self) -> str:
+        try:
+            ref = (self.router.role_overrides.get(self.role) or [None])[0] or self.router.last_ref.get(self.role) \
+                or self.router.first_available(self.role) or ""
+            others = self.router.worker_models(ref)
+        except Exception:  # noqa: BLE001 - only a hint
+            return ""
+        return f" Other models you can give them: {', '.join(others)}." if others else ""
+
+    def _mark_background(self, text: str) -> None:
+        """A workflow result that contains outside content arrives as a message, not as a tool result: the turn that
+        reads it counts as tainted all the same (see guard)."""
+        from alice import guard
+
+        if thinking.from_background(text) and "<untrusted_content" in text:
+            guard.mark(self.ctx, "workflow")
 
     def _cache_ttl_choice(self) -> str:
         """Claude API cache TTL for this session: "5m" or "1h", latched on first use.

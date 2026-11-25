@@ -36,8 +36,8 @@ GROUPS: dict[str, tuple[set[str], str, str]] = {
               r"sembol|referans"),
     "plan": ({"todo_write", "next_step", "monitor", "session", "run_plan", "task_control", "task", "subagents",
               "agent_defs", "process_output", "process_stop", "process_wait", "skill", "exit_plan_mode",
-              "enter_plan_mode", "notify", "advisor"},
-             "multi-step work plan and to-do list, end-of-turn summary box, subagents, starting/handing off a "
+              "enter_plan_mode", "notify", "advisor", "workflow"},
+             "multi-step work plan and to-do list, end-of-turn summary box, subagents, workflows of many agents, starting/handing off a "
              "separate chat, watching in the background and coming back on an event, output/waiting/stopping of a "
              "background command, skills, plan approval",
              r"önce .* sonra|ardından|sonra da|adım adım|planla|alt ajan|ajan tanımla|ajanlar(ım)?\b|arka planda|"
@@ -170,6 +170,7 @@ TOOL_HINTS: dict[str, str] = {
     "task_control": r"görev(i)? (onayla|durdur|iptal)|planı (onayla|durdur)|ne durumda",
     "task": r"alt ajan|subagent|paralel|parallel|aynı anda",
     "subagents": r"alt ajan|subagent|ajanlar(ım)?\b",
+    "workflow": r"ultracode|iş akışı|workflow|çok(lu)? ajan|many agents|fan out",
     "agent_defs": r"ajan tanımla|ajan(ı|ları)? (oluştur|düzenle)|agent definition",
     "process_output": r"arka planda|background|sunucu(yu)? başlat|dev server|npm run|\bwatch\b|start the server",
     "process_stop": r"arka planda|background|sunucu(yu)? (başlat|durdur)|dev server|npm run|\bwatch\b|"

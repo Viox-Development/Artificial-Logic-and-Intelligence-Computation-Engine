@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 
-from alice.config import Config, default_config_dict
-from alice.providers.openai_compat import ChatResult, ProviderError, normalize_message
+# The fixture below gives every test its own home, but a thread that outlives its test finds the environment restored:
+# chats, workflow runs and a model measurement of tests ended up in the real ~/.alice. Now they find this one.
+os.environ["ALICE_HOME"] = tempfile.mkdtemp(prefix="alice-tests-")
+
+from alice.config import Config, default_config_dict  # noqa: E402
+from alice.providers.openai_compat import ChatResult, ProviderError, normalize_message  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

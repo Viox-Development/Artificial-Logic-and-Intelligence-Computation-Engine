@@ -71,15 +71,22 @@ def test_few_per_provider_hidden_left_out_pinned_always_there():
 
 
 # ------------------------------------------------------------------------------------------------ ultracode
-def test_ultracode_is_xhigh_where_the_model_has_it():
-    assert thinking.ULTRACODE in thinking.levels_for("anthropic", "claude-opus-5-5")[0]
-    assert thinking.ULTRACODE in thinking.levels_for("cliproxy", "gpt-6.1-terra")[0]
-    assert thinking.params("anthropic", "claude-opus-5-5", "ultracode") == {"reasoning_effort": "xhigh"}
-    for provider, model in (("anthropic", "claude-haiku-5-5"), ("gemini", "gemini-3.8-flash"), ("openrouter", "x/y")):
-        levels = thinking.levels_for(provider, model)[0]
-        assert thinking.ULTRACODE not in levels
-        assert thinking.fit("ultracode", levels) in ("high", "max")
-    assert thinking.fit("ultracode", ["low", "ultracode"]) == "ultracode"
+def test_ultracode_is_a_switch_not_a_level():
+    assert "ultracode" not in thinking.LEVELS
+    for provider, model in (("anthropic", "claude-opus-5-5"), ("cliproxy", "gpt-6.1-terra"), ("gemini", "gemini-3.8-flash")):
+        assert "ultracode" not in thinking.levels_for(provider, model)[0]
+
+
+def test_cheaper_models_of_the_same_provider(tmp_path):
+    from tests.conftest import FakeProvider, make_config
+
+    from alice.providers.router import Router
+
+    r = Router(make_config({"brain": ["a:m"]}), provider_factory=lambda pc: FakeProvider("a", []), auto_cache={})
+    assert r.worker_models("a:claude-opus-5-5") == []  # nothing read yet, nothing is fetched here
+    r._catalog_cache["a"] = (0, {f"a:{m}" for m in ("claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5",
+                                                  "claude-haiku-5-5", "claude-fable-5-dd-7.4-korg", "grok-imagine-video")})
+    assert set(r.worker_models("a:claude-opus-5-5")) == {"a:claude-sonnet-5-5", "a:claude-haiku-5-5"}
 
 
 def test_ultracode_note_goes_to_the_model_not_to_the_screen(workdir):
@@ -91,9 +98,10 @@ def test_ultracode_note_goes_to_the_model_not_to_the_screen(workdir):
     agent.run_turn("ultracode testleri düzelt")
     msg = agent.messages[-2]
     assert "[ultracode:" in msg["content"] and msg["_display"] == "ultracode testleri düzelt"
-    agent.router.thinking_overrides["brain"] = "ultracode"
+    agent.router.ultracode = True
+    agent.router.thinking_overrides["brain"] = "low"  # any effort goes with it
     agent.run_turn("testleri düzelt")
-    assert "[ultracode:" in agent.messages[-2]["content"]
+    assert "[ultracode:" in agent.messages[-2]["content"] and agent.router.thinking_level("brain") == "low"
 
 
 # ------------------------------------------------------------------------------------------------ measurement file
