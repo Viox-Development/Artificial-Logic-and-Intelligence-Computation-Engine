@@ -128,6 +128,7 @@ class Monitor(Tool):
                 proc = ctx.state.get("bg_procs", {})[int(w.target)]
             except (KeyError, ValueError) as e:
                 raise ToolError(f"there is no background process {w.target} (start it with run_command background=true)") from e
+            proc.notify = False  # this watch tells the chat when the process ends
             log: Path = proc.log
             pos = [log.stat().st_size if log.exists() else 0]
 

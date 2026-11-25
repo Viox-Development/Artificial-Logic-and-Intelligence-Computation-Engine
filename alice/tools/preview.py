@@ -104,6 +104,8 @@ class Preview(Tool):
         res = RunCommand().run(ctx, command, background=True)
         m = re.search(r"pid=(\d+)", res.text)
         proc = ctx.state.get("bg_procs", {}).get(int(m.group(1))) if m else None
+        if proc is not None:
+            proc.notify = False  # a preview server that closes is no news for the chat
         end = time.monotonic() + wait
         while time.monotonic() < end:
             if _reachable(url):
