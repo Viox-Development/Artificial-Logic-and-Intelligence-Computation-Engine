@@ -1,7 +1,8 @@
 """Spoken checklists.
 
 Lists are markdown: the heading is the list's name, each "- " line is a step. First ~/.alice/checklists/
-(your own lists) is searched, then the bundled ones (F-16C, simplified).
+(your own lists) is searched, then the bundled ones (F-16C, simplified; checklists/en/ when the speech language is
+English).
 "Alice, iniş kontrol listesi" (landing checklist) -> the first step is read; "tamam" / "devam" -> the next step.
 """
 
@@ -13,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from alice.config import alice_home
-from alice.i18n import spoken
+from alice.i18n import speech_language, spoken
 
 BUILTIN = Path(__file__).with_name("checklists")
 
@@ -33,7 +34,8 @@ class Checklist:
 
 def load_all() -> dict[str, Checklist]:
     out: dict[str, Checklist] = {}
-    for folder in (BUILTIN, alice_home() / "checklists"):  # the user's own lists overwrite the built-in ones
+    builtin = BUILTIN / "en" if speech_language() == "en" and (BUILTIN / "en").is_dir() else BUILTIN
+    for folder in (builtin, alice_home() / "checklists"):  # the user's own lists overwrite the built-in ones
         if not folder.is_dir():
             continue
         for p in sorted(folder.glob("*.md")):

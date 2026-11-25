@@ -232,10 +232,13 @@ def _name_like(word: str, after_hey: bool | str) -> bool:
     return after_hey and len(w) >= 4 and max(difflib.SequenceMatcher(None, w, n).ratio() for n in ("alis", "alice", "elis")) >= 0.8
 
 
+# Turkish and English answers (the speech language may be either).
 YES_WORDS = {"evet", "tamam", "tamamdır", "olur", "onay", "onayla", "onaylıyorum", "yap", "yapabilirsin", "devam",
-             "peki", "tabii", "elbette"}
+             "peki", "tabii", "elbette",
+             "yes", "yeah", "yep", "sure", "ok", "okay", "go", "approve", "approved", "confirm", "proceed", "do"}
 NO_WORDS = {"hayır", "hayir", "yapma", "dur", "durdur", "iptal", "vazgeç", "istemiyorum", "onaylama", "etme",
-            "silme", "açma", "kapatma", "gönderme", "olmaz", "yok", "bekle"}
+            "silme", "açma", "kapatma", "gönderme", "olmaz", "yok", "bekle",
+            "no", "nope", "don", "dont", "not", "stop", "cancel", "wait", "never"}
 
 
 def is_yes(text: str) -> bool:
@@ -345,18 +348,23 @@ _HUSH_PHRASES = {
     ("sesini", "kes"), ("kes", "sesini"), ("sesini", "kapat"), ("sesini", "kıs"),
     ("uyku", "moduna", "geç"), ("dinlemeyi", "bırak"), ("beni", "dinleme"), ("konuşmayı", "bırak"),
     ("konuşma", "artık"), ("artık", "konuşma"),
+    # English
+    ("shut", "up"), ("be", "quiet"), ("keep", "quiet"), ("stop", "talking"), ("stop", "listening"), ("quiet",),
+    ("silence",), ("hush",), ("go", "to", "sleep"),
 }
 # Weak: silences only if it is the whole sentence ("yeter" = enough, "kes" = cut, "dur" = stop), or if a name comes
 # right before it ("... Alice yeter"). At the end of a longer sentence it does not silence on its own:
 # "pastayı ikiye kes" (cut the cake in half) or "bu kadar yeter mi" (is that enough?) are not commands.
 _HUSH_WEAK = {("yeter",), ("kes",), ("dur",), ("konuşma",), ("uyu",), ("bu", "kadar"), ("o", "kadar"),
               ("teşekkürler",), ("teşekkür", "ederim"), ("sağ", "ol"), ("sağol",), ("eyvallah",), ("görüşürüz",),
-              ("iyi", "geceler"), ("kes", "artık"), ("bırak",)}
+              ("iyi", "geceler"), ("kes", "artık"), ("bırak",),
+              ("stop",), ("enough",), ("that", "s", "all"), ("that", "s", "enough"), ("thanks",), ("thank", "you"),
+              ("good", "night"), ("bye",), ("never", "mind")}
 _HUSH_FILLERS = {"tamam", "lütfen", "artık", "bi", "bir", "biraz", "hadi", "şimdi", "ya", "lan", "ok", "okey", "bakayım",
                  "bakim", "bakım", "oke", "ama", "be", "dedim", "diyorum", "sana", "yahu", "canım", "aşkım", "kızım",
                  "bebeğim", "artik", "hemen", "hele", "bakalım", "şu", "an", "mısın", "misin", "musun",
                  "müsün", "mi", "mı", "mu", "mü", "misiniz", "mısınız", "istiyorum", "rica", "ederim", "et",
-                 "edebilir", "olur"}
+                 "edebilir", "olur", "please", "now", "okay", "just", "can", "could", "you", "would"}
 
 
 _QUESTION = {"mi", "mı", "mu", "mü", "misin", "mısın", "musun", "müsün", "misiniz", "mısınız"}
