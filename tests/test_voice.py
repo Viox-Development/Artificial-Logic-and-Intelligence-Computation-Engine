@@ -1818,3 +1818,11 @@ def test_alert_volume_scales_only_alerts():
     half.frombytes(scaled(loud, 0.5).pcm)
     assert list(half) == [5000, -5000, 10000]
     assert scaled(loud, 1.0) is loud
+
+
+def test_english_hush_and_answers():
+    from alice.voice.listen import is_hush, is_yes
+
+    assert is_hush("Alice shut up") and is_hush("be quiet please") and is_hush("thank you")
+    assert not is_hush("stop the music") and not is_hush("shut the door")
+    assert is_yes("yes do it") and is_yes("okay") and not is_yes("no, cancel") and not is_yes("don't do it")

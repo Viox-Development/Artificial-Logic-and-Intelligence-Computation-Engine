@@ -67,26 +67,31 @@ def _norm(text: str) -> str:
 
 
 _ORD_WORDS = [(r"birinci", 1), (r"ikinci", 2), (r"üçüncü", 3), (r"dördüncü", 4), (r"beşinci", 5)]
-_CARD_WORDS = [(r"bir", 1), (r"iki", 2), (r"üç", 3), (r"dört", 4), (r"beş", 5)]
-_ALL = re.compile(r"\b(hepsi|hepiniz|herkes|tüm kanat|bütün kanat|tümü|tamamı)")
+_CARD_WORDS = [(r"bir", 1), (r"iki", 2), (r"üç", 3), (r"dört", 4), (r"beş", 5),
+               (r"one", 1), (r"two", 2), (r"three", 3), (r"four", 4), (r"five", 5)]  # English callsign numbers
+_ALL = re.compile(r"\b(hepsi|hepiniz|herkes|tüm kanat|bütün kanat|tümü|tamamı|all\b|everyone|everybody|whole flight)")
 
 _VERB_RE = [
-    ("rtb", r"eve dön|üsse dön|üsse git|geri dön|üsse geri|rtb\b|inişe geç|eve git"),
-    ("rejoin", r"katıl|toplan|yanıma gel|yanıma dön|formasyon|kanadıma|rejoin|beni takip|bana katıl"),
-    ("hold", r"bekle|tur at|orbit|daire çiz|\bhold\b|olduğun yerde"),
-    ("attack", r"bastır|saldır|\bvur\b|vurun|vursun|yok et|imha et|angaje|engage|attack|ateş aç"),
+    ("rtb", r"eve dön|üsse dön|üsse git|geri dön|üsse geri|rtb\b|inişe geç|eve git|return to base|go home|"
+            r"head home"),
+    ("rejoin", r"katıl|toplan|yanıma gel|yanıma dön|formasyon|kanadıma|rejoin|beni takip|bana katıl|form up|"
+               r"join on me|follow me|\bon me\b"),
+    ("hold", r"bekle|tur at|orbit|daire çiz|\bhold\b|olduğun yerde|\bcircle\b|stay there|stay where"),
+    ("attack", r"bastır|saldır|\bvur\b|vurun|vursun|yok et|imha et|angaje|engage|attack|ateş aç|suppress|"
+               r"take out|destroy|\bhit\b|\bkill\b"),
 ]
 _TARGET_RE = [
-    ("sam", r"\bsam\b|hava savunma|uçaksavar|\baaa\b|füze rampa|\bsead\b"),
-    ("air", r"uça[kğ]|bandit|bogey|savaşçı|\bmig\b|helikopter"),
-    ("ship", r"gemi|fırkateyn|destroyer|muhrip|\bbot\b"),
-    ("ground", r"tank|zırhlı|\bkara\b|kara hedef|konvoy|araç|topçu|\bbirlik"),
+    ("sam", r"\bsam\b|hava savunma|uçaksavar|\baaa\b|füze rampa|\bsead\b|air defen[cs]e|triple a"),
+    ("air", r"uça[kğ]|bandit|bogey|savaşçı|\bmig\b|helikopter|aircraft|plane|fighter|helicopter"),
+    ("ship", r"gemi|fırkateyn|destroyer|muhrip|\bbot\b|\bships?\b|frigate|\bboats?\b|vessel"),
+    ("ground", r"tank|zırhlı|\bkara\b|kara hedef|konvoy|araç|topçu|\bbirlik|armou?r|ground|convoy|vehicle|"
+               r"artillery|troops"),
 ]
 _DIR_RE = [
-    ("right", r"\bsağ(?!l)\w*"),
-    ("left", r"\bsol(?!o)\w*"),
-    ("front", r"\bön(?!ce)\w*|\bileri\w*|\bkarşı\w*"),
-    ("behind", r"\barka\w*|\bgeri(de|deki)\b|\bkuyru\w*"),
+    ("right", r"\bsağ(?!l)\w*|\bright\b"),
+    ("left", r"\bsol(?!o)\w*|\bleft\b"),
+    ("front", r"\bön(?!ce)\w*|\bileri\w*|\bkarşı\w*|\bahead\b|\bin front\b"),
+    ("behind", r"\barka\w*|\bgeri(de|deki)\b|\bkuyru\w*|\bbehind\b|\brear\b"),
 ]
 
 
@@ -105,7 +110,7 @@ def _index(t: str) -> int | None:
 
 
 def parse(text: str) -> Command | None:
-    """Convert a Turkish command into a Command. None if no verb is found."""
+    """Convert a Turkish or English command into a Command. None if no verb is found."""
     t = _norm(text or "")
     verb = next((v for v, rx in _VERB_RE if re.search(rx, t)), None)
     if verb is None:

@@ -71,3 +71,15 @@ def test_callouts_follow_the_speech_language(monkeypatch):
     assert flight.clock_from(3) == "3" and flight.FlightCompanion._km(1200) == "1.2 kilometres"
     monkeypatch.setenv("ALICE_SPEECH_LANG", "tr")
     assert flight.clock_from(3) == "3'ten" and flight.FlightCompanion._km(1200) == "1,2 kilometre"
+
+
+def test_bundled_checklists_follow_the_speech_language(monkeypatch):
+    from alice.sims import checklists
+
+    monkeypatch.setenv("ALICE_SPEECH_LANG", "en")
+    lists = checklists.load_all()
+    assert lists["inis"].title == "Before landing" and checklists.find("landing checklist", lists).key == "inis"
+    assert checklists.find("engine start", lists).key == "motor-calistirma"
+    monkeypatch.setenv("ALICE_SPEECH_LANG", "tr")
+    tr = checklists.load_all()
+    assert tr["inis"].title == "İniş öncesi" and set(tr) == set(lists)

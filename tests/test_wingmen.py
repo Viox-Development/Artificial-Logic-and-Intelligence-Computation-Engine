@@ -241,3 +241,13 @@ def test_hook_lua_syntax_if_luac_available(tmp_path):
     f.write_text(dcs.hook_lua(41231, ["Uzi 2"]), encoding="utf-8")
     r = subprocess.run([luac, "-p", str(f)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_english_orders():
+    from alice.sims.wingmen import parse
+
+    c = parse("Two, engage the SAM on the right")
+    assert (c.verb, c.index, c.target, c.direction) == ("attack", 2, "sam", "right")
+    assert parse("all, return to base").verb == "rtb" and parse("all, return to base").index == 0
+    assert (parse("Three rejoin on me").verb, parse("Three rejoin on me").index) == ("rejoin", 3)
+    assert parse("play some music") is None
