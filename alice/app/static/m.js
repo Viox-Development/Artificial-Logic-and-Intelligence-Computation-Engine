@@ -317,10 +317,13 @@ const VERBS = {
 const verb = (name) => VERBS[name] || name.replace(/^mcp__/, "").replace(/__/g, " · ");
 const MODES = { plan: ["Plan", _("Only reads, writes a plan")], ask: [_("Ask"), _("Asks before every action")],
   auto: [_("Automatic"), _("Asks only for dangerous actions")], yolo: [_("Full access"), _("Never asks")] };
-const THINK = { off: [_("doesn't think"), _("Fastest")], low: [_("thinks a little"), _("Recommended")], medium: [_("thinks more"), ""],
-  high: [_("thinks a lot"), _("For hard tasks")], xhigh: [_("even more"), _("Very hard tasks")], max: [_("the most"), _("The hardest tasks")],
-  default: [_("the model decides"), ""] };
-const THINK_BINARY = { off: [_("doesn't think"), _("Answers right away")], high: [_("thinks"), _("Thinks first")], default: [_("the model decides"), ""] };
+const THINK = { off: [_("Off"), _("Answers right away without thinking")], low: [_("Low"), _("Quick, for simple tasks")],
+  medium: [_("Medium"), _("Balanced: for everyday work")], high: [_("High"), _("Thinks through hard tasks")],
+  xhigh: [_("Extra high"), _("For long, difficult work")], max: [_("Max"), _("No limit: the slowest, for the hardest problems")],
+  ultracode: ["Ultracode", _("Extra high effort, and the work is split between subagents that check each other. Uses a lot of quota; lasts until ALICE restarts")],
+  default: [_("Auto"), _("The model's own setting")] };
+const THINK_BINARY = { off: [_("Off"), _("Answers right away without thinking")], high: [_("On"), _("Thinks before answering")],
+  default: [_("Auto"), _("The model's own setting")] };
 // Seçili modelin desteklediği seviyeler (sunucu modele göre verir).
 function thinkOpts() {
   const table = S.status.thinking_kind === "binary" ? THINK_BINARY : THINK;
@@ -427,18 +430,25 @@ async function modeSheet() {
 }
 async function thinkSheet() {
   const note = S.status.thinking_kind === "none" ? _("This model has no thinking setting.") : "";
-  const v = await pickSheet(_("Thinking level"), note, thinkOpts(), S.status.thinking_effective || S.status.thinking);
+  const v = await pickSheet(_("Effort"), note, thinkOpts(), S.status.thinking_effective || S.status.thinking);
   if (v) applyStatus(await api("/api/thinking", { level: v }));
 }
-async function modelSheet() {
+async function modelSheet(full) {
   const all = await api("/api/models/all");
+  let rest = 0;
   const opts = [["reset", _("Automatic"), _("The first suitable model; the next one at the limit")]];
   for (const p of (all && all.providers) || []) {
     if (!p.enabled || p.hidden) continue;
-    for (const m of p.models || []) if (!m.hidden) opts.push([m.ref, m.model, p.name + " · " + m.status, !m.ok]);
+    for (const m of p.models || []) {
+      if (m.hidden || m.twin || m.chat === false) continue;
+      if (full === true || m.main !== false) opts.push([m.ref, m.model, (p.label || p.name) + " · " + m.status, !m.ok]);
+      else rest++;
+    }
   }
+  if (rest) opts.push(["more", _("More models ({n})", { n: rest }), ""]);
   const v = await pickSheet("Model", "", opts, all && all.pinned ? all.pinned : "reset");
   if (!v) return;
+  if (v === "more") return modelSheet(true);
   await api("/api/model", { role: "brain", ref: v });
   applyStatus(await api("/api/state"));
   toast(v === "reset" ? _("Automatic choice") : _("Model: {name}", { name: shortModel(v) }));

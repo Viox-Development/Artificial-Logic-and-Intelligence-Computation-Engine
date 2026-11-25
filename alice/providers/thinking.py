@@ -2,7 +2,8 @@
 
 Thinking models (GLM, Qwen3, gpt-oss, Gemini 3, Nemotron...) can think for minutes even on simple tasks.
 Level per role: off | low | medium | high | xhigh | max ("default" = leave to model). xhigh and max only exist in
-ChatGPT input (Extra High, Max); other providers go to high. config.toml:
+ChatGPT input (Extra High, Max); other providers go to high. "ultracode" is xhigh plus a standing order to split the work
+between subagents (ULTRACODE_NOTE, added by the agent); like in Claude Code it lasts for the session. config.toml:
 
     [thinking]
     default = "low"
@@ -17,7 +18,15 @@ from __future__ import annotations
 
 from typing import Any
 
-LEVELS = ("off", "low", "medium", "high", "xhigh", "max", "default")
+LEVELS = ("off", "low", "medium", "high", "xhigh", "max", "ultracode", "default")
+ULTRACODE = "ultracode"
+ULTRACODE_NOTE = (
+    "\n\n[ultracode: the user wants the most thorough result for this request and accepts that it costs more. If the "
+    "request is a question or a small job, just do it. Otherwise: find out enough to split the work into independent "
+    "parts, then run the parts as subagents with the task tool, several task calls in the same reply (at most 5 at a "
+    "time; two subagents never write to the same files; give each one the complete brief). When they are done, have "
+    "separate subagents try to prove the result wrong (tests, edge cases, what was asked but not done), fix what they "
+    "find, and check the whole yourself before you report.]")
 DEFAULTS = {"default": "low", "fast": "off", "voice": "off", "live-think": "medium"}
 
 
@@ -37,11 +46,12 @@ def levels_for(provider: str, model: str) -> tuple[list[str], str]:
     m = model.lower()
     if provider == "chatgpt" or (provider == "cliproxy" and m.startswith(("gpt-", "codex", "o3", "o4"))):
         lv = ["off", "low", "medium", "high", "xhigh"] + (["max"] if "gpt-6" in m else [])
-        return lv + ["default"], "graded"
+        return lv + [ULTRACODE, "default"], "graded"
     if provider == "anthropic" or (provider == "cliproxy" and m.startswith("claude-")):
         lv = ["low", "medium", "high", "max"]  # Claude does not disable thinking entirely: at least "low"
         if "haiku" not in m:
             lv.insert(3, "xhigh")
+            lv.append(ULTRACODE)
         return (["off"] if provider == "cliproxy" else []) + lv + ["default"], "graded"
     if "gpt-oss" in m:
         return ["low", "medium", "high", "default"], "graded"
@@ -66,6 +76,8 @@ def fit(level: str, levels: list[str]) -> str:
     if level in levels:
         return level
     order = ["off", "low", "medium", "high", "xhigh", "max"]
+    if level == ULTRACODE:
+        level = "xhigh"  # the model has no xhigh: the nearest level below it
     if level not in order:
         return "default"
     i = order.index(level)
@@ -85,6 +97,8 @@ def params(provider: str, model: str, level: str) -> dict[str, Any]:
     """Level -> fields to add to request body. Empty for unknown provider/model."""
     if level == "default" or not level:
         return {}
+    if level == ULTRACODE:
+        level = "xhigh"
     if provider == "chatgpt":
         # ChatGPT input (Responses API, reasoning.effort). gpt-6-luna: none/low/medium/high/xhigh/max; rejects
         # "minimal" with 400 and error is counted as "not_found", marking the model dead for the session, so off -> none.

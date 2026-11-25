@@ -3065,7 +3065,8 @@ def make_handler(state: AppState):
                     if level not in LEVELS:
                         return self._json({"ok": False, "error": _("level: {levels}", levels=" | ".join(LEVELS))}, 400)
                     state.router.thinking_overrides["brain"] = level
-                    set_config_value("thinking", "brain", level)  # persist across restarts
+                    if level != "ultracode":  # lasts for the session: after a restart the last normal level is back
+                        set_config_value("thinking", "brain", level)  # persist across restarts
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/models/hide":
                     from alice.config import set_config_value

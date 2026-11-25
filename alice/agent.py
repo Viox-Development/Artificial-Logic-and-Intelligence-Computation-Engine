@@ -20,6 +20,7 @@ from alice.decider import Decider
 from alice.i18n import _
 from alice.permissions import Permissions
 from alice.prompts import COMPACT_PROMPT, build_system_prompt
+from alice.providers import thinking
 from alice.providers.openai_compat import ChatResult, StreamCancelled
 from alice.session import (ACK_SUMMARY, NUDGE_PREFIX, PLAN_NOTE, SHOT_REMOVED, STOPPED, SUMMARY_HEAD, is_summary,
                            strip_plan_note, summary_body)
@@ -831,6 +832,8 @@ class Agent:
         if self.permissions.mode == "plan" and not self.is_child:
             content_text = PLAN_NOTE + content_text
         guess_text = strip_plan_note(content_text)
+        if not self.is_child and self.role == "brain" and self._ultracode(user_text):
+            content_text += thinking.ULTRACODE_NOTE
         if not self.is_child and self.role != "voice" and self.config.agent.get("message_clock", True):
             # The time used to sit in the system prompt and changed it in every new chat (prompt cache rewritten);
             # now it rides at the end of the user's message, which is new anyway. Not used for tool guessing:
@@ -1782,6 +1785,12 @@ class Agent:
 
     def _cache_cold(self) -> bool:
         return bool(self._last_call_at) and time.monotonic() - self._last_call_at > self._cache_ttl()
+
+    def _ultracode(self, text: str) -> bool:
+        # Ultracode is on for the session (effort menu), or the user wrote the word in this message.
+        level = getattr(self.router, "thinking_level", None)
+        return (level is not None and level(self.role) == thinking.ULTRACODE) or bool(
+            re.search(r"\bultracode\b", text or "", re.I))
 
     def _cache_ttl_choice(self) -> str:
         """Claude API cache TTL for this session: "5m" or "1h", latched on first use.

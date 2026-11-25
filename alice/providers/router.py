@@ -34,7 +34,7 @@ from typing import Any, Callable, Protocol
 
 from alice.config import Config, ProviderConfig, alice_home
 from alice.i18n import _
-from alice.providers import context, ranking, thinking
+from alice.providers import context, menu, ranking, thinking
 from alice.providers.anthropic_api import THINKING_KEY
 from alice.providers.chatgpt import make_client
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
@@ -641,6 +641,7 @@ class Router:
             except KeyError:
                 pass  # role without a chain: nothing to add
         hidden = self.hidden()
+        refs = {r for r in refs if not menu.disguised(r.partition(":")[2])}
         out: list[dict[str, Any]] = []
         for name, pc in sorted(self.providers_cfg.items()):
             rows = []
@@ -655,7 +656,7 @@ class Router:
                              "latency": round(float(r.get("latency") or 0), 1), "tested": bool(r)})
             rows.sort(key=lambda x: (-x["quality"], x["latency"] or 99, x["ref"]))
             entry = {"name": name, "enabled": bool(pc.enabled), "hidden": name in hidden,
-                     "key": pc.api_key_env, "models": rows}
+                     "key": pc.api_key_env, "models": rows, "native": pc.kind == "anthropic"}
             if not rows and pc.enabled:
                 # No model works, but it was tried: show the provider's error. Before, a server added from the UI
                 # (e.g. OrcaRouter, whose free models are closed for this account) said "eklendi" (added),
@@ -673,7 +674,9 @@ class Router:
                              error=models_error() if pc.enabled and not rows else "",
                              loading=state == "loading")
             out.append(entry)
-        return self._split_proxy(out, hidden)
+        out = self._split_proxy(out, hidden)
+        menu.mark(out, keep=set(self.role_overrides.get("brain") or ()))
+        return out
 
     @staticmethod
     def _split_proxy(out: list[dict[str, Any]], hidden: set[str] | None = None) -> list[dict[str, Any]]:
