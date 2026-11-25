@@ -675,7 +675,7 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
         ctx.state["ui_elems"] = wrappers
         ctx.state["ui_items"] = {i["id"]: i for i in items}
         return title_text, items
-    if IS_MAC:
+    if IS_MAC and not IS_WIN:
         from alice.tools import macax
 
         try:
@@ -809,7 +809,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
                 el.click_input()
             except Exception:  # noqa: BLE001
                 el.set_focus()
-            press_keys("command+a" if IS_MAC else "ctrl+a")
+            press_keys("command+a" if IS_MAC and not IS_WIN else "ctrl+a")
             type_text(text)
     elif action == "type":
         el.set_focus()

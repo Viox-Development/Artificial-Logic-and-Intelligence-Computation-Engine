@@ -59,7 +59,7 @@ def test_run_none_on_failure_or_error(monkeypatch):
 
 
 def test_foreground_process_none_on_unsupported_systems(monkeypatch):
-    monkeypatch.setattr(monitors.sys, "platform", "darwin")
+    monkeypatch.setattr(monitors.sys, "platform", "freebsd")
     assert foreground_process() is None
 
 

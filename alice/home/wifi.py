@@ -278,13 +278,14 @@ def profile_xml(ssid: str, password: str) -> str:
 
 
 def connect(ssid: str, password: str = "") -> str:
+    known = profiles()
+    if ssid not in known and not password and any(n["ssid"] == ssid and n["auth"].casefold() not in ("open", "açık")
+                                                  for n in scan()):
+        raise RuntimeError(f"'{ssid}' isn't saved and is encrypted; give the password too")
     if _mac():
         _ns("-setairportnetwork", _mac_dev(), ssid, *((password,) if password else ()), timeout=45)
         return f"connecting to '{ssid}'"
-    known = profiles()
     if ssid not in known:
-        if not password and any(n["ssid"] == ssid and n["auth"].casefold() not in ("open", "açık") for n in scan()):
-            raise RuntimeError(f"'{ssid}' isn't saved and is encrypted; give the password too")
         if _linux():
             _nmcli("device", "wifi", "connect", ssid, *(("password", password) if password else ()), timeout=45)
             return f"connecting to '{ssid}'"

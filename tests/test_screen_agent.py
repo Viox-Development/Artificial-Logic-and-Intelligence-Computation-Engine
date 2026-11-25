@@ -435,6 +435,7 @@ def test_set_text_falls_back_to_keyboard_when_field_reverts(monkeypatch):
             raise RuntimeError("desen yok")
 
     monkeypatch.setattr(desktop, "SET_TEXT_SETTLE", 0)
+    monkeypatch.setattr(desktop, "IS_MAC", False)
     monkeypatch.setattr(computer, "press_keys", lambda k: calls.append(("keys", k)))
     monkeypatch.setattr(computer, "type_text", lambda t: calls.append(("type", t)))
     ctx = type("C", (), {"state": {"ui_elems": {5: Addr(), 6: Doc()}}})()
