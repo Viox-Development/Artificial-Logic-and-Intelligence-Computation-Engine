@@ -1704,7 +1704,7 @@ class LiveSession:
         try:
             from alice.evals import record_feedback
 
-            record_feedback(user, reply, note=f"kullanıcı hemen ardından: {heard[:200]}", source="ses-düzeltme")
+            record_feedback(user, reply, note=_("right after, the user said: {heard}", heard=heard[:200]), source="ses-düzeltme")
             self.log(f"live düzeltme test setine eklendi: {user[:80]!r} -> {heard[:80]!r}")
         except Exception:  # noqa: BLE001 - a recording error must not break the conversation
             pass
