@@ -34,21 +34,22 @@ from alice.i18n import _, edge_voice, speech_language, spoken
 from alice.voice.audio import Audio
 from alice.voice.tone import CHATTERBOX, DIRECTION, EMOTIONS, NAMES_TR
 
-# Gemini's female voices (per Google's descriptions). Chosen from these in the listening test.
+# Gemini's female voices (per Google's descriptions, shown in the interface language). Chosen from these in the
+# listening test.
 GEMINI_VOICES = {
-    "Aoede": "ferah", "Kore": "kararlı", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
-    "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak",
+    "Aoede": "breezy", "Kore": "firm", "Leda": "youthful", "Sulafat": "warm", "Despina": "fluent",
+    "Achernar": "soft-toned", "Vindemiatrix": "gentle", "Callirrhoe": "easy-going", "Autonoe": "bright",
 }
 # All of Gemini's ready-made voices (shared by TTS and Live) and Google's descriptions;
     # listened to and chosen under Sistem > Ses.
 ALL_GEMINI_VOICES = {
-    "Kore": "kararlı", "Aoede": "ferah", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
-    "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak", "Zephyr": "parlak",
-    "Puck": "neşeli", "Charon": "bilgili", "Fenrir": "heyecanlı", "Orus": "kararlı", "Enceladus": "nefesli",
-    "Iapetus": "net", "Umbriel": "rahat", "Algieba": "pürüzsüz", "Erinome": "net", "Algenib": "boğuk",
-    "Rasalgethi": "bilgili", "Laomedeia": "neşeli", "Alnilam": "kararlı", "Schedar": "dengeli", "Gacrux": "olgun",
-    "Pulcherrima": "atak", "Achird": "samimi", "Zubenelgenubi": "gündelik", "Sadachbia": "canlı",
-    "Sadaltager": "bilgili",
+    "Kore": "firm", "Aoede": "breezy", "Leda": "youthful", "Sulafat": "warm", "Despina": "fluent",
+    "Achernar": "soft-toned", "Vindemiatrix": "gentle", "Callirrhoe": "easy-going", "Autonoe": "bright", "Zephyr": "bright",
+    "Puck": "upbeat", "Charon": "informative", "Fenrir": "excitable", "Orus": "firm", "Enceladus": "breathy",
+    "Iapetus": "clear", "Umbriel": "easy-going", "Algieba": "smooth", "Erinome": "clear", "Algenib": "gravelly",
+    "Rasalgethi": "informative", "Laomedeia": "upbeat", "Alnilam": "firm", "Schedar": "even", "Gacrux": "mature",
+    "Pulcherrima": "forward", "Achird": "friendly", "Zubenelgenubi": "casual", "Sadachbia": "lively",
+    "Sadaltager": "informative",
 }
 
 
@@ -159,7 +160,7 @@ def build_library(engine: "TTS", out: Path | None = None, emit: Callable[[str], 
         path = out / f"{emo}.wav"
         if path.exists() and not redo:
             continue
-        emit(_("preparing the {emotion} recording", emotion=NAMES_TR[emo]))
+        emit(_("preparing the {emotion} recording", emotion=_(NAMES_TR[emo])))
         try:
             engine.synth(spoken(text), emo).save(path)
         except QuotaError as e:

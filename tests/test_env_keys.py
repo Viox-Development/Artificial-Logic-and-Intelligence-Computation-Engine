@@ -208,7 +208,7 @@ def test_voice_enroll_endpoints(app, monkeypatch):
     v = client.get("/api/voice/enroll").json()
     assert v["state"] == "idle" and v["total"] == len(sid.ENROLL_SENTENCES) and v["profile"] is None
     assert client.post("/api/voice/enroll", json={"action": "uç"}).status_code == 400
-    assert client.post("/api/voice/enroll", json={"action": "test"}).json()["error"] == "önce sesini tanıt"
+    assert client.post("/api/voice/enroll", json={"action": "test"}).json()["error"] == "enroll your voice first"
     sid.save_profile([[1.0, 0.0], [1.0, 0.1]])
     assert client.get("/api/voice/enroll").json()["profile"]["samples"] == 2
     assert client.post("/api/voice/enroll", json={"action": "remove"}).json()["ok"] and sid.load_profile() is None

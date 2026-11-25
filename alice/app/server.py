@@ -1286,7 +1286,7 @@ class AppState:
         key_env = self.cfg.data.get("providers", {}).get("gemini", {}).get("api_key_env", "GEMINI_API_KEY")
         return {"live": str(v.get("live_voice", "Kore")), "tts": str(v.get("tts_cloud", "gemini:Aoede")),
                 "can_preview": bool(os.environ.get(key_env, "").strip()),
-                "voices": [{"name": n, "desc": d} for n, d in ALL_GEMINI_VOICES.items()]}
+                "voices": [{"name": n, "desc": _(d)} for n, d in ALL_GEMINI_VOICES.items()]}
 
     def voice_preview(self, name: str) -> dict[str, Any]:
         """Short Turkish sample with this voice (wav, base64). Generated once, stored in ~/.alice/voice/previews."""

@@ -54,7 +54,7 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
                 if provider in exhausted:
                     row[emo] = "!" + _("daily quota used up")
                     continue
-                emit(f"{eng.name} · {NAMES_TR[emo]}")
+                emit(f"{eng.name} · {_(NAMES_TR[emo])}")
                 err = None
                 for _try in range(4):
                     try:
@@ -100,7 +100,7 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
 
 
 def render(results: dict[str, dict[str, str]], emotions: list[str]) -> str:
-    head = "".join(f"<th>{NAMES_TR[e]}<div class=s>{html.escape(spoken(SAMPLES[e]))}</div></th>" for e in emotions)
+    head = "".join(f"<th>{_(NAMES_TR[e])}<div class=s>{html.escape(spoken(SAMPLES[e]))}</div></th>" for e in emotions)
     rows = []
     for name, row in results.items():
         cells = []

@@ -184,7 +184,7 @@ def test_status_with_library_mismatch_and_chatterbox(monkeypatch, out, tmp_path)
     text = out()
     assert "Cloud voice: gemini:Aoede ready" in text
     assert "Local voice: chatterbox server running" in text and "local Whisper): yes" in text
-    assert "(gemini:Kore; sakin, acil)" in text and "the library differs" in text
+    assert "(gemini:Kore; calm, urgent)" in text and "the library differs" in text
     assert "Speech recognition: groq" in text and "Microphone: yes" in text
 
 
