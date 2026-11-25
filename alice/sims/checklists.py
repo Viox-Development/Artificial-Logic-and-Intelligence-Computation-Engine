@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from alice.config import alice_home
+from alice.i18n import spoken
 
 BUILTIN = Path(__file__).with_name("checklists")
 
@@ -69,8 +70,8 @@ class Runner:
 
     def current(self) -> str:
         if self.i >= len(self.cl.steps):
-            return f"{self.cl.title} kontrol listesi tamam."
-        return f"Adım {self.i + 1}/{len(self.cl.steps)}: {self.cl.steps[self.i]}"
+            return spoken("{title} checklist complete.", title=self.cl.title)
+        return spoken("Step {n}/{total}: {step}", n=self.i + 1, total=len(self.cl.steps), step=self.cl.steps[self.i])
 
     def next(self) -> str:
         self.i = min(self.i + 1, len(self.cl.steps))

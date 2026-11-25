@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import _
 
 DEFAULTS: dict[str, Any] = {
     "method": "text",     # text: War Thunder's turquoise RWR text (LAUNCH/TRACK/MSL); red: the old red marker
@@ -144,9 +145,9 @@ def read_rwr(rgb, cfg: dict[str, Any] | None = None, words=None) -> TextDetectio
         big = hud_mask(img).resize((img.width * k, img.height * k), Image.LANCZOS)
         words = [(t, (x / k, y / k, w / k, h / k)) for t, (x, y, w, h) in ocr_words(big)]
     up = [(_plain(t), box) for t, box in words]
-    launch = any(_like(t, "LAUNCH") for t, _ in up)
-    track = any(_like(t, "TRACK") for t, _ in up)
-    seen_msl = any(MSL_RX.search(t) for t, _ in up)
+    launch = any(_like(t, "LAUNCH") for t, _box in up)
+    track = any(_like(t, "TRACK") for t, _box in up)
+    seen_msl = any(MSL_RX.search(t) for t, _box in up)
     # Direction comes only from a short "MSL" read on its own: the engine sometimes merges it with a nearby marker
     # ("M29MSL"); the middle of a merged word does not show the missile's position (clips jumped 12 -> 6 -> 1).
     msl = [box for t, box in up if MSL_RX.search(t) and len(t.strip(".,:;()'\"")) <= 4]
@@ -330,7 +331,7 @@ def test_files(paths: list[Path], region: tuple[int, int, int, int] | None, cfg:
             x, y, w, h = region
             a = a[y:y + h, x:x + w]
         d = detect(a, cfg)
-        out.append(f"{p.name}: " + (f"işaret var, saat {d.clock} ({d.pixels} piksel)" if d else "işaret yok"))
+        out.append(f"{p.name}: " + (_("mark found, {clock} o'clock ({n} pixels)", clock=d.clock, n=d.pixels) if d else _("no mark")))
     return out
 
 
@@ -344,17 +345,17 @@ def record(cfg: dict[str, Any], seconds: float = 3600.0) -> int:
     folder.mkdir(parents=True, exist_ok=True)
 
     def save(label: str) -> None:
-        rgb, _ = _full_screenshot()
+        rgb, _size = _full_screenshot()
         p = folder / f"{label}-{time.strftime('%Y%m%d-%H%M%S')}.png"
         Image.fromarray(rgb.astype("uint8")).save(p)
-        print(f"kaydedildi: {p}")
+        print(_("saved: {path}", path=p))
 
     keys = WinHotkeys({"<ctrl>+<alt>+m": lambda: save("missile"), "<ctrl>+<alt>+n": lambda: save("clear")})
     if not keys.start():
-        print("kısayollar alınamadı (başka bir program tutuyor olabilir)")
+        print(_("could not take the shortcuts (another program may hold them)"))
         return 1
-    print(f"Örnek toplama açık ({folder}). Füze uyarısı ekrandayken Ctrl+Alt+M, uyarı yokken Ctrl+Alt+N. "
-          "Bitince Ctrl+C.")
+    print(_("Collecting samples ({folder}). Ctrl+Alt+M while a missile warning is on screen, Ctrl+Alt+N when there is "
+            "none. Ctrl+C when done.", folder=folder))
     try:
         time.sleep(seconds)
     except KeyboardInterrupt:
@@ -375,17 +376,17 @@ def vision_cmd(argv: list[str]) -> int:
         try:
             r = [int(v) for v in argv[1:5]]
         except ValueError:
-            print("kullanım: alice vision region X Y GENİŞLİK YÜKSEKLİK")
+            print(_("usage: alice vision region X Y WIDTH HEIGHT"))
             return 2
         set_config_value("sims", "vision_region", r)
         p = save_marked(tuple(r), samples_dir() / "bolge.png")  # type: ignore[arg-type]
-        print(f"bölge kaydedildi: {r}. Doğru yer mi bak: {p}")
+        print(_("region saved: {region}. Check it is the right place: {path}", region=r, path=p))
         return 0
     if sub == "show":
         if region is None:
-            print("bölge ayarlı değil: alice vision region X Y GENİŞLİK YÜKSEKLİK")
+            print(_("no region set: alice vision region X Y WIDTH HEIGHT"))
             return 2
-        print(f"işaretli görüntü: {save_marked(region, samples_dir() / 'bolge.png')}")
+        print(_("marked image: {path}", path=save_marked(region, samples_dir() / "bolge.png")))
         return 0
     if sub == "record":
         return record(cfg)

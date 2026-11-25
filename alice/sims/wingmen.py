@@ -17,17 +17,19 @@ import socket
 from dataclasses import dataclass
 from typing import Any
 
+from alice.i18n import spoken
+
 PORT = 41231
 VERBS = ("attack", "rejoin", "hold", "rtb")
 TARGETS = ("sam", "air", "ground", "ship", "any")
 DIRECTIONS = ("right", "left", "front", "behind", "any")
 _GROUP_OK = re.compile(r"[\w \-]{0,40}", re.ASCII)
 
-ORDINALS = ["hepsi", "Birinci", "İkinci", "Üçüncü", "Dördüncü", "Beşinci", "Altıncı", "Yedinci", "Sekizinci",
-            "Dokuzuncu"]
-VERB_TR = {"attack": "saldır", "rejoin": "yanıma gel", "hold": "bulunduğun yerde bekle", "rtb": "üsse dön"}
-TARGET_TR = {"sam": "SAM", "air": "düşman uçağı", "ground": "kara hedefi", "ship": "gemi", "any": "en yakın düşman"}
-DIR_TR = {"right": "sağdaki", "left": "soldaki", "front": "öndeki", "behind": "arkadaki", "any": ""}
+# Spoken confirmation of an order, in the speech language (spoken()).
+ORDINALS = ["all", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
+VERB_TR = {"attack": "attack", "rejoin": "rejoin on me", "hold": "hold where you are", "rtb": "return to base"}
+TARGET_TR = {"sam": "SAM", "air": "enemy aircraft", "ground": "ground target", "ship": "ship", "any": "nearest enemy"}
+DIR_TR = {"right": "on the right", "left": "on the left", "front": "in front of you", "behind": "behind", "any": ""}
 
 
 @dataclass
@@ -41,22 +43,23 @@ class Command:
     def line(self) -> str:
         """Validated UDP line. Raises ValueError if a field is invalid."""
         if self.verb not in VERBS:
-            raise ValueError(f"bilinmeyen komut: {self.verb}")
+            raise ValueError(f"unknown command: {self.verb}")
         if self.target not in TARGETS or self.direction not in DIRECTIONS:
-            raise ValueError("geçersiz hedef ya da yön")
+            raise ValueError("invalid target or direction")
         if not isinstance(self.index, int) or not 0 <= self.index <= 9:
-            raise ValueError("sıra 0-9 arası olmalı")
+            raise ValueError("the index must be 0-9")
         if not _GROUP_OK.fullmatch(self.group):
-            raise ValueError("grup adı sadece harf, rakam, boşluk, - ve _ içerebilir (en çok 40)")
+            raise ValueError("the group name may only contain letters, digits, spaces, - and _ (at most 40)")
         return f"ALICE1|{self.verb}|{self.index}|{self.target}|{self.direction}|{self.group}"
 
     def describe(self) -> str:
-        who = ORDINALS[self.index] if self.index < len(ORDINALS) else f"{self.index}."
-        who = self.group or ("tüm kanat adamları" if self.index == 0 else who)
+        who = spoken(ORDINALS[self.index]) if self.index < len(ORDINALS) else f"{self.index}."
+        who = self.group or (spoken("all wingmen") if self.index == 0 else who)
         if self.verb == "attack":
-            what = " ".join(w for w in (DIR_TR[self.direction], TARGET_TR[self.target]) if w)
-            return f"{who}: {what} -> saldır"
-        return f"{who}: {VERB_TR[self.verb]}"
+            what = spoken("{target} {direction}", target=spoken(TARGET_TR[self.target]),
+                          direction=spoken(DIR_TR[self.direction]) if DIR_TR[self.direction] else "").strip()
+            return spoken("{who}: {what} -> attack", who=who, what=what)
+        return f"{who}: {spoken(VERB_TR[self.verb])}"
 
 
 def _norm(text: str) -> str:
