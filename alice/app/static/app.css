@@ -689,6 +689,18 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
   flex-wrap: wrap; row-gap: 2px;
 }
 #statusbar .sep { opacity: .6; }
+.st-procs { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: var(--r-sm); color: var(--muted); cursor: pointer; font-size: inherit; }
+.st-procs[hidden] { display: none; }
+.st-procs:hover { background: var(--hover); color: var(--text); }
+.st-procs i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.st-procs.run i { background: var(--accent); }
+.proc { padding: 6px 10px; }
+.proc code { display: block; font: 12px var(--mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proc small { color: var(--faint); font-size: 11.5px; }
+.proc .acts { display: flex; gap: 6px; margin-top: 4px; }
+.proc .acts button { font-size: 12px; color: var(--muted); cursor: pointer; padding: 1px 6px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); }
+.proc .acts button:hover { color: var(--text); background: var(--hover); }
+.proc pre { max-height: 180px; overflow: auto; margin: 6px 0 0; font: 11.5px var(--mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 #stCtx { display: inline-flex; align-items: center; gap: 6px; }
 .meter { display: inline-block; width: 46px; height: 4px; border-radius: var(--r-xs); background: var(--line); overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0; background: var(--faint); transition: width .3s; }

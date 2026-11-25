@@ -120,7 +120,7 @@ def child_context(parent_ctx: ToolContext) -> ToolContext:
     # would wait on the main chat and deadlock, or never release a lock it took (a subagent never releases it).
     state["lock_owner"] = parent_ctx.state.get("lock_owner") or parent_ctx
     # Own records: foreground commands (killed on Stop, 'Durdur') and browser busy state are kept separate.
-    for k in ("subagents", "subagent_ids", "fg_procs", "browser_busy"):
+    for k in ("subagents", "subagent_ids", "fg_procs", "fg_jobs", "browser_busy"):
         state.pop(k, None)
     return ToolContext(cwd=parent_ctx.cwd, config=parent_ctx.config, router=parent_ctx.router,
                        decider=parent_ctx.decider, state=state, emit=lambda s: None)

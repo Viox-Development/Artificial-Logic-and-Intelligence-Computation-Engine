@@ -44,6 +44,9 @@ permission_mode = "auto"
 # A sent message can't be taken back; think twice before setting this to false.
 confirm_outward = true
 max_steps = 80
+# A running command goes on in the background when you press Stop, send a message, move it there yourself or its timeout
+# runs out, and the chat is told when it ends. false: Stop and the timeout kill it.
+background_commands = true
 # Prompt injection guard: in a turn that read outside content (web/message/email), running commands and sending
 # messages need approval in auto mode too, and the content goes to the model marked as "untrusted data". Turning it
 # off is not recommended.

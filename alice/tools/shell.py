@@ -16,9 +16,9 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from alice.tools.base import DANGER, EXEC, Tool, ToolContext, ToolError, ToolResult, obj, smart_truncate, truncate
 
@@ -147,6 +147,30 @@ class BgProc:
     popen: subprocess.Popen
     log: Path
     started: float
+    err: Path | None = None  # stderr of a command that was moved here while it ran (a background one has a single log)
+    notify: bool = True  # tell the chat when it ends (not if it was stopped, or the model already saw the end)
+    waiting: int = 0  # process_wait calls watching it right now
+    reason: str = ""  # why it was moved to the background: user | message | stop | timeout ("": started there)
+
+    def text(self) -> str:
+        parts = [p.read_bytes().decode("utf-8", errors="replace") for p in (self.log, self.err) if p and p.exists()]
+        out = parts[0] if parts else ""
+        if len(parts) > 1 and parts[1].strip():
+            out += ("\n" if out and not out.endswith("\n") else "") + "[stderr]\n" + parts[1]
+        return clean_ps_noise(out) if IS_WIN else out
+
+
+@dataclass
+class FgJob:
+    """A command the turn is waiting for. `request` (set from another thread) moves it to the background."""
+
+    pop: subprocess.Popen
+    command: str
+    log: Path
+    err: Path
+    started: float = field(default_factory=time.time)
+    request: str = ""
+    request_at: float = 0.0
 
 
 class RunCommand(Tool):
@@ -156,7 +180,9 @@ class RunCommand(Tool):
         "Runs without a window, in the background.\n"
         "- To read/search/edit files use read_file, grep, glob, edit_file; for a program with a window use windows "
         "action=open; for git, network and UI work use the matching dedicated tools.\n"
-        "- For long-running work such as servers or watchers: background=true, then process_output.\n"
+        "- For long-running work (servers, watchers, builds, long tests): background=true and go on working; a message "
+        "comes to this chat when it ends, so don't wait for it or poll it. The user can also move a running command "
+        "there; a message they send does it too.\n"
         "- Ask for independent commands as separate calls in the same reply (they run in parallel); chain dependent "
         "ones in one command with ';' (5.1 has no '&&').\n"
         "- For Python code pass python instead of command: the code goes through as is, no quote escaping needed. "
@@ -171,7 +197,7 @@ class RunCommand(Tool):
                    "PowerShell, so quotes stay intact. E.g. \"import json; print(json.load(open('a.json'))['x'])\"."},
         "stdin": {"type": "string", "description": "Text to pass to the standard input of the command or Python code."},
         "cwd": {"type": "string", "description": "Folder the command runs in. Default: the working folder."},
-        "timeout": {"type": "integer", "description": "Seconds; the command is killed when it runs out. Default 120, at most 1800."},
+        "timeout": {"type": "integer", "description": "Seconds to wait. After that the command goes on in the background (where that isn't possible it is killed). Default 120, at most 1800."},
         "background": {"type": "boolean", "description": "true: start in the background without waiting and return the pid. "
                        "Default false."},
         "unsandboxed": {"type": "boolean", "description": "true only if the command failed because of the sandbox and "
@@ -263,15 +289,21 @@ class RunCommand(Tool):
                 pop = subprocess.Popen(argv, cwd=wd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                        env=env, **kwargs)
             procs: dict[int, BgProc] = ctx.state.setdefault("bg_procs", {})
-            procs[pop.pid] = BgProc(pop.pid, command, pop, log, time.time())
+            proc = procs[pop.pid] = BgProc(pop.pid, command, pop, log, time.time(), notify=can_background(ctx))
             time.sleep(1.5)
             head = log.read_bytes().decode("utf-8", errors="replace")[-2000:]
             state = "running" if pop.poll() is None else f"finished (code {pop.returncode})"
+            if pop.returncode is not None:
+                proc.notify = False  # the model sees the end right here
+            elif proc.notify:
+                _watch(ctx, proc)
             return ToolResult(f"started in the background pid={pop.pid}, state: {state}\nlog: {log}\n{head}")
         timeout = max(1, min(int(timeout), 1800))
         # Output goes to a temp file instead of a pipe: if a windowed program the command started (e.g. Blender)
         # inherits the pipes, subprocess.run kept waiting forever even after the timeout.
-        with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe, tempfile.TemporaryFile() as fi:
+        # Named files: if the command is moved to the background, it goes on writing to them.
+        log, errlog = _log_files()
+        with open(log, "wb") as fo, open(errlog, "wb") as fe, tempfile.TemporaryFile() as fi:
             fg_kw: dict[str, Any] = {"creationflags": NO_WINDOW}
             if IS_WIN:
                 fg_kw["startupinfo"] = hidden_startupinfo()
@@ -281,26 +313,34 @@ class RunCommand(Tool):
                 fi.seek(0)
             pop = subprocess.Popen(argv, cwd=wd, stdout=fo, stderr=fe, stdin=fi if stdin else subprocess.DEVNULL,
                                    env=env, **fg_kw)
-            with track_foreground(ctx, pop):
+        job = FgJob(pop, command if command != "python -" else "python: " + next(
+            (ln.strip() for ln in python.splitlines() if ln.strip()), ""), log, errlog)
+        with track_foreground(ctx, pop, job):
+            how = _wait_foreground(job, timeout)
+            if how == "timeout" and can_background(ctx) and not ctx.cancelled():
+                job.request = "timeout"
+            if how not in ("done", "timeout") or job.request == "timeout":
+                return _to_background(ctx, job, limit)
+            timed_out = how == "timeout"
+            if timed_out:
+                # The shell and console child processes (a stuck pytest, node...) are killed; the windowed
+                # program the command opened (Notepad, a Blender window) and its child processes stay open.
+                # Previously only the shell
+                # was killed, and stuck child processes kept running in the background.
+                kill_console_tree(pop.pid)
                 try:
-                    returncode = pop.wait(timeout=timeout)
-                    timed_out = False
+                    pop.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    # The shell and console child processes (a stuck pytest, node...) are killed; the windowed
-                    # program the command opened (Notepad, a Blender window) and its child processes stay open.
-                    # Previously only the shell
-                    # was killed, and stuck child processes kept running in the background.
-                    kill_console_tree(pop.pid)
-                    try:
-                        pop.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        pop.kill()
-                        pop.wait()
-                    returncode, timed_out = -1, True
-            fo.seek(0)
-            fe.seek(0)
-            out = fo.read().decode("utf-8", errors="replace")
-            err = fe.read().decode("utf-8", errors="replace")
+                    pop.kill()
+                    pop.wait()
+        returncode = -1 if timed_out else pop.returncode
+        out = log.read_bytes().decode("utf-8", errors="replace")
+        err = errlog.read_bytes().decode("utf-8", errors="replace")
+        for p in (log, errlog):
+            try:
+                p.unlink()
+            except OSError:
+                pass  # a windowed program the command opened still holds it
         if IS_WIN:
             out, err = clean_ps_noise(out), clean_ps_noise(err)
         if timed_out:
@@ -384,8 +424,11 @@ class ProcessOutput(Tool):
         p = procs.get(pid)
         if not p:
             raise ToolError(f"pid {pid} was not started by ALICE")
-        data = p.log.read_bytes().decode("utf-8", errors="replace") if p.log.exists() else ""
-        state = "running" if p.popen.poll() is None else f"finished (code {p.popen.returncode})"
+        done = p.popen.poll() is not None  # before reading: the last line must not be missed
+        data = p.text()
+        state = f"finished (code {p.popen.returncode})" if done else "running"
+        if done:
+            p.notify = False
         # data[-0:] returned the whole log: 0 and negative values mean "no output, status only".
         n = int(tail_chars or 0)
         if n <= 0:
@@ -408,25 +451,143 @@ class ProcessStop(Tool):
         p = procs.get(pid)
         if not p:
             raise ToolError(f"pid {pid} was not started by ALICE; use process_kill for other processes")
+        p.notify = False
         kill_tree(pid)
         _reap(p.popen)
         return ToolResult(f"durduruldu: {pid}")
 
 
 @contextlib.contextmanager
-def track_foreground(ctx: ToolContext, pop: subprocess.Popen):
-    """Record the foreground process so the Stop button can kill it (and its child processes)."""
+def track_foreground(ctx: ToolContext, pop: subprocess.Popen, job: FgJob | None = None):
+    """Record the foreground process so the Stop button can kill it (and its child processes). With a job it can be
+    moved to the background instead."""
     procs: set = ctx.state.setdefault("fg_procs", set())
+    jobs: dict[int, FgJob] = ctx.state.setdefault("fg_jobs", {})
     procs.add(pop)
+    if job is not None:
+        jobs[pop.pid] = job
     try:
         yield pop
     finally:
         procs.discard(pop)
+        jobs.pop(pop.pid, None)
 
 
-def kill_foreground(ctx: ToolContext) -> None:
+def can_background(ctx: ToolContext) -> bool:
+    """Only in a chat that can be told when the command ends (the app), and not for a subagent: its result would come
+    back after the subagent is gone."""
+    return (callable(ctx.state.get("deliver")) and not ctx.state.get("procs_closed")
+            and not getattr(ctx.state.get("agent"), "is_child", False)
+            and bool(ctx.config.agent.get("background_commands", True)))
+
+
+def background_foreground(ctx: ToolContext, reason: str, grace: float = 0.0) -> list[int]:
+    """Move the commands the turn is waiting for to the background; their pids. grace: seconds a command still gets to
+    finish by itself (a message must not turn every half-second command into a background one)."""
+    if not can_background(ctx):
+        return []
+    moved = []
+    for job in list(ctx.state.get("fg_jobs", {}).values()):
+        if job.pop.poll() is None:
+            if not job.request:
+                job.request_at = time.monotonic() + grace
+                job.request = reason
+            elif grace == 0:
+                job.request, job.request_at = reason, 0.0
+            moved.append(job.pop.pid)
+    return moved
+
+
+def _log_files() -> tuple[Path, Path]:
+    paths = []
+    for part in ("out", "err"):
+        fd, name = tempfile.mkstemp(prefix="alice-cmd-", suffix=f".{part}.log")  # 0600 on POSIX
+        os.close(fd)
+        paths.append(Path(name))
+    return paths[0], paths[1]
+
+
+def _wait_foreground(job: FgJob, timeout: float) -> str:
+    """"done", "timeout", or the reason it has to go to the background."""
+    end = time.monotonic() + timeout
+    while True:
+        left = end - time.monotonic()
+        try:
+            job.pop.wait(timeout=max(0.01, min(0.1, left)))
+            return "done"
+        except subprocess.TimeoutExpired:
+            pass
+        if job.request and time.monotonic() >= job.request_at:
+            return job.request
+        if left <= 0:
+            return "timeout"
+
+
+_MOVED = {"user": "the user moved it to the background", "message": "the user wrote a message while it was running",
+          "timeout": "it did not finish within the timeout", "stop": "the user stopped the turn"}
+
+
+def _to_background(ctx: ToolContext, job: FgJob, limit: int) -> ToolResult:
+    proc = BgProc(job.pop.pid, job.command, job.pop, job.log, job.started, err=job.err, reason=job.request)
+    if ctx.state.get("procs_closed"):  # the chat closed meanwhile: nothing may stay behind
+        kill_tree(job.pop.pid)
+        return ToolResult("stopped: the chat was closed", is_error=True)
+    ctx.state.setdefault("bg_procs", {})[proc.pid] = proc
+    if job.request == "stop":
+        # The user said stop: the end of the command must not start a new turn. It is told with their next message.
+        proc.notify = False
+        ctx.state.setdefault("bg_notes", []).append(
+            f"the command you were running when the user pressed Stop goes on in the background: pid={proc.pid} "
+            f"{job.command[:200]} (process_output, process_stop)")
+    _watch(ctx, proc)
+    tail = truncate(proc.text().strip(), min(limit, 4000)) or "(no output yet)"
+    return ToolResult(f"moved to the background, pid={proc.pid}: {_MOVED.get(job.request, job.request)}. It is still running. A message "
+                      "comes to this chat when it ends; go on with other work, don't wait for it or poll it "
+                      f"(process_output shows the output, process_stop stops it).\noutput so far:\n{tail}")
+
+
+def _watch(ctx: ToolContext, proc: BgProc) -> None:
+    """Tell the chat that started it when a background command ends."""
+    sid = str(ctx.state.get("session_id") or "")
+    to_sid = ctx.state.get("deliver_to")
+    deliver = (lambda t: to_sid(sid, t)) if callable(to_sid) and sid else ctx.state.get("deliver")
+    idle = ctx.state.get("procs_idle")
+
+    def run() -> None:
+        code = proc.popen.wait()
+        time.sleep(1.0)  # a process_wait/process_output that is just returning tells it first
+        if proc.notify and not proc.waiting and not ctx.state.get("procs_closed") and callable(deliver):
+            proc.notify = False
+            secs = int(time.time() - proc.started)
+            deliver(f"[Command pid={proc.pid} finished: exit code {code}, {secs} s]\n{proc.command[:300]}\n"
+                    f"--- end of output ---\n{proc.text()[-3000:]}")
+        elif callable(idle):
+            idle()
+
+    threading.Thread(target=run, daemon=True, name=f"alice-proc-{proc.pid}").start()
+
+
+def pending(ctx: ToolContext) -> bool:
+    """Is there a background command whose end this chat still has to hear about?"""
+    return any(p.notify and p.popen.poll() is None for p in list(ctx.state.get("bg_procs", {}).values()))
+
+
+def procs_view(ctx: ToolContext) -> list[dict[str, Any]]:
+    """Commands for the interface: the ones the turn waits for and the ones in the background."""
+    now = time.time()
+    rows = [{"pid": j.pop.pid, "command": j.command[:300], "state": "foreground", "secs": int(now - j.started),
+             "movable": can_background(ctx) and not j.request}
+            for j in list(ctx.state.get("fg_jobs", {}).values()) if j.pop.poll() is None]
+    for p in list(ctx.state.get("bg_procs", {}).values()):
+        code = p.popen.poll()
+        rows.append({"pid": p.pid, "command": p.command[:300], "state": "running" if code is None else "done",
+                     "code": code, "secs": int(now - p.started), "reason": p.reason})
+    return rows
+
+
+def kill_foreground(ctx: ToolContext, skip: list[int] | tuple[int, ...] = ()) -> None:
     for pop in list(ctx.state.get("fg_procs", ())):
-        if pop.poll() is None:
+        if pop.pid not in skip and pop.poll() is None:
             try:
                 kill_tree(pop.pid)
             except Exception:  # noqa: BLE001 - errors are swallowed while stopping
@@ -545,7 +706,10 @@ def _reap(pop: subprocess.Popen) -> None:
 
 
 def cleanup(ctx: ToolContext) -> None:
-    for p in ctx.state.get("bg_procs", {}).values():
+    ctx.state["procs_closed"] = True
+    kill_foreground(ctx)
+    for p in list(ctx.state.get("bg_procs", {}).values()):
+        p.notify = False
         if p.popen.poll() is None:
             kill_tree(p.pid)
             _reap(p.popen)
@@ -588,8 +752,17 @@ class ProcessWait(Tool):
             raise ToolError(f"invalid pattern: {e}") from e
 
         def read() -> str:
-            return p.log.read_bytes().decode("utf-8", errors="replace") if p.log.exists() else ""
+            return p.text()
 
+        p.waiting += 1
+        try:
+            return self._wait(ctx, p, rx, read, timeout)
+        finally:
+            p.waiting -= 1
+
+    @staticmethod
+    def _wait(ctx: ToolContext, p: BgProc, rx: re.Pattern | None, read: Callable[[], str], timeout: int) -> ToolResult:
+        pid = p.pid
         start = len(read())
         end = time.monotonic() + max(1, min(int(timeout or 60), 600))
         while True:
@@ -605,6 +778,7 @@ class ProcessWait(Tool):
                     return ToolResult(f"pid={pid} pattern seen:\n" + "\n".join(hits[-20:]) +
                                       f"\n--- end of output ---\n{data[-2000:]}")
             if code is not None:
+                p.notify = False
                 return ToolResult(f"pid={pid} finished (code {code})" + (" — pattern not seen" if rx else "") +
                                   f"\n{data[-4000:]}", is_error=bool(rx) or code != 0)
             if ctx.cancelled():

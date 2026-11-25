@@ -834,6 +834,9 @@ class Agent:
         guess_text = strip_plan_note(content_text)
         if not self.is_child and self.role == "brain" and self._ultracode(user_text):
             content_text += thinking.ULTRACODE_NOTE
+        notes = [] if self.is_child else self.ctx.state.pop("bg_notes", [])
+        if notes:
+            content_text += "\n\n[" + "; ".join(notes) + "]"
         if not self.is_child and self.role != "voice" and self.config.agent.get("message_clock", True):
             # The time used to sit in the system prompt and changed it in every new chat (prompt cache rewritten);
             # now it rides at the end of the user's message, which is new anyway. Not used for tool guessing:
@@ -1095,7 +1098,12 @@ class Agent:
             if not (self.busy and self._steering) or self.cancel.is_set():
                 return False
             self._inbox.append((text, list(images or [])))
-            return True
+        if not text.startswith("["):  # a user's message, not the result of some background work
+            from alice.tools.shell import background_foreground
+
+            # The message used to wait until the command ended, which can take half an hour.
+            background_foreground(self.ctx, "message", grace=2.0)
+        return True
 
     def take_inbox(self) -> list[tuple[str, list[str]]]:
         """Messages the turn could not take (the turn ended/was stopped): the caller runs them as a new turn."""
@@ -1258,12 +1266,14 @@ class Agent:
 
     def stop(self) -> None:
         """Stop the current turn from another thread (e.g. the Durdur (Stop) button in the app). Does not wait
-        for a model or tool reply; running commands are terminated too."""
-        self.cancel.set()
+        for a model or tool reply. Running shell commands go on in the background (the user can stop them from the
+        status bar); where the chat can't follow them there (subagent, terminal) they are terminated."""
         from alice.tools.browser import abort_browser
-        from alice.tools.shell import kill_foreground
+        from alice.tools.shell import background_foreground, kill_foreground
 
-        kill_foreground(self.ctx)
+        moved = background_foreground(self.ctx, "stop")  # before cancel: the waiting command must see it first
+        self.cancel.set()
+        kill_foreground(self.ctx, skip=moved)
         abort_browser(self.ctx, "stop")  # a stuck browser call (only if one is running)
 
     def _interruptible(self, fn, *args: Any, **kwargs: Any) -> Any:

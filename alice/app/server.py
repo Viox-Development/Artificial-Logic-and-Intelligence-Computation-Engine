@@ -35,11 +35,11 @@ from alice.i18n import _
 from alice.i18n import language as ui_language
 from alice.permissions import MODES, Permissions
 from alice.providers.router import Router, parse_ref
-from alice.tools import ToolContext, all_tools, attach_mcp, cleanup
+from alice.tools import ToolContext, all_tools, attach_mcp, cleanup, shell
 from alice.tools.base import DesktopLock, ToolResult
 
 STATIC = Path(__file__).parent / "static"
-STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "tasks.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
+STATIC_FILES = {"app.js": "text/javascript", "projects.js": "text/javascript", "tasks.js": "text/javascript", "procs.js": "text/javascript", "ui.js": "text/javascript", "wizard.js": "text/javascript", "buddy.js": "text/javascript",
                 "main.js": "text/javascript", "app.css": "text/css", "marked.min.js": "text/javascript",
                 "purify.min.js": "text/javascript", "highlight.js": "text/javascript", "icon.svg": "image/svg+xml", "alice.png": "image/png", "quick.js": "text/javascript",
                 "quick.css": "text/css", "m.css": "text/css", "m.js": "text/javascript", "i18n.js": "text/javascript",
@@ -435,6 +435,7 @@ class Chat:
         # Messages from background to this chat (monitor events, detached results) and starting detached sessions.
         self.ctx.state["deliver"] = lambda text: app.deliver(self.sid, text)
         self.ctx.state["deliver_to"] = app.deliver  # (chat, text): route subagent result to the initiating chat
+        self.ctx.state["procs_idle"] = lambda: app._drop_if_idle(self)  # its last background command ended unannounced
         self.ctx.state["sessions"] = SessionsAPI(app, self)
         self.ctx.state["builtin_browser"] = app.builtin_browser  # used by browser tool and preview
         attach_memory(self.agent, "uygulama")
@@ -880,10 +881,39 @@ class AppState:
         self._watch_quota()
         with self._chats_lock:
             chat.queued = False
-            if chat is self.chat:
+            # A command still running for this chat: closing would kill it, its end comes as a new turn.
+            if chat is self.chat or shell.pending(chat.ctx):
                 return
             self.background.pop(chat.sid, None)
         chat.close()
+
+    def procs_view(self, sid: str = "") -> dict[str, Any]:
+        chat = self.find_chat(sid) if sid else self.chat
+        return {"procs": shell.procs_view(chat.ctx) if chat is not None else []}
+
+    def procs_action(self, what: str, d: dict[str, Any]) -> dict[str, Any]:
+        """Status bar: move the running commands to the background, stop one, read its output."""
+        sid = str(d.get("sid") or "")
+        chat = self.find_chat(sid) if sid else self.chat
+        if chat is None:
+            return {"ok": False, "error": _("this chat is not open")}
+        if what == "background":
+            return {"ok": True, "moved": shell.background_foreground(chat.ctx, "user")}
+        try:
+            pid = int(d.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        proc = chat.ctx.state.get("bg_procs", {}).get(pid)
+        if what == "output":
+            return {"ok": proc is not None, "text": proc.text()[-8000:] if proc is not None else ""}
+        if proc is not None:
+            shell.ProcessStop().run(chat.ctx, pid)
+            return {"ok": True}
+        job = chat.ctx.state.get("fg_jobs", {}).get(pid)  # only commands ALICE started, never any other pid
+        if job is None:
+            return {"ok": False, "error": _("this command is not running")}
+        shell.kill_tree(pid)
+        return {"ok": True}
 
     # ------------------------------------------------------------------ durdurma
     def stop(self, sid: str = "") -> None:
@@ -2053,7 +2083,8 @@ class AppState:
         """Close background chat opened by chat_for if it stalled without starting a turn (unknown command, /btw).
         Background chats only closed on turn finish: if turn never started, thread and agent stayed forever."""
         with self._chats_lock:
-            if chat is self.chat or chat.busy or self.background.get(chat.sid) is not chat:
+            if (chat is self.chat or chat.busy or self.background.get(chat.sid) is not chat
+                    or shell.pending(chat.ctx)):
                 return
             self.background.pop(chat.sid, None)
         chat.close()
@@ -2539,6 +2570,8 @@ def make_handler(state: AppState):
                 return self._json({**state.agent.usage_breakdown(), "today": state.router.usage.today()})
             if u.path == "/api/prs":
                 return self._json(state.pr_panel(force=(q.get("force") or [""])[0] == "1"))
+            if u.path == "/api/procs":
+                return self._json(state.procs_view((q.get("sid") or [""])[0]))
             if u.path == "/api/subagents":
                 return self._json(state.subagents_view())
             if u.path in ("/api/browser/frame", "/api/browser/tabs"):
@@ -2819,6 +2852,8 @@ def make_handler(state: AppState):
                 if p == "/api/stop":
                     state.stop(str(d.get("sid") or ""))
                     return self._json({"ok": True})
+                if p in ("/api/procs/background", "/api/procs/kill", "/api/procs/output"):
+                    return self._json(state.procs_action(p.rsplit("/", 1)[1], d))
                 if p == "/api/permission":
                     pid, ans = str(d.get("id")), str(d.get("answer"))
                     return self._json({"ok": any(ui.answer(pid, ans) for ui in state.all_uis())})

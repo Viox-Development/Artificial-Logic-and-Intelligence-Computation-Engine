@@ -103,6 +103,11 @@ week). Each row's "⋯" menu can rename (F2 or double-click), pin (pinned chats 
 delete. The open chat's name is also in the top bar and can be changed there. In the other sections the sidebar holds
 that section's tabs. Ctrl+B hides and shows it.
 
+A running command shows up in the status bar: a click (or Ctrl+Shift+B) moves it to the background, and ALICE goes on
+working. Stop, a message you send and the command's timeout do the same instead of killing it; the chat is told when the
+command ends. Commands in the background are stopped from the same place. `[agent] background_commands = false` turns
+this off.
+
 ## Status line
 
 The model that answered, context usage and today's request count. Hovering shows the decision engine, the git branch
