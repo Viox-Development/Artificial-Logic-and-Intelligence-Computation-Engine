@@ -253,7 +253,7 @@ def _status(cfg, argv) -> int:
     if lib.exists():
         from alice.voice.tone import EMOTIONS, NAMES_TR
 
-        have = [NAMES_TR[e] for e in EMOTIONS if (lib.path / f"{e}.wav").exists()]
+        have = [_(NAMES_TR[e]) for e in EMOTIONS if (lib.path / f"{e}.wav").exists()]
         src = lib.source or _("voice unknown")
         warn = (_(" [yellow]the chosen voice is {voice}, the library differs: alice voice library --redo[/]", voice=cloud.name)
                 if cloud and lib.source and lib.source != cloud.name else "")
@@ -516,7 +516,7 @@ def _enroll(cfg, argv) -> int:
     vad = VAD()
     embeddings: list[list[float]] = []
     with mic:
-        for i, sentence in enumerate(sid.ENROLL_SENTENCES, 1):
+        for i, sentence in enumerate(sid.enroll_sentences(), 1):
             for _attempt in range(2):
                 console.print(f"[bold]{i}/{len(sid.ENROLL_SENTENCES)}[/]  \"{escape(sentence)}\"")
                 audio = _record_one(mic, vad)

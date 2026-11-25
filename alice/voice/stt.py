@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol
 
 import httpx
 
+from alice.i18n import spoken
 from alice.config import Config
 from alice.voice.audio import Audio
 
@@ -105,7 +106,7 @@ class ElevenScribe:
             r = self.client.post(self.URL, headers={"xi-api-key": self.api_key}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"elevenlabs bağlantı hatası: {e}") from e
+            raise STTError(f"elevenlabs connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"elevenlabs {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -131,7 +132,7 @@ class GroqWhisper:
             r = self.client.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -144,7 +145,7 @@ class GroqWhisper:
             r = self.client.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return [(str(w.get("word", "")), float(w.get("start", 0)), float(w.get("end", 0)))
@@ -158,7 +159,7 @@ class GroqWhisper:
                                        "temperature": "0", **({"prompt": self.prompt} if self.prompt else {})},
                                  files={"file": (filename, data, "application/octet-stream")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -186,7 +187,7 @@ class LocalWhisper:
         try:
             from faster_whisper import WhisperModel
         except ImportError as e:
-            raise STTError("faster-whisper kurulu değil: pip install faster-whisper") from e
+            raise STTError("faster-whisper is not installed: pip install faster-whisper") from e
         gpu = False
         if self.allow_gpu():
             try:
@@ -265,7 +266,7 @@ def speech_segments(segments, prompt: str = "Hey Alice.") -> list:
 
 
 # Words often said in flight and misheard ("yakıtım" (my fuel) -> "yakıştın", "cannon" -> "Canon").
-FLIGHT_HINT = "Yakıtım ne kadar kaldı? Bingo, cannon, waypoint, tanker, AoA, stall, iniş takımı, flap."
+FLIGHT_HINT = "How much fuel do I have left? Bingo, cannon, waypoint, tanker, AoA, stall, landing gear, flaps."  # spoken()
 
 
 class WakeGate:
@@ -334,8 +335,8 @@ class WakeGate:
                         try:
                             self._model = self._load()
                             if log:
-                                log(f"uyandırma modeli hazır: {self.model_name} ({self.device}), "
-                                    f"{self.load_seconds:.1f} sn")
+                                log(f"wake model ready: {self.model_name} ({self.device}), "
+                                    f"{self.load_seconds:.1f} s")
                         except Exception:  # noqa: BLE001
                             self._failed = True
 
@@ -415,7 +416,7 @@ class WakeGate:
                 if self._model is None:
                     self._model = self._load()
                 if self.flying():
-                    prompt = f"{prompt} {FLIGHT_HINT}".strip()
+                    prompt = f"{prompt} {spoken(FLIGHT_HINT)}".strip()
                 segments, _ = self._model.transcribe(io.BytesIO(wav), language=self.language, beam_size=1,
                                                      initial_prompt=prompt, condition_on_previous_text=False)
                 segs = speech_segments(segments, prompt)
@@ -463,7 +464,7 @@ class STTRouter:
                 # move on to the next engine
                 self.down[e.name] = now + self.cooldown
                 errors.append(f"{e.name}: {ex}" if isinstance(ex, STTError) else f"{e.name}: {type(ex).__name__}: {ex}")
-        raise STTError("; ".join(errors) or "konuşma tanıma motoru yok")
+        raise STTError("; ".join(errors) or "no speech recognition engine")
 
 
 # Whisper makes up sentences it memorized from YouTube subtitles when there is silence or noise

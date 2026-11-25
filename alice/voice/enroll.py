@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from alice.i18n import _
 from alice.voice import speaker_id as sid
 
 LISTEN_SECONDS = 15.0  # wait for one sentence; if nothing is said, "duyamadım" ("I couldn't hear")
@@ -63,7 +64,7 @@ class EnrollSession:
     # ------------------------------------------------------------------ state
     def _reset(self, state: str, **kw: Any) -> None:
         with self._lock:
-            self._s = {"state": state, "step": 0, "total": len(sid.ENROLL_SENTENCES), "sentence": "", "level": 0.0,
+            self._s = {"state": state, "step": 0, "total": len(sid.enroll_sentences()), "sentence": "", "level": 0.0,
                        "hearing": False, "took": 0.0, "left": 0, "message": "", "progress": None, "result": None,
                        "takes": [], "got": "", **kw}
 
@@ -87,7 +88,7 @@ class EnrollSession:
     # ------------------------------------------------------------------ actions
     def _run(self, name: str, fn: Callable[[], None]) -> dict[str, Any]:
         if self.running():
-            return {"ok": False, "error": "zaten sürüyor"}
+            return {"ok": False, "error": _("already running")}
         self._cancel.clear()
 
         def body() -> None:
@@ -108,17 +109,17 @@ class EnrollSession:
         return {"ok": True}
 
     def start(self) -> dict[str, Any]:
-        self._reset("preparing", message="hazırlanıyor")
+        self._reset("preparing", message=_("preparing"))
         return self._run("enroll", self._enroll)
 
     def test(self) -> dict[str, Any]:
         if sid.load_profile() is None:
-            return {"ok": False, "error": "önce sesini tanıt"}
-        self._reset("preparing", message="hazırlanıyor")
+            return {"ok": False, "error": _("enroll your voice first")}
+        self._reset("preparing", message=_("preparing"))
         return self._run("enroll-test", self._test_only)
 
     def install(self) -> dict[str, Any]:
-        self._reset("installing", message="sherpa-onnx kuruluyor (bir dakika sürebilir)")
+        self._reset("installing", message=_("installing sherpa-onnx (it may take a minute)"))
         return self._run("enroll-install", self._install)
 
     def done(self) -> dict[str, Any]:
@@ -135,12 +136,12 @@ class EnrollSession:
 
     def remove(self) -> dict[str, Any]:
         if self.running():
-            return {"ok": False, "error": "tanıtma sürüyor"}
+            return {"ok": False, "error": _("enrollment is in progress")}
         try:
             sid.profile_path().unlink()
         except FileNotFoundError:
             pass  # no profile yet: nothing to delete
-        self._reset("idle", message="ses tanıma kapatıldı: ALICE yine herkesin sesine cevap verir")
+        self._reset("idle", message=_("voice recognition turned off: ALICE answers everyone's voice again"))
         return {"ok": True}
 
     # ------------------------------------------------------------------ steps
@@ -152,17 +153,17 @@ class EnrollSession:
 
     def _install(self) -> None:
         if self.pip() != 0:
-            raise RuntimeError("sherpa-onnx kurulamadı; komut satırında dene: pip install sherpa-onnx")
+            raise RuntimeError(_("could not install sherpa-onnx; try in a terminal: pip install sherpa-onnx"))
         importlib.invalidate_caches()
         if not sid.available():
-            raise RuntimeError("sherpa-onnx kuruldu ama yüklenemedi; uygulamayı yeniden başlat")
+            raise RuntimeError(_("sherpa-onnx was installed but could not be loaded; restart the app"))
         self._reset("idle", message="sherpa-onnx kuruldu")
 
     def _prepare(self) -> Any:
         if not sid.available():
-            raise RuntimeError("sherpa-onnx kurulu değil")
+            raise RuntimeError(_("sherpa-onnx is not installed"))
         if not sid.model_path().is_file():
-            self._set(state="downloading", message="ses tanıma modeli indiriliyor (~40 MB, bir kez)", progress=0.0)
+            self._set(state="downloading", message=_("downloading the voice recognition model (~40 MB, once)"), progress=0.0)
 
             def progress(done: int, total: int) -> None:
                 if self._cancel.is_set():
@@ -170,7 +171,7 @@ class EnrollSession:
                 self._set(progress=(done / total) if total else None)
 
             sid.download_model(progress=progress)
-        self._set(state="preparing", message="model yükleniyor", progress=None)
+        self._set(state="preparing", message=_("loading the model"), progress=None)
         return (self.make_embedder or sid.Embedder)()
 
     def _touch_marker(self) -> None:
@@ -241,10 +242,10 @@ class EnrollSession:
                 return None
 
     def _try_out(self, mic: Any, vad: Any, emb: Any, prof: dict[str, Any]) -> None:
-        self._set(state="testing", sentence="", message="Şimdi kendi aklından bir cümle söyle, deneyelim.")
+        self._set(state="testing", sentence="", message=_("Now say a sentence of your own, let's try."))
         audio = self._record(mic, vad)
         if audio is None:
-            self._set(state="done", message="deneme için ses gelmedi; sesin yine de kaydedildi")
+            self._set(state="done", message=_("no sound for the test; your voice was saved anyway"))
             return
         gate = sid.SpeakerGate(prof, emb)
         ok = gate.check(audio.pcm, audio.rate)
@@ -252,19 +253,19 @@ class EnrollSession:
             prev = self._s.get("result") or {}
         self._set(state="done", result={**prev, "score": round(gate.last_score, 3), "threshold": gate.threshold,
                                         "recognized": ok},
-                  message=("seni tanıdı" if ok else "tanımadı: sessiz bir yerde yeniden tanıtmayı dene"))
+                  message=(_("it recognised you") if ok else _("it did not recognise you: try enrolling again somewhere quiet")))
 
     def _enroll(self) -> None:
         emb = self._prepare()
-        self._set(message="mikrofon açılıyor")
+        self._set(message=_("opening the microphone"))
         vad = self.make_vad()
-        sentences = sid.ENROLL_SENTENCES
+        sentences = sid.enroll_sentences()
         embeddings: list[list[float]] = []
         with self.make_mic() as mic:
             for i, sentence in enumerate(sentences, 1):
                 for attempt in range(TRIES):
                     self._set(state="recording", step=i, sentence=sentence, got="",
-                              message="oku" if attempt == 0 else "duyamadım, bir daha oku")
+                              message=_("read it") if attempt == 0 else _("I couldn't hear, read it again"))
                     audio = self._record(mic, vad)
                     if self._skip.is_set():
                         self._skip.clear()
@@ -274,12 +275,12 @@ class EnrollSession:
                         with self._lock:
                             self._s["takes"].append(round(audio.seconds, 1))
                         # Show that it was taken on screen, then move to the next sentence.
-                        self._set(got=f"✓ alındı ({audio.seconds:.1f} sn)", hearing=False, level=0.0)
+                        self._set(got=_("✓ got it ({n} s)", n=f"{audio.seconds:.1f}"), hearing=False, level=0.0)
                         time.sleep(self.got_pause)
                         break
             if len(embeddings) < MIN_TAKES:
-                raise RuntimeError("yeterli kayıt alınamadı: mikrofon sesini duymuyor olabilir "
-                                   "(Windows ses ayarlarından doğru mikrofonu seç)")
+                raise RuntimeError(_("not enough recordings: the microphone may not be hearing you (pick the right "
+                                     "microphone in the Windows sound settings)"))
             prof = sid.save_profile(embeddings)
             self._set(result={"samples": prof["samples"], "threshold": prof["threshold"],
                               "consistency": prof["consistency"], "noisy": prof["consistency"] < 0.55})
@@ -288,7 +289,7 @@ class EnrollSession:
     def _test_only(self) -> None:
         prof = sid.load_profile()
         if prof is None:
-            raise RuntimeError("önce sesini tanıt")
+            raise RuntimeError(_("enroll your voice first"))
         emb = self._prepare()
         with self.make_mic() as mic:
             self._try_out(mic, self.make_vad(), emb, prof)

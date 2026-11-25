@@ -343,9 +343,9 @@ def test_gemini_quota_parsing():
     from alice.voice.tts import QuotaError, gemini_quota_error
 
     q = gemini_quota_error(GEMINI_429)
-    assert isinstance(q, QuotaError) and q.retry_after == 41 and not q.daily and "dakikalık" in str(q)
+    assert isinstance(q, QuotaError) and q.retry_after == 41 and not q.daily and "per-minute" in str(q)
     d = gemini_quota_error(GEMINI_429.replace("PerMinute", "PerDay"))
-    assert d.daily and "günlük" in str(d)
+    assert d.daily and "daily" in str(d)
     eng = GeminiTTS("k", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429, text=GEMINI_429))))
     with pytest.raises(QuotaError):
         eng.synth("x")
@@ -418,7 +418,7 @@ def test_speech_cache(tmp_path):
     r = TTSRouter(cloud, None, policy=lambda: {}, cache=SpeechCache(tmp_path))
     a = r.synth("Hemen bakıyorum.", "calm")
     b = r.synth("Hemen bakıyorum.", "calm")
-    assert a.pcm == b.pcm and len(cloud.calls) == 1 and r.last.endswith("(önbellek)")
+    assert a.pcm == b.pcm and len(cloud.calls) == 1 and r.last.endswith("(cache)")
     r.synth("Hemen bakıyorum.", "urgent")
     r.synth("uzun " * 40, "calm")
     r.synth("uzun " * 40, "calm")
@@ -518,7 +518,7 @@ def test_list_models_and_status_detail():
         lambda r: httpx.Response(404, text="nf") if "yok" in r.url.path else httpx.Response(429, text=daily))))
     with pytest.raises(QuotaError) as ei:
         eng.synth("x")
-    assert "yok: bulunamadı" in str(ei.value) and "dolu: günlük kota" in str(ei.value)
+    assert "yok: not found" in str(ei.value) and "dolu: daily quota" in str(ei.value)
 
 
 FAKE_TORCH = """

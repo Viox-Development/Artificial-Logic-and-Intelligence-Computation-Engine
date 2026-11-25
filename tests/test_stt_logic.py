@@ -165,7 +165,7 @@ def test_groq_errors_become_stterror(method):
     with pytest.raises(STTError, match="groq 429: rate limit") as ei:
         getattr(groq(bad_status), method)(*args)
     assert len(str(ei.value)) < 230  # body is truncated to 200 characters
-    with pytest.raises(STTError, match="bağlantı"):
+    with pytest.raises(STTError, match="connection error"):
         getattr(groq(boom), method)(*args)
 
 
@@ -392,9 +392,9 @@ def test_router_all_down_message_and_empty():
     r = STTRouter([Eng("a", error=STTError("x")), Eng("b", error=STTError("y"))])
     with pytest.raises(STTError, match="a: x; b: y"):
         r.transcribe(Audio.silence(0.1))
-    with pytest.raises(STTError, match="konuşma tanıma motoru yok"):
+    with pytest.raises(STTError, match="no speech recognition engine"):
         r.transcribe(Audio.silence(0.1))  # all are in cooldown
-    with pytest.raises(STTError, match="motoru yok"):
+    with pytest.raises(STTError, match="no speech recognition engine"):
         STTRouter([]).transcribe(Audio.silence(0.1))
 
 

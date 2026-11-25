@@ -84,7 +84,7 @@ def test_gate_load_needs_profile_package_and_model(tmp_path, monkeypatch):
     assert g.check(b"\1\0" * 16000) and g.active  # once enrolled from the app, it takes effect without a restart
     assert "sherpa-onnx" in logs[-1] and "kontrol edilmedi" in g.last_note
     monkeypatch.setattr(sid, "available", lambda: True)
-    assert g.check(b"\1\0" * 16000) and "modeli yok" in logs[-1]
+    assert g.check(b"\1\0" * 16000) and "no voice recognition model" in logs[-1]
     monkeypatch.setattr(sid, "Embedder", lambda: FakeEmbedder())
     (tmp_path / "models").mkdir()
     sid.model_path().write_bytes(b"x")
@@ -162,7 +162,7 @@ def test_unchecked_wake_is_logged_with_reason(monkeypatch):
     monkeypatch.setattr(va_mod, "voice_log", logs.append)
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=CloudSTT(), speaker_gate=gate())
     assert va._is_user(Audio(b"\2\0" * 4000, 16000))  # 0.25 s
-    assert "kısa ses 0.25 sn" in logs[-1]
+    assert "short audio 0.25 s" in logs[-1]
 
 
 # ---- from the app: "Sesimi tanıt" (introduce my voice)
@@ -232,7 +232,7 @@ def test_app_enroll_cancel_and_silent_mic(tmp_path, monkeypatch):
     s.start()
     s._thread.join(10)
     v = s.view()
-    assert "yeterli kayıt" in v["message"] and sid.load_profile() is None
+    assert "not enough recordings" in v["message"] and sid.load_profile() is None
     s = EnrollSession(mic=lambda: Mic([]), vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=30)
     s.start()
     wait_state(s, "recording")

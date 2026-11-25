@@ -72,12 +72,12 @@ def summary(days: float = 7) -> str:
     lines = []
     for kind in dict.fromkeys(r["kind"] for r in rows):
         vals = sorted(r["s"] for r in rows if r["kind"] == kind)
-        line = (f"{kind}: {len(vals)} tur, ortanca {statistics.median(vals):.1f} sn, en yavaş %10 "
-                f"{_p(vals, 90):.1f} sn üstü, en uzun {vals[-1]:.1f} sn")
+        line = (f"{kind}: {len(vals)} turns, median {statistics.median(vals):.1f} s, slowest 10% "
+                f"above {_p(vals, 90):.1f} s, longest {vals[-1]:.1f} s")
         tool = [r["s"] for r in rows if r["kind"] == kind and r.get("tools")]
         plain = [r["s"] for r in rows if r["kind"] == kind and not r.get("tools")]
         if tool and plain:
-            line += f" (araçlı turlar ortanca {statistics.median(tool):.1f}, araçsız {statistics.median(plain):.1f} sn)"
+            line += f" (turns with tools median {statistics.median(tool):.1f}, without {statistics.median(plain):.1f} s)"
         lines.append(line)
     return "\n".join(lines)
 

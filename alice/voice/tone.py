@@ -14,7 +14,8 @@ from alice.voice.spoken_numbers import say_ordinal
 
 EMOTIONS = ("calm", "happy", "serious", "urgent", "playful")
 
-NAMES_TR = {"calm": "sakin", "happy": "neşeli", "serious": "ciddi", "urgent": "acil", "playful": "şakacı"}
+# Emotion names, English keys shown in the interface language with _().
+NAMES_TR = {"calm": "calm", "happy": "happy", "serious": "serious", "urgent": "urgent", "playful": "playful"}
 
 # Director's notes for the Gemini voice models (they follow English instructions better; the spoken text is Turkish).
 DIRECTION = {

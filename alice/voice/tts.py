@@ -30,25 +30,26 @@ from typing import Any, Callable, Protocol
 import httpx
 
 from alice.config import Config, alice_home
-from alice.i18n import edge_voice, speech_language
+from alice.i18n import _, edge_voice, speech_language, spoken
 from alice.voice.audio import Audio
 from alice.voice.tone import CHATTERBOX, DIRECTION, EMOTIONS, NAMES_TR
 
-# Gemini's female voices (per Google's descriptions). Chosen from these in the listening test.
+# Gemini's female voices (per Google's descriptions, shown in the interface language). Chosen from these in the
+# listening test.
 GEMINI_VOICES = {
-    "Aoede": "ferah", "Kore": "kararlı", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
-    "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak",
+    "Aoede": "breezy", "Kore": "firm", "Leda": "youthful", "Sulafat": "warm", "Despina": "fluent",
+    "Achernar": "soft-toned", "Vindemiatrix": "gentle", "Callirrhoe": "easy-going", "Autonoe": "bright",
 }
 # All of Gemini's ready-made voices (shared by TTS and Live) and Google's descriptions;
     # listened to and chosen under Sistem > Ses.
 ALL_GEMINI_VOICES = {
-    "Kore": "kararlı", "Aoede": "ferah", "Leda": "genç", "Sulafat": "sıcak", "Despina": "akıcı",
-    "Achernar": "yumuşak", "Vindemiatrix": "nazik", "Callirrhoe": "rahat", "Autonoe": "parlak", "Zephyr": "parlak",
-    "Puck": "neşeli", "Charon": "bilgili", "Fenrir": "heyecanlı", "Orus": "kararlı", "Enceladus": "nefesli",
-    "Iapetus": "net", "Umbriel": "rahat", "Algieba": "pürüzsüz", "Erinome": "net", "Algenib": "boğuk",
-    "Rasalgethi": "bilgili", "Laomedeia": "neşeli", "Alnilam": "kararlı", "Schedar": "dengeli", "Gacrux": "olgun",
-    "Pulcherrima": "atak", "Achird": "samimi", "Zubenelgenubi": "gündelik", "Sadachbia": "canlı",
-    "Sadaltager": "bilgili",
+    "Kore": "firm", "Aoede": "breezy", "Leda": "youthful", "Sulafat": "warm", "Despina": "fluent",
+    "Achernar": "soft-toned", "Vindemiatrix": "gentle", "Callirrhoe": "easy-going", "Autonoe": "bright", "Zephyr": "bright",
+    "Puck": "upbeat", "Charon": "informative", "Fenrir": "excitable", "Orus": "firm", "Enceladus": "breathy",
+    "Iapetus": "clear", "Umbriel": "easy-going", "Algieba": "smooth", "Erinome": "clear", "Algenib": "gravelly",
+    "Rasalgethi": "informative", "Laomedeia": "upbeat", "Alnilam": "firm", "Schedar": "even", "Gacrux": "mature",
+    "Pulcherrima": "forward", "Achird": "friendly", "Zubenelgenubi": "casual", "Sadachbia": "lively",
+    "Sadaltager": "informative",
 }
 
 
@@ -87,10 +88,10 @@ def gemini_quota_error(body: str) -> QuotaError:
     if retry is None:
         m = re.search(r"retry in ([\d.]+)s", str(err.get("message", "")))
         retry = float(m.group(1)) if m else None
-    kind = "günlük" if daily else "dakikalık"
-    lim = f" (sınır {limit} istek)" if limit else ""
-    wait = f", {retry:.0f} sn sonra tekrar denenebilir" if retry and not daily else ""
-    return QuotaError(f"gemini {kind} ses kotası doldu{lim}{wait}", retry, daily)
+    kind = "daily" if daily else "per-minute"
+    lim = f" (limit {limit} requests)" if limit else ""
+    wait = f", can be retried in {retry:.0f} s" if retry and not daily else ""
+    return QuotaError(f"gemini {kind} voice quota used up{lim}{wait}", retry, daily)
 
 
 class TTS(Protocol):
@@ -128,14 +129,15 @@ class EmotionLibrary:
 
 
 # Reference sentences: local engines clone well from 6-15 s of clean speech.
+# English keys, recorded in the speech language (spoken()).
 LIBRARY_TEXT = {
-    "calm": "Merhaba, ben ALICE. Bugün her şey yolunda görünüyor; bilgisayarın serin, görevlerin de zamanında "
-            "bitti. Bir şeye ihtiyacın olursa buradayım.",
-    "happy": "Harika haber! Derleme ilk denemede geçti ve bütün testler yeşil. Bence bunu kutlamayı hak ettin.",
-    "serious": "Bir sorun var. Yedekleme görevi yarıda kaldı çünkü hedef disk dolu. Yer açmadan tekrar "
-               "denersem yine başarısız olacak.",
-    "urgent": "Yakıt kritik seviyede. Mevcut tüketimle on dakikan kaldı. Eve dönmek için şimdi ayrılman gerekiyor.",
-    "playful": "Yine mi gece yarısı Unity? Peki, ben kahve içemiyorum ama sana eşlik ederim. Hadi şu hatayı bulalım.",
+    "calm": "Hi, I'm ALICE. Everything looks fine today; your computer is cool and your tasks finished on time. I'm "
+            "here if you need anything.",
+    "happy": "Great news! The build passed on the first try and all the tests are green. I think you deserve to celebrate.",
+    "serious": "There's a problem. The backup task stopped halfway because the target disk is full. If I try again "
+               "without freeing space, it will fail again.",
+    "urgent": "Fuel is critical. At the current burn you have ten minutes left. You need to leave now to make it home.",
+    "playful": "Unity at midnight again? Fine, I can't drink coffee but I'll keep you company. Let's find that bug.",
 }
 
 
@@ -152,22 +154,22 @@ def build_library(engine: "TTS", out: Path | None = None, emit: Callable[[str], 
         meta = {}
     if meta.get("source") and meta["source"] != engine.name:
         redo = True  # don't mix in a library made with a different voice
-        emit(f"önceki kütüphane {meta['source']} sesiyle yapılmış, {engine.name} ile yeniden yapılıyor")
+        emit(_("the old library was made with the {old} voice, remaking it with {new}", old=meta["source"], new=engine.name))
     missing: list[str] = []
     for emo, text in LIBRARY_TEXT.items():
         path = out / f"{emo}.wav"
         if path.exists() and not redo:
             continue
-        emit(f"{NAMES_TR[emo]} kaydı hazırlanıyor")
+        emit(_("preparing the {emotion} recording", emotion=_(NAMES_TR[emo])))
         try:
-            engine.synth(text, emo).save(path)
+            engine.synth(spoken(text), emo).save(path)
         except QuotaError as e:
             emit(f"  {e}")
             rest = list(LIBRARY_TEXT)[list(LIBRARY_TEXT).index(emo):]
             missing += [m for m in rest if redo or not (out / f"{m}.wav").exists()]
             break
         except TTSError as e:
-            emit(f"  atlandı: {e}")
+            emit("  " + _("skipped: {error}", error=e))
             missing.append(emo)
     meta_path.write_text(json.dumps({"source": engine.name, "created": time.time()}), encoding="utf-8")
     return out, sorted(set(missing), key=list(LIBRARY_TEXT).index)
@@ -263,9 +265,9 @@ class GeminiTTS:
             r = self.client.post(self.URL.format(model=model), json=body, headers={"x-goog-api-key": self.api_key})
         except httpx.TimeoutException:
             # The model is slow or stuck right now: move on to the next model for this sentence.
-            return "slow", f"{model}: zaman aşımı"
+            return "slow", f"{model}: timed out"
         except httpx.HTTPError as e:
-            raise TTSError(f"gemini bağlantı hatası: {e}") from e
+            raise TTSError(f"gemini connection error: {e}") from e
         if r.status_code == 429:
             return "quota", gemini_quota_error(r.text)
         if r.status_code in (400, 403, 404):
@@ -275,7 +277,7 @@ class GeminiTTS:
         try:
             part = r.json()["candidates"][0]["content"]["parts"][0]["inlineData"]
         except (KeyError, IndexError, ValueError):
-            return "error", f"{model}: ses döndürmedi"
+            return "error", f"{model}: returned no audio"
         rate = 24000
         mime = part.get("mimeType", "")
         if "rate=" in mime:
@@ -293,11 +295,11 @@ class GeminiTTS:
         for model in self.models:
             # Total time limit: if each model stalled for 45 s, falling back to Edge across 5 models took minutes.
             if time.monotonic() - now > self.TOTAL_SECONDS:
-                errors.append(f"{self.TOTAL_SECONDS:.0f} sn içinde ses gelmedi")
+                errors.append(f"no audio within {self.TOTAL_SECONDS:.0f} s")
                 break
             if self.down.get(model, 0) > now:
-                status[model] = {"daily": "günlük kota", "minute": "dakikalık kota"}.get(self.reason.get(model, ""),
-                                                                                         "bekletiliyor")
+                status[model] = {"daily": "daily quota", "minute": "per-minute quota"}.get(self.reason.get(model, ""),
+                                                                                         "on hold")
                 continue
             fallback: Audio | None = None
             for fmt in self.formats_for(model):
@@ -308,20 +310,20 @@ class GeminiTTS:
                     self.down[model] = now + (6 * 3600 if res.daily else (res.retry_after or 60))
                     self.reason[model] = "daily" if res.daily else "minute"
                     quota.append(res)
-                    status[model] = "günlük kota" if res.daily else "dakikalık kota"
+                    status[model] = "daily quota" if res.daily else "per-minute quota"
                     break
                 if kind == "missing":
                     # Model missing, not enabled on this account, or voice/language unsupported: skip it for a day.
                     self.down[model] = now + 86400
                     self.reason[model] = "error"
                     errors.append(res)
-                    status[model] = "bulunamadı/desteklenmiyor (" + res.rsplit(" ", 1)[-1] + ")"
+                    status[model] = "not found/unsupported (" + res.rsplit(" ", 1)[-1] + ")"
                     break
                 if kind == "slow":
                     self.down[model] = now + 120  # two minutes: continue with the other models
                     self.reason[model] = "error"
                     errors.append(res)
-                    status[model] = "zaman aşımı"
+                    status[model] = "timed out"
                     break
                 if kind == "error":
                     self.down[model] = now + 60  # a model returning 500/503 should not be tried first on every sentence
@@ -347,19 +349,19 @@ class GeminiTTS:
             minute = [max(1.0, self.down[m] - now) for m in self.models
                       if self.reason.get(m) == "minute" and self.down.get(m, 0) > now]
             daily = not minute
-            kind = "günlük" if daily else "dakikalık"
+            kind = "daily" if daily else "per-minute"
             retry = None if daily else min(minute)
-            wait = f", {retry:.0f} sn sonra tekrar denenebilir" if retry else ""
+            wait = f", can be retried in {retry:.0f} s" if retry else ""
             detail = "; ".join(f"{m}: {st}" for m, st in status.items())
-            raise QuotaError(f"gemini {kind} ses kotası doldu{wait} [{detail}]", retry, daily)
-        raise TTSError("gemini: " + ("; ".join(f"{m}: {st}" for m, st in status.items()) or "kullanılabilir model yok"))
+            raise QuotaError(f"gemini {kind} voice quota used up{wait} [{detail}]", retry, daily)
+        raise TTSError("gemini: " + ("; ".join(f"{m}: {st}" for m, st in status.items()) or "no usable model"))
 
 
 def list_gemini_tts_models(api_key: str, client: httpx.Client | None = None) -> list[str]:
     """Speech (TTS) models accessible with this key. Listing models does not use up quota."""
     c = client or httpx.Client(timeout=15)
     out, token = [], ""
-    for _ in range(10):
+    for _try in range(10):
         r = c.get("https://generativelanguage.googleapis.com/v1beta/models",
                   params={"pageSize": 1000, **({"pageToken": token} if token else {})},
                   headers={"x-goog-api-key": api_key})
@@ -443,7 +445,7 @@ class XTTS:
             try:
                 from TTS.api import TTS as CoquiTTS
             except ImportError as e:
-                raise TTSError("XTTS kurulu değil: pip install coqui-tts") from e
+                raise TTSError("XTTS is not installed: pip install coqui-tts") from e
             self._model = CoquiTTS("tts_models/multilingual/multi-dataset/xtts_v2").to(dev)
             self._device = dev
         return self._model
@@ -451,7 +453,7 @@ class XTTS:
     def synth(self, text: str, emotion: str = "calm") -> Audio:
         ref = self.library.clip(emotion)
         if ref is None:
-            raise TTSError("duygu kütüphanesi yok: alice voice library")
+            raise TTSError("no emotion library: alice voice library")
         with self._lock:
             wav = self._load().tts(text=text, speaker_wav=str(ref), language=self.language)
         return Audio.from_floats(wav, 24000).polish()
@@ -534,7 +536,7 @@ class Chatterbox:
             if self.healthy():
                 return
             if not self.python or not Path(self.python).exists():
-                raise TTSError("yerel ses kurulu değil: alice voice install-local")
+                raise TTSError("the local voice is not installed: alice voice install-local")
             import subprocess
             import sys
 
@@ -549,11 +551,11 @@ class Chatterbox:
             end = time.monotonic() + 30
             while time.monotonic() < end:
                 if self._proc.poll() is not None:
-                    raise TTSError(f"yerel ses sunucusu açılamadı, ayrıntı: {log}")
+                    raise TTSError(f"could not start the local voice server, details: {log}")
                 if self.healthy():
                     return
                 time.sleep(0.5)
-            raise TTSError(f"yerel ses sunucusu cevap vermiyor, ayrıntı: {log}")
+            raise TTSError(f"the local voice server does not answer, details: {log}")
 
     def synth(self, text: str, emotion: str = "calm") -> Audio:
         self.ensure_server()
@@ -569,7 +571,7 @@ class Chatterbox:
         try:
             r = self.client.post(self.base + "/synth", json=body, timeout=timeout)
         except httpx.HTTPError as e:
-            raise TTSError(f"yerel ses sunucusu hatası: {e}") from e
+            raise TTSError(f"local voice server error: {e}") from e
         if r.status_code != 200:
             try:
                 msg = r.json().get("error", r.text)
@@ -607,7 +609,7 @@ class EdgeTTS:
         try:
             import edge_tts
         except ImportError as e:
-            raise TTSError("edge-tts kurulu değil: pip install edge-tts") from e
+            raise TTSError("edge-tts is not installed: pip install edge-tts") from e
         rate, pitch = EDGE_PROSODY.get(emotion, ("+0%", "+0Hz"))
 
         async def run() -> bytes:
@@ -620,12 +622,12 @@ class EdgeTTS:
         try:
             return asyncio.run(asyncio.wait_for(run(), self.timeout))
         except Exception as e:  # network/service errors come back as one type
-            raise TTSError(f"edge sesi alınamadı: {type(e).__name__}: {e}") from e
+            raise TTSError(f"could not get the edge voice: {type(e).__name__}: {e}") from e
 
     def synth(self, text: str, emotion: str = "calm") -> Audio:
         data = self._mp3(text, emotion)
         if not data:
-            raise TTSError("edge sesi boş döndü")
+            raise TTSError("the edge voice came back empty")
         return Audio(decode_mp3(data, 24000), 24000)
 
 
@@ -690,13 +692,13 @@ class ElevenLabsTTS:
                 r = self.client.post(url, params={"output_format": f"pcm_{self.RATE}"}, headers=self._headers(),
                                      json=body)
         except httpx.HTTPError as e:
-            raise TTSError(f"elevenlabs'e ulaşılamadı: {type(e).__name__}: {e}") from e
+            raise TTSError(f"could not reach elevenlabs: {type(e).__name__}: {e}") from e
         if r.status_code == 200 and r.content:
             return Audio(r.content, self.RATE)
         low = r.text.lower()
         if r.status_code == 429 or "quota" in low or "credits" in low:
             # Monthly credits used up or rate limit: if credits ran out, retry after an hour (they may have renewed)
-            raise QuotaError(f"elevenlabs kredisi/kotası: {r.text[:160]}", None if r.status_code == 429 else 3600,
+            raise QuotaError(f"elevenlabs credit/quota: {r.text[:160]}", None if r.status_code == 429 else 3600,
                              daily=r.status_code != 429)
         raise TTSError(f"elevenlabs HTTP {r.status_code}: {r.text[:200]}")
 
@@ -708,7 +710,7 @@ def decode_mp3(data: bytes, rate: int) -> bytes:
     try:
         import av
     except ImportError as e:
-        raise TTSError("MP3 çözmek için av gerekli: pip install av") from e
+        raise TTSError("av is needed to decode MP3: pip install av") from e
     out = bytearray()
     with av.open(io.BytesIO(data)) as box:
         res = av.AudioResampler(format="s16", layout="mono", rate=rate)
@@ -866,11 +868,11 @@ class TTSRouter:
             # Only the cache of the engine speaking now: another engine's recording would be a different voice.
             hit = self.cache.get(usable[0].name, emotion, text)
             if hit is not None:
-                self.last = f"{usable[0].name} (önbellek)"
+                self.last = f"{usable[0].name} (cache)"
                 return hit
         for e in order:
             if self.down.get(e.name, 0) > now:
-                errors.append(f"{e.name}: bekletiliyor")
+                errors.append(f"{e.name}: on hold")
                 continue
             try:
                 audio = e.synth(text, emotion)
@@ -894,7 +896,7 @@ class TTSRouter:
 def make_cloud(cfg: Config, voice: str | None = None) -> GeminiTTS | None:
     v = cfg.data.get("voice", {})
     ref = voice or v.get("tts_cloud", "gemini:Aoede")
-    provider, _, name = ref.partition(":")
+    provider, _sep, name = ref.partition(":")
     if provider != "gemini":
         return None
     key = os.environ.get(cfg.data.get("providers", {}).get("gemini", {}).get("api_key_env", "GEMINI_API_KEY"), "")
