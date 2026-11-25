@@ -682,7 +682,7 @@ class VoiceAssistant:
         except STTError as e:
             self.emit(f"anlaşılamadı: {e}")
             return self._decide("stt_hata")
-        self.emit(f"duyulan: {text}")
+        self.emit(_("heard: {text}", text=text))
         self.decision.update(head=text, path="stt")
         if is_hallucination(text):
             voice_log(f"duyulan (gürültü sayıldı) [{getattr(self.stt, 'last', '')}]: {text}")
@@ -1156,7 +1156,7 @@ class VoiceAssistant:
                     self._interrupt()
                     self.muted = False
                     self.armed_until = time.monotonic() + self.follow_up
-                    self.emit("uyandım")
+                    self.emit(_("I'm awake"))
                 # ALICE must not mistake its own voice for speech while it talks.
                 self.vad.boost = 2.5 if self.speaker.speaking else 1.0
                 yield frame
