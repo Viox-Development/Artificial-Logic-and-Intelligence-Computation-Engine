@@ -19,8 +19,8 @@ def test_app_names_are_readable():
 
 def test_describe():
     n = {"app": "Sonora", "title": "Dünyanın Sonuna Doğmuşum", "artist": "maNga", "status": "paused"}
-    assert nowplaying.describe(n) == "maNga – Dünyanın Sonuna Doğmuşum (Sonora, duraklatıldı)"
-    assert "çalan bir şey yok" in nowplaying.describe(None)
+    assert nowplaying.describe(n) == "maNga – Dünyanın Sonuna Doğmuşum (Sonora, paused)"
+    assert "nothing connected to media control" in nowplaying.describe(None)
 
 
 def test_watcher_announces_only_track_changes_while_playing():
@@ -47,9 +47,9 @@ def test_media_tool_controls_the_playing_app_and_reports_result(monkeypatch, tmp
 
     monkeypatch.setattr(time, "sleep", lambda s: None)
     ctx = ToolContext(cwd=tmp_path, config=make_config({"brain": ["a:m"]}))
-    assert extras.Media().run(ctx, "next").text == "done; now: X – B (Sonora, çalıyor)"
+    assert extras.Media().run(ctx, "next").text == "done; now: X – B (Sonora, playing)"
     assert calls == ["next"]
-    assert extras.Media().run(ctx, "now").text == "X – B (Sonora, çalıyor)"
+    assert extras.Media().run(ctx, "now").text == "X – B (Sonora, playing)"
     monkeypatch.setattr(nowplaying, "control", lambda a: False)  # no session: falls back to the media key
     monkeypatch.setattr(media, "key", lambda a, t=1: "tamam")
     assert extras.Media().run(ctx, "play_pause").text == "tamam"
@@ -83,7 +83,7 @@ def test_linux_now_reads_playerctl_metadata(playerctl):
     assert n == {"app": "Spotify", "title": "Sen Ağlama", "artist": "maNga", "album": "Sen Ağlama",
                  "status": "playing"}
     assert calls == [["metadata", "--format", nowplaying.NOW_FORMAT]]
-    assert nowplaying.describe(n) == "maNga – Sen Ağlama (Spotify, çalıyor)"
+    assert nowplaying.describe(n) == "maNga – Sen Ağlama (Spotify, playing)"
 
 
 def test_linux_now_without_player_or_playerctl_is_none(playerctl, monkeypatch):

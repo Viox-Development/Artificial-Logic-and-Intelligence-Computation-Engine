@@ -119,8 +119,25 @@ def linux_foreground_pid() -> int | None:
     return None
 
 
+def parse_lsappinfo_name(text: str) -> str | None:
+    """`lsappinfo info -only name <ASN>` → the app's name ('"LSDisplayName"="Safari"')."""
+    m = re.search(r'"(?:LSDisplayName|name)"\s*=\s*"([^"]+)"', text or "")
+    return m.group(1) if m else None
+
+
+def mac_foreground_app() -> str | None:
+    """macOS: the frontmost app through lsappinfo (needs no permission, unlike System Events)."""
+    exe = shutil.which("lsappinfo")
+    if not exe:
+        return None
+    front = (_run([exe, "front"]) or "").strip()
+    return parse_lsappinfo_name(_run([exe, "info", "-only", "name", front]) or "") if front else None
+
+
 def foreground_process() -> str | None:
-    """Program name of the foreground window (Windows; Linux on X11 and the common Wayland compositors)."""
+    """Program name of the foreground window (Windows; Linux on X11 and the common Wayland compositors; macOS)."""
+    if sys.platform == "darwin":
+        return mac_foreground_app()
     if sys.platform.startswith("linux"):
         pid = linux_foreground_pid()
         try:

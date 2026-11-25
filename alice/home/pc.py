@@ -2,6 +2,7 @@
 
 Windows: Win32 calls, powercfg, DDC/CI and WMI. Linux: loginctl, systemctl, the display server's DPMS command
 (xset on X11; KDE, GNOME, Sway and Hyprland on Wayland), powerprofilesctl and brightnessctl, whichever is installed.
+macOS: pmset, a Control-Command-Q keystroke through osascript, and the `brightness` command (Homebrew).
 Elsewhere, or when the needed tool is missing, it returns an understandable error.
 """
 
@@ -33,13 +34,17 @@ def _windows() -> None:
         raise RuntimeError(_("this only works on Windows for now"))
 
 
+def _mac() -> bool:
+    return sys.platform == "darwin"
+
+
 def _linux() -> bool:
-    """True on Linux, False on Windows; any other system gets an understandable error."""
+    """True on Linux, False on Windows; any other system gets an understandable error (macOS is handled before)."""
     if sys.platform == "win32":
         return False
     if sys.platform.startswith("linux"):
         return True
-    raise RuntimeError(_("this only works on Windows and Linux for now"))
+    raise RuntimeError(_("this only works on Windows, Linux and macOS for now"))
 
 
 def _need(tool: str, package: str = "") -> str:
@@ -106,7 +111,20 @@ def _linux_monitor_off() -> str:
     raise RuntimeError(_("turning the screen off needs one of: {tools}", tools=", ".join(c[0][0] for c in cands)))
 
 
+def _mac_lock() -> str:
+    # Control-Command-Q locks at once but needs the Accessibility permission; otherwise the display sleeps, which locks
+    # when macOS asks for the password right after sleep (the default).
+    osa = shutil.which("osascript")
+    if osa and run([osa, "-e", 'tell application "System Events" to keystroke "q" using {control down, command down}'
+                    ]).returncode == 0:
+        return _("computer locked")
+    _check(run([_need("pmset"), "displaysleepnow"]), _("could not lock the computer"))
+    return _("screen turned off (it locks when macOS asks for the password after sleep)")
+
+
 def lock() -> str:
+    if _mac():
+        return _mac_lock()
     if _linux():
         return _linux_lock()
     import ctypes
@@ -116,6 +134,9 @@ def lock() -> str:
 
 
 def monitor_off() -> str:
+    if _mac():
+        _check(run([_need("pmset"), "displaysleepnow"]), _("could not turn the screen off"))
+        return _("screen turned off (the mouse or keyboard turns it back on)")
     if _linux():
         return _linux_monitor_off()
     import ctypes
@@ -126,6 +147,11 @@ def monitor_off() -> str:
 
 
 def suspend(hibernate: bool = False) -> str:
+    if _mac():
+        if hibernate:
+            raise RuntimeError(_("macOS can't hibernate on request; it decides on its own (pmset hibernatemode)"))
+        _check(run([_need("pmset"), "sleepnow"]), _("could not start sleep"))
+        return _("going to sleep")
     if _linux():
         exe = _need("systemctl", "systemd")
         what = _("could not hibernate (swap or a kernel setting may be missing)") if hibernate else _("could not start sleep")
@@ -188,6 +214,8 @@ def parse_profiles(text: str) -> list[dict]:
 
 
 def plans() -> list[dict]:
+    if _mac():
+        raise RuntimeError(_("macOS has no power plans to switch (Low Power Mode: System Settings → Battery)"))
     if _linux():
         exe = _need("powerprofilesctl", "power-profiles-daemon")
         return parse_profiles(_check(run([exe, "list"]), _("could not read the power profiles")))
@@ -293,10 +321,29 @@ def _linux_brightness(level: int | None, monitor: int | None) -> str:
     return "\n".join(lines)
 
 
+def parse_mac_brightness(text: str) -> list[float]:
+    """`brightness -l` → brightness of each display, 0-1 ("display 0: brightness 0.750000")."""
+    return [float(m) for m in re.findall(r"display \d+: brightness ([0-9.]+)", text)]
+
+
+def _mac_brightness(level: int | None, monitor: int | None) -> str:
+    exe = _need("brightness", "brightness (brew install brightness)")
+    if level is not None:
+        args = [exe, *(["-d", str(monitor - 1)] if monitor else []), f"{level / 100:.2f}"]
+        _check(run(args), _("could not set the brightness"))
+        return f"{monitor or 1}. %{level}" if monitor else f"%{level}"
+    vals = parse_mac_brightness(_check(run([exe, "-l"]), _("could not read the brightness")))
+    if not vals:
+        raise RuntimeError(_("no display with adjustable brightness found"))
+    return "\n".join(f"{i}. %{round(v * 100)}" for i, v in enumerate(vals, 1) if not monitor or i == monitor)
+
+
 def brightness(level: int | None = None, monitor: int | None = None) -> str:
     """If level is None, read it; otherwise set it to 0-100. monitor: 1-based index; if empty, all monitors."""
     if level is not None:
         level = max(0, min(100, int(level)))
+    if _mac():
+        return _mac_brightness(level, monitor)
     if _linux():
         return _linux_brightness(level, monitor)
     import ctypes

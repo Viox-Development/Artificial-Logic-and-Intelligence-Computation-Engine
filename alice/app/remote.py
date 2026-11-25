@@ -287,7 +287,7 @@ def _click(d: dict[str, Any]) -> str:
     x, y = _screen_point(d)
     pg.click(x, y, clicks=2 if d.get("double") else 1, button="right" if d.get("button") == "right" else "left")
     _screen_cache["at"] = 0.0
-    return "tamam"
+    return _("ok")
 
 
 def _scroll(d: dict[str, Any]) -> str:
@@ -304,7 +304,7 @@ def _scroll(d: dict[str, Any]) -> str:
         pg.moveTo(x, y)
         pg.scroll(-dy * 120)  # on Windows, one wheel notch is 120 units
         _screen_cache["at"] = 0.0
-    return "tamam"
+    return _("ok")
 
 
 def _clipboard(text: str) -> str:
@@ -333,7 +333,7 @@ def action(d: dict[str, Any]) -> str:
         from alice.extras import nowplaying
 
         if nowplaying.control(a):  # to the app that is actually playing (the media key used to go to the last-focused one)
-            return "tamam"
+            return _("ok")
     if a in ("play_pause", "next", "previous", "mute", "volume_up", "volume_down"):
         return media.key(a, int(d.get("times") or (3 if a.startswith("volume") else 1)))
     if a == "set_volume":
