@@ -35,7 +35,7 @@ def test_canli_modda_duyulmayan_kisim_modele_not_olarak_gider():
     assert content["turnComplete"] is False
     note = content["turns"][0]["parts"][0]["text"]
     assert "şemsiye" in note.split("Duymadığı kısım")[1]
-    assert state["said"][0].endswith("(sözü kesildi)") and "şemsiye" not in state["said"][0]
+    assert state["said"][0].endswith("(interrupted)") and "şemsiye" not in state["said"][0]
 
 
 def test_klasik_yolda_soylenemeyen_cumleler_cevaba_eklenir():
@@ -73,4 +73,4 @@ def test_klasik_yolda_soylenemeyen_cumleler_cevaba_eklenir():
     va._cut = cut
     va._note_cut()
     last = va.agent.messages[-1]["content"]
-    assert "sözünü kesti" in last and "ortasında kesildi" in last and va._cut is None
+    assert "sözünü kesti" in last and "cut off in the middle" in last and va._cut is None

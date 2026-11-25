@@ -123,11 +123,11 @@ class CallManager:
 
     def _new_chat(self, c: Call, note: str) -> None:
         from alice.app.server import Chat
-        from alice.voice.assistant import VOICE_PROMPT
+        from alice.voice.assistant import voice_prompt
 
         chat = Chat(self.app, self.app.ctx.cwd, self.app.agent.permissions.mode)
         prompt = LIVE_CALL_PROMPT if c.live else CALL_PROMPT
-        chat.agent.messages[0]["content"] += "\n\n" + VOICE_PROMPT + "\n\n" + prompt
+        chat.agent.messages[0]["content"] += "\n\n" + voice_prompt() + "\n\n" + prompt
         if "voice" in self.app.cfg.roles:
             chat.agent.role = "voice"
         splitter_box: dict[str, Any] = {}

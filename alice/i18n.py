@@ -12,7 +12,7 @@ The language is `[ui] language` in config.toml ("en" or "tr", default "en"; the 
 The ALICE_LANG environment variable overrides it, for scripts and tests.
 
 Speech follows it too: `[voice] language` is the language that is recognised and spoken; "auto" (the default) means
-the interface language, a code like "tr" or "en" pins it (speech_language()).
+the interface language, a code like "tr" or "en" pins it (speech_language()). ALICE_SPEECH_LANG overrides "auto".
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ LOCALES = Path(__file__).with_name("locales")
 
 _lock = threading.Lock()
 _current: str | None = None
+_voice: str | None = None
 
 
 def _normalize(value: Any) -> str:
@@ -49,6 +50,18 @@ def _from_config() -> str:
     return _normalize((data.get("ui") or {}).get("language"))
 
 
+def _voice_from_config() -> str:
+    """[voice] language from config.toml ("auto" when missing)."""
+    try:
+        from alice.config import alice_home, tomllib
+
+        path = alice_home() / "config.toml"
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
+    except Exception:  # noqa: BLE001 - a broken config must not break speech; load_config reports it
+        data = {}
+    return str((data.get("voice") or {}).get("language") or "auto")
+
+
 def language() -> str:
     """The current language code ("en" or "tr")."""
     global _current
@@ -64,8 +77,10 @@ def language() -> str:
 def set_language(value: str | None) -> str:
     """Switch the language for this process (Settings calls it after writing the config). None: read it again."""
     global _current
+    global _voice
     with _lock:
         _current = _normalize(value) if value is not None else None
+        _voice = None
     return language()
 
 
@@ -97,25 +112,42 @@ SPEECH_TAGS = {"en": "en-US", "tr": "tr-TR"}
 EDGE_VOICES = {"en": "en-US-AriaNeural", "tr": "tr-TR-EmelNeural"}
 
 
-def speech_language(value: Any = "auto") -> str:
+LANGUAGE_NAMES = {"en": "English", "tr": "Turkish"}
+
+
+def speech_language(value: Any = None) -> str:
     """The language for speech recognition and synthesis: `[voice] language` when it names one, otherwise ("auto" or
-    empty) the interface language."""
+    empty) the interface language. None reads `[voice] language` from config.toml."""
+    global _voice
+    if value is None:
+        with _lock:
+            if _voice is None:
+                _voice = _voice_from_config()
+            value = _voice
     v = str(value or "").strip().lower()
-    return v if v and v != "auto" else language()
+    if v and v != "auto":
+        return v
+    return str(os.environ.get("ALICE_SPEECH_LANG") or "").strip().lower() or language()
 
 
-def speech_tag(value: Any = "auto") -> str:
+def speech_tag(value: Any = None) -> str:
     """BCP-47 tag of the speech language ("tr-TR"), for services that want one."""
     lang = speech_language(value)
     return SPEECH_TAGS.get(lang, lang)
 
 
-def edge_voice(setting: Any, value: Any = "auto") -> str:
+def edge_voice(setting: Any, value: Any = None) -> str:
     """[voice] tts_edge: "auto" picks the Edge voice of the speech language, empty turns it off, a name is used as is."""
     v = str(setting or "").strip()
     if v.lower() != "auto":
         return v
     return EDGE_VOICES.get(speech_language(value), EDGE_VOICES["en"])
+
+
+def speech_language_name(value: Any = None) -> str:
+    """English name of the speech language ("Turkish"), for prompts."""
+    lang = speech_language(value)
+    return LANGUAGE_NAMES.get(lang, lang)
 
 
 def pick(en: str, tr: str) -> str:

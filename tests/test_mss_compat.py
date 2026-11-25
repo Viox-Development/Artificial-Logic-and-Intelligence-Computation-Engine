@@ -54,5 +54,5 @@ def test_monitor_layout_uses_supported_mss_factory(monkeypatch, modern):
     calls = []
     fake_mss(monkeypatch, modern, calls)
 
-    assert monitor_layout() == "tek monitör (1)"
+    assert monitor_layout() == "one monitor (1)"
     assert calls == ["opened", "closed"]

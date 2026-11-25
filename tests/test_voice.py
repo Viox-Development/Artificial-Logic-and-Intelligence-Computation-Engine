@@ -273,8 +273,8 @@ class FakeAgent:
         self.stopped = 0
 
     def run_turn(self, text):
-        assert "[şu an: " in text  # the time is added to every sentence
-        self.turns.append(text.split("\n\n[şu an: ")[0])
+        assert "[now: " in text  # the time is added to every sentence
+        self.turns.append(text.split("\n\n[now: ")[0])
         self.ui.stream_delta("Tamam, hallettim.")
         self.ui.stream_end("Tamam, hallettim.", "x")
         return "ok"
@@ -901,7 +901,7 @@ def test_spoken_time_turkish():
     assert spoken_time(13, 30) == "saat bir buçuk"
     assert spoken_time(12, 0) == "saat tam on iki"
     assert spoken_time(23, 59) == "saat on ikiye bir var"
-    assert "söylenişi: saat" in with_clock("saat kaç?")
+    assert "spoken: saat" in with_clock("saat kaç?")
 
 
 def test_whisper_hallucinations_filtered():
@@ -979,7 +979,7 @@ def test_live_rate_limit_backs_off_for_an_hour_with_one_turkish_message():
     va = VoiceAssistant(FakeAgent(), FakeSpeaker(), stt=None, live=LimitedLive(), emit=events.append)
     assert va._converse_live("merhaba") is False
     assert va._live_down - time.monotonic() > 3000
-    assert any("kotası doldu" in e for e in events)
+    assert any("quota is used up" in e for e in events)
     assert not any("rate limit" in e for e in events)  # the raw English error is not shown
 
 
@@ -1050,7 +1050,7 @@ def test_mic_health_warns_once_on_digital_silence(monkeypatch):
     clock[0] += 16
     va._mic_health(b"\0\0" * 480)
     va._mic_health(b"\0\0" * 480)
-    assert sum("Mikrofonundan" in s for s in sp.said) == 1
+    assert sum("No sound is coming from your microphone" in s for s in sp.said) == 1
     va._mic_health(b"\1\0" + b"\0\0" * 479)
     assert va._mic_warned is False
 

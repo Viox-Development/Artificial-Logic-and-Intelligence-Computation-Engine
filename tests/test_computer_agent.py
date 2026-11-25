@@ -102,7 +102,7 @@ def test_live_runs_computer_task_in_background(monkeypatch):
     agent = SimpleNamespace(_enable_groups_for=lambda **k: None, _execute_calls=execute)
     s = LiveSession(SimpleNamespace(data={"voice": {}}), agent)
     s._run_call(WS(), {"id": "c1", "name": "computer_task", "args": {"goal": "ev yap"}})
-    assert "başladı" in sent[0]["toolResponse"]["functionResponses"][0]["response"]["result"]
+    assert "started" in sent[0]["toolResponse"]["functionResponses"][0]["response"]["result"]
     assert done.wait(3)
     assert "ev yapıldı" in sent[-1]["clientContent"]["turns"][0]["parts"][0]["text"]
     assert s._bg == 0
@@ -154,7 +154,7 @@ def test_live_refuses_second_screen_task_while_one_runs(monkeypatch):
     s._run_call(ws, {"id": "2", "name": "computer_task", "args": {"goal": "a"}})
     release.set()
     results = [m["toolResponse"]["functionResponses"][0]["response"]["result"] for m in sent if "toolResponse" in m]
-    assert "başladı" in results[0] and "zaten" in results[1]
+    assert "started" in results[0] and "already running" in results[1]
 
 
 def test_agent_remembers_what_worked_for_similar_goals():

@@ -327,6 +327,8 @@ def test_watchdog_texts_have_turkish_translations():
 def test_speech_language_follows_the_interface_unless_pinned(monkeypatch):
     from alice import i18n
 
+    monkeypatch.delenv("ALICE_SPEECH_LANG", raising=False)
+
     monkeypatch.setenv("ALICE_LANG", "tr")
     assert i18n.speech_language("auto") == "tr" and i18n.speech_language("") == "tr" and i18n.speech_language("en") == "en"
     assert i18n.speech_tag("auto") == "tr-TR" and i18n.edge_voice("auto", "auto") == "tr-TR-EmelNeural"

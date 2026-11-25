@@ -15,6 +15,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from alice.i18n import _, speech_language, speech_language_name
 from alice.tools.base import ToolResult
 from alice.voice.audio import Audio, Microphone
 from alice.voice.lang import correction
@@ -26,8 +27,9 @@ from alice.voice.tone import SentenceSplitter
 
 VOICE_PROMPT = """# Voice mode
 You are speaking out loud through text-to-speech. The user hears you, they may not be looking at the screen.
-- Answer in Turkish, in 1-3 short spoken sentences unless asked for detail. No markdown, lists, tables or emojis.
-- Each user message ends with the current date and time in brackets. Use it for time/date questions (say the time exactly as its "söylenişi" part);
+- Answer in {language}, in 1-3 short spoken sentences unless asked for detail. No markdown, lists, tables or emojis.
+- Each user message ends with the current date and time in brackets. Use it for time/date questions (if it has a
+  "spoken" form, say the time exactly that way);
   answer simple questions (time, date, small talk, general knowledge) directly without calling tools.
 - Long-term memory is already in your system prompt: do not call the memory tool just to read it. When the user tells
   you something lasting about themselves (likes, dislikes, people, habits, how you should behave) save it with
@@ -74,11 +76,18 @@ def with_clock(text: str) -> str:
 
     from alice.now import voice_line
 
-    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     now = datetime.now()
     state = voice_line()  # mode, game, flights, pulse: so "nasılım?" is answered in context
-    return (f"{text}\n\n[şu an: {now:%d.%m.%Y} {days[now.weekday()]}, saat {now:%H:%M}, "
-            f"söylenişi: {spoken_time(now.hour, now.minute)}" + (f"; durum: {state}" if state else "") + "]")
+    # The Turkish spoken form of the time helps the voice say it naturally; English models say times well on their own.
+    spoken = f", spoken: {spoken_time(now.hour, now.minute)}" if speech_language() == "tr" else ""
+    return (f"{text}\n\n[now: {now:%d.%m.%Y} {days[now.weekday()]}, {now:%H:%M}{spoken}"
+            + (f"; status: {state}" if state else "") + "]")
+
+
+def voice_prompt() -> str:
+    """VOICE_PROMPT for the current speech language."""
+    return VOICE_PROMPT.replace("{language}", speech_language_name())
 
 
 NUMS = ["", "bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz", "on", "on bir", "on iki"]
@@ -94,7 +103,7 @@ def _num(n: int) -> str:
 
 
 def _case(word: str, table: dict[str, str]) -> str:
-    head, _, last = word.rpartition(" ")
+    head, _sep, last = word.rpartition(" ")
     return f"{head} {table[last]}".strip()
 
 
@@ -113,7 +122,9 @@ def spoken_time(hour: int, minute: int) -> str:
     return f"saat {_case(h12(hour + 1), DAT)} {'çeyrek' if rest == 15 else _num(rest)} var"
 
 
-FILLERS = ["Hemen bakıyorum.", "Bir saniye, bakıyorum.", "Tamam, bakıyorum."]
+# Spoken while a tool runs, per speech language.
+FILLERS = {"tr": ["Hemen bakıyorum.", "Bir saniye, bakıyorum.", "Tamam, bakıyorum."],
+           "en": ["Checking now.", "One second, let me look.", "Okay, looking."]}
 LIVE_LIMIT_WAIT = 3600.0  # How long to stay on the normal voice path when the Live quota runs out (sec)
 
 
@@ -183,7 +194,7 @@ class VoiceUI:
         self._inner("tool_start", call_id, name, summary)
         self.tools.append(f"{name}({summary[:80]})")
         if not self.spoke and not self.speaker.speaking:
-            self._say(random.choice(FILLERS), "calm")
+            self._say(random.choice(FILLERS.get(speech_language(), FILLERS["en"])), "calm")
 
     def tool_end(self, call_id: str, name: str, result: ToolResult) -> None:
         self._inner("tool_end", call_id, name, result)
@@ -193,7 +204,7 @@ class VoiceUI:
             return self.inner.ask_permission(name, summary, risk)
         if self.ask is None:
             return "n"
-        return "y" if self.ask(f"{summary[:120]} için onay veriyor musun?") else "n"
+        return "y" if self.ask(_("Do you approve this: {summary}?", summary=summary[:120])) else "n"
 
     def info(self, msg: str) -> None:
         self._inner("info", msg)
@@ -202,11 +213,13 @@ class VoiceUI:
 # A short reaction to a bare "Alice". The same "Efendim?" every time sounded robotic: each one differs,
 # and recently said ones are not repeated.
 ACKS = ("Evet?", "Söyle.", "Hı?", "Dinliyorum.", "Evet, söyle.", "Hmm?", "Buyur.", "Ne var?")
+ACKS_EN = ("Yes?", "Go ahead.", "Hm?", "I'm listening.", "Yes, go on.", "Hmm?", "What's up?")
 
 
 def pick_ack(recent: list[str]) -> str:
     """Pick a reaction different from the last few and add it to the list."""
-    choices = [a for a in ACKS if a not in recent[-3:]] or list(ACKS)
+    acks = ACKS if speech_language() == "tr" else ACKS_EN
+    choices = [a for a in acks if a not in recent[-3:]] or list(acks)
     ack = random.choice(choices)
     recent.append(ack)
     del recent[:-5]
@@ -724,7 +737,7 @@ class VoiceAssistant:
         speech at the start (talking to someone else), it does not look further, so normal chat costs no extra work."""
         head_s = getattr(gate, "HEAD_SECONDS", 2.5)
         start = step
-        for _ in range(limit):
+        for _try in range(limit):
             if audio.seconds - start < 0.8:
                 break
             part = Audio(audio.pcm[int(start * audio.rate) * 2:], audio.rate)
@@ -834,7 +847,7 @@ class VoiceAssistant:
             if e.limited:
                 # Quota exhausted: instead of showing the same English error every 5 minutes, use the normal voice path for an hour.
                 self._live_down = time.monotonic() + LIVE_LIMIT_WAIT
-                self.emit("Gemini canlı ses kotası doldu; bir saat normal sesli yolla (STT + model + TTS) devam ediyorum.")
+                self.emit(_("The Gemini live voice quota is used up; for an hour I'll carry on with the normal voice path (STT + model + TTS)."))
             else:
                 self._live_down = time.monotonic() + 300  # 5 dk eski yolla devam
                 self.emit(f"live açılamadı: {e}")
@@ -989,7 +1002,7 @@ class VoiceAssistant:
             self._hud("think")
             reply = self.agent.run_turn(with_clock(text)) or ""
         except Exception as e:
-            self.speaker.say("Bir sorun çıktı, ekrana yazdım.", "serious")
+            self.speaker.say(_("Something went wrong, I put it on the screen."), "serious")
             self.emit(f"hata: {e}")
             reply = f"HATA {e}"
         finally:
@@ -997,7 +1010,7 @@ class VoiceAssistant:
                 self.agent.role = old_role
             self._busy.clear()
             self._last_turn = time.monotonic()
-            tools = f" araçlar: {', '.join(self.ui.tools)}" if self.ui.tools else ""
+            tools = f" tools: {', '.join(self.ui.tools)}" if self.ui.tools else ""
             voice_log(f"cevap [{', '.join(dict.fromkeys(self.ui.models))}]{tools}: {reply}")
         self._hud("speak")
         self.speaker.wait(120)
@@ -1024,7 +1037,7 @@ class VoiceAssistant:
         from alice.voice.bargein import cut_note
 
         playing = str(cut.get("playing") or "")
-        unheard = " ".join(([f"{playing} (bu cümlenin ortasında kesildi)"] if playing else [])
+        unheard = " ".join(([f"{playing} (cut off in the middle of this sentence)"] if playing else [])
                            + [str(t) for t in cut.get("pending") or []])
         note = cut_note(None, unheard)
         last = next((m for m in reversed(msgs) if m.get("role") == "assistant" and isinstance(m.get("content"), str)),
@@ -1070,14 +1083,13 @@ class VoiceAssistant:
                 mic = cm.__enter__()
             except ImportError as e:
                 voice_log(f"mikrofon kullanılamıyor: {e}")
-                self.emit(f"mikrofon kullanılamıyor ({getattr(e, 'name', None) or e} kurulu değil): "
-                          "pip install 'alice-harness[voice]'")
+                self.emit(_("the microphone can't be used ({name} is not installed): ", name=getattr(e, 'name', None) or e))
                 return None
             except Exception as e:  # noqa: BLE001 - PortAudioError, OSError: device missing/busy
                 if not warned:
                     warned = True
                     voice_log(f"mikrofon açılamadı, {retry:.0f} sn'de bir yeniden denenecek: {e}")
-                    self.emit(f"mikrofon açılamadı: {e}; takılınca dinlemeye başlayacağım")
+                    self.emit(_("could not open the microphone: {error}; I'll start listening when it is plugged in", error=e))
                 self.stop_event.wait(retry)
                 continue
             if warned:
@@ -1092,7 +1104,7 @@ class VoiceAssistant:
             """The headset was unplugged/turned off: don't kill listening, wait and try to reopen."""
             if not mic_down:
                 voice_log(f"mikrofon okunamadı, yeniden deneniyor: {e}")
-                self.emit("mikrofon okunamıyor; tekrar deniyorum")
+                self.emit(_("can't read the microphone; trying again"))
             mic_down.append(time.monotonic())
             self.stop_event.wait(1.0)
             if hasattr(mic, "reopen"):
@@ -1185,7 +1197,7 @@ class VoiceAssistant:
             self._mic_warned = True
             voice_log("mikrofon tamamen sessiz: sessize alınmış ya da kapalı olabilir")
             self.emit("mikrofon sessiz")
-            self.speaker.say("Mikrofonundan hiç ses gelmiyor, sessize alınmış olabilir.", "serious")
+            self.speaker.say(_("No sound is coming from your microphone; it may be muted."), "serious")
         if now - self._mic_retry > 15:
             self._mic_retry = now
             return True
@@ -1268,7 +1280,7 @@ def build_voice_agent(cfg, inner_ui=None, speaker: Speaker | None = None, cwd=No
         speaker.alerts_muted = not bool(vcfg.get("game_alerts", False))
     ui = VoiceUI(speaker, inner_ui)
     agent = Agent(cfg, router, all_tools(cfg, ctx.emit), ctx, Permissions(cfg.agent.get("permission_mode", "auto")), ui, decider)
-    agent.messages[0]["content"] += "\n\n" + VOICE_PROMPT
+    agent.messages[0]["content"] += "\n\n" + voice_prompt()
     from alice.memory import attach_memory
 
     attach_memory(agent, "ses")

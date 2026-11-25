@@ -91,7 +91,7 @@ kadardı miydi mıydı ediyor ettim dedim demiştim kullanıcı kullanıcının 
 on for
 """.split())
 _STOP = {w.translate(_FOLD) for w in _STOP}
-_CLOCK = re.compile(r"\s*\[şu an:[^\]]*\]\s*$")
+_CLOCK = re.compile(r"\s*\[(?:şu an|now):[^\]]*\]\s*$")  # the clock with_clock() adds; older turns hold the Turkish one
 _RECALL = re.compile(r"\s*\[hafızadan.*\]\s*$", re.S)  # note bodies may contain ']': match to the end
 
 # Explicit remember request: saved immediately, without a model.
@@ -1672,7 +1672,7 @@ one finished conversation (it started {date}). Produce:
 (names, projects, numbers, dates). Write only what happened: never sentences like "Hiçbir işlem yapılmadı", "karar \
 alınmadı", "devam eden iş kalmadı". Empty string if it was only trivial commands, small talk, testing ALICE's \
 features, or misheard noise (fragments that make no sense, other languages). ALICE replies starting with \
-[doğrulanmadı] are claims no tool confirmed: do not report them as done or as confirmed by the user.
+[unverified] (older: [doğrulanmadı]) are claims no tool confirmed: do not report them as done or as confirmed by the user.
 2. "followups": things a good assistant should bring up later. kind "ask": an upcoming event in the user's life to \
 ask about afterwards (exam, match, trip, interview) with "due" = the day after it happens; kind "remind": something \
 the user asked to be reminded of on a day; kind "open": only when the user said they will continue something later \
