@@ -106,7 +106,7 @@ class ElevenScribe:
             r = self.client.post(self.URL, headers={"xi-api-key": self.api_key}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"elevenlabs bağlantı hatası: {e}") from e
+            raise STTError(f"elevenlabs connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"elevenlabs {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -132,7 +132,7 @@ class GroqWhisper:
             r = self.client.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -145,7 +145,7 @@ class GroqWhisper:
             r = self.client.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, data=data,
                                  files={"file": ("speech.wav", audio.resample(16000).to_wav(), "audio/wav")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return [(str(w.get("word", "")), float(w.get("start", 0)), float(w.get("end", 0)))
@@ -159,7 +159,7 @@ class GroqWhisper:
                                        "temperature": "0", **({"prompt": self.prompt} if self.prompt else {})},
                                  files={"file": (filename, data, "application/octet-stream")})
         except httpx.HTTPError as e:
-            raise STTError(f"groq bağlantı hatası: {e}") from e
+            raise STTError(f"groq connection error: {e}") from e
         if r.status_code != 200:
             raise STTError(f"groq {r.status_code}: {r.text[:200]}")
         return str(r.json().get("text", "")).strip()
@@ -335,8 +335,8 @@ class WakeGate:
                         try:
                             self._model = self._load()
                             if log:
-                                log(f"uyandırma modeli hazır: {self.model_name} ({self.device}), "
-                                    f"{self.load_seconds:.1f} sn")
+                                log(f"wake model ready: {self.model_name} ({self.device}), "
+                                    f"{self.load_seconds:.1f} s")
                         except Exception:  # noqa: BLE001
                             self._failed = True
 

@@ -89,7 +89,7 @@ def download_model(emit: Callable[[str], None] = lambda s: None,
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_suffix(".part")
-    emit(f"ses tanıma modeli indiriliyor (~40 MB): {MODEL_NAME}")
+    emit(f"downloading the voice recognition model (~40 MB): {MODEL_NAME}")
     with urllib.request.urlopen(MODEL_URL, timeout=60) as r, open(part, "wb") as f:  # noqa: S310 - sabit https adresi
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
@@ -215,8 +215,8 @@ class SpeakerGate:
         self._mtime = mtime
         self._apply(load_profile(self.path) if mtime is not None else None)
         if mtime is not None:
-            self.log(f"ses tanıma profili yüklendi (eşik {self.threshold:.2f})" if self.active
-                     else "ses tanıma profili okunamadı")
+            self.log(f"voice recognition profile loaded (threshold {self.threshold:.2f})" if self.active
+                     else "could not read the voice recognition profile")
 
     @classmethod
     def load(cls, cfg: Any = None, log: Callable[[str], None] = lambda s: None) -> "SpeakerGate | None":
@@ -234,21 +234,21 @@ class SpeakerGate:
             return True
         why = ""
         if self.make_embedder is None:
-            why = "model yüklenemiyor"
+            why = "the model can't be loaded"
         elif not available():
-            why = "sherpa-onnx kurulu değil (Sistem → Ses → Sesimi tanıt kurar)"
+            why = "sherpa-onnx is not installed (System → Voice → Teach my voice installs it)"
         elif not model_path().is_file():
-            why = "ses tanıma modeli yok (Sistem → Ses → Sesimi tanıt indirir)"
+            why = "no voice recognition model (System → Voice → Teach my voice downloads it)"
         else:
             try:
                 self.embedder = self.make_embedder()
                 return True
             except Exception as e:  # noqa: BLE001 - broken model or incompatible package: the assistant still runs
-                why = f"ses tanıma açılamadı: {e}"
+                why = f"could not start voice recognition: {e}"
         self.last_note = why + ", kontrol edilmedi"
         if why != self._warned:
             self._warned = why
-            self.log("ses tanıma: " + why)
+            self.log("voice recognition: " + why)
         return False
 
     def usable(self) -> bool:
@@ -265,7 +265,7 @@ class SpeakerGate:
             return True
         if len(pcm) / 2 / rate < MIN_SECONDS:
             self.last_score = 1.0
-            self.last_note = f"kısa ses {len(pcm) / 2 / rate:.2f} sn, kontrol edilmedi"
+            self.last_note = f"short audio {len(pcm) / 2 / rate:.2f} s, not checked"
             return True
         if not self._ensure_embedder():
             self.last_score = 1.0
@@ -274,6 +274,6 @@ class SpeakerGate:
             self.last_score = cosine(self.vector or [], self.embedder.embed(pcm, rate))
         except Exception as e:  # noqa: BLE001 - if voice recognition fails, do not penalize the user
             self.last_score = 1.0
-            self.last_note = f"ses tanıma hatası, kontrol edilmedi: {type(e).__name__}: {str(e)[:120]}"
+            self.last_note = f"voice recognition error, not checked: {type(e).__name__}: {str(e)[:120]}"
             return True
         return self.last_score >= self.threshold

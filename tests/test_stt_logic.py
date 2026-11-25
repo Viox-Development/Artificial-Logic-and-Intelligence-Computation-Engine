@@ -165,7 +165,7 @@ def test_groq_errors_become_stterror(method):
     with pytest.raises(STTError, match="groq 429: rate limit") as ei:
         getattr(groq(bad_status), method)(*args)
     assert len(str(ei.value)) < 230  # body is truncated to 200 characters
-    with pytest.raises(STTError, match="bağlantı"):
+    with pytest.raises(STTError, match="connection error"):
         getattr(groq(boom), method)(*args)
 
 

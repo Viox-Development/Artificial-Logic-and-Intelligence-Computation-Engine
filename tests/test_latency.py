@@ -15,8 +15,8 @@ def test_kayit_ve_ozet():
         latency.record("canlı", s, model="m", tools=s > 5)
     latency.record("klasik", 4.0)
     text = latency.summary()
-    assert "canlı: 4 tur, ortanca 1.8 sn" in text and "en uzun 9.0 sn" in text
-    assert "araçlı turlar ortanca 9.0" in text and "klasik: 1 tur" in text
+    assert "canlı: 4 turns, median 1.8 s" in text and "longest 9.0 s" in text
+    assert "turns with tools median 9.0" in text and "klasik: 1 tur" in text
     row = json.loads(latency.log_path().read_text(encoding="utf-8").splitlines()[0])
     assert row["kind"] == "canlı" and "tools" not in row  # empty fields are not written
 

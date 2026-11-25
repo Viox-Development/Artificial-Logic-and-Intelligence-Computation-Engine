@@ -1083,7 +1083,8 @@ class VoiceAssistant:
                 mic = cm.__enter__()
             except ImportError as e:
                 voice_log(f"mikrofon kullanılamıyor: {e}")
-                self.emit(_("the microphone can't be used ({name} is not installed): ", name=getattr(e, 'name', None) or e))
+                self.emit(_("the microphone can't be used ({name} is not installed): ", name=getattr(e, 'name', None) or e)
+                          + "pip install 'alice-harness[voice]'")
                 return None
             except Exception as e:  # noqa: BLE001 - PortAudioError, OSError: device missing/busy
                 if not warned:

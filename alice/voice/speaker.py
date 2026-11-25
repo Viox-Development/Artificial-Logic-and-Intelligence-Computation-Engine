@@ -163,11 +163,11 @@ class Speaker:
                         time.sleep(1)
                     self.tts.synth(text, emotion)
                 except Exception as e:  # noqa: BLE001 - no quota/engine: continue on the next startup
-                    log(f"hazır cümle üretilemedi: {e}")
+                    log(f"could not make a ready-made sentence: {e}")
                     break
                 made += 1
             if made:
-                log(f"{made} hazır cümlenin sesi önbelleğe alındı")
+                log(f"{made} ready-made sentences cached")
             return made
 
         if not background:
@@ -242,7 +242,7 @@ class Speaker:
             try:
                 audio: Audio | None = self.tts.synth(text, emotion)
             except Exception as e:
-                self.on_error(f"ses üretilemedi: {e}")
+                self.on_error(f"could not make the audio: {e}")
                 audio = None
             finally:
                 self._making = None
@@ -274,7 +274,7 @@ class Speaker:
             try:
                 self.player.play(scaled(audio, self.alert_volume if sev else self.volume))
             except Exception as e:
-                self.on_error(f"ses çalınamadı: {e}")
+                self.on_error(f"could not play the audio: {e}")
             finally:
                 with self._cv:
                     self._playing = False
