@@ -86,7 +86,7 @@ def archive(session_id: str, messages: list[dict[str, Any]]) -> None:
         return
     lines = []
     for m in strip_images(messages):
-        m = {k: v for k, v in m.items() if k != "reasoning_content"}
+        m = {k: v for k, v in m.items() if k not in ("reasoning_content", "_claude_thinking")}
         if m.get("role") == "tool" and isinstance(m.get("content"), str) and len(m["content"]) > ARCHIVE_TOOL_CHARS:
             m["content"] = m["content"][:ARCHIVE_TOOL_CHARS] + "\n…(shortened)"
         lines.append(json.dumps(m, ensure_ascii=False))
