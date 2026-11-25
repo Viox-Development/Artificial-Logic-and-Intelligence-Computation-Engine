@@ -179,3 +179,37 @@ def test_desktop_reflex_survives_uia_com_error(monkeypatch):
     monkeypatch.setattr(obs, "_window", lambda: 0, raising=False)
     scr = obs.screen("simgeleri gizle")
     assert scr.title == "Program Manager" and len(calls) == 2  # bir kez yeniden denendi
+
+
+def test_tesseract_engine_outside_windows(monkeypatch):
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from alice.reflex import perceive
+
+    head = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+    rows = ["5\t1\t1\t1\t1\t1\t10\t20\t30\t10\t95\tKaydet", "5\t1\t1\t1\t1\t2\t45\t21\t20\t9\t90\tAs",
+            "4\t1\t1\t1\t2\t0\t0\t0\t0\t0\t-1\t", "5\t1\t1\t1\t2\t1\t10\t50\t40\t12\t88\tİptal"]
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if "--list-langs" in cmd:
+            return SimpleNamespace(stdout="List of available languages:\neng\ntur\nosd\n", returncode=0)
+        return SimpleNamespace(stdout=(head + "\n".join(rows)).encode(), stderr=b"", returncode=0)
+
+    eng = perceive.TesseractEngine("tesseract", run=run)
+    img = Image.new("RGB", (200, 100))
+    assert eng.words(img) == [("Kaydet", (10, 20, 30, 10)), ("As", (45, 21, 20, 9)), ("İptal", (10, 50, 40, 12))]
+    assert eng.lines(img) == [("Kaydet As", (10, 20, 55, 10)), ("İptal", (10, 50, 40, 12))]
+    assert calls[-1][-3:] == ["-l", "eng+tur", "tsv"]
+    monkeypatch.setattr(perceive, "_ocr_engine", eng)
+    assert perceive.ocr_image(img)[0] == ("Kaydet As", (0.05, 0.2, 0.325, 0.3))
+
+    monkeypatch.setattr(perceive, "_ocr_engine", None)
+    monkeypatch.setattr(perceive, "_ocr_error", "")
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    ok, why = perceive.ocr_available()
+    assert not ok and "tesseract" in why.lower()
