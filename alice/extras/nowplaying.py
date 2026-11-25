@@ -1,5 +1,5 @@
-"""What is playing and control it: Windows' media sessions (the player box next to the volume icon), and on Linux
-the MPRIS players on D-Bus through `playerctl`.
+"""What is playing and control it: Windows' media sessions (the player box next to the volume icon), on Linux
+the MPRIS players on D-Bus through `playerctl`, and on macOS Spotify and Music through AppleScript.
 
 Spotify, Sonora, YouTube Music, a video in the browser... every app connected to media control shows up here;
 ALICE reads what is playing and stops/skips in that exact app. Media keys (extras.media) used to go to the last
@@ -27,7 +27,7 @@ PLAYERCTL = {"play_pause": "play-pause", "next": "next", "previous": "previous",
 SEP = "\x1f"  # unit separator: never appears in a title, unlike tabs or " - "
 NOW_FORMAT = SEP.join(["{{playerName}}", "{{status}}", "{{title}}", "{{artist}}", "{{album}}"])
 APPS = {"spotify": "Spotify", "sonora": "Sonora", "chrome": "Chrome", "opera": "Opera", "msedge": "Edge",
-        "firefox": "Firefox", "zunemusic": "Medya Oynatıcı", "vlc": "VLC", "applemusic": "Apple Music",
+        "firefox": "Firefox", "zunemusic": "Media Player", "vlc": "VLC", "applemusic": "Apple Music",
         "youtube": "YouTube", "discord": "Discord"}
 
 
@@ -38,7 +38,7 @@ def app_name(aumid: str) -> str:
         if key in low:
             return name
     base = re.split(r"[!\\/]", aumid or "")[-1]
-    return re.sub(r"\.exe$", "", base, flags=re.I) or "bilinmeyen uygulama"
+    return re.sub(r"\.exe$", "", base, flags=re.I) or "unknown app"
 
 
 def _run(coro_fn: Callable[[], Any]) -> Any:
@@ -80,8 +80,44 @@ async def _session():
     return mgr.get_current_session()
 
 
+MAC_APPS = ("Spotify", "Music")
+MAC_CONTROL = {"play_pause": "playpause", "next": "next track", "previous": "previous track", "stop": "pause",
+               "play": "play", "pause": "pause"}
+
+
+def _osascript(script: str) -> str | None:
+    exe = shutil.which("osascript")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-e", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def mac_now_script(app: str) -> str:
+    """AppleScript printing the player's state like NOW_FORMAT, or nothing when the app isn't running (it is not
+    launched: `is running` doesn't start it)."""
+    sep = "(character id 31)"
+    return (f'if application "{app}" is running then tell application "{app}" to return "{app}" & {sep} & '
+            f"(player state as text) & {sep} & (name of current track) & {sep} & (artist of current track) & {sep} & "
+            "(album of current track)")
+
+
+def _mac_now() -> dict[str, Any] | None:
+    for app in MAC_APPS:
+        n = parse_playerctl(_osascript(mac_now_script(app)))
+        if n and (n["title"] or n["artist"]):
+            return n
+    return None
+
+
 def now() -> dict[str, Any] | None:
     """Current media: {app, title, artist, album, status}, or None (nothing playing)."""
+    if sys.platform == "darwin":
+        return _mac_now()
     if sys.platform.startswith("linux"):
         return parse_playerctl(_playerctl("metadata", "--format", NOW_FORMAT))
 
@@ -104,6 +140,11 @@ def control(action: str) -> bool:
         return False
     if sys.platform.startswith("linux"):
         return _playerctl(PLAYERCTL[action]) is not None
+    if sys.platform == "darwin":
+        n = _mac_now()
+        if not n:
+            return False
+        return _osascript(f'tell application "{n["app"]}" to {MAC_CONTROL[action]}') is not None
 
     async def go():
         s = await _session()
@@ -116,9 +157,9 @@ def control(action: str) -> bool:
 
 def describe(n: dict[str, Any] | None) -> str:
     if not n or not (n.get("title") or n.get("artist")):
-        return "şu an medya kontrolüne bağlı çalan bir şey yok"
+        return "nothing connected to media control is playing right now"
     who = f"{n['artist']} – {n['title']}" if n.get("artist") else n["title"]
-    state = {"playing": "çalıyor", "paused": "duraklatıldı", "stopped": "durdu"}.get(n.get("status", ""), n.get("status"))
+    state = n.get("status")
     return f"{who} ({n['app']}, {state})"
 
 

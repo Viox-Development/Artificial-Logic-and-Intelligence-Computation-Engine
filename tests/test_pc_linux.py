@@ -159,8 +159,8 @@ def test_still_windows_only_and_other_systems(linux, monkeypatch):
     linux()
     with pytest.raises(RuntimeError, match="only works on Windows"):
         pc.restart_in(0)
-    monkeypatch.setattr(pc.sys, "platform", "darwin")
-    with pytest.raises(RuntimeError, match="Windows and Linux"):
+    monkeypatch.setattr(pc.sys, "platform", "freebsd")
+    with pytest.raises(RuntimeError, match="Windows, Linux and macOS"):
         pc.lock()
 
 

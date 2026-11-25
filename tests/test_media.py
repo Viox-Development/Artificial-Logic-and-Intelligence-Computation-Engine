@@ -47,13 +47,13 @@ def test_run_false_on_errors(monkeypatch, exc):
 
 # ---------------------------------------------------------------------- key
 def test_key_unknown_action(env):
-    with pytest.raises(ValueError, match="bilinmeyen medya tuşu"):
+    with pytest.raises(ValueError, match="unknown media key"):
         media.key("rewind")
 
 
 def test_key_windows_presses_vk(env):
     env.platform("win32")
-    assert media.key("next", 3) == "tamam"
+    assert media.key("next", 3) == "ok"
     assert env.presses == [(0xB0, 3)]
     assert env.runs == []
 
@@ -67,14 +67,14 @@ def test_key_windows_presses_vk(env):
 ])
 def test_key_linux_commands(env, action, cmd):
     env.platform("linux")
-    assert media.key(action) == "tamam"
+    assert media.key(action) == "ok"
     assert env.runs == [cmd]
 
 
 def test_key_linux_volume_steps(env):
     env.platform("linux")
-    assert media.key("volume_up", 5) == "tamam"
-    assert media.key("volume_down") == "tamam"
+    assert media.key("volume_up", 5) == "ok"
+    assert media.key("volume_down") == "ok"
     assert env.runs == [["pactl", "set-sink-volume", "@DEFAULT_SINK@", "+10%"],
                         ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "-2%"]]
 
@@ -82,52 +82,52 @@ def test_key_linux_volume_steps(env):
 def test_key_linux_missing_tools(env):
     env.platform("linux")
     env.which = None
-    assert media.key("next") == "playerctl yok"
+    assert media.key("next") == "playerctl is missing"
     assert env.runs == []  # not run when playerctl is missing
     env.ok = False
-    assert media.key("mute") == "pactl yok"
-    assert media.key("volume_up") == "pactl yok"
+    assert media.key("mute") == "pactl is missing"
+    assert media.key("volume_up") == "pactl is missing"
     env.which = "/usr/bin/playerctl"
-    assert media.key("play_pause") == "playerctl yok"  # command failed
+    assert media.key("play_pause") == "playerctl is missing"  # command failed
 
 
 def test_key_macos(env):
     env.platform("darwin")
-    assert media.key("volume_up", 2) == "tamam"
+    assert media.key("volume_up", 2) == "ok"
     assert "+ 12)" in env.runs[-1][2]
-    assert media.key("volume_down") == "tamam"
+    assert media.key("volume_down") == "ok"
     assert "+ -6)" in env.runs[-1][2]
-    assert media.key("mute") == "tamam"
+    assert media.key("mute") == "ok"
     assert "muted not" in env.runs[-1][2]
-    assert media.key("play_pause") == "tamam"
+    assert media.key("play_pause") == "ok"
     assert env.runs[-1] == ["osascript", "-e", 'tell application "Music" to playpause']
     n = len(env.runs)
-    assert media.key("next") == "yapılamadı"  # not supported on macOS, no command is run
+    assert media.key("next") == "didn't work"  # not supported on macOS, no command is run
     assert len(env.runs) == n
     env.ok = False
-    assert media.key("mute") == "yapılamadı"
+    assert media.key("mute") == "didn't work"
 
 
 # --------------------------------------------------------------- set_volume
 @pytest.mark.parametrize("given, want", [(50, 50), (150, 100), (-5, 0), (33.7, 33), ("70", 70)])
 def test_set_volume_clamps_linux(env, given, want):
     env.platform("linux")
-    assert media.set_volume(given) == f"ses %{want}"
+    assert media.set_volume(given) == f"volume {want}%"
     assert env.runs == [["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{want}%"]]
 
 
 def test_set_volume_linux_fail(env):
     env.platform("linux")
     env.ok = False
-    assert media.set_volume(10) == "pactl yok"
+    assert media.set_volume(10) == "pactl is missing"
 
 
 def test_set_volume_macos(env):
     env.platform("darwin")
-    assert media.set_volume(40) == "ses %40"
+    assert media.set_volume(40) == "volume 40%"
     assert env.runs == [["osascript", "-e", "set volume output volume 40"]]
     env.ok = False
-    assert media.set_volume(40) == "yapılamadı"
+    assert media.set_volume(40) == "didn't work"
 
 
 def test_set_volume_windows_without_pycaw_uses_keys(env, monkeypatch):
@@ -142,14 +142,14 @@ def test_set_volume_windows_without_pycaw_uses_keys(env, monkeypatch):
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr(builtins, "__import__", no_pycaw)
-    assert media.set_volume(37) == "ses yaklaşık %37"
+    assert media.set_volume(37) == "volume about 37%"
     assert env.presses == [(0xAE, 50), (0xAF, round(37 / 2))]
 
 
 # ----------------------------------------------------------------- shutdown
 def test_shutdown_windows(env):
     env.platform("win32")
-    assert media.shutdown_in(1.5) == "bilgisayar 1.5 dakika sonra kapanacak"
+    assert media.shutdown_in(1.5) == "the computer will shut down in 1.5 min"
     assert env.runs == [["shutdown", "/s", "/t", "90"]]
 
 
@@ -169,17 +169,17 @@ def test_shutdown_unix_minutes(env, minutes, arg):
 def test_shutdown_failure(env):
     env.platform("linux")
     env.ok = False
-    assert media.shutdown_in(10) == "kapatma zamanlayıcısı kurulamadı"
+    assert media.shutdown_in(10) == "could not set the shutdown timer"
 
 
 @pytest.mark.parametrize("plat, cmd", [("win32", ["shutdown", "/a"]), ("linux", ["shutdown", "-c"]),
                                        ("darwin", ["shutdown", "-c"])])
 def test_cancel_shutdown(env, plat, cmd):
     env.platform(plat)
-    assert media.cancel_shutdown() == "kapatma iptal edildi"
+    assert media.cancel_shutdown() == "shutdown cancelled"
     assert env.runs == [cmd]
     env.ok = False
-    assert media.cancel_shutdown() == "iptal edilecek kapatma yok"
+    assert media.cancel_shutdown() == "no shutdown to cancel"
 
 
 # ------------------------------------------------------------------ pause_in
@@ -203,10 +203,10 @@ def test_pause_in_schedules_and_replaces(env, monkeypatch):
     FakeTimer.made = []
     monkeypatch.setattr(media.threading, "Timer", FakeTimer)
     monkeypatch.setattr(media, "_timers", {})
-    assert media.pause_in(30) == "müzik 30 dakika sonra duracak"
+    assert media.pause_in(30) == "music will stop in 30 min"
     first = FakeTimer.made[0]
     assert first.interval == 1800 and first.daemon and first.started
-    assert media.pause_in(0.5) == "müzik 0.5 dakika sonra duracak"
+    assert media.pause_in(0.5) == "music will stop in 0.5 min"
     second = FakeTimer.made[1]
     assert first.cancelled and not second.cancelled
     assert media._timers["pause"] is second

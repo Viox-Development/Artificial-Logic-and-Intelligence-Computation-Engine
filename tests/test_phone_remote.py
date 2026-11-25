@@ -94,8 +94,8 @@ def pg(monkeypatch):
 
 def test_tap_on_phone_screen_clicks_same_spot_on_pc(pg):
     """Tapping the live phone screen: the image fraction is converted to main-screen pixels (also at negative coordinates)."""
-    assert remote.action({"action": "click", "x": 0.5, "y": 0.25}) == "tamam"
-    assert remote.action({"action": "click", "x": 1.0, "y": 0.0, "button": "right"}) == "tamam"
+    assert remote.action({"action": "click", "x": 0.5, "y": 0.25}) == "ok"
+    assert remote.action({"action": "click", "x": 1.0, "y": 0.0, "button": "right"}) == "ok"
     assert pg.calls == [("click", -1920 + 960, 270, 1, "left"), ("click", -1, 0, 1, "right")]
     with pytest.raises(ValueError):
         remote.action({"action": "click", "x": 1.5, "y": 0.2})

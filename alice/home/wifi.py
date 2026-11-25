@@ -1,4 +1,5 @@
-"""Wi-Fi: status, network scan, saved networks, connect/disconnect (Windows `netsh wlan`, Linux NetworkManager `nmcli`).
+"""Wi-Fi: status, network scan, saved networks, connect/disconnect (Windows `netsh wlan`, Linux NetworkManager `nmcli`,
+macOS `networksetup` and `system_profiler`).
 
 netsh's key names change with the system language ("Signal"/"Sinyal"), so parsing relies on format, not names:
 the SSID line is "SSID" in every language, and the signal is a value ending in "%" in every language.
@@ -163,9 +164,80 @@ def _nm_list(rescan: bool) -> str:
                   timeout=30 if rescan else 15)
 
 
+# ---------------------------------------------------------------------- macOS (networksetup)
+def _mac() -> bool:
+    return sys.platform == "darwin"
+
+
+def _ns(*args: str, timeout: float = 20) -> str:
+    exe = shutil.which("networksetup")
+    if not exe:
+        raise RuntimeError("networksetup not found")
+    r = run([exe, *args], timeout=timeout)
+    out = r.stdout or ""
+    # networksetup often exits with 0 and prints the error instead.
+    if r.returncode != 0 or re.search(r"^(Error|Could not|Failed)", out.strip(), re.I):
+        raise RuntimeError((out or r.stderr or "").strip() or "networksetup failed")
+    return out
+
+
+def parse_mac_ports(text: str) -> str | None:
+    """`networksetup -listallhardwareports` → the Wi-Fi device (en0)."""
+    m = re.search(r"Hardware Port: (?:Wi-Fi|AirPort)\s*\nDevice: (\S+)", text)
+    return m.group(1) if m else None
+
+
+def _mac_dev() -> str:
+    dev = parse_mac_ports(_ns("-listallhardwareports"))
+    if not dev:
+        raise RuntimeError("Wi-Fi device not found")
+    return dev
+
+
+def parse_mac_status(text: str) -> dict:
+    """`networksetup -getairportnetwork en0` → {connected, ssid, signal, fields}."""
+    m = re.search(r"Current (?:Wi-Fi|AirPort) Network: (.+)", text)
+    ssid = m.group(1).strip() if m else ""
+    return {"connected": bool(ssid), "ssid": ssid, "signal": None, "fields": [("SSID", ssid)] if ssid else []}
+
+
+def parse_mac_profiles(text: str) -> list[str]:
+    """`networksetup -listpreferredwirelessnetworks en0` → saved network names (tab-indented under a header)."""
+    return [ln.strip() for ln in text.splitlines()[1:] if ln.strip()]
+
+
+def parse_mac_networks(text: str) -> list[dict]:
+    """`system_profiler SPAirPortDataType` → [{ssid, signal, auth}] of the visible networks, sorted by signal."""
+    nets: dict[str, dict] = {}
+    cur: dict | None = None
+    in_list = False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s in ("Current Network Information:", "Other Local Wi-Fi Networks:"):
+            in_list, cur = True, None
+            continue
+        if not in_list or not s:
+            continue
+        if s.endswith(":") and ": " not in s:
+            if not ln.startswith(" " * 10):  # a new top-level section ends the list
+                in_list = False
+                continue
+            cur = nets.setdefault(s[:-1], {"ssid": s[:-1], "signal": 0, "auth": ""})
+        elif cur is not None and s.startswith("Security:"):
+            cur["auth"] = s.split(":", 1)[1].strip()
+        elif cur is not None and s.startswith("Signal / Noise:"):
+            m = re.search(r"(-?\d+) dBm", s)
+            if m:
+                cur["signal"] = max(0, min(100, 2 * (int(m.group(1)) + 100)))
+    return sorted(nets.values(), key=lambda n: -n["signal"])
+
+
 # ---------------------------------------------------------------------- public API
 def status() -> str:
-    s = parse_nm_status(_nm_list(False)) if _linux() else parse_status(_netsh("show", "interfaces"))
+    if _mac():
+        s = parse_mac_status(_ns("-getairportnetwork", _mac_dev()))
+    else:
+        s = parse_nm_status(_nm_list(False)) if _linux() else parse_status(_netsh("show", "interfaces"))
     if not s["connected"]:
         return "Not connected to Wi-Fi."
     head = f"Connected: {s['ssid']}" + (f", signal {s['signal']}%" if s["signal"] is not None else "")
@@ -173,12 +245,17 @@ def status() -> str:
 
 
 def scan() -> list[dict]:
+    if _mac():
+        r = run(["system_profiler", "SPAirPortDataType"], timeout=40)
+        return parse_mac_networks(r.stdout or "")
     if _linux():
         return parse_nm_networks(_nm_list(True))
     return parse_networks(_netsh("show", "networks", "mode=bssid"))
 
 
 def profiles() -> list[str]:
+    if _mac():
+        return parse_mac_profiles(_ns("-listpreferredwirelessnetworks", _mac_dev()))
     if _linux():
         return parse_nm_profiles(_nmcli("-t", "-f", "NAME,TYPE", "connection", "show"))
     return parse_profiles(_netsh("show", "profiles"))
@@ -201,6 +278,9 @@ def profile_xml(ssid: str, password: str) -> str:
 
 
 def connect(ssid: str, password: str = "") -> str:
+    if _mac():
+        _ns("-setairportnetwork", _mac_dev(), ssid, *((password,) if password else ()), timeout=45)
+        return f"connecting to '{ssid}'"
     known = profiles()
     if ssid not in known:
         if not password and any(n["ssid"] == ssid and n["auth"].casefold() not in ("open", "açık") for n in scan()):
@@ -223,6 +303,8 @@ def connect(ssid: str, password: str = "") -> str:
 
 
 def disconnect() -> str:
+    if _mac():
+        raise RuntimeError("macOS has no Wi-Fi disconnect command; turn the radio off instead (radio off)")
     if _linux():
         devs = parse_nm_devices(_nmcli("-t", "-f", "DEVICE,TYPE,CONNECTION", "device"))
         if not devs:
@@ -236,8 +318,11 @@ def disconnect() -> str:
 
 
 def radio(on: bool) -> str:
-    """Turn the Wi-Fi radio on or off (Linux only; Windows has no netsh equivalent)."""
+    """Turn the Wi-Fi radio on or off (Linux and macOS; Windows has no netsh equivalent)."""
+    if _mac():
+        _ns("-setairportpower", _mac_dev(), "on" if on else "off")
+        return "Wi-Fi turned on" if on else "Wi-Fi turned off"
     if not _linux():
-        raise RuntimeError("turning Wi-Fi on and off only works on Linux (nmcli) for now")
+        raise RuntimeError("turning Wi-Fi on and off only works on Linux (nmcli) and macOS for now")
     _nmcli("radio", "wifi", "on" if on else "off")
     return "Wi-Fi turned on" if on else "Wi-Fi turned off"

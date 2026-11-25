@@ -142,7 +142,7 @@ def test_missing_nmcli_gives_a_clear_error(monkeypatch, tmp_path):
 
 
 def test_other_platforms_fail_clearly(monkeypatch, tmp_path):
-    monkeypatch.setattr(wifi.sys, "platform", "darwin")
+    monkeypatch.setattr(wifi.sys, "platform", "freebsd")
     with pytest.raises(ToolError, match="Windows and Linux"):
         Wifi().run(_ctx(tmp_path), action="scan")
 
