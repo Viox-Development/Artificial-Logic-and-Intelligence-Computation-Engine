@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol
 
 import httpx
 
+from alice.i18n import spoken
 from alice.config import Config
 from alice.voice.audio import Audio
 
@@ -186,7 +187,7 @@ class LocalWhisper:
         try:
             from faster_whisper import WhisperModel
         except ImportError as e:
-            raise STTError("faster-whisper kurulu değil: pip install faster-whisper") from e
+            raise STTError("faster-whisper is not installed: pip install faster-whisper") from e
         gpu = False
         if self.allow_gpu():
             try:
@@ -265,7 +266,7 @@ def speech_segments(segments, prompt: str = "Hey Alice.") -> list:
 
 
 # Words often said in flight and misheard ("yakıtım" (my fuel) -> "yakıştın", "cannon" -> "Canon").
-FLIGHT_HINT = "Yakıtım ne kadar kaldı? Bingo, cannon, waypoint, tanker, AoA, stall, iniş takımı, flap."
+FLIGHT_HINT = "How much fuel do I have left? Bingo, cannon, waypoint, tanker, AoA, stall, landing gear, flaps."  # spoken()
 
 
 class WakeGate:
@@ -415,7 +416,7 @@ class WakeGate:
                 if self._model is None:
                     self._model = self._load()
                 if self.flying():
-                    prompt = f"{prompt} {FLIGHT_HINT}".strip()
+                    prompt = f"{prompt} {spoken(FLIGHT_HINT)}".strip()
                 segments, _ = self._model.transcribe(io.BytesIO(wav), language=self.language, beam_size=1,
                                                      initial_prompt=prompt, condition_on_previous_text=False)
                 segs = speech_segments(segments, prompt)
@@ -463,7 +464,7 @@ class STTRouter:
                 # move on to the next engine
                 self.down[e.name] = now + self.cooldown
                 errors.append(f"{e.name}: {ex}" if isinstance(ex, STTError) else f"{e.name}: {type(ex).__name__}: {ex}")
-        raise STTError("; ".join(errors) or "konuşma tanıma motoru yok")
+        raise STTError("; ".join(errors) or "no speech recognition engine")
 
 
 # Whisper makes up sentences it memorized from YouTube subtitles when there is silence or noise

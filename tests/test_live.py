@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from alice.i18n import spoken
 from alice.tools.base import ToolResult
 from alice.voice.live import LiveSession, declarations, sanitize_schema
 
@@ -548,7 +549,7 @@ def test_filler_plays_when_model_calls_a_tool_silently(monkeypatch, tmp_path):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     Audio(b"\x05\x00" * 50, 24000).save(tmp_path / "x.wav")
     for text in fillers.TOOL:
-        Audio(b"\x05\x00" * 50, 24000).save(fillers.Fillers("Kore", None, tmp_path)._file(text))
+        Audio(b"\x05\x00" * 50, 24000).save(fillers.Fillers("Kore", None, tmp_path)._file(spoken(text)))
     ws = FakeWS([{"serverContent": {"inputTranscription": {"text": "Ankara'da hava nasıl"}}},
                  {"toolCall": {"functionCalls": [{"id": "c1", "name": "weather", "args": {"city": "Ankara"}}]}},
                  {"toolCall": {"functionCalls": [{"id": "c2", "name": "weather", "args": {"city": "İzmir"}}]}}])
@@ -628,7 +629,7 @@ def test_dolgu_cumlesi_kullanicinin_tonuna_uyar(tmp_path):
     made = []
     f = Fillers("Kore", lambda text, tone="calm": made.append((tone, text)) or Audio(b"\x01\x00" * 10, 24000), tmp_path)
     for text in PHRASES["calm"]["tool"]:
-        Audio(b"\x05\x00" * 50, 24000).save(f._file(text))
+        Audio(b"\x05\x00" * 50, 24000).save(f._file(spoken(text)))
     assert f.get("tool", "urgent") is not None  # no urgent audio yet: the calm one is played, urgent ones are generated
     _wait(lambda: not f._warming and len(made) == 3)
     assert {t for t, _ in made} == {"urgent"}

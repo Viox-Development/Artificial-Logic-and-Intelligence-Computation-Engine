@@ -14,15 +14,16 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from alice.i18n import _, spoken
 from alice.config import alice_home
 from alice.voice.tone import EMOTIONS, NAMES_TR
 
 SAMPLES = {
-    "calm": "Günaydın. Bugün okul günü, ilk dersin dokuzda. Gece çalışan yedekleme sorunsuz bitti.",
-    "happy": "Harika! Derleme ilk denemede geçti, bütün testler yeşil.",
-    "serious": "Yedekleme yarıda kaldı. Hedef diskte yer kalmamış, önce biraz yer açman gerekiyor.",
-    "urgent": "Bingo yakıt. Mevcut tüketimle on iki dakikan var, şimdi eve dön.",
-    "playful": "Saat gecenin üçü ve yine Unity açık. Ben uyumam ama sen uyusan iyi olur.",
+    "calm": "Good morning. It's a school day, your first class is at nine. The overnight backup finished fine.",
+    "happy": "Great! The build passed on the first try, all the tests are green.",
+    "serious": "The backup stopped halfway. The target disk is full; you need to free some space first.",
+    "urgent": "Bingo fuel. At the current burn you have twelve minutes; head home now.",
+    "playful": "It's three in the morning and Unity is open again. I don't sleep, but you should.",
 }
 
 
@@ -51,13 +52,13 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
             provider = eng.name.split(":")[0]
             if not path.exists():
                 if provider in exhausted:
-                    row[emo] = "!günlük kota doldu"
+                    row[emo] = "!" + _("daily quota used up")
                     continue
                 emit(f"{eng.name} · {NAMES_TR[emo]}")
                 err = None
-                for _ in range(4):
+                for _try in range(4):
                     try:
-                        eng.synth(SAMPLES[emo], emo).save(path)
+                        eng.synth(spoken(SAMPLES[emo]), emo).save(path)
                         err = None
                         model = getattr(eng, "last_model", "")
                         if model:  # which model and instruction format produced it (shown on the page)
@@ -75,10 +76,10 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
                         err = str(e).splitlines()[0][:160]
                         break
                 if err is not None:
-                    emit(f"  atlandı: {err}")
+                    emit("  " + _("skipped: {error}", error=err))
                     row[emo] = f"!{err}"
                     if provider in exhausted:
-                        emit(f"  {provider} için kalan örnekler atlanıyor; yarın aynı komutla kaldığın yerden devam eder")
+                        emit("  " + _("skipping the remaining samples for {provider}; run the same command tomorrow to continue", provider=provider))
                     continue
             row[emo] = fname
     # Also add the leftovers from previous runs to the page.
@@ -99,7 +100,7 @@ def run_audition(engines: list, emotions: list[str] | None = None, out: Path | N
 
 
 def render(results: dict[str, dict[str, str]], emotions: list[str]) -> str:
-    head = "".join(f"<th>{NAMES_TR[e]}<div class=s>{html.escape(SAMPLES[e])}</div></th>" for e in emotions)
+    head = "".join(f"<th>{NAMES_TR[e]}<div class=s>{html.escape(spoken(SAMPLES[e]))}</div></th>" for e in emotions)
     rows = []
     for name, row in results.items():
         cells = []

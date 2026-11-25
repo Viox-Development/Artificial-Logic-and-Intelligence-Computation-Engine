@@ -232,7 +232,7 @@ def test_app_enroll_cancel_and_silent_mic(tmp_path, monkeypatch):
     s.start()
     s._thread.join(10)
     v = s.view()
-    assert "yeterli kayıt" in v["message"] and sid.load_profile() is None
+    assert "not enough recordings" in v["message"] and sid.load_profile() is None
     s = EnrollSession(mic=lambda: Mic([]), vad=LoudVAD, embedder=FakeEmbedder, listen_seconds=30)
     s.start()
     wait_state(s, "recording")

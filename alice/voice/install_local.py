@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from alice.i18n import _
 from alice.config import alice_home, set_config_value
 
 CUDA_INDEXES = ["cu126", "cu124", "cu128", "cu121"]
@@ -73,8 +74,8 @@ def install(emit: Callable[[str], None] = print, run=None) -> Path:
     run = run or default_run
     found = find_python()
     if found is None:
-        raise RuntimeError("Python 3.10-3.12 bulunamadı. Önerilen: winget install Python.Python.3.11 "
-                           "(sonra PowerShell'i kapatıp aç ve tekrar dene)")
+        raise RuntimeError(_("Python 3.10-3.12 not found. Recommended: winget install Python.Python.3.11 (then close and "
+                             "reopen PowerShell and try again)"))
     cmd, ver = found
     if ver != "3.11":
         emit(f"Not: Python {ver} kullanılacak; Chatterbox en sorunsuz 3.11'de kuruluyor. Sorun çıkarsa: "
@@ -82,15 +83,15 @@ def install(emit: Callable[[str], None] = print, run=None) -> Path:
     d = venv_dir()
     py = venv_python(d)
     if not py.exists():
-        emit(f"sanal ortam oluşturuluyor: {d}")
+        emit(_("creating the virtual environment: {path}", path=d))
         if run(cmd + ["-m", "venv", str(d)]) != 0:
-            raise RuntimeError("sanal ortam oluşturulamadı")
+            raise RuntimeError(_("could not create the virtual environment"))
     pip = [str(py), "-m", "pip"]
     run(pip + ["install", "--upgrade", "pip"])
-    emit("Chatterbox kuruluyor (PyTorch dahil, birkaç GB sürebilir)")
+    emit(_("installing Chatterbox (PyTorch included, it may take a few GB)"))
     if run(pip + ["install", "chatterbox-tts"]) != 0:
-        raise RuntimeError("chatterbox-tts kurulamadı. Yukarıdaki hatayı bana gönder; numpy hatasıysa çoğu zaman "
-                           "Python 3.11 ile tekrar denemek çözüyor.")
+        raise RuntimeError(_("could not install chatterbox-tts. Send me the error above; if it is a numpy error, trying "
+                             "again with Python 3.11 usually fixes it."))
     info = _out([str(py), "-c", "import torch; print(torch.__version__, torch.version.cuda or '', "
                                 "torch.cuda.is_available())"])
     emit(f"PyTorch: {info}")
@@ -104,15 +105,15 @@ def install(emit: Callable[[str], None] = print, run=None) -> Path:
                           f"https://download.pytorch.org/whl/{idx}"]) == 0:
                 break
         else:
-            emit("Uyarı: CUDA'lı PyTorch kurulamadı; ses işlemcide (yavaş) üretilecek.")
+            emit(_("Warning: could not install PyTorch with CUDA; the voice will be made on the CPU (slow)."))
     # Local Whisper: checks the generated audio and trims hallucinated tail text. Leaves torch/numpy versions alone.
-    emit("Whisper kuruluyor (sesi kontrol etmek için)")
+    emit(_("installing Whisper (to check the voice)"))
     pins = _out([str(py), "-m", "pip", "freeze"]) or ""
     keep = [ln for ln in pins.splitlines() if ln.split("==")[0].lower() in ("torch", "torchaudio", "numpy")]
     cons = d / "constraints.txt"
     cons.write_text("\n".join(keep) + "\n", encoding="utf-8")
     if run(pip + ["install", "openai-whisper", "-c", str(cons)]) != 0:
-        emit("Uyarı: Whisper kurulamadı; ses kontrolü Groq ile (ya da uzunluğa göre) yapılacak.")
+        emit(_("Warning: could not install Whisper; the voice will be checked with Groq (or by length)."))
     if _out([str(py), "-c", "from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('ok')"]) != "ok":
         raise RuntimeError("Chatterbox kuruldu ama içe aktarılamıyor. Şunu çalıştırıp çıktıyı gönder: "
                            f'"{py}" -c "from chatterbox.mtl_tts import ChatterboxMultilingualTTS"')

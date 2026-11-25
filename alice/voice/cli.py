@@ -516,7 +516,7 @@ def _enroll(cfg, argv) -> int:
     vad = VAD()
     embeddings: list[list[float]] = []
     with mic:
-        for i, sentence in enumerate(sid.ENROLL_SENTENCES, 1):
+        for i, sentence in enumerate(sid.enroll_sentences(), 1):
             for _attempt in range(2):
                 console.print(f"[bold]{i}/{len(sid.ENROLL_SENTENCES)}[/]  \"{escape(sentence)}\"")
                 audio = _record_one(mic, vad)

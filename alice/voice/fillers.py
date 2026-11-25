@@ -21,14 +21,16 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from alice.i18n import spoken
 from alice.voice.audio import Audio
 
-TOOL = ("Bir saniye.", "Hemen bakıyorum.", "Tamam, hallediyorum.")
-THINK = ("Bir düşüneyim.", "Hmm, bir bakayım.")
+# English keys, spoken in the speech language (spoken()).
+TOOL = ("One second.", "Checking now.", "Okay, on it.")
+THINK = ("Let me think.", "Hmm, let me see.")
 PHRASES = {
     "calm": {"tool": TOOL, "think": THINK},
-    "urgent": {"tool": ("Hemen.", "Tamam, hemen bakıyorum."), "think": ("Hemen düşünüyorum.",)},
-    "happy": {"tool": ("Tabii, hemen bakalım!", "Süper, bir saniye!"), "think": ("Güzel soru, bir düşüneyim!",)},
+    "urgent": {"tool": ("Right away.", "Okay, checking right away."), "think": ("Thinking right away.",)},
+    "happy": {"tool": ("Sure, let's look!", "Great, one second!"), "think": ("Good question, let me think!",)},
 }
 RATE = 24000  # Live's output sample rate (AudioOut)
 
@@ -85,7 +87,7 @@ class Fillers:
         """PCM to be played (24 kHz). The same sentence does not repeat consecutively. If the voice for that tone does not exist yet, plays the calm one."""
         kind = "think" if kind == "think" else "tool"
         for t in dict.fromkeys((tone if tone in PHRASES else "calm", "calm")):
-            texts = [x for x in PHRASES[t][kind] if x != self._last]
+            texts = [spoken(x) for x in PHRASES[t][kind] if spoken(x) != self._last]
             random.shuffle(texts)
             for text in texts:
                 pcm = self._load(text, t)
@@ -103,7 +105,8 @@ class Fillers:
         with self._lock:
             if self._warming or self.synth is None:
                 return
-            missing = [t for t in PHRASES[tone]["tool"] + PHRASES[tone]["think"] if not self._file(t, tone).exists()]
+            missing = [spoken(t) for t in PHRASES[tone]["tool"] + PHRASES[tone]["think"]
+                       if not self._file(spoken(t), tone).exists()]
             if not missing:
                 return
             self._warming = True

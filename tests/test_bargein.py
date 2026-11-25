@@ -18,7 +18,7 @@ def test_split_heard_kelime_ortasindan_bolmez():
     assert split_heard(text, 0.0) == ("", text)
     assert cut_note("Ankara", "kısa") == ""  # the unheard part is very short: no note needed
     note = cut_note("Ankara'da hava kapalı.", "Akşam yağmur bekleniyor, şemsiye almayı unutma.")
-    assert "Duyduğu kısım" in note and "şemsiye" in note and "devam et" in note
+    assert "Part they heard" in note and "şemsiye" in note and "devam et" in note
 
 
 def test_canli_modda_duyulmayan_kisim_modele_not_olarak_gider():
@@ -34,7 +34,7 @@ def test_canli_modda_duyulmayan_kisim_modele_not_olarak_gider():
     content = sent[0]["clientContent"]
     assert content["turnComplete"] is False
     note = content["turns"][0]["parts"][0]["text"]
-    assert "şemsiye" in note.split("Duymadığı kısım")[1]
+    assert "şemsiye" in note.split("Part they did not hear")[1]
     assert state["said"][0].endswith("(interrupted)") and "şemsiye" not in state["said"][0]
 
 
@@ -73,4 +73,4 @@ def test_klasik_yolda_soylenemeyen_cumleler_cevaba_eklenir():
     va._cut = cut
     va._note_cut()
     last = va.agent.messages[-1]["content"]
-    assert "sözünü kesti" in last and "cut off in the middle" in last and va._cut is None
+    assert "interrupted you" in last and "cut off in the middle" in last and va._cut is None

@@ -24,20 +24,26 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import spoken
 from alice.config import alice_home
 
 MODEL_NAME = "nemo_en_titanet_small.onnx"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/" + MODEL_NAME)
 MIN_SECONDS = 0.6  # voice fingerprints are unreliable on shorter audio: no decision is made, it is accepted
 THRESHOLD_RANGE = (0.45, 0.6)
+# Read aloud while enrolling: English keys, read in the speech language (enroll_sentences()).
 ENROLL_SENTENCES = [
-    "Hey Alice, saat kaç?",
-    "YouTube'u aç ve bir şarkı çal.",
-    "Bugün hava nasıl olacak, yağmur yağacak mı?",
-    "Discord'daki son mesajlara bir bakar mısın?",
-    "Şu an ne kadar hızlı uçuyorum, yakıtım yeter mi?",
-    "Bir saat sonra arkadaşımı aramamı hatırlat.",
+    "Hey Alice, what time is it?",
+    "Open YouTube and play a song.",
+    "What will the weather be like today, will it rain?",
+    "Can you look at the latest messages on Discord?",
+    "How fast am I flying right now, do I have enough fuel?",
+    "Remind me to call my friend in an hour.",
 ]
+
+
+def enroll_sentences() -> list[str]:
+    return [spoken(s) for s in ENROLL_SENTENCES]
 
 
 def voice_dir() -> Path:

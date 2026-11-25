@@ -26,6 +26,7 @@ def cut_note(heard: str | None, unheard: str) -> str:
     """Note sent to the model ("" = not needed). heard None: the heard part is unknown (the start of the reply)."""
     if len(unheard) < MIN_UNHEARD:
         return ""
-    said = "" if heard is None else f'Duyduğu kısım: "{heard[-300:]}". ' if heard else "Cevabından hiçbir şey duymadı. "
-    return ("[Not: kullanıcı sözünü kesti. " + said + f'Duymadığı kısım: "{unheard[:600]}". '
-            "Yeni söylediğine cevap ver; \"devam et\" derse duymadığı kısımdan sürdür, duyduğunu tekrarlama.]")
+    said = "" if heard is None else f'Part they heard: "{heard[-300:]}". ' if heard else "They heard none of your answer. "
+    return ("[Note: the user interrupted you. " + said + f'Part they did not hear: "{unheard[:600]}". '
+            "Answer what they just said; if they say \"devam et\" (go on), continue from the part they did not hear "
+            "and don't repeat what they heard.]")

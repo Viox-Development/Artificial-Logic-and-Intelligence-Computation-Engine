@@ -30,7 +30,7 @@ from typing import Any, Callable, Protocol
 import httpx
 
 from alice.config import Config, alice_home
-from alice.i18n import edge_voice, speech_language
+from alice.i18n import _, edge_voice, speech_language, spoken
 from alice.voice.audio import Audio
 from alice.voice.tone import CHATTERBOX, DIRECTION, EMOTIONS, NAMES_TR
 
@@ -128,14 +128,15 @@ class EmotionLibrary:
 
 
 # Reference sentences: local engines clone well from 6-15 s of clean speech.
+# English keys, recorded in the speech language (spoken()).
 LIBRARY_TEXT = {
-    "calm": "Merhaba, ben ALICE. Bugün her şey yolunda görünüyor; bilgisayarın serin, görevlerin de zamanında "
-            "bitti. Bir şeye ihtiyacın olursa buradayım.",
-    "happy": "Harika haber! Derleme ilk denemede geçti ve bütün testler yeşil. Bence bunu kutlamayı hak ettin.",
-    "serious": "Bir sorun var. Yedekleme görevi yarıda kaldı çünkü hedef disk dolu. Yer açmadan tekrar "
-               "denersem yine başarısız olacak.",
-    "urgent": "Yakıt kritik seviyede. Mevcut tüketimle on dakikan kaldı. Eve dönmek için şimdi ayrılman gerekiyor.",
-    "playful": "Yine mi gece yarısı Unity? Peki, ben kahve içemiyorum ama sana eşlik ederim. Hadi şu hatayı bulalım.",
+    "calm": "Hi, I'm ALICE. Everything looks fine today; your computer is cool and your tasks finished on time. I'm "
+            "here if you need anything.",
+    "happy": "Great news! The build passed on the first try and all the tests are green. I think you deserve to celebrate.",
+    "serious": "There's a problem. The backup task stopped halfway because the target disk is full. If I try again "
+               "without freeing space, it will fail again.",
+    "urgent": "Fuel is critical. At the current burn you have ten minutes left. You need to leave now to make it home.",
+    "playful": "Unity at midnight again? Fine, I can't drink coffee but I'll keep you company. Let's find that bug.",
 }
 
 
@@ -152,22 +153,22 @@ def build_library(engine: "TTS", out: Path | None = None, emit: Callable[[str], 
         meta = {}
     if meta.get("source") and meta["source"] != engine.name:
         redo = True  # don't mix in a library made with a different voice
-        emit(f"önceki kütüphane {meta['source']} sesiyle yapılmış, {engine.name} ile yeniden yapılıyor")
+        emit(_("the old library was made with the {old} voice, remaking it with {new}", old=meta["source"], new=engine.name))
     missing: list[str] = []
     for emo, text in LIBRARY_TEXT.items():
         path = out / f"{emo}.wav"
         if path.exists() and not redo:
             continue
-        emit(f"{NAMES_TR[emo]} kaydı hazırlanıyor")
+        emit(_("preparing the {emotion} recording", emotion=NAMES_TR[emo]))
         try:
-            engine.synth(text, emo).save(path)
+            engine.synth(spoken(text), emo).save(path)
         except QuotaError as e:
             emit(f"  {e}")
             rest = list(LIBRARY_TEXT)[list(LIBRARY_TEXT).index(emo):]
             missing += [m for m in rest if redo or not (out / f"{m}.wav").exists()]
             break
         except TTSError as e:
-            emit(f"  atlandı: {e}")
+            emit("  " + _("skipped: {error}", error=e))
             missing.append(emo)
     meta_path.write_text(json.dumps({"source": engine.name, "created": time.time()}), encoding="utf-8")
     return out, sorted(set(missing), key=list(LIBRARY_TEXT).index)
@@ -359,7 +360,7 @@ def list_gemini_tts_models(api_key: str, client: httpx.Client | None = None) -> 
     """Speech (TTS) models accessible with this key. Listing models does not use up quota."""
     c = client or httpx.Client(timeout=15)
     out, token = [], ""
-    for _ in range(10):
+    for _try in range(10):
         r = c.get("https://generativelanguage.googleapis.com/v1beta/models",
                   params={"pageSize": 1000, **({"pageToken": token} if token else {})},
                   headers={"x-goog-api-key": api_key})
@@ -451,7 +452,7 @@ class XTTS:
     def synth(self, text: str, emotion: str = "calm") -> Audio:
         ref = self.library.clip(emotion)
         if ref is None:
-            raise TTSError("duygu kütüphanesi yok: alice voice library")
+            raise TTSError("no emotion library: alice voice library")
         with self._lock:
             wav = self._load().tts(text=text, speaker_wav=str(ref), language=self.language)
         return Audio.from_floats(wav, 24000).polish()
@@ -894,7 +895,7 @@ class TTSRouter:
 def make_cloud(cfg: Config, voice: str | None = None) -> GeminiTTS | None:
     v = cfg.data.get("voice", {})
     ref = voice or v.get("tts_cloud", "gemini:Aoede")
-    provider, _, name = ref.partition(":")
+    provider, _sep, name = ref.partition(":")
     if provider != "gemini":
         return None
     key = os.environ.get(cfg.data.get("providers", {}).get("gemini", {}).get("api_key_env", "GEMINI_API_KEY"), "")
