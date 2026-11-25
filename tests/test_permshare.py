@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 import pytest
 
 from alice import permissions as perm
@@ -58,7 +61,8 @@ def test_share_publishes_secret_gist_and_refuses_secrets(workdir):
     (workdir / "rapor.html").write_text("<h1>Rapor</h1>", encoding="utf-8")
     out = Share().run(ctx, ["rapor.html"], title="Haftalık")
     assert api.body["public"] is False and "rapor.html" in api.body["files"]
-    assert "gistcdn.githack.com" in out.text and "secret" in out.text
+    hosts = {urlparse(u).hostname for u in re.findall(r"https://\S+", out.text)}
+    assert "gistcdn.githack.com" in hosts and "secret" in out.text
     (workdir / ".env").write_text("OPENAI_API_KEY=sk-abcdefabcdefabcdefabcdefabcdef", encoding="utf-8")
     with pytest.raises(ToolError, match="not shared"):
         Share().run(ctx, [".env"])
