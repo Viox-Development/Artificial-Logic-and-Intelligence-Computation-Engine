@@ -19,6 +19,7 @@ function openMenu(anchor, build, align, below) {
   let top = below ? r.bottom + 4 : r.top - mh - 6;
   if (below && top + mh > vh - 8) top = r.top - mh - 4;
   if (top < 8) top = r.bottom + 6;
+  if (top + mh > vh - 8) top = Math.max(8, vh - mh - 8);
   let left = align === "right" ? r.right - mw : r.left;
   left = Math.max(8, Math.min(left, vw - mw - 8));
   m.style.top = top + "px";
@@ -55,17 +56,18 @@ function cycleMode() {
 }
 
 const THINK = {
-  off: [_("doesn't think"), _("Fastest: answers right away. For simple tasks")],
-  low: [_("thinks a little"), _("Thinks briefly, then acts (recommended)")],
-  medium: [_("thinks more"), _("A bit more careful, a bit slower")],
-  high: [_("thinks a lot"), _("For hard tasks; needlessly slow on simple ones")],
-  xhigh: [_("even more"), _("Extra High: for very hard tasks")],
-  max: [_("the most"), _("Max: for the hardest tasks, the slowest")],
-  default: [_("the model decides"), _("The model's own setting")],
+  off: [_("Off"), _("Answers right away without thinking")],
+  low: [_("Low"), _("Quick, for simple tasks")],
+  medium: [_("Medium"), _("Balanced: for everyday work")],
+  high: [_("High"), _("Thinks through hard tasks")],
+  xhigh: [_("Extra high"), _("For long, difficult work")],
+  max: [_("Max"), _("No limit: the slowest, for the hardest problems")],
+  ultracode: ["Ultracode", _("Extra high effort, and the work is split between subagents that check each other. Uses a lot of quota; lasts until ALICE restarts")],
+  default: [_("Auto"), _("The model's own setting")],
 };
 // Yalnız açık/kapalı destekleyen modeller (Qwen, GLM, Kimi...): seviye yerine kapalı/açık gösterilir.
-const THINK_BINARY = { off: [_("doesn't think"), _("Answers right away without thinking")], high: [_("thinks"), _("Thinks before answering")],
-  default: [_("the model decides"), _("The model's own setting")] };
+const THINK_BINARY = { off: [_("Off"), _("Answers right away without thinking")], high: [_("On"), _("Thinks before answering")],
+  default: [_("Auto"), _("The model's own setting")] };
 // Seçili modelin desteklediği seviyeler (sunucu modele göre verir); bilinmiyorsa hepsi.
 function thinkOptions(st) {
   st = st || S.status;
@@ -81,37 +83,79 @@ function thinkLabel(st) {
 }
 async function setThinking(level) {
   applyStatus(await api("/api/thinking", { level }));
-  toast(_("Thinking: {level}", { level: (thinkLabel() || THINK[level] || [level])[0] }));
+  toast(_("Effort: {level}", { level: (thinkLabel() || THINK[level] || [level])[0] }));
 }
 
+/* Çaba menüsü (Claude Code ve Codex'teki gibi): hızlıdan akıllıya tek bir kaydırıcı, altında "Otomatik". */
 function thinkMenu() {
   openMenu($("#thinkBtn"), (m) => {
-    m.appendChild(el("div", "menu-title", _("Thinking · {model}", { model: shortModel(S.status.model) })));
     const opts = thinkOptions();
-    if (S.status.thinking_kind === "none") {
-      m.appendChild(el("div", "menu-note", _("This model has no thinking setting; it works its own way.")));
-    }
     const cur = S.status.thinking_effective || S.status.thinking;
-    for (const [k, [label, sub]] of opts) {
-      menuItem(m, k === "off" ? IC.bolt : IC.brain, label[0].toUpperCase() + label.slice(1), sub,
-        () => setThinking(k), cur === k);
+    if (S.status.thinking_kind === "none") {
+      m.appendChild(el("div", "menu-title", _("Effort")));
+      m.appendChild(el("div", "menu-note", _("This model has no thinking setting; it works its own way.")));
+      return;
     }
+    const steps = opts.filter(([k]) => k !== "default");
+    if (S.status.thinking_kind === "binary" || steps.length < 3) {
+      m.appendChild(el("div", "menu-title", _("Effort")));
+      for (const [k, [label, sub]] of opts) menuItem(m, null, label, sub, () => setThinking(k), cur === k);
+      return;
+    }
+    const at = steps.findIndex(([k]) => k === cur);
+    const box = el("div", "effort" + (cur === "ultracode" ? " ultra" : ""));
+    const head = el("div", "ef-head"), name = el("b"), desc = el("small", "ef-desc");
+    head.append(el("span", "", _("Effort")), name);
+    const track = el("div", "ef-track"), input = el("input");
+    input.type = "range"; input.min = 0; input.max = steps.length - 1; input.step = 1;
+    input.value = at < 0 ? Math.min(1, steps.length - 1) : at;
+    input.setAttribute("aria-label", _("Effort"));
+    const dots = el("div", "ef-dots");
+    steps.forEach(([k]) => dots.appendChild(el("i", k === "ultracode" ? "u" : "")));
+    const show = (auto) => {
+      const [k, [label, sub]] = steps[+input.value];
+      name.textContent = auto ? THINK.default[0] : label;
+      desc.textContent = auto ? THINK.default[1] : sub;
+      input.setAttribute("aria-valuetext", name.textContent);
+      box.classList.toggle("ultra", !auto && k === "ultracode");
+      box.style.setProperty("--at", (+input.value / (steps.length - 1)) * 100 + "%");
+      $$("i", dots).forEach((d, i) => d.classList.toggle("on", i <= +input.value));
+    };
+    input.addEventListener("input", () => show(false));
+    input.addEventListener("change", () => setThinking(steps[+input.value][0]));
+    track.append(dots, input);
+    const ends = el("div", "ef-ends");
+    ends.append(el("span", "", _("Faster")), el("span", "", _("Smarter")));
+    box.append(head, track, ends, desc);
+    m.appendChild(box);
+    show(cur === "default");
+    m.appendChild(el("div", "menu-sep"));
+    menuItem(m, null, THINK.default[0], THINK.default[1], () => setThinking("default"), cur === "default");
   }, "right");
 }
 let _modelsMenuCache = null;
-async function modelMenu(anchor) {
+async function modelMenu(anchor, full) {
   // Önbellekte model listesi varsa menüyü gecikmesiz (0ms) anında aç.
   // Arka planda /api/models/all ile taze veriyi çek.
   const render = (all) => {
     const provs = (all && all.providers) || [];
     const pinned = all ? all.pinned : (S.status.brain_pinned ? S.status.brain_chain[0] : null);
     openMenu(anchor instanceof Element ? anchor : $("#modelBtn"), (m) => {
-      m.appendChild(el("div", "menu-title", _("Main model")));
+      const all_ = full === true;
+      let rest = 0;
+      let find = null;
+      if (all_) {
+        find = el("input", "menu-find"); find.type = "search"; find.placeholder = _("Search models");
+        m.appendChild(find);
+      } else m.appendChild(el("div", "menu-title", _("Main model")));
       menuItem(m, IC.spark, _("Automatic"), _("The first suitable model in the chain; moves to the next at its limit"),
         () => pinModel("reset"), !pinned);
       // Sağlayıcıya göre gruplu; gizlenen sağlayıcı/modeller ve anahtarı olmayanlar menüde görünmez.
       for (const p of provs) {
-        const rows = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden) : [];
+        const open = p.enabled && !p.hidden ? p.models.filter((x) => !x.hidden && !x.twin && x.chat !== false) : [];
+        const rows = all_ ? open : open.filter((x) => x.main !== false);
+        rest += open.length - rows.length;
+        if (open.length && !rows.length) continue;
         if (p.name === "chatgpt" && p.enabled && !p.hidden && !rows.length) {
           // giriş var ama liste henüz yok: boş geçme, nedenini söyle
           m.appendChild(el("div", "menu-title", "chatgpt"));
@@ -129,10 +173,19 @@ async function modelMenu(anchor) {
         if (!rows.length) continue;
         m.appendChild(el("div", "menu-title", provLabel(p) + (p.note ? _(" · limit {note}", { note: p.note }) : "")));
         for (const x of rows) {
-          menuItem(m, null, x.model, x.ok ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
+          menuItem(m, null, all_ ? x.model : prettyModel(x.ref), x.ok ? "" : x.status, () => pinModel(x.ref), pinned === x.ref);
         }
       }
+      if (find) {
+        find.addEventListener("input", () => {
+          const q = find.value.trim().toLowerCase();
+          $$(".mi", m).forEach((b) => { b.hidden = !!q && !b.textContent.toLowerCase().includes(q); });
+          $$(".menu-title", m).forEach((t) => { t.hidden = !!q; });
+        });
+        setTimeout(() => find.focus(), 0);
+      }
       m.appendChild(el("div", "menu-sep"));
+      if (rest) menuItem(m, null, _("More models ({n})", { n: rest }), "", () => modelMenu(anchor, true));
       menuItem(m, IC.list, _("Manage models"), _("Hide/show providers or models, see their status"), () => showSettings("models"));
     }, "right", anchor instanceof Element);
   };
@@ -156,7 +209,8 @@ async function hideModel(name, hidden, label) {
    en altta katlanmış "Gelişmiş": puanlama ağırlıkları ve rol sıraları. */
 const PROV_LABEL = { gemini: "Google Gemini", openrouter: "OpenRouter", groq: "Groq", nvidia: "NVIDIA NIM", cerebras: "Cerebras",
   mistral: "Mistral", sambanova: "SambaNova", cloudflare: "Cloudflare", cohere: "Cohere", vercel: "Vercel AI Gateway",
-  zai: "Z.ai", ollama: _("Ollama (local)"), chatgpt: _("ChatGPT account"), cliproxy: "Claude Code proxy" };
+  zai: "Z.ai", ollama: _("Ollama (local)"), chatgpt: _("ChatGPT account"), cliproxy: "Claude Code proxy",
+  "cliproxy-claude": "Claude" };
 /* Sağlayıcının görünen adı. Proxy modelleri sağlayıcı sağlayıcı gruplanır (Claude, Kimi...): onlar kendi etiketini getirir. */
 function provLabel(p) { return p.label || PROV_LABEL[p.name] || p.name; }
 // Sağlayıcı kartlarının açık/kapalı durumunu saklar; bir ayar değiştiğinde sayfa yenilense bile
@@ -185,7 +239,7 @@ function modelsPage(pane, data) {
   }
   hero.append(hl, ha);
   const think = el("div", "mp-think");
-  think.append(el("span", "lbl", _("Thinking level")), segmented(thinkOptions().map(([k, [l]]) => [k, l]),
+  think.append(el("span", "lbl", _("Effort")), segmented(thinkOptions().map(([k, [l]]) => [k, l]),
     S.status.thinking_effective || S.status.thinking, (v) => setThinking(v)), el("small", "", (thinkLabel() || ["", ""])[1]));
   hero.appendChild(think);
   pane.appendChild(hero);
@@ -682,7 +736,7 @@ function renderPanel() {
     const kv = el("dl", "kv");
     const mins = Math.floor((Date.now() - S.started) / 60000);
     const { a, d, n } = changeTotals();
-    for (const [k, v] of [[_("Model"), st.model || _("none")], [_("Thinking level"), (THINK[st.thinking] || [st.thinking || "?"])[0]],
+    for (const [k, v] of [[_("Model"), st.model || _("none")], [_("Effort"), (THINK[st.thinking] || [st.thinking || "?"])[0]],
       [_("Permission mode"), (MODES[st.mode] || [st.mode])[0]], [_("Decider"), st.decider || "-"], [_("Folder"), st.cwd || ""],
       [_("Git branch"), st.branch || "-"], [_("Session"), st.session || ""], [_("Open for"), mins < 1 ? _("under 1 min") : _("{m} min", { m: mins })],
       [_("Today"), _("{n} requests", { n: st.today_requests || 0 })], [_("Changes"), n ? _("{n} files", { n }) + ` +${a} −${d}` : _("none")]]) {
@@ -3310,7 +3364,7 @@ window.addEventListener("drop", (e) => {
 
 $("#sendBtn").addEventListener("click", () => (S.busy && !input.value.trim() ? stop() : submit()));
 $("#modeBtn").addEventListener("click", modeMenu);
-$("#modelBtn").addEventListener("click", modelMenu);
+$("#modelBtn").addEventListener("click", () => modelMenu());
 $("#thinkBtn").addEventListener("click", thinkMenu);
 $("#cwdBtn").addEventListener("click", askCwd);
 /* Dal menüsü: üst çubuktaki dal etiketine tıklayınca yerel ve uzaktaki dallar; seçilene geçilir, uzakta olup

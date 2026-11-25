@@ -817,7 +817,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
     done = threading.Event()
     msgs = []
     fresh = {"chains": {"brain": ["g:a", "g:b", "g:c", "g:d"]}}
-    monkeypatch.setattr(ranking, "refresh", lambda r: fresh)
+    monkeypatch.setattr(ranking, "refresh", lambda r, path=None: fresh)
     reloaded = []
     monkeypatch.setattr(router, "reload_auto", lambda c: reloaded.append(c))
 
@@ -835,7 +835,7 @@ def test_refresh_in_background(monkeypatch, isolated_home):
     assert done.wait(5)
     assert reloaded == [fresh] and msgs[-1] == "model order updated: g:a, g:b, g:c"
 
-    def boom(r):
+    def boom(r, path=None):
         raise RuntimeError("ağ yok")
 
     monkeypatch.setattr(ranking, "refresh", boom)

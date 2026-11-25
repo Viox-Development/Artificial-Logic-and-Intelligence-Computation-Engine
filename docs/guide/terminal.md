@@ -32,7 +32,7 @@ alice reflex "search for the weather" --target browser --url https://duckduckgo.
 ```
 
 `--target browser` first connects to your open browser (it must be running with `--remote-debugging-port=9222`).
-Opening a separate window when that fails is off by default; to allow it, add `browser_allow_separate = true` to the
+Opening a separate window when that fails is off by default; to al| `/think [role] off|low|medium|high|xhigh|max|ultracode|default` | it, add `browser_allow_separate = true` to the
 `[agent]` section of `config.toml`. `--max-steps` sets the step limit (default 25), `--close` closes the browser when
 done, and `--input field=text` can be repeated.
 
@@ -49,7 +49,7 @@ REPL commands:
 | `/help` | list commands |
 | `/plan`, `/mode plan\|ask\|auto\|yolo` | permission mode (Shift+Tab cycles it) |
 | `/model` | chain status; `/model brain groq:openai/gpt-oss-120b` pins a model, `/model brain reset` unpins |
-| `/think [role] off\|low\|medium\|high\|default` | thinking level |
+| `/think [role] off|low|medium|high|xhigh|max|ultracode|default` |\|low\|medium\|high\|default` | thinking level |
 | `/kurul <topic>` | ask the review council (critic, advocate, checker and experts debate and vote) |
 | `/rewind` | go back to before a message |
 | `/init` | create an `ALICE.md` instruction file for this project |

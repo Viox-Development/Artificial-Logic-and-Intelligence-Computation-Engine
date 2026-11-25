@@ -773,10 +773,14 @@ def refresh_in_background(router, emit: Callable[[str], None] = lambda s: None,
     if not _refreshing.acquire(blocking=False):
         return False
 
+    # Where the result goes is decided now, not when the measurement ends: a test that had started it was over by then,
+    # and the result of its made-up providers replaced the user's real model order.
+    target = cache_path()
+
     def work() -> None:
         try:
             emit(_("measuring the models (in the background, once a day)"))
-            cache = refresh(router)
+            cache = refresh(router, path=target)
             router.reload_auto(cache)
             emit(_("model order updated: ") + ", ".join(cache["chains"].get("brain", [])[:3]))
         except Exception as e:  # noqa: BLE001 - a background job must not crash the app

@@ -990,6 +990,21 @@ function shortModel(ref) {
   const m = ref.split(":").slice(1).join(":");
   return (m.split("/").pop() || ref).replace(/:free$/, "");
 }
+// Menüde ve düğmede görünen ad: claude-opus-5-5 -> Opus 5.5, gpt-6.1-terra -> GPT-6.1 Terra, kimi-k3.1-pro -> Kimi K3.1 Pro
+function prettyModel(ref) {
+  const id = shortModel(ref && ref.includes(":") ? ref : "x:" + (ref || ""));
+  if (!ref || !/^[a-z]/.test(id)) return id;
+  const parts = [];
+  for (const w of id.split("-")) {
+    const last = parts[parts.length - 1];
+    if (/^\d{1,2}$/.test(w) && last && /^\d{1,2}$/.test(last)) parts[parts.length - 1] = last + "." + w;
+    else parts.push(w);
+  }
+  if (parts[0] === "claude" && parts.length > 1) parts.shift();
+  const up = { gpt: "GPT", glm: "GLM", oss: "OSS", vl: "VL" };
+  const named = parts.map((w) => up[w] || w[0].toUpperCase() + w.slice(1));
+  return named[0] === "GPT" && named.length > 1 ? "GPT-" + named.slice(1).join(" ") : named.join(" ");
+}
 // Kopyala satırı sadece bir turun son cevabında görünsün (Claude'daki gibi).
 function markFinals() {
   const kids = Array.from(list.children);
@@ -1123,7 +1138,7 @@ function applyStatus(s) {
     $("#modeIcon").innerHTML = icon;
     $("#modeBtn").className = "c-btn pill m-" + st.mode;
   }
-  $("#modelLabel").textContent = shortModel(st.model);
+  $("#modelLabel").textContent = st.model ? prettyModel(st.model) : shortModel(st.model);
   if (st.thinking) {
     // Seçili modelin gerçekten uyguladığı seviye (model desteklemiyorsa en yakını); destek yoksa düğme sönük.
     const merged = { ...S.status, ...st };
@@ -1134,6 +1149,7 @@ function applyStatus(s) {
       $("#thinkBtn").title = merged.thinking_kind === "none" ? _("This model has no thinking setting")
         : _("Thinking: {level}", { level: lab[1] });
       $("#thinkBtn").classList.toggle("dim", merged.thinking_kind === "none");
+      $("#thinkBtn").classList.toggle("ultra", (merged.thinking_effective || st.thinking) === "ultracode");
     }
   }
   // Sabitlenen model cevap veremeyip yedeğe geçildiyse düğme seçileni, çubuk gerçekten cevap vereni gösterir.
