@@ -2368,6 +2368,7 @@ def make_handler(state: AppState):
                 return self._send(404, b"not found", "text/plain")
             self._send(200, body, content_type(f),
                        {"Content-Security-Policy": PREVIEW_CSP, "Access-Control-Allow-Origin": "*"})
+            return None
 
         def _fail(self) -> None:
             """Unexpected error: details logged to app.log, client receives a short message instead of traceback."""

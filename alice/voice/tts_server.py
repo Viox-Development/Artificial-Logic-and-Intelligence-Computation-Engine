@@ -361,6 +361,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"{}", "application/json")
         body = {"ok": True, "device": STATE["device"], "loaded": STATE["model"] is not None}
         self._send(200, json.dumps(body).encode(), "application/json")
+        return None
 
     def _discard_body(self, n: int) -> None:
         """Read and drop a request body we won't use before answering. Closing the socket with unread bytes makes

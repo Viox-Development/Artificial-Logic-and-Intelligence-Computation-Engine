@@ -26,7 +26,10 @@ from alice.app import cliproxy
 REPO = "router-for-me/CLIProxyAPI"
 PINNED_VERSION = "v8.0.57"  # tested version; can be changed via [cliproxy] version in config
 _TIMEOUT = 60.0
-_log: Callable[[str], None] = lambda s: None
+
+
+def _log(s: str) -> None:
+    """Default progress callback when none is given: ignores the message."""
 
 
 def asset_name(version: str, system: str | None = None, machine: str | None = None) -> str:
