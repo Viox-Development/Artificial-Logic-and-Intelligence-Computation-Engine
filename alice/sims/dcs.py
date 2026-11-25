@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from alice.i18n import _, speech_language, spoken
 from alice.sims.flight import FT, NM, PROFILES, FlightState, profile_for
 
 PORT = 41230
@@ -247,7 +248,7 @@ class DCSListener:
         last_rx = time.monotonic()
         while not self._stop.is_set():
             try:
-                raw, _ = self._sock.recvfrom(65535)
+                raw, _addr = self._sock.recvfrom(65535)
             except socket.timeout:
                 if self.active and time.monotonic() - last_rx > self.timeout:
                     self._end()
@@ -438,11 +439,11 @@ def read_mission(path: Path) -> MissionInfo:
                             if unit.get("skill") == "Player":
                                 found = (group, unit, True)
     if found is None:
-        raise ValueError("görevde oyuncu ya da client uçağı bulunamadı")
-    group, unit, _ = found
+        raise ValueError("no player or client aircraft found in the mission")
+    group, unit, _is_player = found
     wps = []
     for i, p in enumerate(lua_list(group.get("route", {}).get("points"))):
-        name = resolve(p.get("name")) or ("Kalkış" if i == 0 else f"WP{i}")
+        name = resolve(p.get("name")) or (spoken("Takeoff") if i == 0 else f"WP{i}")
         wps.append(Waypoint(str(name), float(p.get("x", 0)), float(p.get("y", 0)), float(p.get("alt", 0)) / FT,
                             float(p["speed"]) / 0.514444 if p.get("speed") else None, str(p.get("type", ""))))
     return MissionInfo(name=Path(path).stem, aircraft=str(unit.get("type", "")), group=str(resolve(group.get("name"))),
@@ -470,7 +471,7 @@ _seq = [0]
 def send_command(kind: str, arg: str, port: int = PORT) -> int:
     """Send to the script's command channel (port+1); the returned sequence number arrives in its "ack" field."""
     if kind == "cmd" and arg not in COMMANDS:
-        raise ValueError(f"izin verilmeyen komut: {arg}")
+        raise ValueError(f"command not allowed: {arg}")
     _seq[0] += 1
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(f"{_seq[0]}|{kind}|{arg}".encode(), ("127.0.0.1", port + 1))
@@ -496,20 +497,22 @@ def current_mission(dirs: list[Path] | None = None) -> Path | None:
 
 def briefing_text(m: MissionInfo) -> str:
     """Pre-takeoff spoken briefing: mission, aircraft, route (first two legs and total), radio, description start."""
-    parts = [f"Görev: {m.name}." + (f" {m.group} grubundasın." if m.group else "")]
+    parts = [spoken("Mission: {name}.", name=m.name) + (" " + spoken("You're in the {group} group.", group=m.group)
+                                                         if m.group else "")]
     legs = m.legs()
     if len(legs) > 1:
-        total = sum(d for _, d, _ in legs[1:])
-        parts.append(f"Rotada {len(legs) - 1} nokta var, toplam {total:.0f} mil.")
+        total = sum(d for _wp, d, _brg in legs[1:])
+        parts.append(spoken("The route has {n} points, {nm} miles in total.", n=len(legs) - 1, nm=f"{total:.0f}"))
         for wp, dist, brg in legs[1:3]:
-            alt = f"{wp.alt_ft:,.0f}".replace(",", ".")
-            parts.append(f"{wp.name}: {brg:03.0f} derece, {dist:.0f} mil, {alt} feet.")
+            alt = f"{wp.alt_ft:,.0f}".replace(",", "." if speech_language() == "tr" else ",")
+            parts.append(spoken("{name}: {deg} degrees, {nm} miles, {alt} feet.", name=wp.name, deg=f"{brg:03.0f}",
+                                nm=f"{dist:.0f}", alt=alt))
     if m.frequency_mhz:
-        parts.append(f"Grup frekansı {m.frequency_mhz:g}.")
+        parts.append(spoken("Group frequency {mhz}.", mhz=f"{m.frequency_mhz:g}"))
     desc = re.sub(r"\s+", " ", m.description or "").strip()
     if desc:
         first = re.split(r"(?<=[.!?])\s", desc, maxsplit=1)[0]
-        parts.append(f"Görev açıklaması: {first[:220]}")
+        parts.append(spoken("Mission description: {text}", text=first[:220]))
     return " ".join(parts)
 
 
@@ -522,7 +525,7 @@ def dcs_cmd(argv: list[str]) -> int:
     sub = argv[0] if argv else "status"
     dirs = saved_games_dirs()
     if sub in ("install", "uninstall") and not dirs:
-        console.print("[red]DCS Saved Games klasörü bulunamadı[/] (DCS bir kez açılmış olmalı)")
+        console.print("[red]" + _("DCS Saved Games folder not found") + "[/] " + _("(DCS must have been opened once)"))
         return 1
     if sub == "install":
         from alice.config import load_config
@@ -530,13 +533,13 @@ def dcs_cmd(argv: list[str]) -> int:
 
         wport, wnames = wingmen_settings(load_config().data.get("sims", {}) or {})
         for d in install(dirs, wingmen_port=wport, wingmen=wnames):
-            console.print(f"[green]kuruldu:[/] {d / 'Scripts' / 'alice_export.lua'}")
-            console.print(f"[green]kuruldu:[/] {d / 'Scripts' / 'Hooks' / HOOK.name} (kanat adamı komutları)")
-        console.print("DCS'i yeniden başlat. Veri, çekirdek açıkken (alice core run) işlenir.")
+            console.print("[green]" + _("installed:") + f"[/] {d / 'Scripts' / 'alice_export.lua'}")
+            console.print("[green]" + _("installed:") + f"[/] {d / 'Scripts' / 'Hooks' / HOOK.name} " + _("(wingman commands)"))
+        console.print(_("Restart DCS. The data is handled while the core is running (alice core run)."))
         return 0
     if sub == "uninstall":
         for d in uninstall(dirs):
-            console.print(f"[green]kaldırıldı:[/] {d}")
+            console.print("[green]" + _("removed:") + f"[/] {d}")
         return 0
     if sub == "kneeboard":
         from alice.sims import kneeboard as kb
@@ -544,14 +547,14 @@ def dcs_cmd(argv: list[str]) -> int:
         path = Path(argv[1]) if len(argv) > 1 else latest_mission(dirs)
         info = read_mission(path) if path else None
         written = kb.write(kb.render(info, kb.load_notes()), kb.kneeboard_dirs(dirs))
-        console.print(f"[green]{len(written)} sayfa yazıldı[/]" + (f" ({info.name})" if info else ""))
+        console.print("[green]" + _("{n} pages written", n=len(written)) + "[/]" + (f" ({info.name})" if info else ""))
         return 0
     for d in dirs:
         installed = (d / "Scripts" / "alice_export.lua").exists()
-        console.print(f"{d}: {'[green]kurulu[/]' if installed else '[yellow]kurulu değil (alice dcs install)[/]'}")
+        console.print(f"{d}: " + ("[green]" + _("installed") + "[/]" if installed else "[yellow]" + _("not installed (alice dcs install)") + "[/]"))
     if not dirs:
-        console.print("[yellow]DCS Saved Games klasörü bulunamadı[/]")
+        console.print("[yellow]" + _("DCS Saved Games folder not found") + "[/]")
     m = latest_mission(dirs)
     if m:
-        console.print(f"son görev: {m}")
+        console.print(_("last mission: {path}", path=m))
     return 0

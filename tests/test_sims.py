@@ -393,11 +393,11 @@ def test_dcs_extra_fields_described():
                   "wp_num": 3, "weapons": "AIM-120C x2, AIM-9X x2", "gun": 510, "warnings": "LeftEngineFailure",
                   "gear": 0, "flaps": 0})
     text = "\n".join(describe_extra(s))
-    assert "Mach 0.62" in text and "manyetik yön 006°" in text and "yatış -20°" in text
-    assert "radar irtifa 3,000 ft" in text and "devir %92" in text
-    assert "rüzgar 000° yönünden 19 kt" in text  # wind from the north pushes south
-    assert "sıradaki waypoint 3: 000° (gerçek), 10.0 nm" in text
-    assert "AIM-120C x2" in text and "top mermisi 510" in text and "UYARI / ARIZA: LeftEngineFailure" in text
+    assert "Mach 0.62" in text and "magnetic heading 006°" in text and "bank -20°" in text
+    assert "radar altitude 3,000 ft" in text and "rpm 92%" in text
+    assert "wind from 000° at 19 kt" in text  # wind from the north pushes south
+    assert "next waypoint 3: 000° (true), 10.0 nm" in text
+    assert "AIM-120C x2" in text and "gun rounds 510" in text and "WARNING / FAILURE: LeftEngineFailure" in text
 
 
 def test_warthunder_extra_fields():
@@ -408,8 +408,8 @@ def test_warthunder_extra_fields():
                   "oil temp 1, C": 80, "Mfuel, kg": 300, "Mfuel0, kg": 600, "flaps, %": 20},
                  {"type": "spitfire", "compass": 270, "aviahorizon_roll": 10, "aviahorizon_pitch": 2}, 1.0)
     text = "\n".join(describe_extra(s))
-    assert s.heading == 270 and "Mach 0.45" in text and "gaz %100" in text and "yağ 80°C" in text
-    assert "yakıt %50" in text and "flap %20" in text
+    assert s.heading == 270 and "Mach 0.45" in text and "throttle 100%" in text and "oil 80°C" in text
+    assert "fuel 50%" in text and "flaps 20%" in text
 
 
 def test_proactive_callouts():
@@ -491,13 +491,13 @@ def test_hub_alert_setup_and_clear():
     from alice.sims.hub import SimHub
 
     hub = SimHub({}, None, None)
-    assert "uçuşta değilsin" in hub.alert_altitude(5000)
+    assert "not flying" in hub.alert_altitude(5000)
     c = hub.companion("dcs")
     c.phase, c.last_state = "air", st(1, fuel_kg=2000)
-    assert hub.alert_altitude(5000).startswith("kuruldu: 5.000")
-    assert "zaten" in hub.alert_fuel(2500)
-    assert hub.alert_fuel(1000).startswith("kuruldu")
-    assert hub.clear_alerts() == "2 uyarı kaldırıldı"
+    assert hub.alert_altitude(5000).startswith("set: will be said aloud at 5,000")
+    assert "already" in hub.alert_fuel(2500)
+    assert hub.alert_fuel(1000).startswith("set:")
+    assert hub.clear_alerts() == "2 alerts removed"
     assert c.alt_alert_ft is None and c.fuel_alert_kg is None
 
 
@@ -576,9 +576,9 @@ def test_flight_tool_alert_actions(monkeypatch):
     c.phase, c.last_state = "air", st(1)
     monkeypatch.setattr(hubmod, "ACTIVE", h)
     tool = Flight()
-    assert tool.run(None, "alert_alt", ft=20000).text.startswith("kuruldu")
+    assert tool.run(None, "alert_alt", ft=20000).text.startswith("set:")
     assert c.alt_alert_ft == 20000
-    assert tool.run(None, "alerts_clear").text == "1 uyarı kaldırıldı"
+    assert tool.run(None, "alerts_clear").text == "1 alerts removed"
 
 
 def test_afterburner_does_not_trigger_fuel_calls():

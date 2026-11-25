@@ -17,6 +17,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from alice.i18n import speech_language, spoken
+
 LOW_FT = 2000.0
 TURN_G = 4.0
 WINDOW = 15.0          # this many seconds before the last live moment
@@ -32,7 +34,10 @@ _TENS = {10: "u", 20: "si", 30: "u", 40: "ı", 50: "si", 60: "ı", 70: "i", 80: 
 
 
 def ek(n: int) -> str:
-    """Possessive suffix of a number: 7 -> "7'si", 3 -> "3'ü", 10 -> "10'u". For the locative add "nde": "7'sinde"."""
+    """Possessive suffix of a number: 7 -> "7'si", 3 -> "3'ü", 10 -> "10'u". For the locative add "nde": "7'sinde".
+    Only in Turkish speech; other languages get the number as is."""
+    if speech_language() != "tr":
+        return str(n)
     tail = "ı" if n == 0 else _LAST.get(n % 10) or _TENS.get(n % 100) or "ü"
     return f"{n}'{tail}"
 
@@ -83,14 +88,16 @@ def death_context(f: dict[str, Any], events: list[Any]) -> dict[str, Any] | None
     for e in events:
         dt = end - e.ts
         body = e.body or ""
-        if 0 <= dt <= SIX_BEFORE and body.startswith("Arkanda düşman"):
+        if 0 <= dt <= SIX_BEFORE and body.startswith(("Arkanda düşman", "Enemy behind you")):
             ctx["six"] = True
-        if 0 <= dt <= SAM_BEFORE and "menzilindesin" in body:
+        if 0 <= dt <= SAM_BEFORE and ("menzilindesin" in body or (body.startswith("You're in ") and " range:" in body)):
             ctx["sam"] = True
-        m = re.match(r"^(?:Seni (.+) düşürdü|Yanıyorsun! (.+) vurdu|Ağır hasar aldın, (.+) vurdu)", body)
+        # The callouts in either speech language: who shot you down / set you on fire / damaged you.
+        m = re.match(r"^(?:Seni (.+) düşürdü|Yanıyorsun! (.+) vurdu|Ağır hasar aldın, (.+) vurdu|"
+                     r"(.+) shot you down|You're on fire! (.+) hit you|Heavy damage, (.+) hit you)", body)
         if m and -HIT_AFTER <= dt <= HIT_BEFORE:
             who = next(g for g in m.groups() if g).strip(" .!")
-            if m.group(1):
+            if m.group(1) or m.group(4):
                 downed = who  # the one who downed you is more certain than the one who damaged you
             ctx["killer"] = who
     if downed:
@@ -119,25 +126,27 @@ def patterns(ctxs: list[dict[str, Any]]) -> dict[str, str]:
     low_turn_six = sum(1 for c in ctxs if c["low"] and c["turning"] and c["six"])
     six = sum(1 for c in ctxs if c["six"])
     if often(low_turn_six):
-        out["low_turn_six"] = (f"Son {n} ölümünün {ek(low_turn_six)} alçakta dönerken arkadan geldi. Alçakta uzun "
-                               "dönme; enerjini koru, irtifa kazanıp dön.")
+        out["low_turn_six"] = spoken("{k} of your last {n} deaths came from behind while you turned low. Don't make long "
+                                     "turns down low; keep your energy, gain altitude, then turn.", n=n, k=ek(low_turn_six))
     elif often(six):
-        out["six"] = f"Son {n} ölümünün {ek(six)}nde düşmeden önce arkanda düşman vardı. Arkanı daha sık kontrol et."
+        out["six"] = spoken("In {k} of your last {n} deaths an enemy was behind you before you went down. Check your six "
+                            "more often.", n=n, k=ek(six))
     sam = sum(1 for c in ctxs if c["sam"])
     if often(sam):
         # If the killer wasn't seen, only "menzildeydin" (you were in range) is known: don't speak with certainty.
         sure = sum(1 for c in ctxs if c["sam"] and c["killer"])
-        where = "hava savunmasından" if sure == sam else "hava savunması menzilindeyken oldu"
-        out["sam"] = f"Son {n} ölümünün {ek(sam)} {where}. Menzile girince alçal ya da hemen çık."
+        where = spoken("were to air defences") if sure == sam else spoken("happened inside air defence range")
+        out["sam"] = spoken("{k} of your last {n} deaths {where}. When you enter the range, go low or get out at once.",
+                            n=n, k=ek(sam), where=where)
     killers = Counter(c["killer"] for c in ctxs if c["killer"])
     if killers:
         who, k = killers.most_common(1)[0]
         if often(k):
-            out["killer"] = f"Son {n} ölümünün {ek(k)}nde seni {who} vurdu."
+            out["killer"] = spoken("In {k} of your last {n} deaths {who} shot you.", n=n, k=ek(k), who=who)
     return out
 
 
 # Short tip added to an announcement during a match (pattern -> addition). The flight code uses it once.
-HINTS = {"sam": "Geçen ölümlerinin çoğu hava savunmasındandı, alçal ya da çık.",
-         "low_turn_six": "Alçakta uzun dönme, irtifa kazan.",
-         "six": "Arkanı kontrol et."}
+HINTS = {"sam": "Most of your recent deaths were to air defences, go low or climb.",
+         "low_turn_six": "Don't make long turns down low, gain altitude.",
+         "six": "Check your six."}  # spoken in the speech language (spoken())

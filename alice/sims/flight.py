@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from alice.config import alice_home
+from alice.i18n import speech_language, spoken
 
 KT = 0.514444    # 1 knot = m/s
 FT = 0.3048
@@ -42,7 +43,9 @@ _CLOCK_DEN = {1: "'den", 2: "'den", 3: "'ten", 4: "'ten", 5: "'ten", 6: "'dan", 
 
 
 def clock_from(clock: object) -> str:
-    """"Saat 3'ten kilit" (Turkish ablative suffix; "3'den" was wrong)."""
+    """"Saat 3'ten kilit" (Turkish ablative suffix; "3'den" was wrong). Other languages: the number as is."""
+    if speech_language() != "tr":
+        return str(clock)
     try:
         c = int(clock)
     except (TypeError, ValueError):
@@ -51,6 +54,8 @@ def clock_from(clock: object) -> str:
 
 
 def clock_loc(clock: object) -> str:
+    if speech_language() != "tr":
+        return str(clock)
     try:
         c = int(clock)
     except (TypeError, ValueError):
@@ -203,7 +208,7 @@ def learned_cruise(aircraft: str, folder: Path | None = None) -> float | None:
 
 def fmt_min(m: float) -> str:
     m = max(0, int(round(m)))
-    return f"{m} dakika" if m < 120 else f"{m // 60} saat {m % 60} dakika"
+    return spoken("{m} minutes", m=m) if m < 120 else spoken("{h} hours {m} minutes", h=m // 60, m=m % 60)
 
 
 @dataclass
@@ -227,20 +232,23 @@ class Debrief:
     series: dict[str, list] = field(default_factory=dict)
 
     def summary(self) -> str:
-        parts = [f"Uçuş {fmt_min(self.duration_s / 60)} sürdü."]
-        parts.append(f"En yüksek {self.max_g:.1f} G, en yüksek hız {self.max_ias_kt:.0f} knot.")
+        parts = [spoken("The flight lasted {time}.", time=fmt_min(self.duration_s / 60))]
+        parts.append(spoken("Highest {g} G, top speed {kt} knots.", g=f"{self.max_g:.1f}", kt=f"{self.max_ias_kt:.0f}"))
         if self.fuel_used_kg:  # 0: born in the air or after a refuel, not worth mentioning
-            parts.append(f"{self.fuel_used_kg:.0f} kilo yakıt kullandın, en az {self.min_fuel_kg:.0f} kiloya düştün.")
+            parts.append(spoken("You used {used} kilos of fuel and went down to {low} kilos at the lowest.",
+                                used=f"{self.fuel_used_kg:.0f}", low=f"{self.min_fuel_kg:.0f}"))
         if self.approach_on_speed_pct is not None:
-            q = "iyiydi" if self.approach_on_speed_pct >= 70 else "biraz dalgalıydı" if self.approach_on_speed_pct >= 40 \
-                else "hız kontrolü zayıftı"
-            parts.append(f"Son yaklaşmanın yüzde {self.approach_on_speed_pct:.0f}'i on speed'di, {q}.")
+            q = spoken("good") if self.approach_on_speed_pct >= 70 else spoken("a bit unsteady") \
+                if self.approach_on_speed_pct >= 40 else spoken("speed control was weak")
+            parts.append(spoken("{pct}% of the final approach was on speed, {q}.", pct=f"{self.approach_on_speed_pct:.0f}",
+                                q=q))
         if self.touchdown_vv_ms is not None:
             v = abs(self.touchdown_vv_ms)
-            feel = "yumuşaktı" if v < 1.5 else "normaldi" if v < 3 else "sertti"
-            parts.append(f"Teker koyarken alçalma hızın saniyede {v:.1f} metre, {feel}.")
+            feel = spoken("soft") if v < 1.5 else spoken("normal") if v < 3 else spoken("hard")
+            parts.append(spoken("Your sink rate at touchdown was {v} metres per second, {feel}.", v=f"{v:.1f}", feel=feel))
         if self.hr:
-            parts.append(f"Nabzın ortalama {self.hr['avg']:.0f}, en yüksek {self.hr['max']:.0f}.")
+            parts.append(spoken("Your heart rate averaged {avg}, peaking at {max}.", avg=f"{self.hr['avg']:.0f}",
+                                max=f"{self.hr['max']:.0f}"))
         return " ".join(parts)
 
 
@@ -274,31 +282,34 @@ def coach(d: Debrief, history: list[dict[str, Any]]) -> str:
     if d.touchdown_vv_ms is not None and len(lands) >= 3:
         v, avg = abs(d.touchdown_vv_ms), _avg(lands)
         if v < min(lands):
-            out.append(f"Son {len(lands)} inişinin en yumuşağıydı (ortalaman {avg:.1f}).")
+            out.append(spoken("The softest of your last {n} landings (your average is {avg}).", n=len(lands), avg=f"{avg:.1f}"))
         elif v < avg - 0.3:
-            out.append(f"Son {len(lands)} inişin ortalaması {avg:.1f}, bu {v:.1f}: gelişiyorsun.")
+            out.append(spoken("Your last {n} landings averaged {avg}, this one {v}: you're improving.", n=len(lands),
+                              avg=f"{avg:.1f}", v=f"{v:.1f}"))
         elif v > avg + 0.5:
-            out.append(f"Son {len(lands)} inişin ortalaması {avg:.1f}, bu {v:.1f}; bir dahakine son 50 feet'te "
-                       "alçalmayı biraz daha kes.")
+            out.append(spoken("Your last {n} landings averaged {avg}, this one {v}; next time cut the sink a bit more in "
+                              "the last 50 feet.", n=len(lands), avg=f"{avg:.1f}", v=f"{v:.1f}"))
     appr = [h["approach_on_speed_pct"] for h in history if h.get("approach_on_speed_pct") is not None][-5:]
     if d.approach_on_speed_pct is not None and len(appr) >= 3 and len(out) < 2:
         p, avg = d.approach_on_speed_pct, _avg(appr)
         if p >= avg + 15:
-            out.append(f"Yaklaşmada on speed oranın ortalamanın ({avg:.0f}) epey üstündeydi.")
+            out.append(spoken("Your on-speed share on the approach was well above your average ({avg}).", avg=f"{avg:.0f}"))
         elif p <= avg - 15:
-            out.append(f"Yaklaşma ortalamanın altındaydı (yüzde {avg:.0f} yerine {p:.0f}); hedef: AoA'yı on speed'de "
-                       "tutup gazla düzelt.")
+            out.append(spoken("The approach was below your average ({p}% instead of {avg}%); goal: hold the AoA on speed "
+                              "and correct with the throttle.", avg=f"{avg:.0f}", p=f"{p:.0f}"))
     same = [h for h in history if h.get("aircraft") == d.aircraft and (h.get("duration_s") or 0) >= 60]
     if len(out) < 2 and len(same) >= 3:
         if d.duration_s > max(h["duration_s"] for h in same):
-            out.append(f"Bu uçakla en uzun uçuşundu ({fmt_min(d.duration_s / 60)}).")
+            out.append(spoken("Your longest flight in this aircraft ({time}).", time=fmt_min(d.duration_s / 60)))
         elif d.fuel_used_kg and all(h.get("fuel_used_kg") for h in same[-5:]):
             rate = d.fuel_used_kg / (d.duration_s / 60)
             avg = _avg([h["fuel_used_kg"] / (h["duration_s"] / 60) for h in same[-5:]])
             if rate < avg * 0.8:
-                out.append(f"Dakikada {rate:.0f} kilo yaktın, bu uçaktaki ortalamandan ({avg:.0f}) belirgin az.")
+                out.append(spoken("You burned {rate} kilos a minute, clearly less than your average in this aircraft ({avg}).",
+                                       rate=f"{rate:.0f}", avg=f"{avg:.0f}"))
             elif rate > avg * 1.3:
-                out.append(f"Dakikada {rate:.0f} kilo yaktın, ortalaman {avg:.0f}: art yakıcıda çok kaldın.")
+                out.append(spoken("You burned {rate} kilos a minute, your average is {avg}: you stayed in afterburner a lot.",
+                                       rate=f"{rate:.0f}", avg=f"{avg:.0f}"))
     return " ".join(out[:2])
 
 
@@ -388,8 +399,8 @@ class FlightCompanion:
     def restricted(self) -> None:
         if not self.restricted_said:
             self.restricted_said = True
-            self.say("Bu sunucu uçuş verisi paylaşımını kısıtlıyor. Yakıt ve yaklaşma takibi yapamam ama "
-                     "kontrol listeleri, kneeboard ve sesli komutlar çalışıyor.", "info", "calm")
+            self.say(spoken("This server restricts flight data sharing. I can't track fuel and the approach, but "
+                            "checklists, the kneeboard and voice commands work."), "info", "calm")
 
     def session_end(self) -> None:
         """Data cut off (mission ended). If still airborne, review the flight anyway."""
@@ -446,11 +457,15 @@ class FlightCompanion:
 
     @staticmethod
     def _km(m: float) -> str:
-        return f"{m:.0f} metre" if m < 1000 else f"{m / 1000:.1f} kilometre".replace(".", ",")
+        comma = speech_language() == "tr"  # Turkish decimal comma: "1,2 kilometre"
+        km = f"{m / 1000:.1f}".replace(".", ",") if comma else f"{m / 1000:.1f}"
+        return spoken("{n} metres", n=f"{m:.0f}") if m < 1000 else spoken("{n} kilometres", n=km)
 
     @staticmethod
     def _km_short(m: float) -> str:
-        return f"{m:.0f} m" if m < 1000 else f"{m / 1000:.1f} km".replace(".", ",")
+        if m < 1000:
+            return f"{m:.0f} m"
+        return f"{m / 1000:.1f} km".replace(".", ",") if speech_language() == "tr" else f"{m / 1000:.1f} km"
 
     def _point(self, t: float, clock: Any, text: str, severity: str, key: str, edge: bool = False,
                ttl: float = 4.0) -> None:
@@ -492,7 +507,7 @@ class FlightCompanion:
         for k in keys:
             if k in self.coach_flags and k not in self.coached:
                 self.coached.add(k)
-                return " " + HINTS[k]
+                return " " + spoken(HINTS[k])
         return ""
 
     MISSILE_REPEAT = 8.0    # s: missile warning at most this often (re-shouted when the same missile reappeared)
@@ -541,35 +556,37 @@ class FlightCompanion:
                 clock, name = c.get("clock"), c.get("name") or "radar"
                 if not fresh:
                     if key[0] == "m":
-                        self._follow(t, clock, f"FÜZE · {name}", "critical", "missile", edge=True)
+                        self._follow(t, clock, spoken("MISSILE · {name}", name=name), "critical", "missile", edge=True)
                     elif key[0] == "l":
-                        self._follow(t, clock, f"KİLİT · {name}", "warn", "lock")
+                        self._follow(t, clock, spoken("LOCK · {name}", name=name), "warn", "lock")
                     continue
                 if key[0] in "ml" and not self._alert_ok(t, "missile" if key[0] == "m" else "lock"):
                     # War Thunder threats are read off the screen; when they cut out and came back they counted as "new":
                     # 30 min: 16 "Füze atıldı", 13 "Kilitlendin" (7 Nov). Sound is limited; arrow and glow continue.
                     if key[0] == "m":
-                        self._point(t, clock, f"FÜZE · {name}", "critical", "missile", edge=True)
+                        self._point(t, clock, spoken("MISSILE · {name}", name=name), "critical", "missile", edge=True)
                     else:
-                        self._point(t, clock, f"KİLİT · {name}", "warn", "lock")
+                        self._point(t, clock, spoken("LOCK · {name}", name=name), "warn", "lock")
                 elif key[0] == "m" and c.get("vision"):  # seen on screen: type (and sometimes direction) unknown
-                    self.say(f"Füze! Saat {clock}. Chaff at, dön!" if clock else "Füze atıldı! Chaff at, dön!",
-                             "critical", "urgent")
-                    self._point(t, clock, "FÜZE", "critical", "missile", edge=True)
+                    self.say(spoken("Missile! {clock} o'clock. Chaff, turn!", clock=clock) if clock else
+                             spoken("Missile launched! Chaff, turn!"), "critical", "urgent")
+                    self._point(t, clock, spoken("MISSILE"), "critical", "missile", edge=True)
                 elif key[0] == "m":
-                    self.say(f"Füze! Saat {clock}, {name}. Chaff at, dön!", "critical", "urgent")
-                    self._point(t, clock, f"FÜZE · {name}", "critical", "missile", edge=True)
+                    self.say(spoken("Missile! {clock} o'clock, {name}. Chaff, turn!", clock=clock, name=name),
+                             "critical", "urgent")
+                    self._point(t, clock, spoken("MISSILE · {name}", name=name), "critical", "missile", edge=True)
                 elif key[0] == "l":
-                    self.say(f"Saat {clock_from(clock)} kilit: {name}." if clock and name != "radar" else
-                             (f"Saat {clock_from(clock)} kilitlendin." if clock else "Kilitlendin!"),
-                             "warn", self._urgent())
-                    self._point(t, clock, f"KİLİT · {name}", "warn", "lock")
+                    self.say(spoken("Lock from {clock} o'clock: {name}.", clock=clock_from(clock), name=name)
+                             if clock and name != "radar" else
+                             (spoken("Locked from {clock} o'clock.", clock=clock_from(clock)) if clock else
+                              spoken("You're locked!")), "warn", self._urgent())
+                    self._point(t, clock, spoken("LOCK · {name}", name=name), "warn", "lock")
                 elif name != "?" and t - self.threat_said.get(name, -1e9) > 120:
                     self.threat_said[name] = t
                     # A radar seen on screen has no type, sometimes no direction: it said "Yeni radar: radar, saat None".
-                    text = (f"Yeni radar: {name}, saat {clock}." if name != "radar" and clock else
-                            f"Yeni radar: {name}." if name != "radar" else
-                            f"Yeni radar, saat {clock}." if clock else "")
+                    text = (spoken("New radar: {name}, {clock} o'clock.", name=name, clock=clock) if name != "radar" and clock
+                            else spoken("New radar: {name}.", name=name) if name != "radar" else
+                            spoken("New radar, {clock} o'clock.", clock=clock) if clock else "")
                     if text:
                         self._info(s, text)
                 break  # if there is a missile, the lock/new radar is not said separately
@@ -584,17 +601,20 @@ class FlightCompanion:
         near = planes[0]
         six = next((c for c in planes if c["dist_m"] <= self.SIX_RANGE and c.get("clock") in (4, 5, 6, 7, 8)), None)
         if six is not None and self._may_say(t, "six", self.SIX_REPEAT):
-            self.say(f"Arkanda düşman, saat {six['clock']}, {self._km(six['dist_m'])}!"
+            self.say(spoken("Enemy behind you, {clock} o'clock, {dist}!", clock=six["clock"], dist=self._km(six["dist_m"]))
                      + self._hint("low_turn_six", "six"), "warn", "urgent")
-            self._point(t, six["clock"], f"ARKANDA · {self._km_short(six['dist_m'])}", "critical", "six", edge=True)
+            self._point(t, six["clock"], spoken("ON YOUR SIX · {dist}", dist=self._km_short(six["dist_m"])), "critical", "six",
+                        edge=True)
             self.bandit_close = True
             return
         if six is not None:
-            self._follow(t, six["clock"], f"ARKANDA · {self._km_short(six['dist_m'])}", "critical", "six", edge=True)
+            self._follow(t, six["clock"], spoken("ON YOUR SIX · {dist}", dist=self._km_short(six["dist_m"])), "critical",
+                         "six", edge=True)
         if near["dist_m"] <= self.MERGE_RANGE and not self.bandit_close:
             self.bandit_close = True
             if self._may_say(t, "merge", self.MERGE_REPEAT):
-                self._info(s, f"Düşman saat {near['clock']}, {self._km(near['dist_m'])}.", "serious")
+                self._info(s, spoken("Enemy at {clock} o'clock, {dist}.", clock=near["clock"], dist=self._km(near["dist_m"])),
+                           "serious")
         elif near["dist_m"] > self.MERGE_RANGE + 2000:
             self.bandit_close = False
 
@@ -612,12 +632,13 @@ class FlightCompanion:
             return False
         if not self._may_say(s.t, "nose", self.NOSE_REPEAT):
             c = hot[0]
-            self._follow(s.t, c["clock"], f"BURNU SANA · {self._km_short(c['dist_m'])}", "warn", "nose")
+            self._follow(s.t, c["clock"], spoken("NOSE ON YOU · {dist}", dist=self._km_short(c["dist_m"])), "warn", "nose")
             return False
         c = hot[0]
-        self.say(f"Saat {clock_loc(c['clock'])} düşman burnunu sana çevirdi, {self._km(c['dist_m'])}. Füze gelebilir!",
+        self.say(spoken("The enemy at {clock} o'clock turned its nose on you, {dist}. A missile may come!",
+                        clock=clock_loc(c["clock"]), dist=self._km(c["dist_m"])),
                  "warn", self._urgent())
-        self._point(s.t, c["clock"], f"BURNU SANA · {self._km_short(c['dist_m'])}", "warn", "nose")
+        self._point(s.t, c["clock"], spoken("NOSE ON YOU · {dist}", dist=self._km_short(c["dist_m"])), "warn", "nose")
         return True
 
     def _ground_threats(self, s: FlightState, sams: list[dict]) -> None:
@@ -645,7 +666,8 @@ class FlightCompanion:
                 self.threat_mem[f"sam:{f['name']}"] = s.t
             c = min(fresh, key=lambda f: f["dist_m"])
             name = c["name"]
-            self.say(f"{name[0].upper() + name[1:]} menzilindesin: saat {c['clock']}, {self._km(c['dist_m'])}."
+            self.say(spoken("You're in {name} range: {clock} o'clock, {dist}.", name=name[0].upper() + name[1:],
+                            clock=c["clock"], dist=self._km(c["dist_m"]))
                      + self._hint("sam"),
                      "warn", "serious")
             self._point(s.t, c["clock"], f"{name} · {self._km_short(c['dist_m'])}", "warn", f"sam:{name}")
@@ -654,17 +676,17 @@ class FlightCompanion:
         """War Thunder combat log: kills you made, and hits on you."""
         for kind, who in s.extra.get("hud") or []:
             if kind == "kill":
-                self.say(f"Düşürdün: {who}.", "info", "cheerful")
+                self.say(spoken("Kill: {who}.", who=who), "info", "cheerful")
                 try:  # a HUD error must not break the announcement
-                    self.show("card", title="Düşürdün", text=str(who), severity="info", ttl=4.0, id="kill")
+                    self.show("card", title=spoken("Kill"), text=str(who), severity="info", ttl=4.0, id="kill")
                 except Exception:  # noqa: BLE001
                     pass
             elif kind == "fire":
-                self.say(f"Yanıyorsun! {who} vurdu.", "critical", "urgent")
+                self.say(spoken("You're on fire! {who} hit you.", who=who), "critical", "urgent")
             elif kind == "hit":
-                self.say(f"Ağır hasar aldın, {who} vurdu!", "warn", "urgent")
+                self.say(spoken("Heavy damage, {who} hit you!", who=who), "warn", "urgent")
             elif kind == "killed":
-                self.say(f"Seni {who} düşürdü.", "info", "serious")
+                self.say(spoken("{who} shot you down.", who=who), "info", "serious")
 
     # ------------------------------------------------------------------- phase
     def _airborne(self, s: FlightState) -> bool:
@@ -785,7 +807,7 @@ class FlightCompanion:
         nav = self.home_nav(s)
         if nav and nav["nm"] <= self.home_alert_nm:
             self.home_alert_nm = None
-            self.say(f"Üsse {nav['nm']:.0f} mil kaldı.", "warn", "calm")
+            self.say(spoken("{nm} miles to base.", nm=f"{nav['nm']:.0f}"), "warn", "calm")
 
     def _fuel(self, s: FlightState) -> None:
         if s.fuel_kg is None:
@@ -822,8 +844,8 @@ class FlightCompanion:
                 continue  # already took off low on fuel (common in War Thunder): the 10-minute warning is just noise
             if self._held(flag, left <= limit, s.t, 20) and flag not in self.fuel_flags:
                 self.fuel_flags.update({flag} | ({"low10"} if flag == "low5" else set()))
-                self.say(f"Yakıt yaklaşık {fmt_min(left)} yeter.", sev, self._urgent())
-                self._label(f"YAKIT ~{max(0, round(left))} dk", sev, "fuel", 6.0)
+                self.say(spoken("Fuel for about {time}.", time=fmt_min(left)), sev, self._urgent())
+                self._label(spoken("FUEL ~{n} min", n=max(0, round(left))), sev, "fuel", 6.0)
 
     def _bingo(self, s: FlightState, bingo: float) -> None:
         """Bingo: fuel left equals the way home plus reserve. Joker: a margin before bingo, reported once."""
@@ -833,13 +855,14 @@ class FlightCompanion:
         elif fuel > bingo + joker * 0.5:
             self.fuel_flags.discard("bingo")
         nav = self.home_nav(s) or {}
-        where = f"üs {nav.get('nm', 0):.0f} mil, {nav.get('bearing', 0):03.0f} derece"
+        where = spoken("base {nm} miles, {deg} degrees", nm=f"{nav.get('nm', 0):.0f}", deg=f"{nav.get('bearing', 0):03.0f}")
         if self._held("bingo", fuel <= bingo, s.t, 10) and "bingo" not in self.fuel_flags:
             self.fuel_flags.update({"bingo", "joker"})
-            self.say(f"Bingo. Şimdi eve dön, {where}.", "critical", self._urgent())
+            self.say(spoken("Bingo. Head home now, {where}.", where=where), "critical", self._urgent())
         elif self._held("joker", fuel <= bingo + joker, s.t, 10) and "joker" not in self.fuel_flags:
             self.fuel_flags.add("joker")
-            self.say(f"Joker. Bingo'ya {max(0.0, fuel - bingo):.0f} kilo var, {where}.", "warn", self._urgent())
+            self.say(spoken("Joker. {kg} kilos to bingo, {where}.", kg=f"{max(0.0, fuel - bingo):.0f}", where=where), "warn",
+                     self._urgent())
 
     def _held(self, key: str, cond: bool, t: float, secs: float) -> bool:
         """Has the condition held continuously for at least secs seconds (tank transfers and spikes are ignored)."""
@@ -880,12 +903,12 @@ class FlightCompanion:
             for w in new:
                 self.said_at["light:" + w] = s.t
             names = ", ".join(warning_name(w) for w in new[:3])
-            self.say(f"Uyarı: {names}.", "critical", self._urgent())
+            self.say(spoken("Warning: {names}.", names=names), "critical", self._urgent())
 
     HEAT_REPEAT = 180.0
 
     def _engine_heat(self, s: FlightState) -> None:
-        for key, limit, label in (("oil_temp", self.OIL_MAX, "Yağ"), ("water_temp", self.WATER_MAX, "Su")):
+        for key, limit, label in (("oil_temp", self.OIL_MAX, spoken("Oil")), ("water_temp", self.WATER_MAX, spoken("Water"))):
             v = s.extra.get(key)
             if v is None:
                 continue
@@ -894,7 +917,8 @@ class FlightCompanion:
             if v >= limit and key not in self.heat_flags and s.t - self.said_at.get(key, -1e9) >= self.HEAT_REPEAT:
                 self.heat_flags.add(key)
                 self.said_at[key] = s.t
-                self.say(f"{label} sıcaklığı {v:.0f} derece, motor ısınıyor. Gazı azalt ya da radyatörü aç.",
+                self.say(spoken("{label} temperature {v} degrees, the engine is heating up. Reduce throttle or open the "
+                                "radiator.", label=label, v=f"{v:.0f}"),
                          "warn", self._urgent())
             elif v < limit - 15:
                 self.heat_flags.discard(key)
@@ -915,10 +939,11 @@ class FlightCompanion:
             if self.alt_alert_above is None:
                 self.alt_alert_above = ft > self.alt_alert_ft
             elif (ft <= self.alt_alert_ft) == self.alt_alert_above:
-                self.say(f"{self.alt_alert_ft:,.0f} feet.".replace(",", "."), "info", "calm")
+                self.say(spoken("{ft} feet.", ft=f"{self.alt_alert_ft:,.0f}".replace(",", "." if speech_language() == "tr" else ",")),
+                         "info", "calm")
                 self.alt_alert_ft = self.alt_alert_above = None
         if self.fuel_alert_kg is not None and s.fuel_kg is not None and s.fuel_kg <= self.fuel_alert_kg:
-            self.say(f"Yakıt {self.fuel_alert_kg:.0f} kiloya indi.", "warn", "calm")
+            self.say(spoken("Fuel is down to {kg} kilos.", kg=f"{self.fuel_alert_kg:.0f}"), "warn", "calm")
             self.fuel_alert_kg = None
 
     GROUND_TTI = 5.0     # s: warn if we will hit the ground within this time
@@ -946,7 +971,7 @@ class FlightCompanion:
         if s.agl / -s.vv < self.GROUND_TTI and self.ground_armed \
                 and s.t - self.ground_last_warn >= self.GROUND_REPEAT:
             self.ground_last_warn, self.ground_armed, self.ground_safe_since = s.t, False, None
-            self.say("Yere yaklaşıyorsun, burnu kaldır!", "critical", "urgent")
+            self.say(spoken("Ground close, pull up!"), "critical", "urgent")
 
     def _flaps(self, s: FlightState) -> None:
         """Flaps left open after takeoff: if fast and high for 20 s, remind once."""
@@ -964,7 +989,7 @@ class FlightCompanion:
         self.flaps_since = s.t if self.flaps_since is None else self.flaps_since
         if s.t - self.flaps_since >= 20 and not self.flaps_said:
             self.flaps_said = True
-            self.say("Flaplar hâlâ açık, toplamayı unutma.", "warn", "serious")
+            self.say(spoken("Flaps still down, don't forget to raise them."), "warn", "serious")
 
     def _ext_tanks(self, s: FlightState) -> None:
         """If the external tanks drained slowly (not jettisoned), say so once."""
@@ -976,7 +1001,7 @@ class FlightCompanion:
             self.ext_said = False
         elif last is not None and 0.5 < last < 60 and ext <= 0.5 and not self.ext_said:
             self.ext_said = True
-            self._info(s, "Dış tanklar boşaldı.")
+            self._info(s, spoken("External tanks empty."))
 
     def _gear_check(self, s: FlightState) -> None:
         if s.gear is not None and s.ias is not None and (s.gear < 0.1 or s.ias < 140):
@@ -986,11 +1011,11 @@ class FlightCompanion:
         agl = s.agl if s.agl is not None else s.extra.get("radalt", 0) * FT if s.extra.get("radalt") else None
         if s.gear < 0.1 and agl is not None and agl < 300 and s.ias < 85 and (s.vv or 0) < -2:
             self.gear_last_warn = s.t
-            self.say("Teker kapalı! Alçak ve yavaşsın.", "critical", "urgent")
+            self.say(spoken("Gear up! You're low and slow."), "critical", "urgent")
         elif s.gear > 0.9 and s.ias > 150 and not self.gear_fast_said:
             self.gear_last_warn = s.t
             self.gear_fast_said = True  # once, until the gear retracts or we slow down
-            self.say(f"Teker açık ve hızın {s.ias / 0.514444:.0f} knot, tekeri kapat ya da yavaşla.", "warn", "serious")
+            self.say(spoken("Gear down at {kt} knots, raise the gear or slow down.", kt=f"{s.ias / 0.514444:.0f}"), "warn", "serious")
 
     def _waypoint(self, s: FlightState) -> None:
         e = s.extra
@@ -1002,8 +1027,8 @@ class FlightCompanion:
             return
         if bn[1] <= 2 and self.wp_called != num:
             self.wp_called = num
-            label = f"{int(num)} numaralı waypoint'e" if num is not None else "Waypoint'e"
-            self._info(s, f"{label} {bn[1]:.0f} mil.")
+            self._info(s, spoken("{nm} miles to waypoint {num}.", num=int(num), nm=f"{bn[1]:.0f}") if num is not None
+                       else spoken("{nm} miles to the waypoint.", nm=f"{bn[1]:.0f}"))
 
     def _weapons(self, s: FlightState) -> None:
         now = parse_weapons(s.extra.get("weapons"))
@@ -1012,9 +1037,9 @@ class FlightCompanion:
                 after = now.get(name, 0)
                 if after < before:
                     if after == 1:
-                        self._info(s, f"Son {name}.", "serious")
+                        self._info(s, spoken("Last {name}.", name=name), "serious")
                     elif after == 0:
-                        self._info(s, f"{name} bitti.", "serious")
+                        self._info(s, spoken("{name} gone.", name=name), "serious")
             self.weapons_last = now
         gun = s.extra.get("gun")
         if gun is not None:
@@ -1022,7 +1047,7 @@ class FlightCompanion:
                 self.gun_start, self.gun_flag = gun, False
             elif self.gun_start > 0 and gun <= self.gun_start * 0.2 and not self.gun_flag:
                 self.gun_flag = True
-                self._info(s, f"Top mermisi azaldı, {int(gun)} kaldı.", "serious")
+                self._info(s, spoken("Gun ammo low, {n} left.", n=int(gun)), "serious")
 
     # --------------------------------------------------------------------- G
     def _g(self, s: FlightState) -> None:
@@ -1035,7 +1060,7 @@ class FlightCompanion:
             self.g_since = s.t if self.g_since is None else self.g_since
             if s.t - self.g_since >= p.g_warn_seconds and s.t - self.g_last_warn > 180:
                 self.g_last_warn = s.t
-                self.say(f"Uzun süredir {s.g:.0f} G üstündesin, biraz rahatla.", "warn", "serious")
+                self.say(spoken("You've been above {g} G for a while, ease off a bit.", g=f"{s.g:.0f}"), "warn", "serious")
         else:
             self.g_since = None
 
@@ -1055,10 +1080,10 @@ class FlightCompanion:
                 continue
             if n == 0 and last > 0 and f"{kind}_out" not in self.cm_flags:
                 self.cm_flags.add(f"{kind}_out")
-                self.say(f"{name} bitti.", "warn", "serious")
+                self.say(spoken("{name} gone.", name=name), "warn", "serious")
             elif 0 < n <= low < last and f"{kind}_low" not in self.cm_flags:
                 self.cm_flags.add(f"{kind}_low")
-                self.say(f"{name} azaldı, {n} kaldı.", "warn", "serious")
+                self.say(spoken("{name} low, {n} left.", name=name, n=n), "warn", "serious")
 
     # --------------------------------------------------------------- approach
     def in_approach(self, s: FlightState) -> bool:
@@ -1110,7 +1135,7 @@ class FlightCompanion:
             say_it = kind != last or s.t - self.appr_last_say >= self.APPR_REPEAT
         if not say_it:
             return
-        text = APPROACH[kind]
+        text = spoken(APPROACH[kind])
         self.appr_last_say, self.appr_last_kind = s.t, kind
         self.say(text, "info", "calm" if kind == "on" else "serious")
 
@@ -1177,40 +1202,42 @@ def _bearing_nm(s: FlightState, x: float, z: float) -> tuple[float, float] | Non
     return math.degrees(math.atan2(dz, dx)) % 360, math.hypot(dx, dz) / NM
 
 
-# Turkish names for the DCS MCP warning lights (unknown names are read as they are).
+# Spoken names for the DCS MCP warning lights, in the speech language (unknown names are read as they are).
 WARNING_NAMES = {
-    "LeftEngineFailure": "sol motor arızası", "RightEngineFailure": "sağ motor arızası",
-    "HydraulicsFailure": "hidrolik arızası", "ACSFailure": "otopilot arızası", "AutopilotFailure": "otopilot arızası",
-    "AutopilotOn": "otopilot açık", "CannonFailure": "top arızası", "StallSignalization": "stall",
-    "LeftMainPumpFailure": "sol yakıt pompası arızası", "RightMainPumpFailure": "sağ yakıt pompası arızası",
-    "LeftWingPumpFailure": "sol kanat pompası arızası", "RightWingPumpFailure": "sağ kanat pompası arızası",
-    "RadarFailure": "radar arızası", "EOSFailure": "optik sistem arızası", "MLWSFailure": "füze uyarı sistemi arızası",
-    "ECMFailure": "karıştırıcı arızası", "GearFailure": "teker arızası", "MFDFailure": "ekran arızası",
-    "RWSFailure": "radar uyarı alıcısı arızası", "HUDFailure": "HUD arızası", "LeftTailPlaneFailure": "sol kuyruk hasarı",
-    "RightTailPlaneFailure": "sağ kuyruk hasarı", "LeftAileronFailure": "sol eleron hasarı",
-    "RightAileronFailure": "sağ eleron hasarı", "CanopyOpen": "kanopi açık", "FuelTankDamage": "yakıt tankı hasarı",
-    "MasterWarning": "ana uyarı", "LeftEngineFire": "sol motor yangını", "RightEngineFire": "sağ motor yangını",
+    "LeftEngineFailure": "left engine failure", "RightEngineFailure": "right engine failure",
+    "HydraulicsFailure": "hydraulics failure", "ACSFailure": "autopilot failure", "AutopilotFailure": "autopilot failure",
+    "AutopilotOn": "autopilot on", "CannonFailure": "gun failure", "StallSignalization": "stall",
+    "LeftMainPumpFailure": "left fuel pump failure", "RightMainPumpFailure": "right fuel pump failure",
+    "LeftWingPumpFailure": "left wing pump failure", "RightWingPumpFailure": "right wing pump failure",
+    "RadarFailure": "radar failure", "EOSFailure": "optical system failure", "MLWSFailure": "missile warning system failure",
+    "ECMFailure": "jammer failure", "GearFailure": "gear failure", "MFDFailure": "display failure",
+    "RWSFailure": "radar warning receiver failure", "HUDFailure": "HUD failure", "LeftTailPlaneFailure": "left tail damage",
+    "RightTailPlaneFailure": "right tail damage", "LeftAileronFailure": "left aileron damage",
+    "RightAileronFailure": "right aileron damage", "CanopyOpen": "canopy open", "FuelTankDamage": "fuel tank damage",
+    "MasterWarning": "master warning", "LeftEngineFire": "left engine fire", "RightEngineFire": "right engine fire",
 }
 
 
-APPROACH = {"sink": "Çok hızlı alçalıyorsun.", "slow": "Yavaşsın, stall'a yaklaşıyorsun, güç ver.",
-            "fast": "Hızlısın.", "on": "On speed, iyi."}
+APPROACH = {"sink": "You're sinking too fast.", "slow": "You're slow, close to a stall, add power.",
+            "fast": "You're fast.", "on": "On speed, good."}
 
 
 def callouts() -> list[tuple[str, str]]:
     """Fixed phrases spoken in flight, and their tones. Audio is generated in advance and stored on disk: in flight the
     graphics card is busy with the game, so the voice would come from the cloud (1-2 s delay per warning, quota);
     cached audio plays instantly."""
-    fixed = [("Yere yaklaşıyorsun, burnu kaldır!", "urgent"), ("Teker kapalı! Alçak ve yavaşsın.", "urgent"),
-             ("Flaplar hâlâ açık, toplamayı unutma.", "serious"), ("Dış tanklar boşaldı.", "calm")]
-    fixed += [(text, "calm" if kind == "on" else "serious") for kind, text in APPROACH.items()]
+    fixed = [(spoken("Ground close, pull up!"), "urgent"), (spoken("Gear up! You're low and slow."), "urgent"),
+             (spoken("Flaps still down, don't forget to raise them."), "serious"), (spoken("External tanks empty."), "calm")]
+    fixed += [(spoken(text), "calm" if kind == "on" else "serious") for kind, text in APPROACH.items()]
     # Single-light warnings (the most common case); most critical first.
-    names = sorted(WARNING_NAMES.values(), key=lambda n: ("yangın" not in n, "hasar" in n, n))
-    return fixed + [(f"Uyarı: {n}.", "urgent") for n in names]
+    names = sorted(dict.fromkeys(spoken(n) for n in WARNING_NAMES.values()),
+                   key=lambda n: ("yangın" not in n and "fire" not in n, "hasar" in n or "damage" in n, n))
+    return fixed + [(spoken("Warning: {names}.", names=n), "urgent") for n in names]
 
 
 def warning_name(key: str) -> str:
-    return WARNING_NAMES.get(key) or re.sub(r"(?<!^)(?=[A-Z])", " ", key).lower()
+    name = WARNING_NAMES.get(key)
+    return spoken(name) if name else re.sub(r"(?<!^)(?=[A-Z])", " ", key).lower()
 
 
 def band_name(mhz: float) -> str:
@@ -1222,7 +1249,7 @@ def band_name(mhz: float) -> str:
         return "VHF"
     if 30 <= mhz < 88:
         return "FM"
-    return "frekans"
+    return "frequency"
 
 
 def parse_weapons(text: str | None) -> dict[str, int]:
@@ -1235,72 +1262,72 @@ def parse_weapons(text: str | None) -> dict[str, int]:
 
 
 def describe_extra(s: FlightState) -> list[str]:
-    """Turn the extra indicators into short Turkish lines (only the values the game gives for that aircraft)."""
+    """Turn the extra indicators into short lines for the model (only the values the game gives for that aircraft)."""
     e = s.extra
     out: list[str] = []
     bits = []
     if e.get("mach") is not None:
         bits.append(f"Mach {e['mach']:.2f}")
     if e.get("mag_heading") is not None:
-        bits.append(f"manyetik yön {e['mag_heading']:03.0f}°")
+        bits.append(f"magnetic heading {e['mag_heading']:03.0f}°")
     elif s.heading is not None:
-        bits.append(f"yön {s.heading:03.0f}°")
+        bits.append(f"heading {s.heading:03.0f}°")
     if e.get("pitch") is not None and e.get("bank") is not None:
-        bits.append(f"burun {e['pitch']:+.0f}°, yatış {e['bank']:+.0f}°")
+        bits.append(f"pitch {e['pitch']:+.0f}°, bank {e['bank']:+.0f}°")
     if s.vv is not None:
-        bits.append(f"dikey hız {s.vv / FT * 60:+,.0f} ft/dk")
+        bits.append(f"vertical speed {s.vv / FT * 60:+,.0f} ft/min")
     if e.get("radalt") is not None:
-        bits.append(f"radar irtifa {e['radalt']:,.0f} ft")
+        bits.append(f"radar altitude {e['radalt']:,.0f} ft")
     if bits:
         out.append("  " + ", ".join(bits))
     eng = []
     if e.get("rpm") is not None:
-        eng.append(f"devir %{e['rpm']:.0f}")
+        eng.append(f"rpm {e['rpm']:.0f}%")
     if e.get("throttle") is not None:
-        eng.append(f"gaz %{e['throttle']:.0f}")
+        eng.append(f"throttle {e['throttle']:.0f}%")
     if e.get("egt") is not None:
-        eng.append(f"motor sıcaklığı {e['egt']:.0f}°C")
+        eng.append(f"engine temperature {e['egt']:.0f}°C")
     if e.get("oil_temp") is not None:
-        eng.append(f"yağ {e['oil_temp']:.0f}°C")
+        eng.append(f"oil {e['oil_temp']:.0f}°C")
     if e.get("water_temp") is not None:
-        eng.append(f"su {e['water_temp']:.0f}°C")
+        eng.append(f"water {e['water_temp']:.0f}°C")
     if e.get("fuel_pct") is not None:
-        eng.append(f"yakıt %{e['fuel_pct']:.0f}")
+        eng.append(f"fuel {e['fuel_pct']:.0f}%")
     if eng:
-        out.append("  motor: " + ", ".join(eng))
+        out.append("  engine: " + ", ".join(eng))
     cfg = []
-    for k, label in (("flaps", "flap"), ("speedbrake", "hız freni"), ("hook", "kanca")):
+    for k, label in (("flaps", "flaps"), ("speedbrake", "speed brake"), ("hook", "hook")):
         v = e.get(k)
         if v is not None and v > 0.05:
-            cfg.append(f"{label} %{v * 100:.0f}" if v <= 1 else f"{label} %{v:.0f}")
+            cfg.append(f"{label} {v * 100:.0f}%" if v <= 1 else f"{label} {v:.0f}%")
     if s.gear is not None:
-        cfg.append("teker aşağı" if s.gear > 0.9 else "teker yukarı" if s.gear < 0.1 else "teker hareket halinde")
+        cfg.append("gear down" if s.gear > 0.9 else "gear up" if s.gear < 0.1 else "gear in transit")
     if cfg:
         out.append("  " + ", ".join(cfg))
     if e.get("wind_kt") is not None and e["wind_kt"] >= 1:
-        out.append(f"  rüzgar {e['wind_from']:03.0f}° yönünden {e['wind_kt']:.0f} kt")
+        out.append(f"  wind from {e['wind_from']:03.0f}° at {e['wind_kt']:.0f} kt")
     if e.get("wp_x") is not None and e.get("wp_z") is not None:
         bn = _bearing_nm(s, e["wp_x"], e["wp_z"])
         if bn:
             num = f" {int(e['wp_num'])}" if e.get("wp_num") is not None else ""
             spd = s.tas or s.ias
-            eta = f", varış ~{bn[1] * NM / spd / 60:.0f} dk" if spd and spd > 20 else ""
-            out.append(f"  sıradaki waypoint{num}: {bn[0]:03.0f}° (gerçek), {bn[1]:.1f} nm{eta}")
+            eta = f", arrival ~{bn[1] * NM / spd / 60:.0f} min" if spd and spd > 20 else ""
+            out.append(f"  next waypoint{num}: {bn[0]:03.0f}° (true), {bn[1]:.1f} nm{eta}")
     if e.get("ils_glide") is not None and e.get("ils_side") is not None and (e["ils_glide"] or e["ils_side"]):
         g, sd = e["ils_glide"], e["ils_side"]
-        out.append(f"  ILS: süzülüş {'yukarıda' if g > 0 else 'aşağıda'} ({g:+.2f}), "
-                   f"merkez {'sağda' if sd > 0 else 'solda'} ({sd:+.2f})")
+        out.append(f"  ILS: glide slope {'above' if g > 0 else 'below'} ({g:+.2f}), "
+                   f"centre line {'right' if sd > 0 else 'left'} ({sd:+.2f})")
     if e.get("weapons") or e.get("gun") is not None:
-        w = e.get("weapons") or "yok"
-        gun = f", top mermisi {int(e['gun'])}" if e.get("gun") is not None else ""
-        out.append(f"  silahlar: {w}{gun}")
+        w = e.get("weapons") or "none"
+        gun = f", gun rounds {int(e['gun'])}" if e.get("gun") is not None else ""
+        out.append(f"  weapons: {w}{gun}")
     if e.get("warnings"):
-        out.append(f"  UYARI / ARIZA: {e['warnings']}")
+        out.append(f"  WARNING / FAILURE: {e['warnings']}")
     if e.get("radios"):
-        out.append("  telsiz/seyrüsefer frekansları: " + ", ".join(f"{band_name(float(f))} {f}" for f in
+        out.append("  radio/navigation frequencies: " + ", ".join(f"{band_name(float(f))} {f}" for f in
                                                                str(e["radios"]).split(",") if f))
     if e.get("mode"):
-        out.append(f"  sistem modu: {e['mode']}")
+        out.append(f"  system mode: {e['mode']}")
     return out
 
 
@@ -1331,32 +1358,33 @@ def save_debrief(d: Debrief, hr_series: list[tuple[float, float]] | None = None,
     stamp = time.strftime("%Y%m%d-%H%M", time.localtime(d.start_wall))
     (out / f"{stamp}.json").write_text(json.dumps(asdict(d), ensure_ascii=False), encoding="utf-8")
     ser = d.series
-    charts = [_svg_line(ser["t"], ser["alt_ft"], label="İrtifa (ft)"), _svg_line(ser["t"], ser["g"], label="G"),
-              _svg_line(ser["t"], ser["ias_kt"], label="Hız (knot)"),
-              _svg_line(ser["t"], ser["fuel_kg"], label="Yakıt (kg)")]
+    charts = [_svg_line(ser["t"], ser["alt_ft"], label=spoken("Altitude (ft)")), _svg_line(ser["t"], ser["g"], label="G"),
+              _svg_line(ser["t"], ser["ias_kt"], label=spoken("Speed (knots)")),
+              _svg_line(ser["t"], ser["fuel_kg"], label=spoken("Fuel (kg)"))]
     if hr_series and ser.get("wall"):
         # Heart rate comes with wall-clock time; move it onto the flight's game-time axis.
         w0, t0 = ser["wall"][0], ser["t"][0]
         charts.append(_svg_line([t0 + (t - w0) for t, _ in hr_series], [v for _, v in hr_series], color="var(--hr)",
-                                label="Nabız"))
-    rows = [("Süre", fmt_min(d.duration_s / 60)), ("En yüksek G", f"{d.max_g:.1f}"),
-            ("En yüksek hız", f"{d.max_ias_kt:.0f} kt"), ("En yüksek irtifa", f"{d.max_alt_ft:,.0f} ft")]
+                                label=spoken("Heart rate")))
+    rows = [(spoken("Duration"), fmt_min(d.duration_s / 60)), (spoken("Highest G"), f"{d.max_g:.1f}"),
+            (spoken("Top speed"), f"{d.max_ias_kt:.0f} kt"), (spoken("Highest altitude"), f"{d.max_alt_ft:,.0f} ft")]
     if d.fuel_used_kg is not None:
-        rows.append(("Kullanılan yakıt", f"{d.fuel_used_kg:.0f} kg"))
+        rows.append((spoken("Fuel used"), f"{d.fuel_used_kg:.0f} kg"))
     if d.approach_on_speed_pct is not None:
-        rows.append(("Yaklaşma on speed", f"%{d.approach_on_speed_pct:.0f}"))
+        rows.append((spoken("Approach on speed"), spoken("{pct}%", pct=f"{d.approach_on_speed_pct:.0f}")))
     if d.touchdown_vv_ms is not None:
-        rows.append(("Teker koyma", f"{abs(d.touchdown_vv_ms):.1f} m/s ({abs(d.touchdown_vv_ms) / FT * 60:.0f} fpm)"))
+        rows.append((spoken("Touchdown"), f"{abs(d.touchdown_vv_ms):.1f} m/s ({abs(d.touchdown_vv_ms) / FT * 60:.0f} fpm)"))
     for k, n in (("Chaff", d.chaff_used), ("Flare", d.flare_used)):
         if n:
-            rows.append((f"Kullanılan {k.lower()}", str(n)))
+            rows.append((spoken("{what} used", what=k.lower()), str(n)))
     if d.hr:
-        rows.append(("Nabız", f"ort {d.hr['avg']:.0f}, en yüksek {d.hr['max']:.0f}"))
+        rows.append((spoken("Heart rate"), spoken("avg {avg}, highest {max}", avg=f"{d.hr['avg']:.0f}", max=f"{d.hr['max']:.0f}")))
     table = "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows)
     when = time.strftime("%d.%m.%Y %H:%M", time.localtime(d.start_wall))
     page = out / f"{stamp}.html"
-    page.write_text(f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Uçuş {when}</title><style>
+    title = spoken("Flight {when}", when=when)
+    page.write_text(f"""<!doctype html><html lang="{speech_language()}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
 :root{{--bg:#faf9f7;--fg:#222;--mut:#777;--line:#e4e1dc;--a:#c6613f;--hr:#3f7fc6}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#1c1b1a;--fg:#eee;--mut:#999;--line:#333;--a:#d97757;--hr:#6fa3e0}}}}
 body{{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;margin:24px 16px;max-width:760px}}

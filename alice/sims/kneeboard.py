@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from alice.config import alice_home
+from alice.i18n import spoken
 from alice.sims.dcs import MissionInfo
 
 W, H = 768, 1024
@@ -113,35 +114,35 @@ def _wrap(d, text: str, font, width: int) -> list[str]:
 def render(mission: MissionInfo | None, notes: list[dict]) -> list:
     pages = []
     if mission is not None:
-        p = Page(f"Görev: {mission.name}"[:40])
-        p.line(f"Uçak: {mission.aircraft} · Grup: {mission.group}")
+        p = Page(spoken("Mission: {name}", name=mission.name)[:40])
+        p.line(spoken("Aircraft: {aircraft} · Group: {group}", aircraft=mission.aircraft, group=mission.group))
         if mission.frequency_mhz:
-            p.line(f"Grup frekansı: {mission.frequency_mhz:.3f} MHz", size=30)
+            p.line(spoken("Group frequency: {mhz} MHz", mhz=f"{mission.frequency_mhz:.3f}"), size=30)
         p.y += 10
         xs, right = [40, 90, 470, 600, 728], {2, 3, 4}
-        head = ["#", "Ad", "İrtifa", "Mesafe", "Kerteriz"]
+        head = ["#", spoken("Name"), spoken("Altitude"), spoken("Distance"), spoken("Bearing")]
         p.row(head, xs, size=22, color=(90, 80, 60), right=right)
         for i, (wp, dist, brg) in enumerate(mission.legs()):
             cols = [str(i), wp.name[:18], f"{wp.alt_ft:,.0f} ft", f"{dist:.1f} nm" if i else "", f"{brg:03.0f}°" if i else ""]
             if not p.row(cols, xs, right=right):
                 pages.append(p.img)
-                p = Page("Waypoint'ler (devam)")
+                p = Page(spoken("Waypoints (continued)"))
                 p.row(head, xs, size=22, color=(90, 80, 60), right=right)
                 p.row(cols, xs, right=right)
-        p.line("Kerterizler gerçek (manyetik değil), yaklaşık.", size=18, color=(110, 100, 80))
+        p.line(spoken("Bearings are true (not magnetic), approximate."), size=18, color=(110, 100, 80))
         pages.append(p.img)
         if mission.description.strip():
-            p = Page("Brifing")
+            p = Page(spoken("Briefing"))
             for para in mission.description.splitlines():
                 if para.strip() and not p.line(para.strip(), size=22):
                     break
             pages.append(p.img)
     if notes:
-        p = Page("Notlar")
+        p = Page(spoken("Notes"))
         for n in notes:
             if not p.line(f"{n.get('time', '')}  {n['text']}", size=26):
                 pages.append(p.img)
-                p = Page("Notlar (devam)")
+                p = Page(spoken("Notes (continued)"))
                 p.line(f"{n.get('time', '')}  {n['text']}", size=26)
         pages.append(p.img)
     return pages

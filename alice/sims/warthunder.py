@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 import httpx
 
+from alice.i18n import spoken
 from alice.sims.flight import FlightState
 
 URL = "http://127.0.0.1:8111"
@@ -87,8 +88,8 @@ def _enemy(color: str) -> bool:
 
 # Enemy air defense on the map: icon -> (name spoken, approximate effective range in m)
 GROUND_THREATS = {
-    "SAM": ("SAM", 18000.0), "SPAA": ("uçaksavar", 6000.0), "MissileDestroyer": ("füzeli muhrip", 18000.0),
-    "Cruiser": ("kruvazör", 15000.0), "Frigate": ("fırkateyn", 12000.0), "Destroyer": ("muhrip", 8000.0),
+    "SAM": ("SAM", 18000.0), "SPAA": ("anti-aircraft gun", 6000.0), "MissileDestroyer": ("missile destroyer", 18000.0),
+    "Cruiser": ("cruiser", 15000.0), "Frigate": ("frigate", 12000.0), "Destroyer": ("destroyer", 8000.0),
 }
 
 
@@ -126,9 +127,10 @@ def contacts(objs: list[dict[str, Any]], info: dict[str, Any], limit: int = 6,
                 nose = math.degrees(math.atan2(ox * w, -oy * h))
                 aspect = abs((nose - (bearing + 180) + 180) % 360 - 180)
             planes.append({"id": "", "clock": clock_of(bearing - heading), "dist_m": dist, "kind": "aircraft",
-                           "name": icon or "uçak", "lock": False, "missile": False, "aspect": aspect})
+                           "name": icon or spoken("aircraft"), "lock": False, "missile": False, "aspect": aspect})
         else:
             name, rng = GROUND_THREATS[icon]
+            name = spoken(name)
             if dist <= rng + 15000:
                 ground.append({"id": "", "clock": clock_of(bearing - heading), "dist_m": dist, "kind": "sam",
                                "name": name, "range_m": rng, "lock": False, "missile": False})
@@ -155,14 +157,14 @@ def parse_hud(msg: str) -> dict[str, str] | None:
 
 
 def _type_name(t: str) -> str:
-    return re.sub(r"^[^0-9A-Za-z]+", "", t or "").strip() or "düşman"
+    return re.sub(r"^[^0-9A-Za-z]+", "", t or "").strip() or spoken("enemy")
 
 
 def _attacker(d: dict[str, str]) -> str:
     """The attacker's type. For AI air defense the type is generic, like "TEL" (launcher); then the name
     ("SAMP/T") is clearer."""
     t = _type_name(d["at"])
-    return d["a"].strip() if t.upper() in ("TEL", "DÜŞMAN", "AI") and d["a"].strip() else t
+    return d["a"].strip() if t.upper() in ("TEL", "DÜŞMAN", "ENEMY", "AI") and d["a"].strip() else t
 
 
 def hud_events(msgs: list[dict[str, Any]], nick: str) -> list[tuple[str, str]]:

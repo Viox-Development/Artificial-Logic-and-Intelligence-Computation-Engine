@@ -215,5 +215,5 @@ def test_test_files_crops_full_screenshots(tmp_path):
     Image.fromarray(full).save(tmp_path / "missile-1.png")
     Image.fromarray(np.full((400, 600, 3), 30, dtype=np.uint8)).save(tmp_path / "clear-1.png")
     lines = vision.test_files(sorted(tmp_path.glob("*.png")), (300, 100, 120, 120), {})
-    assert lines == ["clear-1.png: işaret yok", lines[1]]
-    assert lines[1].startswith("missile-1.png: işaret var, saat 2")
+    assert lines == ["clear-1.png: no mark", lines[1]]
+    assert lines[1].startswith("missile-1.png: mark found, 2 o'clock")
