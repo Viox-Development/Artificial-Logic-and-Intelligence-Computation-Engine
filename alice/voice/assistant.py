@@ -468,6 +468,7 @@ class VoiceAssistant:
             self.ui.mute()
             self.agent.stop()
         self._jobs.put(text)
+        return None
 
     def _second_ear(self, audio: Audio, head: str = "") -> str:
         """If the wake word was missed: Groq first (free, ~0.5 s), then ElevenLabs Scribe if needed ("" = not found)."""
@@ -693,6 +694,7 @@ class VoiceAssistant:
                 and not self._is_user(audio, wake=strip_wake(text, strict=self._strict()) is not None)):
             return self._decide("gri")
         self.handle_text(text, direct)
+        return None
 
     # Voice-print scores overlap between the user and others (the lowest 10% of accepts are at 0.38, the highest
     # reject at 0.42): anything this far below the threshold is the "gray zone". There, audio is accepted only if
