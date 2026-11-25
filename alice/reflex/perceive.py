@@ -12,8 +12,8 @@ Jev is still weak at interpreting the screen by itself (images, Box); the best-w
   Jev was clicking that text;
 - the list is limited so that items related to the goal come first.
 
-OCR is done using Windows' built-in engine (winrt-Windows.Media.Ocr; user's languages including Turkish). If the package
-is not available, it works with the accessibility tree only.
+OCR is done using Windows' built-in engine (winrt-Windows.Media.Ocr; user's languages including Turkish), and with
+Tesseract on Linux and macOS. If neither is available, it works with the accessibility tree only.
 """
 
 from __future__ import annotations
@@ -212,8 +212,15 @@ def _engine() -> Any:
     import sys
 
     if sys.platform != "win32":
-        _ocr_error = "screen reading (OCR) is Windows-only for now"
-        raise RuntimeError(_ocr_error)
+        import shutil
+
+        exe = shutil.which("tesseract")
+        if not exe:
+            _ocr_error = ("screen reading (OCR) needs Tesseract outside Windows: sudo apt install tesseract-ocr "
+                          "tesseract-ocr-tur (macOS: brew install tesseract tesseract-lang)")
+            raise RuntimeError(_ocr_error)
+        _ocr_engine = TesseractEngine(exe)
+        return _ocr_engine
     try:
         from winrt.windows.media.ocr import OcrEngine
     except ImportError:
@@ -223,7 +230,7 @@ def _engine() -> Any:
         raise RuntimeError(_ocr_error) from None
     eng = OcrEngine.try_create_from_user_profile_languages()
     if eng is None:
-        _ocr_error = "Windows'ta OCR dili yok (Ayarlar → Dil → bir dil paketi ekle)"
+        _ocr_error = "Windows has no OCR language (Settings → Language → add a language pack)"
         raise RuntimeError(_ocr_error)
     _ocr_engine = eng
     return eng
@@ -233,7 +240,10 @@ def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, in
               ) -> list[tuple[str, tuple[float, float, float, float]]]:
     """Text lines in the image with their fractional boxes. recognize is substituted in tests."""
     w, h = img.size
-    lines = (recognize or _recognize_windows)(img)
+    if recognize is None:
+        eng = _engine()
+        recognize = eng.lines if isinstance(eng, TesseractEngine) else _recognize_windows
+    lines = recognize(img)
     out = []
     for text, (x, y, rw, rh) in lines:
         out.append((text, (x / w, y / h, min(1.0, (x + rw) / w), min(1.0, (y + rh) / h))))
@@ -243,10 +253,12 @@ def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, in
 def ocr_words(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     """Individual words in the image and their pixel boxes (x, y, width, height). Each marker on the same line, such as
     "M29 F15 MSL" on the RWR, needs its own position (the missile's direction comes from the position of MSL)."""
+    eng = _engine()
+    if isinstance(eng, TesseractEngine):
+        return eng.words(img)
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.storage.streams import DataWriter
 
-    eng = _engine()
     rgba = img.convert("RGBA")
     writer = DataWriter()
     writer.write_bytes(rgba.tobytes())
@@ -255,6 +267,66 @@ def ocr_words(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     result = _wait(eng.recognize_async(bmp))
     return [(wd.text, (int(wd.bounding_rect.x), int(wd.bounding_rect.y), int(wd.bounding_rect.width),
                        int(wd.bounding_rect.height))) for line in result.lines for wd in line.words]
+
+
+class TesseractEngine:
+    """OCR outside Windows: the tesseract command (TSV output), English plus Turkish when that language is installed."""
+
+    def __init__(self, exe: str, run: Callable[..., Any] | None = None):
+        import subprocess
+
+        self.exe = exe
+        self.run = run or subprocess.run
+        self._langs: str | None = None
+
+    def langs(self) -> str:
+        if self._langs is None:
+            try:
+                r = self.run([self.exe, "--list-langs"], capture_output=True, text=True, timeout=10)
+                have = set(r.stdout.split())
+            except Exception:  # noqa: BLE001 - asking for the list must not stop OCR; English is always there
+                have = set()
+            self._langs = "+".join(lang for lang in ("eng", "tur") if lang in have) or "eng"
+        return self._langs
+
+    def tsv(self, img: Any) -> str:
+        import io
+
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        r = self.run([self.exe, "stdin", "stdout", "-l", self.langs(), "tsv"], input=buf.getvalue(),
+                     capture_output=True, timeout=30)
+        if r.returncode != 0:
+            raise RuntimeError(f"tesseract failed: {(r.stderr or b'').decode(errors='replace')[:200]}")
+        return r.stdout.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def parse(tsv: str) -> list[tuple[tuple[int, int, int], str, tuple[int, int, int, int]]]:
+        """Words from tesseract's TSV: ((block, paragraph, line), text, (x, y, width, height))."""
+        out = []
+        for row in tsv.splitlines()[1:]:
+            f = row.split("\t")
+            if len(f) < 12 or f[0] != "5" or not f[11].strip():
+                continue
+            out.append(((int(f[2]), int(f[3]), int(f[4])), f[11].strip(),
+                        (int(f[6]), int(f[7]), int(f[8]), int(f[9]))))
+        return out
+
+    def words(self, img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
+        return [(text, box) for _line, text, box in self.parse(self.tsv(img))]
+
+    def lines(self, img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
+        groups: dict[tuple[int, int, int], list[tuple[str, tuple[int, int, int, int]]]] = {}
+        for key, text, box in self.parse(self.tsv(img)):
+            groups.setdefault(key, []).append((text, box))
+        out = []
+        for ws in groups.values():
+            x0 = min(b[0] for _t, b in ws)
+            y0 = min(b[1] for _t, b in ws)
+            x1 = max(b[0] + b[2] for _t, b in ws)
+            y1 = max(b[1] + b[3] for _t, b in ws)
+            out.append((" ".join(t for t, _b in ws), (x0, y0, x1 - x0, y1 - y0)))
+        return out
 
 
 def _wait(op: Any) -> Any:
