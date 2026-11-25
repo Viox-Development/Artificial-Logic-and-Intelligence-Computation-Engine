@@ -6,7 +6,9 @@ Edge/Chrome --app mode (standalone window without an address bar) -> default bro
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -203,16 +205,36 @@ def _create_linux_shortcut() -> list[Path]:
     return made
 
 
+def mac_launcher_script(python: str) -> str:
+    """AppleScript of the ALICE.app launcher: start the app in the background with this Python."""
+    cmd = f"{shlex.quote(python)} -m alice app > /dev/null 2>&1 &"
+    return f"do shell script {json.dumps(cmd)}"
+
+
+def _create_mac_shortcut() -> list[Path]:
+    exe = shutil.which("osacompile")
+    if not exe:
+        raise RuntimeError(_("osacompile not found"))
+    app = Path.home() / "Applications" / "ALICE.app"
+    app.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run([exe, "-o", str(app), "-e", mac_launcher_script(sys.executable)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or "").strip() or _("could not create the shortcut"))
+    return [app]
+
+
 def create_shortcut() -> list[Path]:
     """Place an ALICE shortcut that opens the app without a console.
 
     Windows: Desktop and Start menu (also finds a Desktop moved to OneDrive; with the Start menu entry it can be opened
     by pressing the Windows key and typing "ALICE"). Linux: the application menu (~/.local/share/applications) and the
-    desktop folder when there is one."""
+    desktop folder when there is one. macOS: a small ALICE.app in ~/Applications (found by Spotlight and Launchpad)."""
     if sys.platform.startswith("linux"):
         return _create_linux_shortcut()
+    if sys.platform == "darwin":
+        return _create_mac_shortcut()
     if sys.platform != "win32":
-        raise RuntimeError(_("creating a shortcut works on Windows and Linux for now"))
+        raise RuntimeError(_("creating a shortcut works on Windows, Linux and macOS for now"))
     pyw = Path(sys.executable).with_name("pythonw.exe")
     target = pyw if pyw.exists() else Path(sys.executable)
     icon = Path(__file__).parent / "static" / "alice.ico"
