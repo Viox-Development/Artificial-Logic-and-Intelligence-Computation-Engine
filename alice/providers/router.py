@@ -35,6 +35,7 @@ from typing import Any, Callable, Protocol
 from alice.config import Config, ProviderConfig, alice_home
 from alice.i18n import _
 from alice.providers import context, ranking, thinking
+from alice.providers.anthropic_api import THINKING_KEY
 from alice.providers.chatgpt import make_client
 from alice.providers.openai_compat import (ChatResult, OpenAICompatProvider, ProviderError, StreamCancelled,
                                             redact)
@@ -201,15 +202,16 @@ def _accepts(fn: Any, name: str) -> bool:
     return _ACCEPTS[key]
 
 
-def clean_messages(messages: list[dict[str, Any]], gemini: bool = False) -> list[dict[str, Any]]:
-    """Strip ALICE's internal markers (keys starting with "_") before sending to the provider.
+def clean_messages(messages: list[dict[str, Any]], gemini: bool = False, claude: bool = False) -> list[dict[str, Any]]:
+    """Strip ALICE's internal markers (keys starting with "_") before sending to the provider. The Claude API client
+    (claude=True) also gets the thinking blocks it has to send back.
     When sending to Gemini, a thought_signature is added to each tool_call
     (otherwise Gemini 3 rejects the request with 400)."""
     out = []
     for m in messages:
         if m.get("_error") or m.get("_display_only"):
             continue  # provider error shown to the user ("Seçtiğin model cevap veremedi…"): not part of the conversation
-        m2 = {k: v for k, v in m.items() if not k.startswith("_")}
+        m2 = {k: v for k, v in m.items() if not k.startswith("_") or (claude and k == THINKING_KEY)}
         if m.get("tool_calls"):
             calls = []
             for tc in m["tool_calls"]:
@@ -896,7 +898,7 @@ class Router:
                     continue
                 vision = pc.supports_vision(model) and ref not in self.no_vision
                 msgs = clean_messages(messages if vision else strip_images(messages),
-                                      gemini=is_gemini(pc))
+                                      gemini=is_gemini(pc), claude=pc.kind == "anthropic")
                 client = self.client(p)
                 # If the model lacks the selected level, use the nearest supported one (survives a model switch).
                 # Thinking rules follow the API format, not the provider's name: a second Claude endpoint

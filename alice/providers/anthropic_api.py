@@ -6,8 +6,11 @@ other providers (chat, chat_stream, list_models). Retries, cooldowns and key swi
 key pool, so the package's own retry is turned off.
 
 Notes:
-- Thinking is always adaptive; its summary flows to on_reasoning. Thinking blocks are not sent back on later turns:
-  ALICE shortens and rewrites the history, so a thinking block in the edited history could get the request rejected.
+- Thinking is always adaptive; its summary flows to on_reasoning. Thinking blocks are kept on the message (THINKING_KEY)
+  and sent back unchanged on later steps. They used to be dropped: in a long tool loop the model lost its plan at every
+  step and worked it out again (25 November: 39 steps, 135K output tokens, only ~15K of them visible, no file edited).
+  A block is valid only after the exact conversation that produced it, and ALICE shortens and rewrites the history, so
+  each block carries a fingerprint of that conversation: blocks from before an edit are left out (replayable).
 - If the safety classifier refuses the request, the API continues the same request with another Claude model
   (fallbacks="default"); if that one refuses too, the error goes to the router, which moves on to the next model.
 """
@@ -15,6 +18,7 @@ Notes:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import time
@@ -26,6 +30,9 @@ from alice.providers.openai_compat import (ChatResult, ProviderError, StreamCanc
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 CONTEXT_EDIT_BETA = "context-management-2025-06-27"
+# If a replayed block still does not match its conversation, the API drops it instead of failing the request.
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
+THINKING_KEY = "_claude_thinking"  # internal message key: {"prefix": fingerprint, "blocks": [...]} (other providers never see it)
 # Models that support server-side fallback (not Haiku).
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -106,9 +113,84 @@ def _tool_id(raw: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", str(raw or "")) or "call"
 
 
-def to_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+# --------------------------------------------------------------------------------------------- thinking replay
+def _tools_digest(tools: list[dict[str, Any]] | None) -> str:
+    specs = sorted(json.dumps(t, sort_keys=True, ensure_ascii=False, default=str) for t in tools or [])
+    return hashlib.sha1("\n".join(specs).encode("utf-8", "replace"), usedforsecurity=False).hexdigest()
+
+
+def prefix_digests(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> list[str]:
+    """digests[i]: fingerprint of the tools and messages[:i], i.e. what the model saw before message i. The thinking
+    itself is not part of it (the API does not count earlier thinking blocks either)."""
+    cur = _tools_digest(tools)
+    out = [cur]
+    for m in messages:
+        body = {k: m.get(k) for k in ("role", "content", "tool_calls", "tool_call_id")}
+        data = cur + json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
+        cur = hashlib.sha1(data.encode("utf-8", "replace"), usedforsecurity=False).hexdigest()
+        out.append(cur)
+    return out
+
+
+def thinking_layout(content: Any) -> list[dict[str, Any]]:
+    """Claude answer → its blocks in order. Thinking is kept whole; text (as a length) and tool calls (as an id) are
+    only referred to, because the message already holds them. Empty if there is nothing to send back, or if the answer
+    has a block we could not rebuild exactly (e.g. the switch marker of a server-side fallback)."""
+    out: list[dict[str, Any]] = []
+    for b in content or []:
+        if b.type == "thinking":
+            if not getattr(b, "signature", None):
+                return []
+            out.append({"type": "thinking", "thinking": b.thinking or "", "signature": b.signature})
+        elif b.type == "redacted_thinking":
+            out.append({"type": "redacted_thinking", "data": b.data})
+        elif b.type == "text":
+            out.append({"type": "text", "len": len(b.text)})
+        elif b.type == "tool_use":
+            out.append({"type": "tool_use", "id": b.id})
+        else:
+            return []
+    return out if any(b["type"].endswith("thinking") for b in out) else []
+
+
+def _with_thinking(layout: list[dict[str, Any]], text: str, calls: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Rebuild the answer's blocks in their original order; None if the message was changed since."""
+    by_id = {c["id"]: c for c in calls}
+    out: list[dict[str, Any]] = []
+    pos = used = 0
+    for b in layout:
+        if b["type"] == "text":
+            piece = text[pos:pos + b["len"]]
+            pos += b["len"]
+            if piece.strip():
+                out.append({"type": "text", "text": piece})
+        elif b["type"] == "tool_use":
+            call = by_id.get(_tool_id(b["id"]))
+            if call is None:
+                return None
+            used += 1
+            out.append(call)
+        else:
+            out.append(dict(b))
+    return out if pos == len(text) and used == len(calls) else None
+
+
+def replayable(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> set[int]:
+    """Indexes of the messages whose thinking can go back. Blocks may only be removed from the front, so everything up
+    to the last block whose conversation changed (compaction, shortened output, new tools...) is left out."""
+    marked = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get(THINKING_KEY)]
+    if not marked:
+        return set()
+    digests = prefix_digests(messages, tools)
+    stale = [i for i in marked if messages[i][THINKING_KEY].get("prefix") != digests[i]]
+    last = stale[-1] if stale else -1
+    return {i for i in marked if i > last}
+
+
+def to_messages(messages: list[dict[str, Any]], replay: set[int] | None = None) -> tuple[str, list[dict[str, Any]]]:
     """OpenAI format → (system, Claude messages). Leading system messages go to system; those in the middle go to
-    the user turn as marked text. Consecutive tool results are collected into a single user turn."""
+    the user turn as marked text. Consecutive tool results are collected into a single user turn. `replay`: indexes of
+    the messages that are sent with their thinking blocks."""
     system: list[str] = []
     out: list[dict[str, Any]] = []
 
@@ -120,7 +202,7 @@ def to_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any
         else:
             out.append({"role": role, "content": list(blocks)})
 
-    for m in messages:
+    for i, m in enumerate(messages):
         role = m.get("role")
         if role == "system":
             t = _text(m.get("content"))
@@ -135,14 +217,18 @@ def to_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any
             t = _text(m.get("content"))
             if t.strip():
                 blocks.append({"type": "text", "text": t})
+            calls: list[dict[str, Any]] = []
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except ValueError:
                     args = {}
-                blocks.append({"type": "tool_use", "id": _tool_id(tc.get("id")), "name": fn.get("name") or "",
-                               "input": args if isinstance(args, dict) else {"value": args}})
+                calls.append({"type": "tool_use", "id": _tool_id(tc.get("id")), "name": fn.get("name") or "",
+                              "input": args if isinstance(args, dict) else {"value": args}})
+            blocks.extend(calls)
+            if replay and i in replay:
+                blocks = _with_thinking(m[THINKING_KEY]["blocks"], t, calls) or blocks
             push("assistant", blocks)
         elif role == "tool":
             push("user", [{"type": "tool_result", "tool_use_id": _tool_id(m.get("tool_call_id")),
@@ -278,6 +364,8 @@ class AnthropicProvider:
         self.name = cfg.name
         self.timeout = timeout
         self._client = client
+        self._stale: set[str] = set()  # signatures the API rejected: never sent again
+        self._binding = True  # the endpoint accepts thinking.block_binding
 
     @property
     def client(self) -> Any:
@@ -298,8 +386,37 @@ class AnthropicProvider:
                 pass
 
     # ------------------------------------------------------------------------------------ request body
+    def _replay(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> set[int]:
+        ok = replayable(messages, tools)
+        bad = [i for i in ok if any(b.get("signature", b.get("data")) in self._stale
+                                    for b in messages[i][THINKING_KEY]["blocks"] if b["type"].endswith("thinking"))]
+        return {i for i in ok if not bad or i > max(bad)}
+
+    def _recover(self, err: ProviderError, kw: dict[str, Any]) -> bool:
+        """The request was rejected because of the thinking blocks sent back: change what caused it, True if it is worth
+        sending again. Handled here: the router takes a bad_request for a rejected effort setting and turns it off."""
+        low = str(err).lower()
+        if err.kind != "bad_request":
+            return False
+        if self._binding and ("block_binding" in low or BINDING_BETA in low) and "bound to" not in low:
+            self._binding = False
+            return True
+        sent = {b.get("signature", b.get("data")) for m in kw["messages"] if m["role"] == "assistant"
+                for b in m["content"] if b["type"] in ("thinking", "redacted_thinking")}
+        if sent and ("thinking" in low or "signature" in low):
+            self._stale |= sent
+            return True
+        return False
+
+    @staticmethod
+    def _keep_thinking(out: dict[str, Any], msg: Any, messages: list[dict[str, Any]],
+                       tools: list[dict[str, Any]] | None) -> None:
+        layout = thinking_layout(msg.content) if tools else []  # one-off calls without tools are not continued
+        if layout:
+            out[THINKING_KEY] = {"prefix": prefix_digests(messages, tools)[-1], "blocks": layout}
+
     def _params(self, model, messages, tools, max_tokens, response_format, extra, stream: bool) -> dict[str, Any]:
-        system, msgs = to_messages(messages)
+        system, msgs = to_messages(messages, self._replay(messages, tools))
         kw: dict[str, Any] = {"model": model, "messages": msgs,
                               "max_tokens": int(max_tokens) if max_tokens else (32000 if stream else 16000)}
         out_cfg: dict[str, Any] = {}
@@ -319,12 +436,17 @@ class AnthropicProvider:
         mark_cache(kw, ttl=ttl if ttl in ("5m", "1h") else "5m", mode=mode if mode in CACHE_MODES else "write")
         if not model.startswith(("claude-3", "claude-haiku-4")):
             kw["thinking"] = {"type": "adaptive", "display": "summarized"}
+            if self._binding and any(b["type"].endswith("thinking") for m in msgs if m["role"] == "assistant"
+                                     for b in m["content"]):
+                kw["thinking"]["block_binding"] = {"prefix_mismatch_behavior": "drop_block"}
         effort = (extra or {}).get("reasoning_effort") or ((extra or {}).get("output_config") or {}).get("effort")
         if effort in EFFORTS:
             out_cfg["effort"] = effort
         if out_cfg:
             kw["output_config"] = out_cfg
         betas: list[str] = []
+        if "block_binding" in kw.get("thinking", {}):
+            betas.append(BINDING_BETA)
         if model in FALLBACK_MODELS:
             betas.append(FALLBACK_BETA)
             kw["fallbacks"] = "default"
@@ -387,7 +509,8 @@ class AnthropicProvider:
     # ---------------------------------------------------------------------------------------- calls
     def chat(self, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
              temperature: float | None = None, max_tokens: int | None = None,
-             response_format: dict[str, Any] | None = None, extra: dict[str, Any] | None = None) -> ChatResult:
+             response_format: dict[str, Any] | None = None, extra: dict[str, Any] | None = None,
+             _retries: int = 2) -> ChatResult:
         kw = self._params(model, messages, tools, max_tokens, response_format, extra, stream=False)
         t0 = time.monotonic()
         secs = self.nonstream_timeout(kw["max_tokens"])
@@ -400,9 +523,13 @@ class AnthropicProvider:
         except ProviderError:
             raise
         except Exception as e:  # noqa: BLE001 - package errors are turned into provider errors
-            raise self._error(e) from e
+            err = self._error(e)
+            if _retries and self._recover(err, kw):
+                return self.chat(model, messages, tools, temperature, max_tokens, response_format, extra, _retries - 1)
+            raise err from e
         self._check(msg)
         out, usage = from_message(msg)
+        self._keep_thinking(out, msg, messages, tools)
         return ChatResult(out, self.name, getattr(msg, "model", None) or model, usage, time.monotonic() - t0,
                           finish="length" if getattr(msg, "stop_reason", "") == "max_tokens" else "")
 
@@ -412,16 +539,18 @@ class AnthropicProvider:
                     extra: dict[str, Any] | None = None, cancel: Callable[[], bool] | None = None,
                     on_reasoning: Callable[[str], None] | None = None, on_first: Callable[[], None] | None = None,
                     on_tool: Callable[[str, int], None] | None = None,
-                    on_call: Callable[[dict[str, Any]], None] | None = None) -> ChatResult:
+                    on_call: Callable[[dict[str, Any]], None] | None = None, _retries: int = 2) -> ChatResult:
         kw = self._params(model, messages, tools, max_tokens, response_format, extra, stream=True)
         t0 = time.monotonic()
         tool_name, tool_len = "", 0
+        started = False
         try:
             with self.client.beta.messages.stream(**kw) as stream:
                 for ev in stream:
                     if cancel and cancel():
                         raise StreamCancelled()
                     if ev.type == "content_block_start":
+                        started = True
                         if ev.content_block.type == "tool_use":
                             tool_name, tool_len = ev.content_block.name, 0
                     elif ev.type == "content_block_delta":
@@ -448,9 +577,14 @@ class AnthropicProvider:
         except (ProviderError, StreamCancelled):
             raise
         except Exception as e:  # noqa: BLE001
-            raise self._error(e) from e
+            err = self._error(e)
+            if _retries and not started and self._recover(err, kw):  # rejected before any output
+                return self.chat_stream(model, messages, on_delta, tools, temperature, max_tokens, response_format, extra,
+                                        cancel, on_reasoning, on_first, on_tool, on_call, _retries - 1)
+            raise err from e
         self._check(msg)
         out, usage = from_message(msg)
+        self._keep_thinking(out, msg, messages, tools)
         return ChatResult(out, self.name, getattr(msg, "model", None) or model, usage, time.monotonic() - t0,
                           finish="length" if getattr(msg, "stop_reason", "") == "max_tokens" else "")
 
