@@ -240,10 +240,7 @@ def ocr_image(img: Any, recognize: Callable[[Any], list[tuple[str, tuple[int, in
               ) -> list[tuple[str, tuple[float, float, float, float]]]:
     """Text lines in the image with their fractional boxes. recognize is substituted in tests."""
     w, h = img.size
-    if recognize is None:
-        eng = _engine()
-        recognize = eng.lines if isinstance(eng, TesseractEngine) else _recognize_windows
-    lines = recognize(img)
+    lines = (recognize or _recognize_windows)(img)
     out = []
     for text, (x, y, rw, rh) in lines:
         out.append((text, (x / w, y / h, min(1.0, (x + rw) / w), min(1.0, (y + rh) / h))))
@@ -349,13 +346,14 @@ def _wait(op: Any) -> Any:
 
 def _recognize_windows(img: Any) -> list[tuple[str, tuple[int, int, int, int]]]:
     """Windows.Media.Ocr: line text and pixel box (x, y, width, height). The engine reads at most max_image_dimension pixel
-    edge: larger (3440 width) window is scaled down, boxes are rescaled back."""
+    edge: larger (3440 width) window is scaled down, boxes are rescaled back. On Linux and macOS: Tesseract."""
+    eng = _engine()
+    if isinstance(eng, TesseractEngine):
+        return eng.lines(img)
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
+    from winrt.windows.media.ocr import OcrEngine
     from winrt.windows.storage.streams import DataWriter
 
-    from winrt.windows.media.ocr import OcrEngine
-
-    eng = _engine()
     limit = int(getattr(OcrEngine, "max_image_dimension", 0) or 0) or 4000  # static: not on the instance
     scale = min(1.0, limit / max(img.size))
     src = img if scale >= 1.0 else img.resize((int(img.width * scale), int(img.height * scale)))
