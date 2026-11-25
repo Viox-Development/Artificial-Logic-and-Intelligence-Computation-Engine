@@ -675,9 +675,19 @@ def collect_ui_elements(ctx: ToolContext, title: str | None = None, limit: int =
         ctx.state["ui_elems"] = wrappers
         ctx.state["ui_items"] = {i["id"]: i for i in items}
         return title_text, items
+    if IS_MAC and not IS_WIN:
+        from alice.tools import macax
+
+        try:
+            title_text, items, wrappers = macax.collect(title, limit, budget)
+        except RuntimeError as e:
+            raise ToolError(str(e)) from None
+        ctx.state["ui_elems"] = wrappers
+        ctx.state["ui_items"] = {i["id"]: i for i in items}
+        return title_text, items
     if not IS_WIN:
-        raise ToolError("ui_elements works on Windows (UI Automation) and Linux (AT-SPI) for now. On macOS use the computer "
-                        "tool.")
+        raise ToolError("ui_elements works on Windows (UI Automation), Linux (AT-SPI) and macOS (Accessibility) for now. "
+                        "Elsewhere use the computer tool.")
     if hwnd:
         from pywinauto import Desktop
 
@@ -799,7 +809,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
                 el.click_input()
             except Exception:  # noqa: BLE001
                 el.set_focus()
-            press_keys("ctrl+a")
+            press_keys("command+a" if IS_MAC and not IS_WIN else "ctrl+a")
             type_text(text)
     elif action == "type":
         el.set_focus()
@@ -809,7 +819,7 @@ def ui_act(ctx: ToolContext, element_id: int, action: str, text: str | None = No
     elif action in ("toggle", "expand", "collapse", "select"):
         getattr(el, action)()
     else:
-        raise ToolError(f"bilinmeyen aksiyon: {action}")
+        raise ToolError(f"unknown action: {action}")
     time.sleep(0.2)
     item = (ctx.state.get("ui_items") or {}).get(element_id, {})
     return f"{action} -> [{element_id}] {item.get('role', '')} '{item.get('name', '')}'"

@@ -522,10 +522,11 @@ def test_collect_ui_elements_does_not_read_document_text(ctx, monkeypatch):
     assert [(i["role"], i["value"]) for i in items] == [("Document", "")]
 
 
-def test_collect_ui_elements_on_macos_says_to_use_computer(ctx, monkeypatch):
+def test_collect_ui_elements_on_other_systems_says_to_use_computer(ctx, monkeypatch):
     monkeypatch.setattr(desktop, "IS_WIN", False)
-    monkeypatch.setattr(desktop.sys, "platform", "darwin")
-    with pytest.raises(ToolError, match="On macOS use the computer"):
+    monkeypatch.setattr(desktop, "IS_MAC", False)
+    monkeypatch.setattr(desktop.sys, "platform", "freebsd")
+    with pytest.raises(ToolError, match="Elsewhere use the computer"):
         desktop.collect_ui_elements(ctx)
 
 
@@ -569,7 +570,7 @@ def test_ui_act_coerces_id_and_validates(ctx, monkeypatch, no_sleep):
         act.run(ctx, element_id=9, action="click")
     with pytest.raises(ToolError, match="needs text"):
         act.run(ctx, element_id=3, action="set_text")
-    with pytest.raises(ToolError, match="bilinmeyen aksiyon"):
+    with pytest.raises(ToolError, match="unknown action"):
         act.run(ctx, element_id=3, action="sil")
     act.run(ctx, element_id=3, action="set_text", text=123)
     assert el.calls[-1] == ("set_edit_text", "123")
