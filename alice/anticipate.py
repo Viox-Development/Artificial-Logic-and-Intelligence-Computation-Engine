@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -100,8 +101,17 @@ def state_edit(path: Path | None = None) -> Iterator[dict[str, Any]]:
 
 
 # ------------------------------------------------------------------ Steam
+# Where Steam keeps its files outside Windows (native, the Debian/Ubuntu symlink, Flatpak, macOS).
+STEAM_DIRS = ("~/.local/share/Steam", "~/.steam/steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+              "~/Library/Application Support/Steam")
+
+
 def _steam_root() -> Path | None:
     if sys.platform != "win32":
+        for d in STEAM_DIRS:
+            p = Path(d).expanduser()
+            if (p / "steamapps").is_dir():
+                return p
         return None
     try:
         import winreg
@@ -147,14 +157,26 @@ def update_state(manifest: dict[str, str] | None) -> dict[str, Any] | None:
         return None
     return {"pending": bool(flags & 2) and not flags & 1024, "downloading": bool(flags & 1024),
             "on_launch_only": (manifest.get("AutoUpdateBehavior") or "0") == "1",
-            "build": manifest.get("buildid") or "", "name": manifest.get("name") or "oyun"}
+            "build": manifest.get("buildid") or "", "name": manifest.get("name") or "the game"}
 
 
 def steam_running(processes: set[str]) -> bool:
-    return any(p.lower() == "steam.exe" for p in processes)
+    return any(p.lower() in ("steam.exe", "steam", "steam_osx") for p in processes)
 
 
 def start_steam_silent(root: Path | None = None) -> bool:
+    if sys.platform != "win32":
+        # Linux: the steam launcher on PATH; macOS: the app, opened in the background.
+        cmd = (["open", "-g", "-a", "Steam", "--args", "-silent"] if sys.platform == "darwin"
+               else [shutil.which("steam") or "", "-silent"])
+        if not cmd[0]:
+            return False
+        try:
+            subprocess.Popen(cmd, start_new_session=True, close_fds=True,  # noqa: S603
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except OSError:
+            return False
     root = root or _steam_root()
     exe = root / "steam.exe" if root else None
     if exe is None or not exe.exists():

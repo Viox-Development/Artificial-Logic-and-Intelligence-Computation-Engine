@@ -133,3 +133,14 @@ def test_morning_event_lists_prepared_answers():
     body = events[0][2]
     assert body.startswith("hava: Ankara 12 °C, parçalı bulutlu; posta: xxx") and body.endswith("…")
     assert len(body) < 220
+
+
+def test_steam_outside_windows(monkeypatch, tmp_path):
+    from alice import anticipate as a
+
+    monkeypatch.setattr(a.sys, "platform", "linux")
+    monkeypatch.setattr(a, "STEAM_DIRS", (str(tmp_path / "nope"), str(tmp_path / "Steam")))
+    assert a._steam_root() is None
+    (tmp_path / "Steam" / "steamapps").mkdir(parents=True)
+    assert a._steam_root() == tmp_path / "Steam"
+    assert a.steam_running({"steam"}) and a.steam_running({"Steam.exe"}) and not a.steam_running({"steamwebhelper"})

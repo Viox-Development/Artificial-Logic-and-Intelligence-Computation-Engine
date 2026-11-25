@@ -9,13 +9,16 @@ is using the microphone right now, or DCS/War Thunder is open:
 * the follow-up window without "Alice" closes (a sentence said to a friend must not go to ALICE).
 
 Who is using the microphone is read from the Windows privacy log (the "currently in use" info under Settings >
-Privacy > Microphone): if an app's LastUsedTimeStop value is 0, the microphone is open right now. Discord being
+Privacy > Microphone): if an app's LastUsedTimeStop value is 0, the microphone is open right now. On Linux the
+recording streams come from PulseAudio/PipeWire (`pactl list source-outputs`). Discord being
 open is not enough; it must be in a voice channel. Config: [voice] social_mode = false turns it off; social_apps
 extends the list.
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -25,12 +28,29 @@ from typing import Any, Callable
 VOICE_APPS = {"discord": "Discord", "teamspeak": "TeamSpeak", "ts3client": "TeamSpeak", "zoom": "Zoom",
               "teams": "Teams", "skype": "Skype", "whatsapp": "WhatsApp", "telegram": "Telegram"}
 # Being open is enough: game sound and in-game voice chat.
-GAMES = {"dcs.exe": "DCS", "aces.exe": "War Thunder"}
+GAMES = {"dcs.exe": "DCS", "aces.exe": "War Thunder", "aces": "War Thunder"}  # "aces": War Thunder on Linux
 MIC_KEY = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
 
 
+def pactl_mic_users(text: str) -> list[str]:
+    """App names from `pactl list source-outputs` (each recording stream): its binary, else its name."""
+    out: list[str] = []
+    for block in re.split(r"(?m)^Source Output #", text)[1:]:
+        props = dict(re.findall(r'(?m)^\s*([\w.]+) = "([^"]*)"', block))
+        name = props.get("application.process.binary") or props.get("application.name") or ""
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def mic_users() -> list[str]:
-    """Apps currently using the microphone (by their registry names). Empty outside Windows."""
+    """Apps currently using the microphone (registry names on Windows, binaries on Linux). Empty elsewhere."""
+    if sys.platform.startswith("linux"):
+        try:
+            r = subprocess.run(["pactl", "list", "source-outputs"], capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            return []  # no PulseAudio/PipeWire tools: selective mode then only looks at running games
+        return pactl_mic_users(r.stdout) if r.returncode == 0 else []
     if sys.platform != "win32":
         return []
     import winreg

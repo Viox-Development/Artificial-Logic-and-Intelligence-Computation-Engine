@@ -1826,3 +1826,15 @@ def test_english_hush_and_answers():
     assert is_hush("Alice shut up") and is_hush("be quiet please") and is_hush("thank you")
     assert not is_hush("stop the music") and not is_hush("shut the door")
     assert is_yes("yes do it") and is_yes("okay") and not is_yes("no, cancel") and not is_yes("don't do it")
+
+
+def test_linux_mic_users_from_pactl():
+    from alice.voice.social import SocialWatch, pactl_mic_users
+
+    out = ("Source Output #12\n\tProperties:\n\t\tapplication.name = \"WEBRTC VoiceEngine\"\n"
+           "\t\tapplication.process.binary = \"Discord\"\nSource Output #13\n\tProperties:\n"
+           "\t\tapplication.name = \"Firefox\"\n")
+    assert pactl_mic_users(out) == ["Discord", "Firefox"] and pactl_mic_users("") == []
+    w = SocialWatch(mics=lambda: pactl_mic_users(out), procs=set)
+    assert w._check().startswith("Discord")
+    assert SocialWatch(mics=list, procs=lambda: {"aces"})._check().startswith("War Thunder")
