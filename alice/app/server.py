@@ -297,8 +297,10 @@ def file_preview(path: str, allowed: set[str]) -> dict[str, Any]:
     """Preview of a file displayed to the user: text (markdown/code/csv/html) or image/PDF (base64)."""
     import base64
 
-    p = Path(path)
-    if path not in allowed or not p.is_file():
+    # Only a path from the allow-list (files ALICE showed): the value used is the list's own entry.
+    known = next((a for a in allowed if a == path), None)
+    p = Path(known) if known is not None else None
+    if p is None or not p.is_file():
         return {"ok": False, "error": _("file not found")}
     ext = p.suffix.lower()
     size = p.stat().st_size
@@ -2828,8 +2830,9 @@ def make_handler(state: AppState):
                     # paths from the UI.
                     from alice.tools.meta import SENT_FILES
 
-                    path = str(d.get("path", ""))
-                    if path not in SENT_FILES or not Path(path).exists():
+                    asked = str(d.get("path", ""))
+                    path = next((f for f in SENT_FILES if f == asked), "")  # the list's own entry, not the request's
+                    if not path or not Path(path).exists():
                         return self._json({"ok": False, "error": _("file not found")}, 404)
                     try:
                         if d.get("folder"):
@@ -3039,8 +3042,10 @@ def make_handler(state: AppState):
                     return self._json(state.delete_session(sid))
                 if p in ("/api/session/rename", "/api/session/pin"):
                     sid = str(d.get("id", ""))
-                    f = sess.sessions_dir() / f"{sid}.json"
-                    if not sid or f.parent != sess.sessions_dir() or not f.exists():
+                    root = os.path.normpath(sess.sessions_dir())
+                    fpath = os.path.normpath(os.path.join(root, f"{sid}.json"))
+                    if not sid or not fpath.startswith(root + os.sep) or os.path.dirname(fpath) != root \
+                            or not os.path.exists(fpath):
                         return self._json({"ok": False, "error": _("no such chat")}, 404)
                     if p == "/api/session/rename":
                         row = sess.set_meta(sid, title=str(d.get("title", "")).strip()[:120])
