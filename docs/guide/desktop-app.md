@@ -51,6 +51,11 @@ and Ayarlar (settings) at the bottom. Each section opens as a full page with its
 - Paste an image (Ctrl+V), drag and drop it, or add it with `+`.
 - A message written while ALICE is working is **queued** and sent automatically when the job is done.
 - The box holds the permission mode (Shift+Tab cycles it) and the model picker.
+- The model, the effort and the ultracode switch belong to the chat: changing them in one chat leaves the others
+  as they are, and a reopened chat gets its own back, in its own folder. A new chat starts with the model picked
+  last, the effort from `[thinking] brain` in the config, and in the folder the previous chat was in.
+- Throwaway files ALICE makes for itself (helper scripts, commit messages, logs) go to `~/.alice/tmp`, not your
+  folder; files there older than two weeks are deleted when ALICE starts.
 
 ## Chat
 

@@ -390,8 +390,10 @@ class Permissions:
             # The "path" and the files in the patch text (apply_patch has no "path": it was never checked before).
             # A prefix comparison counted C:\proje2 as inside C:\proje; the check now uses the folder boundary.
             try:
-                root = Path(ctx.cwd).resolve()
-                return any(not _inside(ctx.resolve(p), root) for p in _write_targets(args))
+                from alice.prompts import scratch_dir
+
+                roots = (Path(ctx.cwd).resolve(), scratch_dir().resolve())  # the scratch folder is the model's own
+                return any(not any(_inside(ctx.resolve(p), r) for r in roots) for p in _write_targets(args))
             except (OSError, ValueError, AttributeError, TypeError):
                 return True
         return False
