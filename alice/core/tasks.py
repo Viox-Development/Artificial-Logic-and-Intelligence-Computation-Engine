@@ -432,15 +432,21 @@ class Triggers:
     def _event(self, task: Task, t: dict, st: dict, now: float) -> Fire | None:
         if self.store is None:
             return None
-        since = st.get("event_since")
-        if since is None:  # first look: only events from now on
-            self.book.set_state(task.id, event_since=now)
+        # The cursor is the id of the last event seen. It used to be a timestamp: on Windows an event added in the same
+        # clock tick as the last look had ts == event_since and was skipped.
+        after = st.get("event_after")
+        if after is None and st.get("event_since") is None:  # first look: only events from now on
+            self.book.set_state(task.id, event_after=self.store.last_event_id())
             return None
+        if after is None:  # state saved with a timestamp cursor: read on from that time once
+            events = list(reversed(self.store.events(since=float(st["event_since"]) + 1e-6, limit=200)))
+            newest = max([e.id for e in events] or [self.store.last_event_id()])
+        else:
+            events = self.store.events_after(int(after))
+            newest = max([int(after), *(e.id for e in events)])
         rx = re.compile(str(t["match"]), re.I) if t.get("match") else None
         hits = []
-        newest = float(since)
-        for e in reversed(self.store.events(since=float(since) + 1e-6, limit=200)):
-            newest = max(newest, e.ts)
+        for e in events:
             if t.get("kind") and e.kind != t["kind"]:
                 continue
             if t.get("topic") and e.topic != t["topic"]:
@@ -448,8 +454,8 @@ class Triggers:
             if rx and not rx.search(f"{e.title}\n{e.body}"):
                 continue
             hits.append(f"{e.title}: {e.body}".strip(": "))
-        if newest > float(since):
-            self.book.set_state(task.id, event_since=newest)
+        if newest != after:
+            self.book.set_state(task.id, event_after=newest)
         return Fire(f"olay geldi ({describe_trigger(t)})", hits) if hits else None
 
     def _due_poll(self, t: dict, st: dict, now: float) -> bool:

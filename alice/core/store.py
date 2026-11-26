@@ -247,6 +247,17 @@ class Store:
         lo = since or 0
         return [(max(a, lo), b) for a, b in spans if b > lo]
 
+    def events_after(self, after_id: int, limit: int = 200) -> list[Event]:
+        """Events added after the one with this id, oldest first. Ids only grow (AUTOINCREMENT), unlike timestamps:
+        two events in one clock tick, or one in the same tick as the last look, are not lost."""
+        rows = self._q("SELECT id, ts, kind, title, body, severity, topic, delivered FROM events WHERE id > ? "
+                       "ORDER BY id LIMIT ?", (int(after_id), limit))
+        return [Event(r[0], r[1], r[2], r[3], r[4], r[5], r[6], bool(r[7])) for r in rows]
+
+    def last_event_id(self) -> int:
+        rows = self._q("SELECT COALESCE(MAX(id), 0) FROM events", ())
+        return int(rows[0][0]) if rows else 0
+
     def events(self, since: float | None = None, kind: str | None = None, limit: int = 50) -> list[Event]:
         sql = "SELECT id, ts, kind, title, body, severity, topic, delivered FROM events WHERE ts >= ?"
         args: list = [since or 0]
