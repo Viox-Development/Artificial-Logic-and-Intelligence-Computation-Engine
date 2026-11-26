@@ -131,7 +131,7 @@ def test_mode_cwd_new_and_model(app, workdir):
     assert st["model"] == "a:other" and st["brain_pinned"]
     a_models = next(p for p in client.get("/api/models/all").json()["providers"] if p["name"] == "a")["models"]
     assert "a:other" in [m["ref"] for m in a_models]  # marked in the menu even if not measured yet
-    state.router.last_ref["brain"] = "a:m"  # the selected model failed to answer; the fallback did
+    state.chat.router.last_ref["brain"] = "a:m"  # the selected model failed to answer; the fallback did
     assert state.status()["model"] == "a:other" and state.status()["served_model"] == "a:m"
     assert client.post("/api/models/hide", json={"name": "b", "hidden": True}).json()["ok"]
     assert state.router.is_hidden("b:x") and "hidden_models" in (alice_home() / "config.toml").read_text(encoding="utf-8")

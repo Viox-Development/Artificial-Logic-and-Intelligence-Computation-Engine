@@ -100,7 +100,42 @@ ENVIRONMENT = """# Environment
 - Shell for run_command: {shell}
 - Working directory: {cwd}
 - Date: {date} (the time is at the end of each user message as [saat HH:MM])
-- ALICE home (config, memory, sessions): {home}"""
+- ALICE home (config, memory, sessions): {home}
+- Scratch folder: {scratch}. Throwaway files you make for yourself (helper scripts, commit messages, PR bodies, logs,
+  probes) go here, never in the working directory or the user's folders; files older than two weeks are deleted."""
+
+SCRATCH_DAYS = 14
+
+
+def scratch_dir() -> Path:
+    """Where the model puts its throwaway files. Before it had one, helper scripts, commit messages and logs were left in
+    the working folder (a hundred `_*.py`/`_commitmsg*.txt` files in Downloads)."""
+    return alice_home() / "tmp"
+
+
+def prune_scratch(days: int = SCRATCH_DAYS) -> int:
+    """Delete scratch files older than `days` (at startup). Returns how many were deleted."""
+    import time
+
+    root, gone = scratch_dir(), 0
+    cutoff = time.time() - days * 86400
+    try:
+        files = [p for p in root.rglob("*") if p.is_file()]
+    except OSError:
+        return 0
+    for p in files:
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                gone += 1
+        except OSError:
+            pass  # in use or already gone
+    for d in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        try:
+            d.rmdir()  # only empty ones
+        except OSError:
+            pass
+    return gone
 
 
 def build_system_prompt(cwd: Path, personality: bool = True) -> str:
@@ -119,7 +154,7 @@ def build_system_prompt(cwd: Path, personality: bool = True) -> str:
 
     text = SYSTEM_PROMPT.format(untrusted_rule=PROMPT_RULE).rstrip()
     env = ENVIRONMENT.format(os=os_name, shell=shell, cwd=cwd, date=datetime.now().strftime("%Y-%m-%d %A"),
-                             home=alice_home())
+                             home=alice_home(), scratch=scratch_dir())
     extras = []
     body = personality_text() if personality else ""
     if body:

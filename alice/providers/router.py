@@ -1141,3 +1141,63 @@ class Router:
     def status(self) -> dict[str, list[tuple[str, str]]]:
         roles = set(self.config.roles) | set(self.role_overrides)
         return {role: [(ref, self.available(ref)[1]) for ref in self.chain(role)] for role in sorted(roles)}
+
+
+class ChatRouter(Router):
+    """One chat's view of the shared router. The model, effort and ultracode choices (and the model that last served,
+    shown in the status bar) belong to the chat; everything else (clients, health, cooldowns, quota, catalogs) is the
+    shared router's, read and written through. Before this, every chat used the app's router, so a model or effort
+    picked in one chat changed all of them.
+
+    A copy (copy.copy, as subagents and workflow agents make) stays a view of the same shared router."""
+
+    OWN = frozenset({"role_overrides", "thinking_overrides", "ultracode", "last_ref", "last_settings", "on_event"})
+
+    def __init__(self, base: Router) -> None:  # noqa: D107 - the shared router is not built again
+        self.__dict__["_base"] = base
+        self.__dict__["on_event"] = base.on_event
+        self.reset()
+
+    def reset(self) -> None:
+        """Back to the defaults for a new chat: the shared router's choices (the model kept from the menu)."""
+        base = self.__dict__["_base"]
+        d = self.__dict__
+        d["role_overrides"] = {k: list(v) for k, v in base.role_overrides.items()}
+        d["thinking_overrides"] = dict(base.thinking_overrides)
+        d["ultracode"] = bool(base.ultracode)
+        d["last_ref"] = {}
+        d["last_settings"] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        base = self.__dict__.get("_base")
+        if base is None or name.startswith("__"):  # copy.copy probes __setstate__ on an empty instance
+            raise AttributeError(name)
+        return getattr(base, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self.OWN or name in self.__dict__:
+            self.__dict__[name] = value
+        else:
+            setattr(self.__dict__["_base"], name, value)
+
+    def export(self) -> dict[str, Any]:
+        """The chat's own choices, saved with the chat."""
+        return {"model": list(self.role_overrides.get("brain") or []),
+                "thinking": self.thinking_overrides.get("brain", ""), "ultracode": bool(self.ultracode)}
+
+    def restore(self, saved: Any) -> None:
+        """A reopened chat gets its own choices back; a chat saved before they were kept uses the defaults."""
+        if not isinstance(saved, dict):
+            return
+        from alice.providers import thinking
+
+        model = [str(r) for r in saved.get("model") or [] if isinstance(r, str) and ":" in r]
+        if "model" in saved:
+            if model and model[0].partition(":")[0] in self.providers_cfg:
+                self.role_overrides["brain"] = model[:1]
+            elif not model:
+                self.role_overrides.pop("brain", None)  # Automatic was picked in this chat
+        level = str(saved.get("thinking") or "")
+        if level in thinking.LEVELS:
+            self.thinking_overrides["brain"] = level
+        self.ultracode = bool(saved.get("ultracode"))

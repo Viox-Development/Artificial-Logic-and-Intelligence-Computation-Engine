@@ -34,7 +34,7 @@ from alice.decider import Decider
 from alice.i18n import _, pick
 from alice.i18n import language as ui_language
 from alice.permissions import MODES, Permissions
-from alice.providers.router import Router, parse_ref
+from alice.providers.router import ChatRouter, Router, parse_ref
 from alice.tools import ToolContext, all_tools, attach_mcp, cleanup, shell
 from alice.tools.base import DesktopLock, ToolResult
 
@@ -424,8 +424,10 @@ class Chat:
         self.app = app
         self.sid = sid or sess.new_session_id()
         self.ui = AppUI(app.bus, self.sid)
-        self.ctx = ToolContext(cwd=cwd, config=app.cfg, router=app.router, decider=app.decider, emit=self.ui.info)
-        self.agent = Agent(app.cfg, app.router, list(app.tools), self.ctx, Permissions(mode), self.ui, app.decider)
+        # The chat's own model, effort and ultracode choices over the shared router (see ChatRouter).
+        self.router = ChatRouter(app.router)
+        self.ctx = ToolContext(cwd=cwd, config=app.cfg, router=self.router, decider=app.decider, emit=self.ui.info)
+        self.agent = Agent(app.cfg, self.router, list(app.tools), self.ctx, Permissions(mode), self.ui, app.decider)
         self.ui.agent = self.agent
         self.ctx.state["set_cwd"] = lambda path: app.set_cwd(path, self)  # github clone tool changes the folder
         self.ctx.state["publish"] = app.bus.publish  # live update for team panel
@@ -472,7 +474,7 @@ class Chat:
             from alice import subagents
             from alice.tools import workflow
 
-            extra = {**self.agent.export_stats(), "started": self.started,
+            extra = {**self.agent.export_stats(), "started": self.started, "settings": self.router.export(),
                      "subagents": subagents.export(self.ctx), "workflows": workflow.export(self.ctx)}
             sess.save(self.sid, self.agent.messages, self.ctx.cwd, extra)
             cps = self.agent.checkpoints
@@ -487,8 +489,10 @@ class Chat:
 
     def switch_to(self, sid: str, messages: list[dict[str, Any]] | None = None) -> None:
         """Switch to another chat with the same agent (new or saved): do not carry over previous chat's statistics,
-        usage breakdown, rewind checkpoints, subagents or workflows to the new one."""
+        usage breakdown, rewind checkpoints, subagents, workflows, model, effort or ultracode to the new one. A saved chat
+        opens in its own folder; a new one starts in the folder the previous chat was in."""
         self.agent.reset()
+        self.router.reset()
         self.agent.stats = {k: 0 for k in self.agent.stats}
         self.agent.usage_models, self.agent.usage_tools = {}, {}
         self.agent.checkpoints = {}
@@ -501,6 +505,9 @@ class Chat:
         if messages is not None:
             self.agent.messages = self.agent.messages[:1] + messages
             self._restore_extra()
+            cwd = sess.saved_cwd(sid)
+            if cwd is not None and cwd != self.ctx.cwd:
+                self.app.set_cwd(cwd, self)
 
     def _restore_extra(self) -> None:
         """When opening a saved chat: statistics, usage breakdown, subagents, workflows, rewind checkpoints, and start time."""
@@ -510,6 +517,7 @@ class Chat:
         try:
             extra = sess.load_extra(self.sid)
             self.agent.import_stats(extra)
+            self.router.restore(extra.get("settings"))
             self.started = float(extra.get("started") or self.started)
             subagents.restore(self.ctx, extra.get("subagents") or [])
             workflow.restore(self.ctx, extra.get("workflows") or [])
@@ -598,6 +606,7 @@ class SessionsAPI:
             sid = sess.new_session_id()
             msgs = fork_messages(parent.agent.messages) if fork else None
             chat = Chat(app, parent.ctx.cwd, parent.agent.permissions.mode, sid=sid, messages=msgs)
+            chat.router.restore(parent.router.export())  # the same choices as the chat that started it
             chat.ctx.state["report_to"] = parent.sid
             chat.ctx.state["report_title"] = title
             app.background[sid] = chat
@@ -642,6 +651,9 @@ class AppState:
         if pin.partition(":")[0] in self.router.providers_cfg and pin.partition(":")[2]:
             self.router.role_overrides["brain"] = [pin]
         self.decider = Decider.from_config(cfg, self.router)
+        from alice.prompts import prune_scratch
+
+        threading.Thread(target=prune_scratch, daemon=True, name="alice-scratch").start()  # model's old throwaway files
         self.tools = all_tools(cfg, lambda s: self.bus.publish({"type": "info", "text": s}))
         self.teams: dict[str, Any] = {}
         self.desktop_lock = DesktopLock()
@@ -888,7 +900,8 @@ class AppState:
             if err is None:
                 self.chat.switch_to(sid, msgs)
                 return True
-            self._swap_in(Chat(self, self.ctx.cwd, self.agent.permissions.mode, sid=sid, messages=msgs), old_busy=True)
+            self._swap_in(Chat(self, sess.saved_cwd(sid) or self.ctx.cwd, self.agent.permissions.mode, sid=sid,
+                               messages=msgs), old_busy=True)
             return True
 
     def _finished(self, chat: Chat) -> None:
@@ -1012,9 +1025,9 @@ class AppState:
             "version": __version__,
             # Selected model button (pinned model immediately); bottom bar shows model that actually served response.
             # Previously both were the serving model: newly selected model was not visible until the next response.
-            "model": ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
-                      or self.router.first_available("brain") or ""),
-            "served_model": self.router.last_ref.get("brain") or "",
+            "model": ((self.chat.router.role_overrides.get("brain") or [None])[0] or self.chat.router.last_ref.get("brain")
+                      or self.chat.router.first_available("brain") or ""),
+            "served_model": self.chat.router.last_ref.get("brain") or "",
             "mode": a.permissions.mode,
             "ctx_tokens": a.context_tokens(),
             "ctx_limit": a.compact_at,
@@ -1030,10 +1043,10 @@ class AppState:
             # Includes chat ID of prompt: UI shouldn't draw background card in foreground. list(): iterating
             # over the dictionary while prompts were added/removed in agent thread caused RuntimeError.
             "pending": [{**p, "sid": ui.sid} for ui in self.all_uis() for p in list(ui.pending.values())],
-            "brain_chain": self.router.chain("brain"),
-            "brain_pinned": "brain" in self.router.role_overrides,
-            "thinking": self.router.thinking_level("brain"),
-            "ultracode": bool(self.router.ultracode),
+            "brain_chain": self.chat.router.chain("brain"),
+            "brain_pinned": "brain" in self.chat.router.role_overrides,
+            "thinking": self.chat.router.thinking_level("brain"),
+            "ultracode": bool(self.chat.router.ultracode),
             **self._thinking_options(),
             "stats": self.agent.stats_view(),
             "user": _user_name(),
@@ -1085,12 +1098,12 @@ class AppState:
         return {"ok": False, "error": _("unknown action")}, 404
 
     def set_ultracode(self, on: bool) -> None:
-        """The switch next to the effort: any effort works with it. Not saved, so it is off after a restart."""
-        self.router.ultracode = on
-        ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain") or "")
+        """The switch next to the effort: any effort works with it. It belongs to the foreground chat and is saved with it."""
+        self.chat.router.ultracode = on
+        ref = ((self.chat.router.role_overrides.get("brain") or [None])[0] or self.chat.router.last_ref.get("brain") or "")
         if on and ":" in ref and getattr(self.router, "_real_clients", False):
             # The agent names the provider's other models to the model: have the list ready.
-            threading.Thread(target=self.router._catalog_refs, args=([ref.partition(":")[0]],), daemon=True,
+            threading.Thread(target=self.chat.router._catalog_refs, args=([ref.partition(":")[0]],), daemon=True,
                              name="alice-catalog").start()
 
     def workflows_view(self, sid: str = "") -> dict[str, Any]:
@@ -1169,17 +1182,17 @@ class AppState:
         """Thinking levels supported by the selected (or last responding) brain model: menu only displays these."""
         from alice.providers import thinking
 
-        ref = ((self.router.role_overrides.get("brain") or [None])[0] or self.router.last_ref.get("brain")
-               or self.router.first_available("brain") or "")
+        ref = ((self.chat.router.role_overrides.get("brain") or [None])[0] or self.chat.router.last_ref.get("brain")
+               or self.chat.router.first_available("brain") or "")
         provider, _sep, model = ref.partition(":")
-        pc = self.router.providers_cfg.get(provider)
+        pc = self.chat.router.providers_cfg.get(provider)
         if pc is not None and getattr(pc, "kind", "") == "anthropic":
             provider = "anthropic"  # same levels as the Claude API (e.g. cliproxy's native Claude endpoint)
         levels, kind = thinking.levels_for(provider, model) if ref else (list(thinking.LEVELS), "graded")
         if ref in getattr(self.router, "no_thinking", set()):
             levels, kind = ["default"], "none"  # model rejected the setting (learned at runtime)
         return {"thinking_levels": levels, "thinking_kind": kind,
-                "thinking_effective": thinking.fit(self.router.thinking_level("brain"), levels)}
+                "thinking_effective": thinking.fit(self.chat.router.thinking_level("brain"), levels)}
 
     # ----------------------------------------------------------------- connections
     def connections(self) -> dict[str, Any]:
@@ -2735,14 +2748,14 @@ def make_handler(state: AppState):
             if u.path == "/api/kairos":
                 return self._json(state.kairos_view())
             if u.path == "/api/models/all":
-                return self._json({"providers": state.router.catalog_view(),
-                                   "brain": state.router.chain("brain"),
-                                   "pinned": state.router.role_overrides.get("brain", [None])[0]})
+                return self._json({"providers": state.chat.router.catalog_view(),
+                                   "brain": state.chat.router.chain("brain"),
+                                   "pinned": state.chat.router.role_overrides.get("brain", [None])[0]})
             if u.path == "/api/models":
                 from alice.providers.router import is_ready, reason_text
 
                 return self._json({role: [{"ref": r, "status": reason_text(st), "ok": is_ready(st)} for r, st in rows]
-                                   for role, rows in state.router.status().items()})
+                                   for role, rows in state.chat.router.status().items()})
             return self._send(404, b"not found", "text/plain")
 
         def _events(self) -> None:
@@ -3166,7 +3179,6 @@ def make_handler(state: AppState):
                     state.set_ultracode(bool(d.get("on")))
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/thinking":
-                    from alice.config import set_config_value
                     from alice.providers.thinking import LEVELS
 
                     level = str(d.get("level", ""))
@@ -3175,8 +3187,9 @@ def make_handler(state: AppState):
                         return self._json({"ok": True, **state.status()})
                     if level not in LEVELS:
                         return self._json({"ok": False, "error": _("level: {levels}", levels=" | ".join(LEVELS))}, 400)
-                    state.router.thinking_overrides["brain"] = level
-                    set_config_value("thinking", "brain", level)  # persist across restarts
+                    # This chat only: the default for new chats is [thinking] brain in the config.
+                    state.chat.router.thinking_overrides["brain"] = level
+                    state.chat.save()
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/models/hide":
                     from alice.config import set_config_value
@@ -3188,11 +3201,14 @@ def make_handler(state: AppState):
                     return self._json({"ok": True, **state.status()})
                 if p == "/api/model":
                     role, ref = str(d.get("role", "")), str(d.get("ref", ""))
-                    if ref == "reset":
-                        state.router.role_overrides.pop(role, None)
-                    else:
-                        parse_ref(ref)
-                        state.router.role_overrides[role] = [ref]
+                    # This chat, and the default for new chats; other chats keep the model they have.
+                    for r in (state.chat.router, state.router):
+                        if ref == "reset":
+                            r.role_overrides.pop(role, None)
+                        else:
+                            parse_ref(ref)
+                            r.role_overrides[role] = [ref]
+                    state.chat.save()
                     if role == "brain":
                         from alice.config import set_config_value
 
