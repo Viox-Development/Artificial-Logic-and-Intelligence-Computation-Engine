@@ -95,7 +95,8 @@ class TasksPanel:
 
         new = Task.from_dict({**asdict(t), **self._fields(d)})
         if new.trigger != t.trigger:  # a new source starts clean: its first look only records what is there
-            self.book.set_state(t.id, seen=None, gh_last=None, event_since=None, armed=None, polled=0)
+            self.book.set_state(t.id, seen=None, gh_last=None, event_since=None, event_after=None,
+                                armed=None, polled=0)
         self.book.save(new)
         self.book.log(t.id, "info", _("task edited"))
         return {"ok": True, "task": task_view(self.book, new)}

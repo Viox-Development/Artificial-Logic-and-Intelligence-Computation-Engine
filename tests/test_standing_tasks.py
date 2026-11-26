@@ -145,6 +145,35 @@ def test_event_trigger_only_new_matching_events(book):
     assert tr.check(t, time.time()) is None  # not twice
 
 
+def test_event_in_the_same_clock_tick_is_not_lost(book, monkeypatch):
+    """On Windows time.time() can return the same value twice: an event added right after a look used to have
+    ts == the cursor and was skipped, so the test above failed now and then."""
+    st = Store(":memory:")
+    t = book.save(Task("Koç", "not yaz", trigger={"type": "event", "kind": "flight"}))
+    tr = Triggers(book, st)
+    frozen = 1_800_000_000.0
+    monkeypatch.setattr(time, "time", lambda: frozen)
+    assert tr.check(t, frozen) is None
+    st.add_event("flight", "Uçuş değerlendirmesi: MiG-29", "")
+    st.add_event("flight", "Uçuş değerlendirmesi: Su-27", "")  # two in one tick as well
+    fire = tr.check(t, frozen)
+    assert fire and len(fire.items) == 2 and "MiG-29" in fire.items[0]
+    assert tr.check(t, frozen) is None
+
+
+def test_event_cursor_saved_as_a_time_still_works(book):
+    st = Store(":memory:")
+    old = st.add_event("flight", "Uçuş değerlendirmesi: eski", "", ts=time.time() - 100)
+    t = book.save(Task("Koç", "not yaz", trigger={"type": "event", "kind": "flight"}))
+    book.set_state(t.id, event_since=time.time() - 50)  # state written before ids were the cursor
+    st.add_event("flight", "Uçuş değerlendirmesi: yeni", "")
+    tr = Triggers(book, st)
+    fire = tr.check(t, time.time())
+    assert fire and fire.items == ["Uçuş değerlendirmesi: yeni"]
+    assert book.state(t.id)["event_after"] > old
+    assert tr.check(t, time.time()) is None
+
+
 def test_github_trigger_seeds_then_reports_new(book):
     items = [{"id": 5, "number": 5, "title": "eski", "url": "u5"}]
     t = book.save(Task("Issue", "cevapla", trigger={"type": "github", "repo": "a/b", "every_minutes": 1}))

@@ -969,15 +969,24 @@ def test_cli_capture_timeout_and_no_browser(monkeypatch):
         def wait(self, timeout=None):
             return -9
 
-    monkeypatch.setattr(site.subprocess, "Popen", Hung)
+    # alice.site gets its own subprocess: patching the shared module replaced Popen for the whole process, and a
+    # command started by a thread left over from another test was counted as a browser (issue #434).
+    import subprocess
+    import types
+
+    own = types.ModuleType("subprocess")
+    own.__dict__.update(vars(subprocess))
+    monkeypatch.setattr(site, "subprocess", own)
+    monkeypatch.setattr(own, "Popen", Hung)
     # Sizes start at the same time; when time runs out, all are closed and it returns empty.
     assert site._cli_capture("https://x", timeout=0.3) == {}
     assert len(procs) == 2 and all(p.killed for p in procs)
+    assert subprocess.Popen is not Hung  # other threads keep the real one
 
     def broken(cmd, **kw):
         raise OSError("tarayıcı açılamadı")
 
-    monkeypatch.setattr(site.subprocess, "Popen", broken)
+    monkeypatch.setattr(own, "Popen", broken)
     assert site._cli_capture("https://x") == {}
 
 
