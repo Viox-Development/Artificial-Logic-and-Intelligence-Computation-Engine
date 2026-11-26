@@ -331,6 +331,7 @@ class Router:
         self.no_tools: set[str] = set()
         self.no_thinking: set[str] = set()  # models that reject the thinking parameter
         self.thinking_overrides: dict[str, str] = {}  # per-session level set with /think
+        self.ultracode = False  # substantive work runs as workflows; until ALICE restarts (not saved)
         self.size_limit: dict[str, int] = {}
         self.strikes: dict[str, int] = {}  # consecutive errors: so we don't wait on the same model in vain
         self.out_floor: dict[str, int] = {}  # minimum output budget for a model that exhausts max_tokens while thinking
@@ -558,6 +559,18 @@ class Router:
             close = getattr(client, "close", None)
             if close:
                 close()
+
+    def worker_models(self, ref: str, most: int = 4) -> list[str]:
+        """Other current models of the same provider, for the cheaper stages of a workflow. Only from the catalog that
+        was already read: this runs while a message is being sent."""
+        provider, _sep, model = ref.partition(":")
+        rows = [{"ref": r, "model": r.partition(":")[2], "ok": self.available(r)[0], "hidden": self.is_hidden(r),
+                 "quality": ranking.quality(r)} for r in (self._catalog_cache.get(provider) or (0, ()))[1]
+                if not menu.disguised(r.partition(":")[2])]
+        entry = {"name": provider, "enabled": True, "hidden": False, "models": rows,
+                 "native": getattr(self.providers_cfg.get(provider), "kind", "") == "anthropic"}
+        menu.mark([entry])
+        return [r["ref"] for r in rows if r["main"] and r["ok"] and r["model"] != model][:most]
 
     def _catalog_refs(self, names: list[str]) -> set[str]:
         """The providers' chat models, briefly from cache. Missing ones are read in parallel; if one cannot be

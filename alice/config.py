@@ -98,6 +98,10 @@ context_editing = false
 # unlimited context burns tens of millions of tokens in a project. 0 = no limit.
 team_compact_at = 128000
 tool_output_chars = 12000
+# Workflows (the workflow tool, ultracode): the most agents one run may start, and how many work at the same time
+# (0 = depends on the computer: 2-6).
+workflow_max_agents = 200
+workflow_concurrency = 0
 # In team mode (the team tool), the most agents that can run at the same time; the rest wait in line.
 team_max_parallel = 5
 # The most tool steps the project lead takes when answering an event.

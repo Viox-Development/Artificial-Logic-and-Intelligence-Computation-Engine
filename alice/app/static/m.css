@@ -452,3 +452,25 @@ body.in-call .toast { bottom: calc(var(--safe-b) + 150px); }
 .ask2.task .ta-act summary { font-size: 12.5px; color: var(--muted); }
 .ask2.task .ta-act code { margin-top: 6px; }
 .ask2.done { opacity: .5; pointer-events: none; }
+
+/* ------------------------------------------------------------------ workflows */
+.wf .goal { margin: 6px 0 0; }
+.wf-err { margin-top: 10px; color: var(--err); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
+.wf-fold { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+.wf-fold summary { display: flex; align-items: center; gap: 8px; list-style: none; font-size: 14.5px; min-height: 28px; }
+.wf-fold summary::-webkit-details-marker { display: none; }
+.wf-fold summary b { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-fold summary small { color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.wf-fold .chev { width: 15px; height: 15px; color: var(--faint); transition: transform .15s; }
+.wf-fold[open] .chev { transform: rotate(90deg); }
+.wf-fold .mem:last-child { border-bottom: 0; }
+.wf-fold .mem .l b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.wf-fold .mem .s.s-failed { color: var(--err); }
+.wf-text { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--sunken); font: 12.5px/1.5 var(--mono);
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.wf-line { flex: none; display: flex; align-items: center; gap: 10px; margin: 6px 12px 0; padding: 9px 12px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--line); text-align: left; font-size: 13.5px; }
+.wf-line i { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .8s linear infinite; }
+.wf-line b { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-line small { color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; flex: none; }

@@ -491,7 +491,10 @@ def handle_slash(text: str, agent: Agent, router: Router, ctx: ToolContext, cfg:
     elif cmd == "/think":
         from alice.providers.thinking import LEVELS
 
-        if args and args[-1] in LEVELS:
+        if args and args[-1] == "ultracode":  # a switch, whatever the level
+            router.ultracode = not router.ultracode
+            console.print("Ultracode: " + (_("On") if router.ultracode else _("Off")))
+        elif args and args[-1] in LEVELS:
             role = args[0] if len(args) >= 2 else "*"
             router.thinking_overrides[role] = args[-1]
         roles = ["brain", "fast", "voice", "vision"]

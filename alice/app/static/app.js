@@ -1144,12 +1144,14 @@ function applyStatus(s) {
     const merged = { ...S.status, ...st };
     const lab = thinkLabel(merged);
     if (lab) {
-      $("#thinkLabel").textContent = merged.thinking_kind === "none" ? _("no thinking setting") : lab[0];
+      const ultra = !!merged.ultracode;
+      $("#thinkLabel").textContent = (merged.thinking_kind === "none" ? (ultra ? "" : _("no thinking setting")) : lab[0])
+        + (ultra ? (merged.thinking_kind === "none" ? "" : " · ") + "Ultracode" : "");
       $("#thinkIcon").innerHTML = (merged.thinking_effective || st.thinking) === "off" ? IC.bolt : IC.brain;
       $("#thinkBtn").title = merged.thinking_kind === "none" ? _("This model has no thinking setting")
         : _("Thinking: {level}", { level: lab[1] });
-      $("#thinkBtn").classList.toggle("dim", merged.thinking_kind === "none");
-      $("#thinkBtn").classList.toggle("ultra", (merged.thinking_effective || st.thinking) === "ultracode");
+      $("#thinkBtn").classList.toggle("dim", merged.thinking_kind === "none" && !ultra);
+      $("#thinkBtn").classList.toggle("ultra", ultra);
     }
   }
   // Sabitlenen model cevap veremeyip yedeğe geçildiyse düğme seçileni, çubuk gerçekten cevap vereni gösterir.
@@ -1183,6 +1185,7 @@ function applyStatus(s) {
     if (!p.sid || !st.session || p.sid === st.session) (p.type === "ask_choice" ? onChoice : onPermission)(p);
   }
   markSessions();
+  onWorkflowSession();
   drawChatTitle();
   if (app.classList.contains("empty")) greet();
 }
@@ -1208,7 +1211,10 @@ function renderHistory(items) {
   setTimeout(collapseSteps, 0);  // özetler (setTimeout ile) yazıldıktan sonra
   toBottom(true);
 }
-async function loadHistory() { renderHistory(await api("/api/history")); }
+async function loadHistory() {
+  loadWorkflows();  // at the start and after a reconnect: events may have been missed
+  renderHistory(await api("/api/history"));
+}
 
 // Kenar çubuğu: aramayla süzülen, tarihe göre gruplanmış sohbetler.
 async function loadSessions() {

@@ -724,11 +724,9 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 .menu-find { width: calc(100% - 12px); margin: 6px; padding: 7px 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); font: 13px var(--sans); outline: none; }
 /* Çaba kaydırıcısı */
 .effort { --ef: var(--accent); --at: 0%; width: 280px; padding: 10px 12px 8px; }
-.effort.ultra { --ef: #9b6bff; }
 .ef-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13.5px; }
 .ef-head span { color: var(--muted); }
 .ef-head b { font-weight: 600; color: var(--text); }
-.effort.ultra .ef-head b { color: var(--ef); }
 .ef-track { position: relative; height: 26px; margin-top: 8px; }
 .ef-track::before { content: ""; position: absolute; inset: 11px 8px; border-radius: 2px;
   background: linear-gradient(var(--ef), var(--ef)) 0 / var(--at) 100% no-repeat, var(--line-strong); }
@@ -742,6 +740,13 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: r
 .ef-ends { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--faint); }
 .ef-desc { display: block; min-height: 34px; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .c-btn.think.ultra { color: #9b6bff; }
+.ultra-row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 10px; width: 300px; }
+.ultra-row .mt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ultra-row b { font-weight: 500; font-size: 13.5px; }
+.ultra-row.on b { color: #9b6bff; }
+.ultra-row small { color: var(--faint); font-size: 12px; }
+.ultra-row .switch { flex: none; margin-top: 2px; }
+.ultra-row.on .switch.on { background: #9b6bff; }
 
 #overlay { position: fixed; inset: 0; background: var(--overlay); display: grid; place-items: center; z-index: 40; padding: 20px; }
 #overlay[hidden] { display: none; }
@@ -883,13 +888,13 @@ kbd {
 .ts-files:hover { background: var(--hover); color: var(--text); }
 
 /* ------------------------------------------------------------------ plan çubuğu */
-#planbar {
+#planbar, #wfbar {
   max-width: var(--chat-w); margin: 0 auto 8px; display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 8px 12px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); text-align: left;
   box-shadow: var(--shadow); font-size: 13.5px;
 }
 #planbar[hidden] { display: none; }
-#planbar:hover { border-color: var(--line-strong); }
+#planbar:hover, #wfbar:hover { border-color: var(--line-strong); }
 .pb-ring svg { width: 22px; height: 22px; transform: rotate(-90deg); display: block; }
 .pb-ring circle { fill: none; stroke-width: 4; }
 .pb-ring .bg { stroke: var(--line); }
@@ -2283,3 +2288,44 @@ details > summary::marker { color: var(--faint); }
 .wz-feat.removing .wz-size { color: var(--err); }
 .wz-feat.adding .wz-size { color: var(--accent); }
 .wz-card .btn:disabled { opacity: .45; cursor: default; filter: none; }
+
+/* ------------------------------------------------------------------ workflows (Agents panel) */
+.wf-box { margin-bottom: 14px; }
+.wf-box[hidden], .wf [hidden], .wf-box > [hidden], #wfbar[hidden] { display: none; }
+.wf-box > .act { align-self: flex-start; }
+.wf-head, .wf-phase-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left; color: var(--text); }
+.wf .tchev { width: 14px; height: 14px; flex: none; color: var(--faint); transition: transform .15s; }
+.wf.open > .wf-head .tchev, .wf-phase.open > .wf-phase-head .tchev { transform: rotate(90deg); }
+.wf-head:hover .prp-title { text-decoration: none; }
+.wf .prp-dot.success { background: var(--ok); } .wf .prp-dot.failure { background: var(--err); }
+.wf .prp-dot.pending { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.wf .prp-dot.cached { background: transparent; border: 2px solid var(--ok); box-sizing: border-box; }
+.wf-bar { width: 100%; height: 4px; }
+.wf-bar i { background: var(--accent); }
+.wf-bar.hot i { background: var(--warn); }
+.wf-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wf-phases { display: flex; flex-direction: column; }
+.wf-phase { border-top: 1px solid var(--line); }
+.wf-phase-head { padding: 6px 0; font-size: 12.5px; }
+.wf-phase-head b { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-phase-head .grow { flex: 1; }
+.wf-phase-head .prog { width: 60px; }
+.wf-phase.idle .wf-phase-head { color: var(--faint); }
+.wf-phase.bad .wf-phase-head .wf-num { color: var(--err); }
+.wf-phase > .prp-meta { padding: 0 0 4px 22px; }
+.wf-num { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wf-rows { display: flex; flex-direction: column; padding: 0 0 6px 22px; }
+.wf-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 3px 0; font-size: 12.5px;
+  content-visibility: auto; contain-intrinsic-size: auto 24px; }
+.wf-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-last { grid-column: 2 / -1; color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-error { color: var(--err); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+.wf-fold summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--muted); font-size: 12.5px; padding: 2px 0; }
+.wf-fold summary::-webkit-details-marker { display: none; }
+.wf-fold summary svg { width: 14px; height: 14px; color: var(--faint); transition: transform .15s; }
+.wf-fold[open] summary svg { transform: rotate(90deg); }
+.wf-text { margin: 4px 0 0; padding: 8px 10px; border-radius: var(--r-sm); background: var(--code); color: var(--text);
+  font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+#wfbar .pb-count, #wfbar .spark { flex: none; }
+#wfbar .pb-next { flex: none; }
+@media (prefers-reduced-motion: reduce) { .wf .prp-dot.pending, #wfbar .spark { animation: none; } }

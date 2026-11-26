@@ -258,6 +258,7 @@ const handlers = {
   info: (ev) => { if (S.chatBuilt && /hata|başarısız|veremedi|durduruldu/i.test(ev.text || "")) addNode(el("div", "note err", ev.text)); },
   project_note: () => loadProjects(),
   team: () => loadProjects(),
+  workflow: (ev) => onWorkflow(ev),
   call: (ev) => incomingCall(ev),
   call_state: (ev) => callState(ev),
   call_audio: (ev) => callAudio(ev),
@@ -273,7 +274,7 @@ let es = null;
 function connect() {
   // Anahtar adreste değil: sayfa açılırken kurulan HttpOnly çerezle doğrulanır (alice/app/phone.py phone_handler).
   es = new EventSource("/api/events");
-  es.onopen = () => setOnline(true);
+  es.onopen = () => { setOnline(true); loadWorkflows(); };
   es.onerror = () => {
     setOnline(false);
     if (es.readyState === EventSource.CLOSED) { es.close(); setTimeout(connect, 2500); }
@@ -290,7 +291,9 @@ function connect() {
 /* Telefon kendi açık sohbetini tutar (S.sid). Eskiden bilgisayarın öndeki sohbetini izliyordu: telefonda yeni sohbet
    açınca bilgisayar da ona geçiyor, bilgisayarda başka sohbete geçince telefonun mesajı oraya gidiyordu. */
 function setSid(sid) {
+  const changed = S.sid !== (sid || "");
   S.sid = sid || "";
+  if (changed) wfReset();  // another chat has other workflows
   try { localStorage.setItem("alice.sid", S.sid); } catch (e) { /* gizli sekme */ }
 }
 function applyStatus(st) {
@@ -320,7 +323,6 @@ const MODES = { plan: ["Plan", _("Only reads, writes a plan")], ask: [_("Ask"), 
 const THINK = { off: [_("Off"), _("Answers right away without thinking")], low: [_("Low"), _("Quick, for simple tasks")],
   medium: [_("Medium"), _("Balanced: for everyday work")], high: [_("High"), _("Thinks through hard tasks")],
   xhigh: [_("Extra high"), _("For long, difficult work")], max: [_("Max"), _("No limit: the slowest, for the hardest problems")],
-  ultracode: ["Ultracode", _("Extra high effort, and the work is split between subagents that check each other. Uses a lot of quota; lasts until ALICE restarts")],
   default: [_("Auto"), _("The model's own setting")] };
 const THINK_BINARY = { off: [_("Off"), _("Answers right away without thinking")], high: [_("On"), _("Thinks before answering")],
   default: [_("Auto"), _("The model's own setting")] };
@@ -331,7 +333,11 @@ function thinkOpts() {
 }
 function thinkText() {
   const table = S.status.thinking_kind === "binary" ? THINK_BINARY : THINK;
-  if (S.status.thinking_kind === "none") return _("no thinking");
+  const ultra = S.status.ultracode ? " · Ultracode" : "";
+  if (S.status.thinking_kind === "none") return ultra ? "Ultracode" : _("no thinking");
+  return ultra ? levelText(table) + ultra : levelText(table);
+}
+function levelText(table) {
   return ((table[S.status.thinking_effective || S.status.thinking] || [_("thinking")])[0]);
 }
 
@@ -386,6 +392,7 @@ function buildChat() {
   drawChatHead();
   drawChips();
   updateComposer();
+  wfLine();
   loadHistory();
 }
 function autosize(ta) { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; }
@@ -430,7 +437,11 @@ async function modeSheet() {
 }
 async function thinkSheet() {
   const note = S.status.thinking_kind === "none" ? _("This model has no thinking setting.") : "";
-  const v = await pickSheet(_("Effort"), note, thinkOpts(), S.status.thinking_effective || S.status.thinking);
+  const opts = [...(S.status.thinking_kind === "none" ? [] : thinkOpts()), ["ultracode",
+    "Ultracode · " + (S.status.ultracode ? _("On") : _("Off")),
+    _("For big jobs ALICE writes workflows: many agents work in parallel and check each other, at any effort. Uses a lot of quota; on until ALICE restarts")]];
+  const v = await pickSheet(_("Effort"), note, opts, S.status.thinking_effective || S.status.thinking);
+  if (v === "ultracode") { applyStatus(await api("/api/ultracode", { on: !S.status.ultracode })); return; }
   if (v) applyStatus(await api("/api/thinking", { level: v }));
 }
 async function modelSheet(full) {
@@ -1563,6 +1574,8 @@ function drawMoreTop() {
   const bad = checks.filter((c) => c.status === "fail" || c.status === "warn").length;
   body.appendChild(navRow("heart", _("Health"), checks.length ? (bad ? _("{n} warnings", { n: bad }) : _("no problems")) : "", openHealth, bad ? "w" : ""));
   body.appendChild(navRow("hist", _("Chat history"), String(S.sessions.length || ""), () => { show("chat"); historySheet(); }));
+  const wfBusy = [...WFM.runs.values()].filter((x) => x.status === "running").length;
+  if (WFM.runs.size) body.appendChild(navRow("bolt", _("Workflows"), wfBusy ? _("{n} running", { n: wfBusy }) : String(WFM.runs.size), () => openWorkflows("more")));
   body.appendChild(el("div", "gh", _("Settings")));
   body.appendChild(navRow("key", "Model", shortModel(S.status.model), modelSheet));
   body.appendChild(navRow("gear", _("Appearance"), { system: _("system"), light: _("light"), dark: _("dark") }[theme()] || _("system"), themeSheet));
@@ -2277,6 +2290,195 @@ function stopLiveMic(c) {
   try { m.ctx.close(); } catch (e) { /* yok */ }
 }
 
+/* ================================================================== workflows
+   Runs of the workflow engine: a line in the chat while one works, and a page with its phases and agents. Everything a
+   run says is untrusted text and only goes into textContent. */
+const WFM = { runs: new Map(), open: new Map(), cards: new Map(), box: null, tick: 0, touched: new Map(), timer: 0, at: 0,
+  touch: -1e6, busy: false, again: false };
+const WF_ST = { queued: _("Queued"), running: _("Working"), done: _("Done"), failed: _("Error"),
+  cached: _("Kept from the earlier run"), stopped: _("Stopped") };
+const wfKnown = (s) => (Object.prototype.hasOwnProperty.call(WF_ST, s) ? s : "");
+const wfLabel = (s) => (wfKnown(s) ? WF_ST[s] : String(s || ""));
+function wfTok(n) { return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1000)}k` : `${(n / 1000).toFixed(1)}k`; }
+function wfTime(run, secs, running) {
+  const s = Math.max(0, Math.round((secs || 0) + (running ? (performance.now() - run._at) / 1000 : 0)));
+  return s < 60 ? _("{secs} s", { secs: s }) : s < 3600 ? _("{m} min {s} s", { m: Math.floor(s / 60), s: s % 60 })
+    : _("{h} h {m} min", { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60) });
+}
+const wfAgents = (run) => (run.phases || []).flatMap((p) => p.agents || []);
+const wfOver = (agents) => agents.filter((a) => a.status !== "queued" && a.status !== "running").length;
+function wfRuns() {
+  const num = (r) => Number((/\d+/.exec(r.id) || [0])[0]);
+  return [...WFM.runs.values()].sort((a, b) => num(b) - num(a) || String(b.id).localeCompare(String(a.id)));
+}
+function wfPut(run) { run._at = performance.now(); run._new = true; WFM.runs.set(run.id, run); }
+function onWorkflow(ev) {
+  if (!ev.id || (ev.sid && S.sid && ev.sid !== S.sid)) return;
+  WFM.touched.set(ev.id, ++WFM.tick);
+  WFM.at = performance.now();
+  wfPut(ev);
+  wfSoon();
+}
+function wfSoon() { if (!WFM.timer) WFM.timer = setTimeout(() => { WFM.timer = 0; wfDraw(); }, 500); }
+async function loadWorkflows() {
+  if (WFM.busy) { WFM.again = true; return; }
+  WFM.busy = true;
+  const from = WFM.tick, sid = S.sid;
+  let r = null;
+  try { r = await api("/api/workflows?sid=" + encodeURIComponent(sid || "")); } finally { WFM.busy = false; }
+  WFM.at = performance.now();
+  if (WFM.again) { WFM.again = false; setTimeout(loadWorkflows, 50); }
+  if (!r || !Array.isArray(r.runs) || sid !== S.sid) return;
+  const mine = r.runs.filter((x) => x.id && (!x.sid || !sid || x.sid === sid));
+  const listed = new Set(mine.map((x) => x.id));
+  const newer = (id) => (WFM.touched.get(id) || 0) > from;  // an event that came meanwhile is newer than the list
+  for (const id of [...WFM.runs.keys()]) if (!listed.has(id) && !newer(id)) WFM.runs.delete(id);
+  for (const run of mine) if (!newer(run.id)) wfPut(run);
+  wfDraw();
+}
+function wfReset() {
+  WFM.runs.clear();
+  WFM.open.clear();
+  WFM.touched.clear();
+  wfDraw();
+  loadWorkflows();
+}
+function wfDraw() {
+  wfLine();
+  if (!WFM.box || !WFM.box.isConnected) return;
+  // A redraw between finger down and finger up would swallow the tap.
+  if (performance.now() - WFM.touch < 600) { wfSoon(); return; }
+  const runs = wfRuns(), box = WFM.box;
+  for (const [id, c] of WFM.cards) if (!WFM.runs.has(id)) { c.remove(); WFM.cards.delete(id); }
+  const none = $(".empty", box);
+  if (none) none.remove();
+  if (!runs.length) box.appendChild(el("div", "empty", _("No workflows in this chat.")));
+  runs.forEach((run, i) => {
+    const old = WFM.cards.get(run.id);
+    if (old && !run._new) return;
+    run._new = false;
+    const c = wfCard(run);
+    if (old) old.replaceWith(c); else box.insertBefore(c, box.children[i] || null);
+    WFM.cards.set(run.id, c);
+  });
+}
+// The user's own choice is kept by key, so a redrawn card opens the same way.
+function wfFold(key, title, right, open, fill) {
+  const d = el("details", "wf-fold"), s = el("summary");
+  const want = WFM.open.has(key) ? WFM.open.get(key) : open;
+  s.append(svg("chev", "chev"), el("b", "", title), el("small", "", right || ""));
+  d.appendChild(s);
+  let full = false;
+  const build = () => { if (!full) { full = true; fill(d); } };
+  d.open = want;
+  if (want) build();
+  s.addEventListener("click", () => { WFM.open.set(key, !d.open); build(); });
+  return d;
+}
+function wfCard(run) {
+  const running = run.status === "running", agents = wfAgents(run), over = wfOver(agents);
+  const failed = agents.filter((a) => a.status === "failed").length;
+  const c = el("div", "proj wf");
+  const h = el("div", "h");
+  h.append(el("b", "", run.name || run.id), el("span", "st st-" + wfKnown(run.status), wfLabel(run.status)));
+  c.appendChild(h);
+  if (run.description) c.appendChild(el("p", "goal", run.description));
+  if (agents.length) {
+    const bar = el("div", "bar"), i = el("i");
+    i.style.width = `${(100 * over) / agents.length}%`;
+    bar.appendChild(i);
+    c.appendChild(bar);
+  }
+  const spent = run.spent || 0;
+  const bits = [agents.length ? _("{done}/{total} agents", { done: over, total: agents.length }) : "",
+    failed ? _("{n} failed", { n: failed }) : "", wfTime(run, run.secs, running),
+    run.budget ? _("{spent} of {budget} tokens", { spent: wfTok(spent), budget: wfTok(run.budget) })
+      : spent ? _("{n} tokens", { n: wfTok(spent) }) : ""];
+  c.appendChild(el("div", "meta", bits.filter(Boolean).join(" · ")));
+  if (run.error) c.appendChild(el("div", "wf-err", run.error));
+  const seen = new Map();
+  for (const p of run.phases || []) {
+    const list = p.agents || [], title = p.title || "";
+    const nth = (seen.get(title) || 0) + 1;
+    seen.set(title, nth);
+    if (!list.length) continue;
+    c.appendChild(wfFold(`${run.id}/p${nth}/${title}`, title || _("Agents"), `${wfOver(list)}/${list.length}`,
+      running && list.some((a) => a.status === "running"), (d) => {
+        for (const a of list) d.appendChild(wfRow(a));
+      }));
+  }
+  const log = run.log || [];
+  if (log.length) {
+    c.appendChild(wfFold(run.id + "/log", _("Log ({n})", { n: log.length }), "", false,
+      (d) => d.appendChild(el("pre", "wf-text", log.join("\n")))));
+  }
+  if (run.result) c.appendChild(wfFold(run.id + "/result", _("Result"), "", false, (d) => d.appendChild(el("pre", "wf-text", run.result))));
+  if (running || run.resumable) {
+    const row = el("div", "btns");
+    const b = btn("btn" + (running ? " d" : " p"), running ? _("Stop") : _("Resume"), async () => {
+      b.disabled = true;
+      const r = await api("/api/workflows/" + (running ? "stop" : "resume"), { id: run.id, sid: S.sid });
+      if (!r || !r.ok) { toast((r && r.error) || _("failed")); b.disabled = false; }
+      else if (r.note) toast(r.note);
+      loadWorkflows();
+    });
+    row.appendChild(b);
+    c.appendChild(row);
+  }
+  return c;
+}
+function wfRow(a) {
+  const row = el("div", "mem"), l = el("span", "l");
+  l.append(el("b", "", a.label || `#${a.n}`));
+  const nums = [a.steps ? _("{n} steps", { n: a.steps }) : "", a.tokens ? wfTok(a.tokens) : "",
+    a.status === "running" || a.status === "failed" ? a.last || "" : ""].filter(Boolean).join(" · ");
+  if (nums) l.appendChild(el("small", "", nums));
+  row.append(l, el("span", "s s-" + wfKnown(a.status), wfLabel(a.status)));
+  return row;
+}
+function openWorkflows(tab) {
+  push(tab, _("Workflows"), (body, entry) => {
+    const top = WFM.box;
+    WFM.box = body;
+    WFM.cards.clear();
+    for (const run of WFM.runs.values()) run._new = true;
+    body.addEventListener("touchstart", () => { WFM.touch = performance.now(); }, { passive: true });
+    // The page can be open in two tabs: the last one opened is live, the other one takes over when it closes.
+    entry.onClose = () => { if (WFM.box === body) { WFM.box = top; WFM.cards.clear(); if (top) top.replaceChildren(); wfRedraw(); } };
+    wfDraw();
+    loadWorkflows();
+  });
+}
+function wfRedraw() {
+  for (const run of WFM.runs.values()) run._new = true;
+  wfDraw();
+}
+function wfLine() {
+  const chips = $("#chips");
+  if (!chips) return;
+  let b = $("#wfLine");
+  const runs = wfRuns().filter((r) => r.status === "running");
+  if (!b) {
+    if (!runs.length) return;
+    b = btn("wf-line", null, () => openWorkflows("chat"));
+    b.id = "wfLine";
+    b.append(el("i"), el("b"), el("small"));
+    chips.before(b);
+  }
+  b.hidden = !runs.length;
+  if (!runs.length) return;
+  const agents = runs.flatMap(wfAgents);
+  b.children[1].textContent = runs.length > 1 ? _("{n} workflows are running", { n: runs.length })
+    : _("Workflow: {name}", { name: runs[0].name || runs[0].id });
+  b.children[2].textContent = [agents.length ? `${wfOver(agents)}/${agents.length}` : "",
+    wfTime(runs[0], runs[0].secs, true)].filter(Boolean).join(" · ");
+}
+setInterval(() => {
+  if (document.hidden || ![...WFM.runs.values()].some((r) => r.status === "running")) return;
+  wfLine();
+  if (performance.now() - WFM.at > 20000) loadWorkflows();  // an event may have been lost with the connection
+}, 1000);
+
 /* ================================================================== açılış */
 const RENDER = {
   chat: () => { if (!S.chatBuilt) buildChat(); else { drawChatHead(); drawChips(); } },
@@ -2292,6 +2494,7 @@ document.addEventListener("visibilitychange", () => {
   api("/api/state").then(applyStatus);
   loadProjects();
   loadTaskAsks();
+  loadWorkflows();
 });
 setInterval(() => { if (!document.hidden && S.tab === "pc") refreshPc(); }, 5000);
 setInterval(() => { if (!document.hidden) loadProjects(); }, 20000);

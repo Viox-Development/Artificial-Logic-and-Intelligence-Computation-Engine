@@ -62,7 +62,6 @@ const THINK = {
   high: [_("High"), _("Thinks through hard tasks")],
   xhigh: [_("Extra high"), _("For long, difficult work")],
   max: [_("Max"), _("No limit: the slowest, for the hardest problems")],
-  ultracode: ["Ultracode", _("Extra high effort, and the work is split between subagents that check each other. Uses a lot of quota; lasts until ALICE restarts")],
   default: [_("Auto"), _("The model's own setting")],
 };
 // Yalnız açık/kapalı destekleyen modeller (Qwen, GLM, Kimi...): seviye yerine kapalı/açık gösterilir.
@@ -81,6 +80,24 @@ function thinkLabel(st) {
   const table = st.thinking_kind === "binary" ? THINK_BINARY : THINK;
   return table[k] || THINK[k] || null;
 }
+const ULTRA_TEXT = _("For big jobs ALICE writes workflows: many agents work in parallel and check each other, at any effort. Uses a lot of quota; on until ALICE restarts");
+async function setUltracode(on) {
+  applyStatus(await api("/api/ultracode", { on }));
+  toast("Ultracode: " + (on ? _("On") : _("Off")));
+}
+function ultraRow(m) {
+  m.appendChild(el("div", "menu-sep"));
+  const row = el("div", "ultra-row" + (S.status.ultracode ? " on" : ""));
+  const t = el("span", "mt");
+  t.append(el("b", "", "Ultracode"), el("small", "", ULTRA_TEXT));
+  row.append(t, switchEl(!!S.status.ultracode, "Ultracode", (on) => {
+    row.classList.toggle("on", on);
+    const sw = $(".switch", row);
+    sw.classList.toggle("on", on); sw.setAttribute("aria-checked", on ? "true" : "false");
+    setUltracode(on).then(() => { if (!$("#menu").hidden) thinkMenu(); });
+  }));
+  m.appendChild(row);
+}
 async function setThinking(level) {
   applyStatus(await api("/api/thinking", { level }));
   toast(_("Effort: {level}", { level: (thinkLabel() || THINK[level] || [level])[0] }));
@@ -94,16 +111,16 @@ function thinkMenu() {
     if (S.status.thinking_kind === "none") {
       m.appendChild(el("div", "menu-title", _("Effort")));
       m.appendChild(el("div", "menu-note", _("This model has no thinking setting; it works its own way.")));
-      return;
+      return ultraRow(m);
     }
     const steps = opts.filter(([k]) => k !== "default");
     if (S.status.thinking_kind === "binary" || steps.length < 3) {
       m.appendChild(el("div", "menu-title", _("Effort")));
       for (const [k, [label, sub]] of opts) menuItem(m, null, label, sub, () => setThinking(k), cur === k);
-      return;
+      return ultraRow(m);
     }
     const at = steps.findIndex(([k]) => k === cur);
-    const box = el("div", "effort" + (cur === "ultracode" ? " ultra" : ""));
+    const box = el("div", "effort");
     const head = el("div", "ef-head"), name = el("b"), desc = el("small", "ef-desc");
     head.append(el("span", "", _("Effort")), name);
     const track = el("div", "ef-track"), input = el("input");
@@ -111,13 +128,12 @@ function thinkMenu() {
     input.value = at < 0 ? Math.min(1, steps.length - 1) : at;
     input.setAttribute("aria-label", _("Effort"));
     const dots = el("div", "ef-dots");
-    steps.forEach(([k]) => dots.appendChild(el("i", k === "ultracode" ? "u" : "")));
+    steps.forEach(() => dots.appendChild(el("i")));
     const show = (auto) => {
-      const [k, [label, sub]] = steps[+input.value];
+      const [, [label, sub]] = steps[+input.value];
       name.textContent = auto ? THINK.default[0] : label;
       desc.textContent = auto ? THINK.default[1] : sub;
       input.setAttribute("aria-valuetext", name.textContent);
-      box.classList.toggle("ultra", !auto && k === "ultracode");
       box.style.setProperty("--at", (+input.value / (steps.length - 1)) * 100 + "%");
       $$("i", dots).forEach((d, i) => d.classList.toggle("on", i <= +input.value));
     };
@@ -131,6 +147,7 @@ function thinkMenu() {
     show(cur === "default");
     m.appendChild(el("div", "menu-sep"));
     menuItem(m, null, THINK.default[0], THINK.default[1], () => setThinking("default"), cur === "default");
+    ultraRow(m);
   }, "right");
 }
 let _modelsMenuCache = null;
@@ -673,7 +690,7 @@ function renderPanel() {
   app.classList.toggle("panel-browser", PREFS.tab === "browser");
   if (PREFS.tab === "browser") { renderBrowserPane(); return; }
   if (PREFS.tab === "prs") { renderPrPane(); return; }
-  if (PREFS.tab === "agents") { renderAgentsPane(); return; }
+  if (PREFS.tab === "agents") { loadWorkflows(); renderAgentsPane(); return; }
   const body = $("#panelBody");
   const keep = body.scrollTop;
   body.replaceChildren();
@@ -3134,7 +3151,8 @@ async function runCommand(text) {
       if (arg) pinModel(arg.includes(":") ? arg : "reset"); else modelMenu();
       return true;
     case "think":
-      if (THINK[arg]) setThinking(arg); else thinkMenu();
+      if (arg === "ultracode") setUltracode(!S.status.ultracode);
+      else if (THINK[arg]) setThinking(arg); else thinkMenu();
       return true;
     case "rewind": {
       const users = $$(".turn-user");
@@ -3851,7 +3869,8 @@ async function renderAgentsPane() {
   const head = el("div", "prp-head");
   head.append(el("b", "", _("Subagents")), el("span", "grow"), iconAct(IC.reload, _("Refresh"), renderAgentsPane));
   wrap.appendChild(head);
-  if (!(r.subs || []).length) {
+  if (!(r.subs || []).length && WF.runs.size) wrap.appendChild(el("div", "prp-foot", _("No subagents in this chat")));
+  else if (!(r.subs || []).length) {
     wrap.appendChild(emptyState(IC.spark, _("No subagents in this chat"),
       _("When ALICE hands a job to a subagent (\"research this in the background\", \"review the three modules in parallel\") it shows here live: what it is doing and how many steps it took. You can stop it, or write a follow-up to a finished agent.")));
   }
@@ -3864,7 +3883,7 @@ async function renderAgentsPane() {
   wrap.appendChild(dh);
   drawAgentDefs(defsBox, r.defs || []);
   wrap.appendChild(defsBox);
-  body.replaceChildren(wrap);
+  wfMount(body, wrap);
 }
 function subCard(s) {
   const c = el("div", "prp-card");
@@ -3971,3 +3990,342 @@ function agentForm(a, box, defs) {
     field(_("Model"), model), field(_("Max steps"), steps), field(_("Where"), where), err, acts);
   return f;
 }
+
+/* ================================================================== Workflows
+   Runs of the workflow engine (alice/workflow/engine.py): a script that fans out many subagents. One card per run at
+   the top of the Agents panel, plus a line above the composer while a run is working. The cards are built once and
+   then patched in place: a run can send hundreds of updates, and redrawing would lose scroll, selection and what is
+   folded open. Everything a run says (names, labels, log, result) is untrusted text and only goes into textContent. */
+const WF = { runs: new Map(), cards: new Map(), open: new Map(), box: null, list: null, more: null, all: false,
+  tick: 0, touched: new Map(), timer: 0, dirty: new Set(), at: 0, again: false, busy: false, session: null };
+const WF_SHOWN = 12;  // older runs wait behind "Show all"
+const WF_STATUS = { queued: [_("Queued"), "none"], running: [_("Working"), "pending"], done: [_("Done"), "success"],
+  failed: [_("Error"), "failure"], cached: [_("Kept from the earlier run"), "cached"], stopped: [_("Stopped"), "none"] };
+const wfStatus = (s) => (Object.prototype.hasOwnProperty.call(WF_STATUS, s) ? WF_STATUS[s] : [String(s || ""), "none"]);
+// Writes only when the text changed, so an unchanged node keeps its selection and costs no layout.
+function wfText(node, text) { if (node._t !== text) { node._t = text; node.textContent = text; } }
+function wfClass(node, cls) { if (node.className !== cls) node.className = cls; }
+function wfAgents(run) { return (run.phases || []).flatMap((p) => p.agents || []); }
+function wfCount(agents) {
+  const c = { total: agents.length, over: 0, failed: 0 };
+  for (const a of agents) {
+    if (a.status !== "queued" && a.status !== "running") c.over++;
+    if (a.status === "failed") c.failed++;
+  }
+  return c;
+}
+// The snapshot's seconds are from when it was made; a running clock goes on from there.
+function wfSecs(run, secs, running) {
+  return fmtSecs(Math.max(0, Math.round((secs || 0) + (running ? (performance.now() - run._at) / 1000 : 0))));
+}
+function wfTokens(run) {
+  const spent = run.spent || 0;
+  if (run.budget) return _("{spent} of {budget} tokens", { spent: fmtTok(spent), budget: fmtTok(run.budget) });
+  return spent ? _("{n} tokens", { n: fmtTok(spent) }) : "";
+}
+const wfVisible = () => PREFS.panel && PREFS.tab === "agents" && !!WF.box && WF.box.isConnected;
+const wfMine = (run) => !run.sid || !S.status.session || run.sid === S.status.session;
+// Newest first by the number in the id. The order never depends on the status: a moving card would lose its scroll.
+function wfOrder() {
+  const num = (r) => Number((/\d+/.exec(r.id) || [0])[0]);
+  return [...WF.runs.values()].sort((a, b) => num(b) - num(a) || String(b.id).localeCompare(String(a.id)));
+}
+function wfPut(run) {
+  run._at = performance.now();
+  WF.runs.set(run.id, run);
+  WF.dirty.add(run.id);
+}
+function onWorkflowEvent(ev) {
+  if (!ev.id || !wfMine(ev)) return;
+  WF.touched.set(ev.id, ++WF.tick);
+  WF.at = performance.now();
+  wfPut(ev);
+  wfSoon();
+}
+function wfSoon() { if (!WF.timer) WF.timer = setTimeout(() => { WF.timer = 0; wfDraw(); }, 200); }
+async function loadWorkflows() {
+  if (WF.busy) { WF.again = true; return; }
+  WF.busy = true;
+  const from = WF.tick, session = S.status.session;
+  let r = null;
+  try { r = await api("/api/workflows"); } finally { WF.busy = false; }
+  WF.at = performance.now();
+  if (WF.again) { WF.again = false; setTimeout(loadWorkflows, 50); }
+  if (!r || !Array.isArray(r.runs) || session !== S.status.session) return;
+  const listed = new Set(r.runs.map((x) => x.id));
+  // An event that came while the list was on its way is newer than the list.
+  const newer = (id) => (WF.touched.get(id) || 0) > from;
+  for (const id of [...WF.runs.keys()]) if (!listed.has(id) && !newer(id)) wfForget(id);
+  for (const run of r.runs) if (run.id && wfMine(run) && !newer(run.id)) wfPut(run);
+  wfDraw();
+}
+function wfForget(id) {
+  const v = WF.cards.get(id);
+  if (v) v.root.remove();
+  WF.cards.delete(id);
+  WF.runs.delete(id);
+  WF.touched.delete(id);
+  WF.dirty.delete(id);
+}
+// Another chat came to the front (applyStatus): its workflows are other ones.
+function onWorkflowSession() {
+  if (WF.session === S.status.session) return;
+  WF.session = S.status.session;
+  for (const id of [...WF.runs.keys()]) wfForget(id);
+  WF.open.clear();
+  WF.all = false;
+  wfDraw();
+  loadWorkflows();
+}
+async function wfAct(btn, path, id) {
+  btn.disabled = true;
+  const r = await api(path, { id });
+  if (!r || !r.ok) { toast((r && r.error) || _("didn't work")); btn.disabled = false; }
+  else if (r.note) toast(r.note);
+  loadWorkflows();
+}
+// Keeps the box where it is and swaps only what follows it: detaching it would reset the scroll of log and result.
+function wfMount(body, rest) {
+  if (!WF.box) {
+    WF.box = el("div", "prp wf-box");
+    const head = el("div", "prp-head");
+    head.append(el("b", "", _("Workflows")), el("span", "grow"), iconAct(IC.reload, _("Refresh"), loadWorkflows));
+    WF.list = el("div", "prp");
+    WF.more = el("button", "act", "");
+    WF.more.addEventListener("click", () => { WF.all = true; wfDraw(); });
+    WF.box.append(head, WF.list, WF.more);
+  }
+  if (WF.box.parentNode !== body) body.replaceChildren(WF.box, rest);
+  else {
+    for (const n of [...body.children]) if (n !== WF.box && n !== rest) n.remove();
+    body.appendChild(rest);
+  }
+  wfDraw();
+}
+function wfDraw() {
+  wfDrawBar();
+  if (!wfVisible()) return;
+  const runs = wfOrder(), shown = WF.all ? runs : runs.slice(0, WF_SHOWN);
+  WF.box.hidden = !runs.length;
+  WF.more.hidden = shown.length === runs.length;
+  wfText(WF.more, _("Show all ({n})", { n: runs.length }));
+  // New runs push the oldest card out of the short list.
+  const keep = new Set(shown.map((r) => r.id));
+  for (const [id, v] of WF.cards) if (!keep.has(id)) { v.root.remove(); WF.cards.delete(id); }
+  shown.forEach((run, i) => {
+    let v = WF.cards.get(run.id);
+    if (!v) { v = wfCard(run.id); WF.cards.set(run.id, v); WF.dirty.add(run.id); }
+    if (WF.list.children[i] !== v.root) WF.list.insertBefore(v.root, WF.list.children[i] || null);
+    if (WF.dirty.delete(run.id)) wfUpdate(v, run);
+  });
+}
+function wfFold(title) {
+  const d = el("details", "wf-fold"), s = el("summary"), pre = el("pre", "wf-text");
+  const label = el("span", "", title);
+  s.append(svg(IC.chev), label);
+  d.append(s, pre);
+  return { root: d, label, pre };
+}
+function wfCard(id) {
+  const v = { id, root: el("div", "prp-card wf"), phases: new Map(), stick: true };
+  v.head = el("button", "wf-head");
+  v.dot = el("span", "prp-dot");
+  v.name = el("span", "prp-title");
+  v.head.append(svg(IC.chev, "tchev"), v.dot, v.name);
+  v.head.addEventListener("click", () => wfToggle("run/" + id, !v.root.classList.contains("open"), id));
+  v.meta = el("div", "prp-meta");
+  v.bar = progressBar(0, 0);
+  v.bar.classList.add("wf-bar");
+  v.bar.title = _("Token budget");
+  v.body = el("div", "wf-body");
+  v.desc = el("div", "prp-status");
+  v.plist = el("div", "wf-phases");
+  v.error = el("div", "wf-error");
+  v.log = wfFold(_("Log"));
+  v.result = wfFold(_("Result"));
+  v.path = el("div", "prp-foot");
+  // The log is filled only while it is open; it follows the end unless the user scrolled up.
+  v.log.root.addEventListener("toggle", () => { WF.dirty.add(id); wfDraw(); });
+  v.log.pre.addEventListener("scroll", () => {
+    v.stick = v.log.pre.scrollHeight - v.log.pre.scrollTop - v.log.pre.clientHeight < 24;
+  }, { passive: true });
+  v.body.append(v.desc, v.plist, v.error, v.log.root, v.result.root, v.path);
+  v.acts = el("div", "prp-acts");
+  v.stop = el("button", "act", _("Stop"));
+  v.stop.addEventListener("click", () => wfAct(v.stop, "/api/workflows/stop", id));
+  v.resume = el("button", "act", _("Resume"));
+  v.resume.title = _("Runs the script again; agents that already finished are not run twice");
+  v.resume.addEventListener("click", () => wfAct(v.resume, "/api/workflows/resume", id));
+  v.acts.append(v.stop, v.resume);
+  v.root.append(v.head, v.meta, v.bar, v.body, v.acts);
+  return v;
+}
+function wfToggle(key, open, id) { WF.open.set(key, open); WF.dirty.add(id); wfDraw(); }
+function wfMeta(v, run) {
+  const c = wfCount(wfAgents(run));
+  const bits = [wfStatus(run.status)[0]];
+  if (c.total) bits.push(_("{done}/{total} agents", { done: c.over, total: c.total }));
+  if (c.failed) bits.push(_("{n} failed", { n: c.failed }));
+  bits.push(wfSecs(run, run.secs, run.status === "running"));
+  const tok = wfTokens(run);
+  if (tok) bits.push(tok);
+  wfText(v.meta, bits.join(" · "));
+}
+function wfUpdate(v, run) {
+  const running = run.status === "running";
+  if (running) v.seen = true;  // a run watched to its end stays open with its result
+  const open = WF.open.has("run/" + run.id) ? WF.open.get("run/" + run.id) : !!v.seen;
+  v.root.classList.toggle("open", open);
+  v.head.setAttribute("aria-expanded", String(open));
+  const [label, cls] = wfStatus(run.status);
+  wfClass(v.dot, "prp-dot " + cls);
+  v.dot.title = label;
+  wfText(v.name, run.name || run.id);
+  v.head.title = `${run.id} · ${run.name || ""}`;
+  wfMeta(v, run);
+  v.bar.hidden = !run.budget;
+  if (run.budget) {
+    const part = Math.min(1, (run.spent || 0) / run.budget);
+    v.bar.firstElementChild.style.width = `${100 * part}%`;
+    v.bar.classList.toggle("hot", part > 0.9);
+  }
+  v.stop.hidden = !running;
+  v.resume.hidden = running || !run.resumable;
+  if (v.last !== run.status) { v.last = run.status; v.stop.disabled = v.resume.disabled = false; }
+  v.acts.hidden = v.stop.hidden && v.resume.hidden;
+  v.body.hidden = !open;
+  if (!open) return;
+  wfText(v.desc, run.description || "");
+  v.desc.hidden = !run.description;
+  wfPhases(v, run);
+  wfText(v.error, run.error || "");
+  v.error.hidden = !run.error;
+  const log = run.log || [];
+  v.log.root.hidden = !log.length;
+  wfText(v.log.label, _("Log ({n})", { n: log.length }));
+  if (v.log.root.open) {
+    wfText(v.log.pre, log.join("\n"));
+    if (v.stick) v.log.pre.scrollTop = v.log.pre.scrollHeight;
+  }
+  v.result.root.hidden = !run.result;
+  wfText(v.result.pre, run.result || "");
+  wfText(v.path, run.script_path ? _("Script: {path}", { path: run.script_path }) : "");
+  v.path.hidden = !run.script_path;
+}
+function wfPhases(v, run) {
+  const seen = new Map(), used = new Set();
+  let at = 0;
+  for (const p of run.phases || []) {
+    const agents = p.agents || [], title = p.title || "";
+    // A script may use a title twice, so its count is part of the key.
+    const nth = (seen.get(title) || 0) + 1;
+    seen.set(title, nth);
+    if (!title && !agents.length) continue;
+    const key = `${nth}/${title}`;
+    used.add(key);
+    let g = v.phases.get(key);
+    if (!g) {
+      g = { root: el("div", "wf-phase"), head: el("button", "wf-phase-head"), name: el("b", ""), count: el("span", "wf-num"),
+        bar: progressBar(0, 0), detail: el("div", "prp-meta"), rows: el("div", "wf-rows"), agents: new Map() };
+      g.head.append(svg(IC.chev, "tchev"), g.name, el("span", "grow"), g.bar, g.count);
+      const root = g.root;
+      g.head.addEventListener("click", () => wfToggle(`${v.id}/${key}`, !root.classList.contains("open"), v.id));
+      g.root.append(g.head, g.detail, g.rows);
+      v.phases.set(key, g);
+    }
+    if (v.plist.children[at] !== g.root) v.plist.insertBefore(g.root, v.plist.children[at] || null);
+    at++;
+    const c = wfCount(agents), over = c.total > 0 && c.over === c.total;
+    const k = `${v.id}/${key}`;
+    const open = WF.open.has(k) ? WF.open.get(k) : c.total > 0 && (!over || c.failed > 0);
+    wfClass(g.root, "wf-phase" + (open ? " open" : "") + (c.total ? "" : " idle") + (c.failed ? " bad" : ""));
+    g.head.setAttribute("aria-expanded", String(open));
+    wfText(g.name, title || _("Agents"));
+    g.name.title = title;
+    wfText(g.count, c.total ? `${c.over}/${c.total}` : "");
+    g.bar.hidden = !c.total;
+    g.bar.firstElementChild.style.width = c.total ? `${(100 * c.over) / c.total}%` : "0";
+    wfText(g.detail, p.detail || "");
+    g.detail.hidden = !open || !p.detail;
+    g.rows.hidden = !open;
+    if (open) wfRows(g, run, agents);
+  }
+  for (const [key, g] of v.phases) if (!used.has(key)) { g.root.remove(); v.phases.delete(key); }
+}
+function wfRows(g, run, agents) {
+  const used = new Set();
+  agents.forEach((a, i) => {
+    used.add(a.n);
+    let r = g.agents.get(a.n);
+    if (!r) {
+      r = { root: el("div", "wf-row"), dot: el("span", "prp-dot"), label: el("span", "wf-label"), last: el("span", "wf-last"),
+        num: el("span", "wf-num") };
+      r.root.append(r.dot, r.label, r.num, r.last);
+      g.agents.set(a.n, r);
+    }
+    if (g.rows.children[i] !== r.root) g.rows.insertBefore(r.root, g.rows.children[i] || null);
+    const [label, cls] = wfStatus(a.status);
+    wfClass(r.dot, "prp-dot " + cls);
+    r.dot.title = label;
+    wfText(r.label, a.label || `#${a.n}`);
+    const last = a.status === "queued" ? "" : a.last || "";
+    wfText(r.last, last);
+    r.last.hidden = !last;
+    r.root.title = [`#${a.n} · ${label}${a.model ? " · " + a.model : ""}`, a.label, last].filter(Boolean).join("\n");
+    wfNums(r, run, a);
+  });
+  for (const [n, r] of g.agents) if (!used.has(n)) { r.root.remove(); g.agents.delete(n); }
+}
+function wfNums(r, run, a) {
+  const bits = [];
+  if (a.steps) bits.push(_("{n} steps", { n: a.steps }));
+  if (a.tokens) bits.push(fmtTok(a.tokens));
+  if (a.status !== "queued" && a.status !== "cached") bits.push(wfSecs(run, a.secs, a.status === "running"));
+  wfText(r.num, bits.join(" · "));
+}
+// The line above the composer while a workflow runs; it stays there when ALICE's own turn is over.
+function wfDrawBar() {
+  let bar = document.getElementById("wfbar");
+  const runs = wfOrder().filter((r) => r.status === "running");
+  if (!bar) {
+    if (!runs.length) return;
+    bar = el("button", "");
+    bar.id = "wfbar";
+    bar.title = _("Open the workflow in the side panel");
+    bar.append(svg(IC.spark, "spark"), el("span", "pb-count"), el("span", "pb-text"), el("span", "pb-next"));
+    bar.addEventListener("click", () => openPanel("agents"));
+    $("#planbar").before(bar);
+  }
+  bar.hidden = !runs.length;
+  if (!runs.length) return;
+  const c = wfCount(runs.flatMap(wfAgents));
+  wfText(bar.children[1], c.total ? `${c.over}/${c.total}` : "");
+  wfText(bar.children[2], runs.length > 1 ? _("{n} workflows are running", { n: runs.length })
+    : _("Workflow: {name}", { name: runs[0].name || runs[0].id }));
+  const phase = (runs[0].phases || []).filter((p) => (p.agents || []).some((a) => a.status === "running")).pop();
+  wfText(bar.children[3], [runs.length === 1 && phase ? phase.title : "", wfSecs(runs[0], runs[0].secs, true)]
+    .filter(Boolean).join(" · "));
+}
+setInterval(() => {
+  if (document.hidden) return;
+  const live = [...WF.runs.values()].filter((r) => r.status === "running");
+  if (!live.length) return;
+  wfDrawBar();
+  if (wfVisible()) {
+    for (const run of live) {
+      const v = WF.cards.get(run.id);
+      if (!v) continue;
+      wfMeta(v, run);
+      if (v.body.hidden) continue;
+      const working = wfAgents(run).filter((a) => a.status === "running");
+      for (const g of v.phases.values()) {
+        if (g.rows.hidden) continue;
+        for (const a of working) if (g.agents.has(a.n)) wfNums(g.agents.get(a.n), run, a);
+      }
+    }
+  }
+  // No event for a while: one may have been lost with the connection, and the line would stay forever.
+  if (performance.now() - WF.at > 20000) loadWorkflows();
+}, 1000);
+// The event table is in main.js, which loads after this file.
+document.addEventListener("DOMContentLoaded", () => { handlers.workflow = onWorkflowEvent; });

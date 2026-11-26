@@ -2,8 +2,9 @@
 
 Thinking models (GLM, Qwen3, gpt-oss, Gemini 3, Nemotron...) can think for minutes even on simple tasks.
 Level per role: off | low | medium | high | xhigh | max ("default" = leave to model). xhigh and max only exist in
-ChatGPT input (Extra High, Max); other providers go to high. "ultracode" is xhigh plus a standing order to split the work
-between subagents (ULTRACODE_NOTE, added by the agent); like in Claude Code it lasts for the session. config.toml:
+ChatGPT input (Extra High, Max); other providers go to high. Ultracode is not a level: it is a switch
+next to it (Router.ultracode, on until ALICE restarts) that makes substantive work run as workflows (alice/workflow;
+ULTRACODE_NOTE, added by the agent) at whatever level is set. config.toml:
 
     [thinking]
     default = "low"
@@ -16,18 +17,42 @@ sends it to that model again.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-LEVELS = ("off", "low", "medium", "high", "xhigh", "max", "ultracode", "default")
-ULTRACODE = "ultracode"
+LEVELS = ("off", "low", "medium", "high", "xhigh", "max", "default")
 ULTRACODE_NOTE = (
     "\n\n[ultracode: the user wants the most thorough result for this request and accepts that it costs more. If the "
-    "request is a question or a small job, just do it. Otherwise: find out enough to split the work into independent "
-    "parts, then run the parts as subagents with the task tool, several task calls in the same reply (at most 5 at a "
-    "time; two subagents never write to the same files; give each one the complete brief). When they are done, have "
-    "separate subagents try to prove the result wrong (tests, edge cases, what was asked but not done), fix what they "
-    "find, and check the whole yourself before you report.]")
+    "request is a question or a small job, just do it. Otherwise use the workflow tool: first scout inline (list the "
+    "files, find the parts, read what decides the split), then run a workflow for each phase (understand, design, "
+    "change, verify) with the work list you found, read its result and decide the next phase yourself. Two agents "
+    "running at the same time never write to the same files (or use isolation='worktree'); every prompt is a complete "
+    "brief. Verify adversarially: separate agents try to prove each finding or change wrong, what they confirm is "
+    "fixed, and you check the whole yourself before you report. If you limited the coverage, say so. Not every agent "
+    "needs this model or effort: give mechanical stages a cheaper model or effort='low'.{models}]")
 DEFAULTS = {"default": "low", "fast": "off", "voice": "off", "live-think": "medium"}
+
+
+_TARGET_RX = re.compile(r"(?<![\w.+])\+\s?(\d{1,6}(?:[.,]\d{1,3})?)\s?([km])\b", re.I)
+# Messages ALICE's own background work sends to the chat: their text is a result, not something the user typed.
+BACKGROUND_HEADS = ("[Workflow ", "[Subagent ", "[Session finished]", "[Command ")
+
+
+def from_background(text: str) -> bool:
+    return (text or "").startswith(BACKGROUND_HEADS)
+
+
+def wants_ultracode(text: str) -> bool:
+    """The user wrote the word in this message."""
+    return not from_background(text) and bool(re.search(r"\bultracode\b", text or "", re.I))
+
+
+def token_target(text: str) -> int | None:
+    """The "+500k" / "+2m" token target in the user's message (the budget of workflows started in that turn)."""
+    m = None if from_background(text) else _TARGET_RX.search(text or "")
+    if m is None:
+        return None
+    return int(float(m.group(1).replace(",", ".")) * (1_000 if m.group(2).lower() == "k" else 1_000_000)) or None
 
 
 def level_for(config_data: dict[str, Any], role: str) -> str:
@@ -46,12 +71,11 @@ def levels_for(provider: str, model: str) -> tuple[list[str], str]:
     m = model.lower()
     if provider == "chatgpt" or (provider == "cliproxy" and m.startswith(("gpt-", "codex", "o3", "o4"))):
         lv = ["off", "low", "medium", "high", "xhigh"] + (["max"] if "gpt-6" in m else [])
-        return lv + [ULTRACODE, "default"], "graded"
+        return lv + ["default"], "graded"
     if provider == "anthropic" or (provider == "cliproxy" and m.startswith("claude-")):
         lv = ["low", "medium", "high", "max"]  # Claude does not disable thinking entirely: at least "low"
         if "haiku" not in m:
             lv.insert(3, "xhigh")
-            lv.append(ULTRACODE)
         return (["off"] if provider == "cliproxy" else []) + lv + ["default"], "graded"
     if "gpt-oss" in m:
         return ["low", "medium", "high", "default"], "graded"
@@ -76,8 +100,6 @@ def fit(level: str, levels: list[str]) -> str:
     if level in levels:
         return level
     order = ["off", "low", "medium", "high", "xhigh", "max"]
-    if level == ULTRACODE:
-        level = "xhigh"  # the model has no xhigh: the nearest level below it
     if level not in order:
         return "default"
     i = order.index(level)
@@ -97,8 +119,6 @@ def params(provider: str, model: str, level: str) -> dict[str, Any]:
     """Level -> fields to add to request body. Empty for unknown provider/model."""
     if level == "default" or not level:
         return {}
-    if level == ULTRACODE:
-        level = "xhigh"
     if provider == "chatgpt":
         # ChatGPT input (Responses API, reasoning.effort). gpt-6-luna: none/low/medium/high/xhigh/max; rejects
         # "minimal" with 400 and error is counted as "not_found", marking the model dead for the session, so off -> none.
