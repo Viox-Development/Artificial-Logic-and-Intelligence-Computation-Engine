@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💡 Share an idea or suggestion
-    url: https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/new?category=ideas
+    url: https://github.com/Viox-Development/alice-agent/discussions/new?category=ideas
     about: Rough ideas welcome. Others can upvote them, and popular ones become issues.
   - name: ❓ Ask a question
-    url: https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/new?category=q-a
+    url: https://github.com/Viox-Development/alice-agent/discussions/new?category=q-a
     about: How do I...? Something unclear in the docs?
   - name: Security vulnerability
-    url: https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/security/advisories/new
+    url: https://github.com/Viox-Development/alice-agent/security/advisories/new
     about: Report security problems privately, not as a public issue.

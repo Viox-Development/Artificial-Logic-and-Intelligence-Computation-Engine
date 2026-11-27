@@ -54,7 +54,7 @@ from typing import Any, Callable
 from alice.config import alice_home
 from alice.i18n import _
 
-REPO = "Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine"
+REPO = "Viox-Development/alice-agent"
 API = "https://api.github.com"
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 WINDOWS = sys.platform == "win32"
@@ -348,7 +348,8 @@ def _api(path: str, timeout: float = 8.0) -> Any:
     import httpx
 
     try:
-        r = httpx.get(f"{API}{path}", timeout=timeout, headers={
+        # follow_redirects: GitHub answers a renamed repository with 301 (the repo was renamed to alice-agent).
+        r = httpx.get(f"{API}{path}", timeout=timeout, follow_redirects=True, headers={
             "Accept": "application/vnd.github+json", "User-Agent": "alice-updater"})
         if r.status_code >= 400:
             return None
