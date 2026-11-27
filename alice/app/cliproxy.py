@@ -500,17 +500,16 @@ def _account(f: dict[str, Any]) -> dict[str, Any]:
 
 
 READY_TTL = 60.0  # s
-_ready_cache: dict[str, Any] = {"at": 0.0, "groups": {}}
+_ready_cache: dict[str, Any] = {"at": 0.0, "groups": {}, "used": {}}
 
 
-def groups_ready(fetch: Any = None) -> dict[str, bool]:
-    """Service (claude, codex, antigravity...) -> whether it has at least one usable account. Services without accounts
-    are not in the dict. Router uses this to skip services with all accounts full/logged out: instead of trying that
-    service first on every request and waiting for an error, it moves straight to next. Returns empty if proxy unreachable (none skipped)."""
+def _groups(fetch: Any = None) -> tuple[dict[str, bool], dict[str, int]]:
+    """(service -> has a usable account, service -> quota used by its least-used usable account, 0-100)."""
     now = time.monotonic()
     if fetch is None and _ready_cache["at"] and now - _ready_cache["at"] < READY_TTL:
-        return dict(_ready_cache["groups"])
-    out: dict[str, bool] = {}
+        return dict(_ready_cache["groups"]), dict(_ready_cache["used"])
+    ready: dict[str, bool] = {}
+    used: dict[str, int] = {}
     try:
         data = fetch() if fetch is not None else _req("GET", "/v8/management/credentials")
         files = data.get("files") if isinstance(data, dict) else None
@@ -518,12 +517,29 @@ def groups_ready(fetch: Any = None) -> dict[str, bool]:
             if isinstance(f, dict):
                 acc = _account(f)
                 if acc["provider"]:
-                    out[acc["provider"]] = out.get(acc["provider"], False) or acc["ready"]
+                    ready[acc["provider"]] = ready.get(acc["provider"], False) or acc["ready"]
+                    if acc["ready"]:
+                        pct = int((acc.get("quota") or {}).get("percent") or 0)
+                        used[acc["provider"]] = min(used.get(acc["provider"], 100), pct)
     except Exception:  # noqa: BLE001 - proxy is down: unknown
-        out = {}
+        ready, used = {}, {}
     if fetch is None:
-        _ready_cache.update(at=now, groups=out)
-    return dict(out)
+        _ready_cache.update(at=now, groups=ready, used=used)
+    return dict(ready), dict(used)
+
+
+def groups_ready(fetch: Any = None) -> dict[str, bool]:
+    """Service (claude, codex, antigravity...) -> whether it has at least one usable account. Services without accounts
+    are not in the dict. Router uses this to skip services with all accounts full/logged out: instead of trying that
+    service first on every request and waiting for an error, it moves straight to next. Returns empty if proxy unreachable (none skipped)."""
+    return _groups(fetch)[0]
+
+
+def groups_used(fetch: Any = None) -> dict[str, int]:
+    """Service -> how much of its quota (busiest window, 0-100) the least-used usable account has spent. Background
+    work skips a service above [agent] background_quota_limit, so the quota stays for the user's own work (#459).
+    Services without a usable account are not in the dict; an account without quota data counts as 0."""
+    return _groups(fetch)[1]
 
 
 def status() -> dict[str, Any]:

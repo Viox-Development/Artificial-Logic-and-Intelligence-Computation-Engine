@@ -139,6 +139,15 @@ hidden_models = []
 # out, ALICE doesn't switch to smaller models below this; it stops and says so. Doesn't apply to models you write or
 # pick yourself. 0 = off.
 min_brain_quality = 60
+# Subscription sign-ins (Claude, ChatGPT/Codex, Antigravity through the Claude Code proxy, or ChatGPT signed in
+# directly) head every role's automatic order, with models that fit the role: the strongest for the main brain,
+# mid-size then small for voice, only small ones (Haiku, gpt-luna, Flash) for quick and background jobs. Free models
+# follow. Which service comes first: subscription_order = ["claude", "codex", "antigravity"].
+# Top-tier models that are never picked automatically, only by hand (from the menu, /model, or a role you write):
+manual_only_models = ["*fable*", "*mythos*", "*astra*"]
+# Background work (the core, standing tasks, KAIROS, PR watch) and quick jobs skip a subscription service once its
+# least-used account has spent this much of its quota (percent), so the rest stays for your own work. 100 = never.
+background_quota_limit = 80
 # false: if the model you picked from the menu can't answer, ALICE stops. true: it continues with the role's automatic
 # order.
 pinned_fallback = false

@@ -131,7 +131,7 @@ def make_agent_runner(cfg: Config, cwd: Path | None = None) -> Callable[[str], s
         from alice.providers.router import Router
         from alice.tools import ToolContext, all_tools, cleanup
 
-        router = Router(cfg)
+        router = Router(cfg, background=True)
         decider = Decider.from_config(cfg, router)
         ctx = ToolContext(cwd=cwd or Path.home(), config=cfg, router=router, decider=decider)
         mode = cfg.data.get("core", {}).get("task_permission_mode", "auto")
@@ -379,7 +379,7 @@ class Core:
         if self._router is None:
             from alice.providers.router import Router
 
-            self._router = Router(self.cfg)
+            self._router = Router(self.cfg, background=True)
         return self._router
 
     def _memory(self):

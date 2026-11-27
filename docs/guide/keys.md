@@ -72,11 +72,29 @@ LiteLLM or your own proxy. The trash icon on its card removes it.
 
 CLIProxyAPI is a local bridge that turns Claude Pro/Max, ChatGPT (Codex), Google Antigravity, Kimi and xAI
 subscriptions into a single OpenAI-compatible endpoint on this computer. ALICE knows it as the `cliproxy` provider:
-`http://127.0.0.1:8317/v1`, with the key `CLIPROXY_API_KEY` from `.env`. Because it spends your subscription quota, it
-**doesn't** join the automatic chain; you pick a model from the model menu.
+`http://127.0.0.1:8317/v1`, with the key `CLIPROXY_API_KEY` from `.env`. It is the first option in the setup wizard.
 
-> Using subscriptions through CLIProxy may go against the providers' terms of use and can get the account
-> restricted. Official API keys (the Anthropic row above), z.ai or other providers are risk-free alternatives.
+**Subscriptions come first.** Once an account is signed in, its models head every role's automatic order, picked for
+the job (#459):
+
+| Role | Subscription models |
+|---|---|
+| `brain` (chat, code, agents) | the strongest of each service (Opus, gpt-terra) |
+| `voice` | mid-size first (Sonnet), then small; large models are slow to start speaking |
+| `fast` (summaries, decisions, background jobs) | small ones only (Haiku, gpt-luna, Gemini Flash) |
+| `vision` | the brain's picks that understand images |
+
+Services are tried in `[agent] subscription_order` (Claude, ChatGPT, Antigravity); free models follow them. ChatGPT
+signed in directly (without the proxy) counts as a subscription too.
+
+- **Top-tier models are picked by hand only:** `[agent] manual_only_models = ["*fable*", "*mythos*", "*astra*"]` keeps
+  them out of every automatic order. Pick them from the model menu, with `/model`, or write them in a `[roles]` chain.
+- **Background work leaves quota for you:** the core, standing tasks, KAIROS, PR watch and the `fast` role skip a
+  service once its least-used account has spent `[agent] background_quota_limit` (default 80) percent of its quota.
+  Your own chats still use it. `100` turns this off.
+
+Connecting an account is your choice; check the provider's terms. Without a subscription everything works with API
+keys as before.
 
 **Setup is automatic.** On first start ALICE downloads CLIProxyAPI from its GitHub release, verifies its SHA-256 with
 `checksums.txt` and installs it under `~/.alice/cliproxy/` (`[cliproxy] auto_install = true`). If you don't want the

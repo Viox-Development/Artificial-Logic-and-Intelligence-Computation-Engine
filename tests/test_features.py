@@ -193,3 +193,22 @@ def test_turn_off_stops_core_and_switches(monkeypatch):
     state.system.calls.clear()
     p._turn_off(["core", "phone"])
     assert [(a, d) for a, d in state.system.calls] == [("autostart", {"on": False}), ("stop", {})]
+
+
+def test_a_subscription_through_the_proxy_counts_as_a_model(monkeypatch):
+    """The wizard's Next button opens once a Claude / ChatGPT / Antigravity account is signed in through the proxy
+    (#459). The proxy's own local key alone is not a model."""
+    from alice.app import cliproxy
+    from alice.providers import chatgpt
+
+    panel, state = _panel(monkeypatch)
+    state.router.providers_cfg["cliproxy"] = SimpleNamespace(name="cliproxy", api_key_env="CLIPROXY_API_KEY",
+                                                             enabled=True, needs_key=True, api_key="local")
+    monkeypatch.setattr(chatgpt, "logged_in", lambda: False)
+    monkeypatch.setattr(cliproxy, "settings", lambda: {"installed": True})
+    monkeypatch.setattr(cliproxy, "groups_ready", lambda: {})
+    assert not panel.has_model()  # proxy installed, no account
+    monkeypatch.setattr(cliproxy, "groups_ready", lambda: {"claude": False, "antigravity": True})
+    assert panel.has_model()
+    monkeypatch.setattr(cliproxy, "settings", lambda: {"installed": False})
+    assert not panel.has_model()

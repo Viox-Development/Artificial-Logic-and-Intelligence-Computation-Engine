@@ -612,6 +612,92 @@ def test_subscription_order_claude_then_chatgpt_then_antigravity(monkeypatch):
     assert r.subscription_chain() == ["cliproxy:gpt-6.1-terra"]  # Claude accounts' logins have lapsed: skipped
 
 
+def _subs_router(monkeypatch, models, roles=None, **agent):
+    from alice.providers import picker
+
+    providers = {"cliproxy": {"base_url": "http://p", "api_key_env": "", "max_input_tokens": 200000,
+                              "vision_models": ["claude-*", "gemini-*"]},
+                 "a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 100000}}
+    scores = {"cliproxy:claude-fable-5-1": 99, "cliproxy:claude-opus-5-5": 86, "cliproxy:claude-sonnet-5-5": 64,
+              "cliproxy:claude-haiku-5-5": 32, "cliproxy:gpt-6.1-terra": 61, "cliproxy:gpt-6-luna": 26,
+              "cliproxy:gemini-3.8-flash-high": 76, "cliproxy:gemini-pro-astra": 98, "a:x": 80, "a:y": 50}
+    monkeypatch.setattr(picker, "quality", lambda r: scores.get(r, 0))
+    roles = roles or {"brain": ["auto"], "voice": ["auto"], "fast": ["auto"], "vision": ["auto"]}
+    r = router_with(make_config(roles, providers=providers, **agent), {},
+                    auto_cache={"chains": {"brain": ["a:x"], "voice": ["a:x"], "fast": ["a:y"], "vision": ["a:x"]}})
+    r._subscription_models = models
+    return r
+
+
+ALL_SUBS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "gpt-6.1-terra",
+            "gpt-6-luna", "gemini-3.8-flash-high", "gemini-pro-astra"]
+
+
+def test_top_tier_models_never_enter_an_automatic_order(monkeypatch):
+    """Fable, Mythos, Astra and the like are picked by hand only (#459): not in any role's automatic order, even though
+    they score highest, but a role that names one keeps it."""
+    r = _subs_router(monkeypatch, ALL_SUBS)
+    for role in ("brain", "voice", "fast", "vision"):
+        chain = r.chain(role)
+        assert "cliproxy:claude-fable-5-1" not in chain and "cliproxy:gemini-pro-astra" not in chain, role
+    assert r.chain("brain")[0] == "cliproxy:claude-opus-5-5"
+    r = _subs_router(monkeypatch, ALL_SUBS, roles={"brain": ["cliproxy:claude-fable-5-1", "auto"]})
+    assert r.chain("brain")[0] == "cliproxy:claude-fable-5-1"  # written by hand: allowed
+    r = _subs_router(monkeypatch, ALL_SUBS, manual_only_models=[])  # list emptied: Fable may be picked automatically
+    assert r.chain("brain")[0] == "cliproxy:claude-fable-5-1"
+
+
+def test_each_role_gets_subscription_models_that_fit_it(monkeypatch):
+    """Subscriptions head every role (#459): the strongest for the brain, mid-size then small for voice, only small
+    ones for quick and background jobs, image-capable ones for vision. Free models follow."""
+    r = _subs_router(monkeypatch, ALL_SUBS)
+    assert r.chain("brain")[:4] == ["cliproxy:claude-opus-5-5", "cliproxy:claude-sonnet-5-5",
+                                    "cliproxy:gpt-6.1-terra", "cliproxy:gpt-6-luna"]
+    assert r.chain("voice")[:3] == ["cliproxy:claude-sonnet-5-5", "cliproxy:claude-haiku-5-5", "cliproxy:gpt-6-luna"]
+    fast = r.chain("fast")
+    assert fast[:3] == ["cliproxy:claude-haiku-5-5", "cliproxy:gpt-6-luna", "cliproxy:gemini-3.8-flash-high"]
+    assert "cliproxy:claude-opus-5-5" not in fast and fast[-1] == "a:y"  # large models stay off background work
+    vision = r.chain("vision")
+    assert vision[0] == "cliproxy:claude-opus-5-5" and vision[-1] == "a:x"
+    assert all(r.providers_cfg["cliproxy"].supports_vision(v.split(":", 1)[1]) for v in vision if v.startswith("cliproxy:"))
+
+
+def test_no_subscription_keeps_the_free_order(monkeypatch):
+    r = _subs_router(monkeypatch, [])
+    assert r.chain("brain") == ["a:x"] and r.chain("fast") == ["a:y"]
+
+
+def test_chatgpt_signed_in_directly_heads_the_order(monkeypatch):
+    """ChatGPT signed in without the proxy is a subscription too: its measured models come before free ones."""
+    from alice.providers import chatgpt, picker
+
+    monkeypatch.setattr(chatgpt, "logged_in", lambda: True)
+    monkeypatch.setattr(picker, "quality", lambda r: {"chatgpt:gpt-6.1-terra": 61, "chatgpt:gpt-6-luna": 26,
+                                                      "a:x": 80, "a:y": 50}.get(r, 0))
+    providers = {"chatgpt": {"base_url": "https://chatgpt.com/backend-api/codex", "auth": "chatgpt",
+                             "max_input_tokens": 200000},
+                 "a": {"base_url": "http://a", "api_key_env": "", "max_input_tokens": 100000}}
+    res = {"chatgpt:gpt-6.1-terra": {"ok": True}, "chatgpt:gpt-6-luna": {"ok": True}, "a:x": {"ok": True}}
+    r = router_with(make_config({"brain": ["auto"], "fast": ["auto"]}, providers=providers), {},
+                    auto_cache={"chains": {"brain": ["a:x"], "fast": ["a:y"]}, "results": res})
+    assert r.chain("brain")[:2] == ["chatgpt:gpt-6.1-terra", "chatgpt:gpt-6-luna"]
+    assert r.chain("fast")[0] == "chatgpt:gpt-6-luna" and "chatgpt:gpt-6.1-terra" not in r.chain("fast")
+
+
+def test_background_work_skips_a_subscription_near_its_quota(monkeypatch):
+    """Background routers (core, tasks) and quick jobs skip a service whose quota is nearly spent (#459), so the rest
+    stays for the user's own work; the user's own brain requests still use it."""
+    r = _subs_router(monkeypatch, ALL_SUBS)
+    r._subscription_used = {"claude": 85, "codex": 10}
+    assert r.chain("brain")[0] == "cliproxy:claude-opus-5-5"  # the user's own work: not skipped
+    assert not any(x.startswith("cliproxy:claude-") for x in r.chain("fast"))
+    r.background = True
+    brain = r.chain("brain")
+    assert brain[0] == "cliproxy:gpt-6.1-terra" and not any(x.startswith("cliproxy:claude-") for x in brain)
+    r.config.agent["background_quota_limit"] = 100  # never skip
+    assert r.chain("brain")[0] == "cliproxy:claude-opus-5-5"
+
+
 def test_proxy_auth_error_does_not_close_the_whole_proxy():
     """A lapsed Claude login must not close the ChatGPT and Gemini models on the proxy for the whole session."""
     providers = {"cliproxy": {"base_url": "http://p", "api_key_env": "", "max_input_tokens": 200000}}

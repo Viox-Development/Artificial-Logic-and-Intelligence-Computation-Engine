@@ -315,8 +315,12 @@ class Router:
         max_wait: float = 65.0,
         on_event: Callable[[str], None] | None = None,
         auto_cache: dict[str, Any] | None = None,
+        background: bool = False,
     ):
         self.config = config
+        # Background work (core, standing tasks, KAIROS, PR watch): leaves subscription quota for the user's own work.
+        self.background = background
+        self._subscription_used: dict[str, int] | None = None  # used in tests instead of the proxy's quota data
         self.providers_cfg = config.providers()
         self._factory = provider_factory or make_client
         self._real_clients = provider_factory is None
@@ -452,13 +456,15 @@ class Router:
                           if r in res and res[r].get("ok", True) else (2, 0))
         if role == "vision" and res:
             refs = list(refs) + ranking.vision_backups(res, self.providers_cfg, list(refs))
-        refs = [r for r in refs if r.partition(":")[0] in self.providers_cfg]
+        refs = [r for r in refs if r.partition(":")[0] in self.providers_cfg and not self.manual_only(r)]
         if role == "brain":
             # When the strong models' quota runs out, the work falls to small models like flash-lite, gemma and step-5,
             # and they could not handle long agent work either. Rather than talk nonsense with a weak model, it is
             # right to stop and say "uygun model kalmadı" (no suitable model left).
             refs = self.strong_enough(refs)
-            subs = self.subscription_chain()
+        if role in self.SUBSCRIPTION_ROLES:
+            # Subscriptions (#459) head every role's automatic order, with models that fit the role; free models follow.
+            subs = self.subscription_chain(role)
             if subs:
                 if any(r.startswith("cliproxy:gpt-") for r in subs):
                     # A ChatGPT account is linked to the proxy: its direct login must not enter the order twice.
@@ -466,49 +472,110 @@ class Router:
                 refs = subs + [r for r in refs if r not in subs]
         return refs
 
+    # Top-tier models that are only ever picked by hand: never in an automatic order ([agent] manual_only_models).
+    MANUAL_ONLY = ("*fable*", "*mythos*", "*astra*")
+
+    def manual_only(self, ref: str) -> bool:
+        """Is this model for picking by hand only? Patterns match the model name, case ignored ("*fable*")."""
+        from fnmatch import fnmatchcase
+
+        pats = self.config.agent.get("manual_only_models")
+        pats = self.MANUAL_ONLY if pats is None else pats
+        model = ref.partition(":")[2].lower() or ref.lower()
+        return any(fnmatchcase(model, str(p).lower()) or fnmatchcase(ref.lower(), str(p).lower()) for p in pats)
+
+    SUBSCRIPTION_ROLES = ("brain", "voice", "fast", "vision")
+    # Model size from its name, for picking subscription models that fit a role.
+    SMALL_TIER = ("haiku", "luna", "flash", "mini", "nano", "lite")
+    MID_TIER = ("sonnet",)
+
+    def _tier(self, ref: str) -> int:
+        """0 = small and fast, 1 = mid, 2 = large."""
+        low = ref.lower()
+        if any(x in low for x in self.SMALL_TIER):
+            return 0
+        return 1 if any(x in low for x in self.MID_TIER) else 2
+
     SUBSCRIPTION_ORDER = ("claude", "codex", "antigravity")
     SUBSCRIPTION_PER_GROUP = 2
     # Antigravity accounts expose models from multiple families (Gemini, Claude, GPT) under a single
     # subscription; allow more models from that group so the best of each family can enter the chain.
     SUBSCRIPTION_ANTIGRAVITY_PER_GROUP = 4
 
-    def subscription_chain(self) -> list[str]:
-        """Models from the subscription proxy (CLIProxyAPI) head the main model's automatic order: Claude first,
+    def subscription_chain(self, role: str = "brain") -> list[str]:
+        """Models from the subscription proxy (CLIProxyAPI) head the role's automatic order: Claude first,
         then ChatGPT, then Antigravity ([agent] subscription_order). The proxy itself switches between accounts of
-        the same service; if all of a service's accounts are full or failing, the next service is used. The few
-        strongest models of each service are taken; a service with no usable account is skipped.
+        the same service; if all of a service's accounts are full or failing, the next service is used. A service
+        with no usable account is skipped. Models in [agent] manual_only_models (Fable and the like) never enter.
+
+        Each role gets the models that fit it: the main brain the strongest few of each service; voice mid-size
+        models first (Sonnet), then small ones; quick jobs ("fast": summaries, background work) only small ones
+        (Haiku, gpt-luna, Flash), so background work doesn't use up the large models' limits; vision the brain's
+        models that understand images.
 
         Antigravity accounts may also serve Claude & GPT models under their own quota; these are grouped under
         "antigravity" (not "claude"/"codex") so they use the correct limits and account switching."""
-        cp = self.providers_cfg.get("cliproxy")
-        if cp is None or not cp.enabled or not (self._real_clients or self._subscription_models is not None):
-            return []
         from alice.providers import picker
 
-        try:
-            from alice.app import cliproxy
-
-            models = (self._subscription_models if self._subscription_models is not None
-                      else cliproxy.tidy_models(cliproxy.live_models()))
-            ready = {} if self._subscription_models is not None else cliproxy.groups_ready()
-        except Exception:  # noqa: BLE001 - proxy is off: no subscription order
-            return []
-        order = [str(x) for x in self.config.agent.get("subscription_order") or self.SUBSCRIPTION_ORDER]
         floor = self.brain_floor()
         out: list[str] = []
-        for gid in order:
-            if ready.get(gid) is False:
-                continue  # all accounts of this service are off / over quota / asking for a new login
-            refs = [f"cliproxy:{m}" for m in models if cliproxy.model_group(m)[0] == gid]
-            refs = [r for r in refs if not self.is_hidden(r) and not ranking.excluded(r)]
-            # With equal scores, the newer version goes first (gpt-6.1-terra before gpt-5.6-terra).
-            refs.sort(key=lambda r: (-picker.quality(r), [-int(x) for x in re.findall(r"\d+", r)]))
-            # Those above the threshold come first. So the service is not left out of the order entirely,
-            # the remaining slots are filled with its best models.
-            good = [r for r in refs if picker.quality(r) >= floor]
-            per = self.SUBSCRIPTION_ANTIGRAVITY_PER_GROUP if gid == "antigravity" else self.SUBSCRIPTION_PER_GROUP
-            out += (good + [r for r in refs if r not in good])[:per]
+        cp = self.providers_cfg.get("cliproxy")
+        if cp is not None and cp.enabled and (self._real_clients or self._subscription_models is not None):
+            try:
+                from alice.app import cliproxy
+
+                models = (self._subscription_models if self._subscription_models is not None
+                          else cliproxy.tidy_models(cliproxy.live_models()))
+                ready = {} if self._subscription_models is not None else cliproxy.groups_ready()
+                spare = self.background or role == "fast"
+                used = ({} if not spare else self._subscription_used if self._subscription_used is not None
+                        else cliproxy.groups_used())
+            except Exception:  # noqa: BLE001 - proxy is off: no proxy models in the order
+                models, ready, used = [], {}, {}
+            limit = self.background_quota_limit()
+            order = [str(x) for x in self.config.agent.get("subscription_order") or self.SUBSCRIPTION_ORDER]
+            for gid in order:
+                if ready.get(gid) is False:
+                    continue  # all accounts of this service are off / over quota / asking for a new login
+                if used.get(gid, 0) >= limit:
+                    continue  # background or quick job: this service's quota is kept for the user's own work
+                refs = [f"cliproxy:{m}" for m in models if cliproxy.model_group(m)[0] == gid]
+                per = self.SUBSCRIPTION_ANTIGRAVITY_PER_GROUP if gid == "antigravity" else self.SUBSCRIPTION_PER_GROUP
+                out += self._fit(refs, role, per, cp, floor, picker)
+        # ChatGPT signed in directly (no proxy): the models that worked in the last measurement, unless the proxy
+        # already has a ChatGPT account (the same plan must not enter twice).
+        gpt = self.providers_cfg.get("chatgpt")
+        if gpt is not None and gpt.enabled and not any(r.startswith("cliproxy:gpt-") for r in out):
+            res = self.auto_cache.get("results") or {}
+            refs = [r for r, v in res.items() if r.startswith("chatgpt:") and isinstance(v, dict)
+                    and (v.get("ok") or v.get("ever_ok"))]
+            out += self._fit(refs, role, self.SUBSCRIPTION_PER_GROUP, gpt, floor, picker)
         return out
+
+    def background_quota_limit(self) -> int:
+        """Quota use (percent) above which background work and quick jobs skip a subscription service
+        ([agent] background_quota_limit, default 80; 100 = never skip)."""
+        try:
+            return int(self.config.agent.get("background_quota_limit", 80))
+        except (TypeError, ValueError):
+            return 80
+
+    def _fit(self, refs: list[str], role: str, per: int, pc: ProviderConfig, floor: int, picker: Any) -> list[str]:
+        """The few models of one subscription service that fit the role, best first."""
+        refs = [r for r in refs if not self.is_hidden(r) and not ranking.excluded(r) and not self.manual_only(r)]
+        # With equal scores, the newer version goes first (gpt-6.1-terra before gpt-5.6-terra).
+        refs.sort(key=lambda r: (-picker.quality(r), [-int(x) for x in re.findall(r"\d+", r)]))
+        if role == "fast":
+            return [r for r in refs if self._tier(r) == 0][:per]
+        if role == "voice":
+            # Capable but quick to answer: mid-size first, then small; large models are too slow to start speaking.
+            return sorted([r for r in refs if self._tier(r) < 2], key=lambda r: -self._tier(r))[:per]
+        if role == "vision":
+            refs = [r for r in refs if pc.supports_vision(r.partition(":")[2])]
+        # Those above the threshold come first. So the service is not left out of the order entirely,
+        # the remaining slots are filled with its best models.
+        good = [r for r in refs if picker.quality(r) >= floor]
+        return (good + [r for r in refs if r not in good])[:per]
 
     def _cached_dead(self) -> set[str]:
         if ranking.cache_age(self.auto_cache) > 7 * 24 * 3600:

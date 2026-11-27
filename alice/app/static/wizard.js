@@ -11,7 +11,10 @@ const WZ_T = {
     langNote: "The rest of the app is still mostly in Turkish; English is on the way.",
     start: "Get started",
     modelTitle: "Connect a model",
-    modelText: "ALICE works with free API tiers. One key is enough; add more later so it can switch when one hits its limit.",
+    modelText: "Sign in with a subscription you already have, or use free API keys. One is enough; you can add more later in Settings.",
+    subsTitle: "Sign in with a subscription",
+    subsText: "Claude Pro / Max, ChatGPT (Codex) or Google Antigravity: higher limits and stronger models than free keys. ALICE installs a small local proxy (Claude Code proxy) for the sign-in.",
+    keysTitle: "Or use API keys",
     getKey: "Get a free key",
     paste: "Paste the key",
     save: "Save and test",
@@ -56,7 +59,10 @@ const WZ_T = {
     langNote: "",
     start: "Başlayalım",
     modelTitle: "Bir model bağla",
-    modelText: "ALICE ücretsiz API kotalarıyla çalışır. Bir anahtar yeter; sonra daha fazlasını eklersen biri limite takılınca diğerine geçer.",
+    modelText: "Zaten olan bir aboneliğinle giriş yap ya da ücretsiz API anahtarları kullan. Biri yeter; sonra Ayarlar'dan daha fazlasını ekleyebilirsin.",
+    subsTitle: "Aboneliğinle giriş yap",
+    subsText: "Claude Pro / Max, ChatGPT (Codex) ya da Google Antigravity: ücretsiz anahtarlardan daha yüksek limit ve daha güçlü modeller. Giriş için ALICE küçük bir yerel proxy (Claude Code proxy) kurar.",
+    keysTitle: "Ya da API anahtarı kullan",
     getKey: "Ücretsiz anahtar al",
     paste: "Anahtarı yapıştır",
     save: "Kaydet ve dene",
@@ -195,12 +201,25 @@ function wzWelcome() {
 function wzModel() {
   const d = WZ.data || {};
   const body = el("div", "wz-list");
+  // Subscriptions first (#459): the same card as Settings → Keys, so installing the proxy and signing in work the same.
+  if (typeof cliproxySection === "function") {
+    const subs = el("div", "wz-key first wz-subs");
+    const sh = el("div", "wz-key-head");
+    const sn = el("div");
+    const st = el("b", "", wt("subsTitle"));
+    st.appendChild(el("span", "wz-badge", wt("recommended")));
+    sn.append(st, el("small", "", wt("subsText")));
+    sh.appendChild(sn);
+    subs.appendChild(sh);
+    cliproxySection(subs);
+    body.appendChild(subs);
+    body.appendChild(el("div", "wz-sec", wt("keysTitle")));
+  }
   const keys = d.keys || [];
   keys.forEach((k, i) => {
-    const row = el("div", "wz-key" + (i === 0 ? " first" : ""));
+    const row = el("div", "wz-key");
     const head = el("div", "wz-key-head");
     const name = el("b", "", k.label);
-    if (i === 0) name.appendChild(el("span", "wz-badge", wt("recommended")));
     head.appendChild(name);
     if (k.set) head.appendChild(el("span", "wz-ok", "✓ " + wt("works")));
     else if (k.url) {
@@ -209,7 +228,7 @@ function wzModel() {
       head.appendChild(a);
     }
     row.appendChild(head);
-    if (!k.set && (i === 0 || row.dataset.open)) row.appendChild(wzKeyForm(k));
+    if (!k.set && row.dataset.open) row.appendChild(wzKeyForm(k));
     else if (!k.set) {
       head.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
@@ -237,12 +256,22 @@ function wzModel() {
   }));
   cg.appendChild(cgHead);
   body.appendChild(cg);
+  const skip = wzBtn(wt("skip"), () => { WZ.step = 2; wzDraw(); });
+  skip.hidden = !!d.has_model;
+  const next = wzBtn(wt("next"), () => { WZ.step = 2; wzDraw(); }, true, !d.has_model);
   wzShell(wt("modelTitle"), wt("modelText"), body, [
     wzBtn(wt("back"), () => { WZ.step = 0; wzDraw(); }),
     el("span", "grow"),
-    d.has_model ? null : wzBtn(wt("skip"), () => { WZ.step = 2; wzDraw(); }),
-    wzBtn(wt("next"), () => { WZ.step = 2; wzDraw(); }, true, !d.has_model),
+    skip,
+    next,
   ], 1);
+  // A subscription signed in through the proxy card doesn't redraw the wizard: check now and then, without redrawing
+  // (that would reset the card in the middle of a sign-in).
+  WZ.timer = setInterval(async () => {
+    if (WZ.step !== 1 || (WZ.data && WZ.data.has_model)) return;
+    const f = await api("/api/features");
+    if (f && f.has_model) { WZ.data = f; next.disabled = false; skip.hidden = true; }
+  }, 3000);
 }
 
 function wzKeyForm(k) {

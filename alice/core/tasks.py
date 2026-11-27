@@ -601,7 +601,7 @@ def make_task_agent(cfg: Any, router_factory: Callable[[], Any] | None = None) -
         from alice.providers.router import Router
         from alice.tools import all_tools, cleanup, groups
 
-        router = router_factory() if router_factory else Router(cfg)
+        router = router_factory() if router_factory else Router(cfg, background=True)
         decider = Decider.from_config(cfg, router)
         cwd = Path(str(task.trigger.get("path") or "")).expanduser() if task.trigger.get("type") == "folder" else None
         ctx = ToolContext(cwd=cwd if cwd and cwd.is_dir() else Path.home(), config=cfg, router=router,
