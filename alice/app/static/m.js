@@ -1590,10 +1590,11 @@ function appRow(body) {
   if (NATIVE && NATIVE.versionCode) {
     const mine = NATIVE.versionCode();
     const newer = app.available && app.version_code > mine;
-    body.appendChild(navRow("dl", _("App"), newer ? _("update available: ") + app.version_name : NATIVE.version() + _(" · up to date"), () => {
-      if (!newer) return toast(_("The app is up to date. It updates itself when a new version comes out."));
+    // The computer may not have fetched a new release yet, so "up to date" can be stale: a tap always checks, and the
+    // app says what happened (up to date, downloading, or why it failed) (#461).
+    body.appendChild(navRow("dl", _("App"), newer ? _("update available: ") + app.version_name : NATIVE.version() + _(" · tap to check for updates"), () => {
       NATIVE.checkUpdate();
-      toast(_("Downloading the update…"));
+      toast(_("Checking for updates…"));
     }, newer ? "w" : ""));
   } else if (/Android/i.test(navigator.userAgent) && app.available) {
     body.appendChild(navRow("dl", _("Install the Android app"), app.version_name, () => {

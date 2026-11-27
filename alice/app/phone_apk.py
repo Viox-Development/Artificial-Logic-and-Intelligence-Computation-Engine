@@ -75,11 +75,11 @@ def refresh(force: bool = False, repo: Path | None = None) -> dict[str, Any] | N
         _last["at"] = time.monotonic()
         repo = repo or repo_dir()
         if repo is None:
-            _last["error"] = "ALICE bir git klasöründen çalışmıyor"
+            _last["error"] = "ALICE is not running from a git folder"
             return info()
         code, out = _git(["fetch", "--quiet", "origin", f"+refs/heads/{BRANCH}:{REF}"], repo)
         if code != 0:
-            _last["error"] = (out.strip().splitlines() or ["git fetch başarısız"])[-1]
+            _last["error"] = (out.strip().splitlines() or ["git fetch failed"])[-1]
             return info()
         raw = _blob(repo, "version.json")
         try:
@@ -87,7 +87,7 @@ def refresh(force: bool = False, repo: Path | None = None) -> dict[str, Any] | N
         except ValueError:
             meta = None
         if not isinstance(meta, dict):
-            _last["error"] = "android-apk dalında version.json yok"
+            _last["error"] = "no version.json on the android-apk branch"
             return info()
         cur = info()
         if cur and cur["version_code"] >= int(meta.get("version_code") or 0):
@@ -95,7 +95,7 @@ def refresh(force: bool = False, repo: Path | None = None) -> dict[str, Any] | N
             return cur
         apk = _blob(repo, "ALICE.apk")
         if not apk or (meta.get("sha256") and hashlib.sha256(apk).hexdigest() != meta["sha256"]):
-            _last["error"] = "APK eksik ya da bozuk"
+            _last["error"] = "the APK is missing or damaged"
             return cur
         meta["sha256"] = hashlib.sha256(apk).hexdigest()
         folder().mkdir(parents=True, exist_ok=True)
@@ -116,6 +116,8 @@ def refresh_async() -> None:
 def view() -> dict[str, Any]:
     out: dict[str, Any] = dict(info() or {})
     out["available"] = bool(out)
+    # A fetch is running: the version above may be about to change (the settings page says "checking").
+    out["checking"] = _lock.locked()
     if _last["error"]:
         out["error"] = _last["error"]
     return out

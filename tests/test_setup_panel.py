@@ -105,7 +105,7 @@ def test_phone_toggle_restarts_core_and_shows_qr(monkeypatch):
     assert p.action("phone_enable", {"on": True})["ok"] and p.system.calls == ["restart"]
     ph = p.view()["phone"]
     assert ph["enabled"] and "/m?t=" in ph["url"]  # the phone app's address (the Android app recognizes this)
-    assert ph["app"] == {"available": False}  # APK not downloaded to the computer yet
+    assert ph["app"] == {"available": False, "checking": False}  # APK not downloaded to the computer yet
     tok = ph["url"].split("t=")[1]
     assert p.action("phone_new_token", {})["ok"] and p.view()["phone"]["url"].split("t=")[1] != tok
     assert p.system.calls == ["restart", "restart"]

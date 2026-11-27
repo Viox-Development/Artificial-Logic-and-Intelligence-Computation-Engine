@@ -29,6 +29,14 @@ public class UpdateReceiver extends BroadcastReceiver {
         } else if (status == PackageInstaller.STATUS_FAILURE_CONFLICT || status == PackageInstaller.STATUS_FAILURE_INCOMPATIBLE) {
             Updater.notify(c, "ALICE güncellenemedi",
                     "Yeni sürüm farklı bir anahtarla imzalanmış. Uygulamayı bir kez silip bilgisayardaki QR'den yeniden kur.", null);
+        } else if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
+            // Kullanıcı onay ekranında "İptal"e bastı: bir sonraki kontrolde yeniden sorulur.
+            Updater.notify(c, "ALICE güncellemesi iptal edildi", "Ayarlar → Uygulama'dan yeniden başlatabilirsin.", null);
+        } else if (status != PackageInstaller.STATUS_SUCCESS) {
+            // Eskiden diğer hatalar sessizce yutuluyordu: kullanıcı neden güncellenmediğini hiç görmüyordu (#461).
+            String msg = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            Updater.notify(c, "ALICE güncellenemedi",
+                    "Android kurulumu tamamlamadı (" + status + (msg != null && !msg.isEmpty() ? ": " + msg : "") + ").", null);
         }
         // STATUS_SUCCESS: Android uygulamayı yeniden başlatır, BootReceiver (MY_PACKAGE_REPLACED) servisi açar.
     }
