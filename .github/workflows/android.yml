@@ -49,7 +49,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: İmza anahtarı
+      - name: Signing key
         env:
           KS_B64: ${{ secrets.ALICE_KEYSTORE_B64 }}
           KS_PASS: ${{ secrets.ALICE_KEYSTORE_PASSWORD }}
@@ -62,7 +62,7 @@ jobs:
             echo "ALICE_KEY_ALIAS=${KS_ALIAS:-alice}" >> "$GITHUB_ENV"
             echo "SIGNED=1" >> "$GITHUB_ENV"
           else
-            echo "::warning::ALICE_KEYSTORE_B64 gizli değişkeni yok: APK geçici anahtarla imzalanıyor ve yayınlanmayacak."
+            echo "::warning::ALICE_KEYSTORE_B64 secret is not set: the APK is signed with a temporary key and will not be published."
             keytool -genkeypair -keystore "$RUNNER_TEMP/debug.keystore" -storetype JKS \
               -storepass android -keypass android -alias androiddebugkey \
               -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
