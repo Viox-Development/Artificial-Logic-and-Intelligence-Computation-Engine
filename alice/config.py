@@ -145,6 +145,9 @@ min_brain_quality = 60
 # follow. Which service comes first: subscription_order = ["claude", "codex", "antigravity"].
 # Top-tier models that are never picked automatically, only by hand (from the menu, /model, or a role you write):
 manual_only_models = ["*fable*", "*mythos*", "*astra*"]
+# Background work (the core, standing tasks, KAIROS, PR watch) and quick jobs skip a subscription service once its
+# least-used account has spent this much of its quota (percent), so the rest stays for your own work. 100 = never.
+background_quota_limit = 80
 # false: if the model you picked from the menu can't answer, ALICE stops. true: it continues with the role's automatic
 # order.
 pinned_fallback = false

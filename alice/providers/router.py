@@ -315,8 +315,12 @@ class Router:
         max_wait: float = 65.0,
         on_event: Callable[[str], None] | None = None,
         auto_cache: dict[str, Any] | None = None,
+        background: bool = False,
     ):
         self.config = config
+        # Background work (core, standing tasks, KAIROS, PR watch): leaves subscription quota for the user's own work.
+        self.background = background
+        self._subscription_used: dict[str, int] | None = None  # used in tests instead of the proxy's quota data
         self.providers_cfg = config.providers()
         self._factory = provider_factory or make_client
         self._real_clients = provider_factory is None
@@ -523,12 +527,18 @@ class Router:
                 models = (self._subscription_models if self._subscription_models is not None
                           else cliproxy.tidy_models(cliproxy.live_models()))
                 ready = {} if self._subscription_models is not None else cliproxy.groups_ready()
+                spare = self.background or role == "fast"
+                used = ({} if not spare else self._subscription_used if self._subscription_used is not None
+                        else cliproxy.groups_used())
             except Exception:  # noqa: BLE001 - proxy is off: no proxy models in the order
-                models, ready = [], {}
+                models, ready, used = [], {}, {}
+            limit = self.background_quota_limit()
             order = [str(x) for x in self.config.agent.get("subscription_order") or self.SUBSCRIPTION_ORDER]
             for gid in order:
                 if ready.get(gid) is False:
                     continue  # all accounts of this service are off / over quota / asking for a new login
+                if used.get(gid, 0) >= limit:
+                    continue  # background or quick job: this service's quota is kept for the user's own work
                 refs = [f"cliproxy:{m}" for m in models if cliproxy.model_group(m)[0] == gid]
                 per = self.SUBSCRIPTION_ANTIGRAVITY_PER_GROUP if gid == "antigravity" else self.SUBSCRIPTION_PER_GROUP
                 out += self._fit(refs, role, per, cp, floor, picker)
@@ -541,6 +551,14 @@ class Router:
                     and (v.get("ok") or v.get("ever_ok"))]
             out += self._fit(refs, role, self.SUBSCRIPTION_PER_GROUP, gpt, floor, picker)
         return out
+
+    def background_quota_limit(self) -> int:
+        """Quota use (percent) above which background work and quick jobs skip a subscription service
+        ([agent] background_quota_limit, default 80; 100 = never skip)."""
+        try:
+            return int(self.config.agent.get("background_quota_limit", 80))
+        except (TypeError, ValueError):
+            return 80
 
     def _fit(self, refs: list[str], role: str, per: int, pc: ProviderConfig, floor: int, picker: Any) -> list[str]:
         """The few models of one subscription service that fit the role, best first."""

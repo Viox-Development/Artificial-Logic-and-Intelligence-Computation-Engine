@@ -326,7 +326,7 @@ class Kairos:
         from alice.providers.router import Router
         from alice.tools import all_tools, cleanup
 
-        router = Router(self.cfg)
+        router = Router(self.cfg, background=True)
         decider = Decider.from_config(self.cfg, router)
         ctx = ToolContext(cwd=Path.home(), config=self.cfg, router=router, decider=decider)
         ctx.state["tool_groups"] = {"notify"}  # notify tool visible from the start; others via load_tools

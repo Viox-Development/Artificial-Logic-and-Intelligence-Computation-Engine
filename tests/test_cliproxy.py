@@ -285,6 +285,20 @@ def test_groups_ready_skips_services_without_usable_accounts():
     assert cliproxy.groups_ready(lambda: {"files": files}) == {"claude": False, "codex": True}
 
 
+def test_groups_used_is_the_least_used_ready_account():
+    """Background work (#459) looks at the account the proxy can still move to: the least-used usable one."""
+    now = __import__("time").time()
+
+    def claude(name, used, **kw):
+        return {"id": name, "provider": "claude", "status": "active", **kw, "quota": {"signals": {
+            "Anthropic-Ratelimit-Unified-5h-Utilization": str(used), "Anthropic-Ratelimit-Unified-5h-Reset": str(now + 900)}}}
+
+    files = [claude("claude-1.json", 0.93), claude("claude-2.json", 0.41),
+             claude("claude-3.json", 0.05, disabled=True),  # off: does not count
+             {"id": "codex-1.json", "provider": "codex", "status": "active"}]  # no quota data: 0
+    assert cliproxy.groups_used(lambda: {"files": files}) == {"claude": 41, "codex": 0}
+
+
 def test_expired_cooldown_does_not_keep_account_busy():
     """If the proxy leaves an expired cooldown record uncleared, the account must not look busy forever."""
     now = __import__("time").time()

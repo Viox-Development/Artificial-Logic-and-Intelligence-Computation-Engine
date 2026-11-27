@@ -684,6 +684,20 @@ def test_chatgpt_signed_in_directly_heads_the_order(monkeypatch):
     assert r.chain("fast")[0] == "chatgpt:gpt-6-luna" and "chatgpt:gpt-6.1-terra" not in r.chain("fast")
 
 
+def test_background_work_skips_a_subscription_near_its_quota(monkeypatch):
+    """Background routers (core, tasks) and quick jobs skip a service whose quota is nearly spent (#459), so the rest
+    stays for the user's own work; the user's own brain requests still use it."""
+    r = _subs_router(monkeypatch, ALL_SUBS)
+    r._subscription_used = {"claude": 85, "codex": 10}
+    assert r.chain("brain")[0] == "cliproxy:claude-opus-5-5"  # the user's own work: not skipped
+    assert not any(x.startswith("cliproxy:claude-") for x in r.chain("fast"))
+    r.background = True
+    brain = r.chain("brain")
+    assert brain[0] == "cliproxy:gpt-6.1-terra" and not any(x.startswith("cliproxy:claude-") for x in brain)
+    r.config.agent["background_quota_limit"] = 100  # never skip
+    assert r.chain("brain")[0] == "cliproxy:claude-opus-5-5"
+
+
 def test_proxy_auth_error_does_not_close_the_whole_proxy():
     """A lapsed Claude login must not close the ChatGPT and Gemini models on the proxy for the whole session."""
     providers = {"cliproxy": {"base_url": "http://p", "api_key_env": "", "max_input_tokens": 200000}}

@@ -395,7 +395,7 @@ def default_reviewer(cfg: Any) -> Callable[[Watch, dict[str, Any], Any, str | No
 
         wt = worktree_for(cfg, w, pr["head"]["ref"], token)
         title, diff, sha = review.pr_diff(api, w.repo, w.number)
-        router = Router(cfg)
+        router = Router(cfg, background=True)
         try:
             findings = review.review(cfg, router, wt, title, diff)
         finally:

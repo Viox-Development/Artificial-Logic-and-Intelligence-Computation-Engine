@@ -45,7 +45,7 @@ def core_cmd(argv: list[str]) -> int:
         from alice.decider import Decider
         from alice.providers.router import Router
 
-        router = Router(cfg)
+        router = Router(cfg, background=True)
         from alice import updater
 
         if updater.boot_check() == "rolled":  # new version crashed repeatedly: rolled back to previous version
