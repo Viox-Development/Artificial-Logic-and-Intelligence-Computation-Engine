@@ -19,7 +19,7 @@ provider's own dashboard for exact limits.
 | **Cloudflare Workers AI** | 10,000 "neurons" per day for free: Kimi K2.5, GLM 4.7 Flash, Llama 3.3 70B, Gemma 4; about 150-300K tokens per day on a big model. The URL contains the account ID, so `CLOUDFLARE_ACCOUNT_ID` is needed too | brain fallback |
 | **Vercel AI Gateway** | $5 of credit per account every 30 days; Claude, GPT and Gemini with one key. It spends credit, so it is **not** added to the chains automatically, only by hand: `/model brain vercel:anthropic/claude-sonnet-5.5` | strong model chosen by hand |
 | **Anthropic (Claude API)** | The official API, pay as you go (console.anthropic.com): Claude Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1, through the official `anthropic` package (`pip install anthropic`). It is paid, so it is **not** added automatically: pick it from the model menu or with `/model brain anthropic:claude-opus-5-5` | strong model chosen by hand |
-| **CLIProxyAPI (subscriptions)** | Claude Pro/Max, ChatGPT (Codex) and other subscriptions through a local proxy; spends your subscription quota | chosen by hand; also the ChatGPT Realtime voice backend. See [keys.md](keys.md) |
+| **CLIProxyAPI (subscriptions)** | Claude Pro/Max, ChatGPT (Codex), Google Antigravity and other subscriptions through a local proxy; spends your subscription quota | **first in every chain** when signed in, with models picked per role; top-tier models (Fable and the like) by hand only. Also the ChatGPT Realtime voice backend. See [keys.md](keys.md) |
 | **Ollama (local)** | Unlimited, offline, depends on your GPU | the last resort at the end of every chain |
 
 With a key in `.env`, **Mistral** and **SambaNova** are measured and added to the chains automatically as well. In the

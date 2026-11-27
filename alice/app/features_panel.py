@@ -46,11 +46,18 @@ class FeaturesPanel:
         from alice.providers import chatgpt
 
         cfgs = self.state.router.providers_cfg.values()
-        if any(pc.enabled and pc.needs_key and pc.api_key for pc in cfgs):
+        if any(pc.enabled and pc.needs_key and pc.api_key and not str(getattr(pc, "name", "")).startswith("cliproxy") for pc in cfgs):
             return True
         try:
-            return bool(chatgpt.logged_in())
+            if chatgpt.logged_in():
+                return True
         except Exception:  # noqa: BLE001 - not signed in / module missing
+            pass
+        try:  # a subscription signed in through the Claude Code proxy (#459)
+            from alice.app import cliproxy
+
+            return bool(cliproxy.settings().get("installed") and any(cliproxy.groups_ready().values()))
+        except Exception:  # noqa: BLE001 - proxy not installed / not running
             return False
 
     def view(self) -> dict[str, Any]:

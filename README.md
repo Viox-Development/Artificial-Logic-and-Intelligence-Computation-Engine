@@ -121,12 +121,14 @@ hour; a bad key skips the provider for the session. If one provider goes down, A
 | Mistral, SambaNova, Z.ai, Cohere, Cerebras, Cloudflare Workers AI | Free tiers of varying size | fallbacks |
 | ChatGPT account | Sign in with your ChatGPT plan (free plans included) through the Codex login; no API key | only when you pick it |
 | Anthropic, Vercel AI Gateway | Paid or credit-based | only when you pick them |
-| Your own subscriptions (via CLIProxyAPI) | Claude, ChatGPT, and others through a local proxy | only when you pick them |
+| Your own subscriptions (via CLIProxyAPI) | Claude Pro/Max, ChatGPT (Codex), Google Antigravity and others through a local proxy | **first in every chain** when signed in |
 | Any OpenAI-compatible server | LM Studio, vLLM, LiteLLM, your own | measured and added automatically |
 | Ollama (local) | Unlimited, offline | last resort in every chain |
 
-By default the brain chain uses the best measured free models from the providers you have keys for, then local
-Ollama. Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
+When you sign in with a subscription, its models come first, picked for the job: the strongest for the main brain,
+mid-size for voice, small ones for quick and background work. Top-tier models (Fable and the like) are only used when
+you pick them. Without a subscription, the brain chain uses the best measured free models from the providers you have
+keys for, then local Ollama. Free tiers change often; `alice models --write` scans the live catalogs and updates the chains.
 Why this order, and how the router and reflex work: [docs/guide/models.md](docs/guide/models.md),
 [docs/guide/architecture.md](docs/guide/architecture.md).
 
@@ -236,10 +238,12 @@ You can also paste keys in the app under **Connections → Keys**; they are save
 Several keys per provider are supported and rotated automatically. Any OpenAI-compatible server (LM Studio, vLLM,
 LiteLLM) can be added from the same page. Details: [docs/guide/keys.md](docs/guide/keys.md).
 
-**Subscriptions through a local proxy (optional).** ALICE can use [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
-to route your own Claude, ChatGPT, or other subscriptions through an OpenAI-compatible endpoint on your machine.
-It is off the automatic chain and only used when you pick its models. Using subscriptions this way may violate the
-providers' terms of service and can get accounts restricted; that choice and its risk are yours.
+**Subscriptions (recommended).** Sign in with Claude Pro/Max, ChatGPT (Codex) or Google Antigravity in the setup
+wizard or under **Connections → Keys**. ALICE installs [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), a
+local proxy, for the sign-in. Subscriptions have much higher limits than free tiers, so their models head every chain;
+free keys stay as the fallback. Background work (the core, standing tasks) skips a subscription once 80% of its quota
+is used, so the rest stays for you. Connecting an account is your choice; check the provider's terms. You can also
+skip it and use only API keys, or any provider you like.
 
 ### First run
 
