@@ -103,6 +103,7 @@
  " · resets in {n} days": " · {n} gün sonra sıfırlanır",
  " · runs on the next tick": " · bir sonraki turda çalışacak",
  " · speech to text: ": " · konuşmayı yazıya çeviren: ",
+ " · tap to check for updates": " · güncellemeye bakmak için dokun",
  " · tap: click, hold: right-click, two fingers: scroll": " · dokun: tıkla, basılı tut: sağ tık, iki parmak: kaydır",
  " · the first one tried failed ({why})": " · ilk denenen olmadı ({why})",
  " · the most this window width allows": " · bu pencere genişliğinde en fazla bu kadar",

@@ -9,7 +9,10 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -32,6 +35,8 @@ import java.security.MessageDigest;
 final class Updater {
     static final int ID_UPDATE = 3;
     private static final long EVERY_MS = 3 * 3600 * 1000L;
+    // Bilgisayar uyuyordu ya da ağ yoktu: 3 saat değil, 15 dakika sonra yeniden dene (#461).
+    private static final long RETRY_MS = 15 * 60 * 1000L;
     private static volatile boolean busy;
     private static volatile long lastCheck;
 
@@ -49,7 +54,11 @@ final class Updater {
     /** Arka planda kontrol et. force: zaman sınırına bakma (kullanıcı "Güncelle"ye bastı). */
     static void check(Context c, boolean force) {
         Context app = c.getApplicationContext();
-        if (busy || !Prefs.configured(app)) return;
+        if (!Prefs.configured(app)) return;
+        if (busy) {
+            if (force) toast(app, "Güncellemeye zaten bakılıyor…");
+            return;
+        }
         long now = System.currentTimeMillis();
         if (!force && now - lastCheck < EVERY_MS) return;
         lastCheck = now;
@@ -57,8 +66,10 @@ final class Updater {
         new Thread(() -> {
             try {
                 run(app, force);
-            } catch (Exception ignored) {
-                // bilgisayar kapalı ya da indirme yarıda kaldı: bir sonraki kontrolde yeniden
+            } catch (Exception e) {
+                // bilgisayar kapalı ya da indirme yarıda kaldı: 15 dakika sonra yeniden
+                lastCheck = System.currentTimeMillis() - EVERY_MS + RETRY_MS;
+                if (force) toast(app, "Güncellenemedi: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
             } finally {
                 busy = false;
             }
@@ -66,10 +77,19 @@ final class Updater {
     }
 
     private static void run(Context c, boolean interactive) throws Exception {
-        JSONObject info = new JSONObject(Api.get(c, "/api/phone/app"));
+        // refresh=1: bilgisayar önce GitHub'daki android-apk dalını çeker, sonra cevap verir. Eskiden önce cevap verip
+        // sonra çekiyordu: yeni sürümden sonraki ilk soru hep eski sürümü görüyordu ve telefon 3 saat bekliyordu (#461).
+        JSONObject info = new JSONObject(getInfo(c));
         long remote = info.optLong("version_code", 0);
-        if (remote <= versionCode(c)) return;
         String name = info.optString("version_name");
+        if (remote <= versionCode(c)) {
+            if (interactive) {
+                String err = info.optString("error");
+                if (remote <= 0) toast(c, "Bilgisayarda telefon uygulaması yok" + (err.isEmpty() ? "" : ": " + err));
+                else toast(c, "Uygulama güncel (" + name + ")" + (err.isEmpty() ? "" : ". Bilgisayar yeni sürüme bakamadı: " + err));
+            }
+            return;
+        }
         if (!c.getPackageManager().canRequestPackageInstalls()) {
             Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName()));
             s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -78,7 +98,34 @@ final class Updater {
                     "Kendini güncelleyebilmesi için bir kez izin ver: dokun, \"Bu kaynaktan izin ver\"i aç.", s);
             return;
         }
-        install(c, download(c, info.optString("sha256")));
+        if (interactive) toast(c, "Güncelleme indiriliyor (" + name + ")…");
+        File apk = download(c, info.optString("sha256"));
+        if (interactive) toast(c, "Güncelleme kuruluyor…");
+        install(c, apk);
+    }
+
+    private static String getInfo(Context c) throws IOException {
+        HttpURLConnection h = (HttpURLConnection) new URL(Prefs.base(c) + "/api/phone/app?refresh=1").openConnection();
+        h.setConnectTimeout(6000);
+        h.setReadTimeout(120000);  // bilgisayar yeni APK'yı GitHub'dan indiriyor olabilir
+        h.setRequestProperty("X-Alice-Token", Prefs.token(c));
+        try {
+            if (h.getResponseCode() != 200) throw new IOException("HTTP " + h.getResponseCode());
+            try (InputStream in = h.getInputStream()) {
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+                return b.toString("UTF-8");
+            }
+        } finally {
+            h.disconnect();
+        }
+    }
+
+    /** Kullanıcı "Güncelle"ye bastıysa sonucu söyle (arka plan iş parçacığından). */
+    static void toast(Context c, String text) {
+        new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(c, text, Toast.LENGTH_LONG).show());
     }
 
     private static File download(Context c, String sha256) throws Exception {
@@ -104,7 +151,7 @@ final class Updater {
         if (!sha256.isEmpty() && !sha256.equalsIgnoreCase(hex.toString())) {
             //noinspection ResultOfMethodCallIgnored
             out.delete();
-            throw new IOException("APK özeti tutmuyor");
+            throw new IOException("APK özeti tutmuyor (indirme bozuk)");
         }
         return out;
     }

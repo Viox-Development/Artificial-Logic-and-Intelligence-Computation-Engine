@@ -2546,7 +2546,12 @@ def make_handler(state: AppState):
             if u.path == "/api/phone/app":  # latest version of mobile app on PC
                 from alice.app import phone_apk
 
-                phone_apk.refresh_async()
+                if q.get("refresh", [""])[0] == "1":
+                    # The phone's own update check and a tap on "update": fetch the android-apk branch before
+                    # answering. Answering first gave the old version, and the phone then waited 3 hours (#461).
+                    phone_apk.refresh(force=True)
+                else:
+                    phone_apk.refresh_async()
                 return self._json(phone_apk.view())
             if u.path == "/api/phone/app.apk":
                 from alice.app import phone_apk
