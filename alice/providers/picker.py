@@ -127,9 +127,10 @@ def pool(router) -> list[str]:
 
     out: list[str] = []
     for r in refs:
+        manual = getattr(router, "manual_only", None)
         if r in out or r in ranking.RANDOM_ROUTERS or r in getattr(router, "no_tools", set()) \
-                or ranking.excluded(r):
-            continue
+                or ranking.excluded(r) or (callable(manual) and manual(r)):
+            continue  # manual_only: top-tier models (Fable and the like) are picked by hand only
         try:
             ok, why = router.available(r)
         except Exception:  # noqa: BLE001 - undefined provider, etc.
