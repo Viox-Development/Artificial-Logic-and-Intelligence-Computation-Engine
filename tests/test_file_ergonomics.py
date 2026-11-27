@@ -158,8 +158,19 @@ def test_grep_truncation_note_counts_total(ctx, workdir):
     for i in range(10):
         (workdir / f"f{i}.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     out = Grep().run(ctx, pattern=r"def foo", max_results=3).text
-    assert "of 10 matching lines" in out and "offset=3" in out
+    assert ("of 10 matching lines" in out or "of at least 10 matching lines" in out)
+    assert "offset=3" in out
     assert "narrow" in out  # suggestion to narrow with path/glob
+
+
+def test_grep_truncation_note_is_english_when_total_is_not_exact(monkeypatch, ctx, workdir):
+    # Force the Python scan path to cut early, so the reported total is an "at least" count.
+    monkeypatch.setattr("alice.tools.files.MAX_SCAN_LINES", 5)
+    for i in range(10):
+        (workdir / f"f{i}.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+    out = Grep().run(ctx, pattern=r"def foo", max_results=3).text
+    assert "of at least 5 matching lines" in out
+    assert "en az" not in out
 
 
 def test_grep_pagination_consistent(ctx, workdir):

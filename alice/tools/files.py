@@ -800,7 +800,7 @@ class Grep(Tool):
         total = len(lines)
         page = lines[offset:offset + max_results]
         scanned = str(base) if base.is_dir() else str(base.parent)
-        shown_total = f"{total}" if exact_total else f"en az {total}"
+        shown_total = f"{total}" if exact_total else f"at least {total}"
         if not page:
             if offset and total:
                 # offset is past the last page: "eşleşme yok" would mislead; there are matches, just not on this page.
