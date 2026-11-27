@@ -1,6 +1,6 @@
 # ALICE
 
-[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](../LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](../CONTRIBUTING.md)
+[![CI](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/alice-agent/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/alice-agent/actions/workflows/codeql.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](../LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](../CONTRIBUTING.md)
 
 **Artificial Logic and Intelligence Computation Engine.** Bilgisayarında çalışan, Claude Code / Codex tarzı bir ajan harness. Fark şu: tek bir ücretli modele bağlı değil, ücretsiz API katmanlarını sırayla kullanıyor ve hızlı arayüz kararları için Jev gibi System One modelleri kullanabiliyor.
 
@@ -104,8 +104,8 @@ Yani reflex modu anahtarsız da çalışıyor, sadece daha yavaş: Jev için bil
 Python 3.10+ lazım (python.org, "Add to PATH" işaretli).
 
 ```powershell
-git clone https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine
-cd Artificial-Logic-and-Intelligence-Computation-Engine
+git clone https://github.com/Viox-Development/alice-agent
+cd alice-agent
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -121,7 +121,7 @@ alice init
 **Linux'ta** tek satır yeterli (Python 3.10+ ve Git lazım, klonlamaya gerek yok):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/alice-agent/main/install.sh | bash
 ```
 
 Son sürümü `~/.local/share/alice`'e kurar, `alice` komutunu `~/.local/bin`'e koyar ve ALICE'i uygulama menüsüne ekler.

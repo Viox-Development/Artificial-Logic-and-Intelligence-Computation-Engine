@@ -1,6 +1,6 @@
 # ALICE
 
-[![CI](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/actions/workflows/codeql.yml) [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Viox-Development/alice-agent/coverage-badge/coverage.json)](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20(full)%20%7C%20Linux%20(partial)-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![CI](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml) [![CodeQL](https://github.com/Viox-Development/alice-agent/actions/workflows/codeql.yml/badge.svg)](https://github.com/Viox-Development/alice-agent/actions/workflows/codeql.yml) [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Viox-Development/alice-agent/coverage-badge/coverage.json)](https://github.com/Viox-Development/alice-agent/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12%20%7C%203.13-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 **Artificial Logic and Intelligence Computation Engine.** An AI agent that lives on your computer, in the spirit of
 Claude Code and Codex, but not tied to one paid model. It chains free API tiers (and your own keys or subscriptions)
@@ -135,7 +135,7 @@ Why this order, and how the router and reflex work: [docs/guide/models.md](docs/
 ## Install (Windows)
 
 The easy way: download `ALICE-Setup.exe` from the
-[latest release](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/releases/latest)
+[latest release](https://github.com/Viox-Development/alice-agent/releases/latest)
 and run it. It needs no admin rights, sets up Python and ALICE in a few minutes, then opens ALICE on a short setup
 wizard:
 
@@ -151,8 +151,8 @@ release.
 From source:
 
 ```powershell
-git clone https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine
-cd Artificial-Logic-and-Intelligence-Computation-Engine
+git clone https://github.com/Viox-Development/alice-agent
+cd alice-agent
 powershell -ExecutionPolicy Bypass -File install.ps1        # ALICE and the app; the wizard picks the rest
 powershell -ExecutionPolicy Bypass -File install.ps1 -All   # or every optional feature at once, no wizard
 ```
@@ -166,7 +166,7 @@ window, then runs `alice init` and `alice shortcut`. With `-All` it also install
 One line, no clone needed (needs Python 3.10+ and Git):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/alice-agent/main/install.sh | bash
 ```
 
 It installs the latest release into `~/.local/share/alice`, puts the `alice` command in `~/.local/bin`, and adds ALICE
@@ -184,7 +184,7 @@ support). Install Python 3.10+ and Git first (`brew install python git`, or the 
 same line as on Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Viox-Development/alice-agent/main/install.sh | bash
 ```
 
 It installs into `~/.local/share/alice` and puts `alice` in `~/.local/bin`; there is no app menu entry, so start it with
@@ -334,23 +334,26 @@ More: [configuration](docs/guide/config.md), [connections](docs/CONNECT.md), [pl
 
 ## Platform support
 
-ALICE is developed and used daily on **Windows**, where every feature works.
+ALICE is developed on **Windows**, where every feature works, and is used daily on **Linux** too. The test suite
+runs on Windows, Linux and macOS in CI.
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ (tested in CI) | ✅ (tested in CI) |
+| Agent, coding tools, shell, browser, web, memory, projects, providers | ✅ | ✅ | ✅ |
 | Voice, phone app chat and notifications, system monitoring and rules | ✅ | ✅ | untested |
 | Command sandbox | low integrity | bubblewrap | sandbox-exec |
-| UI elements by ID (`ui_elements` / `ui_act`) | ✅ UI Automation | ✅ AT-SPI (needs PyGObject: `sudo apt install python3-gi gir1.2-atspi-2.0`) | ❌ |
-| Reflex desktop observer, screen OCR | ✅ | ❌ (screenshots only) | ❌ |
-| On-screen HUD | ✅ | ❌ | ❌ |
-| Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | untested (needs the Accessibility permission) |
-| PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ✅ ([docs/guide/home.md](docs/guide/home.md)) | ❌ |
-| Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` (untested) |
-| Time machine, Steam and flight-sim integration | ✅ | ❌ | ❌ |
+| UI elements by ID (`ui_elements` / `ui_act`) | ✅ UI Automation | ✅ AT-SPI (needs PyGObject: `sudo apt install python3-gi gir1.2-atspi-2.0`) | ✅ Accessibility API |
+| Reflex screen OCR | ✅ | ✅ Tesseract | ✅ Tesseract |
+| On-screen HUD | ✅ | ❌ ([#444](https://github.com/Viox-Development/alice-agent/issues/444)) | ❌ ([#444](https://github.com/Viox-Development/alice-agent/issues/444)) |
+| Global shortcuts / quick bar | ✅ | ✅ X11; on Wayland bind a desktop shortcut to `alice quick --open` | ✅ (needs the Accessibility permission) |
+| PC control (lock, sleep, brightness), Wi-Fi, foreground app modes, now playing | ✅ | ✅ ([docs/guide/home.md](docs/guide/home.md)) | ✅ |
+| Microphone-in-use detection, Steam integration | ✅ | ✅ | ✅ |
+| Time machine (encrypted screen history) | ✅ | ✅ OS keyring | ✅ OS keyring |
+| Installer and app menu shortcut | ✅ (`ALICE-Setup.exe`) | ✅ (`install.sh`, tested in CI) | `install.sh` and `ALICE.app`; no package yet ([#445](https://github.com/Viox-Development/alice-agent/issues/445)) |
+| Flight-sim integration (DCS, War Thunder) | ✅ | ❌ | ❌ |
 
 Bringing Linux and macOS closer to Windows is tracked in
-[#239](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/issues/239); most items
+[#239](https://github.com/Viox-Development/alice-agent/issues/239); most items
 have their own issue and are good places to start contributing.
 
 ## Known limitations
@@ -363,12 +366,12 @@ have their own issue and are good places to start contributing.
 
 ## Ideas and feedback
 
-Have an idea, a wish, or something that annoyed you? [Share it in Ideas](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/categories/ideas), even if it is rough. Upvote the ideas you want most: they shape what gets built next. Questions go to [Q&A](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/discussions/categories/q-a), bugs to [issues](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/issues/new/choose).
+Have an idea, a wish, or something that annoyed you? [Share it in Ideas](https://github.com/Viox-Development/alice-agent/discussions/categories/ideas), even if it is rough. Upvote the ideas you want most: they shape what gets built next. Questions go to [Q&A](https://github.com/Viox-Development/alice-agent/discussions/categories/q-a), bugs to [issues](https://github.com/Viox-Development/alice-agent/issues/new/choose).
 
 ## Contributing
 
 Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md), look for
-[good first issues](https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/labels/good%20first%20issue),
+[good first issues](https://github.com/Viox-Development/alice-agent/labels/good%20first%20issue),
 and report security problems privately as described in [SECURITY.md](SECURITY.md).
 
 ```bash

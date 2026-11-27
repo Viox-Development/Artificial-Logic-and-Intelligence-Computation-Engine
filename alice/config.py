@@ -537,7 +537,7 @@ base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 vision_models = ["google/gemma-*", "meta-llama/llama-4-*", "*vl*", "*vision*"]
 max_input_tokens = 128000
-headers = { "HTTP-Referer" = "https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine", "X-Title" = "ALICE" }
+headers = { "HTTP-Referer" = "https://github.com/Viox-Development/alice-agent", "X-Title" = "ALICE" }
 
 [providers.groq]
 base_url = "https://api.groq.com/openai/v1"

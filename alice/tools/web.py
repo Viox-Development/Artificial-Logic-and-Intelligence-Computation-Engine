@@ -153,7 +153,7 @@ def _extract(ctx: ToolContext, url: str, text: str, prompt: str) -> str | None:
 # ------------------------------------------------------------------------------------- fetch ladder
 # crawl4ai's escalation: a plain request first (fast, no browser), then a real stealth browser when the answer is a
 # block page, a challenge or an empty JavaScript shell. Only an explicit raw=True skips the browser.
-BOT_UA = ("ALICE/1.0 (+https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine; "
+BOT_UA = ("ALICE/1.0 (+https://github.com/Viox-Development/alice-agent; "
           "personal assistant fetching a page for its user)")
 # Sites that refuse a faked browser UA but welcome an honest client (Wikimedia's robot policy asks for exactly this).
 HONEST_UA_HOSTS = ("wikipedia.org", "wikimedia.org", "wiktionary.org", "wikidata.org", "mediawiki.org")

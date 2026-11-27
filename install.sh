@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ALICE setup for Linux (and macOS). One line, no clone needed:
-#   curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Viox-Development/alice-agent/main/install.sh | bash
 # Or inside a clone:
 #   bash install.sh             # ALICE and the app; the app's setup wizard picks the rest
 #   bash install.sh --all       # every optional feature at once, no wizard
@@ -9,7 +9,7 @@
 # Environment: ALICE_REF (tag or branch to install; default the latest vX.Y.Z release), ALICE_REPO_URL (clone source)
 set -euo pipefail
 
-REPO_URL="${ALICE_REPO_URL:-https://github.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine.git}"
+REPO_URL="${ALICE_REPO_URL:-https://github.com/Viox-Development/alice-agent.git}"
 FIRST_LINUX_RELEASE="v0.3.1"  # the first release with the Linux launcher and this installer
 DIR="${XDG_DATA_HOME:-$HOME/.local/share}/alice"
 ALL=0
@@ -19,7 +19,7 @@ SHORTCUT=1
 usage() {
     cat <<'EOF'
 ALICE setup for Linux (and macOS). One line, no clone needed:
-  curl -fsSL https://raw.githubusercontent.com/Viox-Development/Artificial-Logic-and-Intelligence-Computation-Engine/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Viox-Development/alice-agent/main/install.sh | bash
 Or inside a clone:
   bash install.sh             # ALICE and the app; the app's setup wizard picks the rest
   bash install.sh --all       # every optional feature at once, no wizard

@@ -2,6 +2,17 @@
 
 Thanks for your interest in ALICE! Bug fixes, tests, documentation, and new tools are all welcome.
 
+## Your first pull request in a few steps
+
+1. Pick an issue labeled [good first issue](https://github.com/Viox-Development/alice-agent/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   and comment that you're on it. Each one names the files, what to change and when it's done.
+2. Fork, clone and set up (any of Windows, Linux or macOS; no API key needed for the tests):
+   `pip install -e ".[dev]"`, then `python -m pytest -q -n auto` should pass.
+3. Make the change with a test, run `ruff check alice tests` and the related tests.
+4. Open the pull request with the template filled in. A bot asks you to sign the CLA with one comment (once, ever).
+
+Working with an AI coding agent? Point it at [AGENTS.md](AGENTS.md): setup, checks and the rules CI enforces.
+
 ## Before you start
 
 - Look for issues labeled **good first issue** or **help wanted**. Comment on the issue so others know you are
@@ -27,7 +38,7 @@ ruff check alice tests
 python -m pytest -q
 ```
 
-CI runs the same lint and tests on Windows and Linux with Python 3.10, 3.12, and 3.13.
+CI runs the same lint and tests on Windows, Linux and macOS with Python 3.10, 3.12, and 3.13.
 
 The tests use a fake model. To see how well ALICE actually solves tasks with real models, and whether the review
 council helps, run the agent evals: `python -m evals --models <provider:model,...>`. They need API keys, use model
