@@ -73,6 +73,10 @@ jobs:
       - name: Testler (kapsamla)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: python -m pytest -q -n auto --durations=25 --cov=alice --cov-report=term --cov-report=xml
+      # Coverage table in the job summary (#452), reusing the XML from the step above.
+      - name: Coverage summary
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        run: python .github/scripts/coverage_summary.py coverage.xml "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         with:
