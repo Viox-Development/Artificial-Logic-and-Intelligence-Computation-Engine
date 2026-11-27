@@ -1,10 +1,22 @@
 name: Release notes
 
-# Keeps a draft release with notes from merged pull requests. Publishing it stays a manual step.
+# Keeps a draft release with notes from merged pull requests. Publishing is a manual step: either publish the
+# draft on GitHub, or run this workflow by hand with "publish" checked (and optional highlights put above the notes).
+# A release published by this workflow uses the built-in token, which does not start other workflows: run the Windows
+# and Android workflows by hand with the new tag to attach the installers.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the release instead of updating the draft
+        type: boolean
+        default: false
+      header:
+        description: Markdown put above the generated notes (e.g. a Highlights section)
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -15,5 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v7
+        with:
+          publish: ${{ inputs.publish || false }}
+          header: ${{ inputs.header }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
