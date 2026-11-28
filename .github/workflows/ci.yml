@@ -67,10 +67,10 @@ jobs:
           pip install -e ".[dev]" pytest-cov
       # Tests run in parallel (pytest-xdist, one worker per core on the machine). Coverage measurement slows the tests;
       # it is enabled only in the job that uploads the report.
-      - name: Testler
+      - name: Tests
         if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python == '3.13') }}
         run: python -m pytest -q -n auto --durations=25
-      - name: Testler (kapsamla)
+      - name: Tests (with coverage)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: python -m pytest -q -n auto --durations=25 --cov=alice --cov-report=term --cov-report=xml
       - uses: actions/upload-artifact@v7
