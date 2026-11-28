@@ -164,7 +164,10 @@ def test_grep_truncation_note_counts_total(ctx, workdir):
 
 
 def test_grep_truncation_note_is_english_when_total_is_not_exact(monkeypatch, ctx, workdir):
-    # Force the Python scan path to cut early, so the reported total is an "at least" count.
+    # Force the Python scan path (no rg) and make it cut early, so the reported total is an "at least" count.
+    # Without this, Grep uses ripgrep when it is installed, MAX_SCAN_LINES has no effect and the
+    # assertion on "at least 5" only passes on machines without rg.
+    monkeypatch.setattr("alice.tools.files.shutil.which", lambda name: None)
     monkeypatch.setattr("alice.tools.files.MAX_SCAN_LINES", 5)
     for i in range(10):
         (workdir / f"f{i}.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
