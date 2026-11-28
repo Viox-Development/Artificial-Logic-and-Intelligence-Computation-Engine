@@ -52,7 +52,11 @@ def test_downloads_returns_not_found_without_hits(monkeypatch, tmp_path):
 
 def test_open_uses_the_chat_folder_and_refuses_a_missing_file(monkeypatch, tmp_path):
     opened = []
+    # Stub both launch paths: os.startfile on Windows and subprocess.Popen
+    # (xdg-open / open) elsewhere, so the test never launches a real program
+    # and passes on every platform.
     monkeypatch.setattr(ff.os, "startfile", lambda value: opened.append(value), raising=False)
+    monkeypatch.setattr("subprocess.Popen", lambda args, **kwargs: opened.append(args[-1]))
     (tmp_path / "given.pdf").write_bytes(b"x")
     tool = ff.FindFiles()
     with pytest.raises(ToolError):
