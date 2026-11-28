@@ -19,9 +19,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install "ruff>=0.6"
-      - name: Ruff (hata kuralları)
+      - name: Ruff (error rules)
         run: ruff check alice tests evals
-      - name: Derleme (SyntaxWarning dahil hata sayılır)
+      - name: Build (SyntaxWarning counts as an error)
         run: python -W error -m compileall -q alice tests evals
 
   # Type checking, one package at a time (#229): the packages listed under [tool.pyright] include in pyproject.toml.
@@ -61,16 +61,16 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]" pytest-cov
-      # Testler paralel (pytest-xdist, makinedeki çekirdek sayısı kadar işçi). Kapsam ölçümü testleri yavaşlatır;
-      # sadece raporu yüklenen işte açık.
-      - name: Testler
+      # Tests run in parallel (pytest-xdist, one worker per core on the machine). Coverage measurement slows the tests;
+      # it is enabled only in the job that uploads the report.
+      - name: Tests
         if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python == '3.13') }}
         run: python -m pytest -q -n auto --durations=25
-      - name: Testler (kapsamla)
+      - name: Tests (with coverage)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: python -m pytest -q -n auto --durations=25 --cov=alice --cov-report=term --cov-report=xml
       # Coverage table in the job summary (#452), reusing the XML from the step above.
@@ -201,5 +201,5 @@ jobs:
           git branch -f ci-install HEAD
           cd /tmp
           ALICE_REPO_URL="file://$GITHUB_WORKSPACE" ALICE_REF=ci-install bash -s < "$GITHUB_WORKSPACE/install.sh" 2>&1 | tee out.txt
-          ! grep -q 'ayrık HEAD\|detached HEAD' out.txt
+          ! grep -q 'detached HEAD' out.txt
           "$HOME/.local/bin/alice" --version
